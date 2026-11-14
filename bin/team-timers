@@ -1351,7 +1351,7 @@ quota_step() {
     log quota "$entry"
   done < <(jq -r '.closed[] | .notice.key as $k
     | "\($k): closed with no post ("
-      + (if ($k | capture("/(?<r>[^/]+)$").r | try fromdateiso8601 catch 0) > now
+      + (if ([$k | capture("/(?<r>[^/]+)$").r][0] // "" | try fromdateiso8601 catch 0) > now
          then "a higher threshold of its window was crossed before it was posted" else "its window reset" end)
       + ")"' <<<"$NOTICE_PLAN")
   while IFS= read -r entry; do
