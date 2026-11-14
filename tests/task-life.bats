@@ -150,13 +150,13 @@ case "$1 $2" in
       jq -n --arg b "${BASH_REMATCH[2]}" '{name: $b, protected: false}'
     elif [[ $2 =~ ^repos/[^/]+/([^/]+)/compare/([^.]+)\.\.\.(.+)$ && $3 == --jq && $4 == .behind_by ]]; then
       # How many commits the base has that the head lacks.
-      git --git-dir "$ORIGINS/${BASH_REMATCH[1]}.git" rev-list --count "${BASH_REMATCH[3]}..${BASH_REMATCH[2]}"
+      git --git-dir "${ORIGINS:?}/${BASH_REMATCH[1]}.git" rev-list --count "${BASH_REMATCH[3]}..${BASH_REMATCH[2]}"
     elif [[ $2 =~ ^repos/[^/]+/[^/]+/actions/runs\?head_sha=[0-9a-f]+\&per_page=100$ ]]; then
       # No workflow runs: this GitHub runs no Actions, so team-ci-wait's look reads only the checks.
       echo '{"total_count": 0, "workflow_runs": []}'
     elif [[ $2 =~ ^repos/([^/]+/([^/]+))/pulls/([0-9]+)/commits$ ]]; then
       file=$(pr_file "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}")
-      git=(git --git-dir "$ORIGINS/${BASH_REMATCH[2]}.git")
+      git=(git --git-dir "${ORIGINS:?}/${BASH_REMATCH[2]}.git")
       for sha in $("${git[@]}" rev-list --reverse "$(jq -r .baseRefName "$file")..$(jq -r .headRefOid "$file")"); do
         jq -n --arg sha "$sha" --arg message "$("${git[@]}" log -1 --format=%B "$sha")" '{sha: $sha, commit: {message: $message}}'
       done | jq -s .

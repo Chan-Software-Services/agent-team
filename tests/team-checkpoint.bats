@@ -1120,8 +1120,8 @@ usage/home-pc/2026-10-21.jsonl"
   echo "untracked" >"$TEAM_HOME/notes.txt"
   make_machine laptop
   on_machine laptop bash -c 'echo "from laptop" >"$TEAM_HOME/manual-steps.md" &&
-    git -C "$TEAM_HOME" add manual-steps.md && git -C "$TEAM_HOME" commit -q -m "docs: a manual step" &&
-    git -C "$TEAM_HOME" push -q origin dev'
+    git -C "${TEAM_HOME:?}" add manual-steps.md && git -C "${TEAM_HOME:?}" commit -q -m "docs: a manual step" &&
+    git -C "${TEAM_HOME:?}" push -q origin dev'
   local theirs staged
   theirs=$(team_tip) staged=$(git -C "${TEAM_HOME:?}" diff --cached)
 
@@ -1147,8 +1147,8 @@ tasks/T1/scratch/spec.md"
   echo "local readme" >"$TEAM_HOME/README.md"
   make_machine laptop
   on_machine laptop bash -c 'echo "from laptop" >"$TEAM_HOME/README.md" &&
-    git -C "$TEAM_HOME" add README.md && git -C "$TEAM_HOME" commit -q -m "docs: a readme" &&
-    git -C "$TEAM_HOME" push -q origin dev'
+    git -C "${TEAM_HOME:?}" add README.md && git -C "${TEAM_HOME:?}" commit -q -m "docs: a readme" &&
+    git -C "${TEAM_HOME:?}" push -q origin dev'
   local theirs mine
   theirs=$(team_tip)
 
@@ -1177,8 +1177,8 @@ docs: a readme"
   run_bin -0 team-open home feature feat work "Do the work"
   make_machine laptop
   on_machine laptop bash -c 'echo "from laptop" >"$TEAM_HOME/manual-steps.md" &&
-    git -C "$TEAM_HOME" add manual-steps.md && git -C "$TEAM_HOME" commit -q -m "docs: a manual step" &&
-    git -C "$TEAM_HOME" push -q origin dev'
+    git -C "${TEAM_HOME:?}" add manual-steps.md && git -C "${TEAM_HOME:?}" commit -q -m "docs: a manual step" &&
+    git -C "${TEAM_HOME:?}" push -q origin dev'
   # Another script commits on the branch once the replay has built its commits, before its lock.
   local real_git theirs
   real_git=$(command -v git)
@@ -1219,7 +1219,7 @@ chore: ledger T1 plan-approved"
   run_bin -0 team-open home feature feat work "Do the work"
   make_machine laptop
   on_machine laptop bash -c 'echo "{}" >>"$TEAM_HOME/ledger.jsonl" &&
-    git -C "$TEAM_HOME" commit -q -am "chore: a ledger line" && git -C "$TEAM_HOME" push -q origin dev'
+    git -C "${TEAM_HOME:?}" commit -q -am "chore: a ledger line" && git -C "${TEAM_HOME:?}" push -q origin dev'
   local theirs
   theirs=$(team_tip)
 

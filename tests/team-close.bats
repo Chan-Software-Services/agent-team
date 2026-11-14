@@ -67,7 +67,7 @@ SH
 case $1 in
   agents) cat "$BATS_TEST_TMPDIR/sessions.json" ;;
   stop | rm)
-    echo "$1 $2 archive:$(find "$TEAM_HOME/tasks" -path '*/scratch*' -type f 2>/dev/null | wc -l) worktrees:$(git -C "$HOME/projects/home" worktree list | wc -l)" \
+    echo "$1 $2 archive:$(find "$TEAM_HOME/tasks" -path '*/scratch*' -type f 2>/dev/null | wc -l) worktrees:$(git -C "${HOME:?}/projects/home" worktree list | wc -l)" \
       >>"$BATS_TEST_TMPDIR/order"
     ;;
   *) exit 64 ;;
@@ -899,9 +899,9 @@ team-stack: stackfix-1 is removed, its logs in $wt/.scratch/task/stack-logs"
 case $1 in
   agents) cat "$BATS_TEST_TMPDIR/sessions.json" ;;
   stop)
-    echo late >"$LATE_IN/late.txt"
-    git -C "$LATE_IN" add late.txt
-    git -C "$LATE_IN" commit -q -m "feat: late"
+    echo late >"${LATE_IN:?}/late.txt"
+    git -C "${LATE_IN:?}" add late.txt
+    git -C "${LATE_IN:?}" commit -q -m "feat: late"
     ;;
   rm) ;;
   *) exit 64 ;;

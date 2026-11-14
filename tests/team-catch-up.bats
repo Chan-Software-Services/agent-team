@@ -89,7 +89,7 @@ green_pr() {
 stub_gh() {
   echo "$head" >"$GH_DIR/first-head"
   stub_script gh <<'EOF'
-tip=$(git --git-dir="$PROJ_ORIGIN" rev-parse "refs/heads/feat/T14-tooling")
+tip=$(git --git-dir="${PROJ_ORIGIN:?}" rev-parse "refs/heads/feat/T14-tooling")
 case "$*" in
   "pr view 5 --repo owner/proj --json headRefOid --jq .headRefOid")
     lag=$(cat "$GH_DIR/lag" 2>/dev/null || echo 0)
