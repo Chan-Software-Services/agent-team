@@ -2036,7 +2036,11 @@ pr_part() {
     project=${project%%$'\n'*}
   fi
   if [[ -n $project ]]; then
+    # Under its new owner while the registry still names the old (bin/lib/repo-moves.json), as
+    # registered_pr gives it, so gh reads the PR where it is.
     repo=$(team_project "$project" repo) || return 1
+    repo=$(canonical_url "https://github.com/$repo") || return 1
+    repo=${repo#https://github.com/}
     required_checks=$(team_project "$project" required_checks) || return 1
     bar=$(own_bar "$project") || return 1
   fi

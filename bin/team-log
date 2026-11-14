@@ -22,6 +22,8 @@
 # Any other value is stored as JSON when it parses as JSON (a number, true) and as a string
 # otherwise; a field the contract types as a string, a choice or an id, any discord_* field, and a
 # whole number of 16 digits or more (which a JSON number cannot hold exactly) are always strings.
+# A url naming a repo that moved owner (bin/lib/repo-moves.json) is logged under its new owner, and
+# compared with the task's events so, from the command line and from --from-message alike.
 # note is allowed on every kind. Kinds team-log is not a writer of
 # (opened, launch, merged, closed...) are refused, and so is a merge-approved whose url is not
 # one of the task's pr events (a trailing slash aside), or with no head, or a head neither a pr
@@ -330,8 +332,9 @@ fi
   die "an answered that names a Discord message is logged only by team-answer, which reads it and checks it is Daniel's: team-answer $task ${seen[id]:-<id>} <the message's id>"
 
 # Each value is typed by the contract when it names the field, and by whether it parses as JSON
-# otherwise (typed_value in bin/lib/ledger.jq), so the checks below read the values the line
-# will hold; ledger_append then checks the event against the contract and the lifecycle table.
+# otherwise (typed_value in bin/lib/ledger.jq), and a url is written with its repo under its new
+# owner (canonical_event), so the checks below read the values the line will hold; ledger_append
+# then checks the event against the contract and the lifecycle table.
 typed=$(ledger_jq '
   if $contract.kinds | has($event) | not then "unknown event kind '"'"'\($event)'"'"'; team-log --help lists the kinds" | halt_error(1) else
   field_types($contract.kinds[$event]) as $types
@@ -339,7 +342,7 @@ typed=$(ledger_jq '
   | reduce range(0; $pairs | length; 2) as $i ({line: {ts: (now | todate), task: $task, event: $event}, problems: []};
       $pairs[$i] as $key | ($pairs[$i + 1] | typed_value($key; $types[$key])) as $typed
       | .line[$key] = $typed.value | .problems += ($typed.problems // []))
-  | if .problems == [] then .line | review_sent_back else .problems | join("; ") | halt_error(1) end end' \
+  | if .problems == [] then .line | canonical_event | review_sent_back else .problems | join("; ") | halt_error(1) end end' \
   -nc --arg task "$task" --arg event "$event" --args "${pairs[@]}" 2>&1) || die "${typed%$'\n'}"
 
 # A park carries its cause (bin/lib/lifecycle.json's causes): a cause= given is kept; a held is
@@ -712,15 +715,20 @@ problem=$(jq -r '.problems // empty | join("; ")' <<<"$parsed")
 [[ -z $problem ]] || die "$problem"
 
 # A PR's head, and its head branch against the task's in the PR's project: the pr event's head, and
-# a branch-renamed when they differ (the gate moved the branch).
+# a branch-renamed when they differ (the gate moved the branch). The URL's repo and each project's
+# are compared under their new owners (canonical_url), and gh reads the PR under the new one.
 # github_pr <url>: sets pr_head, and renamed to "project=<p> branch=<b>" or ''.
 github_pr() {
   local url=$1 repo number project='' p r view branch current names=()
   [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+)/?$ ]]
   repo=${BASH_REMATCH[1]} number=${BASH_REMATCH[2]}
+  repo=$(canonical_url "https://github.com/$repo") || exit 1
+  repo=${repo#https://github.com/}
   while IFS= read -r p; do
     r=$(team_project "$p" repo) || exit 1
     names+=("$p ($r)")
+    r=$(canonical_url "https://github.com/$r") || exit 1
+    r=${r#https://github.com/}
     [[ ${r,,} != "${repo,,}" ]] || project=$p
   done < <(jq -r '.[] | select(.event == "opened" or .event == "worktree-added") | .project | strings' <<<"$TASK_EVENTS" | awk '!seen[$0]++')
   if [[ -z $project ]]; then
