@@ -1788,7 +1788,8 @@ team_project() {
 # word whatever the registry says: named agent-team, its primary checkout the code checkout this
 # library runs from or, when that checkout is a linked worktree, its main worktree, or its repo,
 # in any case, the owner/name of that checkout's origin (an HTTPS or SSH URL, a trailing .git or
-# slash aside). Refuses an unknown project: own_project <name>
+# slash aside), each at the end of its moves (bin/lib/repo-moves.json), so the origin and the
+# registry may name a moved repo under either owner. Refuses an unknown project: own_project <name>
 own_project() {
   local project code path common url
   [[ $1 != agent-team ]] || return 0
@@ -1801,7 +1802,8 @@ own_project() {
   url=$(git -C "$code" remote get-url origin 2>/dev/null) || return 1
   url=${url%/} url=${url%.git}
   [[ $url =~ [:/]([^/:]+/[^/:]+)$ ]] || return 1
-  [[ ${BASH_REMATCH[1],,} == "$(jq -r '.repo | ascii_downcase' <<<"$project")" ]]
+  ledger_jq '[$origin, .repo | "https://github.com/\(.)" | canonical_url | ascii_downcase] | .[0] == .[1]' \
+    -e --arg origin "${BASH_REMATCH[1]}" <<<"$project" >/dev/null
 }
 
 # The registered projects that are the team's own (own_project), in the registry's order, and the
@@ -1875,7 +1877,8 @@ review_app_jwt() {
 # goes to curl only on stdin through --config -, from printf, a builtin, so it is in no process's
 # arguments and no child's environment; not through gh, which takes a token only from its
 # environment or its login. curl reads no config of the user's (-q, its first argument), so no
-# ~/.curlrc can trace, proxy or add to the call. The answer's body is printed, then its HTTP status
+# ~/.curlrc can trace, proxy or add to the call, and it follows no redirect, so no answer can move
+# the call elsewhere: a 301 is an answer like any other. The answer's body is printed, then its HTTP status
 # on a line of its own, for the caller to hold in memory, since a token GitHub mints is in the body
 # and no file is to hold it; a call curl cannot make fails with curl's exit, its error on stderr.
 # <bearer> is refused unless it is the characters a JWT or a token is made of, so no answer GitHub
