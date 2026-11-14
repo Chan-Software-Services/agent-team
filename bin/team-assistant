@@ -10,7 +10,8 @@
 #        team-assistant thread <title> [--from <message id>]
 # Run by the assistant (AGENT_TEAM_ROLE=assistant) and the coordinator (coordinator, or none set:
 # Daniel's own shell); any other role is refused, "a <role> session cannot hand off: that is the
-# assistant's and the coordinator's". send, answer and thread are refused on a machine that is
+# assistant's and the coordinator's" ("an" before a role starting with a vowel, as "an ops
+# session"). send, answer and thread are refused on a machine that is
 # fenced or lost the lease (lease_refusal in bin/lib/team.sh), before Discord is read.
 #
 # send hands <body> (a text file, read verbatim) from this session to the other. The

@@ -1,5 +1,5 @@
 # The launchers' shared parts, for the scripts that start one long-lived session of the team
-# (claude-coordinator), sourced after team.sh:
+# (claude-coordinator and claude-assistant), sourced after team.sh:
 #
 #   # shellcheck source=bin/lib/launch.sh
 #   source "$TEAM_LIB/launch.sh"
