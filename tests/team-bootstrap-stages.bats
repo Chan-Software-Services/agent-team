@@ -106,13 +106,13 @@ agent_path_override:
   rm -rf "$CONVENTIONER" "$SITE"
   : >"$STUB_FIXTURES/gates"
   run_bin -0 team-bootstrap
-  assert_equal "$(stage_lines projects)" "running: git clone -q https://github.com/chanjdaniel/Conventioner.git ~/projects/Conventioner
+  assert_equal "$(stage_lines projects)" "running: git clone -q https://github.com/Chan-Software-Services/Conventioner.git ~/projects/Conventioner
 running: echo /.scratch/task/ >>~/projects/Conventioner/.git/info/exclude
 running: cd ~/projects/Conventioner && no-mistakes init
 conventioner is set up in ~/projects/Conventioner
 running: git clone -q https://github.com/owner/site.git ~/projects/site
 site is set up in ~/projects/site"
-  assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" https://github.com/chanjdaniel/Conventioner.git
+  assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" https://github.com/Chan-Software-Services/Conventioner.git
   assert_equal "$(git -C "$SITE" remote get-url origin)" https://github.com/owner/site.git
   assert_equal "$(cat "$SITE/.git/info/exclude" | grep -c scratch)" 0
   assert_equal "$(git -C "$CONVENTIONER" status --porcelain)$(git -C "$SITE" status --porcelain)" ""

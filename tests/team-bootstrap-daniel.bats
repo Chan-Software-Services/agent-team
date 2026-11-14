@@ -121,7 +121,7 @@ echo "  - Token: gho_fakefakefakefake"
 EOF2
   mkdir -p "$CONVENTIONER"
   run_bin -1 team-bootstrap
-  assert_equal "$(tail -n1 <<<"$output")" "projects: Daniel: move it aside, then git clone https://github.com/chanjdaniel/Conventioner.git ~/projects/Conventioner (~/projects/Conventioner is not a git checkout)"
+  assert_equal "$(tail -n1 <<<"$output")" "projects: Daniel: move it aside, then git clone https://github.com/Chan-Software-Services/Conventioner.git ~/projects/Conventioner (~/projects/Conventioner is not a git checkout)"
   [[ ! -e $STUB_CALLS/git-clone.log ]]
 }
 
@@ -281,7 +281,7 @@ machine: done: the team home shares history with origin's dev"
   assert_contains "$output" "machine: named the team home ~/agent-team-records (~/.config/agent-team/home)"
   assert_contains "$output" "check: doctor: "
   # The stages after it read the doctor on that team home: its projects are cloned.
-  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/chanjdaniel/Conventioner.git $CONVENTIONER
+  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/Chan-Software-Services/Conventioner.git $CONVENTIONER
 clone -q https://github.com/owner/site.git $SITE"
   assert_contains "$output" "check: doctor: "
   [[ $output != *" team home: "* && $output != *" records: "* && $output != *"FAIL checkout "* ]]

@@ -366,11 +366,13 @@ esac
 
 # Daniel's word is on one PR at one head: the approval names the PR as one of the task's pr events
 # does, and a head that PR's pr events, or the task's reviews since its first one, logged (pr_heads
-# in bin/lib/ledger.jq), its message sent no earlier than the first of them, as team-merge holds.
+# in bin/lib/ledger.jq), its message sent no earlier than the first of them, as team-merge holds;
+# the URL is compared with each moved repo under its new owner (canonical_url), as the events are.
 if [[ $event == merge-approved && -n ${seen[url]:-} ]]; then
   task_events_once
   problem=$(ledger_jq '
     . as $all
+    | ($url | canonical_url) as $url
     | [$all[] | select(.event == "pr" and (.url | type) == "string")] as $prs
     | ($all | pr_heads($url)) as $mine
     | if $mine == [] and $prs == [] then "\($url) is not a PR of \($events); it has none"
@@ -384,7 +386,7 @@ if [[ $event == merge-approved && -n ${seen[url]:-} ]]; then
   message=${seen[discord_message]:-}
   # A Discord id holds the milliseconds since 2015-01-01 above its low 22 bits.
   if [[ $message =~ ^[1-9][0-9]{0,18}$ ]]; then
-    logged=$(ledger_jq 'head_logged($url; $head) | "\(.ts) \(.event)"' \
+    logged=$(ledger_jq 'head_logged($url | canonical_url; $head) | "\(.ts) \(.event)"' \
       -r --arg url "${seen[url]}" --arg head "${seen[head]}" <<<"$TASK_EVENTS")
     sent=$(((10#$message >> 22) / 1000 + 1420070400))
     ((sent >= $(date -ud "${logged% *}" +%s))) ||

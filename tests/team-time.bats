@@ -74,7 +74,7 @@ time_json() {
   local json
   json=$(time_json --until "$until")
   assert_equal "$(jq -c '.gate_runs.per_pr' <<<"$json")" \
-    '[{"task":"T60","pr":"https://github.com/chanjdaniel/Conventioner/pull/7","runs":3,"causes":{"none":1,"load":1,"review":1}}]'
+    '[{"task":"T60","pr":"https://github.com/Chan-Software-Services/Conventioner/pull/7","runs":3,"causes":{"none":1,"load":1,"review":1}}]'
   assert_equal "$(jq -c '.gate_runs.by_cause' <<<"$json")" '{"none":1,"load":1,"review":1}'
   assert_equal "$(jq -c '.gate_runs.by_outcome' <<<"$json")" '{"red":1,"pushed":1,"stopped-green":1}'
   assert_equal "$(jq -c '.gate_runs.step_minutes' <<<"$json")" '{"review":5,"test":25,"document":1,"push":1,"ci":28}'
@@ -82,7 +82,7 @@ time_json() {
   assert_equal "$(jq -c '.gate_runs.approved' <<<"$json")" '{"review-coverage":2,"lint-before":1}'
 
   run_bin -0 team-time --until "$until"
-  grep -Eq '^T60 +https://github.com/chanjdaniel/Conventioner/pull/7 +3 +none 1, load 1, review 1$' <<<"$output"
+  grep -Eq '^T60 +https://github.com/Chan-Software-Services/Conventioner/pull/7 +3 +none 1, load 1, review 1$' <<<"$output"
   assert_contains "$output" "Gate runs by cause: none 1, load 1, review 1"
   assert_contains "$output" "Gate runs by outcome: red 1, pushed 1, stopped-green 1"
   assert_contains "$output" "Gate minutes per step (median): review 5, test 25, document 1, push 1, ci 28"
@@ -97,13 +97,13 @@ time_json() {
   local json
   json=$(time_json --until "$until")
   assert_equal "$(jq -c '.reviews' <<<"$json")" \
-    '[{"task":"T60","pr":"https://github.com/chanjdaniel/Conventioner/pull/7","reviews":2,"findings":1}]'
+    '[{"task":"T60","pr":"https://github.com/Chan-Software-Services/Conventioner/pull/7","reviews":2,"findings":1}]'
   assert_equal "$(jq -c '.builders' <<<"$json")" \
     '[{"task":"T60","builders":3,"tickets":1},{"task":"T61","builders":2,"tickets":0},{"task":"T62","builders":1,"tickets":0}]'
   assert_equal "$(jq -c '.denials' <<<"$json")" '2'
 
   run_bin -0 team-time --until "$until"
-  grep -Eq '^T60 +https://github.com/chanjdaniel/Conventioner/pull/7 +2 +1$' <<<"$output"
+  grep -Eq '^T60 +https://github.com/Chan-Software-Services/Conventioner/pull/7 +2 +1$' <<<"$output"
   grep -Eq '^T60 +3 +1$' <<<"$output"
   assert_contains "$output" "Denials: 2"
 }

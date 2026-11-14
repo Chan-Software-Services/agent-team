@@ -12,15 +12,15 @@ setup() {
   doctor_machine
 }
 
-@test "each registered project's lines pass for a correct clone; Conventioner's pool is Conventioner-d4c77a" {
+@test "each registered project's lines pass for a correct clone; Conventioner's pool is Conventioner-3930b8" {
   only_checks 200-projects.sh
   tools_at arch
   run_bin -0 team-doctor
   assert_equal "$(grep -E '^.... [a-z ]+ (conventioner|site): ' <<<"$output")" "PASS checkout conventioner: ~/projects/Conventioner, a primary checkout
-PASS origin conventioner: https://github.com/chanjdaniel/Conventioner.git
+PASS origin conventioner: https://github.com/Chan-Software-Services/Conventioner.git
 PASS task dir conventioner: git ignores .scratch/task/
 PASS gate conventioner: no-mistakes has a gate for it
-PASS slots conventioner: every slot is in the pool Conventioner-d4c77a, as treehouse names it from origin
+PASS slots conventioner: every slot is in the pool Conventioner-3930b8, as treehouse names it from origin
 PASS leases conventioner: no slot of the pool is leased
 PASS trust conventioner: claude starts background sessions in ~/projects/Conventioner
 PASS branches conventioner: every local branch is on origin
@@ -68,10 +68,10 @@ PASS changes site: the primary checkout is clean"
   run_bin -1 team-doctor
   assert_equal "$(line_of 'origin site')" "FAIL origin site: no remote origin; fix: git -C ~/projects/site remote add origin https://github.com/owner/site.git"
 
-  url=git@github.com:chanjdaniel/Conventioner.git
+  url=git@github.com:Chan-Software-Services/Conventioner.git
   git -C "$CONVENTIONER" remote set-url origin "$url"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'slots conventioner')" "FAIL slots conventioner: not in the pool Conventioner-$(printf '%s' "$url" | sha256sum | cut -c1-6), as treehouse names it from origin $url: ~/.treehouse/Conventioner-d4c77a/1/Conventioner, ~/.treehouse/Conventioner-d4c77a/2/Conventioner; fix: the origin line's fix"
+  assert_equal "$(line_of 'slots conventioner')" "FAIL slots conventioner: not in the pool Conventioner-$(printf '%s' "$url" | sha256sum | cut -c1-6), as treehouse names it from origin $url: ~/.treehouse/Conventioner-3930b8/1/Conventioner, ~/.treehouse/Conventioner-3930b8/2/Conventioner; fix: the origin line's fix"
   git -C "$CONVENTIONER" remote remove origin
   run_bin -1 team-doctor
   assert_equal "$(line_of 'slots conventioner')" "FAIL slots conventioner: unknown, since treehouse names the pool from origin, which is missing; fix: the origin line's fix"
@@ -79,26 +79,26 @@ PASS changes site: the primary checkout is clean"
 
 @test "a treehouse slot outside the pool its origin names fails the slots line" {
   tools_at arch
-  sed -i 's#\.treehouse/Conventioner-d4c77a/2/#.treehouse/Conventioner-8e12e0/2/#' "$TEAM_HOME/projects.toml"
+  sed -i 's#\.treehouse/Conventioner-3930b8/2/#.treehouse/Conventioner-8e12e0/2/#' "$TEAM_HOME/projects.toml"
   run_bin -1 team-doctor
-  assert_equal "$(grep -v '^PASS ' <<<"$output")" "FAIL slots conventioner: not in the pool Conventioner-d4c77a, as treehouse names it from origin: ~/.treehouse/Conventioner-8e12e0/2/Conventioner; fix: put conventioner's pool.slots in projects.toml under the pool's directory, ~/.treehouse/Conventioner-d4c77a/ unless its treehouse.toml sets another root"
+  assert_equal "$(grep -v '^PASS ' <<<"$output")" "FAIL slots conventioner: not in the pool Conventioner-3930b8, as treehouse names it from origin: ~/.treehouse/Conventioner-8e12e0/2/Conventioner; fix: put conventioner's pool.slots in projects.toml under the pool's directory, ~/.treehouse/Conventioner-3930b8/ unless its treehouse.toml sets another root"
 }
 
 @test "slots: a slot that is a worktree of another clone of the same origin warns, naming it and how many slots are the team's (report F13)" {
   only_checks 200-projects.sh
   tools_at arch
-  local pool=$HOME/.treehouse/Conventioner-d4c77a other=$HOME/firstmate/projects/Conventioner shown remove
+  local pool=$HOME/.treehouse/Conventioner-3930b8 other=$HOME/firstmate/projects/Conventioner shown remove
   # Slot 2 is this checkout's worktree and slot 1 does not exist: both pass, as treehouse makes 1.
   git -C "$CONVENTIONER" worktree add -q --detach "$pool/2/Conventioner"
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-d4c77a, as treehouse names it from origin"
+  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-3930b8, as treehouse names it from origin"
 
   # Another clone with the same folder name and origin shares the pool, and owns slot 1.
   git clone -q "$CONVENTIONER" "$other"
-  git -C "$other" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
+  git -C "$other" remote set-url origin https://github.com/Chan-Software-Services/Conventioner.git
   git -C "$other" worktree add -q --detach "$pool/1/Conventioner"
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  shown='~/.treehouse/Conventioner-d4c77a'
+  shown='~/.treehouse/Conventioner-3930b8'
   remove="git -C ~/firstmate/projects/Conventioner worktree remove"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'slots conventioner')" "WARN slots conventioner: slot 1 is a worktree of ~/firstmate/projects/Conventioner, so 1 of 2 slots are the team's; fix: Daniel's, once nothing in it is needed by that clone: $remove $shown/1/Conventioner"
@@ -115,7 +115,7 @@ PASS changes site: the primary checkout is clean"
   only_checks 200-projects.sh
   tools_at arch
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  local pool=$HOME/.treehouse/Conventioner-d4c77a shown='~/.treehouse/Conventioner-d4c77a'
+  local pool=$HOME/.treehouse/Conventioner-3930b8 shown='~/.treehouse/Conventioner-3930b8'
   # A removed worktree leaves its numbered folder, which treehouse does not make a slot in again.
   mkdir -p "$pool/1" "$pool/2/Conventioner" "$pool/4"
   run_bin -0 team-doctor
@@ -129,7 +129,7 @@ PASS changes site: the primary checkout is clean"
 
   rm -r "$pool/2"
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-d4c77a, as treehouse names it from origin"
+  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-3930b8, as treehouse names it from origin"
 }
 
 # ledger_opened <task> <slot>: <task> opened in Conventioner, in its slot <slot> (relative to HOME).
@@ -142,7 +142,7 @@ ledger_opened() {
 @test "leases: each slot the pool leases is an open task's worktree there, or a WARN naming it with the return" {
   only_checks 200-projects.sh
   tools_at arch
-  local pool=.treehouse/Conventioner-d4c77a fix
+  local pool=.treehouse/Conventioner-3930b8 fix
   ledger_opened T1 "$pool/1/Conventioner"
   ledger_opened T2 "$pool/2/Conventioner"
   leased_slots "$pool/1/Conventioner" T1 "$pool/2/Conventioner" T2
@@ -179,7 +179,7 @@ ledger_opened() {
   local other
   mkdir -p "$HOME/$pool/5/Conventioner"
   other=$(other_spelling "$HOME/.treehouse")
-  ledger_opened T5 "${other##*/}/Conventioner-d4c77a/5/Conventioner"
+  ledger_opened T5 "${other##*/}/Conventioner-3930b8/5/Conventioner"
   leased_slots "$pool/3/Conventioner" T2 "$pool/5/Conventioner" T5
   run_bin -0 team-doctor
   assert_equal "$(line_of 'leases conventioner')" "PASS leases conventioner: every leased slot (2) is an open task's worktree here"
