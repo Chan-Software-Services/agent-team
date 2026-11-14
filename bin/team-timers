@@ -301,24 +301,25 @@
 #            (whose commit pushes) after 60 s, the uptime step after 180 s, the quota step after
 #            60 s, each reading and the place after 60 s, the level step, the sweep and the pack
 #            after 300 s and the janitor after 1200 s, each logged as "<step>: failed: timed out
-#            after <n> s" (a janitor stopped so wrote no report, so the next run starts it again),
-#            and a whole run, on Linux and macOS alike, after 70 minutes, with everything it
-#            started, logged as "run: failed: timed out after 4200 s" (exit 1), so the next run
-#            takes the lock; the systemd service's TimeoutStartSec=4500 stands behind that. The
-#            sweep, the janitor and the level step need docker on the PATH enable captured (the
-#            sweep and the capacity step claude too), and
-#            the reading counts the team's stacks as other programs without it: run enable again
-#            once it is there. A run that finds another still going skips. Posts go through
-#            discord_api; times in them are this machine's local time. On macOS, inside the job
-#            (TEAM_HEARTBEAT_JOB is agent-team.heartbeat) with the heartbeat's plist gone, the job
-#            was disabled while loaded: a run that starts so says "team-timers: the heartbeat was
-#            disabled, so this run unloads its job and does nothing else" on stderr, boots its job
-#            out and exits 0, before the lock or any step, with no log line or record; a run whose
-#            plist went while it ran (its own fence, or a handoff's disable) boots its job out as
-#            its very last act, after its log line, record and alerts, on the normal and the
-#            timed-out end alike (the timed-out end takes the lock back the moment the stopped run
-#            lets it go, and holds it to the end, so no disable from outside reads the run as over
-#            meanwhile). Outside the job, or with the plist there, a run is as above.
+#            after <n> s" (the quota step's as "quota: failed: team-quota status timed out after
+#            60 s"; a janitor stopped so wrote no report, so the next run starts it again), and a
+#            whole run, on Linux and macOS alike, after 70 minutes, with everything it started,
+#            logged as "run: failed: timed out after 4200 s" (exit 1), so the next run takes the
+#            lock; the systemd service's TimeoutStartSec=4500 stands behind that. The sweep, the
+#            janitor and the level step need docker on the PATH enable captured (the sweep and the
+#            capacity step claude too), and the reading counts the team's stacks as other programs
+#            without it: run enable again once it is there. A run that finds another still going
+#            skips. Posts go through discord_api; times in them are this machine's local time. On
+#            macOS, inside the job (TEAM_HEARTBEAT_JOB is agent-team.heartbeat) with the heartbeat's
+#            plist gone, the job was disabled while loaded: a run that starts so says "team-timers:
+#            the heartbeat was disabled, so this run unloads its job and does nothing else" on
+#            stderr, boots its job out and exits 0, before the lock or any step, with no log line or
+#            record; a run whose plist went while it ran (its own fence, or a handoff's disable)
+#            boots its job out as its very last act, after its log line, record and alerts, on the
+#            normal and the timed-out end alike (the timed-out end takes the lock back the moment
+#            the stopped run lets it go, and holds it to the end, so no disable from outside reads
+#            the run as over meanwhile). Outside the job, or with the plist there, a run is as
+#            above.
 #   watch    A stream for anyone watching the hold: checks the offline flag every 60 s until
 #            killed, and prints one line when it appears (at once if it is there) and one when it
 #            goes:

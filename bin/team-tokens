@@ -122,11 +122,11 @@
 # w, w_per_review}] (each sorted by project, then toolkits, an empty list first; a ratio with no
 # outcome null)}, relaunches {reasons, all, warmup_w}, rereviews {count, complete, w, median_w,
 # mean_w}, blocks, current_block (or null), seven_days {from, to, machines, all}, quota (team-quota
-# status --json's object, or null when it could not be read), quota_error (why, or null) and coordinator
-# (or null) {machine, sessions, unread_replies, turns, all, daniel_turns, waits {all, idle,
-# mid_turn}, compactions}, its times in seconds; each list's
-# items are objects named after the table's columns, tokens are counts and $w has six decimals, a
-# whole number printed as an integer.
+# status --json's object, or null when it could not be read), quota_error (why, or null) and
+# coordinator (or null) {machine, sessions, unread_replies, turns, all, daniel_turns, waits {all,
+# idle, mid_turn}, compactions}, its times in seconds; each list's items are objects named after
+# the table's columns, tokens are counts and $w has six decimals, a whole number printed as an
+# integer.
 #
 # export reads this machine's Claude Code transcripts (~/.claude/projects/*/*.jsonl and each
 # session's subagents/*.jsonl) and writes one line per assistant reply into the team home's
