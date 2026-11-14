@@ -696,7 +696,7 @@ launched T7-reviewer c0000001"
     n=$((n + 1))
     sed -i "s#^repo = .*#repo = \"$registry\"#" "$TEAM_HOME/projects.toml"
     cp "$BATS_TEST_TMPDIR/ledger.before" "$TEAM_HOME/ledger.jsonl"
-    rm -rf "$TEAM_HOME/tasks/T7"
+    rm -rf "${TEAM_HOME:?}/tasks/T7"
     cp -a "$BATS_TEST_TMPDIR/T7.before" "$TEAM_HOME/tasks/T7"
     run_bin -0 --separate-stderr team-next T7 --checks "$checks" -- "T7 PR $given"
     assert_equal "$output" "logged pr url=$url head=$sha
