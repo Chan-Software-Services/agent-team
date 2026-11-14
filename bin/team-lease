@@ -33,10 +33,10 @@
 #            sessions typing one. Clears this machine's fence.
 #   renew    The holder only: a new renewed_at. On a machine that lost the lease it fences
 #            this machine instead, and exits 1: writes fenced (since, the holder seen and its
-#            epoch), stops every live session named coordinator or T<n>-<role> (claude agents
-#            --json, then claude stop each; no other session), ending an ops session (T<n>-ops)
-#            with team-ops-end instead, so its transcript and answer file go too (claude stop
-#            alone when that fails, said), and runs team-timers disable.
+#            epoch), stops every live session named coordinator, assistant or T<n>-<role>
+#            (claude agents --json, then claude stop each; no other session), ending an ops
+#            session (T<n>-ops) with team-ops-end instead, so its transcript and answer file go
+#            too (claude stop alone when that fails, said), and runs team-timers disable.
 #            A fenced machine refuses check, renew and release, posts nothing to Discord and
 #            pushes nothing (bin/hooks/lease-fence), until a take clears the fence.
 #   release  The holder only: state released. A released lease is left as it is (exit 0).
@@ -327,7 +327,7 @@ fence() {
       else
         problems+=("could not stop $name ($id): $(grep -m1 . "$err" || echo "claude stop failed")")
       fi
-    done < <(jq -r '.[] | select(.name | strings | . == "coordinator" or test("^T[0-9]+-[a-z][a-z0-9-]*$"))
+    done < <(jq -r '.[] | select(.name | strings | . == "coordinator" or . == "assistant" or test("^T[0-9]+-[a-z][a-z0-9-]*$"))
       | "\(.id // ((.sessionId // "")[:8])) \(.name)"' <<<"$sessions")
   else
     problems+=("could not read the live session list (claude agents --json), so no session was stopped")

@@ -2,10 +2,11 @@
 # team-resume: the machine taking the team over reads the lease, runs the doctor, waits for or
 # refuses another machine's fresh lease, pulls the team home and the code checkout, applies the
 # config, takes the lease, enables the heartbeat, makes each open task's worktrees here, writes the
-# report and starts the coordinator. Two machines: home-pc (this sandbox's HOME) opens T1 in a git
+# report and starts the coordinator, then the assistant. Two machines: home-pc (this sandbox's HOME) opens T1 in a git
 # pool project, home, with a live builder and a pushed commit; laptop (make_machine) resumes, from
 # a code checkout of the test's own (code_checkout). The doctor is a stub (TEAM_DOCTOR) whose lines
-# a test sets; claude is a stub with a session list per machine.
+# a test sets; claude is a stub with a session list per machine, and each machine's coordinator
+# Discord access file names Daniel, so claude-assistant starts.
 
 load helpers/common
 load helpers/treehouse
@@ -61,8 +62,10 @@ case "$*" in
       echo "Error: Workspace not trusted. Run claude here once and accept the trust dialog." >&2
       exit 1
     fi
-    jq --arg name "$3" '. + [{id: "7c3e9a10", name: $name, status: "idle"}]' "$list" >"$list.next" && mv "$list.next" "$list"
-    echo "Started background session 7c3e9a10 ($3)" ;;
+    id=7c3e9a10
+    [[ $3 != assistant ]] || id=a55157a7
+    jq --arg id "$id" --arg name "$3" '. + [{id: $id, name: $name, status: "idle"}]' "$list" >"$list.next" && mv "$list.next" "$list"
+    echo "Started background session $id ($3)" ;;
   *) echo "claude stub: unplanned call: $*" >&2; exit 64 ;;
 esac
 SH
@@ -93,7 +96,15 @@ SH
 
   make_machine laptop
   laptop=$BATS_TEST_TMPDIR/machines/laptop
+  daniel_heard "$HOME"
+  daniel_heard "$laptop/home"
   code_checkout
+}
+
+# The coordinator's Discord access file in <home>, with Daniel's id, which claude-assistant reads.
+daniel_heard() {
+  echo '{"dmPolicy": "allowlist", "allowFrom": ["757"], "groups": {}, "pending": {}}' \
+    >"$1/.claude/channels/discord/access.json"
 }
 
 # The report the last run wrote, as its report line names it: reported
@@ -116,9 +127,15 @@ hand_off() {
   "$REPO_ROOT/bin/team-handoff" >/dev/null
 }
 
-# The coordinator launches on laptop: each claude --bg call laptop made, as JSON arguments.
+# The coordinator launches on laptop: each claude --bg call laptop made but the assistant's, as
+# JSON arguments.
 coordinator_launches() {
-  stub_calls claude | jq -c 'select(.[0] == "--bg")'
+  stub_calls claude | jq -c 'select(.[0] == "--bg" and .[2] != "assistant")'
+}
+
+# The assistant's launches, the same way.
+assistant_launches() {
+  stub_calls claude | jq -c 'select(.[0] == "--bg" and .[2] == "assistant")'
 }
 
 # Everything a refused resume must leave as it was on laptop: its team home's HEAD and status,
@@ -148,8 +165,11 @@ laptop_state() {
   # first free slot of laptop's pool is taken, and the move logged.
   assert_contains "$output" "T1 home: $laptop/home/slots/home/1 on feat/T1-work at ${head:0:7}, moved from $wt, scratch restored from tasks/T1/scratch"
   [[ $report == "$laptop/team/tasks/resume-$(date +%F)-"[0-2][0-9][0-5][0-9][0-5][0-9].json ]]
-  assert_contains "$output" "coordinator: started, with the resume skill and the report"
-  assert_equal "${lines[-1]}" "Pin the coordinator in \`claude agents\` (Ctrl+T)."
+  assert_contains "$output" "coordinator: started, with the resume skill and the report
+Pin the coordinator in \`claude agents\` (Ctrl+T).
+assistant: Started background session a55157a7 (assistant)
+assistant: started, with its stow note and its digest"
+  assert_equal "${lines[-1]}" "Pin the assistant in \`claude agents\` (Ctrl+T)."
 
   # The doctor ran on laptop, once.
   assert_equal "$(cat "$BATS_TEST_TMPDIR/doctor.runs")" "$laptop/home"
@@ -180,6 +200,11 @@ laptop_state() {
   assert_equal "$(coordinator_launches | jq -r '.[1:3] | join(" ")')" "--name coordinator"
   assert_equal "$(coordinator_launches | jq -r 'last')" \
     "You are the coordinator, resuming the team on laptop. Follow the \`resume\` skill with the report $report."
+  # The assistant after it, from the team home, its prompt naming its stow note and its digest.
+  assert_equal "$(assistant_launches | wc -l)" 1
+  assert_equal "$(assistant_launches | jq -r 'last')" \
+    "You are the assistant, resuming on laptop. Read assistant/handoff.md first, then follow your digest."
+  assert_equal "$(jq -r '.[] | select(.status != "stopped") | .name' "$laptop/home/sessions.json" | sort | paste -sd ' ')" "assistant coordinator"
 
   # A second run finishes nothing new, and the live coordinator refuses a second start.
   local first
@@ -196,6 +221,23 @@ laptop_state() {
   assert_equal "$(find "$laptop/team/tasks" -maxdepth 1 -name 'resume-*.json' | sort)" "$(printf '%s\n' "$report" "$second" | sort)"
   assert_equal "$(cat "$report")" "$first"
   assert_equal "$(jq -r .machine "$second")" laptop
+}
+
+@test "an assistant that does not start is said, the coordinator left running, and the resume exits 1; a run again starts it" {
+  hand_off
+  rm "$laptop/home/.claude/channels/discord/access.json"
+
+  on_machine laptop run_bin -1 --separate-stderr team-resume
+  assert_equal "$stderr" "team-resume: assistant: cannot read Daniel's Discord ids from the allowFrom of ~/.claude/channels/discord/access.json, so the assistant would hear nobody; start it with claude-assistant once that is fixed"
+  assert_equal "${lines[-1]}" "Pin the coordinator in \`claude agents\` (Ctrl+T)."
+  assert_equal "$(assistant_launches)" ""
+  assert_equal "$(jq -r '.[] | "\(.name) \(.status)"' "$laptop/home/sessions.json")" "coordinator idle"
+  assert_equal "$(lease_json | jq -c '[.holder, .state]')" '["laptop","held"]'
+
+  # Once fixed, claude-assistant starts it, as the line says.
+  daniel_heard "$laptop/home"
+  on_machine laptop run_bin -0 claude-assistant
+  assert_equal "$(assistant_launches | wc -l)" 1
 }
 
 @test "after a shutdown, home-pc resumes itself: the lease again at its epoch, each worktree where it was, and here in the report" {
@@ -408,7 +450,7 @@ team-doctor-trust-home"
   assert_contains "$output" "doctor: 1 passed, 0 warned"
   assert_equal "$(lease_json | jq -c '[.holder, .state]')" '["laptop","held"]'
   assert_equal "$(coordinator_launches | jq -r '.[2]' | tail -n 1)" coordinator
-  [[ $(jq -r '.[].name' "$laptop/home/sessions.json") == coordinator ]]
+  assert_equal "$(jq -r '.[].name' "$laptop/home/sessions.json" | paste -sd ' ')" "coordinator assistant"
 }
 
 @test "the code checkout's branch is fast-forwarded to origin's after the team home, before the config" {

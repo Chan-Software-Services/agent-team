@@ -16,6 +16,8 @@ On Daniel's "shut down" (the PC goes down for a while and the team comes back on
 - Step 5 runs `team-handoff --here`: the stacks are stopped, their data kept for the restart, instead of taken down.
 - Step 6's final post is still what it printed from `Released at`, whose first line now tells Daniel to run `team-resume` here after the restart.
 
+Step 4 sends `ASSISTANT STOW` too, and waits for the assistant's answer as in a move, since `team-handoff --here` stops the assistant as well and the restart's `team-resume` starts it again from its stow note.
+
 The level recorded in `level.jsonl` holds across the restart; `team-resume` then brings back what it allows, as the `resume` skill says.
 
 ## Steps
@@ -32,8 +34,10 @@ The level recorded in `level.jsonl` holds across the restart; `team-resume` then
    Name each one that did not answer in the final post.
    Never send `STOW` to an ops session (`T<n>-ops`): it is never carried over, and `team-handoff` ends it with `team-ops-end`, deleting its transcript and answer file.
    If its answer had not reached Daniel yet, say so in the final post: Daniel asks again on the other machine.
+   With the workers' STOWs, while a session named `assistant` is live (`claude agents --json`), send `ASSISTANT STOW` to the assistant and wait for its `ASSISTANT PAUSED stowed` in the same 10 minutes: it writes `assistant/handoff.md`, its stow note, which the handoff commits and the assistant the other machine's `team-resume` starts reads first.
+   An assistant that has not answered by then is stopped by the handoff all the same, its note perhaps missing: name it in the final post.
 5. **Run.** `team-handoff`.
-   It stops and removes the workers' sessions (an ops session ended by `team-ops-end`), checkpoints, pushes the task branches, logs `stowed` per open task, captures the Claude config, commits and pushes the team home, disables the heartbeat, releases the lease, and prints the final message: the release line, then what config it captured and any it refused (a `settings.json` with an `env` key, a skill holding a dotenv-like file), which stay for Daniel to review.
+   It stops and removes the workers' sessions (an ops session ended by `team-ops-end`), checkpoints, pushes the task branches, logs `stowed` per open task, stops and removes the assistant, captures the Claude config, commits and pushes the team home, disables the heartbeat, releases the lease, and prints the final message: the release line, then what config it captured and any it refused (a `settings.json` with an `env` key, a skill holding a dotenv-like file), which stay for Daniel to review.
    A failure stops it before the release with the reason: fix what it names (a diverged branch goes back to its builder's word, or Daniel's), then run `team-handoff` again, which picks up where it stopped.
    Exit 75: GitHub went away; wait, then run it again.
 6. **Post the final message.** What `team-handoff` printed from `Released at` to its end goes in `#coordinator` word for word, with any worker that did not answer STOW.

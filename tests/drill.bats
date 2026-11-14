@@ -2,11 +2,11 @@
 # The two-machine drill: the plan's acceptance test of moving the team, end to end through the
 # real commands. Each test starts from a fresh pair of machines on one bare team-home origin and
 # one bare project origin: home-pc (this sandbox's HOME) holds the lease with its heartbeat
-# enabled, its coordinator started by claude-coordinator, and T1 opened in the git pool project
-# home with a builder launched by team-worker and its first commit made; laptop (make_machine) is
-# the machine the team moves to. claude, gh, curl and op are the sandbox's stubs (claude keeps
-# each machine's sessions under its own HOME), and team-resume's doctor is a stub that passes
-# (TEAM_DOCTOR): the doctor's own lines are tests/team-doctor*.bats', and the crash test runs the
+# enabled, its coordinator started by claude-coordinator and its assistant by claude-assistant,
+# and T1 opened in the git pool project home with a builder launched by team-worker and its first
+# commit made; laptop (make_machine) is the machine the team moves to. claude, gh, curl and op
+# are the sandbox's stubs (claude keeps each machine's sessions under its own HOME), and
+# team-resume's doctor is a stub that passes (TEAM_DOCTOR): the doctor's own lines are tests/team-doctor*.bats', and the crash test runs the
 # real one on home-pc for its salvage lines.
 # Scenarios: a clean handoff and resume, one of a task with a ticket worktree whose builder
 # --fill relaunches on the other machine, the shutdown (team-handoff --here, then team-resume on
@@ -86,6 +86,10 @@ SH
   "$REPO_ROOT/bin/team-timers" enable >/dev/null
   run_bin -0 claude-coordinator "$TEAM_HOME"
   coordinator=$(session_id coordinator)
+  # The assistant beside it, its Discord state read from the coordinator's access file.
+  daniel_heard "$HOME"
+  run_bin -0 claude-assistant
+  assistant=$(session_id assistant)
   run_bin -0 team-open home feature feat work "Do the work"
   wt=$HOME/slots/home/1
   run_bin -0 team-thread T1 home "Do the work"
@@ -103,9 +107,16 @@ SH
 
   make_machine laptop
   laptop=$BATS_TEST_TMPDIR/machines/laptop
+  daniel_heard "$laptop/home"
   code_checkout
   lt=$laptop/home/slots/home/1
   state=$HOME/.local/state/agent-team
+}
+
+# The coordinator's Discord access file in <home>, with Daniel's id, which claude-assistant reads.
+daniel_heard() {
+  echo '{"dmPolicy": "allowlist", "allowFrom": ["757"], "groups": {}, "pending": {}}' \
+    >"$1/.claude/channels/discord/access.json"
 }
 
 # The id of home-pc's session named <name>.
@@ -116,6 +127,11 @@ session_id() {
 # Each claude --bg call laptop made (one naming a file under its HOME), as JSON arguments.
 laptop_launches() {
   stub_calls claude | jq -c --arg home "$laptop/home/" 'select(.[0] == "--bg" and any(.[]; startswith($home)))'
+}
+
+# The name of each session laptop launched, one per line.
+laptop_launched() {
+  laptop_launches | jq -r '.[index("--name") + 1]'
 }
 
 # The status of each of home-pc's sessions, "<name> <status>", one per line.
@@ -166,7 +182,8 @@ posts() {
   [[ ${lines[-2]} == "Released at "*" from home-pc. The \`team-resume --wait\` started on the other machine takes the team now; with none running there, run \`team-resume\` there." ]]
   assert_equal "${lines[-1]}" "Config captured: nothing."
   assert_equal "$(git -C "$home_origin" rev-parse feat/T1-work)" "$head"
-  # Only the builder's session went; the coordinator retires itself after posting.
+  # The builder's session and the assistant's went; the coordinator retires itself after posting.
+  assert_contains "$output" "assistant: stopped $assistant"
   assert_equal "$(home_pc_sessions)" "coordinator busy"
 
   on_machine laptop run_bin -0 --separate-stderr team-resume
@@ -192,10 +209,11 @@ posts() {
   # laptop's heartbeat runs, and its coordinator was started with the resume skill and the report.
   on_machine laptop run -0 "$REPO_ROOT/bin/team-timers" status --json
   assert_equal "$(jq -c '[.installed, .enabled]' <<<"$output")" "[true,true]"
-  assert_equal "$(laptop_launches | wc -l)" 1
-  assert_equal "$(laptop_launches | jq -r '.[1:3] | join(" ")')" "--name coordinator"
-  assert_equal "$(laptop_launches | jq -r last)" \
+  assert_equal "$(laptop_launched | paste -sd ' ')" "coordinator assistant"
+  assert_equal "$(laptop_launches | jq -r last | head -n 1)" \
     "You are the coordinator, resuming the team on laptop. Follow the \`resume\` skill with the report $report."
+  assert_equal "$(laptop_launches | jq -r last | tail -n 1)" \
+    "You are the assistant, resuming on laptop. Read assistant/handoff.md first, then follow your digest."
   assert_equal "$(jq -c '.tasks | map({task, here, roles: .stowed.roles, crashed, failures})' "$report")" \
     '[{"task":"T1","here":false,"roles":["builder"],"crashed":null,"failures":[]}]'
 }
@@ -305,6 +323,7 @@ nothing to launch: 02 running in session $old; 03 blocked on 02"
   run -0 "$REPO_ROOT/bin/team-timers" status --json
   assert_equal "$(jq -c '[.installed, .enabled]' <<<"$output")" "[true,true]"
   assert_equal "$(session_id coordinator | wc -l)" 1
+  assert_equal "$(session_id assistant | wc -l)" 1
   # The stack waits, stopped with its data, for the builder the resume skill relaunches.
   assert_equal "$(jq -r '[.[] | select(.Config.Labels["com.docker.compose.project"] == "stackfix-1") | .State.Running] | unique | .[]' \
     "$DOCKER_STATE/containers.json")" false
@@ -424,9 +443,9 @@ Only in $TEAM_HOME.pre-rewrite/tasks/T1: old.git"
   # itself off and posts nothing.
   : >"$STUB_CALLS/curl.log"
   run_bin -0 team-timers run
-  assert_contains "$output" "lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator ($coordinator), T1-builder ($builder)"
+  assert_contains "$output" "lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator ($coordinator), assistant ($assistant), T1-builder ($builder)"
   jq -e '.holder == "laptop" and .epoch == 2' "$state/fenced"
-  assert_equal "$(home_pc_sessions)" "$(printf '%s\n' "coordinator stopped" "T1-builder stopped")"
+  assert_equal "$(home_pc_sessions)" "$(printf '%s\n' "coordinator stopped" "assistant stopped" "T1-builder stopped")"
   run -0 "$REPO_ROOT/bin/team-timers" status --json
   assert_equal "$(jq -c '[.installed, .enabled]' <<<"$output")" "[false,false]"
   assert_equal "$(stub_calls curl)" ""
@@ -475,7 +494,7 @@ Only in $TEAM_HOME.pre-rewrite/tasks/T1: old.git"
   assert_equal "$(cat "$lt/a.txt")" "edited"
   [[ ! -e $lt/c.txt ]]
   assert_equal "$(cat "$lt/.scratch/task/spec.md")" "spec"
-  assert_equal "$(laptop_launches | wc -l)" 1
+  assert_equal "$(laptop_launched | paste -sd ' ')" "coordinator assistant"
 
   # home-pc comes back: its heartbeat fences it, and its doctor fails, listing what only home-pc
   # holds (the park in its ledger, the later commit and edit, but not the waiting list written

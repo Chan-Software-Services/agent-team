@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # team-handoff: the machine being left stows every open task through team-stow (its workers'
 # sessions stopped, its stacks taken down, or only stopped with --here, a checkpoint, its task
-# branches pushed, one stowed each), captures its Claude config, commits and pushes the team
+# branches pushed, one stowed each), stops and removes the assistant, captures its Claude config, commits and pushes the team
 # home, disables its heartbeat and releases the lease; then --retire removes the coordinator.
 # One git-pool project, home, on a bare origin; home-pc holds the lease on the team home's bare
 # origin with its heartbeat enabled, and T1 is open there with a live builder (stubbed claude);
@@ -162,6 +162,35 @@ rm 81f08540"
   assert_equal "$(stowed_events | wc -l)" 1
 }
 
+# Add a live session named assistant, <id>, to the session list.
+live_assistant() {
+  jq --arg id "$1" '. + [{id: $id, sessionId: "\($id)-1111", name: "assistant", status: "idle", state: "done"}]' \
+    "$BATS_TEST_TMPDIR/sessions.json" >"$BATS_TEST_TMPDIR/sessions.next"
+  mv "$BATS_TEST_TMPDIR/sessions.next" "$BATS_TEST_TMPDIR/sessions.json"
+}
+
+# Run a handoff, with --here when given, to its assistant step with two assistants live, then
+# again to its end: each is stopped and removed after the stow, the coordinator left for --retire,
+# and the run again says none is live.
+assistant_step() {
+  live_assistant a55157a7
+  live_assistant b6626818
+  TEAM_HANDOFF_STOP_AFTER=3 run_bin -1 --separate-stderr team-handoff "$@"
+  [[ $output == *"stowed: T1 "*$'\n'"assistant: stopped a55157a7"$'\n'"assistant: stopped b6626818" ]]
+  assert_equal "$(stops_and_removes | grep -v 81f08540)" "stop a55157a7
+rm a55157a7
+stop b6626818
+rm b6626818"
+  assert_equal "$(jq -r '.[] | select(.name == "assistant")' "$BATS_TEST_TMPDIR/sessions.json")" ""
+  assert_equal "$(jq -r '.[] | select(.name == "coordinator") | .status' "$BATS_TEST_TMPDIR/sessions.json")" busy
+
+  run_bin -0 team-handoff "$@"
+  assert_contains "$output" "stow: done earlier in this handoff
+assistant: none live
+config: "
+  assert_equal "$(lease_json | jq -r .state)" released
+}
+
 @test "a handoff pushes the task branch, stows the task, stops only its worker, commits the records and releases the lease" {
   make_machine laptop
   echo "steps" >"$TEAM_HOME/manual-steps.md"
@@ -177,6 +206,8 @@ rm 81f08540"
   assert_contains "$output" "config: captured CLAUDE.md (new)"
   assert_contains "$output" "sessions: T1: stopped and removed T1-builder (81f08540)"
   assert_contains "$output" "stacks: T1: no stack"
+  # The assistant step follows the stow; with none live it says so.
+  [[ $output == *"stowed: T1 "*$'\n'"assistant: none live"$'\n'"config: captured CLAUDE.md (new)"* ]]
   assert_contains "$output" "team home: committed $(git -C "$TEAM_HOME" rev-parse --short HEAD) chore: handoff from home-pc and pushed dev"
   assert_contains "$output" "heartbeat: "
   assert_contains "$output" "lease: home-pc released the lease, epoch 1"
@@ -217,6 +248,47 @@ rm 81f08540"
   assert_equal "$(lease_json | jq -c '[.holder, .epoch, .state]')" '["laptop",2,"held"]'
   on_machine laptop git -C "$BATS_TEST_TMPDIR/machines/laptop/team" pull -q
   assert_equal "$(jq -r 'select(.event == "stowed") | .worktrees[0].head' "$BATS_TEST_TMPDIR/machines/laptop/team/ledger.jsonl")" "$head"
+}
+
+@test "the assistant step stops and removes every live assistant after the stow, and says none live on a run again" { assistant_step; }
+@test "with --here, the assistant step stops and removes every live assistant too" { assistant_step --here; }
+
+@test "an assistant that will not stop, or no session list, refuses the handoff before the config step, with nothing released; a failed removal is said and the handoff goes on" {
+  live_assistant a55157a7
+  # The setup's stub, which each stub below runs for every other call.
+  cp "$STUB_FIXTURES/claude.sh" "$BATS_TEST_TMPDIR/claude-real.sh"
+  stub_script claude <<'SH'
+case "$*" in
+  'stop a55157a7') echo "error: session is busy" >&2; exit 1 ;;
+  *) bash "$BATS_TEST_TMPDIR/claude-real.sh" "$@" ;;
+esac
+SH
+  run_bin -1 --separate-stderr team-handoff
+  assert_equal "$stderr" "team-handoff: assistant: could not stop a55157a7: error: session is busy; run team-handoff again; nothing was released"
+  [[ $output != *"config: "* ]]
+  assert_equal "$(lease_json | jq -r .state)" held
+
+  stub_script claude <<'SH'
+case "$*" in
+  'agents --json') echo "error: daemon down" >&2; exit 1 ;;
+  *) bash "$BATS_TEST_TMPDIR/claude-real.sh" "$@" ;;
+esac
+SH
+  run_bin -1 --separate-stderr team-handoff
+  assert_equal "$stderr" "team-handoff: assistant: cannot read the live session list (claude agents --json); nothing was released"
+  assert_equal "$(lease_json | jq -r .state)" held
+
+  stub_script claude <<'SH'
+case "$*" in
+  'rm a55157a7') echo "error: cannot remove" >&2; exit 1 ;;
+  *) bash "$BATS_TEST_TMPDIR/claude-real.sh" "$@" ;;
+esac
+SH
+  run_bin -0 --separate-stderr team-handoff
+  assert_equal "$stderr" "team-handoff: assistant: stopped a55157a7, but claude rm failed (error: cannot remove); remove it by hand; the handoff goes on"
+  assert_contains "$output" "stow: done earlier in this handoff
+config: "
+  assert_equal "$(lease_json | jq -r .state)" released
 }
 
 @test "the handoff's commit holds the level record, so Daniel's level holds on the next machine" {
@@ -479,6 +551,7 @@ team-handoff: stow: T1 is not stowed, as team-stow says; fix what it names, then
 @test "interrupted after step 4, a run again finishes the handoff once" { interrupt_after 4; }
 @test "interrupted after step 5, a run again finishes the handoff once" { interrupt_after 5; }
 @test "interrupted after step 6, a run again finishes the handoff once" { interrupt_after 6; }
+@test "interrupted after step 7, a run again finishes the handoff once" { interrupt_after 7; }
 
 @test "a machine that does not hold the lease, or cannot reach GitHub, refuses and changes nothing" {
   local before

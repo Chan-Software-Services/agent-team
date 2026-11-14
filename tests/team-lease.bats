@@ -251,7 +251,7 @@ checkout_state() {
   local state=$HOME/.local/state/agent-team
   stub_script claude <<'EOF'
 case $1 in
-  agents) echo '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "81f08540", "name": "T5-builder"}, {"id": "1baf2408", "name": "notes"}]' ;;
+  agents) echo '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "a55157a7", "name": "assistant"}, {"id": "81f08540", "name": "T5-builder"}, {"id": "1baf2408", "name": "notes"}]' ;;
   stop) [[ $2 != 81f08540 ]] || { echo "error: no such session" >&2; exit 1; } ;;
 esac
 EOF
@@ -265,9 +265,9 @@ EOF
   jq -e '.lost == false and .mine == true' <<<"$output"
 
   run_bin -1 --separate-stderr team-lease renew
-  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd); the heartbeat is not installed; nothing to disable; could not stop T5-builder (81f08540): error: no such session; team-lease take clears the fence"
+  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), assistant (a55157a7); the heartbeat is not installed; nothing to disable; could not stop T5-builder (81f08540): error: no such session; team-lease take clears the fence"
   jq -e '.holder == "laptop" and .epoch == 2' "$state/fenced"
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["stop","3169fcbd"]' '["stop","a55157a7"]' '["stop","81f08540"]')"
   lease_json | jq -e '.holder == "laptop"'
   run_bin -1 --separate-stderr team-lease check
   assert_contains "$stderr" "home-pc is fenced since"

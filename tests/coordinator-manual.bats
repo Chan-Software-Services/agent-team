@@ -173,6 +173,20 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'ask them to say it in `#assistant` first' <<<"$words"
 }
 
+@test "the assistant's role says how it starts, stows, and behaves fenced and offline" {
+  local life
+  life=$(section assistant 'Start, stow and the lease')
+  grep -qF 'follow your digest' <<<"$life"
+  grep -qF '`fetch_messages`' <<<"$life"
+  grep -qF 'On `ASSISTANT STOW`, write `assistant/handoff.md` in the team home' <<<"$life"
+  grep -qF 'reply `ASSISTANT PAUSED stowed` to `coordinator`' <<<"$life"
+  grep -qF 'delete it once its work is done' <<<"$life"
+  grep -qF 'another machine runs the team: post nothing and end your turn' <<<"$life"
+  grep -qF 'keep talking with Daniel and touch no GitHub' <<<"$life"
+  # The stow reply is the one line beyond the hand-off forms it sends the coordinator.
+  grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
+}
+
 @test "the builder, planner and reviewer say the statement in its four lines exactly, their project's instructions the system prompt's" {
   local role
   for role in builder planner reviewer; do
@@ -296,6 +310,15 @@ $WORKER_INSTRUCTIONS"
   grep -qF '`team-handoff --check`' "$skill"
   grep -qF 'First run `team-stow --all --begin --cause handoff`, which logs each open task'"'"'s `stowing`; then send `T<n> STOW` to each live worker' "$skill"
   grep -qF 'up to 10 minutes' "$skill"
+  # The assistant stows in the STOW step, before team-handoff stops it, in the shutdown case too.
+  local stow run asked waited
+  stow=$(grep -n '^4\. \*\*STOW the workers\.\*\*' "$skill" | cut -d: -f1)
+  run=$(grep -n '^5\. \*\*Run\.\*\*' "$skill" | cut -d: -f1)
+  asked=$(grep -nF 'send `ASSISTANT STOW` to the assistant' "$skill" | cut -d: -f1 | tail -n 1)
+  waited=$(grep -nF 'wait for its `ASSISTANT PAUSED stowed`' "$skill" | cut -d: -f1 | tail -n 1)
+  ((stow < asked && asked <= waited && waited < run))
+  awk '$0 == "## The same-machine case: \"shut down\"" { on = 1; next } /^## / { on = 0 } on' "$skill" |
+    grep -qF 'Step 4 sends `ASSISTANT STOW` too'
   grep -qF '`team-handoff --retire`' "$skill"
   grep -qF '`team-handoff` moves the team off this machine' "$manual"
 }
@@ -314,6 +337,8 @@ $WORKER_INSTRUCTIONS"
   grep -qF 'For each task whose `crashed` is not null, for each role of `crashed.roles`' "$skill"
   grep -qF '`team-brief T<n> resume-crash --name resume-<role> --force --set role=<role> --set brief=<that brief> --set machine=<crashed.machine> --set checkpoint=<crashed.checkpoint> --set snapshot=' "$skill"
   grep -qF '`team-log T<n> resumed all=true`' "$skill"
+  # The post says whether the assistant started, as the live session list shows it.
+  grep -E '^5\. \*\*Post\.\*\*' -A3 "$skill" | grep -qF 'whether the assistant started: a session named `assistant` in `claude agents --json`'
   # Each failed worktree is in the ledger, and every report of the day goes at the end.
   grep -qF 'Each failure is also a `rehome-failed` in the ledger' "$skill"
   grep -qF 'delete every report of the day, `tasks/resume-<date>-*.json`, the earlier runs'"'"' included' "$skill"
