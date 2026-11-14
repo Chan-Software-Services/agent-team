@@ -530,7 +530,7 @@ setup_project() {
   origin=$(git -C "$path" remote get-url origin 2>/dev/null) || origin=''
   if [[ -z $origin ]]; then
     act "git -C $(printf %q "$path") remote add origin $url"
-  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" ]]; then
+  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" && -z $(moved_origin "$origin") ]]; then
     # The origin already followed the move, and the registry has yet to: a set-url would put it
     # back on the old owner.
     say "left the origin $origin as it is: it is on $moved, where the registry's $repo moved; set $project's repo = \"$moved\" in projects.toml, as team-project --check names it"

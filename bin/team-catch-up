@@ -31,9 +31,10 @@
 # seconds, default 30), caught-up is logged with url (the PR's, under its new owner), from (the
 # reviewed head, the same through each catch-up of it), head (the merge) and base (the base's
 # commit merged), all full shas, and agent-review is set to success on the merge, its description
-# "clean merge of <base> <short base> onto <short head>, reviewed": through team-review-check, as the reviewer App's
-# check run, on a project whose agent-review the App posts (own_bar in bin/lib/team.sh), which
-# reads the review the merge stands on through that caught-up, else through team-review-status.
+# "clean merge of <base> <short base> onto <short head>, reviewed": through team-review-check, as
+# the reviewer App's check run, on a project whose agent-review the App posts (own_bar in
+# bin/lib/team.sh), which reads the review the merge stands on through that caught-up, else
+# through team-review-status.
 # A status or check that cannot be set is said on stderr with the command to set it; the merge is
 # pushed and logged all the same, exit 1. A check posted whose token alone was not revoked
 # (team-review-check printed its id) is said as posted, with why, and is no failure.

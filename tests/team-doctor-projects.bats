@@ -107,6 +107,13 @@ PASS changes site: the primary checkout is clean"
     run_bin -1 team-doctor
     assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, on Chan-Software-Services/Conventioner, where the registry's chanjdaniel/Conventioner moved (bin/lib/repo-moves.json); fix: $fix"
   done
+  # An origin still on the old owner, in another form than the registry's URL, is no origin on the
+  # new one: a treehouse project's gets the pool move, as before.
+  for url in git@github.com:chanjdaniel/Conventioner.git https://github.com/chanjdaniel/Conventioner; do
+    git -C "$CONVENTIONER" remote set-url origin "$url"
+    run_bin -1 team-doctor
+    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, not https://github.com/chanjdaniel/Conventioner.git; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  done
   # The registry's own URL still passes, and another repository is set back as before.
   git -C "$CONVENTIONER" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
   run_bin team-doctor

@@ -195,7 +195,7 @@ check_project() {
     report "origin $project" PASS "$url"
   elif [[ -z $origin ]]; then
     report "origin $project" FAIL "no remote origin" "git -C $shown remote add origin $url"
-  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" ]]; then
+  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" && -z $(moved_origin "$origin") ]]; then
     # The origin already followed the move, and the registry has yet to: a set-url would put it
     # back on the old owner.
     report "origin $project" FAIL "origin is $origin, on $moved, where the registry's $repo moved (bin/lib/repo-moves.json)" \

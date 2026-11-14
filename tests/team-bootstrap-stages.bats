@@ -160,6 +160,15 @@ intone is set up in ~/projects/intone_app"
 intone is set up in ~/projects/intone_app"
     assert_equal "$(git -C "$intone" remote get-url origin)" "$url"
   done
+  # An origin still on the old owner, in another form than the registry's URL, is no origin on the
+  # new one: a treehouse project's stops the run as Daniel's pool move, as before.
+  sed -i 's#^repo = "Chan-Software-Services/Conventioner"$#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
+  for url in git@github.com:chanjdaniel/Conventioner.git https://github.com/chanjdaniel/Conventioner; do
+    git -C "$CONVENTIONER" remote set-url origin "$url"
+    run_bin -1 team-bootstrap --stage projects
+    assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner (origin $url, a repository that moved to Chan-Software-Services/Conventioner)"
+    assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" "$url"
+  done
 }
 
 @test "a git pool's slots inside the checkout are ignored there once, so they never show as untracked in it" {
