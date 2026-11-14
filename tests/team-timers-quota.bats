@@ -154,6 +154,20 @@ Claude usage: Fable's week is at 90%, past 90%; it resets $week."
   grep -E "quota: seven_day/70/$WEEK_RESETS: closed with no post \(a higher threshold of its window was crossed before it was posted\)$" "$log"
 }
 
+@test "a crossing whose post kept failing until its window reset is closed as reset, not as passed by a higher one" {
+  reading 72
+  echo "1 503" >"$STUB_FIXTURES/inbox/fail-post"
+  run_bin -1 team-timers run
+  rm "$STUB_FIXTURES/inbox/fail-post"
+  # Its reset comes before a post goes through, and the next week's reading is below 70%.
+  sed -i "s/$WEEK_RESETS/2026-01-05T09:00:00Z/g" "$state/notices.json"
+  week_resets=2036-11-24T09:00:00Z reading 60
+  run_bin -0 team-timers run
+  assert_equal "$(alerts_posted)" ""
+  assert_equal "$(quota_keys)" "[]"
+  grep -E "quota: seven_day/70/2026-01-05T09:00:00Z: closed with no post \(its window reset\)$" "$log"
+}
+
 @test "a reading whose window has reset closes the old notice with no post, and the new week posts afresh" {
   reading 75
   run_bin -0 team-timers run

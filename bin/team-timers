@@ -1343,14 +1343,16 @@ quota_step() {
     step_failed quota "$why"
     return 0
   fi
+  # A closed notice's reason is its key's reset: one whose reset has not come was passed by a higher
+  # threshold before it was posted, and any other, posted or not, closed as its window reset.
   while IFS= read -r entry; do
     [[ -n $entry ]] || continue
-    if [[ $(jq -r .why <<<"$entry") == unposted ]]; then
-      log quota "$(jq -r .notice.key <<<"$entry"): closed with no post (a higher threshold of its window was crossed before it was posted)"
-    else
-      log quota "$(jq -r .notice.key <<<"$entry"): closed with no post (its window reset)"
-    fi
-  done < <(jq -c '.closed[]' <<<"$NOTICE_PLAN")
+    log quota "$entry"
+  done < <(jq -r '.closed[] | .notice.key as $k
+    | "\($k): closed with no post ("
+      + (if ($k | capture("/(?<r>[^/]+)$").r | try fromdateiso8601 catch 0) > now
+         then "a higher threshold of its window was crossed before it was posted" else "its window reset" end)
+      + ")"' <<<"$NOTICE_PLAN")
   while IFS= read -r entry; do
     [[ -n $entry ]] || continue
     id=$(jq -r .id <<<"$entry") key=$(jq -r .notice.key <<<"$entry")
