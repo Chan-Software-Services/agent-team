@@ -259,7 +259,7 @@ rm 81f08540"
 @test "with --here, the assistant step stops and removes every live assistant too" { assistant_step --here; }
 
 @test "an assistant whose turn is done, listed only with --all, is stopped and removed; a stopped one is left" {
-  live_assistant a55157a7 done false
+  live_assistant a55157a7 "done" false
   live_assistant c7737929 stopped false
   TEAM_HANDOFF_STOP_AFTER=3 run_bin -1 --separate-stderr team-handoff
   [[ $output == *"stowed: T1 "*$'\n'"assistant: stopped a55157a7" ]]
