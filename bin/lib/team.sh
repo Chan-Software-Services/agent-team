@@ -15,7 +15,7 @@
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, toolkit_refusal, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
-# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
+# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -265,8 +265,10 @@ ledger_append() {
     if [[ $refusing == true ]]; then
       # The verdict: nothing when the table takes the event, else "warn" and a line per problem,
       # or "refuse" and the problems joined. The task's events are the lines naming it (a cheap
-      # test before each is parsed) that are its objects.
-      verdict=$(ledger_jq '[inputs | select(contains($e.task)) | fromjson? | select(type == "object" and .task == $e.task)]
+      # test before each is parsed) that are its objects, each url canonical, as the event's is,
+      # so a PR logged under an old owner and the new one is one PR.
+      verdict=$(ledger_jq '($e | canonical_event) as $e
+          | [inputs | select(contains($e.task)) | fromjson? | select(type == "object" and .task == $e.task) | canonical_event]
           | [transition_problems($e)] as $problems
           | lifecycle_table.lifecycle_from as $from
           | if $problems == [] then empty
@@ -326,18 +328,21 @@ ledger_push() {
   return 0
 }
 
-# All of a task's events, in ledger order, one compact object per line (lines that are not JSON
-# objects are skipped): task_events T<n>
+# All of a task's events, in ledger order, one compact object per line, each url canonical
+# (canonical_event in bin/lib/ledger.jq; lines that are not JSON objects are skipped):
+# task_events T<n>
 task_events() {
   [[ ! -e $TEAM_HOME/ledger.jsonl ]] ||
-    jq -cR --arg task "$1" 'fromjson? | select(type == "object" and .task == $task)' "$TEAM_HOME/ledger.jsonl"
+    ledger_jq 'fromjson? | select(type == "object" and .task == $task) | canonical_event' -cR --arg task "$1" \
+      "$TEAM_HOME/ledger.jsonl"
 }
 
-# A task's events as one compact JSON array in ledger order, [] when it has none, in one jq run:
-# task_event_array T<n>
+# A task's events as one compact JSON array in ledger order, each url canonical, [] when it has
+# none, in one jq run: task_event_array T<n>
 task_event_array() {
   if [[ -e $TEAM_HOME/ledger.jsonl ]]; then
-    jq -cnR --arg task "$1" '[inputs | fromjson? | select(type == "object" and .task == $task)]' "$TEAM_HOME/ledger.jsonl"
+    ledger_jq '[inputs | fromjson? | select(type == "object" and .task == $task) | canonical_event]' -cnR --arg task "$1" \
+      "$TEAM_HOME/ledger.jsonl"
   else
     echo '[]'
   fi
@@ -1896,17 +1901,27 @@ default_events_json() {
   ledger_jq 'ledger_events | default_events' -nRc "$ledger"
 }
 
-# The project, its repo as the registry spells it, and the number of a pull request URL, one
-# per line, refusing any URL but https://github.com/<owner>/<name>/pull/<n> in a registered
-# project's repo: registered_pr <url>
+# The project, its repo and the number of a pull request URL, one per line, refusing any URL but
+# https://github.com/<owner>/<name>/pull/<n> in a registered project's repo. The URL may name the
+# repo under an old owner or the new one (bin/lib/repo-moves.json), and the repo printed is the
+# registry's at the end of its moves, so gh and the reviewer App's calls go to the new owner while
+# the registry still names the old: registered_pr <url>
 registered_pr() {
-  local project
+  local project repo number
   [[ $1 =~ ^https://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/([1-9][0-9]*)$ ]] ||
     usage_error "not a GitHub pull request URL: $1"
-  project=$(team_project --find repo "${BASH_REMATCH[1]}") || exit 1
-  [[ -n $project ]] || die "${BASH_REMATCH[1]} is no registered project's repo"
+  repo=${BASH_REMATCH[1]} number=${BASH_REMATCH[2]}
+  project=$(team_project --find repo "$repo") || exit 1
+  [[ -n $project ]] || die "$repo is no registered project's repo"
   project=${project%%$'\n'*}
-  printf '%s\n' "$project" "$(team_project "$project" repo)" "${BASH_REMATCH[2]}"
+  repo=$(canonical_url "https://github.com/$(team_project "$project" repo)") || exit 1
+  printf '%s\n' "$project" "${repo#https://github.com/}" "$number"
+}
+
+# A GitHub URL with its repo at the end of its moves (bin/lib/repo-moves.json), anything after it
+# as written, and any other text as it is, by ledger.jq's canonical_url: canonical_url <url>
+canonical_url() {
+  ledger_jq '$url | canonical_url' -nr --arg url "$1"
 }
 
 # Run gh, keeping its JSON in <dir>/<name>: github <dir> <name> <gh arguments...>

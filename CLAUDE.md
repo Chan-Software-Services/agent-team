@@ -40,6 +40,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `reading.sh`: one reading of the machine's load (its memory, its processes by directory and descent, the team's stacks), which `team-capacity sample` takes.
     - `records`: the team home's paths, which no tracked path matches.
     - `records-rewrite/`: `team-records-rewrite`'s drop list, message expression, S02 callback and `verify.py`.
+    - `repo-moves.json`: the repositories that moved owner, each old `owner/name` to its new one with the date, a constant `ledger.jq` imports, so a PR URL under either owner is one PR to the ledger's event readers, and `team-project` reads for `--find repo` and `--check`.
     - `review-app`: the reviewer App's id and slug, one `id=<n>` and one `slug=<s>` line, a committed constant; with no such file the App is off and agent-team merges on the per-head word alone.
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.

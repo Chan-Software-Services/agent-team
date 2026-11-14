@@ -8,15 +8,23 @@
 #        team-project --find <key> <value>
 #                                     the projects whose key (dotted, as above) is the value, or
 #                                     holds it when a list, one per line; a boolean is true or
-#                                     false, repo compares in any case, and path, pool.slots,
-#                                     pool.lease and pool.return as the same file, however
-#                                     spelled (a symlink, or another case on a case-insensitive
-#                                     filesystem); a key no project has is refused
+#                                     false, repo compares in any case and across a move of
+#                                     bin/lib/repo-moves.json either way (the old owner's
+#                                     owner/name finds the project registered under the new, and
+#                                     the new finds the one still under the old), and path,
+#                                     pool.slots, pool.lease and pool.return as the same file,
+#                                     however spelled (a symlink, or another case on a
+#                                     case-insensitive filesystem); a key no project has is refused
 #        team-project --check         check the whole file and list every problem; the names
 #                                     coordinator (team-config's folder for the team home's own
 #                                     auto memory), task and all (the scopes of a
 #                                     merge-default-withdrawn or merge-default-restored besides a
-#                                     project's name) and own (bin/lib/guarded's @own) are reserved
+#                                     project's name) and own (bin/lib/guarded's @own) are
+#                                     reserved; a repo that is a move's from in
+#                                     bin/lib/repo-moves.json is named with the repo to set,
+#                                     "<name>: repo <from> moved to <to> (bin/lib/repo-moves.json):
+#                                     set repo = "<to>"", which only --check refuses, so every
+#                                     other command still reads the registry until it is edited
 #
 # The registry has one table per project the team works on, keyed by its short name.
 # Per project:
@@ -151,6 +159,9 @@ ENUMS = {
     "provider": ("treehouse", "git"),
 }
 RELATIVE_PATHS = ("path", "task_dir", "lease", "return")
+# The repositories that moved owner, the code's own table beside this script (never the registry,
+# which any session can edit, since a move decides which ledger events name one PR).
+MOVES_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib", "repo-moves.json")
 # The keys --find compares as paths (same_path), once resolved.
 ABSOLUTE_PATHS = ("path", "pool.slots", "pool.lease", "pool.return")
 
@@ -472,10 +483,30 @@ def same_path(a, b):
     return os.path.basename(a) == os.path.basename(b) and same_path(os.path.dirname(a), os.path.dirname(b))
 
 
+# The moves of bin/lib/repo-moves.json, each from in any case to its to.
+def moves():
+    try:
+        with open(MOVES_FILE, encoding="utf-8") as moves_file:
+            table = json.load(moves_file)
+    except (OSError, ValueError) as error:
+        fail(f"cannot read the repository moves {MOVES_FILE}: {error}")
+    return {move["from"].casefold(): move["to"] for move in table["moves"]}
+
+
+# A repo, owner/name, at the end of its chain of moves, else as given, as ledger.jq's
+# canonical_repo has it: the chain is followed at most once per move, so a cycle still ends.
+def canonical_repo(repo, table):
+    for _ in table:
+        repo = table.get(repo.casefold(), repo)
+    return repo
+
+
 # The names of the projects whose dotted key is value, or holds it when a list.
 def find(registry, home, dotted, value):
     if dotted == "repo":
-        same = lambda held: held.casefold() == value.casefold()
+        table = moves()
+        wanted = canonical_repo(value, table).casefold()
+        same = lambda held: canonical_repo(held, table).casefold() == wanted
     elif dotted in ABSOLUTE_PATHS:
         same = lambda held: same_path(held, value)
     else:
@@ -509,6 +540,16 @@ def main(args):
     path = os.path.join(team_home(), "projects.toml")
     registry = load(path)
     if args[0] == "--check":
+        table = moves()
+        moved = [
+            f"{name}: repo {project['repo']} moved to {canonical_repo(project['repo'], table)} (bin/lib/repo-moves.json):"
+            f' set repo = "{canonical_repo(project["repo"], table)}"'
+            for name, project in registry.items()
+            if project["repo"].casefold() in table
+        ]
+        if moved:
+            print("\n".join(f"{NAME}: {path}: {line}" for line in moved), file=sys.stderr)
+            fail(f"{path}: {len(moved)} problem{'s' if len(moved) > 1 else ''}")
         print(f"{path}: {len(registry)} projects ok")
     elif args[0] == "--list":
         print("\n".join(registry))

@@ -129,6 +129,43 @@ registry() {
   assert_contains "$output" "no project has a key 'pool.color'"
 }
 
+@test "--find repo matches across a move of bin/lib/repo-moves.json both ways, in any case" {
+  sed -i 's#^repo = "owner/alpha"#repo = "chanjdaniel/Conventioner"#; s#^repo = "owner/beta"#repo = "Chan-Software-Services/agent-team"#' \
+    "$TEAM_HOME/projects.toml"
+  # The registry under the old owner, found by the new and by the old in another case.
+  run_bin -0 team-project --find repo Chan-Software-Services/Conventioner
+  assert_equal "$output" alpha
+  run_bin -0 team-project --find repo CHANJDANIEL/conventioner
+  assert_equal "$output" alpha
+  # The registry under the new owner, found by the old and by the new in another case.
+  run_bin -0 team-project --find repo chanjdaniel/agent-team
+  assert_equal "$output" beta
+  run_bin -0 team-project --find repo chan-software-services/AGENT-TEAM
+  assert_equal "$output" beta
+  # A repo of the old owner that never moved is no moved one's.
+  run_bin -0 team-project --find repo chanjdaniel/no-mistakes
+  assert_equal "$output" ""
+}
+
+@test "--check names a repo that is a move's from with the repo to set, which every other command still reads" {
+  sed -i 's#^repo = "owner/alpha"#repo = "chanjdaniel/Conventioner"#; s#^repo = "owner/beta"#repo = "CHANJDANIEL/agent-team"#' \
+    "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-project: $TEAM_HOME/projects.toml: alpha: repo chanjdaniel/Conventioner moved to Chan-Software-Services/Conventioner (bin/lib/repo-moves.json): set repo = \"Chan-Software-Services/Conventioner\"
+team-project: $TEAM_HOME/projects.toml: beta: repo CHANJDANIEL/agent-team moved to Chan-Software-Services/agent-team (bin/lib/repo-moves.json): set repo = \"Chan-Software-Services/agent-team\"
+team-project: $TEAM_HOME/projects.toml: 2 problems"
+  run_bin -0 team-project alpha repo
+  assert_equal "$output" chanjdaniel/Conventioner
+  run_bin -0 team-project --list
+  assert_equal "$output" $'alpha\nbeta'
+  # Under the new owner, it passes.
+  sed -i 's#^repo = "chanjdaniel/Conventioner"#repo = "Chan-Software-Services/Conventioner"#; s#^repo = "CHANJDANIEL/agent-team"#repo = "Chan-Software-Services/agent-team"#' \
+    "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --check
+  assert_contains "$output" "2 projects ok"
+}
+
 @test "a malformed command line is a usage error" {
   run_bin -2 team-project
   assert_contains "$output" "usage: team-project"
@@ -344,13 +381,13 @@ home_setting() {
 
   run_bin -0 team-project conventioner
   assert_equal "$(jq -r '[.repo, .base, .delivery, .merge_method, .task_dir, .pool.provider] | join(" ")' <<<"$output")" \
-    "chanjdaniel/Conventioner dev no-mistakes merge .scratch/task treehouse"
+    "Chan-Software-Services/Conventioner dev no-mistakes merge .scratch/task treehouse"
   assert_equal "$(jq -r .path <<<"$output")" "$HOME/Documents/projects/personal/Conventioner"
   assert_equal "$(jq -r '.pool.slots | length' <<<"$output")" "4"
 
   run_bin -0 team-project agent-team
   assert_equal "$(jq -r '[.repo, .base, .delivery, .merge_method, .pool.provider] | join(" ")' <<<"$output")" \
-    "chanjdaniel/agent-team dev direct-pr merge git"
+    "Chan-Software-Services/agent-team dev direct-pr merge git"
   assert_equal "$(jq -c .pool.slots <<<"$output")" \
     "[\"$HOME/agent-team/.claude/worktrees/1\",\"$HOME/agent-team/.claude/worktrees/2\",\"$HOME/agent-team/.claude/worktrees/3\",\"$HOME/agent-team/.claude/worktrees/4\",\"$HOME/agent-team/.claude/worktrees/5\"]"
 
