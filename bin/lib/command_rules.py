@@ -73,6 +73,16 @@ it; only the kill and delete rows use it, so a call with neither reads no proces
 A row reads every command the walk yields, a shell's script file and a sourced one among them (a
 file named team-worker that bash runs is team-worker), but for the upload and delete rows, which
 read no file's name as curl or rm.
+Contract: the kill and delete rows refuse the forms an agent writes when it means no harm, each
+form tests/command-guard-kill.bats and tests/command-guard-delete.bats hold, plainly spelled, run
+directly or through the walk's wrappers and strings (bash -c, eval, a heredoc or here-string a
+shell reads, a pipe into a shell, xargs, sudo, env, nohup, a path to the program, a quoted name,
+a script written and run in the same command). Each refusal names what it refused and the
+allowed way. An ordinary command, one an agent writes for its work, is never refused for a word
+it only mentions. When the guard cannot decide (its reader fails, or a process or path it needs
+cannot be read), it refuses. They do not promise to see a spelling chosen to hide a name or a
+path from the reader, nor what Not seen lists below: those are for a kernel layer to hold where a
+machine has one, which this guard is not.
 Not seen: a name built by a substitution or held in a variable; a function of one's own, a
 script of one's own written by an earlier call or the Write tool (one this call writes and runs is
 read), or a copy or link of a guarded one; a string another interpreter runs (python3 -c, node -e,
@@ -80,10 +90,14 @@ perl -e, a require of the capture script); a file a shell reads on stdin (cat x 
 command_text.commands does not walk (its header lists it: ssh's remote command, nsenter, chroot,
 unshare, systemd-run, tmux send-keys, git rebase's --exec); each under an emptied environment
 too, so a team script one of those runs there goes unseen. Of a kill or a delete, not seen: one in
-a script file written by an earlier call or the Write tool, a package script (npm run, make), an
-interpreter's own code (python3 -c "os.kill(...)"), systemctl, launchctl, docker kill or docker
-rm, ssh's remote command, a single file's rm, git clean (which the worker settings deny); of a
-delete, a link or a move the same command makes before it (ln -s /tmp l && rm -rf l/x).
+a script file written by an earlier call or the Write tool, a package script (npm run, make),
+systemctl, launchctl, docker kill or docker rm, ssh's remote command, a single file's rm, git
+clean (which the worker settings deny); of a delete, a link or a move the same command makes
+before it (ln -s /tmp l && rm -rf l/x). Nor, of a kill or a delete, the four families of
+spellings chosen to hide one: a name or option built at run time; a shell option or variable
+that changes what a path means; a program's own decoding of what it runs; and an interpreter's
+own delete or kill (python3 -c "os.kill(...)", perl -e 'unlink ...'). Some of those the rows
+read still, but none is promised.
 It is a speed bump, as a deny rule is, which the role's rule against reaching a refused thing
 another way holds.
 """
