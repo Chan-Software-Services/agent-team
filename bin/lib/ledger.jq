@@ -2180,10 +2180,11 @@ def inbox_items($own; $notes; $tickets):
 # waiting.json $previous (null when there is none or it cannot be read): an item whose key
 # $previous's items hold keeps its number, and each other item, in order, takes the lowest
 # positive number that no kept item holds, no earlier new item took and no item of the latest post
-# ($previous.posted's items) showed.
+# ($previous.posted's items) showed. A stored key is read with its URLs under their new owners
+# (canonical_text), as the items' keys are, so an item keyed by a PR's old URL keeps its number.
 def waiting_numbered($previous):
   ([$previous.items[]? | objects | select((.key | type) == "string" and (.n | type) == "number")]
-   | map({key, value: .n}) | from_entries) as $kept
+   | map({key: (.key | canonical_text), value: .n}) | from_entries) as $kept
   | [$previous.posted.items[]? | objects | .n | numbers] as $shown
   | reduce .[] as $item ({items: [], seen: {}};
       .items += [{n: (if .seen[$item.key] then null else $kept[$item.key] end)} + $item]

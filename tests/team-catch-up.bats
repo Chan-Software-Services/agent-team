@@ -349,6 +349,40 @@ EOF
   [[ ! -e $GH_DIR/statuses ]]
 }
 
+# run_bin runs a copy of bin/ whose moves table (bin/lib/repo-moves.json) has proj's repo moved to
+# owner/proj from old-owner/proj, and the ledger names PR #5 under the old owner, as one logged
+# before the move does: proj_moved
+proj_moved() {
+  export CODE_CHECKOUT=$BATS_TEST_TMPDIR/moved-code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  rm -f "$CODE_CHECKOUT/bin/lib/repo-moves.json"
+  echo '{"moves": [{"from": "old-owner/proj", "to": "owner/proj", "on": "2026-11-14"}]}' \
+    >"$CODE_CHECKOUT/bin/lib/repo-moves.json"
+  sed -i 's#https://github.com/owner/proj/#https://github.com/old-owner/proj/#g' "$TEAM_HOME/ledger.jsonl"
+}
+
+@test "--pr under either owner of a moved repo catches up the PR logged under the other, with the registry under either, and caught-up carries the URL under the new" {
+  proj_moved
+  local registry pr
+  for registry in owner/proj old-owner/proj; do
+    sed -i "s#^repo = .*#repo = \"$registry\"#" "$TEAM_HOME/projects.toml"
+    for pr in https://github.com/old-owner/proj/pull/5 https://github.com/owner/proj/pull/5/; do
+      base_moves >/dev/null
+      run_bin -0 --separate-stderr team-catch-up T14 --pr "$pr"
+      assert_equal "$(jq -r 'select(.event == "caught-up") | .url' "$TEAM_HOME/ledger.jsonl" | tail -n 1)" "$url"
+    done
+  done
+  # Four catch-ups, each logged under the new owner; gh was asked only there (its stub refuses
+  # any other repo), and agent-review set there.
+  assert_equal "$(jq -r 'select(.event == "caught-up") | .url' "$TEAM_HOME/ledger.jsonl" | sort -u)" "$url"
+  assert_equal "$(jq -r 'select(.event == "caught-up")' "$TEAM_HOME/ledger.jsonl" | jq -s length)" 4
+  assert_equal "$(jq -r '.[3] | sub("[0-9a-f]{40}$"; "<merge>")' "$GH_DIR/statuses" | uniq -c | sed 's/^ *//')" \
+    "4 repos/owner/proj/statuses/<merge>"
+  run_bin -1 --separate-stderr team-catch-up T14 --pr https://github.com/old-owner/proj/pull/6
+  assert_contains "$stderr" "https://github.com/owner/proj/pull/6 is not one of T14's pr events:"
+}
+
 @test "--pr names one of the task's PRs; anything else is refused" {
   run_bin -1 --separate-stderr team-catch-up T14 --pr https://github.com/owner/proj/pull/6
   assert_contains "$stderr" "https://github.com/owner/proj/pull/6 is not one of T14's pr events:"
