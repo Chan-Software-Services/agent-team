@@ -79,11 +79,13 @@ form tests/command-guard-kill.bats and tests/command-guard-delete.bats hold, pla
 directly or through the walk's wrappers and strings (bash -c, eval, a heredoc or here-string a
 shell reads, a pipe into a shell, xargs, sudo, env, nohup, a path to the program, a quoted name,
 a script written and run in the same command). Each refusal names what it refused and the
-allowed way. An ordinary command, one an agent writes for its work, is never refused for a word
-it only mentions. When the guard cannot decide (its reader fails, or a process or path it needs
-cannot be read), it refuses. They do not promise to see a spelling chosen to hide a name or a
-path from the reader, nor what Not seen lists below: those are for a kernel layer to hold where a
-machine has one, which this guard is not.
+allowed way. An ordinary command, one an agent writes for its work, is never refused for a
+guarded name it only mentions; but a delete of a variable, a relative path or a glob may be
+unread in a call that names a variable or shell option that changes what the path means, even in
+prose (delete_rules.py's header lists them). When the guard cannot decide (its reader fails, or a
+process or path it needs cannot be read), it refuses. They do not promise to see a spelling
+chosen to hide a name or a path from the reader, nor what Not seen lists below: those are for a
+kernel layer to hold where a machine has one, which this guard is not.
 Not seen: a name built by a substitution or held in a variable; a function of one's own, a
 script of one's own written by an earlier call or the Write tool (one this call writes and runs is
 read), or a copy or link of a guarded one; a string another interpreter runs (python3 -c, node -e,

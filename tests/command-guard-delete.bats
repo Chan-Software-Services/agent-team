@@ -248,6 +248,9 @@ refuses_wrapped() {
   refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "rm -rf x"
   refuses "a recursive delete of \$T, $OUTSIDE" "$DELETE_WAY" 'rm -rf "$T"'
   refuses "$FIND $OUT, $OUTSIDE" "$DELETE_WAY" "find . -delete"
+  refuses "a recursive delete of \$tmp, $OUTSIDE" "$DELETE_WAY" 'tmp=; rm -rf "$tmp"'
+  refuses "$FIND \$tmp, $OUTSIDE" "$DELETE_WAY" 'tmp=; find "$tmp" -delete'
+  refuses "$NO_START" "$DELETE_WAY" "find -delete"
   passes "rm -rf" "rm x" "git rm -r x"
 }
 
@@ -448,5 +451,18 @@ refuses_wrapped() {
   refuses "a recursive delete of $WT/src/*/.git, $GIT" "$GIT_WAY" "rm -rf src/*/.git"
   refuses "a recursive delete of $WT/src/sub/.git, $GIT" "$GIT_WAY" "rm -rf src/sub/.git"
   refuses "$FIND $WT/.git, $GIT" "$GIT_WAY" "find .git -delete"
+  refuses "a recursive delete of $JOB/tmp/check/.git/objects, $GIT" "$GIT_WAY" \
+    'rm -rf "$CLAUDE_JOB_DIR/tmp/check/.git/objects"'
+  refuses "a recursive delete of $JOB/tmp/check/.git/*, $GIT" "$GIT_WAY" 'rm -rf "$CLAUDE_JOB_DIR/tmp/check/.git/"*'
+  refuses "$FIND $WT/.git/objects, $GIT" "$GIT_WAY" "find .git/objects -delete"
   passes 'rm -rf "$CLAUDE_JOB_DIR/tmp/check"' "rm -rf build/.github" "rm -rf src/git"
+}
+
+# The incident's shape, run from a checkout's parent, as the agent that ran it was: the verdicts
+# come from the command, never from the cwd, so a cwd outside the roots refuses them alike.
+@test "find \$tmp -delete, with tmp unset or empty, and find with no start path are refused from the worktree's parent" {
+  CWD=$BATS_TEST_TMPDIR
+  refuses "$FIND \$tmp, $UNREAD" "$UNREAD_WAY" 'find $tmp -delete'
+  refuses "$FIND \$tmp, $EMPTY" "$EMPTY_WAY" 'tmp=; find $tmp -delete'
+  refuses "$NO_START" "$EMPTY_WAY" "find -delete"
 }

@@ -29,8 +29,8 @@ quoted name, sudo, env, nohup, timeout and the rest are no way around a row:
 A call names a variable or a shell option when its text does, or that text unquoted (its line
 continuations dropped, its $'...' strings decoded, its quotes and backslashes removed), or a word,
 assignment or wrapper word of a command its walk reads that the text does not hold as it is; so
-I""FS=, C\\DPATH=, CD{PATH,X}= and shopt -s cdable_v''ars name them. A shopt with a word, or a shell with an -O or +O value, holding
-a $ or a backtick names every option.
+I""FS=, C\\DPATH=, CD{PATH,X}= and shopt -s cdable_v''ars name them. A shopt with a word, or a
+shell with an -O or +O value, holding a $ or a backtick names every option.
 Each operand is resolved without running anything, from the walk's word (its quotes removed, its
 unquoted brace lists expanded):
   - a backslash left in it (a quoted backslash), or a word the walk decoded from a $'...' escape
@@ -43,14 +43,15 @@ unquoted brace lists expanded):
     directory below; any of them is unread when the call names it (above) otherwise than as a use
     ($X, ${X}, ${X:-y}), as an assignment, read, unset or a word of prose does;
   - a variable the command assigns is each value it is given, every one of which must pass: its
-    first mention in the command's text is an assignment (X=...) and every other one the call
-    names (above) an assignment or a use, and each value comes from a bare assignment or one of export, local, declare,
-    typeset or readonly (not declare -n); a value that is $(mktemp ...) or `mktemp ...` alone is
-    the new path mktemp makes: its template under -p <dir> or --tmpdir=<dir>; its template's name
-    under $TMPDIR (/tmp when it is empty) with -t, --tmpdir alone or no template (tmp.XXXXXXXXXX);
-    else its template as written, relative to the cwd when relative; a value with a blank, or that
-    starts with (, an array, is unread, and so is a variable assigned before a command on its line
-    (X=1 rm -rf "$X", env X=1 ...), which the shell expands before the assignment;
+    first mention in the command's text is an assignment (X=...) and every other one the call names
+    (above) an assignment or a use, and each value comes from a bare assignment or one of export,
+    local, declare, typeset or readonly (not declare -n); a value that is $(mktemp ...) or
+    `mktemp ...` alone is the new path mktemp makes: its template under -p <dir> or --tmpdir=<dir>;
+    its template's name under $TMPDIR (/tmp when it is empty) with -t, --tmpdir alone or no
+    template (tmp.XXXXXXXXXX); else its template as written, relative to the cwd when relative; a
+    value with a blank, or that starts with (, an array, is unread, and so is a variable assigned
+    before a command on its line (X=1 rm -rf "$X", env X=1 ...), which the shell expands before the
+    assignment;
   - any other $, a backtick, $( or <( or >( left in it makes it unread, and so does a variable
     while the call names IFS otherwise than as a use, since that may split its value;
   - a path under /proc or /dev is unread, since /proc/self and /dev/fd name the guard's own
@@ -74,10 +75,11 @@ hidden entries, another case or across directories, which the guard's match skip
 written empty ("") deletes nothing; one that holds a variable and expands to nothing, a variable
 the command leaves empty, deletes another path ("$T"/x) or none, and as find's start path the
 directory find runs in (find $T -delete), so it is refused (delete-empty).
-A path whose last component is .git (after its links are followed, or a glob's as written) is a
-repository's .git, the worktree's own or a scratch checkout's, and is refused (delete-git).
+A path with a .git component below its root (after its links are followed, or a glob's as
+written) is a repository's .git or a path inside one, the worktree's own or a scratch checkout's,
+and is refused (delete-git).
 With no root at all (no worktree and no job tmp found), every recursive delete is refused as
-outside, naming its first operand.
+outside, naming its first operand (an empty one too), or a find's missing start path.
 The rows, in order, each naming the first operand of its kind:
   delete-outside: a path outside the worktree and the job tmp.
   delete-kept: the worktree, its .scratch/task or the job tmp, or a directory holding one.
@@ -527,11 +529,13 @@ def _verdict(path, context):
         directory = os.path.realpath("/".join(parts[:first]) or "/")
         shown = directory.rstrip("/") + "/" + "/".join(parts[first:])
         dotted = parts[first].startswith(".")
-    if not any(_within(directory, root) for root in context.roots):
+    root = next((root for root in context.roots if _within(directory, root)), None)
+    if root is None:
         return OUTSIDE, shown
     if dotted or any(_within(kept, directory) for kept in context.kept):
         return KEPT, shown
-    if os.path.basename(shown.rstrip("/")) == ".git":
+    # A .git or a path inside one, below the root, so a root's own path is never read for it.
+    if ".git" in shown[len(root.rstrip("/")) :].split("/"):
         return GIT, shown
     return None, shown
 
@@ -559,7 +563,8 @@ def _judge(word, opening, context):
                 if kind:
                     found.append((kind, opening.format(shown) + WHY[kind]))
         if empty:
-            found.append((EMPTY, opening.format(getattr(word, "written", None) or word) + WHY[EMPTY]))
+            kind = EMPTY if context.roots else OUTSIDE
+            found.append((kind, opening.format(getattr(word, "written", None) or word) + WHY[kind]))
     except Unread:
         written = getattr(word, "written", None) or word
         if not context.roots:
