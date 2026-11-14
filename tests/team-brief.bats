@@ -2086,7 +2086,7 @@ after"
   open_t12
   local changed="Run only the tests your change reaches, never the whole suite, which CI runs on every head you push: \`make test-changed\` on the packages you changed"
   local whole="Nothing but you runs conv's whole suite, so run it once at your end, as the project's docs say, beside the tests your change reaches as you go."
-  local pr=https://github.com/chanjdaniel/agent-team/pull/9 brief
+  local pr=https://github.com/Chan-Software-Services/agent-team/pull/9 brief
   # A direct-PR delivery runs them on the head it pushes, in place of team-checks, and its PR body
   # names no local checks.
   run_bin -0 team-brief T14 builder-deliver --set "goal=the goal"
