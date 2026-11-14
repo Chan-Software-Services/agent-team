@@ -636,9 +636,9 @@ EOF
     '[{"name": "shellcheck", "bucket": "pass", "state": "SUCCESS"}]' '[]'
   run_bin -0 team-state T5 --json
   assert_equal "$(jq -c '.pr | [.repo, .project, .number, .ledger_head, .required_missing, .head_moved]' <<<"$output")" \
-    '["chanjdaniel/agent-team","agent-team",4,"f5c35825",["data","macos","test","toolkits","zizmor"],true]'
+    '["Chan-Software-Services/agent-team","agent-team",4,"f5c35825",["data","test","toolkits","zizmor"],true]'
   assert_equal "$(jq -c '.phase' <<<"$output")" '"in-review"'
-  assert_equal "$(stub_calls gh | jq -r '.[4]' | sort -u)" "chanjdaniel/agent-team"
+  assert_equal "$(stub_calls gh | jq -r '.[4]' | sort -u)" "Chan-Software-Services/agent-team"
 }
 
 @test "a PR event naming its project takes the repo from the registry" {

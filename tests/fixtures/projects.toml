@@ -3,7 +3,7 @@
 # The project registry, read only through bin/team-project; `team-project --help` documents every key.
 
 [conventioner]
-repo = "chanjdaniel/Conventioner"
+repo = "Chan-Software-Services/Conventioner"
 path = "Documents/projects/personal/Conventioner"
 base = "dev"
 delivery = "no-mistakes"
@@ -33,12 +33,12 @@ legacy_images = ["nmtest-[0-9]+-(backend|frontend)", "nmfix-.*", "nmtest-t12-.*"
 legacy_gate = "nmtest-[0-9]+"
 
 [agent-team]
-repo = "chanjdaniel/agent-team"
+repo = "Chan-Software-Services/agent-team"
 path = "agent-team"
 base = "dev"
 delivery = "direct-pr"
 merge_method = "merge"
-required_checks = ["shellcheck", "test", "macos", "toolkits", "data", "zizmor"]
+required_checks = ["shellcheck", "test", "toolkits", "data", "zizmor"]
 task_dir = ".scratch/task"
 docs = ["CLAUDE.md"]
 toolkits = []

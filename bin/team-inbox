@@ -38,7 +38,8 @@
 # Numbers: an item is keyed "ask <task> <id> <the asked's ts>" (so a re-ask of the same id is a new
 # item), "pr <url>" (its trailing slash dropped), "interview <task> <thread>", "walk <task> <the
 # walk's start>" (so a walk stopped and started again is a new item) or "note <id>", id
-# team-current's id of its line. An item the last run listed keeps its number, and each new one,
+# team-current's id of its line. An item the last run listed keeps its number (its stored key read
+# with each moved repo's URL under the new owner, bin/lib/repo-moves.json), and each new one,
 # in rank order, takes the lowest number no listed item holds and no item of the latest post
 # showed (waiting.json's posted, null until a post records one). A waiting.json that is missing
 # numbers the list afresh; one that cannot be read, or is of another schema than team-waiting/1,

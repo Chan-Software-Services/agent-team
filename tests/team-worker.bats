@@ -672,7 +672,7 @@ TOML
   run_bin -0 team-worker T7 builder "$wt1" -- go
   local settings=$TEAM_HOME/tasks/T7/settings.builder.proj.json
   assert_equal "$(jq -r '.autoMode.environment[] | select(startswith("**Source control**"))' "$settings")" \
-    "**Source control**: the team's repositories are on GitHub: its team home, chanjdaniel/agent-team-records (~/agent-team-records: the ledger, plans, briefs and memory), and the projects it works on, owner/proj (primary checkout ~/projects/proj), owner/other (primary checkout ~/projects/other) and someone/Third (primary checkout ~/elsewhere/third). agent-team is the team's own code, and no-mistakes is Daniel's fork of the gate, whose pull requests from the team go to the fork itself, never upstream."
+    "**Source control**: the team's repositories are on GitHub: its team home, Chan-Software-Services/agent-team-records (~/agent-team-records: the ledger, plans, briefs and memory), and the projects it works on, owner/proj (primary checkout ~/projects/proj), owner/other (primary checkout ~/projects/other) and someone/Third (primary checkout ~/elsewhere/third). agent-team is the team's own code, and no-mistakes is Daniel's fork of the gate, whose pull requests from the team go to the fork itself, never upstream."
   assert_equal "$(jq -r '.autoMode.environment[] | select(startswith("**Repository visibility**"))' "$settings")" \
     "**Repository visibility**: other and Third are public, so whatever reaches them is published; proj is private; agent-team-records, the team home, is private."
   assert_equal "$(jq -r '.autoMode.environment[] | select(startswith("**Default / protected branches**")) | split(";")[0]' "$settings")" \
@@ -1092,8 +1092,11 @@ role_texts() {
       "$(jq -c .permissions.deny "$worker")"
     assert_equal "$(jq -c --slurpfile w "$worker" --slurpfile r "$REPO_ROOT/settings/$role.json" \
       '.skillOverrides == ($w[0].skillOverrides * ($r[0].skillOverrides // {}))' "$settings")" true
-    assert_equal "$(jq -c '[.syncClaudeAiPlugins, .syncClaudeAiSkills, .enabledPlugins["cc-plugin-plugin-authoring@builtin"]]' "$settings")" \
-      '[false,false,false]'
+    # The built-in easel plugin is off in enabledPlugins, so it never registers mcp__easel__chart,
+    # an MCP tool from outside the toolkits, nor its prompt section or automatic charts; a deny
+    # rule on the tool alone would leave the charts.
+    assert_equal "$(jq -c '[.syncClaudeAiPlugins, .syncClaudeAiSkills, .enabledPlugins["cc-plugin-plugin-authoring@builtin"],
+      .enabledPlugins["cc-plugin-easel@builtin"]]' "$settings")" '[false,false,false,false]'
     mapfile -t texts < <(role_texts "$role")
     ((${#texts[@]} > 1)) || { echo "no brief template found for $role" >&2; return 1; }
     keeps_named "$settings" "${texts[@]}" || { echo "in $role's settings" >&2; return 1; }
@@ -1290,16 +1293,21 @@ UNLISTED="a new toolkit for a project takes Daniel's yes, then its name in that 
 
 @test "the worker settings take away the tools and skills no worker uses, and the check notices a named one" {
   open_task T7
-  run_bin -0 team-worker T7 reviewer "$wt1" -- go
-  local settings=$TEAM_HOME/tasks/T7/settings.reviewer.proj.json tool
-  for tool in Artifact DesignSync ScheduleWakeup CronCreate RemoteTrigger SendFeedback AskUserQuestion EnterWorktree; do
-    jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null ||
-      { echo "no deny rule for $tool" >&2; return 1; }
-  done
-  for tool in Bash Read Edit Write Agent Skill ToolSearch SendMessage ListAgents Monitor WebFetch WebSearch; do
-    if jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null; then
-      echo "denies $tool, which workers use" >&2 && return 1
-    fi
+  local settings role tool
+  # Workflow too: its description allows it only on the user's opt-in to multi-agent
+  # orchestration, which no worker has, and a deny rule drops its definition from the context.
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    settings=$TEAM_HOME/tasks/T7/settings.$role.proj.json
+    for tool in Artifact DesignSync ScheduleWakeup CronCreate RemoteTrigger SendFeedback AskUserQuestion EnterWorktree Workflow; do
+      jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null ||
+        { echo "the $role settings have no deny rule for $tool" >&2; return 1; }
+    done
+    for tool in Bash Read Edit Write Agent Skill ToolSearch SendMessage ListAgents Monitor WebFetch WebSearch; do
+      if jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null; then
+        echo "the $role settings deny $tool, which workers use" >&2 && return 1
+      fi
+    done
   done
   assert_equal "$(jq -c '.skillOverrides | [.lavish, .loop, .implement, .["code-review"]]' "$settings")" '["off","off","off",null]'
   # A brief that names a skill or tool the settings take away fails the check.
@@ -1746,9 +1754,10 @@ assert_prod_write_gated() {
   # A skill's inline shell would run a command in a role that has no shell.
   assert_equal "$(jq -r .disableSkillShellExecution "$s")" true
   # disableBundledSkills leaves the built-in plugin that carries the plugin-authoring skill (T16
-  # ticket 09's second live check), which the worker settings turn off for every worker.
+  # ticket 09's second live check), which the worker settings turn off for every worker, as they
+  # do the built-in easel plugin and its chart tool.
   assert_equal "$(jq -c .enabledPlugins "$s")" \
-    '{"discord@claude-plugins-official":false,"mongodb-atlas@claude-plugins-official":false,"cc-plugin-plugin-authoring@builtin":false}'
+    '{"discord@claude-plugins-official":false,"mongodb-atlas@claude-plugins-official":false,"cc-plugin-plugin-authoring@builtin":false,"cc-plugin-easel@builtin":false}'
   # The shared hooks come first (lease-fence on Bash, a tool ops lacks), then the role's own.
   assert_equal "$(jq -r '.hooks.PreToolUse[] | "\(.matcher) \(.hooks[0].command)"' "$s" | sed -n 1,2p)" \
     "Bash $REPO_ROOT/bin/hooks/lease-fence

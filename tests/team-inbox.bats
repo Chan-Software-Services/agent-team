@@ -346,6 +346,24 @@ $RANKED"
 $RANKED"
 }
 
+@test "an item that waiting.json keyed by a moved repo's old URL keeps its number, keyed under the new owner" {
+  opened T3 "Three" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T3","event":"asked","id":"a","text":"A?"}'
+  opened T4 "Four" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T4","event":"pr","url":"https://github.com/chanjdaniel/Conventioner/pull/4","head":"abc1234def"}' \
+    '{"task":"T4","event":"review","head":"abc1234def","verdict":"pass"}'
+  run_bin -0 team-inbox
+  assert_equal "$(numbers)" "1 pr https://github.com/Chan-Software-Services/Conventioner/pull/4
+2 ask T3 a 2026-10-01T11:00:00Z"
+  # waiting.json as a run before the move wrote it, the PR keyed by its old URL, and numbered 7.
+  jq '.items |= map(if .kind == "pr" then .n = 7 | .key = "pr https://github.com/chanjdaniel/Conventioner/pull/4" else . end)' \
+    "$TEAM_HOME/waiting.json" >"$BATS_TEST_TMPDIR/waiting.json"
+  mv "$BATS_TEST_TMPDIR/waiting.json" "$TEAM_HOME/waiting.json"
+  run_bin -0 team-inbox
+  assert_equal "$(numbers)" "7 pr https://github.com/Chan-Software-Services/Conventioner/pull/4
+2 ask T3 a 2026-10-01T11:00:00Z"
+}
+
 @test "a number the latest post showed is not given to a new item until the next post frees it, and a re-asked id is a new item" {
   opened T3 "Three" >>"$TEAM_HOME/ledger.jsonl"
   log_events '{"task":"T3","event":"asked","id":"a","text":"A?"}' \

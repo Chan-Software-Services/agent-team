@@ -390,9 +390,10 @@ plan_text() {
 }
 
 # The task's latest pr event in this project's repo, while its PR is open: a later phase's review
-# has no PR once the earlier phase's merged.
+# has no PR once the earlier phase's merged. The events' URLs are canonical, a moved repo under its
+# new owner, so the registry's repo is compared in canonical form too, whichever owner it names.
 pr=$(ledger_jq '. as $events | task_prs as $prs | [$prs[]
-    | select(.url | strings | ascii_downcase | startswith("https://github.com/\($repo | ascii_downcase)/pull/"))]
+    | select(.url | strings | ascii_downcase | startswith("https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/"))]
   | last | select(. != null and (pr_merged($events; $prs) | not)) | .url // empty' -r --arg repo "$repo" <<<"$events")
 # Before the PR: a gated project's builder stops before its gate, and a direct-PR task's under a
 # Disclosure section pushes nothing before the review passes.
@@ -489,6 +490,8 @@ for key in "${used[@]}"; do
     derive+=("$key")
   elif [[ -v sets[$key] ]]; then
     values[$key]=${sets[$key]}
+    # A PR under a moved repo's old owner names it under the new one, as the ledger's events do.
+    [[ $key != pr ]] || values[pr]=$(canonical_url "${values[pr]}") || exit 1
   elif [[ " ${derivable[*]} " == *" $key "* ]]; then
     derive+=("$key")
   elif [[ ! -v values[$key] ]]; then

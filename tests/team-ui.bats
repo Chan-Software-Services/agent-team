@@ -62,7 +62,7 @@ interview_thread() {
 register_conventioner() {
   cat >"$TEAM_HOME/projects.toml" <<'TOML'
 [conventioner]
-repo = "chanjdaniel/Conventioner"
+repo = "Chan-Software-Services/Conventioner"
 path = "Documents/projects/personal/Conventioner"
 base = "dev"
 delivery = "no-mistakes"

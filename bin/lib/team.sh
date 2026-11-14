@@ -15,7 +15,7 @@
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, capture_refusal, toolkit_refusal, task_own_dirs, path_under, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
-# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
+# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -95,9 +95,8 @@ PACK_LOOSE=200
 # hook follows with a command's name: at the start, after a separator, a parenthesis (a subshell's
 # or a case pattern's), a brace (a group's or a function's body), a backtick or a line break, past
 # the reserved words a command may follow there ({, !, if, then, else, elif, do, while, until,
-# time and coproc), any variable assignments and a directory. bin/hooks/lease-fence and
-# bin/hooks/command-guard read it.
-# shellcheck disable=SC2034 # read by the hooks
+# time and coproc), any variable assignments and a directory. bin/hooks/lease-fence reads it.
+# shellcheck disable=SC2034 # read by the hook
 COMMAND_START=$'(^|[;&|(){`\n])[[:space:]]*((\\{|!|if|then|else|elif|do|while|until|time|coproc)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?'
 
 # Refuse with a reason on stderr.
@@ -268,8 +267,10 @@ ledger_append() {
     if [[ $refusing == true ]]; then
       # The verdict: nothing when the table takes the event, else "warn" and a line per problem,
       # or "refuse" and the problems joined. The task's events are the lines naming it (a cheap
-      # test before each is parsed) that are its objects.
-      verdict=$(ledger_jq '[inputs | select(contains($e.task)) | fromjson? | select(type == "object" and .task == $e.task)]
+      # test before each is parsed) that are its objects, each url canonical, as the event's is,
+      # so a PR logged under an old owner and the new one is one PR.
+      verdict=$(ledger_jq '($e | canonical_event) as $e
+          | [inputs | select(contains($e.task)) | fromjson? | select(type == "object" and .task == $e.task) | canonical_event]
           | [transition_problems($e)] as $problems
           | lifecycle_table.lifecycle_from as $from
           | if $problems == [] then empty
@@ -330,18 +331,21 @@ ledger_push() {
   return 0
 }
 
-# All of a task's events, in ledger order, one compact object per line (lines that are not JSON
-# objects are skipped): task_events T<n>
+# All of a task's events, in ledger order, one compact object per line, each url canonical
+# (canonical_event in bin/lib/ledger.jq; lines that are not JSON objects are skipped):
+# task_events T<n>
 task_events() {
   [[ ! -e $TEAM_HOME/ledger.jsonl ]] ||
-    jq -cR --arg task "$1" 'fromjson? | select(type == "object" and .task == $task)' "$TEAM_HOME/ledger.jsonl"
+    ledger_jq 'fromjson? | select(type == "object" and .task == $task) | canonical_event' -cR --arg task "$1" \
+      "$TEAM_HOME/ledger.jsonl"
 }
 
-# A task's events as one compact JSON array in ledger order, [] when it has none, in one jq run:
-# task_event_array T<n>
+# A task's events as one compact JSON array in ledger order, each url canonical, [] when it has
+# none, in one jq run: task_event_array T<n>
 task_event_array() {
   if [[ -e $TEAM_HOME/ledger.jsonl ]]; then
-    jq -cnR --arg task "$1" '[inputs | fromjson? | select(type == "object" and .task == $task)]' "$TEAM_HOME/ledger.jsonl"
+    ledger_jq '[inputs | fromjson? | select(type == "object" and .task == $task) | canonical_event]' -cnR --arg task "$1" \
+      "$TEAM_HOME/ledger.jsonl"
   else
     echo '[]'
   fi
@@ -481,9 +485,22 @@ local_path() {
 #                      audits are in the run's findings.md, which is kept)
 #   nested repository  a directory holding .git, or a bare repository's HEAD, objects/ and refs/
 #   dependencies       a directory named node_modules, .venv, venv or __pycache__
-#   over 200 files     any other directory holding more than 200 files through its
-#                      subdirectories, the outermost one only
+#   over 200 files     what brings each other directory holding more than 200 files through
+#                      its subdirectories (none counted inside a directory another reason
+#                      names) to 200 at most: its crowded subdirectories by this same rule, then
+#                      its largest other subdirectories, the largest first and a research
+#                      task's work/probes/ last, at most ten of them, or else the directory
+#                      whole; at work/ beside probes, as many as it takes, so the probes go
+#                      only after every other subdirectory, when work/'s own files leave no
+#                      room for them
 #   link               a symbolic link
+#   video              a file named .webm, .mp4, .m4v, .mov, .mkv or .avi, in any case (a
+#                      Playwright sweep's video.webm)
+#   Playwright output  a directory named test-results, playwright-report or blob-report, and a
+#                      trace (trace.zip, or a name ending in .trace.zip or -trace.zip)
+#   build output       a directory named dist, and a minified bundle, a source map or a font (a
+#                      name ending in .min.js, .min.mjs, .min.cjs, .min.css, .map, .ttf, .otf,
+#                      .woff, .woff2 or .eot, in any case)
 #   image              a file whose extension IMAGE_TYPE names, in any case, or whose first
 #                      bytes image_magic reads as an image's (a screenshot is never kept in git;
 #                      the records hook refuses one)
@@ -492,8 +509,10 @@ local_path() {
 #   email at a public  a file whose bytes hold an address refused_emails records counts, the
 #   provider           owner being the team home's git user.email: the records hook refuses it,
 #                      and one such file would stop every checkpoint's commit of its task
-# Nothing is looked for inside a path named by an earlier reason. This is the one place the list
-# is written; the scripts that archive, and their docs, point here.
+# Nothing is looked for inside a directory a reason names, nor in a file an earlier reason names.
+# What is kept is bounded so: no file over 1 MiB, and no directory under <dir> over 200 files,
+# a research task's probes as any other path. This is the one place the list is written; the
+# scripts that archive, and their docs, point here.
 # A missing directory has none: archive_left_out <dir>
 archive_left_out() {
   (
@@ -517,22 +536,139 @@ archive_left_out() {
         skip_path "$dir"
       done < <(find ui-check -mindepth 2 -maxdepth 2 -type d -name lighthouse -print0 | sort -z)
     fi
-    local is_repo=(-type d \( -exec test -e '{}/.git' ';' -o -exec test -f '{}/HEAD' ';' -exec test -d '{}/objects' ';' -exec test -d '{}/refs' ';' \))
-    local is_deps=(-type d \( -name node_modules -o -name .venv -o -name venv -o -name __pycache__ \))
+    # The directory rules, each read by its name through set_pruned's, dir_rule's and file_rule's
+    # namerefs.
+    # shellcheck disable=SC2034 # read by name
+    local is_repo=(-type d \( -exec test -e '{}/.git' ';' -o -exec test -f '{}/HEAD' ';' -exec test -d '{}/objects' ';' -exec test -d '{}/refs' ';' \)) \
+      is_deps=(-type d \( -name node_modules -o -name .venv -o -name venv -o -name __pycache__ \)) \
+      is_playwright=(-type d \( -name test-results -o -name playwright-report -o -name blob-report \)) \
+      is_build_output=(-type d -name dist)
     local is_image=(-regextype posix-extended -iregex ".*\\.($IMAGE_TYPE)")
-    # walk <from> <expression>: find under <from>, never inside what skip, is_repo or is_deps match; the
-    # expression applies to every other path.
-    walk() { find "$1" -mindepth 1 \( \( "${skip[@]}" \) -o \( "${is_repo[@]}" \) -o \( "${is_deps[@]}" \) \) -prune -o "${@:2}"; }
-    find . -mindepth 1 \( "${skip[@]}" \) -prune -o \( "${is_repo[@]}" \) -printf 'nested repository\t%P\0' -prune | sort -z
-    find . -mindepth 1 \( \( "${skip[@]}" \) -o \( "${is_repo[@]}" \) \) -prune -o \( "${is_deps[@]}" \) -printf 'dependencies\t%P\0' -prune | sort -z
-    # A directory never holds more files than its parent, so the outermost crowded directories are
-    # among the top-level ones.
-    while IFS= read -r -d '' dir; do
-      (($(walk "./$dir" ! -type d -printf . | wc -c) > 200)) || continue
-      printf 'over 200 files\t%s\0' "$dir"
-      skip_path "$dir"
-    done < <(find . -mindepth 1 -maxdepth 1 -type d ! \( \( "${skip[@]}" \) -o \( "${is_repo[@]}" \) -o \( "${is_deps[@]}" \) \) -printf '%P\0' | sort -z)
+    local is_video=(-type f -regextype posix-extended -iregex '.*\.(webm|mp4|m4v|mov|mkv|avi)')
+    local is_trace=(-type f \( -iname trace.zip -o -iname '*.trace.zip' -o -iname '*-trace.zip' \))
+    local is_bundle=(-type f -regextype posix-extended -iregex '.*(\.min\.(js|mjs|cjs|css)|\.map|\.(ttf|otf|woff2?|eot))')
+    # A file left out by its name alone, never read for an image, a size, a secret or an address.
+    local is_named=(\( "${is_video[@]}" \) -o \( "${is_trace[@]}" \) -o \( "${is_bundle[@]}" \))
+    # set_pruned [<rule>...]: set pruned to what skip names, as it grows, and what each directory
+    # rule (is_repo, is_deps, is_playwright, is_build_output) matches but the rules named, the
+    # one place their list is written.
+    local -a pruned
+    set_pruned() {
+      local pruned_rule
+      pruned=(\( "${skip[@]}" \))
+      for pruned_rule in is_repo is_deps is_playwright is_build_output; do
+        [[ " $* " != *" $pruned_rule "* ]] || continue
+        local -n pruned_test=$pruned_rule
+        pruned+=(-o \( "${pruned_test[@]}" \))
+        unset -n pruned_test
+      done
+    }
+    # walk <from> <expression>: find under <from>, never inside what skip or a directory rule
+    # names; the expression applies to every other path.
+    walk() {
+      set_pruned
+      find "$1" -mindepth 1 \( "${pruned[@]}" \) -prune -o "${@:2}"
+    }
+    # dir_rule <reason> <rule> [<rule>...]: name, as <reason>, each outermost directory the first
+    # <rule> matches, never inside what skip or a directory rule other than those given matches.
+    dir_rule() {
+      local -n dir_test=$2
+      set_pruned "${@:2}"
+      find . -mindepth 1 \( "${pruned[@]}" \) -prune -o \( "${dir_test[@]}" \) -printf "$1\t%P\0" -prune | sort -z
+    }
+    # A nested repository is named inside a dependency tree too.
+    dir_rule 'nested repository' is_repo is_deps
+    dir_rule dependencies is_deps
+    # crowd_count[<dir>]: how many files <dir> holds through its subdirectories, none inside what
+    # skip or a directory rule names, counted in one walk; a directory holding none has no entry.
+    local -A crowd_count=()
+    local crowd_dir
+    while IFS= read -r -d '' crowd_dir; do
+      crowd_dir=${crowd_dir#.} crowd_dir=${crowd_dir#/}
+      while [[ -n $crowd_dir ]]; do
+        crowd_count[$crowd_dir]=$((${crowd_count[$crowd_dir]:-0} + 1))
+        if [[ $crowd_dir == */* ]]; then crowd_dir=${crowd_dir%/*}; else crowd_dir=''; fi
+      done
+    done < <(walk . ! -type d -printf '%h\0')
+    # crowd_cut <dir>: leave <dir> out, taking what it still holds off its count and each
+    # enclosing directory's.
+    local -a crowded_dirs=()
+    crowd_cut() {
+      local cut_dir=$1 cut_files=${crowd_count[$1]}
+      while :; do
+        crowd_count[$cut_dir]=$((${crowd_count[$cut_dir]} - cut_files))
+        [[ $cut_dir == */* ]] || break
+        cut_dir=${cut_dir%/*}
+      done
+      crowded_dirs+=("$1")
+    }
+    # crowded <dir>: when <dir> holds over 200 files, leave out its crowded subdirectories by this
+    # same rule, then its largest other subdirectories, the largest first (the first by name of
+    # those as large) and work/probes last, until the rest holds at most 200; when that takes
+    # more than ten of them, or they are not enough, leave out <dir> itself in their place. At
+    # work/, while work/probes holds files, there is no bound of ten, so its siblings go one by
+    # one, as many as it takes, and work/probes goes after every one of them, only when work/'s
+    # own files leave no room for it.
+    crowded() {
+      local crowd_at=$1 crowd_sub crowd_subs=() crowd_most crowd_left crowd_picked=() crowd_cap=10
+      ((${crowd_count[$crowd_at]:-0} > 200)) || return 0
+      for crowd_sub in "${!crowd_count[@]}"; do
+        [[ $crowd_sub != "$crowd_at"/* || $crowd_sub == "$crowd_at"/*/* ]] || crowd_subs+=("$crowd_sub")
+      done
+      ((${#crowd_subs[@]} == 0)) || mapfile -d '' -t crowd_subs < <(printf '%s\0' "${crowd_subs[@]}" | sort -z)
+      for crowd_sub in "${crowd_subs[@]}"; do crowded "$crowd_sub"; done
+      [[ $crowd_at != work ]] || ((${crowd_count[work/probes]:-0} == 0)) || crowd_cap=${#crowd_subs[@]}
+      # The subdirectories still holding files, in the order they are taken, sorted once.
+      ((${#crowd_subs[@]} == 0)) || mapfile -d '' -t crowd_subs < <(
+        for crowd_sub in "${crowd_subs[@]}"; do
+          crowd_most=${crowd_count[$crowd_sub]}
+          ((crowd_most > 0)) || continue
+          [[ $crowd_sub != work/probes ]] || crowd_most=-1
+          printf '%s\t%s\0' "$crowd_most" "$crowd_sub"
+        done | sort -z -t $'\t' -k1,1nr -k2 | cut -z -f 2-
+      )
+      crowd_left=${crowd_count[$crowd_at]}
+      for crowd_sub in "${crowd_subs[@]}"; do
+        ((crowd_left > 200 && ${#crowd_picked[@]} <= crowd_cap)) || break
+        crowd_picked+=("$crowd_sub")
+        crowd_left=$((crowd_left - ${crowd_count[$crowd_sub]}))
+      done
+      if ((crowd_left > 200 || ${#crowd_picked[@]} > crowd_cap)); then
+        crowd_cut "$crowd_at"
+      else
+        for crowd_sub in "${crowd_picked[@]}"; do crowd_cut "$crowd_sub"; done
+      fi
+    }
+    while IFS= read -r -d '' crowd_dir; do crowded "$crowd_dir"; done < <(
+      for crowd_dir in "${!crowd_count[@]}"; do [[ $crowd_dir == */* ]] || printf '%s\0' "$crowd_dir"; done | sort -z
+    )
+    # Each directory left out is named once, never inside another one left out, and no later rule
+    # looks inside it.
+    local -A crowd_out=()
+    local crowd_named=()
+    for crowd_dir in "${crowded_dirs[@]}"; do crowd_out[$crowd_dir]=1; done
+    for crowd_dir in "${crowded_dirs[@]}"; do
+      dir=$crowd_dir
+      while [[ $dir == */* ]]; do
+        dir=${dir%/*}
+        [[ -z ${crowd_out[$dir]:-} ]] || continue 2
+      done
+      crowd_named+=("$crowd_dir")
+      skip_path "$crowd_dir"
+    done
+    ((${#crowd_named[@]} == 0)) || printf 'over 200 files\t%s\0' "${crowd_named[@]}" | sort -z
     walk . -type l -printf 'link\t%P\0' | sort -z
+    walk . "${is_video[@]}" -printf 'video\t%P\0' | sort -z
+    # file_rule <reason> <directory rule> <file rule>: name, as <reason>, each outermost directory
+    # the first rule matches and each other file the second does.
+    file_rule() {
+      local -n file_dir_test=$2 file_test=$3
+      set_pruned "$2"
+      find . -mindepth 1 \( "${pruned[@]}" \) -prune -o \( "${file_dir_test[@]}" \) -printf "$1\t%P\0" -prune -o \
+        \( "${file_test[@]}" \) -printf "$1\t%P\0" | sort -z
+    }
+    file_rule 'Playwright output' is_playwright is_trace
+    file_rule 'build output' is_build_output is_bundle
     # An image by its extension, or by its first bytes, which image_magic reads only in the files
     # that could start with an image's signature: those grep takes for binary (a NUL byte, as tiff's
     # and ico's signatures hold) or empty, and the text files a line of which starts as png's,
@@ -543,7 +679,7 @@ archive_left_out() {
     local path owner small=() signature=$'^(\x89PNG|\xff\xd8\xff|GIF8|RIFF|BM)|ftyp'
     while IFS= read -r -d '' path; do image[$path]=1; done < <(walk . -type f "${is_image[@]}" -printf '%P\0')
     while IFS= read -r -d '' path; do candidate[$path]=1; done < <(
-      walk . -type f ! \( "${is_image[@]}" \) -printf '%P\0' |
+      walk . -type f ! \( "${is_image[@]}" \) ! \( "${is_named[@]}" \) -printf '%P\0' |
         xargs -0r sh -c 'grep -sILZ -e "" -- "$@"; grep -slZE -e "$0" -- "$@"' "$signature" || true
     )
     for path in "${!candidate[@]}"; do
@@ -552,10 +688,10 @@ archive_left_out() {
     ((${#image[@]} == 0)) || printf 'image\t%s\0' "${!image[@]}" | sort -z
     while IFS= read -r -d '' path; do
       [[ -n ${image[$path]:-} ]] || printf 'over 1 MiB\t%s\0' "$path"
-    done < <(walk . -type f ! \( "${is_image[@]}" \) -size +1048576c -printf '%P\0' | sort -z)
+    done < <(walk . -type f ! \( "${is_image[@]}" \) ! \( "${is_named[@]}" \) -size +1048576c -printf '%P\0' | sort -z)
     while IFS= read -r -d '' path; do
       [[ -n ${image[$path]:-} ]] || small+=("$path")
-    done < <(walk . -type f ! \( "${is_image[@]}" \) -size -1048577c -printf '%P\0' | sort -z)
+    done < <(walk . -type f ! \( "${is_image[@]}" \) ! \( "${is_named[@]}" \) -size -1048577c -printf '%P\0' | sort -z)
     ((${#small[@]} == 0)) || while IFS= read -r path; do
       secret[$path]=1
       printf 'may hold a secret\t%s\0' "$path"
@@ -960,7 +1096,9 @@ docker_silence() {
 }
 
 # Whether Claude Code trusts the root <path>, from a promptless background session named <name>
-# started there, which it refuses in an untrusted root with "Workspace not trusted". The probe
+# started there, which it refuses in an untrusted root with "Workspace not trusted". The session
+# starts with Remote Control off, its --settings remoteControlAtStartup false outranking the user
+# settings' true, since claude rm leaves a session's Remote Control row on claude.ai. The probe
 # goes either way: the session it printed, and any session of its name (one an earlier probe
 # left), are stopped and removed. Sets trust_verdict (trusted, untrusted, or unknown when the
 # start printed no session id), trust_left (the sessions claude rm left), trust_rc and trust_out
@@ -970,7 +1108,8 @@ trust_probe() {
   local name=$2 id line probe_ids=() probe_kept=()
   local -A probe_seen=()
   trust_rc=0 trust_left=()
-  trust_out=$(cd "$1" && bounded 60 claude --bg --name "$name" 2>&1 </dev/null) || trust_rc=$?
+  trust_out=$(cd "$1" && bounded 60 claude --bg --name "$name" --settings '{"remoteControlAtStartup":false}' 2>&1 </dev/null) ||
+    trust_rc=$?
   # The first 8 hex digits of the start's output that stand as a word, then each live session of
   # the probe's name, read with builtins but for the session list's jq; each kept once, no blank.
   if [[ $trust_out != *"Workspace not trusted"* &&
@@ -1694,7 +1833,8 @@ team_project() {
 # word whatever the registry says: named agent-team, its primary checkout the code checkout this
 # library runs from or, when that checkout is a linked worktree, its main worktree, or its repo,
 # in any case, the owner/name of that checkout's origin (an HTTPS or SSH URL, a trailing .git or
-# slash aside). Refuses an unknown project: own_project <name>
+# slash aside), each at the end of its moves (bin/lib/repo-moves.json), so the origin and the
+# registry may name a moved repo under either owner. Refuses an unknown project: own_project <name>
 own_project() {
   local project code path common url
   [[ $1 != agent-team ]] || return 0
@@ -1707,7 +1847,8 @@ own_project() {
   url=$(git -C "$code" remote get-url origin 2>/dev/null) || return 1
   url=${url%/} url=${url%.git}
   [[ $url =~ [:/]([^/:]+/[^/:]+)$ ]] || return 1
-  [[ ${BASH_REMATCH[1],,} == "$(jq -r '.repo | ascii_downcase' <<<"$project")" ]]
+  ledger_jq '[$origin, .repo | canonical_repo | ascii_downcase] | .[0] == .[1]' \
+    -e --arg origin "${BASH_REMATCH[1]}" <<<"$project" >/dev/null
 }
 
 # The registered projects that are the team's own (own_project), in the registry's order, and the
@@ -1781,11 +1922,13 @@ review_app_jwt() {
 # goes to curl only on stdin through --config -, from printf, a builtin, so it is in no process's
 # arguments and no child's environment; not through gh, which takes a token only from its
 # environment or its login. curl reads no config of the user's (-q, its first argument), so no
-# ~/.curlrc can trace, proxy or add to the call. The answer's body is printed, then its HTTP status
-# on a line of its own, for the caller to hold in memory, since a token GitHub mints is in the body
-# and no file is to hold it; a call curl cannot make fails with curl's exit, its error on stderr.
-# <bearer> is refused unless it is the characters a JWT or a token is made of, so no answer GitHub
-# gives can add to curl's config: review_app_api <method> <path> <bearer> [<JSON body file>]
+# ~/.curlrc can trace, proxy or add to the call, and it follows no redirect, so no answer can move
+# the call elsewhere: a 301 is an answer like any other. The answer's body is printed, then its
+# HTTP status on a line of its own, for the caller to hold in memory, since a token GitHub mints is
+# in the body and no file is to hold it; a call curl cannot make fails with curl's exit, its error
+# on stderr. <bearer> is refused unless it is the characters a JWT or a token is made of, so no
+# answer GitHub gives can add to curl's config:
+# review_app_api <method> <path> <bearer> [<JSON body file>]
 review_app_api() {
   local args=(-q --silent --show-error --config - --request "$1" --write-out '\n%{http_code}' --max-time 30
     --header 'Accept: application/vnd.github+json' --header 'X-GitHub-Api-Version: 2022-11-28')
@@ -1807,17 +1950,67 @@ default_events_json() {
   ledger_jq 'ledger_events | default_events' -nRc "$ledger"
 }
 
-# The project, its repo as the registry spells it, and the number of a pull request URL, one
-# per line, refusing any URL but https://github.com/<owner>/<name>/pull/<n> in a registered
-# project's repo: registered_pr <url>
+# The project, its repo and the number of a pull request URL, one per line, refusing any URL but
+# https://github.com/<owner>/<name>/pull/<n> in a registered project's repo. The URL may name the
+# repo under an old owner or the new one (bin/lib/repo-moves.json), and the repo printed is the
+# registry's at the end of its moves, so gh and the reviewer App's calls go to the new owner while
+# the registry still names the old: registered_pr <url>
 registered_pr() {
-  local project
+  local project repo number
   [[ $1 =~ ^https://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/([1-9][0-9]*)$ ]] ||
     usage_error "not a GitHub pull request URL: $1"
-  project=$(team_project --find repo "${BASH_REMATCH[1]}") || exit 1
-  [[ -n $project ]] || die "${BASH_REMATCH[1]} is no registered project's repo"
+  repo=${BASH_REMATCH[1]} number=${BASH_REMATCH[2]}
+  project=$(team_project --find repo "$repo") || exit 1
+  [[ -n $project ]] || die "$repo is no registered project's repo"
   project=${project%%$'\n'*}
-  printf '%s\n' "$project" "$(team_project "$project" repo)" "${BASH_REMATCH[2]}"
+  repo=$(canonical_repo "$(team_project "$project" repo)") || exit 1
+  printf '%s\n' "$project" "$repo" "$number"
+}
+
+# A GitHub URL with its repo at the end of its moves (bin/lib/repo-moves.json), anything after it
+# as written, and any other text as it is, by ledger.jq's canonical_url: canonical_url <url>
+canonical_url() {
+  ledger_jq '$url | canonical_url' -nr --arg url "$1"
+}
+
+# A repo, <owner>/<name>, at the end of its moves (bin/lib/repo-moves.json), its old names matched
+# in any case, and any other repo as given, by ledger.jq's canonical_repo: canonical_repo <repo>
+canonical_repo() {
+  ledger_jq '$repo | canonical_repo' -nr --arg repo "$1"
+}
+
+# The repo a git remote URL names, at the end of its moves (bin/lib/repo-moves.json), else nothing
+# for a URL that names no GitHub repo: an HTTPS (https://github.com/<owner>/<name>) or SSH
+# (git@github.com:<owner>/<name>, ssh://git@github.com/<owner>/<name>) URL, a trailing .git or
+# slash aside, its repo compared in any case, as canonical_repo compares it: origin_repo <url>
+origin_repo() {
+  local url=${1%/}
+  [[ $url =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9-]+/[A-Za-z0-9._-]+)$ ]] || return 0
+  canonical_repo "${BASH_REMATCH[2]%.git}"
+}
+
+# The repo a git remote URL names, at the end of its moves, when that repo moved, else nothing, the
+# URL read as origin_repo reads it: moved_origin <url>
+moved_origin() {
+  local url=${1%/} to
+  to=$(origin_repo "$url") || return
+  [[ -n $to ]] || return 0
+  url=${url%.git}
+  [[ ${url,,} == *"/${to,,}" || ${url,,} == *":${to,,}" ]] || printf '%s\n' "$to"
+}
+
+# The fix for the origin of the treehouse project <project>: treehouse names a pool by a hash of
+# its checkout's origin URL, so a bare set-url sends the next lease to a new, empty pool, and the
+# registry's slots stop matching: pool_move_fix <project>
+pool_move_fix() {
+  printf "move %s's treehouse pool with the origin: see sops/portability.md, A repository that moves owner\n" "$1"
+}
+
+# The URL the team home is cloned from, https://github.com/<repo>.git, its repo the end of the
+# move of agent-team-records in bin/lib/repo-moves.json, so no script spells its owner: team_home_url
+team_home_url() {
+  ledger_jq '[repo_moves[] | select(.from | ascii_downcase | endswith("/agent-team-records")) | .to | canonical_repo][0]
+    // error("bin/lib/repo-moves.json has no move of agent-team-records") | "https://github.com/\(.).git"' -nr
 }
 
 # Run gh, keeping its JSON in <dir>/<name>: github <dir> <name> <gh arguments...>
@@ -1932,7 +2125,10 @@ pr_part() {
     project=${project%%$'\n'*}
   fi
   if [[ -n $project ]]; then
+    # Under its new owner while the registry still names the old (bin/lib/repo-moves.json), as
+    # registered_pr gives it, so gh reads the PR where it is.
     repo=$(team_project "$project" repo) || return 1
+    repo=$(canonical_repo "$repo") || return 1
     required_checks=$(team_project "$project" required_checks) || return 1
     bar=$(own_bar "$project") || return 1
   fi
