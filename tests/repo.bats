@@ -2395,6 +2395,62 @@ bats: 3 tests passed; 1 of 2 files failed"
 ok 2 after it"
 }
 
+# test: copy_run_left <copy> <pid file>: the pids, one per line, still running of what a test
+# started from <copy>'s tests: this user's processes whose command line holds <copy>/tests/, and
+# each pid of <pid file> while it is this user's and runs a command holding that path or the
+# test's own "sleep 120". Bound by owner and path, so a kill of them reaches nothing else.
+copy_run_left() {
+  local tests=${1:?}/tests/ me pid
+  me=$(id -u)
+  [[ $tests == /*/*/tests/ ]] || { echo "copy_run_left: $tests is no copy's path" >&2 && return 1; }
+  # TESTS goes to awk, not ps: an empty ENVIRON["TESTS"] makes index() match every process, so
+  # awk refuses one too.
+  ps -U "$me" -o pid=,args= |
+    TESTS=$tests awk 'ENVIRON["TESTS"] == "" { exit 1 } index($0, ENVIRON["TESTS"]) { print $1 }' || return 1
+  [[ -e $2 ]] || return 0
+  while read -r pid; do
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    ps -o uid=,args= -p "$pid" 2>/dev/null |
+      TESTS=$tests ME=$me awk -v pid="$pid" '$1 == ENVIRON["ME"] && (index($0, ENVIRON["TESTS"]) || (NF == 3 && $2 " " $3 == "sleep 120")) { print pid }'
+  done <"$2"
+}
+
+@test "team-heavy stop ends a tests/run bats run's files too, though each runs under timeout in a process group of its own" {
+  local copy=$BATS_TEST_TMPDIR/copy run i pid left=''
+  unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
+  limits_checkout "$copy"
+  # With no user manager answering (the sandbox's systemctl), team-heavy runs tests/run in a
+  # process group alone and stops only that group, so the stop reaches each file's timeout,
+  # which has a group of its own, only through tests/run.
+  printf '%s\n' "@test \"sleeps\" { echo \"\$\$\" >\"$BATS_TEST_TMPDIR/pids\"; sleep 120 & echo \"\$!\" >>\"$BATS_TEST_TMPDIR/pids\"; wait \"\$!\"; }" \
+    >"$copy/tests/sleeps.bats"
+  TEAM_JOBS=1 "$copy/tests/run" bats >"$BATS_TEST_TMPDIR/run.out" 2>&1 3>&- &
+  run=$!
+  for ((i = 0; i < 300; i++)); do
+    [[ ! -e $BATS_TEST_TMPDIR/pids || $(wc -l <"$BATS_TEST_TMPDIR/pids") -lt 2 ]] || break
+    sleep 0.1
+  done
+  [[ $(wc -l <"$BATS_TEST_TMPDIR/pids") -eq 2 ]]
+  run -0 "$copy/bin/team-heavy" stop
+  assert_contains "$output" "stopped tests/run bats in "
+  wait "$run" || true
+  # What the stop TERMed may take a moment to be reaped.
+  for ((i = 0; i < 50; i++)); do
+    left=$(copy_run_left "$copy" "$BATS_TEST_TMPDIR/pids")
+    [[ -n $left ]] || break
+    sleep 0.1
+  done
+  if [[ -n $left ]]; then
+    # shellcheck disable=SC2086 # one pid per word
+    ps -o pid=,user=,args= -p "${left//$'\n'/,}" >&3 || true
+    # A test kills only what it proves its own: never more than the handful this run starts.
+    (($(wc -w <<<"$left") <= 20)) || { echo "refusing to kill $(wc -w <<<"$left") processes: $left" >&2 && return 1; }
+    # shellcheck disable=SC2086 # one pid per word
+    kill $left 2>/dev/null || true
+  fi
+  assert_equal "$left" ""
+}
+
 # bats runs a test's time limit countdown as a background job of the test's own shell, so a bare
 # wait there waits out the limit too: a test waits on the processes it started, by their ids.
 @test "no test file runs a bare wait, which would wait for bats' own time limit countdown" {

@@ -350,12 +350,18 @@ run_bats() {
     echo "bats: shard $shard has no file"
     return 0
   fi
-  # timeout ends 124 when its TERM stopped the file, 137 when its kill did.
+  # timeout ends 124 when its TERM stopped the file, 137 when its kill did. It runs the file in a
+  # process group of its own, so its kill reaches what the file left behind, but a signal to this
+  # run's group (team-heavy stop with no scope, a Ctrl-C) does not: each file's bash passes an
+  # INT, TERM or HUP on to its timeout as TERM, which signals that group, and ends once it has.
   # shellcheck disable=SC2016 # expanded by each file's bash
   tr '\n' '\0' <"$out/files" |
     BATS_TEST_TIMEOUT=$test_seconds xargs -0 -r -n 1 -P "$jobs" bash -c '
       name=${3##*/} verdict=ok rc=0 stopped=""
-      timeout -k 30 "$2m" "$0/tests/vendor/bats-core/bin/bats" "$3" >"$1/$name" 2>&1 || rc=$?
+      timeout -k 30 "$2m" "$0/tests/vendor/bats-core/bin/bats" "$3" >"$1/$name" 2>&1 &
+      pid=$!
+      trap "kill -TERM $pid 2>/dev/null; wait $pid; exit 143" INT TERM HUP
+      wait "$pid" || rc=$?
       if ((rc != 0)); then verdict="not ok"; touch "$1/$name.failed"; fi
       if ((rc == 124 || rc == 137)) && ((SECONDS >= $2 * 60)); then
         touch "$1/$name.stopped"
