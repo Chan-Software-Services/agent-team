@@ -176,6 +176,37 @@ usage/home-pc/time/2026-10-26.jsonl"
   done
 }
 
+# The problems of a moves table (bin/lib/repo-moves.json), one per line: a move not {from, to, on}
+# with owner/name repos and a date, a from twice in any case, and a cycle, a from whose chain of
+# moves comes back to a from after as many steps as there are moves.
+moves_problems() {
+  jq -r '(.moves // []) as $moves
+    | ($moves | map({key: (.from | strings | ascii_downcase), value: .to}) | from_entries) as $to
+    | if (.moves | type) != "array" then "moves is not a list" else empty end,
+      ($moves[] | select((keys != ["from", "on", "to"])
+        or any(.from, .to; type != "string" or (test("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$") | not))
+        or ((.on | type) != "string" or (.on | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") | not)))
+        | "not a move of owner/name repos on a date: \(tojson)"),
+      ($moves | group_by(.from | strings | ascii_downcase)[] | select(length > 1) | "\(.[0].from): moved twice"),
+      ($moves[] | .from | strings | select(reduce range($moves | length) as $_ (.; $to[ascii_downcase] // .)
+        | ascii_downcase | IN($to | keys[])) | "\(.): its moves end in a cycle")' "$1"
+}
+
+@test "the moves table is moves of owner/name repos on a date, each from once in any case, with no cycle" {
+  assert_equal "$(moves_problems "$REPO_ROOT/bin/lib/repo-moves.json")" ""
+}
+
+@test "a moves table with a malformed move, a from twice or a cycle is named" {
+  echo '{"moves": [{"from": "a/x", "to": "b/x", "on": "2026-11-14"}, {"from": "B/X", "to": "a/x", "on": "2026-11-15"},
+    {"from": "c/x", "to": "d/x", "on": "2026-11-14"}, {"from": "C/x", "to": "e/x", "on": "2026-11-14"},
+    {"from": "f/x", "to": "https://github.com/g/x", "on": "2026-11-14"}]}' >"$BATS_TEST_TMPDIR/moves.json"
+  assert_equal "$(moves_problems "$BATS_TEST_TMPDIR/moves.json")" \
+    'not a move of owner/name repos on a date: {"from":"f/x","to":"https://github.com/g/x","on":"2026-11-14"}
+c/x: moved twice
+a/x: its moves end in a cycle
+B/X: its moves end in a cycle'
+}
+
 # A drill proves the code it names: each proves path of bin/lib/drills.json is a tracked file, or a
 # directory, ending in /, that holds tracked files, so a rename never leaves a drill proving
 # nothing; and each drill's name is lower-case kebab case, its by coordinator or daniel.

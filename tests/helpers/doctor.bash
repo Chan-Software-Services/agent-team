@@ -205,8 +205,8 @@ EOF
   # Two projects, cloned as the bootstrap clones them: Conventioner gated by no-mistakes with a
   # treehouse pool, site with a git pool; no-mistakes has a gate for each checkout listed in
   # $STUB_FIXTURES/gates, and each keeps its auto memory in the team home.
-  register conventioner chanjdaniel/Conventioner no-mistakes treehouse \
-    .treehouse/Conventioner-d4c77a/1/Conventioner .treehouse/Conventioner-d4c77a/2/Conventioner
+  register conventioner Chan-Software-Services/Conventioner no-mistakes treehouse \
+    .treehouse/Conventioner-3930b8/1/Conventioner .treehouse/Conventioner-3930b8/2/Conventioner
   register site owner/site direct-pr git projects/site-slots/1
   # shellcheck disable=SC2034 # read by the tests
   CONVENTIONER=$HOME/projects/Conventioner SITE=$HOME/projects/site

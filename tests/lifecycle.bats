@@ -423,7 +423,7 @@ problems() {
   assert_equal "$(problems plan-approved)" ""
   FOLD_LIB=$BATS_TEST_TMPDIR/lib
   mkdir -p "$FOLD_LIB"
-  cp "$REPO_ROOT/bin/lib/ledger.jq" "$FOLD_LIB/"
+  cp "$REPO_ROOT/bin/lib/ledger.jq" "$REPO_ROOT/bin/lib/repo-moves.json" "$FOLD_LIB/"
   jq '.kinds["plan-approved"].phases = ["planning", "building", "merged-part", "merged"]' "$REPO_ROOT/bin/lib/lifecycle.json" \
     >"$FOLD_LIB/lifecycle.json"
   assert_equal "$(problems plan-approved)" \
