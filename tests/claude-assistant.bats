@@ -303,7 +303,12 @@ assert_nothing_written() {
 }
 
 @test "its settings deny every rule of the coordinator's, the Discord token and access files, and the coordinator's acts" {
-  local settings=$REPO_ROOT/assistant.settings.json command
+  local settings=$REPO_ROOT/assistant.settings.json command rule
+  # Each script rule has its path spelling too, as the claude rules have.
+  while IFS= read -r rule; do
+    jq -e --arg r "Bash(*/${rule#Bash(}" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
+      { echo "no path spelling of $rule" >&2; return 1; }
+  done < <(jq -r '.permissions.deny[] | select(test("^Bash\\((team-|claude-coordinator )"))' "$settings")
   assert_equal "$(jq -r --slurpfile a "$settings" '.permissions.deny - $a[0].permissions.deny | .[]' "$REPO_ROOT/coordinator.settings.json")" ""
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
@@ -324,7 +329,11 @@ assert_nothing_written() {
     "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
     "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
     "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
-    "$REPO_ROOT/bin/claude-coordinator --prompt x" \
+    "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
+    "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
+    "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
+    "$REPO_ROOT/bin/team-review-comment https://github.com/o/r/pull/5 x.md" "team-load-check --probe --role assistant" \
+    "~/agent-team/bin/team-load-check" "team-heavy run -- git push" "$REPO_ROOT/bin/team-heavy run --label x -- sh -c x" \
     "claude stop 0a1b2c3d" "claude rm 0a1b2c3d" "claude attach coordinator" "claude --bg --name x go" \
     "claude -p hi" "claude --model opus --print hi" "$HOME/.local/bin/claude stop x" \
     "sudo pacman -S jq" "op read op://x/y" "cat /proc/1/environ"; do
