@@ -79,7 +79,8 @@ launch_singleton coordinator
 launch_unlocked lease_gate "a coordinator"
 mcp=$LAUNCH_STATE/coordinator.mcp.json
 settings=$LAUNCH_STATE/coordinator.settings.json
-launch_settings "$code/coordinator.settings.json" "$code/toolkits/coordinator/.mcp.json" "$settings" "$mcp"
+launch_settings "$code/coordinator.settings.json" "$code/toolkits/coordinator/.mcp.json" \
+  "$code/toolkits/coordinator/connectors.json" "$settings" "$mcp"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
 # inherit the lock's file, so a running coordinator never holds the next launch's lock.

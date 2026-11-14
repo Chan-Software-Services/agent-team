@@ -230,6 +230,17 @@ denied() {
   assert_equal "$(denied | grep '^claude\.ai ')" 'claude.ai Claude Docs'
 }
 
+@test "a missing connectors file refuses the launch, naming it, and launches nothing" {
+  code_checkout
+  rm "$CODE_CHECKOUT/toolkits/coordinator/connectors.json"
+  run_bin -1 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "claude-coordinator: cannot read the connectors to keep, $CODE_CHECKOUT/toolkits/coordinator/connectors.json (a JSON list of names), so the connectors to deny are unknown"
+  if grep -q -- '"--bg"' "$STUB_CALLS/claude.log" 2>/dev/null; then
+    echo "claude --bg was called: $(stub_calls claude)" >&2
+    return 1
+  fi
+}
+
 @test "the Discord plugin and its channel stay on, and its servers are never denied" {
   printf '%s\n' 'plugin:discord:discord: bun run start - ✔ Connected' 'other: x - ✔ Connected' \
     >"$BATS_TEST_TMPDIR/mcp-list.txt"

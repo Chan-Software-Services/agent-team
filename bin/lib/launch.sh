@@ -14,7 +14,8 @@
 #                                as it is.
 #   launch_singleton <name>      refuses while `claude agents --json --all` lists a session named
 #                                <name> in any state but stopped, naming its id.
-#   launch_settings <template> <mcp template> <out settings> <out mcp> [@<KEY>@=<value>...]
+#   launch_settings <template> <mcp template or ""> <connectors or ""> <out settings> <out mcp>
+#                   [@<KEY>@=<value>...]
 #                                writes the session's MCP config and settings, the servers its
 #                                list names but its own denied.
 #
@@ -64,22 +65,29 @@ launch_singleton() {
   [[ -z $live ]] || die "$article $name is already live: session $live; stop it with claude stop $live first"
 }
 
-# launch_settings <template> <mcp template> <out settings> <out mcp> [@<KEY>@=<value>...]:
-# writes <out mcp>, the MCP template, and <out settings>, the settings template with
-# deniedMcpServers set, each written whole and then moved into place. In every string of both,
-# @TEAM_CODE@ names this checkout, and each extra @<KEY>@ its value.
+# launch_settings <template> <mcp template or ""> <connectors or ""> <out settings> <out mcp>
+# [@<KEY>@=<value>...]: writes <out mcp>, the MCP template (an empty one names no server), and
+# <out settings>, the settings template with deniedMcpServers set, each written whole and then
+# moved into place. In every string of both, @TEAM_CODE@ names this checkout, and each extra
+# @<KEY>@ its value.
 # The servers denied are every one that `claude mcp list`, run in the working directory, names,
 # but the MCP template's own, those of a plugin the settings enable (plugin:<plugin>:<server>),
-# and the claude.ai connectors the connectors.json beside the MCP template keeps, by exact name
-# (none without one). Each line of the list is "<name>: <what it runs> - <health>", and a name
+# and the claude.ai connectors <connectors> keeps, a JSON list of names, by exact name (none when
+# it is empty). Dies when <connectors> is named but is not such a list, so a missing file never
+# denies every connector unsaid. Each line of the list is "<name>: <what it runs> - <health>", and a name
 # holds no ": ". Dies when the list fails, and when it printed a line but named no server in its
 # format, naming its first line, since a changed format would deny nothing; an empty list, or
 # Claude Code's "No MCP servers configured." line, denies none. The list's health check starts
 # the servers, so they get no lock.
 launch_settings() {
-  local template=$1 mcp_template=$2 settings=$3 mcp=$4 code listed line first='' empty='' pair subs kept
+  local template=$1 mcp_template=$2 connectors=$3 settings=$4 mcp=$5 code listed line first='' empty='' pair subs
+  local kept='[]'
   local -a servers=() named=()
-  shift 4
+  shift 5
+  if [[ -n $connectors ]]; then
+    kept=$(jq -ce 'if type == "array" and all(type == "string") then . else empty end' "$connectors" 2>/dev/null) ||
+      die "cannot read the connectors to keep, $connectors (a JSON list of names), so the connectors to deny are unknown"
+  fi
   code=$(dirname "$(dirname "$TEAM_LIB")")
   named=(--arg @TEAM_CODE@ "$code")
   for pair; do
@@ -91,7 +99,11 @@ launch_settings() {
   local substitute='walk(if type == "string"
     then reduce ($subs | to_entries[]) as $s (.; split($s.key) | join($s.value)) else . end)'
 
-  jq --argjson subs "$subs" "$substitute" "$mcp_template" >"$mcp.$$"
+  if [[ -n $mcp_template ]]; then
+    jq --argjson subs "$subs" "$substitute" "$mcp_template" >"$mcp.$$"
+  else
+    echo '{"mcpServers": {}}' >"$mcp.$$"
+  fi
   mv -f "$mcp.$$" "$mcp"
 
   listed=$(launch_unlocked claude mcp list) || die "claude mcp list failed, so the servers to deny are unknown"
@@ -104,8 +116,6 @@ launch_settings() {
   [[ ${#servers[@]} -gt 0 || -z $first || -n $empty ]] ||
     die "claude mcp list printed lines but named no server in its format (\"<name>: <what it runs> - <health>\"), so the servers to deny are unknown; its first line: $first"
 
-  kept='[]'
-  [[ ! -e ${mcp_template%/*}/connectors.json ]] || kept=$(jq -c . "${mcp_template%/*}/connectors.json")
   jq --argjson subs "$subs" --slurpfile mcp "$mcp" --argjson connectors "$kept" \
     "$substitute"' as $settings
     | (($mcp[0].mcpServers // {} | keys) + $connectors) as $own

@@ -88,11 +88,8 @@ mv -f "$state/access.json.$$" "$state/access.json"
 
 mcp=$LAUNCH_STATE/assistant.mcp.json
 settings=$LAUNCH_STATE/assistant.settings.json
-# Its MCP template names no server and has no connectors.json beside it, so no connector is kept.
-template=$(mktemp -d)
-trap 'rm -rf "$template"' EXIT
-echo '{"mcpServers": {}}' >"$template/.mcp.json"
-launch_settings "$code/assistant.settings.json" "$template/.mcp.json" "$settings" "$mcp" \
+# No MCP template and no connectors: it runs no server of its own and keeps no connector.
+launch_settings "$code/assistant.settings.json" "" "" "$settings" "$mcp" \
   "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
