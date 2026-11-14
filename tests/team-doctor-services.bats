@@ -61,8 +61,16 @@ daemon_refuses() {
   veth_addr_gen_mode none
   run_bin -0 team-doctor
   assert_equal "$(line_of 'docker veth')" "PASS docker veth: IPv6 is off (no /proc/sys/net/ipv6), so a Docker veth gets no IPv6 link-local address"
-  # Docker Desktop's veths are inside its VM, so macOS has no such line, whatever the file says.
+  # Nor does a kernel whose new interfaces have IPv6 turned off by sysctl, whatever their mode.
   veth_addr_gen_mode 0
+  echo 1 >"$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/disable_ipv6"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: net.ipv6.conf.default.disable_ipv6 is 1, so a new Docker veth gets no IPv6 address at all"
+  # Turned back on, the mode is read again.
+  echo 0 >"$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/disable_ipv6"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode is 0, $because; fix: $fix"
+  # Docker Desktop's veths are inside its VM, so macOS has no such line, whatever the file says.
   on_macos
   tools_at macos
   run_bin -0 team-doctor
