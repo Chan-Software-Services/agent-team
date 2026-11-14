@@ -187,6 +187,43 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
 }
 
+@test "the manual hands the assistant Daniel's walkthroughs, manual steps, logins and spikes, answers its hand-offs, and leaves manual-steps.md to it" {
+  local discord rows
+  discord=$(section coordinator Discord)
+  # The Discord bullet: who Daniel's direct contact is, what goes to it, how, and the one line to Daniel.
+  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks you for, and each step of yours that needs Daniel's hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and the line \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in one line to go to \`#assistant\`." <<<"$discord"
+  # The coordinator no longer keeps manual-steps.md: it hands each new step to the assistant.
+  grep -qxF -- "- You write directly only \`tasks/\`, the projects' \`memory/<project>/\`, and the ledger through the scripts; \`manual-steps.md\` is the assistant's, so a new step only Daniel can take goes to it with \`team-assistant send walkthrough\`." "$manual"
+  assert_equal "$(grep -c 'manual-steps\.md' "$manual")" 1
+  # The two rows: a hand-off from the assistant is read, acted on by kind and answered; its answer is read.
+  rows=$(grep -E '^\| `ASSISTANT ' "$manual")
+  assert_equal "$(wc -l <<<"$rows")" 2
+  grep -qF '| `ASSISTANT H<n> <kind>`, the assistant'"'"'s hand-off | `team-assistant show H<n>` | Act by kind: a `task` is `team-open` (`When: now`) or a `tasks/queued/` file (`When: queue`)' <<<"$rows"
+  grep -qF 'a `decision` an ask'"'"'s answer with `team-answer T<n> <id> <message id> --channel <channel id>`, a hold or a relay to a worker' <<<"$rows"
+  grep -qF 'then `team-assistant answer H<n> --file <answer>` (`--task T<n>` for a task you opened from it) and send `assistant` the line `COORDINATOR ANSWER H<n>`.' <<<"$rows"
+  grep -qF '| `ASSISTANT ANSWER H<n>`, its answer to yours | `team-assistant show H<n>` |' <<<"$rows"
+  # Each kind the coordinator sends and reads is one team-assistant knows.
+  local kind help
+  help=$("$REPO_ROOT/bin/team-assistant" --help)
+  for kind in walkthrough spike task decision research; do
+    grep -qE "\\b$kind \\(" <<<"$help" || { echo "team-assistant names no kind $kind" >&2; return 1; }
+  done
+}
+
+@test "the root CLAUDE.md's team home table has a row for each records path, and its Layout lists the assistant's launcher, settings and library" {
+  local doc=$REPO_ROOT/CLAUDE.md path missing=()
+  while IFS= read -r path; do
+    path=${path%'**'}
+    grep -qF "| \`$path\` |" "$doc" || missing+=("$path")
+  done < <(grep -v -e '^#' -e '^$' "$REPO_ROOT/bin/lib/records")
+  assert_equal "${missing[*]}" ""
+  grep -qxF -- '- `bin/`: the team'"'"'s commands, `team-*`, `claude-assistant` and `claude-coordinator`.' "$doc"
+  grep -qE '^- `assistant\.settings\.json`: ' "$doc"
+  grep -qE '^    - `launch\.sh`: ' "$doc"
+  # Each file the Layout names for the assistant exists.
+  [[ -f $REPO_ROOT/assistant.settings.json && -f $REPO_ROOT/bin/lib/launch.sh && -x $REPO_ROOT/bin/claude-assistant ]]
+}
+
 @test "the builder, planner and reviewer say the statement in its four lines exactly, their project's instructions the system prompt's" {
   local role
   for role in builder planner reviewer; do
@@ -697,13 +734,15 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 `PR <url>` :: `team-next`
 `DONE ...` :: `team-next` (`--sent-back <list>` as step 5 says)
 `FAILED <why>` :: `team-log --from-message`
-`INJECTION <where> <what>` :: `team-log --from-message`'
+`INJECTION <where> <what>` :: `team-log --from-message`
+`ASSISTANT H<n> <kind>`, the assistant'"'"'s hand-off :: `team-assistant show H<n>`
+`ASSISTANT ANSWER H<n>`, its answer to yours :: `team-assistant show H<n>`'
   grep -qF "\`team-next T<n> -- '<the message>'\`, which then hands the work on or prints the one thing left for you, or \`team-log T<n> --from-message '<the message>'\` where there is no hand-off" "$manual"
   # The retro's planner reports through team-next too.
   grep -qF "On \`T<n> DONE <path>\`, run \`team-next T<n> -- '<the message>'\`" "$plugin/skills/retro/SKILL.md"
 }
 
-@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 118 lines and 27730 bytes" {
+@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 118 lines and 28988 bytes" {
   local files=("$manual" "$plugin"/skills/*/SKILL.md) found
   # A worker's report is logged only by team-next or team-log --from-message; a paused of a cause
   # no worker reports (the usage limit, the machine's load, the machine off) is the coordinator's own.
@@ -746,9 +785,10 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # what it prints at its end and its re-arm after a catch-up and on exit 75, and the sanctioned
   # actions team-catch-up and its reruns, and 118 lines and 27730 bytes once the plan step named
   # the Parallel: caps and parallel= and the build step the one line on a parallel phase,
-  # team-next --fill and its integration).
+  # team-next --fill and its integration, and 28988 once Discord named the assistant, the
+  # message table its two rows and manual-steps.md went to it, three lines tightened to fit).
   (($(wc -l <"$manual") <= 118))
-  (($(wc -c <"$manual") <= 27730))
+  (($(wc -c <"$manual") <= 28988))
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {
