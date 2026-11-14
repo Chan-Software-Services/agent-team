@@ -122,7 +122,7 @@
     },
     "handoff": {
       "writer": "team-assistant",
-      "about": "a hand-off between the assistant and the coordinator that names the task (team-assistant send or answer --task): id its H<n>, kind its kind, from its sender, state sent when it is sent and answered when its recipient answers it; the hand-off itself is the team home's assistant/handoffs/H<n>.md and its line in assistant/handoffs.jsonl",
+      "about": "a hand-off between the assistant and the coordinator that names the task (team-assistant send --task, and answer of such a hand-off while the task is open or with --task): id its H<n>, kind its kind, from its sender, state sent when it is sent and answered when its recipient answers it; the hand-off itself is the team home's assistant/handoffs/H<n>.md and its line in assistant/handoffs.jsonl",
       "required": {"id": "string", "kind": ["task", "decision", "research", "note", "walkthrough", "spike"], "from": ["assistant", "coordinator"], "state": ["sent", "answered"]}
     },
     "ran": {

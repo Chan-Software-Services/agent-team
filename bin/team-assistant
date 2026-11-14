@@ -31,7 +31,7 @@
 # assistant/handoffs.jsonl: front matter (id, kind, from, to, sent, and task, daniel_message,
 # daniel_channel and report when given), a blank line, then the body; and appends {ts, id,
 # event: "sent", kind, from, to} with those fields given to handoffs.jsonl. It commits the
-# hand-off, the log, the report and the ledger alone as "chore: handoff H<n> <kind>" and pushes
+# hand-off, the log, the report and (with --task) the ledger alone as "chore: handoff H<n> <kind>" and pushes
 # (commit_records); a commit or push that fails is one line on stderr, "H<n> is not on origin yet
 # (<why>); the next checkpoint pushes it", and the hand-off stands. It prints
 # "H<n> assistant/handoffs/H<n>.md"; the sender then sends the other session
