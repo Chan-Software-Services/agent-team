@@ -52,9 +52,11 @@
 #              cloned from https://github.com/<repo>.git to its registry path, that exact origin
 #              (treehouse names its pool from it, so a treehouse project whose origin names a
 #              moved repository of bin/lib/repo-moves.json stops the run as Daniel's pool move,
-#              its origin left as it is), the task directory and the folder of a git
-#              pool's slots inside the checkout in .git/info/exclude unless git ignores them, and
-#              `no-mistakes init` for a no-mistakes project without a gate.
+#              its origin left as it is, and an origin already on the new owner of a repository
+#              the registry still names by its old one is left for the registry edit), the task
+#              directory and the folder of a git pool's slots inside the checkout in
+#              .git/info/exclude unless git ignores them, and `no-mistakes init` for a no-mistakes
+#              project without a gate.
 #   config     The marketplaces and plugins of machine/claude/plugins.txt (claude plugin), then
 #              team-config apply when none of what it would replace differs here (a file or skill
 #              changed on this machine is Daniel's call, apply or capture), then the Discord plugin
@@ -507,7 +509,7 @@ name_gate_wrapper() {
 
 # Set up one registered project whose checkout, origin, task dir or gate line failed.
 setup_project() {
-  local project=$1 facts path repo task_dir url check verdict reason fix origin moved exclude out
+  local project=$1 facts path repo task_dir url check verdict reason fix origin moved on exclude out
   facts=$(team_project "$project")
   path=$(jq -r .path <<<"$facts") repo=$(jq -r .repo <<<"$facts") task_dir=$(jq -r .task_dir <<<"$facts")
   url=https://github.com/$repo.git
@@ -528,6 +530,10 @@ setup_project() {
   origin=$(git -C "$path" remote get-url origin 2>/dev/null) || origin=''
   if [[ -z $origin ]]; then
     act "git -C $(printf %q "$path") remote add origin $url"
+  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" ]]; then
+    # The origin already followed the move, and the registry has yet to: a set-url would put it
+    # back on the old owner.
+    say "left the origin $origin as it is: it is on $moved, where the registry's $repo moved; set $project's repo = \"$moved\" in projects.toml, as team-project --check names it"
   elif [[ $origin != "$url" ]]; then
     moved=$(moved_origin "$origin")
     # treehouse names the pool from the origin URL, so the origin moves with the pool, by hand.

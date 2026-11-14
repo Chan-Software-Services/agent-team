@@ -1476,15 +1476,15 @@ if [[ $handoff == review ]]; then
 
   sets=()
   if [[ $kind == PR ]]; then
-    # The PR's repo and each open worktree's project's, compared in canonical form (a moved repo
-    # under its new owner), so the URL and the registry may name either owner.
+    # The PR's repo and each open worktree's project's, owner/name, compared in canonical form (a
+    # moved repo under its new owner), so the URL and the registry may name either owner.
     [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+/?$ ]]
-    repo=$(canonical_url "https://github.com/${BASH_REMATCH[1]}") || exit 1
+    repo=$(canonical_repo "${BASH_REMATCH[1]}") || exit 1
     project=''
     while IFS= read -r p; do
       [[ -n $p ]] || continue
       r=$(team_project "$p" repo) || exit 1
-      r=$(canonical_url "https://github.com/$r") || exit 1
+      r=$(canonical_repo "$r") || exit 1
       [[ ${r,,} != "${repo,,}" ]] || project=$p
     done <<<"$projects"
     [[ -n $project ]] || die "$url is in no repo of $task's open worktrees"

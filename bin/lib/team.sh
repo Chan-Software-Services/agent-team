@@ -15,7 +15,7 @@
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, toolkit_refusal, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
-# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
+# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -1802,7 +1802,7 @@ own_project() {
   url=$(git -C "$code" remote get-url origin 2>/dev/null) || return 1
   url=${url%/} url=${url%.git}
   [[ $url =~ [:/]([^/:]+/[^/:]+)$ ]] || return 1
-  ledger_jq '[$origin, .repo | "https://github.com/\(.)" | canonical_url | ascii_downcase] | .[0] == .[1]' \
+  ledger_jq '[$origin, .repo | canonical_repo | ascii_downcase] | .[0] == .[1]' \
     -e --arg origin "${BASH_REMATCH[1]}" <<<"$project" >/dev/null
 }
 
@@ -1878,11 +1878,12 @@ review_app_jwt() {
 # arguments and no child's environment; not through gh, which takes a token only from its
 # environment or its login. curl reads no config of the user's (-q, its first argument), so no
 # ~/.curlrc can trace, proxy or add to the call, and it follows no redirect, so no answer can move
-# the call elsewhere: a 301 is an answer like any other. The answer's body is printed, then its HTTP status
-# on a line of its own, for the caller to hold in memory, since a token GitHub mints is in the body
-# and no file is to hold it; a call curl cannot make fails with curl's exit, its error on stderr.
-# <bearer> is refused unless it is the characters a JWT or a token is made of, so no answer GitHub
-# gives can add to curl's config: review_app_api <method> <path> <bearer> [<JSON body file>]
+# the call elsewhere: a 301 is an answer like any other. The answer's body is printed, then its
+# HTTP status on a line of its own, for the caller to hold in memory, since a token GitHub mints is
+# in the body and no file is to hold it; a call curl cannot make fails with curl's exit, its error
+# on stderr. <bearer> is refused unless it is the characters a JWT or a token is made of, so no
+# answer GitHub gives can add to curl's config:
+# review_app_api <method> <path> <bearer> [<JSON body file>]
 review_app_api() {
   local args=(-q --silent --show-error --config - --request "$1" --write-out '\n%{http_code}' --max-time 30
     --header 'Accept: application/vnd.github+json' --header 'X-GitHub-Api-Version: 2022-11-28')
@@ -1917,8 +1918,8 @@ registered_pr() {
   project=$(team_project --find repo "$repo") || exit 1
   [[ -n $project ]] || die "$repo is no registered project's repo"
   project=${project%%$'\n'*}
-  repo=$(canonical_url "https://github.com/$(team_project "$project" repo)") || exit 1
-  printf '%s\n' "$project" "${repo#https://github.com/}" "$number"
+  repo=$(canonical_repo "$(team_project "$project" repo)") || exit 1
+  printf '%s\n' "$project" "$repo" "$number"
 }
 
 # A GitHub URL with its repo at the end of its moves (bin/lib/repo-moves.json), anything after it
@@ -1927,17 +1928,30 @@ canonical_url() {
   ledger_jq '$url | canonical_url' -nr --arg url "$1"
 }
 
-# The repo a git remote URL names, at the end of its moves (bin/lib/repo-moves.json), when that
-# repo moved, else nothing: an HTTPS (https://github.com/<owner>/<name>) or SSH
+# A repo, <owner>/<name>, at the end of its moves (bin/lib/repo-moves.json), its old names matched
+# in any case, and any other repo as given, by ledger.jq's canonical_repo: canonical_repo <repo>
+canonical_repo() {
+  ledger_jq '$repo | canonical_repo' -nr --arg repo "$1"
+}
+
+# The repo a git remote URL names, at the end of its moves (bin/lib/repo-moves.json), else nothing
+# for a URL that names no GitHub repo: an HTTPS (https://github.com/<owner>/<name>) or SSH
 # (git@github.com:<owner>/<name>, ssh://git@github.com/<owner>/<name>) URL, a trailing .git or
-# slash aside, its repo compared in any case, as canonical_url compares it: moved_origin <url>
-moved_origin() {
-  local url=${1%/} repo to
+# slash aside, its repo compared in any case, as canonical_repo compares it: origin_repo <url>
+origin_repo() {
+  local url=${1%/}
   [[ $url =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9-]+/[A-Za-z0-9._-]+)$ ]] || return 0
-  repo=${BASH_REMATCH[2]%.git}
-  to=$(canonical_url "https://github.com/$repo") || return
-  to=${to#https://github.com/}
-  [[ $to == "$repo" ]] || printf '%s\n' "$to"
+  canonical_repo "${BASH_REMATCH[2]%.git}"
+}
+
+# The repo a git remote URL names, at the end of its moves, when that repo moved, else nothing, the
+# URL read as origin_repo reads it: moved_origin <url>
+moved_origin() {
+  local url=${1%/} to
+  to=$(origin_repo "$url") || return
+  [[ -n $to ]] || return 0
+  url=${url%.git}
+  [[ ${url,,} == *"/${to,,}" || ${url,,} == *":${to,,}" ]] || printf '%s\n' "$to"
 }
 
 # The fix for the origin of the treehouse project <project>: treehouse names a pool by a hash of
@@ -2069,8 +2083,7 @@ pr_part() {
     # Under its new owner while the registry still names the old (bin/lib/repo-moves.json), as
     # registered_pr gives it, so gh reads the PR where it is.
     repo=$(team_project "$project" repo) || return 1
-    repo=$(canonical_url "https://github.com/$repo") || return 1
-    repo=${repo#https://github.com/}
+    repo=$(canonical_repo "$repo") || return 1
     required_checks=$(team_project "$project" required_checks) || return 1
     bar=$(own_bar "$project") || return 1
   fi

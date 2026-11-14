@@ -97,6 +97,25 @@ PASS changes site: the primary checkout is clean"
   assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: no remote origin; fix: git -C ~/projects/Conventioner remote add origin https://github.com/Chan-Software-Services/Conventioner.git"
 }
 
+@test "a project's origin already on the new owner of the repository the registry still names by its old one gets the registry edit, never a set-url back" {
+  only_checks 200-projects.sh
+  tools_at arch
+  sed -i 's#^repo = "Chan-Software-Services/Conventioner"$#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
+  local url fix="set conventioner's repo = \"Chan-Software-Services/Conventioner\" in projects.toml, as team-project --check names it, and leave the origin as it is"
+  for url in https://github.com/Chan-Software-Services/Conventioner.git git@github.com:chan-software-services/Conventioner; do
+    git -C "$CONVENTIONER" remote set-url origin "$url"
+    run_bin -1 team-doctor
+    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, on Chan-Software-Services/Conventioner, where the registry's chanjdaniel/Conventioner moved (bin/lib/repo-moves.json); fix: $fix"
+  done
+  # The registry's own URL still passes, and another repository is set back as before.
+  git -C "$CONVENTIONER" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
+  run_bin team-doctor
+  assert_equal "$(line_of 'origin conventioner')" "PASS origin conventioner: https://github.com/chanjdaniel/Conventioner.git"
+  git -C "$CONVENTIONER" remote set-url origin https://github.com/someone/Conventioner.git
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is https://github.com/someone/Conventioner.git, not https://github.com/chanjdaniel/Conventioner.git; fix: git -C ~/projects/Conventioner remote set-url origin https://github.com/chanjdaniel/Conventioner.git"
+}
+
 @test "moved origins passes on a machine whose origins name no moved repository, saying how many it read" {
   only_checks 084-moved-origins.sh
   tools_at arch
@@ -107,6 +126,11 @@ PASS changes site: the primary checkout is clean"
 PASS moved origins: read 3 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
   # The new owner in any case is no move's from.
   git -C "$CODE_CHECKOUT" remote add origin https://github.com/chan-software-services/agent-team.git
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+  # Nor is an SSH remote of the new owner, or of the old owner's repository that never moved.
+  git -C "$CONVENTIONER" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
+  git -C "$SITE" remote set-url origin ssh://git@github.com/chanjdaniel/no-mistakes.git/
   run_bin -0 team-doctor
   assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
 }

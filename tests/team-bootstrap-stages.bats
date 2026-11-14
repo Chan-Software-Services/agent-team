@@ -149,6 +149,19 @@ intone is set up in ~/projects/intone_app"
   assert_equal "$(stage_lines projects | head -n1)" "running: git -C ~/projects/Conventioner remote set-url origin https://github.com/Chan-Software-Services/Conventioner.git"
 }
 
+@test "an origin already on the new owner of a repository the registry still names by its old one is left as it is, naming the registry edit" {
+  tools_at arch
+  register intone chanjdaniel/intone_app direct-pr git
+  local intone=$HOME/projects/intone_app url
+  for url in https://github.com/Chan-Software-Services/intone_app.git git@github.com:chan-software-services/intone_app.git; do
+    git -C "$intone" remote set-url origin "$url"
+    run_bin -0 team-bootstrap --stage projects
+    assert_equal "$(stage_lines projects)" "left the origin $url as it is: it is on Chan-Software-Services/intone_app, where the registry's chanjdaniel/intone_app moved; set intone's repo = \"Chan-Software-Services/intone_app\" in projects.toml, as team-project --check names it
+intone is set up in ~/projects/intone_app"
+    assert_equal "$(git -C "$intone" remote get-url origin)" "$url"
+  done
+}
+
 @test "a git pool's slots inside the checkout are ignored there once, so they never show as untracked in it" {
   tools_at arch
   register fork owner/fork direct-pr git projects/fork/.claude/worktrees/1 projects/fork/.claude/worktrees/2

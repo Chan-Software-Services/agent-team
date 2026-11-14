@@ -7,7 +7,9 @@
 #               treehouse project, whose pool treehouse names from it, the fix of an origin that
 #               names a moved repository (bin/lib/repo-moves.json) is the pool move
 #               (sops/portability.md, A repository that moves owner), never a bare set-url,
-#               which would send the next lease to a new, empty pool.
+#               which would send the next lease to a new, empty pool; an origin already on
+#               the new owner of a repository the registry still names by its old one is right,
+#               and the fix is the registry edit (team-project --check).
 #   task dir    git ignores the task directory, as team-open requires.
 #   gate        no-mistakes projects only: `no-mistakes status` in the checkout shows a gate.
 #   slots       treehouse pools only: every slot is in the pool treehouse names from origin,
@@ -161,7 +163,7 @@ check_leases() {
 
 # The lines of the registered project <name> (see the header).
 check_project() {
-  local project=$1 facts path shown repo url top common origin task_dir delivery provider return_cmd exclude out rc pool slot
+  local project=$1 facts path shown repo url top common origin task_dir delivery provider return_cmd exclude out rc pool slot moved on
   local wrong=() registered=() unpushed=() found=() fields=() branch count ticket_branches ledger
   project_registry "$project"
   facts=$registry_reply
@@ -193,6 +195,11 @@ check_project() {
     report "origin $project" PASS "$url"
   elif [[ -z $origin ]]; then
     report "origin $project" FAIL "no remote origin" "git -C $shown remote add origin $url"
+  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" ]]; then
+    # The origin already followed the move, and the registry has yet to: a set-url would put it
+    # back on the old owner.
+    report "origin $project" FAIL "origin is $origin, on $moved, where the registry's $repo moved (bin/lib/repo-moves.json)" \
+      "set $project's repo = \"$moved\" in projects.toml, as team-project --check names it, and leave the origin as it is"
   elif [[ $provider == treehouse && -n $(moved_origin "$origin") ]]; then
     report "origin $project" FAIL "origin is $origin, not $url" "$(pool_move_fix "$project")"
   else

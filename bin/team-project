@@ -424,7 +424,9 @@ def check(registry):
 
 
 # The registry, parsed and checked; any problem refuses with every problem listed.
-def load(path):
+# The registry at path, checked; with moved, a repo that is a move's from is one more problem,
+# listed after the others, which only --check refuses.
+def load(path, moved=False):
     try:
         with open(path, "rb") as registry_file:
             registry = tomllib.load(registry_file)
@@ -433,6 +435,8 @@ def load(path):
     except tomllib.TOMLDecodeError as error:
         fail(f"{path}: not valid TOML: {error}")
     problems = check(registry)
+    if moved:
+        problems.extend(moved_problems(registry))
     if problems:
         print("\n".join(f"{NAME}: {path}: {problem}" for problem in problems), file=sys.stderr)
         fail(f"{path}: {len(problems)} problem{'s' if len(problems) > 1 else ''}")
@@ -501,6 +505,17 @@ def canonical_repo(repo, table):
     return repo
 
 
+# Each project whose repo is a move's from, named with the repo to set.
+def moved_problems(registry):
+    table = moves()
+    return [
+        f"{name}: repo {project['repo']} moved to {canonical_repo(project['repo'], table)} (bin/lib/repo-moves.json):"
+        f' set repo = "{canonical_repo(project["repo"], table)}"'
+        for name, project in registry.items()
+        if isinstance(project, dict) and isinstance(project.get("repo"), str) and project["repo"].casefold() in table
+    ]
+
+
 # The names of the projects whose dotted key is value, or holds it when a list.
 def find(registry, home, dotted, value):
     if dotted == "repo":
@@ -538,18 +553,8 @@ def main(args):
         fail(USAGE, 2)
     home = os.environ.get("HOME") or fail("HOME is not set")
     path = os.path.join(team_home(), "projects.toml")
-    registry = load(path)
+    registry = load(path, moved=args[0] == "--check")
     if args[0] == "--check":
-        table = moves()
-        moved = [
-            f"{name}: repo {project['repo']} moved to {canonical_repo(project['repo'], table)} (bin/lib/repo-moves.json):"
-            f' set repo = "{canonical_repo(project["repo"], table)}"'
-            for name, project in registry.items()
-            if project["repo"].casefold() in table
-        ]
-        if moved:
-            print("\n".join(f"{NAME}: {path}: {line}" for line in moved), file=sys.stderr)
-            fail(f"{path}: {len(moved)} problem{'s' if len(moved) > 1 else ''}")
         print(f"{path}: {len(registry)} projects ok")
     elif args[0] == "--list":
         print("\n".join(registry))

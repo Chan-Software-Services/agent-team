@@ -22,9 +22,9 @@
 #   prefix, so a review logged on a short head stands for no sha, and is named as such;
 #   a sha that is not the PR's head, read with gh pr view.
 # Then it signs a JWT with the key (review_app_jwt: RS256 by openssl, issued 60 seconds back,
-# expiring 9 minutes on), reads the App's installation on the repo, the registry's at the end of
-# its moves (registered_pr), so a moved repo's new owner (GET /repos/{repo}/installation), mints an
-# installation token for that one repository with checks: write alone (POST
+# expiring 9 minutes on), reads the App's installation on the repo registered_pr gives, the
+# registry's at the end of its moves, so a moved repo's new owner (GET /repos/{repo}/installation),
+# mints an installation token for that one repository with checks: write alone (POST
 # /app/installations/{id}/access_tokens), posts the check run (POST /repos/{repo}/check-runs: name
 # agent-review, head_sha the sha, status completed, the conclusion, completed_at now, and the
 # summary as its output's title and summary) and revokes the token (DELETE /installation/token).

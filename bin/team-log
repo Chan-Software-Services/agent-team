@@ -716,19 +716,17 @@ problem=$(jq -r '.problems // empty | join("; ")' <<<"$parsed")
 
 # A PR's head, and its head branch against the task's in the PR's project: the pr event's head, and
 # a branch-renamed when they differ (the gate moved the branch). The URL's repo and each project's
-# are compared under their new owners (canonical_url), and gh reads the PR under the new one.
+# are compared under their new owners (canonical_repo), and gh reads the PR under the new one.
 # github_pr <url>: sets pr_head, and renamed to "project=<p> branch=<b>" or ''.
 github_pr() {
   local url=$1 repo number project='' p r view branch current names=()
   [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+)/?$ ]]
   repo=${BASH_REMATCH[1]} number=${BASH_REMATCH[2]}
-  repo=$(canonical_url "https://github.com/$repo") || exit 1
-  repo=${repo#https://github.com/}
+  repo=$(canonical_repo "$repo") || exit 1
   while IFS= read -r p; do
     r=$(team_project "$p" repo) || exit 1
     names+=("$p ($r)")
-    r=$(canonical_url "https://github.com/$r") || exit 1
-    r=${r#https://github.com/}
+    r=$(canonical_repo "$r") || exit 1
     [[ ${r,,} != "${repo,,}" ]] || project=$p
   done < <(jq -r '.[] | select(.event == "opened" or .event == "worktree-added") | .project | strings' <<<"$TASK_EVENTS" | awk '!seen[$0]++')
   if [[ -z $project ]]; then

@@ -166,6 +166,20 @@ team-project: $TEAM_HOME/projects.toml: 2 problems"
   assert_contains "$output" "2 projects ok"
 }
 
+@test "--check lists a moved repo with the registry's other problems, in one run" {
+  sed -i 's#^repo = "owner/alpha"#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
+  printf '%s\n' '[beta.bogus]' 'x = 1' >>"$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-project: $TEAM_HOME/projects.toml: beta: unknown key 'bogus'
+team-project: $TEAM_HOME/projects.toml: alpha: repo chanjdaniel/Conventioner moved to Chan-Software-Services/Conventioner (bin/lib/repo-moves.json): set repo = \"Chan-Software-Services/Conventioner\"
+team-project: $TEAM_HOME/projects.toml: 2 problems"
+  # Every other command refuses the other problem, and never names the moved repo.
+  run_bin -1 --separate-stderr team-project alpha repo
+  assert_equal "$stderr" "team-project: $TEAM_HOME/projects.toml: beta: unknown key 'bogus'
+team-project: $TEAM_HOME/projects.toml: 1 problem"
+}
+
 @test "a malformed command line is a usage error" {
   run_bin -2 team-project
   assert_contains "$output" "usage: team-project"

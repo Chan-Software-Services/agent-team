@@ -868,6 +868,53 @@ EOF
   refute_grep -e "$first" "$output"
 }
 
+@test "a brief finds the task's PR logged under either owner of a moved repo, with the registry under either, and names it under the new one" {
+  local old=https://github.com/chanjdaniel/agent-team new=https://github.com/Chan-Software-Services/agent-team
+  local registry logged given n=0
+  for registry in old new; do
+    for logged in "$old" "$new"; do
+      for given in derived "$old/pull/9" "$new/pull/9/"; do
+        n=$((n + 1))
+        : >"$TEAM_HOME/ledger.jsonl"
+        rm -rf "$TEAM_HOME/tasks/T14" "$HOME/agent-team/.claude/worktrees/2" "$BATS_TEST_TMPDIR/origin"
+        sed -i 's#^repo = ".*/agent-team"$#repo = "Chan-Software-Services/agent-team"#' "$TEAM_HOME/projects.toml"
+        [[ $registry == new ]] || sed -i 's#^repo = "Chan-Software-Services/agent-team"$#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
+        open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
+        reviewed_branch T14 main
+        event T14 pr "$(jq -cn --arg h "$reviewed" --arg url "$logged/pull/9" '{url: $url, head: $h}')"
+        on_github "$new/pull/9" "$head"
+        local set=() named=$new/pull/9
+        [[ $given == derived ]] || set=(--set "pr=$given") named=$new/pull/9${given##*/pull/9}
+        run_bin -0 --separate-stderr team-brief T14 rereview --name "r-$n" "${set[@]}"
+        # The ledger's head is found for the PR, so GitHub's newer one is said on stderr.
+        assert_equal "$stderr" "team-brief: $named is at $head on GitHub, not at the ledger's $reviewed; the brief names GitHub's"
+        grep -qxF "PR: $named against \`main\`, reviewed at \`$reviewed\`, now at head \`$head\`." "$output"
+        refute_grep -F chanjdaniel/agent-team/pull "$output"
+      done
+    done
+  done
+}
+
+@test "a gated project's round brief finds its PR logged under either owner of a moved repo, with the registry under either, not none" {
+  local old=https://github.com/chanjdaniel/Conventioner new=https://github.com/Chan-Software-Services/Conventioner
+  local registry logged n=0
+  for registry in old new; do
+    for logged in "$old" "$new"; do
+      n=$((n + 1))
+      : >"$TEAM_HOME/ledger.jsonl"
+      rm -rf "$TEAM_HOME/tasks/T12" "$HOME/.treehouse" "$BATS_TEST_TMPDIR/origin"
+      sed -i 's#^repo = ".*/Conventioner"$#repo = "Chan-Software-Services/Conventioner"#' "$TEAM_HOME/projects.toml"
+      [[ $registry == new ]] || sed -i 's#^repo = "Chan-Software-Services/Conventioner"$#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
+      open_t12
+      reviewed_branch T12 dev
+      event T12 pr "$(jq -cn --arg h "$reviewed" --arg url "$logged/pull/9" '{url: $url, head: $h}')"
+      run_bin -0 --separate-stderr team-brief T12 builder-round --name "round-$n" --set findings_file=.scratch/task/review.md --set goal=g
+      assert_contains "$(<"$output")" "PR: $new/pull/9, against"
+      refute_grep -F chanjdaniel/Conventioner/pull "$output"
+    done
+  done
+}
+
 @test "a direct-PR task's only PR merged leaves a template that needs a PR unfilled, naming --set pr" {
   open_task T14 home feature feat/T14-x agent-team/.claude/worktrees/1 "the work"
   local url=https://github.com/Chan-Software-Services/agent-team/pull/9
