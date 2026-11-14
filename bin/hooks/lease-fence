@@ -26,7 +26,8 @@
 #     team-current is blocked as a Discord post is, saying another machine runs the team, so an
 #     assistant left on a machine that lost the lease pushes, hands off and keeps no list; while
 #     the team holds offline, one that runs git push, gh or gh-axi is blocked with its own hold
-#     ("GitHub is unreachable (since 13:05); the team is holding: keep talking with Daniel, ...").
+#     (offline_hold assistant: "GitHub is unreachable (since 13:05); the team is holding: keep
+#     talking with Daniel, ..."), the text its session-start digest gives.
 #     Its Discord posts, and its team-post, team-ask and team-inbox, are blocked as every role's,
 #     saying the assistant on the holder answers #assistant.
 # Reads, in ~/.local/state/agent-team/: fenced (team-lease's), offline (team-timers run's,
@@ -128,8 +129,8 @@ case $tool in
       if [[ $command =~ $push || $command =~ $assistant_write ]]; then
         lease_block "pushes, hands off and keeps no list; another machine runs the team now, and the assistant there takes Daniel's messages."
       fi
-      if [[ $command =~ $push || $command =~ $gh ]] && since=$(offline_since); then
-        block "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
+      if [[ $command =~ $push || $command =~ $gh ]] && hold=$(offline_hold assistant); then
+        block "$hold"
       fi
     elif why=$(fence_reason); then
       [[ ! $command =~ $push ]] ||

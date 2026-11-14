@@ -86,7 +86,8 @@ $(catch_up_line)"
   handoff H3 walkthrough coordinator assistant
   DISCORD_STATE_DIR=$HOME/.claude/channels/discord start
   assert_equal "$stderr" ""
-  assert_equal "$output" "GitHub unreachable since 2026-11-14T09:00:00Z; the team is holding: keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held.
+  # The hold is offline_hold's assistant text, the one the lease-fence hook blocks with.
+  assert_equal "$output" "GitHub is unreachable (since $(date -d 2026-11-14T09:00:00Z +%H:%M)); the team is holding: keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held.
 WARNING: DISCORD_STATE_DIR is $HOME/.claude/channels/discord, not $HOME/.claude/channels/discord-assistant: the Discord plugin may be reading the coordinator's channels: post nothing, and tell Daniel in #coordinator through the coordinator (a note hand-off).
 Your stow note, from your last stow ($TEAM_HOME/assistant/handoff.md): delete it once its work is done.
 # Stow note

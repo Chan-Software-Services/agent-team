@@ -2,8 +2,9 @@
 # SessionStart hook for the assistant: on start, resume, clear or compaction, print what it left
 # and what to do first, so a restarted or compacted assistant picks its conversations up again.
 # Claude Code adds what it prints to the session's context. In order:
-#   - while the team holds (the offline flag, as session-digest reads it), one line: keep
-#     talking with Daniel and touch no GitHub;
+#   - while the team holds offline, one line (offline_hold assistant in bin/lib/team.sh, the text
+#     the lease-fence hook blocks the assistant's GitHub calls with): keep talking with Daniel and
+#     touch no GitHub;
 #   - when DISCORD_STATE_DIR (the settings' env) is not ~/.claude/channels/discord-assistant, a
 #     WARNING line: the Discord plugin may be reading the coordinator's channels, so post nothing;
 #   - the team home's assistant/handoff.md, its stow note, when there is one, under a line saying
@@ -17,7 +18,7 @@
 #   - on any start but compact (read from the event's JSON on stdin, and when it cannot be read),
 #     one ListAgents call: a row named assistant but this session is a twin to tell Daniel of; a
 #     compaction keeps the process, so it does not.
-# Exit 0, but non-zero when a command of its own fails (the hold flag's or the stow note's read)
+# Exit 0, but non-zero when a command of its own fails (the stow note's read)
 # and when the library refuses, with no team home. Wired only in assistant.settings.json.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
@@ -29,13 +30,8 @@ event=''
 [[ -t 0 ]] || event=$(cat)
 start_source=$(jq -r '.source | strings' 2>/dev/null <<<"$event") || start_source=''
 
-# The hold, one line, while the offline flag is there.
-flag=$HOME/.local/state/agent-team/offline
-if [[ -e $flag ]]; then
-  since=$(jq -er '.since | strings' "$flag" 2>/dev/null) || since=$(date -u -r "$flag" +%FT%TZ)
-  echo "GitHub unreachable since $since; the team is holding: keep talking with Daniel, and touch" \
-    "no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
-fi
+# The hold, one line, while the team holds offline: the text the lease-fence hook blocks with.
+! hold=$(offline_hold assistant) || echo "$hold"
 
 # The plugin's state directory: the assistant's own, or a loud line.
 own=$HOME/.claude/channels/discord-assistant

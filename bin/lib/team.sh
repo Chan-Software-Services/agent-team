@@ -858,12 +858,16 @@ offline_since() {
 
 # Print the hold while the team holds offline (offline_since): "GitHub is unreachable (since
 # 13:05); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and
-# wait.", or fail when it does not hold. The lease-fence hook and team-thread wait give it:
-# offline_hold
+# wait.", or with assistant its own tail, "...: keep talking with Daniel, and touch no GitHub (no
+# gh, gh-axi or git push) until your Bash calls stop being held."; fail when it does not hold.
+# The lease-fence hook, team-thread wait, team-ci-wait and the assistant's digest give it:
+# offline_hold [assistant]
 offline_hold() {
-  local since
+  local since what="commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
   since=$(offline_since) || return 1
-  echo "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
+  [[ ${1:-} != assistant ]] ||
+    what="keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
+  echo "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: $what"
 }
 
 # Print why this machine must not <does> ("posts nothing to Discord; ..."), or fail when it may:
