@@ -100,7 +100,7 @@ assert_not_launched() {
 
 @test "--help prints the header" {
   run_bin -0 claude-coordinator --help
-  assert_contains "$output" "Start the one session that owns Discord: the team's coordinator."
+  assert_contains "$output" "Start the one session that owns #coordinator and the tasks' threads: the team's coordinator."
   assert_contains "$output" "Usage: claude-coordinator [--prompt <text>] [working-directory]"
   assert_equal "$(stub_calls claude)" ""
 }
