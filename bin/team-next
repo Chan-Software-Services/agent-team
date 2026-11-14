@@ -148,7 +148,8 @@
 # pr (url and head) or done (session and report) is logged already and a reviewer's launch follows
 # it with no review since ("already handed off"); and for a DONE, when its sha is not the HEAD of
 # the sending builder's worktree. The worktree is the sending builder's, or for a PR the task's
-# worktree in the project whose repo holds the PR. With no review logged yet, the brief is
+# worktree in the project whose repo holds the PR (either owner of a moved repo, the URL's and the
+# registry's, bin/lib/repo-moves.json). With no review logged yet, the brief is
 # team-brief T<n> reviewer --name review with --checks as its checks (refused without one), the
 # PR's url and head (a PR) or the reported head (review-ready; no pr); after one, it is
 # rereview, or verify when the latest review sent findings back and either counted
@@ -1475,12 +1476,15 @@ if [[ $handoff == review ]]; then
 
   sets=()
   if [[ $kind == PR ]]; then
+    # The PR's repo and each open worktree's project's, compared in canonical form (a moved repo
+    # under its new owner), so the URL and the registry may name either owner.
     [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+/?$ ]]
-    repo=${BASH_REMATCH[1]}
+    repo=$(canonical_url "https://github.com/${BASH_REMATCH[1]}") || exit 1
     project=''
     while IFS= read -r p; do
       [[ -n $p ]] || continue
       r=$(team_project "$p" repo) || exit 1
+      r=$(canonical_url "https://github.com/$r") || exit 1
       [[ ${r,,} != "${repo,,}" ]] || project=$p
     done <<<"$projects"
     [[ -n $project ]] || die "$url is in no repo of $task's open worktrees"

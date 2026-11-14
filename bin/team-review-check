@@ -14,29 +14,31 @@
 #   its key, ~/.config/agent-team/review-app.pem, missing, not a file or not mode 600
 #   (team-secrets restores it, at Daniel's terminal);
 #   a repo no registered project has (registered_pr in bin/lib/team.sh);
-#   a PR no task's pr event names (a trailing slash and the case aside; the latest such event's
-#   task is the PR's);
+#   a PR no task's pr event names (a trailing slash, the case and a moved repo's owner aside, by
+#   canonical_url in bin/lib/ledger.jq; the latest such event's task is the PR's);
 #   a ledger whose latest review of the sha, or, for a head team-catch-up made, of the head
 #   exact_reviewed_head in bin/lib/ledger.jq leads back to, is not the verdict asked for, pass for
 #   success and findings for failure, or no such review; each head matched in full, never by a
 #   prefix, so a review logged on a short head stands for no sha, and is named as such;
 #   a sha that is not the PR's head, read with gh pr view.
 # Then it signs a JWT with the key (review_app_jwt: RS256 by openssl, issued 60 seconds back,
-# expiring 9 minutes on), reads the App's installation on the repo (GET
-# /repos/{repo}/installation), mints an installation token for that one repository with checks:
-# write alone (POST /app/installations/{id}/access_tokens), posts the check run (POST
-# /repos/{repo}/check-runs: name agent-review, head_sha the sha, status completed, the conclusion,
-# completed_at now, and the summary as its output's title and summary) and revokes the token
-# (DELETE /installation/token). The JWT and the token go to curl only through --config - on stdin
-# (review_app_api, which reads no ~/.curlrc), never in an argument or a child's environment, and
-# GitHub's answers are held in this script's memory alone, never in a file. Prints the check run's
-# id.
+# expiring 9 minutes on), reads the App's installation on the repo, the registry's at the end of
+# its moves (registered_pr), so a moved repo's new owner (GET /repos/{repo}/installation), mints an
+# installation token for that one repository with checks: write alone (POST
+# /app/installations/{id}/access_tokens), posts the check run (POST /repos/{repo}/check-runs: name
+# agent-review, head_sha the sha, status completed, the conclusion, completed_at now, and the
+# summary as its output's title and summary) and revokes the token (DELETE /installation/token).
+# The JWT and the token go to curl only through --config - on stdin (review_app_api, which reads
+# no ~/.curlrc), never in an argument or a child's environment, and GitHub's answers are held in
+# this script's memory alone, never in a file. Prints the check run's id.
 # A call GitHub refuses, or curl cannot make, ends it, exit 1, naming the call and why, and that
 # nothing was posted, but for a post curl could not finish, which may have reached GitHub and is
-# said to be unknown; once the token is minted it is revoked on every exit, a failed post included,
-# and a revoke that fails is said on stderr (the token expires on its own within the hour), exit
-# 1, after the check run's id when the post was made, so a caller that reads an id on stdout knows
-# the check was posted. A token GitHub answers that is not of a token's characters is never sent.
+# said to be unknown; a redirect is never followed, so a 301 is GitHub's answer, refused as any
+# code but the one expected is. Once the token is minted it is revoked on every exit, a failed post
+# included, and a revoke that fails is said on stderr (the token expires on its own within the
+# hour), exit 1, after the check run's id when the post was made, so a caller that reads an id on
+# stdout knows the check was posted. A token GitHub answers that is not of a token's characters is
+# never sent.
 # Exit 2, posting nothing: any other command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -68,11 +70,13 @@ mode=$(stat -L -c %a -- "$key")
 pr=$(registered_pr "$url")
 { read -r _ && read -r repo && read -r number; } <<<"$pr"
 
-# The PR's task: the latest pr event naming the URL.
+# The PR's task: the latest pr event naming the URL, both in canonical form (a moved repo under
+# its new owner), so a PR logged under either owner is found by either's URL.
 task=''
 if [[ -s $TEAM_HOME/ledger.jsonl ]]; then
-  task=$(jq -rnR --arg url "${url,,}" '[inputs | fromjson? | select(type == "object" and .event == "pr"
-    and (.url | strings | rtrimstr("/") | ascii_downcase) == $url) | .task] | last // empty' "$TEAM_HOME/ledger.jsonl")
+  task=$(ledger_jq '($url | canonical_url | ascii_downcase) as $url | ledger_events
+    | [.[] | select(.event == "pr" and (.url | strings | rtrimstr("/") | ascii_downcase) == $url) | .task]
+    | last // empty' -rnR --arg url "$url" "$TEAM_HOME/ledger.jsonl")
 fi
 [[ -n $task ]] || die "no task's pr event names $url, so no review of it is logged; nothing posted"
 events=$(task_event_array "$task")
