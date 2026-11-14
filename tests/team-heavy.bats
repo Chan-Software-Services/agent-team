@@ -338,7 +338,7 @@ costs() {
   real_ps=$(command -v ps)
   stub_command ps
   stub_script ps <<SH
-if [[ \$* == "-A -o pgid= -o rss=" && ! -e "$first_look" ]]; then
+if [[ \$1 == -A && \$* == *rss=* && ! -e "$first_look" ]]; then
   touch "$first_look"
   exit 0
 fi
@@ -348,6 +348,24 @@ SH
   [[ -e $first_look ]]
   assert_equal "$stderr" ""
   jq -e '.kind == "heavy:tests-run" and .peak_bytes > 0' "$COSTS"
+}
+
+@test "with no scope a run's sample counts its whole process tree, a descendant in a process group of its own included" {
+  as_macos
+  # GNU timeout moves itself and its command into a group of their own, as tests/run's per-file
+  # limit does; the hog there holds about 100 MB, its group's leader a few MB. Each look reads
+  # nothing until the hog holds its memory, so the first that reads any sees it.
+  local real_ps ready=$BATS_TEST_TMPDIR/ready hog=$BATS_TEST_TMPDIR/hog.sh
+  real_ps=$(command -v ps)
+  stub_command ps
+  stub_script ps <<SH
+if [[ \$1 == -A && \$* == *rss=* && ! -e "$ready" ]]; then exit 0; fi
+exec "$real_ps" "\$@"
+SH
+  printf '%s\n' 'x=$(head -c 100000000 /dev/zero | tr "\0" a)' ': >"$1"' 'sleep 2' >"$hog"
+  run_bin -0 --separate-stderr team-heavy run --kind tests-run -- bash -c 'timeout 60 bash "$0" "$1"; true' "$hog" "$ready"
+  assert_equal "$stderr" ""
+  jq -e '.kind == "heavy:tests-run" and .peak_bytes > 100000000' "$COSTS"
 }
 
 @test "a cost sample that cannot be written is a line on stderr and the run's status stands" {
