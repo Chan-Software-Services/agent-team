@@ -95,20 +95,18 @@ jq -e --arg id "$id" 'any(.[]; .event == "asked" and .id == $id)' <<<"$events" >
 
 # From #assistant, never a plan approval or a script's yes, which team-merge and team-run-approved
 # read only from the task's thread and #coordinator.
-place=''
+place='' does="logs no answer; the coordinator on the holder takes Daniel's answers."
 if [[ -n $channel ]]; then
   never="a plan approval and a script's yes count only in the task's thread or #coordinator, never #assistant"
   [[ $id != plan ]] || die "$task's plan is a plan approval: $never"
   ! jq -e --arg id "$id" 'map(select(.event == "asked" and .id == $id)) | last | has("script")' <<<"$events" >/dev/null ||
     die "$task's $id asks for a script's yes: $never"
-  does="logs no answer; the coordinator on the holder takes Daniel's answers."
   if why=$(lease_refusal "$does"); then die "$why"; fi
 fi
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 if [[ -n $channel ]]; then place=$(assistant_place "$channel" 2>"$scratch/error") || die "$(<"$scratch/error")"; fi
-word=$(answer_message "$task" "$id" "$message" "$events" \
-  "logs no answer; the coordinator on the holder takes Daniel's answers." "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
+word=$(answer_message "$task" "$id" "$message" "$events" "$does" "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
 answer=$(jq -r '.message.content | strings' <<<"$word")
 [[ $answer =~ [^[:space:]] ]] || die "Discord message $message has no text to log as the answer"
 # By number, the reply must name the number, and what is printed is the text of its parts that do.

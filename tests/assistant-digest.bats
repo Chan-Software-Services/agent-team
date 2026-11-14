@@ -2,7 +2,7 @@
 # hooks/assistant-digest: the assistant's SessionStart hook prints, in order, the offline hold, a
 # warning when its Discord state is not its own, its stow note, the hand-offs open to and from it,
 # the catch-up step on #assistant and its threads, and on any start but a compaction the
-# ListAgents call for an assistant twin. It always exits 0.
+# ListAgents call for an assistant twin. It exits 0 but when a command of its own fails.
 
 load helpers/common
 
@@ -34,8 +34,9 @@ handoff() {
       >>"$TEAM_HOME/assistant/handoffs.jsonl"
 }
 
+# The catch-up step, naming the thread cache's ids <known> (none by default): catch_up_line [<known>]
 catch_up_line() {
-  echo "Catch up on Discord before anything else: messages sent while no assistant listened are never delivered to you, only readable. Read #assistant (1570965039278596199) and each thread of yours still open (your stow note's, and the ids in ~/.local/state/agent-team/assistant-threads) back to your own last message there with the Discord plugin's fetch_messages, which reads at most 100 messages, and answer first what Daniel asked that has no answer."
+  echo "Catch up on Discord before anything else: messages sent while no assistant listened are never delivered to you, only readable. Read #assistant (1570965039278596199) and each thread of yours still open (your stow note's, and of the threads found so far: ${1:-none}) back to your own last message there with the Discord plugin's fetch_messages, which reads at most 100 messages, and answer first what Daniel asked that has no answer."
 }
 
 twin_line() {
@@ -53,6 +54,13 @@ twin_line() {
   assert_equal "$output" "No hand-off is open to or from you (team-assistant list --open).
 $(catch_up_line)
 $(twin_line)"
+}
+
+@test "the catch-up step names the thread cache's ids itself, since the assistant's Bash may not read the file" {
+  mkdir -p "$HOME/.local/state/agent-team"
+  printf '%s\n' 1571000000000000101 1571000000000000202 >"$HOME/.local/state/agent-team/assistant-threads"
+  start
+  assert_equal "${lines[1]}" "$(catch_up_line "1571000000000000101, 1571000000000000202")"
 }
 
 @test "a compaction, which keeps the process, gets no twin step; a resume and a clear do" {

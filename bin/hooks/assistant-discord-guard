@@ -5,10 +5,12 @@
 # Usage: assistant-discord-guard   (the hook's input on stdin)
 #   reply, react, edit_message and download_attachment (their chat_id) and fetch_messages (its
 #     channel) pass only in ASSISTANT_CHANNEL (bin/lib/team.sh) or a thread whose parent_id is
-#     it, so the Discord plugin's own outbound gate is not the only wall. A thread is read once
-#     with discord_api GET channels/<id> and then kept in ~/.local/state/agent-team/assistant-threads,
-#     one known-good id per line, which team-assistant thread writes too; a channel that is
-#     neither is not kept, and is read again on its next call.
+#     it (assistant_thread_of in bin/lib/team.sh), so the Discord plugin's own outbound gate is
+#     not the only wall. A thread is read once with discord_api GET channels/<id> and then kept
+#     in the thread cache, ~/.local/state/agent-team/assistant-threads (ASSISTANT_THREADS), which
+#     team-assistant thread writes too; a channel that is neither is not kept, and is read again
+#     on its next call. The cache is trusted only because the assistant cannot write it: its
+#     settings deny the Edit tool and any Bash call naming the file.
 #   reply's files pass only when each, an absolute path, resolves (symlinks followed) to a file
 #     under ~/.local/state/agent-team/assistant-files/ or the team home's assistant/, so a link
 #     there into ~/.claude/channels/ or the records attaches nothing.
@@ -38,7 +40,6 @@ block() {
 }
 
 state=$HOME/.local/state/agent-team
-threads=$state/assistant-threads
 
 input=$(cat)
 tool=$(jq -er 'if type == "object" then .tool_name | strings else empty end' <<<"$input" 2>/dev/null) ||
@@ -59,7 +60,7 @@ chat=$(jq -er --arg f "$field" '.tool_input | objects | .[$f] | strings' <<<"$in
 # A chat id is a snowflake, checked before it goes into a URL.
 [[ $chat =~ ^[1-9][0-9]{0,19}$ ]] ||
   block "'$chat' is not a Discord channel id; the assistant reaches only #assistant ($ASSISTANT_CHANNEL) and its threads."
-if [[ $chat != "$ASSISTANT_CHANNEL" ]] && ! grep -qxF -- "$chat" "$threads" 2>/dev/null; then
+if [[ $chat != "$ASSISTANT_CHANNEL" ]] && ! grep -qxF -- "$chat" "$ASSISTANT_THREADS" 2>/dev/null; then
   # Discord's reason, kept by hand: an EXIT trap here would take the place of team_guard's.
   err=$(mktemp) rc=0
   channel=$(discord_api "channels/$chat" 2>"$err") || rc=$?
@@ -71,9 +72,8 @@ if [[ $chat != "$ASSISTANT_CHANNEL" ]] && ! grep -qxF -- "$chat" "$threads" 2>/d
     parent=unreadable
   thread=$(jq -r 'if type == "object" and ([.type] | inside([10, 11, 12])) then "yes" else "no" end' <<<"$channel" 2>/dev/null) ||
     thread=no
-  if [[ $thread == yes && $parent == "$ASSISTANT_CHANNEL" ]]; then
-    mkdir -p "$state"
-    echo "$chat" >>"$threads"
+  if assistant_thread_of "$channel"; then
+    assistant_thread_keep "$chat"
   elif [[ $thread == yes ]]; then
     block "channel $chat is a thread of $parent, not of #assistant ($ASSISTANT_CHANNEL); the assistant reaches only #assistant and its threads."
   else

@@ -310,7 +310,8 @@ assert_nothing_written() {
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
     "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels/discord && cat .env" \
     "cd ~/.claude/channels/discord-assistant && cat .env" "cd ~/.claude/channels && cat discord/.env" \
-    "pushd ~/.claude/channels/discord" \
+    "pushd ~/.claude/channels/discord" "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
+    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
     "git push" "git push origin main" "git push -u origin x" "git -C ~/agent-team-records push" \
     "git -C ~/agent-team-records push origin main" "git commit -m x" "git -C ~/agent-team-records commit -m x" \
     "gh pr create --fill" "gh pr merge 5" "gh pr comment 5 --body x" "gh pr review 5 --approve" "gh pr ready 5" \
@@ -345,7 +346,7 @@ assert_nothing_written() {
   done
 }
 
-@test "its settings deny the Read and Edit tools the Discord token and access files, and leave the inbox" {
+@test "its settings deny the Read and Edit tools the Discord token and access files, the Edit tool the thread cache, and leave the inbox" {
   local settings=$REPO_ROOT/assistant.settings.json rule tool
   for tool in Read Edit; do
     for rule in "$tool(~/.claude/channels/discord/**)" "$tool(~/.claude/channels/discord-assistant/.env)" \
@@ -354,6 +355,8 @@ assert_nothing_written() {
         { echo "no deny rule $rule" >&2; return 1; }
     done
   done
+  # The thread cache the Discord guard trusts, which only the scripts and hooks write.
+  jq -e '.permissions.deny | index("Edit(~/.local/state/agent-team/assistant-threads)") != null' "$settings" >/dev/null
   assert_equal "$(jq -c '[.permissions.deny[] | select(test("discord-assistant/(inbox|\\*)"))]' "$settings")" '[]'
 }
 

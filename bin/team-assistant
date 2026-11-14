@@ -58,7 +58,7 @@
 # channels/<ASSISTANT_CHANNEL>/threads, type 11), or from Daniel's message <message id> there
 # (POST channels/<ASSISTANT_CHANNEL>/messages/<id>/threads), named <title> cut at 100
 # characters, archived after 7 days without a message (auto_archive_duration 10080); adds its id
-# to ~/.local/state/agent-team/assistant-threads and prints it.
+# to the thread cache, ~/.local/state/agent-team/assistant-threads, and prints it.
 # Exit codes: 0 done, 1 refused, 2 a malformed command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -67,7 +67,6 @@ USAGE="usage: team-assistant send <kind> --file <body> [--task T<n>] [--daniel <
 rel_dir=assistant/handoffs
 log_rel=assistant/handoffs.jsonl
 log=$TEAM_HOME/$log_rel
-threads=$HOME/.local/state/agent-team/assistant-threads
 ID_RE='^[1-9][0-9]{0,19}$'
 
 case ${AGENT_TEAM_ROLE:-} in
@@ -129,11 +128,9 @@ lease_check() {
 # Daniel's message <message> in <channel>, read from Discord as daniel_message gives it, held to
 # #assistant and its threads and refused when edited: daniel_word <message> <channel>
 daniel_word() {
-  local place word edited error
-  error=$(mktemp)
-  place=$(assistant_place "$2" 2>"$error") || die "$(<"$error")"
-  word=$(daniel_message "$1" "Daniel's word" "$place" 2>"$error") || die "$(<"$error")"
-  rm -f "$error"
+  local place word edited
+  place=$(assistant_place "$2" 2>"$scratch/error") || die "$(<"$scratch/error")"
+  word=$(daniel_message "$1" "Daniel's word" "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
   edited=$(jq -r '.message.edited_timestamp // empty' <<<"$word")
   [[ -z $edited ]] ||
     die "Discord message $1 was edited at $edited, so its text may not be what Daniel first sent: ask them to say it again as a new message"
@@ -378,10 +375,7 @@ case $command in
       die "Discord opened no thread under #assistant: $(grep -m 1 . "$scratch/error" || echo "no reason given")"
     thread=$(jq -r 'select(type == "object") | .id // empty | tostring' <<<"$reply" 2>/dev/null) || thread=''
     [[ $thread =~ $ID_RE ]] || die "Discord opened no thread under #assistant: its answer names no thread id"
-    if ! grep -qxF -- "$thread" "$threads" 2>/dev/null; then
-      mkdir -p "${threads%/*}"
-      echo "$thread" >>"$threads"
-    fi
+    assistant_thread_keep "$thread"
     echo "$thread"
     ;;
 

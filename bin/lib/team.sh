@@ -1725,16 +1725,38 @@ daniel_message() {
     '{place: $place, channel: $channel, who: $who, message: .}' <<<"$reply"
 }
 
+# The assistant's thread cache: the ids of the threads under #assistant found so far, one
+# known-good id per line, which the assistant's Discord guard passes without asking Discord and
+# its digest lists. It is trusted only because the assistant cannot write it: its settings deny
+# the Edit tool and any Bash call naming the file (assistant.settings.json), so only the scripts
+# and hooks below add to it.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
+
+# Succeed when <channel>, Discord's channel object as JSON, is a thread (type 10, 11 or 12)
+# whose parent_id is #assistant (ASSISTANT_CHANNEL), the one rule of a thread of the
+# assistant's: assistant_thread_of <channel JSON>
+assistant_thread_of() {
+  [[ -n $ASSISTANT_CHANNEL ]] &&
+    jq -e --arg parent "$ASSISTANT_CHANNEL" 'type == "object" and ([.type] | inside([10, 11, 12]))
+      and ((.parent_id // "") | tostring) == $parent' >/dev/null 2>&1 <<<"$1"
+}
+
+# Add thread <id> to the thread cache (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
+assistant_thread_keep() {
+  grep -qxF -- "$1" "$ASSISTANT_THREADS" 2>/dev/null && return 0
+  mkdir -p "${ASSISTANT_THREADS%/*}" && echo "$1" >>"$ASSISTANT_THREADS"
+}
+
 # The daniel_message place of the Discord channel <id> when it is #assistant (ASSISTANT_CHANNEL),
-# "#assistant <id>", or a thread under it, "the #assistant thread <id>", read from Discord
-# (discord_api GET channels/<id>, its parent_id) every time, so Daniel's word is held to the
+# "#assistant <id>", or a thread under it (assistant_thread_of), "the #assistant thread <id>",
+# read from Discord (discord_api GET channels/<id>) every time, so Daniel's word is held to the
 # assistant's channel by Discord's answer alone, never by a file; a thread found so is added to
-# ~/.local/state/agent-team/assistant-threads, one known-good id per line, which the assistant's
-# Discord guard reads. Fails with the one reason on stderr: no channel is set
-# (TEAM_ASSISTANT_CHANNEL empty), the channel cannot be read, or it is neither. team-assistant
-# and team-answer --channel hold Daniel's word to it: assistant_place <id>
+# the thread cache (assistant_thread_keep). Fails with the one reason on stderr: no channel is
+# set (TEAM_ASSISTANT_CHANNEL empty), the channel cannot be read, or it is neither.
+# team-assistant and team-answer --channel hold Daniel's word to it: assistant_place <id>
 assistant_place() {
-  local channel=$1 reply parent error cache=$HOME/.local/state/agent-team/assistant-threads
+  local channel=$1 reply error
   [[ -n $ASSISTANT_CHANNEL ]] || {
     echo "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so Daniel's word cannot be held to #assistant" >&2
     return 1
@@ -1750,14 +1772,11 @@ assistant_place() {
     return 1
   fi
   rm -f "$error"
-  parent=$(jq -r 'select(type == "object") | .parent_id // empty | tostring' <<<"$reply" 2>/dev/null) || parent=''
-  [[ $parent == "$ASSISTANT_CHANNEL" ]] || {
+  assistant_thread_of "$reply" || {
     echo "channel $channel is neither #assistant ($ASSISTANT_CHANNEL) nor a thread under it, so Daniel's word there is not for the assistant" >&2
     return 1
   }
-  if ! grep -qxF -- "$channel" "$cache" 2>/dev/null; then
-    mkdir -p "${cache%/*}" && echo "$channel" >>"$cache"
-  fi
+  assistant_thread_keep "$channel"
   echo "the #assistant thread $channel"
 }
 
