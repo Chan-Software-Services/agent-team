@@ -3,7 +3,7 @@
 # call and shows stderr to the agent; exit 0 passes it.
 #
 # Usage: lease-fence [--coordinator | --assistant]   (the hook's input on stdin; the session's
-#   role on its Bash)
+#   role on its Bash, and the assistant's on its Discord tools too, for its own texts)
 #   Discord (the coordinator's and the assistant's reply, react and edit_message), and a Bash
 #     command of any role that runs team-post, team-ask or team-inbox: blocked while this
 #     machine is fenced, or when the lease on origin is not this machine's last write and names
@@ -25,8 +25,10 @@
 #   Bash (the assistant, --assistant): a command that runs git push, team-assistant or
 #     team-current is blocked as a Discord post is, saying another machine runs the team, so an
 #     assistant left on a machine that lost the lease pushes, hands off and keeps no list; while
-#     the team holds offline, one that runs git push, gh or gh-axi is blocked with the hold, as a
-#     worker's is.
+#     the team holds offline, one that runs git push, gh or gh-axi is blocked with its own hold
+#     ("GitHub is unreachable (since 13:05); the team is holding: keep talking with Daniel, ...").
+#     Its Discord posts, and its team-post, team-ask and team-inbox, are blocked as every role's,
+#     saying the assistant on the holder answers #assistant.
 # Reads, in ~/.local/state/agent-team/: fenced (team-lease's), offline (team-timers run's,
 # through offline_hold in bin/lib/team.sh), and what lease_refusal reads there.
 # When it cannot decide it refuses, saying so, as a guard does: input that is not a JSON object
@@ -72,6 +74,7 @@ homeless=$TEAM_HOME_PROBLEM
 
 # What a machine that may not post does not do, for lease_refusal.
 POSTS="posts nothing to Discord; the coordinator on the holder answers there."
+[[ $role != assistant ]] || POSTS="posts nothing to Discord; the assistant on the holder answers #assistant."
 # What one that may not log Daniel's answer does not do, as team-answer says it.
 ANSWERS="logs no answer; the coordinator on the holder takes Daniel's answers."
 # What one that may not wait on an interview does not do, as team-thread wait says it.
@@ -125,8 +128,8 @@ case $tool in
       if [[ $command =~ $push || $command =~ $assistant_write ]]; then
         lease_block "pushes, hands off and keeps no list; another machine runs the team now, and the assistant there takes Daniel's messages."
       fi
-      if [[ $command =~ $push || $command =~ $gh ]] && hold=$(offline_hold); then
-        block "$hold"
+      if [[ $command =~ $push || $command =~ $gh ]] && since=$(offline_since); then
+        block "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
       fi
     elif why=$(fence_reason); then
       [[ ! $command =~ $push ]] ||

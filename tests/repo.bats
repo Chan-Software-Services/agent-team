@@ -966,14 +966,14 @@ $bad: b-guard x: timeout is 1.5, not a whole number of seconds from 1 to 120
 $bad: c-guard: timeout is 121, not a whole number of seconds from 1 to 120"
 }
 
-# The assistant's guards (T328): on each of the Discord plugin's five tools, the lease fence and
-# the Discord guard that keeps it in #assistant; on Bash, its own lease fence and the worker
+# The assistant's guards (T328): on each of the Discord plugin's five tools, its own lease fence
+# and the Discord guard that keeps it in #assistant; on Bash, its own lease fence and the worker
 # guard. Each named hook is an executable of bin/hooks/.
-@test "the assistant's settings run lease-fence and assistant-discord-guard on every Discord tool, and lease-fence --assistant and command-guard on Bash" {
+@test "the assistant's settings run lease-fence --assistant and assistant-discord-guard on every Discord tool, and lease-fence --assistant and command-guard on Bash" {
   assert_equal "$(jq -c '.hooks.PreToolUse | map({matcher: (.matcher | split("|") | sort),
       hooks: [.hooks[] | .command | sub("^\"@TEAM_CODE@/bin/hooks/"; "") | sub("\""; "")]})' "$REPO_ROOT/assistant.settings.json")" \
     "$(jq -cn '[{matcher: ["reply", "react", "edit_message", "fetch_messages", "download_attachment"]
-        | map("mcp__plugin_discord_discord__" + .) | sort, hooks: ["lease-fence", "assistant-discord-guard"]},
+        | map("mcp__plugin_discord_discord__" + .) | sort, hooks: ["lease-fence --assistant", "assistant-discord-guard"]},
       {matcher: ["Bash"], hooks: ["lease-fence --assistant", "command-guard"]}]')"
   [[ -x $REPO_ROOT/bin/hooks/assistant-discord-guard && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard ]]
 }

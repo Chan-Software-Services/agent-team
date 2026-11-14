@@ -457,9 +457,16 @@ assistant_call() {
   done
   for command in "${others[@]}"; do assistant_call -0 "$command"; done
   assert_equal "$(probes)" 0
-  # The posts every role is held to hold for the assistant too.
+  # The posts every role is held to hold for the assistant too, saying who answers #assistant.
   assistant_call -2 "team-post --coordinator --file q.md"
-  assert_contains "$stderr" "a fenced machine posts nothing to Discord"
+  assert_contains "$stderr" "a fenced machine posts nothing to Discord; the assistant on the holder answers #assistant."
+  # Its Discord posts, with its settings' --assistant, say the same.
+  local tool
+  for tool in reply react edit_message; do
+    run_bin -2 --separate-stderr hooks/lease-fence --assistant <<<"$(jq -cn --arg tool "mcp__plugin_discord_discord__$tool" \
+      '{hook_event_name: "PreToolUse", cwd: env.HOME, tool_name: $tool, tool_input: {chat_id: "1563", text: "x"}}')"
+    assert_equal "$stderr" "Blocked: home-pc is fenced since 2026-10-22T14:00:00Z (holder seen laptop, epoch 2): a fenced machine posts nothing to Discord; the assistant on the holder answers #assistant."
+  done
 
   # A worker's and the coordinator's Bash are not the assistant's: its scripts are not theirs to gate.
   rm "$state/fenced"
@@ -471,7 +478,8 @@ assistant_call() {
   mkdir -p "$state"
   echo '{"since": "2026-10-22T13:05:00Z", "posted": true}' >"$state/offline"
   local command hold
-  hold="Blocked: GitHub is unreachable (since $(date -d 2026-10-22T13:05:00Z +%H:%M)); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
+  # Its own hold: it has no task to send a PAUSED for, and keeps talking with Daniel.
+  hold="Blocked: GitHub is unreachable (since $(date -d 2026-10-22T13:05:00Z +%H:%M)); the team is holding: keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
   for command in "git push" "git -C ~/agent-team-records push" "gh pr view 6" "gh-axi pr list" \
     "cd x && gh api repos/o/p" "GH_REPO=a/b gh issue list" "(gh pr view 6)"; do
     assistant_call -2 "$command"

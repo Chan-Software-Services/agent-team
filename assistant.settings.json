@@ -439,7 +439,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"@TEAM_CODE@/bin/hooks/lease-fence\"",
+            "command": "\"@TEAM_CODE@/bin/hooks/lease-fence\" --assistant",
             "onFailure": "block",
             "timeout": 60
           },
