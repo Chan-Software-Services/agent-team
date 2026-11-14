@@ -183,7 +183,7 @@ $ui/capture-1/ui-pick.md"
   jq -cn '{ts: "2026-10-25T10:01:00Z", task: "T7", event: "thread", discord_thread: "1563000000000000007"}' >>"$TEAM_HOME/ledger.jsonl"
   cat >"$TEAM_HOME/projects.toml" <<'TOML'
 [conventioner]
-repo = "chanjdaniel/Conventioner"
+repo = "Chan-Software-Services/Conventioner"
 path = "Documents/projects/personal/Conventioner"
 base = "dev"
 delivery = "no-mistakes"

@@ -21,14 +21,14 @@ Setting up a machine is `sops/machine-setup.md`.
 
 Two repositories hold the team, each checked out on every machine:
 
-- **The code**, `chanjdaniel/agent-team`, public, at `~/agent-team`: the scripts, roles, settings, hooks, templates, plugins, toolkits and tests, and nothing from the records; changed only through merged PRs to `dev`.
-- **The team home**, `chanjdaniel/agent-team-records`, private, at `~/agent-team-records`: the records (the ledger, the registry, `tasks/`, `projects/`, `memory/`, `machine/`, `usage/`, `manual-steps.md`), committed straight to `dev` by the scripts, and the `lease` branch; its origin also holds the work a project's origin must not see (`wip/<project>/T<n>` snapshots and `salvage/` branches), since a project's origin may be public.
+- **The code**, `Chan-Software-Services/agent-team`, public, at `~/agent-team`: the scripts, roles, settings, hooks, templates, plugins, toolkits and tests, and nothing from the records; changed only through merged PRs to `dev`.
+- **The team home**, `Chan-Software-Services/agent-team-records`, private, at `~/agent-team-records`: the records (the ledger, the registry, `tasks/`, `projects/`, `memory/`, `machine/`, `usage/`, `manual-steps.md`), committed straight to `dev` by the scripts, and the `lease` branch; its origin also holds the work a project's origin must not see (`wip/<project>/T<n>` snapshots and `salvage/` branches), since a project's origin may be public.
   Those branches are reached by URL, never through the team home checkout, which fetches only `dev` and `lease` (the doctor's `team home fetch` line).
 
 | What | Where | Moved by |
 | - | - | - |
-| Scripts, roles, settings, hooks, templates, plugins, toolkits | the code checkout (`chanjdaniel/agent-team`), `dev` | git, through merged PRs: `team-merge` fast-forwards the code checkout after merging its own project, and `team-resume` on the machine taking over |
-| Plans, briefs, the ledger, the registry | the team home (`chanjdaniel/agent-team-records`), `dev` | git |
+| Scripts, roles, settings, hooks, templates, plugins, toolkits | the code checkout (`Chan-Software-Services/agent-team`), `dev` | git, through merged PRs: `team-merge` fast-forwards the code checkout after merging its own project, and `team-resume` on the machine taking over |
+| Plans, briefs, the ledger, the registry | the team home (`Chan-Software-Services/agent-team-records`), `dev` | git |
 | The lease | the team home's origin, orphan branch `lease`, one `lease.json` | `team-lease` |
 | Each task's scratch (spec, tickets, notes, `handoff.md`) | `tasks/T<n>/scratch/` (`scratch-<project>/` for an added project) | `team-checkpoint`, `team-handoff`; restored by `team-open --resume` |
 | Work in flight | each project's origin: the task branch; the team home's origin: `wip/<project>/T<n>` | workers' pushes; `team-checkpoint` |
@@ -155,6 +155,25 @@ Taking the PC down for a while (an update, a restart, a night off) is a handoff 
 - When the dead machine boots, its still-enabled heartbeat finds the new holder and fences it before anyone could start a coordinator there (sessions do not restart on their own after a shutdown); its doctor then lists the salvage commands.
 - Its doctor's `salvage records` line names what its team home holds that origin's branch lacks, the commits and the uncommitted records (the ledger lines of its last minutes, with their count), and the commands that commit them as `wip: salvage records from <machine>` and push the head to the team home's origin as `salvage/records/<machine>-<epoch>`, the epoch of the lease that machine last held.
   Daniel runs them before that team home is brought level with origin, since the reset that levels it throws those lines away; the line passes once the salvage branch holds the head and nothing is uncommitted.
+
+## A repository that moves owner
+
+GitHub redirects a moved repository's old URL, but only until someone makes a repository at the old name, so each machine follows a move.
+`bin/lib/repo-moves.json` is the table of the moves, old `owner/name` to new; every reader of the ledger and every script that takes a PR URL reads a URL under either owner as the same repository, and logs it under the new one.
+Its moves of 2026-11-14 took agent-team, agent-team-records, Conventioner and intone_app from Daniel's own account to the organization `Chan-Software-Services`.
+
+The coordinator's steps, in order, once the code that adds a move has merged:
+
+1. The registry edit: `team-project --check` names each project whose `repo` is a move's old one, with the `repo` to set; set each in `projects.toml`, in one commit of the team home, and `--check` passes.
+2. On each machine, `team-doctor`'s `moved origins` line names each checkout (the code checkout, the team home, each project's primary checkout) whose origin names a moved repository, with its fix; run `git -C <path> remote set-url origin https://github.com/<new>.git` for each but a treehouse project's, and the line passes once none is left.
+3. For a treehouse project, whose pool treehouse names `<checkout's folder>-<the first 3 bytes of the SHA-256 of the origin URL, in hex>`, so that a bare `set-url` would send the next lease to a new, empty pool and the registry's `slots` would stop matching, move the pool with the origin, keeping its pre-warmed slots:
+   1. Check that no slot is leased: `treehouse status` in the primary checkout shows none leased, and the doctor's `leases` line passes saying so.
+   2. Set the origin: `git -C <primary> remote set-url origin https://github.com/<new>.git`.
+   3. Rename the pool folder, under `~/.treehouse/` unless its `treehouse.toml` sets another root, to the name treehouse now derives, which the doctor's `slots` line names (`printf '%s' https://github.com/<new>.git | sha256sum | cut -c1-6` gives its hash).
+   4. Run `git -C <primary> worktree repair <each slot>`, each slot by its new path, so git finds the moved worktrees.
+   5. Rewrite the project's `slots` in `projects.toml` under the new folder, in a commit of the team home.
+   6. Check that `treehouse status` lists the slots again, and that the doctor's `origin`, `slots` and `moved origins` lines pass.
+4. For a gated project (`delivery = "no-mistakes"`), re-register it with the gate: `no-mistakes init` in its primary checkout, then check that `no-mistakes status` there names the new URL as its remote.
 
 ## A real server later
 

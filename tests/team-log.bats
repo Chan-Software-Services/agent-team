@@ -312,12 +312,12 @@ Nothing waits on you."
   opened_task T14
   local before after
   before=$(date -u +%FT%TZ)
-  run_bin -0 team-log T14 pr url=https://github.com/chanjdaniel/agent-team/pull/5 head=a1b2c3d
+  run_bin -0 team-log T14 pr url=https://github.com/Chan-Software-Services/agent-team/pull/5 head=a1b2c3d
   after=$(date -u +%FT%TZ)
   assert_equal "$output" ""
   assert_equal "$(logged_after 2 | wc -l)" "1"
   assert_equal "$(logged_after 2)" \
-    '{"task":"T14","event":"pr","url":"https://github.com/chanjdaniel/agent-team/pull/5","head":"a1b2c3d"}'
+    '{"task":"T14","event":"pr","url":"https://github.com/Chan-Software-Services/agent-team/pull/5","head":"a1b2c3d"}'
   local ts
   ts=$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -r .ts)
   [[ $ts =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
@@ -544,13 +544,13 @@ LINES
 @test "a field the contract types as a string stays a string even when it looks like JSON" {
   opened_task T14
   run_bin -0 team-log T14 ticket-done ticket=12 'commits=["1234567"]'
-  run_bin -0 team-log T14 pr url=https://github.com/chanjdaniel/agent-team/pull/5 head=1234567 note=true
-  run_bin -0 team-log T14 merge-approved url=https://github.com/chanjdaniel/agent-team/pull/5 discord_message=1563000000000000123456789 head=1234567
+  run_bin -0 team-log T14 pr url=https://github.com/Chan-Software-Services/agent-team/pull/5 head=1234567 note=true
+  run_bin -0 team-log T14 merge-approved url=https://github.com/Chan-Software-Services/agent-team/pull/5 discord_message=1563000000000000123456789 head=1234567
   assert_equal "$(logged_after 2)" "$(
     cat <<'LINES'
 {"task":"T14","event":"ticket-done","ticket":"12","commits":["1234567"]}
-{"task":"T14","event":"pr","url":"https://github.com/chanjdaniel/agent-team/pull/5","head":"1234567","note":"true"}
-{"task":"T14","event":"merge-approved","url":"https://github.com/chanjdaniel/agent-team/pull/5","discord_message":"1563000000000000123456789","head":"1234567"}
+{"task":"T14","event":"pr","url":"https://github.com/Chan-Software-Services/agent-team/pull/5","head":"1234567","note":"true"}
+{"task":"T14","event":"merge-approved","url":"https://github.com/Chan-Software-Services/agent-team/pull/5","discord_message":"1563000000000000123456789","head":"1234567"}
 LINES
   )"
 }
@@ -885,6 +885,50 @@ LINES
   run_bin -1 team-log T14 merge-approved url=$five discord_message=1562661774950400000 head=$fix
   assert_equal "$output" "team-log: Discord message 1562661774950400000 was sent at 2026-10-22T03:00:00Z, before the review event that first logged head $fix at $reviewed, so it is not Daniel's word on that head"
   assert_equal "$(logged_after 2 | wc -l)" "2"
+}
+
+# PR #5 of agent-team, under the owner it moved from and the one it moved to (bin/lib/repo-moves.json).
+OLD_FIVE=https://github.com/chanjdaniel/agent-team/pull/5
+NEW_FIVE=https://github.com/Chan-Software-Services/agent-team/pull/5
+
+@test "a url under a moved repo's old owner is logged under the new one, and one under the new as given, for pr, ci, ci-rerun and merge-approved" {
+  opened_task T14
+  local head=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 url
+  for url in $OLD_FIVE https://github.com/ChanJDaniel/Agent-Team/pull/5 $NEW_FIVE; do
+    run_bin -0 team-log T14 pr "url=$url" head=$head
+    run_bin -0 team-log T14 ci "url=$url" head=$head outcome=passed
+    run_bin -0 team-log T14 ci-rerun "url=$url" head=$head check=test run=42 job=43
+    run_bin -0 team-log T14 merge-approved "url=$url" discord_message="$(soon)" head=$head
+  done
+  assert_equal "$(logged_after 2 | jq -r '"\(.event) \(.url)"')" "$(for _ in 1 2 3; do
+    printf '%s\n' "pr $NEW_FIVE" "ci $NEW_FIVE" "ci-rerun $NEW_FIVE" "merge-approved $NEW_FIVE"
+  done)"
+  # A repo no move names, and a name that only begins with a moved one, are logged as given.
+  run_bin -0 team-log T14 pr url=https://github.com/chanjdaniel/agent-teamx/pull/5 head=$head
+  run_bin -0 team-log T14 pr url=https://github.com/owner/proj/pull/5 head=$head
+  assert_equal "$(tail -n 2 "$TEAM_HOME/ledger.jsonl" | jq -r .url)" \
+    "https://github.com/chanjdaniel/agent-teamx/pull/5"$'\n'"https://github.com/owner/proj/pull/5"
+  run_bin -0 team-log --check
+}
+
+@test "merge-approved under either owner holds on a PR the ledger logged under the other, at a head its pr event logged" {
+  opened_task T14
+  opened_task T15
+  local head=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  # T14's PR was logged under the old owner before the move, as the real ledger holds it.
+  jq -cn --arg url "$OLD_FIVE" --arg head "$head" '{ts: (now | todate), task: "T14", event: "pr", url: $url, head: $head}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-log T14 merge-approved url=$NEW_FIVE discord_message="$(soon)" head=$head
+  run_bin -0 team-log T14 merge-approved url=$OLD_FIVE/ discord_message="$(soon)" head=$head
+  assert_equal "$(tail -n 2 "$TEAM_HOME/ledger.jsonl" | jq -r .url)" "$NEW_FIVE"$'\n'"$NEW_FIVE/"
+  # T15's, logged under the new owner, takes Daniel's word under the old.
+  run_bin -0 team-log T15 pr url=$NEW_FIVE head=$head
+  run_bin -0 team-log T15 merge-approved url=$OLD_FIVE discord_message="$(soon)" head=$head
+  assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -r .url)" "$NEW_FIVE"
+  # A head no pr event of the PR logged is refused under either owner, naming the PR under the new.
+  run_bin -1 team-log T14 merge-approved url=$OLD_FIVE discord_message="$(soon)" head=e4f5a6b
+  assert_equal "$output" "team-log: head e4f5a6b is not a head the pr events of $NEW_FIVE, or the reviews since, logged:
+  $head"
 }
 
 # T14 opened in proj, with its worktree at $BATS_TEST_TMPDIR/wt holding the task directory
@@ -1955,6 +1999,22 @@ assert_no_answer_logged() {
   # The branch is the task's now, so the next PR message renames nothing.
   logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" \
     --from-message "T7 PR $URL merged dev conflicts: none"
+}
+
+@test "--from-message logs a PR under either owner of a moved repo under the new, read on GitHub there, with the registry under either" {
+  local old=https://github.com/chanjdaniel/agent-team/pull/12 new=https://github.com/Chan-Software-Services/agent-team/pull/12
+  local registry
+  for registry in chanjdaniel/agent-team Chan-Software-Services/agent-team; do
+    plan_project proj "$registry" >"$TEAM_HOME/projects.toml"
+    : >"$TEAM_HOME/ledger.jsonl"
+    opened T7 proj
+    launched T7 builder b0000001
+    # gh answers the PR only under the new owner.
+    on_github "$new" "$HEAD_A" feat/T7-x
+    logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$new\",\"head\":\"$HEAD_A\"}" --from-message "T7 PR $old"
+    logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$new\",\"head\":\"$HEAD_A\"}" \
+      --from-message "T7 PR $new merged dev conflicts: none"
+  done
 }
 
 @test "--from-message refuses a PR it cannot read on GitHub, in no repo of the task, or followed by anything else" {

@@ -15,7 +15,7 @@
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, toolkit_refusal, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
-# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
+# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -265,8 +265,10 @@ ledger_append() {
     if [[ $refusing == true ]]; then
       # The verdict: nothing when the table takes the event, else "warn" and a line per problem,
       # or "refuse" and the problems joined. The task's events are the lines naming it (a cheap
-      # test before each is parsed) that are its objects.
-      verdict=$(ledger_jq '[inputs | select(contains($e.task)) | fromjson? | select(type == "object" and .task == $e.task)]
+      # test before each is parsed) that are its objects, each url canonical, as the event's is,
+      # so a PR logged under an old owner and the new one is one PR.
+      verdict=$(ledger_jq '($e | canonical_event) as $e
+          | [inputs | select(contains($e.task)) | fromjson? | select(type == "object" and .task == $e.task) | canonical_event]
           | [transition_problems($e)] as $problems
           | lifecycle_table.lifecycle_from as $from
           | if $problems == [] then empty
@@ -326,18 +328,21 @@ ledger_push() {
   return 0
 }
 
-# All of a task's events, in ledger order, one compact object per line (lines that are not JSON
-# objects are skipped): task_events T<n>
+# All of a task's events, in ledger order, one compact object per line, each url canonical
+# (canonical_event in bin/lib/ledger.jq; lines that are not JSON objects are skipped):
+# task_events T<n>
 task_events() {
   [[ ! -e $TEAM_HOME/ledger.jsonl ]] ||
-    jq -cR --arg task "$1" 'fromjson? | select(type == "object" and .task == $task)' "$TEAM_HOME/ledger.jsonl"
+    ledger_jq 'fromjson? | select(type == "object" and .task == $task) | canonical_event' -cR --arg task "$1" \
+      "$TEAM_HOME/ledger.jsonl"
 }
 
-# A task's events as one compact JSON array in ledger order, [] when it has none, in one jq run:
-# task_event_array T<n>
+# A task's events as one compact JSON array in ledger order, each url canonical, [] when it has
+# none, in one jq run: task_event_array T<n>
 task_event_array() {
   if [[ -e $TEAM_HOME/ledger.jsonl ]]; then
-    jq -cnR --arg task "$1" '[inputs | fromjson? | select(type == "object" and .task == $task)]' "$TEAM_HOME/ledger.jsonl"
+    ledger_jq '[inputs | fromjson? | select(type == "object" and .task == $task) | canonical_event]' -cnR --arg task "$1" \
+      "$TEAM_HOME/ledger.jsonl"
   else
     echo '[]'
   fi
@@ -1853,7 +1858,8 @@ team_project() {
 # word whatever the registry says: named agent-team, its primary checkout the code checkout this
 # library runs from or, when that checkout is a linked worktree, its main worktree, or its repo,
 # in any case, the owner/name of that checkout's origin (an HTTPS or SSH URL, a trailing .git or
-# slash aside). Refuses an unknown project: own_project <name>
+# slash aside), each at the end of its moves (bin/lib/repo-moves.json), so the origin and the
+# registry may name a moved repo under either owner. Refuses an unknown project: own_project <name>
 own_project() {
   local project code path common url
   [[ $1 != agent-team ]] || return 0
@@ -1866,7 +1872,8 @@ own_project() {
   url=$(git -C "$code" remote get-url origin 2>/dev/null) || return 1
   url=${url%/} url=${url%.git}
   [[ $url =~ [:/]([^/:]+/[^/:]+)$ ]] || return 1
-  [[ ${BASH_REMATCH[1],,} == "$(jq -r '.repo | ascii_downcase' <<<"$project")" ]]
+  ledger_jq '[$origin, .repo | canonical_repo | ascii_downcase] | .[0] == .[1]' \
+    -e --arg origin "${BASH_REMATCH[1]}" <<<"$project" >/dev/null
 }
 
 # The registered projects that are the team's own (own_project), in the registry's order, and the
@@ -1940,11 +1947,13 @@ review_app_jwt() {
 # goes to curl only on stdin through --config -, from printf, a builtin, so it is in no process's
 # arguments and no child's environment; not through gh, which takes a token only from its
 # environment or its login. curl reads no config of the user's (-q, its first argument), so no
-# ~/.curlrc can trace, proxy or add to the call. The answer's body is printed, then its HTTP status
-# on a line of its own, for the caller to hold in memory, since a token GitHub mints is in the body
-# and no file is to hold it; a call curl cannot make fails with curl's exit, its error on stderr.
-# <bearer> is refused unless it is the characters a JWT or a token is made of, so no answer GitHub
-# gives can add to curl's config: review_app_api <method> <path> <bearer> [<JSON body file>]
+# ~/.curlrc can trace, proxy or add to the call, and it follows no redirect, so no answer can move
+# the call elsewhere: a 301 is an answer like any other. The answer's body is printed, then its
+# HTTP status on a line of its own, for the caller to hold in memory, since a token GitHub mints is
+# in the body and no file is to hold it; a call curl cannot make fails with curl's exit, its error
+# on stderr. <bearer> is refused unless it is the characters a JWT or a token is made of, so no
+# answer GitHub gives can add to curl's config:
+# review_app_api <method> <path> <bearer> [<JSON body file>]
 review_app_api() {
   local args=(-q --silent --show-error --config - --request "$1" --write-out '\n%{http_code}' --max-time 30
     --header 'Accept: application/vnd.github+json' --header 'X-GitHub-Api-Version: 2022-11-28')
@@ -1966,17 +1975,67 @@ default_events_json() {
   ledger_jq 'ledger_events | default_events' -nRc "$ledger"
 }
 
-# The project, its repo as the registry spells it, and the number of a pull request URL, one
-# per line, refusing any URL but https://github.com/<owner>/<name>/pull/<n> in a registered
-# project's repo: registered_pr <url>
+# The project, its repo and the number of a pull request URL, one per line, refusing any URL but
+# https://github.com/<owner>/<name>/pull/<n> in a registered project's repo. The URL may name the
+# repo under an old owner or the new one (bin/lib/repo-moves.json), and the repo printed is the
+# registry's at the end of its moves, so gh and the reviewer App's calls go to the new owner while
+# the registry still names the old: registered_pr <url>
 registered_pr() {
-  local project
+  local project repo number
   [[ $1 =~ ^https://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/([1-9][0-9]*)$ ]] ||
     usage_error "not a GitHub pull request URL: $1"
-  project=$(team_project --find repo "${BASH_REMATCH[1]}") || exit 1
-  [[ -n $project ]] || die "${BASH_REMATCH[1]} is no registered project's repo"
+  repo=${BASH_REMATCH[1]} number=${BASH_REMATCH[2]}
+  project=$(team_project --find repo "$repo") || exit 1
+  [[ -n $project ]] || die "$repo is no registered project's repo"
   project=${project%%$'\n'*}
-  printf '%s\n' "$project" "$(team_project "$project" repo)" "${BASH_REMATCH[2]}"
+  repo=$(canonical_repo "$(team_project "$project" repo)") || exit 1
+  printf '%s\n' "$project" "$repo" "$number"
+}
+
+# A GitHub URL with its repo at the end of its moves (bin/lib/repo-moves.json), anything after it
+# as written, and any other text as it is, by ledger.jq's canonical_url: canonical_url <url>
+canonical_url() {
+  ledger_jq '$url | canonical_url' -nr --arg url "$1"
+}
+
+# A repo, <owner>/<name>, at the end of its moves (bin/lib/repo-moves.json), its old names matched
+# in any case, and any other repo as given, by ledger.jq's canonical_repo: canonical_repo <repo>
+canonical_repo() {
+  ledger_jq '$repo | canonical_repo' -nr --arg repo "$1"
+}
+
+# The repo a git remote URL names, at the end of its moves (bin/lib/repo-moves.json), else nothing
+# for a URL that names no GitHub repo: an HTTPS (https://github.com/<owner>/<name>) or SSH
+# (git@github.com:<owner>/<name>, ssh://git@github.com/<owner>/<name>) URL, a trailing .git or
+# slash aside, its repo compared in any case, as canonical_repo compares it: origin_repo <url>
+origin_repo() {
+  local url=${1%/}
+  [[ $url =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9-]+/[A-Za-z0-9._-]+)$ ]] || return 0
+  canonical_repo "${BASH_REMATCH[2]%.git}"
+}
+
+# The repo a git remote URL names, at the end of its moves, when that repo moved, else nothing, the
+# URL read as origin_repo reads it: moved_origin <url>
+moved_origin() {
+  local url=${1%/} to
+  to=$(origin_repo "$url") || return
+  [[ -n $to ]] || return 0
+  url=${url%.git}
+  [[ ${url,,} == *"/${to,,}" || ${url,,} == *":${to,,}" ]] || printf '%s\n' "$to"
+}
+
+# The fix for the origin of the treehouse project <project>: treehouse names a pool by a hash of
+# its checkout's origin URL, so a bare set-url sends the next lease to a new, empty pool, and the
+# registry's slots stop matching: pool_move_fix <project>
+pool_move_fix() {
+  printf "move %s's treehouse pool with the origin: see sops/portability.md, A repository that moves owner\n" "$1"
+}
+
+# The URL the team home is cloned from, https://github.com/<repo>.git, its repo the end of the
+# move of agent-team-records in bin/lib/repo-moves.json, so no script spells its owner: team_home_url
+team_home_url() {
+  ledger_jq '[repo_moves[] | select(.from | ascii_downcase | endswith("/agent-team-records")) | .to | canonical_repo][0]
+    // error("bin/lib/repo-moves.json has no move of agent-team-records") | "https://github.com/\(.).git"' -nr
 }
 
 # Run gh, keeping its JSON in <dir>/<name>: github <dir> <name> <gh arguments...>
@@ -2091,7 +2150,10 @@ pr_part() {
     project=${project%%$'\n'*}
   fi
   if [[ -n $project ]]; then
+    # Under its new owner while the registry still names the old (bin/lib/repo-moves.json), as
+    # registered_pr gives it, so gh reads the PR where it is.
     repo=$(team_project "$project" repo) || return 1
+    repo=$(canonical_repo "$repo") || return 1
     required_checks=$(team_project "$project" required_checks) || return 1
     bar=$(own_bar "$project") || return 1
   fi
