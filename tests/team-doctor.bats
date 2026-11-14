@@ -143,7 +143,7 @@ guard_is() {
   run -1 "$CODE_CHECKOUT/bin/team-doctor"
   # With no ~/agent-team-records the fix clones it first, since the setting would name a missing directory.
   assert_equal "$(line_of 'team home')" \
-    "FAIL team home: neither TEAM_HOME nor ~/.config/agent-team/home names one; fix: clone the team home, then name it: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && echo agent-team-records > ~/.config/agent-team/home"
+    "FAIL team home: neither TEAM_HOME nor ~/.config/agent-team/home names one; fix: clone the team home, then name it: git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && echo agent-team-records > ~/.config/agent-team/home"
   # With no team home there is no fetch or pack to check.
   assert_equal "$(line_of 'team home fetch')" ""
   assert_equal "$(line_of 'team home pack')" ""

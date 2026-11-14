@@ -293,7 +293,7 @@ clone -q https://github.com/owner/site.git $SITE"
   echo laptop >"$HOME/.config/agent-team/machine"
   unset TEAM_HOME
   run -1 "$CODE_CHECKOUT/bin/team-bootstrap"
-  assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
+  assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
   [[ ! -e $STUB_CALLS/git-clone.log ]]
   # Once it is cloned, only naming it is left; the check stage says the same.
   mkdir "$HOME/agent-team-records"
@@ -301,6 +301,6 @@ clone -q https://github.com/owner/site.git $SITE"
   assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: name the team home's checkout for this machine: team-bootstrap --home agent-team-records"
   rmdir "$HOME/agent-team-records"
   run -1 "$CODE_CHECKOUT/bin/team-bootstrap" --stage check
-  assert_contains "$output" "check: Daniel 1: team home: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records (~/.config/agent-team/home is missing)"
+  assert_contains "$output" "check: Daniel 1: team home: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records (~/.config/agent-team/home is missing)"
   [[ $output != *"these failed: "*"team home"* ]]
 }

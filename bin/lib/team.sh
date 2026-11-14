@@ -15,7 +15,7 @@
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, toolkit_refusal, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
-# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
+# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -1922,6 +1922,33 @@ registered_pr() {
 # as written, and any other text as it is, by ledger.jq's canonical_url: canonical_url <url>
 canonical_url() {
   ledger_jq '$url | canonical_url' -nr --arg url "$1"
+}
+
+# The repo a git remote URL names, at the end of its moves (bin/lib/repo-moves.json), when that
+# repo moved, else nothing: an HTTPS (https://github.com/<owner>/<name>) or SSH
+# (git@github.com:<owner>/<name>, ssh://git@github.com/<owner>/<name>) URL, a trailing .git or
+# slash aside, its repo compared in any case, as canonical_url compares it: moved_origin <url>
+moved_origin() {
+  local url=${1%/} repo to
+  [[ $url =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9-]+/[A-Za-z0-9._-]+)$ ]] || return 0
+  repo=${BASH_REMATCH[2]%.git}
+  to=$(canonical_url "https://github.com/$repo") || return
+  to=${to#https://github.com/}
+  [[ $to == "$repo" ]] || printf '%s\n' "$to"
+}
+
+# The fix for the origin of the treehouse project <project>: treehouse names a pool by a hash of
+# its checkout's origin URL, so a bare set-url sends the next lease to a new, empty pool, and the
+# registry's slots stop matching: pool_move_fix <project>
+pool_move_fix() {
+  printf "move %s's treehouse pool with the origin: see sops/portability.md, A repository that moves owner\n" "$1"
+}
+
+# The URL the team home is cloned from, https://github.com/<repo>.git, its repo the end of the
+# move of agent-team-records in bin/lib/repo-moves.json, so no script spells its owner: team_home_url
+team_home_url() {
+  ledger_jq '[repo_moves[] | select(.from | ascii_downcase | endswith("/agent-team-records")) | .to | canonical_repo][0]
+    // error("bin/lib/repo-moves.json has no move of agent-team-records") | "https://github.com/\(.).git"' -nr
 }
 
 # Run gh, keeping its JSON in <dir>/<name>: github <dir> <name> <gh arguments...>

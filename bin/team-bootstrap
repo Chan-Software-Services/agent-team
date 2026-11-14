@@ -50,7 +50,9 @@
 #              shell's rc file (~/.zshrc or ~/.bashrc) when PATH lacks them.
 #   projects   Each registered project with a failing checkout, origin, task dir or gate line:
 #              cloned from https://github.com/<repo>.git to its registry path, that exact origin
-#              (treehouse names its pool from it), the task directory and the folder of a git
+#              (treehouse names its pool from it, so a treehouse project whose origin names a
+#              moved repository of bin/lib/repo-moves.json stops the run as Daniel's pool move,
+#              its origin left as it is), the task directory and the folder of a git
 #              pool's slots inside the checkout in .git/info/exclude unless git ignores them, and
 #              `no-mistakes init` for a no-mistakes project without a gate.
 #   config     The marketplaces and plugins of machine/claude/plugins.txt (claude plugin), then
@@ -276,7 +278,7 @@ clone_home() {
   if [[ -d $HOME/agent-team-records ]]; then
     echo "name the team home's checkout for this machine: team-bootstrap --home agent-team-records"
   else
-    echo "clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
+    echo "clone the team home, then name it for this machine: git clone --single-branch --branch dev $(team_home_url) ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
   fi
 }
 
@@ -505,7 +507,7 @@ name_gate_wrapper() {
 
 # Set up one registered project whose checkout, origin, task dir or gate line failed.
 setup_project() {
-  local project=$1 facts path repo task_dir url check verdict reason fix origin exclude out
+  local project=$1 facts path repo task_dir url check verdict reason fix origin moved exclude out
   facts=$(team_project "$project")
   path=$(jq -r .path <<<"$facts") repo=$(jq -r .repo <<<"$facts") task_dir=$(jq -r .task_dir <<<"$facts")
   url=https://github.com/$repo.git
@@ -527,6 +529,12 @@ setup_project() {
   if [[ -z $origin ]]; then
     act "git -C $(printf %q "$path") remote add origin $url"
   elif [[ $origin != "$url" ]]; then
+    moved=$(moved_origin "$origin")
+    # treehouse names the pool from the origin URL, so the origin moves with the pool, by hand.
+    if [[ -n $moved && $(jq -r .pool.provider <<<"$facts") == treehouse ]]; then
+      daniel "$(pool_move_fix "$project") (origin $origin, a repository that moved to $moved)"
+      return
+    fi
     act "git -C $(printf %q "$path") remote set-url origin $url"
   fi
   exclude=$(git -C "$path" rev-parse --path-format=absolute --git-path info/exclude)

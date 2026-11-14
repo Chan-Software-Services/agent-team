@@ -3,7 +3,11 @@
 #               a missing checkout is its one line:
 #   checkout    The primary checkout at its registry path: a git checkout of its own, not a
 #               worktree of another; missing, the fix is the clone.
-#   origin      Exactly https://github.com/<repo>.git, the URL the bootstrap clones from.
+#   origin      Exactly https://github.com/<repo>.git, the URL the bootstrap clones from; for a
+#               treehouse project, whose pool treehouse names from it, the fix of an origin that
+#               names a moved repository (bin/lib/repo-moves.json) is the pool move
+#               (sops/portability.md, A repository that moves owner), never a bare set-url,
+#               which would send the next lease to a new, empty pool.
 #   task dir    git ignores the task directory, as team-open requires.
 #   gate        no-mistakes projects only: `no-mistakes status` in the checkout shows a gate.
 #   slots       treehouse pools only: every slot is in the pool treehouse names from origin,
@@ -189,6 +193,8 @@ check_project() {
     report "origin $project" PASS "$url"
   elif [[ -z $origin ]]; then
     report "origin $project" FAIL "no remote origin" "git -C $shown remote add origin $url"
+  elif [[ $provider == treehouse && -n $(moved_origin "$origin") ]]; then
+    report "origin $project" FAIL "origin is $origin, not $url" "$(pool_move_fix "$project")"
   else
     report "origin $project" FAIL "origin is $origin, not $url" "git -C $shown remote set-url origin $url"
   fi

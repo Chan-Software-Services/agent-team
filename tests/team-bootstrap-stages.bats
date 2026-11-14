@@ -128,6 +128,27 @@ site is set up in ~/projects/site"
 site is set up in ~/projects/site"
 }
 
+@test "an origin on a moved repository's old owner is set to the new one, but a treehouse project's stops the run as Daniel's pool move" {
+  tools_at arch
+  register intone Chan-Software-Services/intone_app direct-pr git
+  local intone=$HOME/projects/intone_app old=https://github.com/chanjdaniel/Conventioner.git
+  git -C "$intone" remote set-url origin git@github.com:chanjdaniel/intone_app.git
+  run_bin -0 team-bootstrap --stage projects
+  assert_equal "$(stage_lines projects)" "running: git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
+intone is set up in ~/projects/intone_app"
+  assert_equal "$(git -C "$intone" remote get-url origin)" https://github.com/Chan-Software-Services/intone_app.git
+
+  # Conventioner's pool is named from its origin, so its origin is left for the pool move.
+  git -C "$CONVENTIONER" remote set-url origin "$old"
+  run_bin -1 team-bootstrap --stage projects
+  assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner (origin $old, a repository that moved to Chan-Software-Services/Conventioner)"
+  assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" "$old"
+  # Another origin of a treehouse project, on no moved repository, is set as before.
+  git -C "$CONVENTIONER" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
+  run_bin -0 team-bootstrap --stage projects
+  assert_equal "$(stage_lines projects | head -n1)" "running: git -C ~/projects/Conventioner remote set-url origin https://github.com/Chan-Software-Services/Conventioner.git"
+}
+
 @test "a git pool's slots inside the checkout are ignored there once, so they never show as untracked in it" {
   tools_at arch
   register fork owner/fork direct-pr git projects/fork/.claude/worktrees/1 projects/fork/.claude/worktrees/2
