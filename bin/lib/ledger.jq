@@ -3,6 +3,48 @@
 # string per problem found.
 
 import "lifecycle" as $lifecycle;
+import "repo-moves" as $moves;
+
+# The repositories that moved owner, bin/lib/repo-moves.json, imported as data: each {from, to,
+# on}, from an owner/name compared in any case, as GitHub compares them, to spelled as GitHub
+# spells it.
+def repo_moves: $moves::moves[0].moves;
+
+# A repo, owner/name, at the end of its chain of moves (a move's to may be another's from), else
+# the repo as given; anything but a string is left as it is. The chain is followed at most once
+# per move, so a cycle, which tests/repo.bats refuses, still ends.
+def canonical_repo:
+  if type != "string" then .
+  else
+    (repo_moves | map({key: (.from | ascii_downcase), value: .to}) | from_entries) as $to
+    | reduce range(repo_moves | length) as $_ (.; $to[ascii_downcase] // .)
+  end;
+
+# A GitHub URL, https://github.com/<owner>/<name> and anything after it, with its repo canonical
+# (canonical_repo) and the rest as written; any other string, or anything but a string, is left
+# as it is.
+def canonical_url:
+  if type == "string" and startswith("https://github.com/") then
+    (capture("\\Ahttps://github\\.com/(?<repo>[A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?<rest>(\\.git)?([/?#].*)?)\\z")
+      // null) as $m
+    | if $m == null then . else "https://github.com/\($m.repo | canonical_repo)\($m.rest)" end
+  else . end;
+
+# Free text with every https://github.com/<from> of a move, in any case, followed by a slash,
+# .git, the end or a character no repo name holds, rewritten to the end of its chain of moves;
+# anything but a string is left as it is.
+def canonical_text:
+  if type != "string" then .
+  else
+    reduce (repo_moves[] | {from: (.from | gsub("\\."; "\\.")), to: (.to | canonical_repo)}) as $m (.;
+      gsub("https://github\\.com/\($m.from)(?=\\.git(?![A-Za-z0-9_.-])|\\.(?![A-Za-z0-9_-])|[^A-Za-z0-9_.-]|\\z)";
+        "https://github.com/\($m.to)"; "i"))
+  end;
+
+# An event with its url, when it has one, canonical (canonical_url): every reader of the ledger
+# takes its events through this, so a PR logged under an old owner and under the new one is one
+# PR. The ledger itself keeps each line as written.
+def canonical_event: if type == "object" and (.url | type) == "string" then .url |= canonical_url else . end;
 
 # A jq type, or a field type of the contract, as a noun: "a list", "a number", "null".
 def noun:
@@ -346,12 +388,13 @@ def head_logged($url; $head): first(pr_heads($url)[] | select(same_head(.head; $
 # Whether this event, logged after the ask $ask (an asked event), settles it: the answered with its
 # id, or for history a merge-preapproved with it (a kind retired by T276), or a merge-approved
 # whose url (a trailing slash aside) the ask's text names, not followed by a digit, since the
-# coordinator logs a merge answer as merge-approved alone as often as not.
+# coordinator logs a merge answer as merge-approved alone as often as not; the url and the text
+# are compared with each moved repo under its new owner (canonical_url, canonical_text).
 def settles($ask):
   (.event == "answered" and .id == $ask.id)
   or (.event == "merge-preapproved" and .ask == $ask.id)
   or (.event == "merge-approved" and (.url | type) == "string" and (.url | test("^https?://"))
-    and ((.url | rtrimstr("/")) as $url | ($ask.text // "" | tostring) as $text
+    and ((.url | canonical_url | rtrimstr("/")) as $url | ($ask.text // "" | tostring | canonical_text) as $text
       | any($text | indices($url)[]; $text[. + ($url | length):] | test("^[0-9]") | not)));
 
 # The lifecycle: one fold of a task's events into its state, read by every def that asks where
@@ -1666,10 +1709,12 @@ def task_findings($sessions; $activity):
 
 # The following defs read the whole ledger.
 
-# Every ledger event of a task T<n>, read as raw lines (jq -nR), as one array in ledger order;
-# lines that are not JSON objects with such a task are skipped.
+# Every ledger event of a task T<n>, read as raw lines (jq -nR), as one array in ledger order, each
+# with its url canonical (canonical_event); lines that are not JSON objects with such a task are
+# skipped.
 def ledger_events:
-  [inputs | fromjson? | select(type == "object" and (.task | type) == "string" and (.task | test("^T[1-9][0-9]*$")))];
+  [inputs | fromjson? | select(type == "object" and (.task | type) == "string" and (.task | test("^T[1-9][0-9]*$")))
+    | canonical_event];
 
 # Ledger events as an object of each task's events, keyed by task id.
 def by_task: group_by(.task) | map({key: .[0].task, value: .}) | from_entries;
@@ -1858,6 +1903,28 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
     + [$events | retro_status | retro_due_finding]
     + [$health | health_findings];
 
+# The findings team-sweep adds after sweep's, from the views it reads beside the ledger: team-queue
+# list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
+# team-current check --json's ($current), one current-stale finding naming each item whose task
+# closed; each view null when there is nothing to read, and {error} when its script failed, which
+# is one finding of kind queue or current naming the error and "fix what <script> names". Each
+# finding has task, session and name null.
+def sweep_views($queue; $current):
+  def failed($kind; $script):
+    "fix what \($script) names" as $next
+    | {task: null, kind: $kind, session: null, name: null, next: $next, text: "\($kind): \(.error): \($next)"};
+  ($queue | if . == null then [] elif .error != null then [failed("queue"; "team-queue")] else .findings // [] end)
+  + ($current
+     | if . == null then []
+       elif .error != null then [failed("current"; "team-current")]
+       elif (.closed // []) == [] then []
+       else (.closed | length) as $n
+         | "team-current done <id> for each that is done, or add it again under an open task" as $next
+         | [{task: null, kind: "current-stale", session: null, name: null, next: $next,
+             text: "current: \($n) item\(if $n == 1 then " names" else "s name" end) a closed task: \(
+               [.closed[] | "\(.id) (\(.task), closed \(.closed_at[:10]))"] | join(", ")); next: \($next)"}]
+       end);
+
 # What team-capacity plan reads of the ledger, over every ledger event as one array, with the
 # session list <sessions>: one {task, opened (its opened's time, else its first event's),
 # finished ([{session, role}]: the idle live sessions whose work is handed on, handed_on_launches
@@ -1907,8 +1974,9 @@ def open_tasks: [to_entries[] | select(.value | is_open) | .key] | sort_by(.[1:]
 # registered project's open PRs ($prs), the current items ($items) and the production checks' last
 # results ($production, team-uptime status --json's object or {error}). It carries $level as level,
 # the open tasks stowed, waiting to resume, as awaiting_resume, the resources_line as resources
-# (null when $level is {error}), and $production as production.
-def snapshot($tasks; $states; $level; $withdrawn; $sessions; $prs; $items; $production; $waiting; $queued):
+# (null when $level is {error}), $production as production, and $queue (team-queue list --json's
+# object, {error}, or null with no queue) as queue, less its findings.
+def snapshot($tasks; $states; $level; $withdrawn; $sessions; $prs; $items; $production; $waiting; $queued; $queue):
   team_sessions($tasks; $sessions) as $team
   | ($tasks | awaiting_resume) as $stowed
   | {schema: "team-snapshot/1",
@@ -1924,7 +1992,8 @@ def snapshot($tasks; $states; $level; $withdrawn; $sessions; $prs; $items; $prod
      pending_asks: [$states[] | .task as $task | (.pending_asks // [])[] | {task: $task} + .],
      waiting: $waiting,
      items: $items,
-     queued: $queued};
+     queued: $queued,
+     queue: ($queue | if type == "object" then del(.findings) else null end)};
 
 # The current items of tasks/current.md, over its lines (-R): each line starting "- ", without it.
 def current_items: [inputs | rtrimstr("\r") | select(startswith("- ")) | .[2:]];
@@ -1950,7 +2019,10 @@ def checks_waits_to_arm:
 # "Checks waits to arm unless running: team-next T<n> --ci (<url> at <short>, since <ts>)", none
 # when there is none. After the resources line, one line per withdrawal of the default merge word
 # that stands. The Production line, after them, is team-uptime's status line, or "Production
-# unreadable: <error>", and there is none when no project has a check.
+# unreadable: <error>", and there is none when no project has a check. The queue's line ends it,
+# cut at 200: "Queue: <r> ready, <w> waiting, <o> opened; <the room's line>; next: <the top ready
+# item> (<project>, priority <p>, <size>): <its summary>", "Queue: nothing ready; <w> waiting, <o>
+# opened; <the room's line>", or "Queue unreadable: <error>", and none with no queue.
 def snapshot_text:
   def section($title; $lines; $columns):
     if $lines == [] then "\($title): none" else "\($title) (\($lines | length)):", ($lines[] | "  " + . | clip($columns)) end;
@@ -1995,7 +2067,16 @@ def snapshot_text:
      else "Current items (\($items | length)):", ($items[:40][] | "  - " + . | clip(200)),
        if $items | length > 40 then "  and \($items | length - 40) more in tasks/current.md" else empty end
      end),
-  (.queued // 0 | if . > 0 then "Queued work: \(.) file\(if . == 1 then "" else "s" end), listed in tasks/queued/index.md" else empty end);
+  (.queue // null
+   | if . == null then empty
+     elif .error != null then "Queue unreadable: \(.error)" | clip(200)
+     else "\(.waiting | length) waiting, \(.opened | length) opened; \(.room.says)" as $rest
+       | if .ready == [] then "Queue: nothing ready; \($rest)"
+         else .ready[0] as $top
+           | "Queue: \(.ready | length) ready, \($rest); next: \($top.file) (\($top.project), priority \($top.priority), \($top.size)): \($top.summary // $top.title)"
+         end
+       | clip(200)
+     end);
 
 # Whether the default word may hold for some PR, over every ledger event as an array: an open task
 # awaits merge with its plan approved. team-sweep and team-inbox read the registry for own_in only
@@ -2099,10 +2180,11 @@ def inbox_items($own; $notes; $tickets):
 # waiting.json $previous (null when there is none or it cannot be read): an item whose key
 # $previous's items hold keeps its number, and each other item, in order, takes the lowest
 # positive number that no kept item holds, no earlier new item took and no item of the latest post
-# ($previous.posted's items) showed.
+# ($previous.posted's items) showed. A stored key is read with its URLs under their new owners
+# (canonical_text), as the items' keys are, so an item keyed by a PR's old URL keeps its number.
 def waiting_numbered($previous):
   ([$previous.items[]? | objects | select((.key | type) == "string" and (.n | type) == "number")]
-   | map({key, value: .n}) | from_entries) as $kept
+   | map({key: (.key | canonical_text), value: .n}) | from_entries) as $kept
   | [$previous.posted.items[]? | objects | .n | numbers] as $shown
   | reduce .[] as $item ({items: [], seen: {}};
       .items += [{n: (if .seen[$item.key] then null else $kept[$item.key] end)} + $item]

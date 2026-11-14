@@ -2,7 +2,8 @@
 # Merge a task's PR on Daniel's recorded word, only with every required check green on its head.
 #
 # Usage: team-merge T<n> [--pr <url>]
-# The PR is the task's latest pr event, or --pr, which must be one of the task's pr events; its
+# The PR is the task's latest pr event, or --pr, which must be one of the task's pr events (a URL
+# under a moved repo's old owner or its new one, bin/lib/repo-moves.json, naming the same PR); its
 # repo must be a project in projects.toml. Checks first, changing nothing, each failure a reason.
 # Two words may merge it, read from the ledger by merge_authority in bin/lib/ledger.jq (the
 # derivation every reader shares) and tried in this order, the first that holds merging it:
@@ -153,6 +154,8 @@ jq -e 'any(.[]; .event == "pr")' <<<"$events" >/dev/null || die "$task has no pr
 if [[ -z $url ]]; then
   pr=$(jq -c 'map(select(.event == "pr")) | last' <<<"$events")
 else
+  # The task's events carry each url under its repo's new owner, so the URL given is read so too.
+  url=$(canonical_url "$url") || exit 1
   pr=$(jq -c --arg url "$url" 'map(select(.event == "pr" and (.url | rtrimstr("/")) == $url)) | last' <<<"$events")
   [[ $pr != null ]] ||
     die "$url is not one of $task's pr events:"$'\n'"$(jq -r '.[] | select(.event == "pr") | "  \(.url)"' <<<"$events")"
