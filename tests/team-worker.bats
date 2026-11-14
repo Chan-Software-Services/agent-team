@@ -671,7 +671,7 @@ TOML
   run_bin -0 team-worker T7 builder "$wt1" -- go
   local settings=$TEAM_HOME/tasks/T7/settings.builder.proj.json
   assert_equal "$(jq -r '.autoMode.environment[] | select(startswith("**Source control**"))' "$settings")" \
-    "**Source control**: the team's repositories are on GitHub: its team home, chanjdaniel/agent-team-records (~/agent-team-records: the ledger, plans, briefs and memory), and the projects it works on, owner/proj (primary checkout ~/projects/proj), owner/other (primary checkout ~/projects/other) and someone/Third (primary checkout ~/elsewhere/third). agent-team is the team's own code, and no-mistakes is Daniel's fork of the gate, whose pull requests from the team go to the fork itself, never upstream."
+    "**Source control**: the team's repositories are on GitHub: its team home, Chan-Software-Services/agent-team-records (~/agent-team-records: the ledger, plans, briefs and memory), and the projects it works on, owner/proj (primary checkout ~/projects/proj), owner/other (primary checkout ~/projects/other) and someone/Third (primary checkout ~/elsewhere/third). agent-team is the team's own code, and no-mistakes is Daniel's fork of the gate, whose pull requests from the team go to the fork itself, never upstream."
   assert_equal "$(jq -r '.autoMode.environment[] | select(startswith("**Repository visibility**"))' "$settings")" \
     "**Repository visibility**: other and Third are public, so whatever reaches them is published; proj is private; agent-team-records, the team home, is private."
   assert_equal "$(jq -r '.autoMode.environment[] | select(startswith("**Default / protected branches**")) | split(";")[0]' "$settings")" \

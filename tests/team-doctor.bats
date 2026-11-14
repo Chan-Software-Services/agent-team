@@ -143,7 +143,7 @@ guard_is() {
   run -1 "$CODE_CHECKOUT/bin/team-doctor"
   # With no ~/agent-team-records the fix clones it first, since the setting would name a missing directory.
   assert_equal "$(line_of 'team home')" \
-    "FAIL team home: neither TEAM_HOME nor ~/.config/agent-team/home names one; fix: clone the team home, then name it: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && echo agent-team-records > ~/.config/agent-team/home"
+    "FAIL team home: neither TEAM_HOME nor ~/.config/agent-team/home names one; fix: clone the team home, then name it: git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && echo agent-team-records > ~/.config/agent-team/home"
   # With no team home there is no fetch or pack to check.
   assert_equal "$(line_of 'team home fetch')" ""
   assert_equal "$(line_of 'team home pack')" ""
@@ -370,7 +370,7 @@ EOF
 # login and the branch, from $STUB_FIXTURES/branch.json, or fails as $STUB_FIXTURES/branch.err says.
 review_app_machine() {
   review_app_on
-  register agent-team chanjdaniel/agent-team direct-pr git
+  register agent-team Chan-Software-Services/agent-team direct-pr git
   local registry=$TEAM_HOME/projects.toml
   tac "$registry" | sed '0,/^base = "main"$/s//base = "dev"/' | tac >"$registry.new"
   mv "$registry.new" "$registry"
@@ -381,7 +381,7 @@ review_app_machine() {
   stub_script gh <<'EOF'
 case $* in
   'auth status --hostname github.com') echo "  - Token: gho_fakefakefakefake" ;;
-  'api repos/chanjdaniel/agent-team/branches/dev')
+  'api repos/Chan-Software-Services/agent-team/branches/dev')
     if [[ -f $STUB_FIXTURES/branch.err ]]; then cat "$STUB_FIXTURES/branch.err" >&2; exit 1; fi
     cat "$STUB_FIXTURES/branch.json" ;;
   *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
@@ -410,8 +410,8 @@ protected_by() {
   only_checks 112-review-app.sh
   review_app_machine
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection on chanjdaniel/agent-team requires agent-review from it, enforced for everyone"
-  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/chanjdaniel/agent-team/branches/dev"]'
+  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection on Chan-Software-Services/agent-team requires agent-review from it, enforced for everyone"
+  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/agent-team/branches/dev"]'
 }
 
 @test "the review app line fails on a malformed bin/lib/review-app, naming it" {
@@ -444,29 +444,29 @@ protected_by() {
   local pin_fix="fix: Daniel takes step 6 of sops/merging.md, agent-review pinned to App 123456 in dev's required checks"
   protected_by none everyone
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on chanjdaniel/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
   protected_by 15368 everyone
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on chanjdaniel/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
   # A commit status's context alone, with no check pinned to an App, holds nothing.
   jq '.protection.required_status_checks.checks |= map(select(.context != "agent-review"))' "$STUB_FIXTURES/branch.json" >"$BATS_TEST_TMPDIR/branch.json"
   mv "$BATS_TEST_TMPDIR/branch.json" "$STUB_FIXTURES/branch.json"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on chanjdaniel/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
   protected_by 123456 non_admins
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on chanjdaniel/agent-team enforces its required checks for non_admins, not everyone, so an administrator could merge past them; fix: Daniel turns on enforce_admins in dev's protection on chanjdaniel/agent-team"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team enforces its required checks for non_admins, not everyone, so an administrator could merge past them; fix: Daniel turns on enforce_admins in dev's protection on Chan-Software-Services/agent-team"
   echo '{"name": "dev", "protected": false}' >"$STUB_FIXTURES/branch.json"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on chanjdaniel/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
 }
 
 @test "the review app line fails when GitHub cannot be read or no registered project is the team's own" {
   only_checks 112-review-app.sh
   review_app_machine
-  echo "HTTP 404: Branch not found (https://api.github.com/repos/chanjdaniel/agent-team/branches/dev)" >"$STUB_FIXTURES/branch.err"
+  echo "HTTP 404: Branch not found (https://api.github.com/repos/Chan-Software-Services/agent-team/branches/dev)" >"$STUB_FIXTURES/branch.err"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev on chanjdaniel/agent-team cannot be read from GitHub: HTTP 404: Branch not found (https://api.github.com/repos/chanjdaniel/agent-team/branches/dev); fix: the github login line's fix, then run team-doctor again"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev on Chan-Software-Services/agent-team cannot be read from GitHub: HTTP 404: Branch not found (https://api.github.com/repos/Chan-Software-Services/agent-team/branches/dev); fix: the github login line's fix, then run team-doctor again"
   # The registry without agent-team: conventioner and site, neither the team's own.
   sed -i '/^\[agent-team/,$d' "$TEAM_HOME/projects.toml"
   run_bin -1 team-doctor

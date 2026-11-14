@@ -104,7 +104,7 @@ install -m 755 <d>/bin/no-mistakes $HOME/.no-mistakes/bin/no-mistakes"
 running: add ~/.no-mistakes/bin to PATH in ~/.zshrc"
   assert_equal "$(cat "$HOME/.zshrc")" "export PATH=\"\$HOME/.local/bin:\$PATH\" # team-bootstrap
 export PATH=\"\$HOME/.no-mistakes/bin:\$PATH\" # team-bootstrap"
-  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/chanjdaniel/Conventioner.git $CONVENTIONER
+  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/Chan-Software-Services/Conventioner.git $CONVENTIONER
 clone -q https://github.com/owner/site.git $SITE"
   assert_equal "$(stage_lines config)" "running: claude plugin marketplace add anthropics/claude-plugins-official
 running: claude plugin install discord@claude-plugins-official --scope user
@@ -163,7 +163,7 @@ done: the team home shares history with origin's dev"
 would run: brew install --cask docker-desktop"
   assert_equal "$(stage_lines tools | sed -n '2,3p')" "would run: curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 would run: nvm install $(lock_pin node) && nvm alias default $(lock_pin node)"
-  assert_equal "$(stage_lines projects | head -n2)" "would run: git clone -q https://github.com/chanjdaniel/Conventioner.git ~/projects/Conventioner
+  assert_equal "$(stage_lines projects | head -n2)" "would run: git clone -q https://github.com/Chan-Software-Services/Conventioner.git ~/projects/Conventioner
 would then set up conventioner's task directory exclude and its no-mistakes gate"
   assert_contains "$output" "check: Daniel 1: 1password: "
 
