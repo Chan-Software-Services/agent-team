@@ -34,7 +34,10 @@
 # event: "sent", kind, from, to} with those fields given to handoffs.jsonl. It commits the
 # hand-off, the log, the report and (with --task) the ledger alone as "chore: handoff H<n> <kind>" and pushes
 # (commit_records); a commit or push that fails is one line on stderr, "H<n> is not on origin yet
-# (<why>); the next checkpoint pushes it", and the hand-off stands. It prints
+# (<why>); the next checkpoint pushes it", and the hand-off stands. The ledger's handoff is
+# logged after the hand-off's files, and a ledger that refuses it (the task closed meanwhile) is
+# one line on stderr, "H<n> is sent, but the ledger took no handoff event on T<n> (<why>); the
+# hand-off stands: send its line as ever", the ledger left out of the commit. It prints
 # "H<n> assistant/handoffs/H<n>.md"; the sender then sends the other session
 # "ASSISTANT H<n> <kind>" (the assistant) or "COORDINATOR H<n> <kind>" (the coordinator).
 #
@@ -46,7 +49,8 @@
 # its file a blank line, "## Answer", a blank line, "<UTC time>, by the <role>:" and <text>, and
 # to handoffs.jsonl {ts, id, event: "answered", by} with task (--task's, else the hand-off's) when
 # there is one; logs handoff (state answered) on the hand-off's task while it is open and on
-# --task's, an open task; commits and pushes as "chore: handoff H<n> answered", as send does; and
+# --task's, an open task, a refusal said as send says it; commits and pushes as "chore: handoff
+# H<n> answered", as send does; and
 # prints "H<n> assistant/handoffs/H<n>.md". The answerer then sends "ASSISTANT ANSWER H<n>" or
 # "COORDINATOR ANSWER H<n>".
 #
@@ -147,6 +151,27 @@ commit_handoff() {
     reason=$(grep -m 1 . "$scratch/commit" | sed 's/^team-assistant: //' || true)
     echo "${0##*/}: $id is not on origin yet (${reason:-commit_records failed with no reason}); the next checkpoint pushes it" >&2
   fi
+}
+
+# Log <event> on its task, after the hand-off's own files are written: a ledger that refuses it
+# (the task closed meanwhile, the contract) leaves the hand-off <done> all the same, saying so in
+# one stderr line, so its id is still printed and no retry makes a second one of the same body.
+# Sets LOGGED to 1 when the event is in, else 0. Called as a plain command, never in a condition,
+# where bash would ignore set -e in the subshell too: log_handoff <id> <done> <task> <event>
+log_handoff() {
+  local reason rc
+  set +e
+  (
+    set -e
+    ledger_append "$4"
+  ) 2>"$scratch/ledger"
+  rc=$?
+  set -e
+  LOGGED=1
+  ((rc != 0)) || return 0
+  LOGGED=0
+  reason=$(grep -m 1 . "$scratch/ledger" | sed 's/^team-assistant: //' || true)
+  echo "${0##*/}: $1 is $2, but the ledger took no handoff event on $3 (${reason:-ledger_append failed with no reason}); the hand-off stands: send its line as ever" >&2
 }
 
 # The next hand-off's number: one more than the highest in the log.
@@ -256,9 +281,9 @@ case $command in
     paths=("$file_rel" "$log_rel")
     if [[ -n $report ]]; then paths+=("$report"); fi
     if [[ -n $task ]]; then
-      ledger_append "$(jq -nc --arg ts "$sent" --arg task "$task" --arg id "$id" --arg kind "$kind" --arg from "$me" \
-        '{ts: $ts, task: $task, event: "handoff", id: $id, kind: $kind, from: $from, state: "sent"}')"
-      paths+=(ledger.jsonl)
+      log_handoff "$id" sent "$task" "$(jq -nc --arg ts "$sent" --arg task "$task" --arg id "$id" --arg kind "$kind" \
+        --arg from "$me" '{ts: $ts, task: $task, event: "handoff", id: $id, kind: $kind, from: $from, state: "sent"}')"
+      ((LOGGED == 0)) || paths+=(ledger.jsonl)
     fi
     commit_handoff "$id" "chore: handoff $id $kind" "${paths[@]}"
     echo "$id $file_rel"
@@ -319,11 +344,13 @@ case $command in
     logged_on=()
     if [[ -n $sent_task && $(task_status "$(task_event_array "$sent_task")") == open ]]; then logged_on+=("$sent_task"); fi
     if [[ -n $task && " ${logged_on[*]} " != *" $task "* ]]; then logged_on+=("$task"); fi
+    logged=0
     for on in "${logged_on[@]}"; do
-      ledger_append "$(jq -nc --arg ts "$ts" --arg task "$on" --arg id "$id" --arg kind "$kind" --arg from "$from" \
-        '{ts: $ts, task: $task, event: "handoff", id: $id, kind: $kind, from: $from, state: "answered"}')"
+      log_handoff "$id" answered "$on" "$(jq -nc --arg ts "$ts" --arg task "$on" --arg id "$id" --arg kind "$kind" \
+        --arg from "$from" '{ts: $ts, task: $task, event: "handoff", id: $id, kind: $kind, from: $from, state: "answered"}')"
+      ((LOGGED == 0)) || logged=1
     done
-    ((${#logged_on[@]} == 0)) || paths+=(ledger.jsonl)
+    ((logged == 0)) || paths+=(ledger.jsonl)
     commit_handoff "$id" "chore: handoff $id answered" "${paths[@]}"
     echo "$id $file_rel"
     ;;

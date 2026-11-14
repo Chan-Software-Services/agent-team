@@ -347,6 +347,34 @@ assistant/research/2026-11-14-doctor.md"
   assert_equal "$(git -C "$TEAM_HOME" log -1 --format=%s)" "chore: handoff H1 note"
 }
 
+@test "a ledger that refuses the handoff event still leaves the hand-off sent or answered, committed, with its id printed and one line saying so" {
+  # The ledger refuses the append (here, a file it cannot write) after the hand-off's own files.
+  chmod a-w "$TEAM_HOME/ledger.jsonl"
+  printf 'Walk Daniel through the token.\n' >"$body"
+  run_bin -0 --separate-stderr team-assistant send walkthrough --file "$body" --task T7
+  chmod u+w "$TEAM_HOME/ledger.jsonl"
+  assert_equal "$output" "H1 assistant/handoffs/H1.md"
+  assert_contains "$stderr" "team-assistant: H1 is sent, but the ledger took no handoff event on T7 ("
+  assert_contains "$stderr" "); the hand-off stands: send its line as ever"
+  assert_equal "$(wc -l <<<"$stderr")" 1
+  assert_equal "$(logged)" ""
+  assert_equal "$(pushed | head -n 3)" "chore: handoff H1 walkthrough
+assistant/handoffs.jsonl
+assistant/handoffs/H1.md"
+  # A retry is not needed, so no second hand-off: the next one is H2.
+  printf 'Done with Daniel.\n' >"$BATS_TEST_TMPDIR/answer.md"
+  chmod a-w "$TEAM_HOME/ledger.jsonl"
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-assistant answer H1 --file "$BATS_TEST_TMPDIR/answer.md"
+  chmod u+w "$TEAM_HOME/ledger.jsonl"
+  assert_equal "$output" "H1 assistant/handoffs/H1.md"
+  assert_contains "$stderr" "team-assistant: H1 is answered, but the ledger took no handoff event on T7 ("
+  assert_equal "$(wc -l <<<"$stderr")" 1
+  assert_equal "$(handoffs | tail -n 1)" '{"id":"H1","event":"answered","by":"assistant","task":"T7"}'
+  assert_equal "$(pushed | head -n 3)" "chore: handoff H1 answered
+assistant/handoffs.jsonl
+assistant/handoffs/H1.md"
+}
+
 @test "show prints the hand-off's state and file, and Daniel's message read again, verbatim" {
   AGENT_TEAM_ROLE=assistant run_bin -0 team-assistant send task --file "$body" --daniel "$DANIEL" --channel "$THREAD"
   run_bin -0 --separate-stderr team-assistant show H1
