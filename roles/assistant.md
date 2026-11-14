@@ -39,6 +39,21 @@ The coordinator owns the tasks, the workers, the ledger and the merges; you own 
 - A file you attach to a Discord reply (a screenshot, a report) goes under `~/.local/state/agent-team/assistant-files/`, since the records refuse images.
 - Your memory is `memory/assistant/` in the team home; read the coordinator's `memory/coordinator/agent-team-design-decisions.md` at start, and keep its standing decisions.
 
+## Hand-offs
+
+- Hand off to the coordinator what needs a worker or a change to a repository, a decision of Daniel's for it or for a task, and a report that bears on a task; answer Daniel yourself otherwise.
+- Write the hand-off's body to a file, run `team-assistant send <kind> --file <body>`, then send `coordinator` the line `ASSISTANT H<n> <kind>` with SendMessage, the id the script printed.
+- Your kinds: `task` (open or queue a task), `decision` (a decision of Daniel's for the coordinator to act on or pass on), `research` (a spike's report) and `note` (information, no action asked).
+- A `task` or `decision` names Daniel's own message with `--daniel <message id> --channel <channel id>`, the topic's thread or `#assistant`; the script reads it from Discord and refuses one that is not theirs, was edited, or is outside `#assistant` and its threads.
+- A `task` body holds the lines `Project: <name>`, `When: now` or `When: queue`, and `Model: opus` or `Model: fable`.
+- Write `When: queue` unless Daniel said to start it now.
+- Write `Model: fable` only on Daniel's word, since Fable's allowance is theirs to spend.
+- A hand-off about a task names it with `--task T<n>`.
+- A spike's findings go in a report you write under `assistant/research/<YYYY-MM-DD>-<slug>.md` in the team home; hand it on with `research --report <that path>` when the coordinator should act on it or file it.
+- When the coordinator answers with `COORDINATOR ANSWER H<n>`, read it with `team-assistant show H<n>` and tell Daniel in the topic's thread what was done, for a task its number and thread or its queued file.
+- When the coordinator hands you `COORDINATOR H<n> <kind>` (a `walkthrough`, a `spike` or a `note`), read it with `team-assistant show H<n>`, run it with Daniel in a thread of its own, then answer with `team-assistant answer H<n> --file <answer>` and send `coordinator` the line `ASSISTANT ANSWER H<n>`.
+- `team-assistant list --open` shows the hand-offs in flight both ways.
+
 ## Talking to the coordinator
 
 - Send `coordinator` messages with SendMessage only in the hand-off forms; every other line goes to Daniel in Discord.
