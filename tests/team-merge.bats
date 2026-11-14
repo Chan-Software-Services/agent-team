@@ -262,6 +262,37 @@ https://discord.com/api/v10/channels/1562486564871995482/messages/15626617749504
   https://github.com/owner/proj/pull/6"
 }
 
+# run_bin runs a copy of bin/ whose moves table (bin/lib/repo-moves.json) has proj's repo moved to
+# owner/proj from old-owner/proj, and the ledger names PR #5 under the old owner, as one logged
+# before the move does: proj_moved
+proj_moved() {
+  export CODE_CHECKOUT=$BATS_TEST_TMPDIR/moved-code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  rm -f "$CODE_CHECKOUT/bin/lib/repo-moves.json"
+  echo '{"moves": [{"from": "old-owner/proj", "to": "owner/proj", "on": "2026-11-14"}]}' \
+    >"$CODE_CHECKOUT/bin/lib/repo-moves.json"
+  sed -i 's#https://github.com/owner/proj/#https://github.com/old-owner/proj/#g' "$TEAM_HOME/ledger.jsonl"
+}
+
+@test "--pr under either owner of a moved repo picks the PR logged under the other, with the registry under either, and merged carries the URL under the new" {
+  proj_moved
+  local registry url
+  for registry in owner/proj old-owner/proj; do
+    sed -i "s#^repo = .*#repo = \"$registry\"#" "$TEAM_HOME/projects.toml"
+    for url in https://github.com/old-owner/proj/pull/5 https://github.com/Old-Owner/proj/pull/5/ https://github.com/owner/proj/pull/5; do
+      merge_again
+      run_bin -0 team-merge T14 --pr "$url"
+      assert_equal "$(merged_events | jq -r '"\(.pr) \(.url)"')" "5 https://github.com/owner/proj/pull/5"
+      # gh reads and merges the PR under the new owner alone.
+      assert_equal "$(stub_calls gh | jq -r '.[] | select(test("/"))' | grep -c old-owner)" 0
+    done
+  done
+  run_bin -1 --separate-stderr team-merge T14 --pr https://github.com/old-owner/proj/pull/7
+  assert_equal "$stderr" "team-merge: https://github.com/owner/proj/pull/7 is not one of T14's pr events:
+  https://github.com/owner/proj/pull/5"
+}
+
 @test "no merge-approved for the PR is refused without asking Discord" {
   jq -c 'if .event == "merge-approved" then .url = "https://github.com/owner/proj/pull/6" else . end' \
     "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l"

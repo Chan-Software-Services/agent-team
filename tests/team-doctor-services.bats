@@ -638,7 +638,7 @@ captures_pass="PASS captures: the team home's git ignores tasks/*/ui/, every cap
 # A slot <slot> of Conventioner's pool (its folder's number) with a screenshot in .scratch/shots/,
 # detached as a returned slot is; prints its path: slot_with_shots <n>
 slot_with_shots() {
-  local slot=$HOME/.treehouse/Conventioner-d4c77a/$1/Conventioner
+  local slot=$HOME/.treehouse/Conventioner-3930b8/$1/Conventioner
   git -C "$CONVENTIONER" worktree add -q --detach "$slot"
   mkdir -p "$slot/.scratch/shots/builder"
   touch "$slot/.scratch/shots/builder/page.png"
@@ -665,7 +665,7 @@ slot_closed() {
   slot_opened T5 "$one"
   slot_closed T5 "$one" returned
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  shown='~/.treehouse/Conventioner-d4c77a'
+  shown='~/.treehouse/Conventioner-3930b8'
   run_bin team-doctor
   assert_equal "$(line_of captures)" "WARN captures: $shown/1/Conventioner/.scratch/shots/ is left behind, in a slot held by no open task (team-close removes .scratch/shots/ from each worktree it returns); fix: rm -rf $one/.scratch/shots"
 
@@ -693,7 +693,7 @@ slot_closed() {
   slot_opened T4 "$slot"
   slot_closed T4 "$slot" returned
   other=$(other_spelling "$HOME/.treehouse")
-  slot_opened T5 "${other}/Conventioner-d4c77a/1/Conventioner"
+  slot_opened T5 "${other}/Conventioner-3930b8/1/Conventioner"
   run_bin team-doctor
   assert_equal "$(line_of captures)" "$captures_pass"
 
@@ -704,7 +704,7 @@ slot_closed() {
   assert_equal "$(line_of captures)" "$captures_pass"
 
   # An empty folder holds nothing to warn about.
-  slot=$HOME/.treehouse/Conventioner-d4c77a/4/Conventioner
+  slot=$HOME/.treehouse/Conventioner-3930b8/4/Conventioner
   git -C "$CONVENTIONER" worktree add -q --detach "$slot"
   mkdir -p "$slot/.scratch/shots"
   run_bin team-doctor
@@ -734,7 +734,7 @@ slot_closed() {
   # Daniel returned it by hand, so no team-close will remove them.
   git -C "$slot" switch -q --detach
   run_bin team-doctor
-  assert_contains "$(line_of captures)" "WARN captures: ~/.treehouse/Conventioner-d4c77a/1/Conventioner/.scratch/shots/ is left behind"
+  assert_contains "$(line_of captures)" "WARN captures: ~/.treehouse/Conventioner-3930b8/1/Conventioner/.scratch/shots/ is left behind"
 }
 
 @test "the captures line leaves another clone's worktree in the pool, and judges nothing without a ledger or a registry" {
@@ -743,13 +743,13 @@ slot_closed() {
   local slot other=$HOME/firstmate/projects/Conventioner
   # A clone sharing the pool owns slot 1, whose screenshots are that clone's.
   git clone -q "$CONVENTIONER" "$other"
-  slot=$HOME/.treehouse/Conventioner-d4c77a/1/Conventioner
+  slot=$HOME/.treehouse/Conventioner-3930b8/1/Conventioner
   git -C "$other" worktree add -q --detach "$slot"
   mkdir -p "$slot/.scratch/shots"
   touch "$slot/.scratch/shots/page.png"
   # A folder holding no worktree at all is the slots line's.
-  mkdir -p "$HOME/.treehouse/Conventioner-d4c77a/2/Conventioner/.scratch/shots"
-  touch "$HOME/.treehouse/Conventioner-d4c77a/2/Conventioner/.scratch/shots/page.png"
+  mkdir -p "$HOME/.treehouse/Conventioner-3930b8/2/Conventioner/.scratch/shots"
+  touch "$HOME/.treehouse/Conventioner-3930b8/2/Conventioner/.scratch/shots/page.png"
   run_bin team-doctor
   assert_equal "$(line_of captures)" "$captures_pass"
 
