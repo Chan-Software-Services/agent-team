@@ -108,6 +108,15 @@ passes() {
     $'git commit -m "$(cat <<\'EOF\'\nfix: x\n\nteam-worker T1 ops wt is refused\nEOF\n)"'
 }
 
+# A shell given its -c string reads no script from stdin, so what printf prints into it (through
+# xargs, the names of the bats files to run) is not decoded and read as commands; with no string
+# after -c, as xargs -0 bash -c, it still is.
+@test "names printed into xargs running a shell's -c string pass" {
+  passes "printf '%s\\n' team-inbox team-answer | xargs -P 2 -I{} sh -c 'tests/vendor/bats-core/bin/bats tests/{}.bats'" \
+    "printf '%s\\n' team-inbox | bash -c 'cat'"
+  refuses "$COORDINATOR" "printf '%s\\n' team-inbox | xargs -0 bash -c" "printf '%s\\n' team-inbox | bash"
+}
+
 @test "a call of another tool passes, and input it cannot read is refused, naming why" {
   run_bin -0 --separate-stderr hooks/command-guard <<<'{"tool_name": "Read", "tool_input": {"file_path": "AGENT_TEAM_ROLE=x"}}'
   local input

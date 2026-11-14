@@ -44,9 +44,10 @@ The text it prints is the command with:
     dropped, and so for each such string inside another (its later lines already start lines);
   - a shell's here-string, or one in a command piped into a shell, its quotes removed; and for
     each command piped into a shell, the text of each of its quoted strings and of each of its
-    simple commands' words after the first, quotes dropped, and what each of its echo and printf
-    commands prints, as written and decoded as for a file written (below); each added on a line of
-    its own.
+    simple commands' words after the first, quotes dropped, and, unless each shell it is piped into
+    is given its -c string (sh -c 'x {}' behind xargs, which reads no script from stdin), what each
+    of its echo and printf commands prints, as written and decoded as for a file written (below);
+    each added on a line of its own.
 A shell here is a pipeline segment one of whose simple commands, as the walk below reads it (its
 assignments, redirections and the wrappers' options passed, its words' quotes removed, its
 $'...' escapes decoded and its braces expanded), or a command that one runs (its string, its find -exec),
@@ -625,14 +626,27 @@ def _fed(reading, shells, pipeline, segment):
     return True
 
 
-def _runs_shell(command, start, end, bodies, subscripts):
+def _runs_shell(command, start, end, bodies, subscripts, script=False):
     """Whether a simple command of the segment from start to end, or one it runs (in a string, by
-    find -exec), is a shell that may read its script from stdin, as the header says."""
+    find -exec), is a shell that may read its script from stdin, as the header says; with script,
+    not one given its -c string, which reads none (xargs -0 bash -c, given none, still may)."""
     for words in _segment_commands(command, start, end, bodies, subscripts):
         for found in _walk(words, command, 0, (), DIRECT):
             name = os.path.basename(found.words[0]) if found.words else ""
+            if script and name in SHELLS and _given_string(found.words[1:]):
+                continue
             if name in SHELLS or name == "source" or (name == "." and len(found.words) > 1):
                 return True
+    return False
+
+
+def _given_string(args):
+    """Whether a shell's arguments hold a -c option among its leading options, a word after it."""
+    for k, arg in enumerate(args):
+        if not re.fullmatch(r"-[A-Za-z]+", arg):
+            return False
+        if "c" in arg:
+            return k + 1 < len(args)
     return False
 
 
@@ -661,9 +675,17 @@ def _code_parts(command, depth):
     ]
     # A segment is a shell too when a group or substitution in it starts one, (bash) or >(bash),
     # since it reads the segment's stdin; a group's pipelines come after its parent's.
-    for (parent, _), shell in reversed(list(zip(reading.pipelines, shells))):
+    # Of those, the ones that may read their script from stdin, which what echo or printf prints
+    # into them is decoded for.
+    scripts = [
+        [_runs_shell(command, s, e, bodies, reading.subscripts, script=True) for s, e in segments]
+        for _, segments in reading.pipelines
+    ]
+    for (parent, _), shell, script in reversed(list(zip(reading.pipelines, shells, scripts))):
         if parent is not None and any(shell):
             shells[parent[0]][parent[1]] = True
+        if parent is not None and any(script):
+            scripts[parent[0]][parent[1]] = True
     out, start = [], 0
     for heredoc in reading.heredocs:
         lines = command[heredoc.body[0] : heredoc.body[1]].split("\n")[:-1]
@@ -681,7 +703,7 @@ def _code_parts(command, depth):
     # only: its later lines already start lines of the text.
     added = [OPENING.sub("", text[match.end() :].split("\n", 1)[0]) for match in RUNS_STRING.finditer(text)]
     added += [word for pipeline, segment, word in reading.strings if _fed(reading, shells, pipeline, segment)]
-    for (_, segments), shell in zip(reading.pipelines, shells):
+    for (_, segments), shell, script in zip(reading.pipelines, shells, scripts):
         for k in range(1, len(segments)):
             if not shell[k]:
                 continue
@@ -691,7 +713,10 @@ def _code_parts(command, depth):
                 for simple in SIMPLE.split(piped.replace("'", "").replace('"', "")):
                     words = simple.split(None, 1)
                     added += words[1:]
-                # What echo or printf prints into the pipe, decoded, as _writes reads it for a file.
+                # What echo or printf prints into the pipe, decoded, as _writes reads it for a file,
+                # when the shell may read it as its script.
+                if not script[k]:
+                    continue
                 for words in _segment_commands(command, s, e, bodies, reading.subscripts):
                     added += list(_printed(words))
     parts = [text] + [inner for inner in added if inner]
