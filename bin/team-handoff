@@ -21,9 +21,10 @@
 #                  team-stow exits 75); a stack that would not stop or go down is said, and the
 #                  handoff goes on. Once per handoff: a run again skips it, so a run started with
 #                  --here finishes only with --here, and one without only without.
-#   3. assistant   Every live session named assistant (claude agents --json) stopped and
-#                  removed (claude stop, claude rm), "assistant: stopped <id>" each, or
-#                  "assistant: none live"; with or without --here, and again on a run again. One
+#   3. assistant   Every session named assistant in any state but stopped (claude agents --json
+#                  --all, which also lists one whose turn is done) stopped and removed (claude
+#                  stop, claude rm), "assistant: stopped <id>" each, or "assistant: none
+#                  live"; with or without --here, and again on a run again. One
 #                  that will not stop, or no session list, refuses the handoff with nothing
 #                  released; one stopped whose removal fails is said, and the handoff goes on.
 #   4. config      team-config capture, each captured item listed; a capture that fails or refuses
@@ -246,8 +247,10 @@ if [[ -z $finished ]]; then
 
   # 3. The assistant, which runs only beside the coordinator on the lease holder: stopped and
   # removed, so it posts nothing once the team moves; its stow note is in the records already.
-  sessions=$(claude agents --json 2>"$err" {lock_fd}>&- | jq -ce 'select(type == "array")' 2>/dev/null) ||
-    die "assistant: cannot read the live session list (claude agents --json); nothing was released"
+  # The list is --all's, as launch_singleton reads it, since without it one whose turn is done is
+  # left out, though a message wakes it; a stopped one, which nothing wakes, is left.
+  sessions=$(claude agents --json --all 2>"$err" {lock_fd}>&- | jq -ce 'select(type == "array")' 2>/dev/null) ||
+    die "assistant: cannot read the session list (claude agents --json --all); nothing was released"
   assistants=0
   while read -r id; do
     assistants=1
@@ -258,7 +261,7 @@ if [[ -z $finished ]]; then
     else
       echo "team-handoff: assistant: stopped $id, but claude rm failed ($(first_error)); remove it by hand; the handoff goes on" >&2
     fi
-  done < <(jq -r '.[] | select(.name == "assistant") | .id // ((.sessionId // "")[:8])' <<<"$sessions")
+  done < <(jq -r '.[] | select(.name == "assistant" and .state != "stopped") | .id // ((.sessionId // "")[:8])' <<<"$sessions")
   ((assistants)) || echo "assistant: none live"
   step_done 3
 

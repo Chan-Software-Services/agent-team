@@ -304,7 +304,7 @@ decide_take() {
 # Fence this machine, which lost the lease DESC shows, and refuse: the fence file first, so the
 # fence hook blocks at once, then the team's sessions, then the heartbeat.
 fence() {
-  local holder epoch seen sessions id name stopped=() problems=() out outcome
+  local holder epoch seen sessions all id name stopped=() problems=() out outcome
   holder=${FIELD[holder]} epoch=${FIELD[epoch]}
   seen="$holder holds it (epoch $epoch)"
   [[ ${FIELD[state]} == held ]] || seen="$holder released it (epoch $epoch)"
@@ -313,6 +313,16 @@ fence() {
   mv -f "$state/fenced.$$" "$state/fenced"
   if sessions=$(claude agents --json 2>"$err" {lock_fd}>&- | jq -c 'select(type == "array")' 2>/dev/null) &&
     [[ -n $sessions ]]; then
+    # The assistant is read from --all too, as launch_singleton reads it, since the plain list
+    # leaves out one whose turn is done, though a message wakes it; a stopped one is left.
+    if all=$(claude agents --json --all 2>"$err" {lock_fd}>&- | jq -c 'select(type == "array")' 2>/dev/null) &&
+      [[ -n $all ]]; then
+      sessions=$(jq -c --argjson all "$all" '. as $listed | ($listed | map(.id // .sessionId)) as $ids
+        | $listed + [$all[] | select(.name == "assistant" and .state != "stopped")
+          | select((.id // .sessionId) as $id | $ids | index($id) | not)]' <<<"$sessions")
+    else
+      problems+=("could not read the session list with --all (claude agents --json --all), so an assistant whose turn is done may still run: stop it with claude stop <id>")
+    fi
     while read -r id name; do
       # An ops session holds production query results: ended, transcript and all.
       if [[ $name =~ ^T[0-9]+-ops$ ]]; then

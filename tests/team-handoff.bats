@@ -43,8 +43,10 @@ TOML
   mkdir -p "$HOME/.claude"
   echo "Shared instructions." >"$HOME/.claude/CLAUDE.md"
 
-  # claude: agents --json from sessions.json; stop marks a session stopped, rm takes it off the
-  # list; no plugins and no marketplaces.
+  # claude: agents --json --all from sessions.json, and agents --json without the rows marked
+  # listed false, as Claude Code leaves out a background session whose turn is done once the
+  # daemon settles its process; stop marks a session stopped, rm takes it off the list; no plugins
+  # and no marketplaces.
   cat >"$BATS_TEST_TMPDIR/sessions.json" <<'JSON'
 [{"id": "3169fcbd", "sessionId": "3169fcbd-1111", "name": "coordinator", "status": "busy", "state": "working"},
  {"id": "81f08540", "sessionId": "81f08540-1111", "name": "T1-builder", "status": "idle", "state": "done"},
@@ -54,7 +56,8 @@ JSON
   stub_script claude <<'SH'
 list=$BATS_TEST_TMPDIR/sessions.json
 case "$*" in
-  'agents --json') cat "$list" ;;
+  'agents --json') jq 'map(select(.listed != false))' "$list" ;;
+  'agents --json --all') cat "$list" ;;
   'stop '*) jq --arg id "$2" 'map(if .id == $id then .status = "stopped" else . end)' "$list" >"$list.next" && mv "$list.next" "$list" ;;
   'rm '*) jq --arg id "$2" 'map(select(.id != $id))' "$list" >"$list.next" && mv "$list.next" "$list" ;;
   'plugin list --json' | 'plugin marketplace list --json') echo '[]' ;;
@@ -162,9 +165,11 @@ rm 81f08540"
   assert_equal "$(stowed_events | wc -l)" 1
 }
 
-# Add a live session named assistant, <id>, to the session list.
+# Add a session named assistant, <id>, to the session list, in state <state> (done by default),
+# and with <listed> false listed only by agents --json --all: live_assistant <id> [<state> [<listed>]]
 live_assistant() {
-  jq --arg id "$1" '. + [{id: $id, sessionId: "\($id)-1111", name: "assistant", status: "idle", state: "done"}]' \
+  jq --arg id "$1" --arg state "${2:-done}" --argjson listed "${3:-true}" \
+    '. + [{id: $id, sessionId: "\($id)-1111", name: "assistant", status: "idle", state: $state, listed: $listed}]' \
     "$BATS_TEST_TMPDIR/sessions.json" >"$BATS_TEST_TMPDIR/sessions.next"
   mv "$BATS_TEST_TMPDIR/sessions.next" "$BATS_TEST_TMPDIR/sessions.json"
 }
@@ -253,6 +258,16 @@ rm 81f08540"
 @test "the assistant step stops and removes every live assistant after the stow, and says none live on a run again" { assistant_step; }
 @test "with --here, the assistant step stops and removes every live assistant too" { assistant_step --here; }
 
+@test "an assistant whose turn is done, listed only with --all, is stopped and removed; a stopped one is left" {
+  live_assistant a55157a7 done false
+  live_assistant c7737929 stopped false
+  TEAM_HANDOFF_STOP_AFTER=3 run_bin -1 --separate-stderr team-handoff
+  [[ $output == *"stowed: T1 "*$'\n'"assistant: stopped a55157a7" ]]
+  assert_equal "$(stops_and_removes | grep -v 81f08540)" "stop a55157a7
+rm a55157a7"
+  assert_equal "$(jq -r '.[] | select(.name == "assistant") | .id' "$BATS_TEST_TMPDIR/sessions.json")" c7737929
+}
+
 @test "an assistant that will not stop, or no session list, refuses the handoff before the config step, with nothing released; a failed removal is said and the handoff goes on" {
   live_assistant a55157a7
   # The setup's stub, which each stub below runs for every other call.
@@ -270,12 +285,12 @@ SH
 
   stub_script claude <<'SH'
 case "$*" in
-  'agents --json') echo "error: daemon down" >&2; exit 1 ;;
+  'agents --json --all') echo "error: daemon down" >&2; exit 1 ;;
   *) bash "$BATS_TEST_TMPDIR/claude-real.sh" "$@" ;;
 esac
 SH
   run_bin -1 --separate-stderr team-handoff
-  assert_equal "$stderr" "team-handoff: assistant: cannot read the live session list (claude agents --json); nothing was released"
+  assert_equal "$stderr" "team-handoff: assistant: cannot read the session list (claude agents --json --all); nothing was released"
   assert_equal "$(lease_json | jq -r .state)" held
 
   stub_script claude <<'SH'
@@ -338,7 +353,7 @@ team home: committed"
   stub_script claude <<'SH'
 list=$BATS_TEST_TMPDIR/sessions.json
 case "$*" in
-  'agents --json') cat "$list" ;;
+  'agents --json' | 'agents --json --all') cat "$list" ;;
   'stop '*) jq --arg id "$2" 'map(if .id == $id then .status = "stopped" else . end)' "$list" >"$list.next" && mv "$list.next" "$list"
     echo "late" >"$HOME/slots/home/1/late.txt" ;;
   'rm '*) jq --arg id "$2" 'map(select(.id != $id))' "$list" >"$list.next" && mv "$list.next" "$list" ;;
