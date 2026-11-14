@@ -50,7 +50,8 @@ TOML
   ledger_line "{\"task\":\"T9\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$HEAD_SHA\",\"ts\":\"2026-11-12T09:00:00Z\"}"
   stub_reply gh "$HEAD_SHA"
   # curl answers as GitHub would, each call by its method and path: its stdin (the config), its
-  # environment and its body file are kept per call, numbered by its line in curl.log. A fixture
+  # environment and its body file are kept per call, numbered by its line in curl.log. The repo it
+  # answers on is APP_REPO, Owner/agent-team by default. A fixture
   # curl.<call> (installation, mint, check-run or revoke) holds "<http code> <body>" to answer
   # instead, or "exit <n>" for a call curl cannot make.
   stub_script curl <<'SH'
@@ -76,9 +77,9 @@ if [[ -n $body ]]; then cp "$body" "$STUB_CALLS/curl.body.$n"; fi
 path=${url#https://api.github.com/}
 printf '%s %s\n' "$method" "$path" >>"$STUB_CALLS/curl.calls"
 case "$method $path" in
-  "GET repos/Owner/agent-team/installation") call=installation answer='200 {"id": 777}' ;;
+  "GET repos/${APP_REPO:-Owner/agent-team}/installation") call=installation answer='200 {"id": 777}' ;;
   "POST app/installations/777/access_tokens") call=mint answer="201 {\"token\": \"$(<"$STUB_FIXTURES/token")\", \"expires_at\": \"2026-11-12T13:00:00Z\"}" ;;
-  "POST repos/Owner/agent-team/check-runs")
+  "POST repos/${APP_REPO:-Owner/agent-team}/check-runs")
     call=check-run answer='201 {"id": 4242, "name": "agent-review"}'
     # With CHECK_RUN_HOLD set, the post says it started and waits for the test's go, up to 10 s.
     if [[ -n ${CHECK_RUN_HOLD:-} ]]; then
@@ -352,4 +353,45 @@ POST app/installations/777/access_tokens"
   run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
   assert_equal "$output" 4242
   assert_equal "$stderr" "team-review-check: revoking the App's token failed: GitHub answered HTTP 500: Server Error; it expires on its own within the hour"
+}
+
+@test "a PR logged under one owner of a moved repo is found by the other's URL, and the App reads, mints and posts on the new owner's repo" {
+  local old=https://github.com/chanjdaniel/agent-team/pull/5 new=https://github.com/Chan-Software-Services/agent-team/pull/5
+  export APP_REPO=Chan-Software-Services/agent-team
+  # <ledger's url> <given url> <registry's repo>: the registry under either owner.
+  local -a cases=(
+    "$old $new Chan-Software-Services/agent-team"
+    "$new $old Chan-Software-Services/agent-team"
+    "$old $new chanjdaniel/agent-team"
+    "$new $old chanjdaniel/agent-team"
+    "$old $old chanjdaniel/agent-team"
+  )
+  local line logged given registry
+  for line in "${cases[@]}"; do
+    read -r logged given registry <<<"$line"
+    sed -i "s#^repo = .*#repo = \"$registry\"#" "$TEAM_HOME/projects.toml"
+    : >"$TEAM_HOME/ledger.jsonl"
+    ledger_line '{"task":"T9","event":"opened","project":"agent-team"}'
+    ledger_line "{\"task\":\"T9\",\"event\":\"pr\",\"url\":\"$logged\",\"project\":\"agent-team\",\"head\":\"$HEAD_SHA\"}"
+    ledger_line "{\"task\":\"T9\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$HEAD_SHA\",\"ts\":\"2026-11-12T09:00:00Z\"}"
+    rm -f "$STUB_CALLS/curl.calls" "$STUB_CALLS/gh.log"
+    run_bin --separate-stderr -0 team-review-check "$given" "$HEAD_SHA" success "no blocking findings"
+    assert_equal "$output" 4242
+    assert_equal "$(curl_calls)" "GET repos/Chan-Software-Services/agent-team/installation
+POST app/installations/777/access_tokens
+POST repos/Chan-Software-Services/agent-team/check-runs
+DELETE installation/token"
+    assert_equal "$(stub_calls gh | jq -r '.[4]')" Chan-Software-Services/agent-team
+  done
+}
+
+@test "a redirect from GitHub is never followed: a 301 is reported as GitHub's answer, and nothing is posted" {
+  echo '301 {"message": "Moved Permanently", "url": "https://api.github.com/repositories/42/installation"}' \
+    >"$STUB_FIXTURES/curl.installation"
+  run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
+  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 301: Moved Permanently; nothing posted"
+  assert_equal "$(curl_calls)" "GET repos/Owner/agent-team/installation"
+  # curl is never told to follow one.
+  assert_equal "$(stub_calls curl | jq -c '[.[] | select(test("^(-L|--location(-trusted)?)$"))]')" "[]"
+  assert_equal "$(stub_calls curl | wc -l)" 1
 }

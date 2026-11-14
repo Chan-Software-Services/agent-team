@@ -4,7 +4,8 @@
 # (builder-merge-base) and a rereview's.
 #
 # Usage: team-catch-up T<n> [--pr <url>]
-# The PR is the task's latest pr event, or --pr, which must be one of the task's pr events; its
+# The PR is the task's latest pr event, or --pr, which must be one of the task's pr events (a URL
+# under a moved repo's old owner or its new one, bin/lib/repo-moves.json, naming the same PR); its
 # repo must be a project in projects.toml. Checks first, changing nothing, each failure a reason,
 # every one given at once (exit 1):
 #   the PR is open and targets the project's base;
@@ -27,12 +28,13 @@
 # and through the checkout's hooks; a push origin refuses because the branch moved meanwhile is
 # exit 1, nothing logged: run it again.
 # Then, once GitHub shows the merge as the PR's head (waited on for up to TEAM_CATCH_UP_WAIT
-# seconds, default 30), caught-up is logged with url (the PR's), from (the reviewed head, the same
-# through each catch-up of it), head (the merge) and base (the base's commit merged), all full
-# shas, and agent-review is set to success on the merge, its description "clean merge of <base>
-# <short base> onto <short head>, reviewed": through team-review-check, as the reviewer App's
-# check run, on a project whose agent-review the App posts (own_bar in bin/lib/team.sh), which
-# reads the review the merge stands on through that caught-up, else through team-review-status.
+# seconds, default 30), caught-up is logged with url (the PR's, under its new owner), from (the
+# reviewed head, the same through each catch-up of it), head (the merge) and base (the base's
+# commit merged), all full shas, and agent-review is set to success on the merge, its description
+# "clean merge of <base> <short base> onto <short head>, reviewed": through team-review-check, as
+# the reviewer App's check run, on a project whose agent-review the App posts (own_bar in
+# bin/lib/team.sh), which reads the review the merge stands on through that caught-up, else
+# through team-review-status.
 # A status or check that cannot be set is said on stderr with the command to set it; the merge is
 # pushed and logged all the same, exit 1. A check posted whose token alone was not revoked
 # (team-review-check printed its id) is said as posted, with why, and is no failure.
@@ -75,6 +77,8 @@ jq -e 'any(.[]; .event == "pr")' <<<"$events" >/dev/null || die "$task has no pr
 if [[ -z $url ]]; then
   pr=$(jq -c 'map(select(.event == "pr")) | last' <<<"$events")
 else
+  # The task's events carry each url under its repo's new owner, so the URL given is read so too.
+  url=$(canonical_url "$url") || exit 1
   pr=$(jq -c --arg url "$url" 'map(select(.event == "pr" and (.url | rtrimstr("/")) == $url)) | last' <<<"$events")
   [[ $pr != null ]] ||
     die "$url is not one of $task's pr events:"$'\n'"$(jq -r '.[] | select(.event == "pr") | "  \(.url)"' <<<"$events")"

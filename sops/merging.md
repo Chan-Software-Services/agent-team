@@ -117,7 +117,7 @@ For agent-team, the team's own project (`own_project` in `bin/lib/team.sh`: by n
 
 T243 found that any session can write a passing `review` ledger event and post the `agent-review` commit status with Daniel's own token, so agent-team, whose PRs change the guards themselves, merges unattended only behind a check no session's token can post.
 
-- The reviewer App is one GitHub App owned by `chanjdaniel`, with Checks read and write and Metadata read and no webhook, installed on `chanjdaniel/agent-team` alone.
+- The reviewer App is one GitHub App owned by `chanjdaniel`, with Checks read and write and Metadata read and no webhook, installed on the organization `Chan-Software-Services` for all its repositories.
 - `bin/lib/review-app` names it, one `id=<n>` and one `slug=<s>` line, a committed constant read by `review_app` in `bin/lib/team.sh`, never a registry key, since the registry is a record any session can edit; with no such file the App is off, and agent-team merges on the per-head word alone.
 - Its key is `~/.config/agent-team/review-app.pem`, mode 600, the `review-app-key` entry of the team home's `machine/secrets.json`, restored by `team-secrets`; the worker and coordinator settings deny it to the `Read` and `Edit` tools and deny a Bash command naming its path (`*agent-team/review-app*`, `*.config/agent-team/*.pem*`, and a `cd` or `pushd` into `~/.config/agent-team`), and the load check's refusal probe tries the `Read` tool, two `cat` spellings, a `cd` and a `pushd` on it.
 - `team-review-check <pr url> <sha> <success|failure> <summary>`, the coordinator's alone (a worker session is refused), posts `agent-review` as the App's check run on a PR's head, only when the task's latest review of that head has the verdict it posts, pass for success and findings for failure; it signs a JWT with the key, mints an installation token for the one repository with `checks: write` alone, posts and revokes the token, handing the JWT and the token to `curl` only on stdin.
@@ -143,8 +143,8 @@ A second App check, posted by `team-merge` itself just before it merges and requ
 
 Until step 6, agent-team merges on the per-head word as before; no other project is touched.
 
-1. After T276's second PR merges: create the App (github.com, Settings, Developer settings, GitHub Apps; no webhook; Checks read and write, Metadata read; only on this account) and note its id.
-2. Generate its private key and install the App on `chanjdaniel/agent-team` only.
+1. After T276's second PR merges: create the App (github.com, Settings, Developer settings, GitHub Apps; no webhook; Checks read and write, Metadata read; installable on any account, since the organization installs it) and note its id.
+2. Generate its private key and install the App on the organization `Chan-Software-Services`, for all its repositories.
 3. Move the key to `~/.config/agent-team/review-app.pem` with mode 600, run `team-secrets save review-app-key` once the coordinator has added the manifest entry, delete the download, and restore it on the laptop.
 4. Give the App's id in the task's thread; T276's third PR commits `bin/lib/review-app` and merges on the per-head word.
 5. The coordinator posts the App's check with `team-review-check` on every open agent-team PR reviewed before.
