@@ -2,9 +2,10 @@
 # hooks/command-guard's delete rows (bin/lib/delete_rules.py): a recursive delete (rm -r in every
 # spelling, find -delete and find -exec rm) passes only when every path it deletes resolves
 # strictly inside the worktree or the job's tmp, never one of them, the worktree's .scratch/task or
-# a directory holding one, wherever it runs (behind a wrapper, in a string a shell or eval runs, in
-# a heredoc or here-string a shell reads, piped into a shell); a path the guard cannot read before
-# it runs is refused; and git rm, a single file's rm, rmdir and text that only names a delete pass.
+# a directory holding one, nor a repository's .git, wherever it runs (behind a wrapper, in a string
+# a shell or eval runs, in a heredoc or here-string a shell reads, piped into a shell); a variable
+# the command leaves empty, a find with no start path and a path the guard cannot read before it
+# runs are refused; and git rm, a single file's rm, rmdir and text that only names a delete pass.
 
 load helpers/common
 
@@ -26,6 +27,13 @@ UNREAD="a path the guard cannot read before it runs (a variable or substitution 
 FIND="a recursive delete (find -delete or find -exec rm) under"
 # shellcheck disable=SC2016 # the allowed ways name $CLAUDE_JOB_DIR as the worker writes it
 DELETE_WAY='delete only inside your worktree (never it or its .scratch/task, which team-close archives) or inside $CLAUDE_JOB_DIR/tmp, by a path spelled out in the command; make scratch with mktemp -d "$CLAUDE_JOB_DIR/tmp/<name>.XXXXXX"'
+# shellcheck disable=SC2016
+EMPTY="which the command leaves empty, so the delete reaches another path or none"
+NO_START="a recursive delete (find -delete or find -exec rm) with no start path, which find takes as the directory it runs in"
+GIT="which is a repository's .git"
+EMPTY_WAY='name each path to delete, spelled out or in a variable the same command sets to it, and give find its start path (find build -delete)'
+# shellcheck disable=SC2016
+GIT_WAY='leave a repository'"'"'s .git in place; to drop a scratch repository, delete its whole directory inside your worktree or $CLAUDE_JOB_DIR/tmp'
 # shellcheck disable=SC2016
 UNREAD_WAY='spell the path out, or set the variable in the same command (T=$(mktemp -d "$CLAUDE_JOB_DIR/tmp/<name>.XXXXXX")), inside your worktree or your job'"'"'s tmp'
 
@@ -218,7 +226,7 @@ refuses_wrapped() {
   refuses "$FIND $TMP, $OUTSIDE" "$DELETE_WAY" "find /tmp -delete" "find -L /tmp -delete" "find -H -O3 /tmp -delete" \
     "find build /tmp -delete" "find /tmp -execdir rm {} \\;" "find /tmp -okdir /bin/rm -f {} \\;" \
     "find /tmp -exec sudo rm -rf {} \\;" "find /tmp -exec sh -c 'rm -rf {}' \\;" "sudo find /tmp -mindepth 1 -delete"
-  refuses "$FIND $WT, $KEPT" "$DELETE_WAY" "find . -name '*.pyc' -delete" "find -delete" "find -name x -exec rm {} +"
+  refuses "$FIND $WT, $KEPT" "$DELETE_WAY" "find . -name '*.pyc' -delete"
   refuses "$FIND \$D, $UNREAD" "$UNREAD_WAY" "find \"\$D\" -delete"
   refuses "a recursive delete of \$1, $UNREAD" "$UNREAD_WAY" "find build -exec sh -c 'rm -rf \"\$1\"' _ {} \\;"
   passes "find /tmp -name x" "find /tmp -exec ls {} +" "find build -exec grep -delete {} +" "find /tmp -print -quit"
@@ -256,11 +264,14 @@ refuses_wrapped() {
   assert_equal "$stderr" "Blocked by command-guard: a recursive delete of $TMP/x, $OUTSIDE; the allowed way: $DELETE_WAY. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
 }
 
-@test "the delete rows come after the kill rows, outside first, then kept, then unread" {
+@test "the delete rows come after the kill rows, outside first, then kept, a .git, empty, then unread" {
   guard -2 "rm -rf /tmp/x; pkill x"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), which reaches every task's processes and the team's own sessions; the allowed way: find your own process's PID (pgrep -af <pattern>, or the \$! you noted when you started it) and kill that literal PID in a call of its own, which passes when the process is yours and its working directory is inside your worktree or your job's tmp. A guardrail: do not reach it another way."
   refuses "a recursive delete of $TMP/x, $OUTSIDE" "$DELETE_WAY" 'rm -rf "$T" . /tmp/x'
   refuses "a recursive delete of $WT, $KEPT" "$DELETE_WAY" 'rm -rf "$T" .'
+  git -C "$WT" init -q
+  refuses "a recursive delete of $WT/.git, $GIT" "$GIT_WAY" 'E=; rm -rf "$T" "$E" .git'
+  refuses "a recursive delete of \$E, $EMPTY" "$EMPTY_WAY" 'E=; rm -rf "$T" "$E"'
 }
 
 # A name split by quotes or a backslash, a brace list, ANSI-C quoting or a script that printf
@@ -388,4 +399,54 @@ refuses_wrapped() {
   refuses "a recursive delete of $OUT/*, $OUTSIDE" "$DELETE_WAY" "rm -rf src/a/b/*/*" "rm -rf src/*/*/*/*"
   refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "rm -rf src/*/b/*/x"
   passes "rm -rf src/*/*" "rm -rf src/a/*/*"
+}
+
+# A find that names no start path deletes under whatever directory it runs in (a find $T -delete
+# with T empty is one), so it is refused wherever it runs, a directory inside the worktree too.
+@test "a find -delete or find -exec rm with no start path is refused, wherever it runs" {
+  refuses_wrapped "$NO_START" "$EMPTY_WAY" "find -delete"
+  refuses "$NO_START" "$EMPTY_WAY" "find -name '*.o' -delete" "find -name x -exec rm {} +" \
+    "find -type f -exec rm {} \\;" "find -L -delete" "find -- -name x -delete"
+  CWD=$WT/build
+  refuses "$NO_START" "$EMPTY_WAY" "find -delete" "find -name x -exec rm -rf {} +"
+  passes "find . -name x -delete" "find -name x -print"
+}
+
+# A variable the command leaves empty takes the delete to another path ("$T"/x is /x) or to the
+# directory find runs in (find $T -delete), so a recursive delete on one is refused, quoted or not,
+# braced or with a slash; an unset one is unread, as every variable the command does not set.
+@test "a recursive delete of a variable left empty or unset is refused" {
+  refuses "a recursive delete of \$tmp, $EMPTY" "$EMPTY_WAY" 'tmp=; rm -rf "$tmp"' 'tmp=""; rm -rf $tmp' \
+    "tmp=''; rm -rf \"\$tmp\"" 'tmp=build; tmp=; rm -rf "$tmp"'
+  refuses "a recursive delete of \${tmp}, $EMPTY" "$EMPTY_WAY" 'tmp=; rm -rf ${tmp}'
+  refuses "$FIND \$tmp, $EMPTY" "$EMPTY_WAY" 'tmp=; find $tmp -delete' 'tmp=""; find "$tmp" -delete' \
+    'tmp=; find "$tmp" -name x -exec rm -rf {} +'
+  refuses "a recursive delete of /, $OUTSIDE" "$DELETE_WAY" 'tmp=; rm -rf "$tmp/"' 'tmp=; rm -rf $tmp/'
+  refuses "a recursive delete of \$tmp, $UNREAD" "$UNREAD_WAY" 'rm -rf "$tmp"'
+  refuses "a recursive delete of \$tmp/, $UNREAD" "$UNREAD_WAY" 'rm -rf $tmp/'
+  refuses "a recursive delete of \${tmp}, $UNREAD" "$UNREAD_WAY" 'rm -rf ${tmp}'
+  refuses "$FIND \$tmp, $UNREAD" "$UNREAD_WAY" 'find $tmp -delete'
+  passes 'tmp=build; rm -rf "$tmp"' 'rm -rf ""' 'tmp=; rm -f "$tmp"'
+}
+
+# The worktree's parent, HOME and / are outside, and a repository's .git, the worktree's own or a
+# scratch checkout's inside a root, is refused, by name or through a link or a glob; deleting a
+# scratch repository whole passes.
+@test "a recursive delete of the worktree's parent, HOME, / or a repository's .git is refused" {
+  refuses_wrapped "a recursive delete of $BATS_TEST_TMPDIR, $OUTSIDE" "$DELETE_WAY" "rm -rf .."
+  refuses "$FIND $BATS_TEST_TMPDIR, $OUTSIDE" "$DELETE_WAY" "find .. -delete"
+  refuses "a recursive delete of $HOME, $OUTSIDE" "$DELETE_WAY" "rm -rf ~" 'rm -rf "$HOME"' 'rm -rf ${HOME}/'
+  refuses "a recursive delete of /, $OUTSIDE" "$DELETE_WAY" "rm -rf /"
+  git -C "$WT" init -q
+  git -C "$JOB/tmp/check" init -q
+  ln -s "$JOB/tmp/check/.git" "$WT/gitlink"
+  refuses_wrapped "a recursive delete of $WT/.git, $GIT" "$GIT_WAY" "rm -rf .git"
+  refuses "a recursive delete of $WT/.git, $GIT" "$GIT_WAY" "rm -rf .git/" "rm -rf ./src/../.git"
+  refuses "a recursive delete of $JOB/tmp/check/.git, $GIT" "$GIT_WAY" 'rm -rf "$CLAUDE_JOB_DIR/tmp/check/.git"' \
+    "rm -rf gitlink"
+  git -C "$WT/src/sub" init -q
+  refuses "a recursive delete of $WT/src/*/.git, $GIT" "$GIT_WAY" "rm -rf src/*/.git"
+  refuses "a recursive delete of $WT/src/sub/.git, $GIT" "$GIT_WAY" "rm -rf src/sub/.git"
+  refuses "$FIND $WT/.git, $GIT" "$GIT_WAY" "find .git -delete"
+  passes 'rm -rf "$CLAUDE_JOB_DIR/tmp/check"' "rm -rf build/.github" "rm -rf src/git"
 }

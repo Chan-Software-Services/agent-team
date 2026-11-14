@@ -4,8 +4,9 @@ bin/lib/command_rules.py appends ROWS to its table after the kill rows (bin/lib/
 Each row is its id, its test over one command_text.Command and the call's context, returning its
 reason when it refuses and None when it passes, and its allowed way, as kill_rules.py's are.
 A recursive delete passes only when every path it deletes resolves strictly inside a root (the
-worktree or the job tmp) and is no kept path (a root or the worktree's .scratch/task) nor a
-directory holding one.
+worktree or the job tmp), is no kept path (a root or the worktree's .scratch/task) nor a directory
+holding one, and is no repository's .git; and when no operand holds a variable it leaves empty,
+and a find names a start path.
 
 Which commands, read past their wrappers as command_text.heads_behind reads them, so a path, a
 quoted name, sudo, env, nohup, timeout and the rest are no way around a row:
@@ -14,8 +15,9 @@ quoted name, sudo, env, nohup, timeout and the rest are no way around a row:
     --; a file a shell runs as its script, or source reads, is never rm.
   find with -delete outside its -exec lists, its operands its start paths (its words before the
     first that starts with -, ( or !, past the leading options -H, -L, -P, -E, -X, -d, -s, -x,
-    -D <debug> and -O<level> and a -- after them; . when there are none, a {} never one), and
-    the list -files0-from reads them from, which the guard cannot read: "-files0-from's list".
+    -D <debug> and -O<level> and a -- after them; a {} never one), and the list -files0-from
+    reads them from, which the guard cannot read: "-files0-from's list". A find that names no start
+    path takes the directory it runs in, whichever that is, so it is refused (delete-empty).
   rm run by find's -exec, -execdir, -ok or -okdir, recursive or not, directly or in a string a
     shell there runs: find's start paths are its operands, and its own operands holding no {} are
     checked as well when it is recursive.
@@ -68,13 +70,19 @@ normalized as written must pass too, and so must each directory that glob matche
 the rest, resolved, or when the rest holds a glob judged so in turn (to 256 matches in all), so a
 .. or a link after a glob climbs nowhere unseen. Such a path is unread in a call that names
 dotglob, GLOBIGNORE (which turns it on), nocaseglob or globstar, under which Bash's glob matches
-hidden entries, another case or across directories, which the guard's match skips. An empty
-operand deletes nothing.
+hidden entries, another case or across directories, which the guard's match skips. An operand
+written empty ("") deletes nothing; one that holds a variable and expands to nothing, a variable
+the command leaves empty, deletes another path ("$T"/x) or none, and as find's start path the
+directory find runs in (find $T -delete), so it is refused (delete-empty).
+A path whose last component is .git (after its links are followed, or a glob's as written) is a
+repository's .git, the worktree's own or a scratch checkout's, and is refused (delete-git).
 With no root at all (no worktree and no job tmp found), every recursive delete is refused as
 outside, naming its first operand.
 The rows, in order, each naming the first operand of its kind:
   delete-outside: a path outside the worktree and the job tmp.
   delete-kept: the worktree, its .scratch/task or the job tmp, or a directory holding one.
+  delete-git: a repository's .git.
+  delete-empty: a variable the command leaves empty, or a find with no start path.
   delete-unread: a path the guard cannot read before it runs.
 Not this rule's: git clean (which the worker settings deny), rsync --delete, a single file's rm,
 rmdir, an editor tool's write and an interpreter's own delete.
@@ -104,12 +112,23 @@ ALLOWED_UNREAD = (
     'spell the path out, or set the variable in the same command (T=$(mktemp -d "$CLAUDE_JOB_DIR/tmp/<name>.XXXXXX")),'
     " inside your worktree or your job's tmp"
 )
+ALLOWED_GIT = (
+    "leave a repository's .git in place; to drop a scratch repository, delete its whole directory inside your"
+    " worktree or $CLAUDE_JOB_DIR/tmp"
+)
+ALLOWED_EMPTY = (
+    "name each path to delete, spelled out or in a variable the same command sets to it, and give find its start"
+    " path (find build -delete)"
+)
 RM = "a recursive delete of {}"
 FIND = "a recursive delete (find -delete or find -exec rm) under {}"
-OUTSIDE, KEPT, UNREAD = "outside", "kept", "unread"
+NO_START = "a recursive delete (find -delete or find -exec rm) with no start path, which find takes as the directory it runs in"
+OUTSIDE, KEPT, GIT, EMPTY, UNREAD = "outside", "kept", "git", "empty", "unread"
 WHY = {
     OUTSIDE: ", which is outside your worktree and your job's tmp",
     KEPT: ", which is your worktree, its .scratch/task or your job's tmp, or holds one",
+    GIT: ", which is a repository's .git",
+    EMPTY: ", which the command leaves empty, so the delete reaches another path or none",
     UNREAD: (
         ", a path the guard cannot read before it runs (a variable or substitution this command does not set,"
         " a ~user, a brace range, or a relative path after a cd it cannot follow)"
@@ -512,6 +531,8 @@ def _verdict(path, context):
         return OUTSIDE, shown
     if dotted or any(_within(kept, directory) for kept in context.kept):
         return KEPT, shown
+    if os.path.basename(shown.rstrip("/")) == ".git":
+        return GIT, shown
     return None, shown
 
 
@@ -519,12 +540,16 @@ def _judge(word, opening, context):
     """The verdicts of one operand: (kind, reason) for each path it may delete that does not pass,
     or with no root one OUTSIDE for its first path, or its word when that is unread."""
     try:
-        paths = []
+        paths, empty = [], False
         for path in _expand(word, context):
             if path and not path.startswith("/"):
                 paths += [os.path.join(base, path) for base in _candidates(context)]
             elif path:
                 paths.append(path)
+            else:
+                # A word that expands to nothing (a variable left empty) deletes another path or,
+                # as find's start path, the directory find runs in; "" as written deletes nothing.
+                empty = empty or word != ""
         # /proc/self, /dev/fd and the rest name the guard's own process, not the command's.
         if any(path.startswith(LIVE) for path in paths):
             raise Unread
@@ -533,6 +558,8 @@ def _judge(word, opening, context):
             for kind, shown in _verdicts(path, context):
                 if kind:
                     found.append((kind, opening.format(shown) + WHY[kind]))
+        if empty:
+            found.append((EMPTY, opening.format(getattr(word, "written", None) or word) + WHY[EMPTY]))
     except Unread:
         written = getattr(word, "written", None) or word
         if not context.roots:
@@ -559,8 +586,7 @@ def _rm(args):
 
 def _starts(args):
     """find's start paths among its words after its name: past its leading options and a -- that
-    ends them, its words before the first that starts with -, ( or !; . when there are none; a {}
-    never one."""
+    ends them, its words before the first that starts with -, ( or !, a {} among them."""
     k = 0
     while k < len(args) and (FIND_LEADING.fullmatch(args[k]) or args[k] == "-D"):
         k += 2 if args[k] == "-D" else 1
@@ -570,7 +596,7 @@ def _starts(args):
     while k < len(args) and not args[k].startswith(("-", "(", "!")):
         paths.append(args[k])
         k += 1
-    return [path for path in paths if path != "{}"] if paths else ["."]
+    return paths
 
 
 def _holds(args, option):
@@ -589,9 +615,13 @@ def _holds(args, option):
 def _find_starts(args, context):
     """The verdicts on find's start paths: each of _starts', and its -files0-from list's, which the
     guard cannot read before it runs (with no root, outside)."""
-    found = []
-    for start in _starts(args):
-        found += _judge(start, FIND, context)
+    starts = _starts(args)
+    # With none, not even a {} that xargs or -exec fills or a -files0-from list, find takes the
+    # directory it runs in.
+    found = [] if starts or _holds(args, "-files0-from") else [(EMPTY if context.roots else OUTSIDE, NO_START)]
+    for start in starts:
+        if start != "{}":
+            found += _judge(start, FIND, context)
     if _holds(args, "-files0-from"):
         kind = OUTSIDE if not context.roots else UNREAD
         found.append((kind, FIND.format("-files0-from's list") + WHY[kind]))
@@ -646,5 +676,7 @@ def _row(kind):
 ROWS = (
     ("delete-outside", _row(OUTSIDE), ALLOWED_DELETE),
     ("delete-kept", _row(KEPT), ALLOWED_DELETE),
+    ("delete-git", _row(GIT), ALLOWED_GIT),
+    ("delete-empty", _row(EMPTY), ALLOWED_EMPTY),
     ("delete-unread", _row(UNREAD), ALLOWED_UNREAD),
 )

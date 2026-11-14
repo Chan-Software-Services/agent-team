@@ -66,7 +66,8 @@ The rows, in order:
   The delete rows, bin/lib/delete_rules.py's (its header holds their wording and how a path is
     resolved): a recursive delete (rm -r, find -delete or find -exec rm) of a path outside the
     worktree and the job tmp, of either of them, the worktree's .scratch/task or a directory
-    holding one, and of a path the guard cannot read before it runs, each naming its allowed way.
+    holding one, of a repository's .git, of a variable the command leaves empty, by a find with no
+    start path, and of a path the guard cannot read before it runs, each naming its allowed way.
 Each row is given the call's context (Context): the command's text, the hook input's cwd, the
 worktree, the job tmp, the roots, the kept paths and the role, each read on a row's first use of
 it; only the kill and delete rows use it, so a call with neither reads no process or file for it.
