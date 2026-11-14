@@ -696,6 +696,35 @@ launched T7-reviewer c0000001"
   assert_equal "$(bg_calls | wc -l)" 1
 }
 
+@test "a PR's hand-off takes a URL under either owner of a moved repo, with the registry under either, and logs it under the new" {
+  # A moves table of the test's own: old-owner/proj moved to owner/proj, where gh answers.
+  code_checkout
+  rm -f "$CODE_CHECKOUT/bin/lib/repo-moves.json"
+  echo '{"moves": [{"from": "old-owner/proj", "to": "owner/proj", "on": "2026-11-14"}]}' \
+    >"$CODE_CHECKOUT/bin/lib/repo-moves.json"
+  on_github 9 "$sha"
+  local old=https://github.com/old-owner/proj/pull/9 checks given registry n=0
+  checks=$(checks)
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/ledger.before"
+  cp -a "$TEAM_HOME/tasks/T7" "$BATS_TEST_TMPDIR/T7.before"
+  # <given url> <registry's repo>.
+  local -a cases=("$old owner/proj" "$url old-owner/proj" "$old old-owner/proj")
+  for line in "${cases[@]}"; do
+    read -r given registry <<<"$line"
+    n=$((n + 1))
+    sed -i "s#^repo = .*#repo = \"$registry\"#" "$TEAM_HOME/projects.toml"
+    cp "$BATS_TEST_TMPDIR/ledger.before" "$TEAM_HOME/ledger.jsonl"
+    rm -rf "$TEAM_HOME/tasks/T7"
+    cp -a "$BATS_TEST_TMPDIR/T7.before" "$TEAM_HOME/tasks/T7"
+    run_bin -0 --separate-stderr team-next T7 --checks "$checks" -- "T7 PR $given"
+    assert_equal "$output" "logged pr url=$url head=$sha
+brief $TEAM_HOME/tasks/T7/brief-review.md
+launched T7-reviewer c000000$n"
+    assert_equal "$(jq -c 'select(.event == "launch") | .worktree' "$TEAM_HOME/ledger.jsonl" | tail -n 1)" "\"$wt\""
+    grep -qF "review \`origin/main...$sha\`" "$TEAM_HOME/tasks/T7/brief-review.md"
+  done
+}
+
 @test "a PR after a review renders rereview-2 with the derived since and the coordinator's words, and the next one rereview-3" {
   local fix fix2
   reviewed_once "$sha" '[1]' '{"blocking": 1}'

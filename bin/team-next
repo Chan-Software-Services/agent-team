@@ -154,8 +154,9 @@
 # pr (url and head) or done (session and report) is logged already and a reviewer's launch follows
 # it with no review since ("already handed off"); and for a DONE, when its sha is not the HEAD of
 # the sending builder's worktree. The worktree is the sending builder's, or for a PR the task's
-# worktree in the project whose repo holds the PR. With no review logged yet, or none since the
-# task's latest merged part (a merged with phases_left, so a later phase's first PR), the brief is
+# worktree in the project whose repo holds the PR (either owner of a moved repo, the URL's and the
+# registry's, bin/lib/repo-moves.json). With no review logged yet, or none since the task's latest
+# merged part (a merged with phases_left, so a later phase's first PR), the brief is
 # team-brief T<n> reviewer --name review (review-<k>, the lowest k from 2, once a launch read the
 # name) with --checks as its checks (refused without one: "T<n> has no review yet", or "no review
 # since its phase merged at <ts>", "so its first reviewer needs --checks <file>, ..."), the
@@ -1504,12 +1505,15 @@ if [[ $handoff == review ]]; then
 
   sets=()
   if [[ $kind == PR ]]; then
+    # The PR's repo and each open worktree's project's, owner/name, compared in canonical form (a
+    # moved repo under its new owner), so the URL and the registry may name either owner.
     [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+/?$ ]]
-    repo=${BASH_REMATCH[1]}
+    repo=$(canonical_repo "${BASH_REMATCH[1]}") || exit 1
     project=''
     while IFS= read -r p; do
       [[ -n $p ]] || continue
       r=$(team_project "$p" repo) || exit 1
+      r=$(canonical_repo "$r") || exit 1
       [[ ${r,,} != "${repo,,}" ]] || project=$p
     done <<<"$projects"
     [[ -n $project ]] || die "$url is in no repo of $task's open worktrees"
