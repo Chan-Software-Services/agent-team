@@ -51,9 +51,9 @@
 #         bin/lib/working-set.awk), one more read inside it as the command ends, and the CPU its
 #         CPUUsageNSec, read there too; elsewhere each sample is the resident memory of its
 #         process tree (its process group and every descendant of the command, one in a group of
-#         its own included, as under GNU timeout), and the CPU the time its processes took. A run that was stopped, or whose
-#         memory no look read, leaves no sample, said on stderr, and a sample that cannot be
-#         written is a line on stderr: neither changes the exit status.
+#         its own included, as under GNU timeout), and the CPU the time its processes took. A run
+#         that was stopped, or whose memory no look read, leaves no sample, said on stderr, and a
+#         sample that cannot be written is a line on stderr: neither changes the exit status.
 #         An INT, TERM or HUP to team-heavy (a Ctrl-C in its terminal, or stop) ends the
 #         command's whole tree, as stop says, and team-heavy then exits with the command's status.
 #         Under a run already (TEAM_HEAVY_HELD set), the command runs at once, inside its parent's
