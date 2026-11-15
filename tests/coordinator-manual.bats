@@ -539,7 +539,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'a plain `note` goes back when its scope is `change`, and is queued as a follow-up, never sent back, when it is `before`' <<<"$reviewer"
   # Every round, a notes-only one too, reports at the push and stops: no builder waits on CI or
   # pushes a fix under a review, and a red check comes back as a fix round from the checks wait.
-  grep -qF '   The delivery ends at the `PR` it sends (on a gated project, once the gate'"'"'s run, its ci step skipped, or the base'"'"'s merge after it has pushed), with no wait on the PR'"'"'s GitHub checks and nothing more pushed' \
+  grep -qF '   The delivery ends at the `PR` it sends (on a gated project, once the gate'"'"'s run, its ci step skipped, or the base'"'"'s merge after it has pushed), with no wait after it on the PR'"'"'s GitHub checks and nothing more pushed' \
     "$REPO_ROOT/templates/briefs/builder-round.md"
   # The PR body names no local checks, so the round has no line of them to bring up to date.
   if grep -F 'local checks' "$REPO_ROOT/templates/briefs/builder-round.md"; then return 1; fi

@@ -7,7 +7,7 @@
    Fix each finding the coordinator sends you on the branch, pushing nothing; once they are fixed, or the coordinator says the review passed, go on with the push, the tests and the PR.
 4. On the head you push: {{tests}}
    Fix the branch and push again until they pass on one head.
-5. Open one PR from `{{branch}}` to `{{base}}`: `gh pr create --repo {{repo}} --base {{base}} --head {{branch}}`, titled as a Conventional Commit, its body opening with what this PR changes, in words a reader of the repository can follow, with no task, ticket, phase or retro number (the task's goal is "{{goal}}": on a phase, say this phase's part of it alone and name the others as their own PRs).{{captures}}
-6. Send `{{task}} PR <full url>` to `coordinator` and stop: the delivery ends there, with no wait on the PR's GitHub checks, since the coordinator's script waits on them once the review passes, and a red check comes back to you from the coordinator as a fix round, as a review's findings do.
+5. Open one PR from `{{branch}}` to `{{base}}`: `gh pr create --repo {{repo}} --base {{base}} --head {{branch}}`, titled as a Conventional Commit, its body opening with what this PR changes, in words a reader of the repository can follow, with no task, ticket, phase or retro number (the task's goal is "{{goal}}": on a phase, say this phase's part of it alone and name the others as their own PRs).{{captures}}{{ci}}
+6. Send `{{task}} PR <full url>` to `coordinator` and stop: the delivery ends there, with no wait after it on the PR's GitHub checks, since the coordinator's script waits on them once the review passes, and a red check comes back to you from the coordinator as a fix round, as a review's findings do.
 
 Never run a command that needs `sudo`; send `{{task}} BLOCKED <the command> needs sudo` to `coordinator` instead.

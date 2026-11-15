@@ -12,7 +12,7 @@ Its blockers are done on this branch.{{ui}}{{parallel}}
 
 1. Read `{{task_dir}}/spec.md`, your ticket, the files it names, and every note in `{{task_dir}}/build-notes/`.
 2. Tick every box you meet in the ticket; leave an unmet one unticked with the reason, and note anything else you find under "Found along the way".
-3. Before your DONE: {{tests}}
+3. Before your DONE: {{tests}}{{ci}}
 4. Write `{{task_dir}}/build-notes/{{ticket}}.md` for the next builder: what exists, the decisions to know, and how it is tested.
 5. Do not open a PR: the builder who delivers does that once for the whole task.
 6. Send `{{task}} DONE {{ticket}} <sha> <one line>` to `coordinator`, or `{{task}} BLOCKED {{ticket}} <why>`.
