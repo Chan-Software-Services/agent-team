@@ -134,8 +134,8 @@ launch_settings() {
 # skillOverrides.<name> to "off" for each personal skill of the user, so the session's skill
 # listing holds none of them and one the user adds later is off at the next launch. A personal
 # skill is a directory of ${CLAUDE_CONFIG_DIR:-~/.claude}/skills that holds a SKILL.md, and its
-# names are the directory's and, when its frontmatter has a name line, that one's too, since
-# Claude Code lists it by the frontmatter's. A name the settings already override keeps its
+# names are the directory's and, when its frontmatter has a name line, that one's too, so it is
+# off whichever of the two Claude Code lists it by. A name the settings already override keeps its
 # value, and a name <plugin directory>/skills holds gets no entry, since an override by a bare
 # name may reach the plugin's skill of that name. Written whole, then moved into place.
 launch_skills_off() {
