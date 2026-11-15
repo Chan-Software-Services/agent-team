@@ -17,8 +17,8 @@
 #   5. a hold standing, told, and the tell 15 minutes old or more: released, "timeout", with the
 #      unstowed instructions
 #   6. else it counts the block and exits 2 as in 2
-# An untold hold never times out: no model call runs between a block and the next tell, so its
-# conversation does not grow.
+# An untold hold never times out: no model call runs between a block and the next tell or
+# reminder, so its conversation does not grow.
 # PreCompact, any other trigger (manual, Daniel's /compact): never held, and the record is left as
 # it is; it runs with the stowed instructions when a stow stands since the session's last release,
 # else the unstowed ones. An event with no usable session_id runs with the unstowed ones too.
@@ -34,6 +34,14 @@
 # prints {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": <text>}},
 # the text telling the coordinator to run the stow skill now and end it with team-stowed, and when
 # the compaction runs anyway. Told once per hold; every other PostToolUse prints nothing.
+# UserPromptSubmit and Stop, with a hold standing and not stowed since it began, remind: each logs
+# "reminded" and prints that text, the prompt as its additionalContext (hookEventName
+# "UserPromptSubmit"), the turn's end as {"decision": "block", "reason": <text>}, which keeps the
+# turn open; a Stop event whose stop_hook_active is true (the turn was already kept open once)
+# prints nothing and logs nothing. A reminder of a hold not yet told is its tell, without a "told"
+# line: the 15 minutes run from it. A reminder of a told one ends "Unstowed, it runs anyway from
+# <HH:MM> UTC, 15 minutes after you were first told." in place of "at <HH:MM> UTC, 15 minutes from
+# now."
 # Any other event: nothing, exit 0. On any event but PreCompact, a session with no record exits 0
 # before the library is read, so a tool call of a session never held or stowed costs one jq.
 # Exit 0, or 2 to hold a compaction; a failure of its own never exits 2, so with no onFailure on
@@ -80,6 +88,29 @@ hold() {
   exit 2
 }
 
+# tell_text <when it runs anyway> <first, or empty>: what the coordinator is told of a hold, the
+# first time or as a reminder of a hold already told.
+tell_text() {
+  local clock runs
+  clock=$(compact_hold_clock "$1")
+  runs="at $clock UTC, 15 minutes from now."
+  [[ -n $2 ]] || runs="from $clock UTC, 15 minutes after you were first told."
+  echo "compact-hold: an auto-compaction of this conversation is held until you stow. Run the stow skill now, walking the conversation since your last stow, and end it with team-stowed, which lets the compaction run. Unstowed, it runs anyway $runs"
+}
+
+# remind: with a hold standing and unstowed, logs "reminded" and prints its text, else prints
+# nothing. Run in a command substitution, which a failed command does not end on its own.
+remind() {
+  local out runs_at
+  out=$(compact_hold_update "$session" '
+    if .held_at != null and (.stowed_at == null or .stowed_at < .held_at)
+    then {record: (.told_at //= $now), log: [{event: "reminded"}],
+      runs_at: ((.told_at // $now) + 900), first: (.told_at == null)} else {record: .} end') || exit 1
+  runs_at=$(jq -r '.runs_at // ""' <<<"$out")
+  [[ -n $runs_at ]] || exit 0
+  tell_text "$runs_at" "$(jq -r 'select(.first) | 1' <<<"$out")"
+}
+
 case $name in
   PreCompact)
     [[ -n $session ]] || unstowed "no stow was recorded"
@@ -112,7 +143,17 @@ case $name in
       then {record: (.told_at = $now), log: [{event: "told"}], runs_at: ($now + 900)} else {record: .} end')
     runs_at=$(jq -r '.runs_at // ""' <<<"$out")
     [[ -n $runs_at ]] || exit 0
-    jq -cn --arg text "compact-hold: an auto-compaction of this conversation is held until you stow. Run the stow skill now, walking the conversation since your last stow, and end it with team-stowed, which lets the compaction run. Unstowed, it runs anyway at $(compact_hold_clock "$runs_at") UTC, 15 minutes from now." \
+    jq -cn --arg text "$(tell_text "$runs_at" 1)" \
       '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $text}}'
+    ;;
+  UserPromptSubmit)
+    text=$(remind)
+    [[ -z $text ]] || jq -cn --arg text "$text" \
+      '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $text}}'
+    ;;
+  Stop)
+    if jq -e '.stop_hook_active == true' >/dev/null <<<"$event"; then exit 0; fi
+    text=$(remind)
+    [[ -z $text ]] || jq -cn --arg text "$text" '{decision: "block", reason: $text}'
     ;;
 esac

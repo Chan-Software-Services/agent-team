@@ -280,7 +280,10 @@
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/stop-sweep\"" }]
+        "hooks": [
+          { "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/stop-sweep\"" },
+          { "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/compact-hold\"", "timeout": 10 }
+        ]
       }
     ],
     "PreCompact": [
@@ -289,6 +292,11 @@
       }
     ],
     "PostToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/compact-hold\"", "timeout": 10 }]
+      }
+    ],
+    "UserPromptSubmit": [
       {
         "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/compact-hold\"", "timeout": 10 }]
       }

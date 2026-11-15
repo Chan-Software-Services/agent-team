@@ -142,12 +142,15 @@ assert_not_launched() {
     "$(jq -c --arg code "$REPO_ROOT" 'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) else . end)' \
       "$REPO_ROOT/coordinator.settings.json")"
   assert_equal "$(jq -r '[.hooks[][].hooks[].command] | .[]' "$settings")" \
-    "\"$REPO_ROOT/bin/hooks/session-digest\""$'\n'"\"$REPO_ROOT/bin/hooks/stop-sweep\""$'\n'"\"$REPO_ROOT/bin/hooks/compact-hold\""$'\n'"\"$REPO_ROOT/bin/hooks/compact-hold\""$'\n'"\"$REPO_ROOT/bin/hooks/lease-fence\""$'\n'"\"$REPO_ROOT/bin/hooks/lease-fence\" --coordinator"
+    "\"$REPO_ROOT/bin/hooks/session-digest\""$'\n'"\"$REPO_ROOT/bin/hooks/stop-sweep\""$'\n'"\"$REPO_ROOT/bin/hooks/compact-hold\""$'\n'"\"$REPO_ROOT/bin/hooks/compact-hold\""$'\n'"\"$REPO_ROOT/bin/hooks/compact-hold\""$'\n'"\"$REPO_ROOT/bin/hooks/compact-hold\""$'\n'"\"$REPO_ROOT/bin/hooks/lease-fence\""$'\n'"\"$REPO_ROOT/bin/hooks/lease-fence\" --coordinator"
   [[ -x $REPO_ROOT/bin/hooks/session-digest && -x $REPO_ROOT/bin/hooks/stop-sweep && -x $REPO_ROOT/bin/hooks/compact-hold && -x $REPO_ROOT/bin/hooks/lease-fence ]]
-  # compact-hold holds an auto-compaction and tells the coordinator after a tool call, with no
-  # matcher; its PreCompact entry has no onFailure, so a broken hold lets the compaction run.
-  assert_equal "$(jq -c '[.hooks.PreCompact, .hooks.PostToolUse] | map(map(del(.hooks[].command)))' "$settings")" \
-    '[[{"hooks":[{"type":"command","timeout":30}]}],[{"hooks":[{"type":"command","timeout":10}]}]]'
+  # compact-hold holds an auto-compaction, tells the coordinator after a tool call and reminds it
+  # on each prompt, with no matcher; its PreCompact entry has no onFailure, so a broken hold lets
+  # the compaction run. Its Stop reminder sits beside stop-sweep, in the one Stop entry.
+  assert_equal "$(jq -c '[.hooks.PreCompact, .hooks.PostToolUse, .hooks.UserPromptSubmit] | map(map(del(.hooks[].command)))' "$settings")" \
+    '[[{"hooks":[{"type":"command","timeout":30}]}],[{"hooks":[{"type":"command","timeout":10}]}],[{"hooks":[{"type":"command","timeout":10}]}]]'
+  assert_equal "$(jq -c '.hooks.Stop | map(.hooks |= map(.command |= sub(".*/"; "") | .command |= rtrimstr("\"")))' "$settings")" \
+    '[{"hooks":[{"type":"command","command":"stop-sweep"},{"type":"command","command":"compact-hold","timeout":10}]}]'
   [[ $(cat "$settings") != *"@TEAM_CODE@"* ]]
   assert_equal "$(jq .isolatePeerMachines "$settings")" true
   assert_equal "$(find "${settings%/*}" -name '*.json.*')" ""

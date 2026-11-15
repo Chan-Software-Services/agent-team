@@ -25,6 +25,19 @@ event() {
 auto() { event "$1" PreCompact '{"trigger": "auto", "custom_instructions": null}'; }
 manual() { event "$1" PreCompact '{"trigger": "manual", "custom_instructions": ""}'; }
 tool() { event -0 PostToolUse '{"tool_name": "Bash", "tool_input": {"command": "true"}, "tool_response": {}}'; }
+prompt() { event -0 UserPromptSubmit '{"prompt": "next"}'; }
+# turn_end [<stop_hook_active>]: the turn ends, kept open once already or not (the default).
+turn_end() { event -0 Stop '{"stop_hook_active": '"${1:-false}"'}'; }
+
+# told_text <the record's told_at>: the tell, and a reminder that is the first tell of its hold.
+told_text() {
+  echo "compact-hold: an auto-compaction of this conversation is held until you stow. Run the stow skill now, walking the conversation since your last stow, and end it with team-stowed, which lets the compaction run. Unstowed, it runs anyway at $(clock "$(($1 + 900))") UTC, 15 minutes from now."
+}
+
+# reminded_text <the record's told_at>: a reminder of a hold told before it.
+reminded_text() {
+  echo "compact-hold: an auto-compaction of this conversation is held until you stow. Run the stow skill now, walking the conversation since your last stow, and end it with team-stowed, which lets the compaction run. Unstowed, it runs anyway from $(clock "$(($1 + 900))") UTC, 15 minutes after you were first told."
+}
 
 stowed_now() {
   CLAUDE_CODE_SESSION_ID=$session run_bin -0 team-stowed
@@ -78,8 +91,7 @@ reply() {
   assert_equal "$stderr" ""
   assert_equal "$(jq -c 'keys, (.hookSpecificOutput | keys)' <<<"$output")" '["hookSpecificOutput"]'$'\n''["additionalContext","hookEventName"]'
   assert_equal "$(jq -r .hookSpecificOutput.hookEventName <<<"$output")" PostToolUse
-  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" \
-    "compact-hold: an auto-compaction of this conversation is held until you stow. Run the stow skill now, walking the conversation since your last stow, and end it with team-stowed, which lets the compaction run. Unstowed, it runs anyway at $(clock "$(($(jq .told_at "$record") + 900))") UTC, 15 minutes from now."
+  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" "$(told_text "$(jq .told_at "$record")")"
   # Told once per hold: every later tool call prints nothing.
   tool
   assert_equal "$output$stderr" ""
@@ -200,6 +212,119 @@ reply() {
   tool
   assert_equal "$output$stderr" ""
   assert_equal "$(logged)" stowed
+}
+
+@test "each prompt of a held, unstowed session reminds the coordinator, the first as the tell when no tool call told it" {
+  auto -2
+  prompt
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c 'keys, (.hookSpecificOutput | keys)' <<<"$output")" '["hookSpecificOutput"]'$'\n''["additionalContext","hookEventName"]'
+  assert_equal "$(jq -r .hookSpecificOutput.hookEventName <<<"$output")" UserPromptSubmit
+  # Untold until now, so the reminder is the tell and the 15 minutes run from it.
+  local told
+  told=$(jq .told_at "$record")
+  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" "$(told_text "$told")"
+  # A tool call tells nothing more, since the hold is told.
+  tool
+  assert_equal "$output$stderr" ""
+
+  # Every later prompt reminds again, and the time it names stays the first tell's.
+  age '.told_at = $now - 300'
+  told=$(jq .told_at "$record")
+  prompt
+  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" "$(reminded_text "$told")"
+  prompt
+  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" "$(reminded_text "$told")"
+  assert_equal "$(jq -c '[.told_at, .blocks]' "$record")" "[$told,1]"
+  assert_equal "$(logged)" $'held\nreminded\nreminded\nreminded'
+  assert_equal "$(jq -sc 'map(keys) | unique' "$log")" '[["at","event","session"]]'
+
+  # A hold a tool call told is reminded too, and the reminder's 15 minutes still time it out.
+  age '.told_at = $now - 900'
+  auto -0
+  assert_equal "$output" "$(unstowed_text "it was held 15 minutes after the tell")"
+}
+
+@test "a turn of a held, unstowed session cannot end without the reminder once" {
+  auto -2
+  tool
+  local told before
+  told=$(jq .told_at "$record")
+  before=$(cat "$record")
+  turn_end
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c 'keys' <<<"$output")" '["decision","reason"]'
+  assert_equal "$(jq -r .decision <<<"$output")" block
+  assert_equal "$(jq -r .reason <<<"$output")" "$(reminded_text "$told")"
+  assert_equal "$(cat "$record")" "$before"
+  assert_equal "$(logged)" $'held\ntold\nreminded'
+
+  # Kept open once already, the turn ends: nothing printed, logged or written.
+  turn_end true
+  assert_equal "$output$stderr" ""
+  assert_equal "$(cat "$record")" "$before"
+  assert_equal "$(logged)" $'held\ntold\nreminded'
+
+  # A Stop event that does not say is one not yet kept open.
+  event -0 Stop
+  assert_equal "$(jq -r .decision <<<"$output")" block
+  assert_equal "$(logged)" $'held\ntold\nreminded\nreminded'
+}
+
+@test "a turn that ends on an untold hold is told by its reminder, whose 15 minutes then run" {
+  auto -2
+  turn_end
+  local told
+  told=$(jq .told_at "$record")
+  [[ $told != null ]]
+  assert_equal "$(jq -r .reason <<<"$output")" "$(told_text "$told")"
+  tool
+  assert_equal "$output$stderr" ""
+  assert_equal "$(logged)" $'held\nreminded'
+  age '.told_at = $now - 900'
+  auto -0
+  assert_equal "$(logged)" $'held\nreminded\nreleased timeout'
+}
+
+@test "a prompt or a turn's end with no hold standing, or after the stow, reminds nothing" {
+  prompt
+  assert_equal "$output$stderr" ""
+  turn_end
+  assert_equal "$output$stderr" ""
+  [[ ! -e $state/compact-hold ]]
+
+  # A stow with no hold, then a held compaction that is stowed, then its release.
+  stowed_now
+  prompt
+  assert_equal "$output$stderr" ""
+  turn_end
+  assert_equal "$output$stderr" ""
+  age '.stowed_at = $now - 600'
+  auto -2
+  stowed_now
+  local before
+  before=$(cat "$record")
+  prompt
+  assert_equal "$output$stderr" ""
+  turn_end
+  assert_equal "$output$stderr" ""
+  assert_equal "$(cat "$record")" "$before"
+  auto -0
+  prompt
+  assert_equal "$output$stderr" ""
+  turn_end
+  assert_equal "$output$stderr" ""
+  assert_equal "$(logged)" $'stowed\nheld\nstowed\nreleased stowed'
+}
+
+@test "a reminder that cannot read its record fails without keeping the turn open" {
+  auto -2
+  echo 'not a record' >"$record"
+  event -1 Stop '{"stop_hook_active": false}'
+  assert_equal "$output" ""
+  assert_contains "$stderr" "$record is not a compact-hold record"
+  event -1 UserPromptSubmit '{"prompt": "next"}'
+  assert_equal "$output" ""
 }
 
 @test "each session has its own hold" {
