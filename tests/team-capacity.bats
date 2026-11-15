@@ -786,14 +786,12 @@ team_reading() {
   [[ $(tail -n 1 "$STATE_DIR/costs.jsonl" | jq -r .at) == $(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -r .at) ]]
 }
 
-@test "sample with no seam takes a real reading of this machine, a process in a held worktree counted to its task" {
-  sample_machine
-  unset TEAM_MEMINFO TEAM_READING_PROCS TEAM_READING_CPUS
-  # The stubbed uname says this machine's own OS, read past the stubs.
-  if [[ $(command -p uname -s) == Darwin ]]; then as_macos; fi
-  mkdir -p "$T7_WT"
-  local sleeper rss comm i
-  (cd "$T7_WT" && exec sleep 60) &
+# sleeper_in <directory>: start a real sleep working in <directory>, noted for teardown, and set
+# sleeper to its pid and sleeper_rss to its resident KiB as ps says it.
+sleeper_in() {
+  local comm i
+  mkdir -p "$1"
+  (cd "$1" && exec sleep 60) &
   sleeper=$!
   echo "$sleeper" >>"$BATS_TEST_TMPDIR/sleepers"
   # Its RSS is read only once it is the sleep, never the subshell before its exec, whose RSS is
@@ -808,15 +806,46 @@ team_reading() {
     fi
     sleep 0.05
   done
-  rss=$(ps -o rss= -p "$sleeper" | tr -d ' ')
+  sleeper_rss=$(ps -o rss= -p "$sleeper" | tr -d ' ')
+}
+
+@test "sample with no seam takes a real reading of this machine, a process in a held worktree counted to its task" {
+  sample_machine
+  unset TEAM_MEMINFO TEAM_READING_PROCS TEAM_READING_CPUS
+  # The stubbed uname says this machine's own OS, read past the stubs. On Linux the process counts
+  # by its PSS, above 0 and never above its RSS; on macOS by its RSS, which may have grown since.
+  local sleeper sleeper_rss fits='. > 0 and . <= $rss * 1024'
+  if [[ $(command -p uname -s) == Darwin ]]; then
+    as_macos
+    fits='. >= $rss * 1024'
+  fi
+  sleeper_in "$T7_WT"
   run_bin -0 --separate-stderr team-capacity sample
   assert_equal "$output$stderr" ""
   # The machine's own team slices (the suite's heavy run, in its task's) are tasks of the reading
   # too, so only the sandbox's are read.
-  assert_equal "$(jq -c --argjson rss "$rss" '(.tasks | map(select(.task | IN("T7", "T9"))) | INDEX(.task)) as $tasks
+  assert_equal "$(jq -c --argjson rss "$sleeper_rss" '(.tasks | map(select(.task | IN("T7", "T9"))) | INDEX(.task)) as $tasks
       | [.memory.total > 0, ($tasks | keys),
-         ($tasks.T7.memory - ([$tasks.T7.stacks[].memory] | add // 0) >= $rss * 1024), $tasks.T7.cpu]' "$STATE_DIR/readings.jsonl")" \
+         ($tasks.T7.memory - ([$tasks.T7.stacks[].memory] | add // 0) | '"$fits"'), $tasks.T7.cpu]' "$STATE_DIR/readings.jsonl")" \
     '[true,["T7","T9"],true,null]'
+}
+
+@test "on Linux a real reading counts a process by the PSS TEAM_READING_PSS gives it, and one it does not list by its RSS" {
+  [[ $(command -p uname -s) == Linux ]] || skip "PSS is read on Linux only"
+  sample_machine
+  unset TEAM_MEMINFO TEAM_READING_PROCS TEAM_READING_CPUS
+  local sleeper sleeper_rss listed
+  sleeper_in "$T7_WT"
+  listed=$sleeper
+  sleeper_in "$T9_WT"
+  export TEAM_READING_PSS=$BATS_TEST_TMPDIR/pss
+  printf '%s\t7\n' "$listed" >"$TEAM_READING_PSS"
+  run_bin -0 --separate-stderr team-capacity sample
+  assert_equal "$output$stderr" ""
+  assert_equal "$(jq -c --argjson rss "$sleeper_rss" '(.tasks | INDEX(.task)) as $tasks
+      | [($tasks.T7.memory - ([$tasks.T7.stacks[].memory] | add // 0)),
+         ($tasks.T9.memory - ([$tasks.T9.stacks[].memory] | add // 0) >= $rss * 1024)]' "$STATE_DIR/readings.jsonl")" \
+    '[7168,true]'
 }
 
 # cost <kind> <peak MiB>...: one cost line of <kind> per peak, its peak a working set.
@@ -2153,6 +2182,7 @@ cpu_reading() {
 
 @test "jobs: the floor of the CPU budget at the recorded level, at least 1, and nproc with no team home, reading or record to size it by" {
   # The sandbox's TEAM_READING_CPUS (12) stands for nproc, which counts without it.
+  # shellcheck disable=SC2153 # TEAM_READING_CPUS is the sandbox's, not a misspelt TEAM_READING_PSS
   local nproc=$TEAM_READING_CPUS
   run -0 env -u TEAM_READING_CPUS "$REPO_ROOT/bin/team-capacity" jobs
   assert_equal "$output" "$(nproc)"
