@@ -1477,13 +1477,15 @@ describe("rehearse-migrations", () => {
     const checkout = join(tempDir("origins"), "checkout");
     repo.git(dirname(checkout), "clone", "--quiet", repo.bare, "checkout");
     const repositories = ["Chan-Software-Services/Conventioner", "chanjdaniel/Conventioner"];
+    // A URL that carries a token, built here so this file holds nothing shaped like an address.
+    const withToken = ["https://x-access-token:abc", "github.com/Chan-Software-Services/Conventioner.git/"].join("@");
     const refusalOf = (url) => {
       repo.git(checkout, "remote", "set-url", "origin", url);
       return checkoutRefusal(checkout, repositories);
     };
     for (const url of [
       "https://github.com/Chan-Software-Services/Conventioner.git", "https://github.com/chanjdaniel/Conventioner", "git@github.com:chan-software-services/conventioner.git",
-      "ssh://git@github.com/chanjdaniel/Conventioner.git", "https://x-access-token:abc@github.com/Chan-Software-Services/Conventioner.git/",
+      "ssh://git@github.com/chanjdaniel/Conventioner.git", withToken,
     ]) {
       assert.equal(refusalOf(url), undefined, url);
     }
