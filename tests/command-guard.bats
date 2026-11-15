@@ -550,6 +550,21 @@ passes() {
     'echo "$(env -i team-merge T7)"' 'env -i team-anything'
 }
 
+# The assistant's launcher, like the coordinator's, has no team- in its name, so the hook's quick
+# pass must send it on to the rule table too.
+@test "claude-assistant behind an emptied environment is refused as claude-coordinator is, by any path" {
+  local launcher
+  for launcher in claude-coordinator claude-assistant; do
+    # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+    refuses "$EMPTIED" "env -i $launcher" "env -i ~/agent-team/bin/$launcher" "env --ignore-environment $launcher" \
+      "env - $launcher" "env - A=1 $launcher" "exec -c $launcher" "exec -cl \"\$HOME/agent-team/bin/$launcher\"" \
+      "env -iC /tmp $launcher" "env -i '$launcher'" "env -i nohup $launcher" "env -i bash ~/agent-team/bin/$launcher" \
+      "bash -c 'env -i $launcher'" "env -i bash -c '$launcher'" "eval \"env -i $launcher\"" "git status; env -i $launcher" \
+      "env -i $launcher --load-check /tmp/x"
+    passes "grep -rn 'env -i $launcher' tests/" "git log -S'env -i $launcher' --oneline" "env -i ./$launcher-notes"
+  done
+}
+
 @test "env -i before another command, and a search, commit or file naming env -i or a team script, pass" {
   passes 'env -i ls' 'env -i PATH="$PATH" HOME="$HOME" tests/run' 'env -i PATH="$PATH" tests/run bats --changed' \
     'env -i bash -c "echo hi"' 'env -i git status' 'env -i grep -rn team-log bin/' 'exec -c ls' 'env team-log T7 x' \

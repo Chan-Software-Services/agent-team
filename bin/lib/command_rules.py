@@ -42,10 +42,10 @@ The rows, in order:
     worker_refusal reads them).
   role-unset: either, or an element of either, named by unset, or either by env's -u (alone or
     ending a short cluster, its value joined or next) or --unset. The same reason.
-  environment-emptied: a command named team-<anything> or claude-coordinator behind env -i (alone
-    or among env's short options), env --ignore-environment (or a prefix GNU takes), env - or
-    exec -c, past any wrappers between or in a string a shell runs there: it would run with no
-    AGENT_TEAM_ROLE, so its own worker_refusal would not see the worker.
+  environment-emptied: a command named team-<anything>, claude-coordinator or claude-assistant
+    behind env -i (alone or among env's short options), env --ignore-environment (or a prefix GNU
+    takes), env - or exec -c, past any wrappers between or in a string a shell runs there: it
+    would run with no AGENT_TEAM_ROLE, so its own worker_refusal would not see the worker.
   lease-steal: team-lease or team-resume with --steal among its words before its --. Reason: a
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
@@ -85,6 +85,8 @@ DECLARERS = frozenset("export declare typeset local readonly let read mapfile re
 # What runs a script by its path, with its options before it.
 INTERPRETERS = frozenset(("node", "deno", "bun", "npx", "source", "."))
 COORDINATOR = frozenset(("team-ask", "team-answer", "team-inbox", "team-run-approved"))
+# The launchers, the team scripts whose names do not begin team-.
+LAUNCHERS = frozenset(("claude-coordinator", "claude-assistant"))
 TASK_ID = re.compile(r"T[0-9]+")
 # What runs the command after it, past its options, as a reading of where a command starts takes
 # it: the wrappers and the shells.
@@ -268,11 +270,11 @@ def _unset(command, context):
 
 
 def _team_script(word):
-    """Whether a word names a team script: team-<anything> or claude-coordinator, by any path."""
+    """Whether a word names a team script: team-<anything> or a launcher, by any path."""
     name = _name(word)
     if _blank(word) or word.startswith("-"):
         return False
-    return name == "claude-coordinator" or (name.startswith("team-") and len(name) > len("team-"))
+    return name in LAUNCHERS or (name.startswith("team-") and len(name) > len("team-"))
 
 
 def _empties(wrapper):

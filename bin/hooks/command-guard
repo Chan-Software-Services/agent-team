@@ -10,7 +10,7 @@
 # tool_input.command is missing or not a string. Another tool's call passes, and so does a command
 # naming none of team-worker, team-load-check, ui-capture, AGENT_TEAM_, --steal, team-ask,
 # team-answer, team-inbox, team-thread, team-run-approved, curl and wget, nor env or exec before an
-# option together with team- or claude-coordinator, at once, with no Python run.
+# option together with team-, claude-coordinator or claude-assistant, at once, with no Python run.
 # Any other is decided by one rule table, bin/lib/command_rules.py, run once on the hook's input:
 # it walks each simple command the call runs (past its wrappers, into the strings its shells,
 # eval, su, script, env -S, flock -c, watch, parallel and find -exec run, and a shell's script or
@@ -54,7 +54,7 @@ command=$(jq -er '.tool_input.command | strings' <<<"$input" 2>/dev/null) ||
   $command == *team-inbox* || $command == *team-thread* || $command == *team-run-approved* ||
   $command == *curl* || $command == *wget* ||
   (($command == *env*[[:space:]]-* || $command == *exec*[[:space:]]-*) &&
-  ($command == *team-* || $command == *claude-coordinator*)) ]] || exit 0
+  ($command == *team-* || $command == *claude-coordinator* || $command == *claude-assistant*)) ]] || exit 0
 
 # The rule table's one line names the first row that refuses; an error of its own, or a row's,
 # is its last line, the upload row's naming outbound.py.
