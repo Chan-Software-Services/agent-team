@@ -2669,7 +2669,7 @@ Daniel moves it with one command.'
   grep -qxF -- '- What Daniel pointed at, kept for this task: `~/agent-team-records/tasks/T12/ui/`, each capture in a directory of its own.' \
     "$TEAM_HOME/tasks/T12/brief.md"
   # One capture of a fix's intake has no note, and is still named as the element it holds, with no count.
-  rm -r "$ui/capture-2" "$ui/capture-3" "$ui/capture-10"
+  rm -r "${ui:?}/capture-2" "${ui:?}/capture-3" "${ui:?}/capture-10"
   run_bin -0 team-brief T12 builder-fix --set read='- `AGENTS.md`.' --set commits=fix --set goal=g --force
   grep -qxF -- '  - `capture-1/`: an element and page capture.' "$TEAM_HOME/tasks/T12/brief.md"
   assert_equal "$(grep -c 'with no note' "$TEAM_HOME/tasks/T12/brief.md")" 0

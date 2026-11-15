@@ -551,15 +551,19 @@ on"
 }
 
 @test "of several interview walks started at once, one is on" {
-  local n
+  local n pid
+  local -a pids=()
   for n in 21 22 23 24 25 26; do
     open_task "T$n"
     interview_thread "T$n"
   done
   for n in 21 22 23 24 25 26; do
     "$CODE_CHECKOUT/bin/team-ui" "T$n" --walk start --in interview >/dev/null 2>&1 &
+    pids+=("$!")
   done
-  wait
+  for pid in "${pids[@]}"; do
+    wait "$pid" || true
+  done
   assert_equal "$(jq -c 'select(.event == "walk")' "$TEAM_HOME/ledger.jsonl" | wc -l)" 1
 }
 
