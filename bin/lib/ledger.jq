@@ -1360,14 +1360,17 @@ def review_projects:
 
 # The task's checks wait with the project and the review it stands on, or null: of each project
 # its reviews were made in (review_projects; of every review when none is known), that project's
-# wait (project_checks_wait); the first, in the order of their passes, that still waits (its state
-# not passed), else the latest that passed. So a pass in one repository keeps its wait while
-# another repository's review is logged after it. project is null when no review's project is
-# known, and review is the index of the pass in the task's events.
+# wait (project_checks_wait); the first, in the order of their passes, that can still be armed (its
+# state waiting, pending or infrastructure), else the latest that passed, else the latest that
+# failed. So a pass in one repository keeps its wait while another repository's review is logged
+# after it, or while another's failed checks are out as a round. project is null when no review's
+# project is known, and review is the index of the pass in the task's events.
 def checks_wait_of:
   [(review_projects | if . == [] then [null] else . end)[] as $p | project_checks_wait($p) | values]
   | sort_by(.review)
-  | first(.[] | select(.state != "passed")) // last;
+  | first(.[] | select(.state | IN("waiting", "pending", "infrastructure")))
+    // (map(select(.state == "passed")) | last)
+    // last;
 
 # checks_wait_of without its project and review, as team-state prints it.
 def checks_wait: checks_wait_of | if . == null then null else del(.project, .review) end;

@@ -1980,6 +1980,54 @@ SH
     "$(jq -cn --arg url "$url" --arg h "$sha" '{url: $url, head: $h, state: "passed"}')"
 }
 
+@test "--ci waits on a pass in one repository though another repository's checks failed and went back as a round before it" {
+  own_app
+  two_repos
+  both_on_github
+  live b0000001 120000 b0000002 80000
+  # proj's pass, whose checks fail on a failure of the PR's own: the round goes back to proj's builder.
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  red_checks "$sha"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=failed"
+  # other's pass, logged after it, has its own wait.
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 -- "T7 DONE pass $url_other $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(url=$url_other arm_line "$head_other")"
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "waiting"}')"
+  ci_wait_ends passed "$head_other"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_equal "$(stub_calls team-ci-wait | tail -n 1)" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", $url, $h]')"
+  # The passed wait stands before the failed one, which only its own repository's next review ends.
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "passed"}')"
+}
+
+@test "--ci's passed end, with a pass in each of two repositories, ends on the arm line of the other repository's wait" {
+  own_app
+  two_repos
+  both_on_github
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(arm_line "$sha")"
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 -- "T7 DONE pass $url_other $counts before=none guarded=none"
+  # The wait is the first pass's, and its end names the wait that stands after it.
+  ci_wait_ends passed "$sha"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=passed"
+  assert_contains "$output" "merge ask: $url at $sha, "
+  assert_equal "$(tail -n 1 <<<"$output")" "$(url=$url_other arm_line "$head_other")"
+  # The other's wait, armed as that line says, ends on its merge ask alone: no wait is left to arm.
+  ci_wait_ends passed "$head_other"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+}
+
 @test "with reviewers in two repositories, a verdict from a session that is not its own repository's latest reviewer is still refused" {
   own_app
   two_repos

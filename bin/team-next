@@ -229,8 +229,9 @@
 # launch of no role (closed, Daniel's hold, an ask open), "T<n>'s latest review is not a pass on
 # an open PR, so no checks wait for a merge" when checks_wait in bin/lib/ledger.jq is null (in a
 # task whose reviews were made in several projects it is, of each project's latest review that is
-# a pass on an open PR, the first that still waits, else the latest that passed, and the wait's
-# end reads that pass, its project's PR and its project's holder), "the
+# a pass on an open PR, the first that can still be armed (waiting, pending or infrastructure),
+# else the latest that passed, else the latest that failed, and the wait's end reads that pass,
+# its project's PR and its project's holder), "the
 # checks of <short> failed and went back as a round on <ts>" when its state is failed (until the
 # round's builder logs a done with no pr of the PR at another head since, a rerun that passed, which
 # waits again), and, once a wait ended, "the checks wait of T<n> moved to <url> at <short> while it
@@ -241,7 +242,9 @@
 #                    line below, nothing logged; exit 75 when GitHub cannot be read; "<url> is
 #                    merged: its checks no longer matter", exit 0, when it shows it merged), logs
 #                    ci outcome=passed of the head (already logged when checks_wait's state is
-#                    passed), then prints the merge line below, exit 0
+#                    passed), then prints the merge line below, and after it the arm line above
+#                    for another PR's wait when checks_wait now names one waiting or pending
+#                    (another repository's pass, which had no wait while this one ran), exit 0
 #   failed           with a failure of class pr (the PR's own): writes the report
 #                    tasks/T<n>/ci-<the head's first 8 characters>.md in the team home (a heading
 #                    naming the PR and head, one line per failure, the PR's, then infrastructure,
@@ -501,6 +504,11 @@ round_line() {
   esac
 }
 
+# arm_line <url> <short head>: the line that arms the checks wait of a pass on that PR and head.
+arm_line() {
+  echo "checks: arm team-next $task --ci with Bash run_in_background unless it is already running: it waits on the checks of $1 at $2, then prints the merge ask or hands a red check back as a round"
+}
+
 # merge_line: what is left once the checks of the reviewed head ($reviewed, in full) passed, from
 # read_state's variables and the task's events: the merge ask or the default word's merge, or for a
 # PR behind its base the merge base step (see the header).
@@ -641,6 +649,17 @@ if [[ -n $ci ]]; then
       echo "logged ci ${fields[*]}"
     fi
   }
+  # next_wait_line: after a passed end's merge line, the arm line of the wait the ledger now names,
+  # when it is another PR's with no wait ended yet (waiting or pending): another repository's pass,
+  # which had no wait while this one ran.
+  next_wait_line() {
+    local next_url='' next_head='' next_state=''
+    json_vars --ledger next_url='checks_wait | .url' next_head='checks_wait | .head' next_state='checks_wait | .state' \
+      <<<"$(task_event_array "$task")"
+    [[ $next_state == waiting || $next_state == pending ]] || return 0
+    [[ ${next_url%/} != "${wait_url%/}" ]] || return 0
+    arm_line "$next_url" "${next_head:0:8}"
+  }
   moved_line() {
     echo "the head of $wait_url is ${1:0:8}, not the passed $wait_short: a commit no round made; read it with team-state $task before anything else"
     exit 1
@@ -756,6 +775,7 @@ if [[ -n $ci ]]; then
         # The facts name the reviewed head: the PR's own, or the one a catch-up made the merge from.
         reviewed=${wait_from:-$live_head}
         merge_line
+        next_wait_line
         exit 0
         ;;
       failed)
@@ -1483,7 +1503,7 @@ if [[ $handoff == verdict ]]; then
     if [[ $holds == gone ]]; then echo "$gone $go_on"; else echo "send to $who: $go_on"; fi
     exit 0
   fi
-  echo "checks: arm team-next $task --ci with Bash run_in_background unless it is already running: it waits on the checks of $pr_url at $short, then prints the merge ask or hands a red check back as a round"
+  arm_line "$pr_url" "$short"
   exit 0
 fi
 
