@@ -16,7 +16,7 @@
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
@@ -2082,6 +2082,131 @@ clean_base_merges() {
       return 1
     fi
   done < <(git -C "$dir" rev-list --reverse "$head" "^$from" "^$base")
+}
+
+# The proof that <sha> is the merge queue's trial commit of PR <number> of <project>, in <repo>:
+# the PR's head, as reviewed, merged cleanly onto what is ahead of it in the queue. Reads the PR's
+# queue entry from GitHub by GraphQL (given 30 seconds), then fetches <sha> and the PR's head
+# into the project's primary checkout, changing no ref. With no problem it prints the PR's head
+# and returns 0. Else it prints the first problem, one line, and returns 1: <sha> is not the
+# entry's headCommit (or the PR has no entry); the entry is UNMERGEABLE; <sha> has not exactly two
+# parents; its second parent is not the PR's head; its first parent does not hold the entry's
+# baseCommit; its tree is not the clean merge of its parents (base_merge); the project's
+# merge_method is not merge, since the proof is of a merge commit. An entry or a commit that
+# cannot be read prints why and returns 2: queue_commit_problems <project> <repo> <number> <sha>
+queue_commit_problems() {
+  local queue_project=$1 queue_repo=$2 queue_number=$3 queue_sha=$4 queue_dir queue_rc=0 queue_out
+  queue_dir=$(mktemp -d) || return 2
+  queue_out=$(queue_commit_proof "$queue_dir") || queue_rc=$?
+  rm -rf "$queue_dir"
+  printf '%s\n' "$queue_out"
+  return "$queue_rc"
+}
+
+# queue_commit_problems' reading, with its locals and <dir> for its files: queue_commit_proof <dir>
+queue_commit_proof() {
+  local dir=$1 rc=0 entry state trial base head primary method tree short=${queue_sha:0:7}
+  local -a parents
+  # shellcheck disable=SC2016 # the query's variables are GraphQL's
+  bounded 30 gh api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    headRefOid mergeQueueEntry { state headCommit { oid } baseCommit { oid } } } } }' \
+    -f owner="${queue_repo%%/*}" -f name="${queue_repo#*/}" -F number="$queue_number" \
+    >"$dir/entry" 2>"$dir/entry.stderr" </dev/null || rc=$?
+  if ((rc != 0)) || ! entry=$(jq -ce '.data.repository.pullRequest | objects' "$dir/entry" 2>/dev/null); then
+    printf "the merge queue entry of %s#%s cannot be read: gh api graphql: " "$queue_repo" "$queue_number"
+    grep -m1 . "$dir/entry.stderr" || if ((rc == 124)); then echo "no answer in 30 seconds"
+    elif ((rc == 0)); then echo "no such pull request"; else echo "exit $rc"; fi
+    return 2
+  fi
+  { read -r head && read -r state && read -r trial && read -r base; } < <(jq -r '.headRefOid // "",
+    (.mergeQueueEntry | .state // "", .headCommit.oid // "", .baseCommit.oid // "")' <<<"$entry")
+  if [[ -z $state ]]; then
+    echo "$queue_repo#$queue_number is not in the merge queue"
+    return 1
+  elif [[ -z $trial ]]; then
+    echo "the queue entry of $queue_repo#$queue_number has no trial commit yet, so $short is not it"
+    return 1
+  elif [[ $trial != "$queue_sha" ]]; then
+    echo "$short is not the trial commit of $queue_repo#$queue_number's queue entry, which is ${trial:0:7}"
+    return 1
+  elif [[ $state == UNMERGEABLE ]]; then
+    echo "the queue entry of $queue_repo#$queue_number is UNMERGEABLE"
+    return 1
+  fi
+  if [[ ! $head =~ ^[0-9a-f]{40}$ || ! $base =~ ^[0-9a-f]{40}$ ]]; then
+    echo "the merge queue entry of $queue_repo#$queue_number cannot be read: GitHub's answer names no head or no base commit"
+    return 2
+  fi
+  primary=$(team_project "$queue_project" path) || return 2
+  if ! git -C "$primary" fetch -q origin "$queue_sha" "$head" 2>"$dir/fetch.stderr"; then
+    printf "the trial commit %s and the head %s cannot be fetched into %s: " "$short" "${head:0:7}" "$primary"
+    grep -m1 . "$dir/fetch.stderr" || echo "git fetch failed"
+    return 2
+  fi
+  read -r -a parents <<<"$(git -C "$primary" rev-list --parents -n 1 "$queue_sha")"
+  parents=("${parents[@]:1}")
+  if ((${#parents[@]} < 2)); then
+    echo "$short is a commit of its own, not a merge of the PR's head"
+    return 1
+  elif ((${#parents[@]} > 2)); then
+    echo "$short merges ${#parents[@]} parents at once, not the PR's head alone"
+    return 1
+  elif [[ ${parents[1]} != "$head" ]]; then
+    echo "$short merges ${parents[1]:0:7}, which is not the PR's head ${head:0:7}"
+    return 1
+  elif ! git -C "$primary" merge-base --is-ancestor "$base" "${parents[0]}" 2>/dev/null; then
+    echo "$short merges the head onto ${parents[0]:0:7}, which does not hold the queue entry's base ${base:0:7}"
+    return 1
+  fi
+  tree=$(base_merge "$primary" "${parents[0]}" "${parents[1]}") || rc=$?
+  if ((rc == 1)); then
+    echo "$short is no clean merge: ${head:0:7} conflicts with ${parents[0]:0:7}"
+    return 1
+  elif ((rc != 0)); then
+    echo "the merge of ${head:0:7} onto ${parents[0]:0:7} cannot be judged in $primary: $tree"
+    return 2
+  elif [[ $tree != "$(git -C "$primary" rev-parse "$queue_sha^{tree}")" ]]; then
+    echo "$short changes more than the merge of its parents"
+    return 1
+  fi
+  method=$(team_project "$queue_project" merge_method) || return 2
+  if [[ $method != merge ]]; then
+    echo "$queue_project merges with $method, and a trial commit is proved only for merge"
+    return 1
+  fi
+  printf '%s\n' "$head"
+}
+
+# The task of a pull request: the task of the latest pr event naming <url>, both in canonical form
+# (a moved repo under its new owner), a trailing slash and the case aside, so a PR logged under
+# either owner is found by either's URL; nothing when no pr event names it: pr_task <url>
+pr_task() {
+  [[ -s $TEAM_HOME/ledger.jsonl ]] || return 0
+  ledger_jq '($url | canonical_url | ascii_downcase) as $url | ledger_events
+    | [.[] | select(.event == "pr" and (.url | strings | rtrimstr("/") | ascii_downcase) == $url) | .task]
+    | last // empty' -rnR --arg url "$1" "$TEAM_HOME/ledger.jsonl"
+}
+
+# Why <task>'s ledger holds no review of <sha> with the verdict agent-review's <conclusion> stands
+# for (pass for success, findings for failure), else nothing: its latest review of the sha or, for
+# a head team-catch-up made, of the head exact_reviewed_head in bin/lib/ledger.jq leads back to,
+# each head matched in full, never by a prefix. Fails on events it cannot read:
+# review_refusal <task> <sha> <success|failure>
+review_refusal() {
+  local verdict=findings
+  [[ $3 != success ]] || verdict=pass
+  task_event_array "$1" | ledger_jq 'exact_reviewed_head($sha) as $reviewed
+  | "\($reviewed[:7])\(if exact_head($reviewed; $sha) then "" else " (caught up to \($sha[:7]))" end)" as $named
+  | ([.[] | select(.event == "review" and exact_head(.head; $reviewed))] | last) as $review
+  | ([.[] | select(.event == "review" and same_head(.head; $reviewed))] | last) as $prefix
+  | if $review == null and $prefix != null then
+      "\($task)'"'"'s review of \($prefix.head), at \($prefix.ts // "no time"), names its head by a prefix, not in full, so it stands for no full sha"
+    elif $review == null then "\($task) logged no review of \($named), so no reviewer'"'"'s verdict is there to post"
+    elif $review.verdict != $verdict then
+      "\($task)'"'"'s latest review of \($named), at \($review.ts // "no time"), is \($review.verdict), so agent-review on it is \(
+        if $review.verdict == "pass" then "success" else "failure" end), not \($conclusion)"
+    else empty end' -r --arg sha "$2" --arg task "$1" --arg verdict "$verdict" --arg conclusion "$3"
 }
 
 # The pr part of a task's state: its latest pr event joined with GitHub, using <dir> for gh's
