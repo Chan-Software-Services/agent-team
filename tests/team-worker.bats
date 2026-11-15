@@ -1405,7 +1405,7 @@ skills_only_kit() {
   skills_only_kit kit-n
   rm -r "${code:?}/toolkits/kit-n/evals"
   # Every listed key, a comment, a blank line and a value that goes on over indented lines hold.
-  printf '%s\n' --- "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
+  printf '%s\n' $'--- \t' "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
     "tools: [Read]" "model: inherit" "omitClaudeMd: true" --- "You read." >"$code/toolkits/kit-n/agents/reader.md"
   # So do lines that end with a carriage return and a line feed.
   printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" >"$code/toolkits/kit-n/skills/look/SKILL.md"
@@ -1477,6 +1477,26 @@ skills_only_kit() {
     'printf "%b\n" --- "name: reader\xC2\x85\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
     'printf "%b\n" --- "name: look\xE2\x80\xA8\"h\\\\x6foks\": {}" --- "# Look" >skills/look/SKILL.md'
     'printf "%b\n" --- "name: look\xE2\x80\xA9\"h\\\\x6foks\": {}" --- "# Look" >skills/look/SKILL.md'
+    # An opening line Claude Code may take as a frontmatter's and a reader of plain ASCII would
+    # not: --- and then a no-break space, a zero width no-break space, a form feed, a vertical tab.
+    'printf "%b\n" "---\xC2\xA0" "name: reader" "hooks: {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" "---\xEF\xBB\xBF" "name: reader" "hooks: {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" "---\f" "name: look" "hooks: {}" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" "---\v" "name: look" "hooks: {}" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" "---x" "name: reader" --- "You read." >agents/reader.md'
+    # A file that does not open with a frontmatter: none at all, an empty file, a blank line or a
+    # space before the opening line.
+    'echo "You read." >agents/reader.md'
+    ': >skills/look/SKILL.md'
+    'sed -i "1s/^/\\n/" agents/reader.md'
+    'sed -i "1s/^/ /" skills/look/SKILL.md'
+    # A byte in a frontmatter that is no printable ASCII: a letter outside ASCII, a no-break
+    # space alone on a line, a tab in a value and as an indent, a form feed.
+    'printf "%b\n" --- "name: reader" "description: caf\xC3\xA9" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: reader" "\xC2\xA0" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: look" "description: a\tb" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" --- "name: look" "description:" "\tLooks." --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" --- "name: reader" "description: a\fb" --- "You read." >agents/reader.md'
   )
   for change in "${changes[@]}"; do
     n=$((n + 1))
@@ -1522,8 +1542,9 @@ skills_only_kit() {
   assert_contains "$output" "Skills-only is read from the toolkit's own files at each launch"
   assert_contains "$output" "none a symbolic link"
   assert_contains "$output" "indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,"
-  assert_contains "$output" "none has hooks or mcpServers before a colon, opens with ?"
-  assert_contains "$output" "holds a carriage return before its end, U+0085, U+2028 or U+2029"
+  assert_contains "$output" "none has hooks or mcpServers before a colon or opens with ?"
+  assert_contains "$output" "frontmatter, a first line of --- and then only spaces and tabs, a byte order mark before it or"
+  assert_contains "$output" "ASCII, a carriage return at its end aside"
   assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 

@@ -151,12 +151,13 @@
 # agents/, skills/ and evals/, each optional and none a symbolic link (so no .mcp.json, .lsp.json,
 # hooks/, scripts/, commands/, bin/ or settings.json); .claude-plugin/ holds only plugin.json, an
 # object whose keys are only name, version, description and author; agents/ holds only *.md files
-# and skills/ only <name>/SKILL.md files, none a symbolic link; each frontmatter of theirs, a byte
-# order mark before it or not, ends, and each of its lines that is not blank, a comment or
+# and skills/ only <name>/SKILL.md files, none a symbolic link; each of those files opens with a
+# frontmatter, a first line of --- and then only spaces and tabs, a byte order mark before it or
+# not, which ends at a line of --- and then only spaces; every line between holds only printable
+# ASCII, a carriage return at its end aside, and each of them that is not blank, a comment or
 # indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,
-# the first of them not indented, and none has hooks or mcpServers before a colon, opens with ?
-# (a YAML explicit key), or holds a carriage return before its end, U+0085, U+2028 or U+2029 (a
-# line break to a YAML reader); evals/, which no session loads, may hold anything. A toolkit
+# the first of them not indented, and none has hooks or mcpServers before a colon or opens with ?
+# (a YAML explicit key), so a file this cannot read with certainty is a doubt; evals/, which no session loads, may hold anything. A toolkit
 # that fails any of these is checked against the project's list like every other, so one that
 # gains a server, a hook or a script comes back under it on its own.
 # A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets
@@ -426,30 +427,40 @@ skills_only_toolkit() (
     esac
   done
   ((${#prose[@]})) || exit 0
-  # A frontmatter is the lines between a first line of ---, a byte order mark before it or not,
-  # and the next. Each of its lines that is not blank, a comment or indented must open with one of
-  # the keys below and a colon, so no other spelling of a key (quoted, escaped, an alias, a merge
-  # or an explicit key) is read as none; the first such line is not indented, so an indented one
-  # is a listed key's value. hooks or mcpServers before a colon anywhere in one counts too, quoted
-  # or nested, and so do an indented explicit key (a line opening with ?) and a frontmatter that
-  # never ends, so a doubt goes to the allow list. So does a line holding a line break a YAML
-  # reader may take and awk does not: a carriage return anywhere but its end, U+0085, U+2028 or
-  # U+2029, after which a second key would sit on a listed key's line.
-  awk -v bom=$'\xEF\xBB\xBF' -v nel=$'\xC2\x85' -v ls=$'\xE2\x80\xA8' -v ps=$'\xE2\x80\xA9' -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '
-    FNR == 1 {
-      if (inside) { doubt = 1; exit }
-      if (index($0, bom) == 1) $0 = substr($0, length(bom) + 1)
-      inside = ($0 ~ /^---[[:space:]]*$/); keyed = 0; next
-    }
-    !inside { next }
-    /^---[[:space:]]*$/ { inside = 0; next }
-    /\r./ || index($0, nel) || index($0, ls) || index($0, ps) { doubt = 1; exit }
-    /(hooks|mcpServers)["'\'']?[[:space:]]*:/ { doubt = 1; exit }
-    /^[[:space:]]*$/ || /^#/ { next }
-    /^[[:space:]]/ { if (!keyed || $0 ~ /^[[:space:]]*\?/) { doubt = 1; exit } next }
-    $0 !~ "^(" keys "):([[:space:]]|$)" { doubt = 1; exit }
-    { keyed = 1 }
-    END { exit (doubt || inside) }' "${prose[@]}"
+  # Each file must open with a frontmatter this reads with certainty, and anything else is a doubt
+  # that goes to the allow list, since Claude Code finds a frontmatter with a looser pattern
+  # (^---\s*\n([\s\S]*?)---\s*\n?, whose \s holds spaces outside ASCII) than any line rule. So:
+  # - the first line, a byte order mark before it or not, is --- and then only spaces and tabs;
+  # - a later line of --- and then only spaces ends it, and it must end;
+  # - every line between holds only printable ASCII (no tab, no other control or line break
+  #   character, no byte outside ASCII), a carriage return at a line's end aside;
+  # - each of them that is not blank, a comment or indented opens with one of the keys below and a
+  #   colon, so no other spelling of a key (quoted, escaped, an alias, a merge or an explicit key)
+  #   is read as none; the first such line is not indented, so an indented one is a listed key's
+  #   value;
+  # - none has hooks or mcpServers before a colon, quoted or nested, or is an indented explicit
+  #   key (a line opening with ?).
+  # Claude Code ends a frontmatter at the first --- anywhere, so it reads no more than these lines.
+  # awk runs in the C locale, so it reads bytes and its ranges are ASCII's.
+  for file in "${prose[@]}"; do
+    LC_ALL=C awk -v bom=$'\xEF\xBB\xBF' -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '
+      { sub(/\r$/, "") }
+      NR == 1 {
+        if (index($0, bom) == 1) $0 = substr($0, length(bom) + 1)
+        if ($0 !~ /^---[ \t]*$/) { doubt = 1; exit }
+        inside = 1; next
+      }
+      !inside { next }
+      /[^ -~]/ { doubt = 1; exit }
+      /^--- *$/ { inside = 0; next }
+      /(hooks|mcpServers)["'\'']? *:/ { doubt = 1; exit }
+      /^ *$/ || /^#/ { next }
+      /^ / { if (!keyed || $0 ~ /^ *\?/) { doubt = 1; exit } next }
+      $0 !~ "^(" keys "):( |$)" { doubt = 1; exit }
+      { keyed = 1 }
+      END { exit (doubt || inside || NR == 0) }' "$file" || exit 1
+  done
+  exit 0
 )
 
 # A worker gets only the toolkits its worktree's project lists in the registry, but a skills-only
