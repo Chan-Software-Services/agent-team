@@ -492,9 +492,11 @@ $(id_of "$today") ${today#- }"
 @test "reconcile closes each until item whose condition holds, one commit each, and keeps each that does not" {
   opened_task T4
   opened_task T5
+  opened_task T7
   jq -cn '{ts: "2026-11-14T09:00:00Z", task: "T4", event: "review", head: "abc", verdict: "pass"},
     {ts: "2026-11-15T11:00:00Z", task: "T5", event: "review", head: "abc", verdict: "pass"},
-    {ts: "2026-11-15T12:00:00Z", task: "T4", event: "merged", url: "https://github.com/owner/proj/pull/4"}' >>"$TEAM_HOME/ledger.jsonl"
+    {ts: "2026-11-15T12:00:00Z", task: "T4", event: "merged", url: "https://github.com/owner/proj/pull/4"},
+    {ts: "2026-11-15T12:30:00Z", task: "T7", event: "closed"}' >>"$TEAM_HOME/ledger.jsonl"
   mkdir -p "$TEAM_HOME/assistant/handoffs"
   jq -cn '{ts: "2026-11-15T09:00:00Z", id: "H1", event: "sent", kind: "task", from: "assistant", to: "coordinator"},
     {ts: "2026-11-15T09:00:00Z", id: "H2", event: "sent", kind: "task", from: "assistant", to: "coordinator"},
@@ -506,9 +508,10 @@ case $3 in
   */pull/8) echo OPEN ;;
 esac
 EOF
-  # Each condition kind, holding (first) and not (second).
-  local -a holding=("handoff H1 answered" "task T4 opened" "task T4 merged" "ledger T5 review"
-    "pr https://github.com/owner/proj/pull/7 merged" "file tasks/T4/review.md")
+  # Each condition kind, holding (first) and not (second); the pr item closes last, once the
+  # records' are in.
+  local -a holding=("handoff H1 answered" "task T4 opened" "task T4 merged" "task T7 closed" "ledger T5 review"
+    "file tasks/T4/review.md" "pr https://github.com/owner/proj/pull/7 merged")
   local -a open=("handoff H2 answered" "task T6 opened" "task T5 closed" "ledger T4 review"
     "pr https://github.com/owner/proj/pull/8 merged" "file tasks/T4/gone.md")
   local condition
@@ -556,10 +559,57 @@ EOF
   head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD)
   run_bin -0 --separate-stderr team-current reconcile
   assert_equal "$output" ""
-  assert_equal "$stderr" "team-current: kept $(id_of "$pr"): cannot check pr https://github.com/owner/proj/pull/7 merged: GitHub did not answer (gh exit 1: error connecting to api.github.com)
-team-current: kept $(id_of "$bad"): cannot check soon: the condition 'soon' is not one of: handoff H<n> answered, task T<n> opened|closed|merged, ledger T<n> <kind>, pr <GitHub PR URL> merged, or file <path>"
+  assert_equal "$stderr" "team-current: kept $(id_of "$bad"): cannot check soon: the condition 'soon' is not one of: handoff H<n> answered, task T<n> opened|closed|merged, ledger T<n> <kind>, pr <GitHub PR URL> merged, or file <path>
+team-current: kept $(id_of "$pr"): cannot check pr https://github.com/owner/proj/pull/7 merged: GitHub did not answer (gh exit 1: error connecting to api.github.com)"
   assert_equal "$(cat "$current")" "$(printf '%s\n' "# Current items" "$pr" "$bad")"
   assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+}
+
+@test "reconcile closes and moves over what the records settle, in both lists, before it asks GitHub about any pr item" {
+  opened_task T4
+  jq -cn '{ts: "2026-11-15T12:00:00Z", task: "T4", event: "merged", url: "https://github.com/owner/proj/pull/4"}' >>"$TEAM_HOME/ledger.jsonl"
+  # A GitHub that does not answer, which keeps both lists as they were at its first call.
+  local seen=$BATS_TEST_TMPDIR/seen
+  stub_script gh <<EOF
+[[ -e '$seen' ]] || cat '$current' '$mine' >'$seen'
+echo "error connecting to api.github.com" >&2
+exit 1
+EOF
+  local pr="- owe - the merge news | https://github.com/owner/proj/pull/7 | until pr https://github.com/owner/proj/pull/7 merged | $ADDED"
+  local task="- ask T4 the news of T4 | 1563000000000000045 | until task T4 merged | $ADDED"
+  local theirs="- owe T4 tell Daniel T4 merged | 1563000000000000046 | until task T4 merged | $ADDED"
+  local old="- owe - the login walkthrough | 1563000000000000047"
+  printf '%s\n' "# Current items" "$pr" "$task" >"$current"
+  printf '%s\n' "# Assistant items" "$old" "$theirs" >"$mine"
+  commit_all
+  local head
+  head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD)
+  run_bin -0 --separate-stderr team-current reconcile
+  assert_equal "$stderr" "team-current: kept $(id_of "$pr"): cannot check pr https://github.com/owner/proj/pull/7 merged: GitHub did not answer (gh exit 1: error connecting to api.github.com)"
+  assert_equal "$(cat "$seen")" "$(printf '%s\n' "# Current items" "$pr" "# Assistant items" "$old$TAIL")"
+  assert_equal "$(subjects_since "$head")" "chore: current closed $(id_of "$task"): task T4 merged
+chore: current closed $(id_of "$theirs"): task T4 merged
+chore: current migrated 1 item"
+  assert_equal "$(cat "$current")" "$(printf '%s\n' "# Current items" "$pr")"
+  # waiting.md was brought up to date for the closed ask, whatever GitHub did after.
+  [[ $(cat "$TEAM_HOME/waiting.md") != *"the news of T4"* ]]
+}
+
+@test "reconcile keeps each item whose ledger or hand-off condition its jq cannot read, naming it on stderr" {
+  opened_task T4
+  jq -cn '{ts: "2026-11-15T12:00:00Z", task: "T4", event: "merged", url: "https://github.com/owner/proj/pull/4"}' >>"$TEAM_HOME/ledger.jsonl"
+  local task="- next T4 the news of T4 | 1563000000000000045 | until task T4 merged | $ADDED"
+  local handoff="- next - the answer | 1563000000000000046 | until handoff H1 answered | $ADDED"
+  local file="- next - the plan | 1563000000000000047 | until file tasks/T4/plan.md | $ADDED"
+  printf '%s\n' "# Current items" "$task" "$handoff" "$file" >"$current"
+  commit_all
+  # The jq that reads the records for the conditions fails; every other jq runs.
+  fails_on_call jq 'as $wanted'
+  run_bin -0 --separate-stderr team-current reconcile
+  assert_equal "$stderr" "team-current: kept $(id_of "$task"): cannot check task T4 merged: the records could not be read
+team-current: kept $(id_of "$handoff"): cannot check handoff H1 answered: the records could not be read"
+  assert_equal "$(grep -v '^team home:' <<<"$output")" "closed $(id_of "$file"): file tasks/T4/plan.md"
+  assert_equal "$(cat "$current")" "$(printf '%s\n' "# Current items" "$task" "$handoff")"
 }
 
 @test "reconcile moves each list's old-form lines over once, one commit per list, and brings waiting.md up to date" {

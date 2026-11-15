@@ -2568,6 +2568,32 @@ current_lines() {
   assert_equal "$(current_lines "$output")" ""
 }
 
+@test "a current step stopped while GitHub hangs on a pr item has already committed the closes the records settle" {
+  jq -cn '{ts: "2026-11-15T09:00:00Z", task: "T5", event: "merged", url: "https://github.com/owner/proj/pull/5"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  local pr="owe - the merge news | https://github.com/owner/proj/pull/7 | until pr https://github.com/owner/proj/pull/7 merged | added 2026-11-15T08:00:00Z"
+  local closing="owe T5 the news of T5 | ledger 2026-11-15T08:00:00Z | until task T5 merged | added 2026-11-15T08:00:00Z"
+  mkdir -p "$TEAM_HOME/tasks"
+  printf '%s\n' '# Current items' "- $pr" "- $closing" >"$TEAM_HOME/tasks/current.md"
+  git -C "${TEAM_HOME:?}" add -A
+  git -C "${TEAM_HOME:?}" commit -qm "test: the list"
+  # A GitHub that hangs on the PR's state, far past the step's limit, and answers every other call.
+  stub_script gh <<'EOF'
+[[ "$1 $2" == "pr view" ]] || exit 0
+exec 3>&-
+command -p sleep 20
+EOF
+  TEAM_TIMERS_CURRENT_SECONDS=8 TEAM_TIMERS_KILL_SECONDS=1 run_bin -0 team-timers run
+  local lines
+  lines=$(current_lines "$output" | grep -v '^team home: ')
+  assert_equal "$lines" "closed $(printf '%s' "$closing" | sha256sum | cut -c1-6): task T5 merged
+failed: timed out after 8 s"
+  assert_equal "$(sed -n '2,$p' "$TEAM_HOME/tasks/current.md")" "- $pr"
+  assert_equal "$(git -C "${TEAM_HOME:?}" log -1 --format=%s -- tasks/current.md)" \
+    "chore: current closed $(printf '%s' "$closing" | sha256sum | cut -c1-6): task T5 merged"
+  assert_equal "$(git -C "${TEAM_HOME:?}" status --porcelain -- tasks/current.md)" ""
+}
+
 @test "the current step logs what a reconcile that went well says on stderr, an item it kept unchecked, as a problem line" {
   CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
   mkdir -p "$CODE_CHECKOUT"

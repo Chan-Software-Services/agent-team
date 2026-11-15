@@ -47,9 +47,12 @@
 # reconcile, for each list in turn: removes each until item whose condition holds, one commit
 # each, printing "closed <id>: <condition>"; and rewrites each old-form line with "| review <the
 # date 3 days out> | added <now>", one commit for the list, printing "migrated <id> as <new id>:
-# review <date>" each. A condition it cannot check (GitHub unreachable or refusing for a pr, a
-# condition that does not parse) keeps its item, named on stderr as "team-current: kept <id>:
-# cannot check <condition>: <why>"; it exits 0 then, and 1 only when a commit fails.
+# review <date>" each. Only then does it ask GitHub about the pr items, each list's in turn (up to
+# 30 s each), closing each as GitHub answers, so a GitHub that hangs, or a caller that stops the
+# run then, holds back no change the team's own records settle. A condition it cannot check
+# (GitHub unreachable or refusing for a pr, a condition that does not parse, a ledger or hand-off
+# log its jq cannot read) keeps its item, named on stderr as "team-current: kept <id>: cannot
+# check <condition>: <why>"; it exits 0 then, and 1 only when a commit fails.
 # check prints each line that add would refuse, as "<file>:<n>: <reasons>", and every line that is
 # neither the title, blank nor an item; a line of the old form, a line with no end or no added, an
 # end that is neither form, a condition that does not parse, and a review date more than 7 days
@@ -171,10 +174,11 @@ where_problem() {
   fi
 }
 
-# Whether <kind> is one of the ledger's kinds, from the contract, read once; it writes to no pipe,
-# which a reader that stops at its first match would close under the writer: ledger_kind <kind>
+# Whether <kind> is one of the ledger's kinds, from the contract; it writes to no pipe, which a
+# reader that stops at its first match would close under the writer: ledger_kind <kind>
 ledger_kind() {
-  [[ -n ${kinds:-} ]] || kinds=$(jq -r '.kinds | keys[]' "$TEAM_LIB/ledger-contract.json")
+  local kinds
+  kinds=$(jq -r '.kinds | keys[]' "$TEAM_LIB/ledger-contract.json")
   [[ $'\n'$kinds$'\n' == *$'\n'"$1"$'\n'* ]]
 }
 
@@ -469,32 +473,46 @@ review_date() {
 
 # Which of the conditions given, as JSON lines {i, condition, added} on stdin, hold by the ledger
 # and the hand-off log, printed as their i, one per line; the pr and file conditions are left to
-# the caller: records_hold
+# the caller. It fails when a jq of its own does, whose stderr $scratch/jq then holds: records_hold
 records_hold() {
   local conditions
   conditions=$(jq -sc '[.[] | . + (.condition | capture("^(?<what>task|ledger|handoff) (?<id>\\S+) (?<event>\\S+)$") // {})
-    | select(.what != null)]')
+    | select(.what != null)]' 2>"$scratch/jq") || return 1
   {
     jq -nRr --argjson conditions "$conditions" '
       [$conditions[] | select(.what != "handoff")] as $wanted
       | reduce (inputs | fromjson? | objects) as $e ({};
           reduce ($wanted[] | select(.id == $e.task and .event == $e.event
             and (.what == "task" or ((($e.ts // "") | tostring) >= (.added | ltrimstr("added ")))))) as $c (.; .[$c.i | tostring] = true))
-      | keys[]' < <(cat "$TEAM_HOME/ledger.jsonl" 2>/dev/null || true)
-    jq -nRr --argjson conditions "$conditions" '
+      | keys[]' < <(cat "$TEAM_HOME/ledger.jsonl" 2>/dev/null || true) &&
+      jq -nRr --argjson conditions "$conditions" '
       [$conditions[] | select(.what == "handoff")] as $wanted
       | reduce (inputs | fromjson? | objects) as $e ({};
           reduce ($wanted[] | select(.id == $e.id and $e.event == "answered")) as $c (.; .[$c.i | tostring] = true))
       | keys[]' < <(cat "$TEAM_HOME/assistant/handoffs.jsonl" 2>/dev/null || true)
-  }
+  } 2>"$scratch/jq"
 }
 
-# Close each until item of the list whose condition holds and move its old-form lines over,
-# committing and printing each change; sets changed_inbox when an ask or owe line changed:
-# reconcile_list <name>
-reconcile_list() {
-  local i condition url state why rc old
-  local -a checks=() closing_lines=()
+# Remove the until item <line> of the list in use, whose condition holds, committing and printing
+# the change; sets changed_inbox when it is an ask or owe line: close_item <line>
+close_item() {
+  closing=$1
+  parse_item "$closing"
+  id=$(item_id "$closing")
+  # shellcheck disable=SC2034 # read by commit_records
+  records_edit=edit_close
+  commit_change "chore: current closed $id: ${end#until }"
+  [[ -n $gone ]] || echo "closed $id: ${end#until }"
+  [[ ! $closing =~ ^-\ (ask|owe)\  ]] || changed_inbox=1
+}
+
+# Close each until item of the list whose condition the team's own records settle (every condition
+# but pr) and holds, and move its old-form lines over, committing and printing each change; a
+# condition that does not parse, or that the records cannot be read for, keeps its item, named on
+# stderr: reconcile_records <name>
+reconcile_records() {
+  local i condition why old held
+  local -a checks=() checked=() closing_lines=()
   local -A holds=() moved=()
   use_list "$1"
   [[ -e $current ]] || return 0
@@ -511,35 +529,28 @@ reconcile_list() {
         echo "team-current: kept $(item_id "${lines[i]}"): cannot check $condition: $why" >&2
       elif [[ $condition =~ ^file\ (.+)$ ]]; then
         [[ ! -e $TEAM_HOME/${BASH_REMATCH[1]} ]] || holds[$i]=1
-      elif [[ $condition =~ ^pr\ (.+)\ merged$ ]]; then
-        url=${BASH_REMATCH[1]} rc=0
-        state=$(timeout 30 gh pr view "$url" --json state -q .state 2>"$scratch/gh" </dev/null) || rc=$?
-        if ((rc)); then
-          why=$(grep . "$scratch/gh" | tail -n 1 || true)
-          echo "team-current: kept $(item_id "${lines[i]}"): cannot check $condition: GitHub did not answer (gh exit $rc${why:+: $why})" >&2
-        elif [[ $state == MERGED ]]; then
-          holds[$i]=1
-        fi
-      else
+      elif [[ ! $condition =~ ^pr\  ]]; then
         checks+=("$(jq -cn --argjson i "$i" --arg condition "$condition" --arg added "$added" '{i: $i, condition: $condition, added: $added}')")
+        checked+=("$i")
       fi
     fi
   done
   if ((${#checks[@]})); then
-    while IFS= read -r i; do holds[$i]=1; done < <(printf '%s\n' "${checks[@]}" | records_hold)
+    if held=$(printf '%s\n' "${checks[@]}" | records_hold); then
+      while IFS= read -r i; do [[ -z $i ]] || holds[$i]=1; done <<<"$held"
+    else
+      why=$(grep . "$scratch/jq" | tail -n 1 || true)
+      for i in "${checked[@]}"; do
+        parse_item "${lines[i]}"
+        echo "team-current: kept $(item_id "${lines[i]}"): cannot check ${end#until }: the records could not be read${why:+ ($why)}" >&2
+      done
+    fi
   fi
   for i in "${!lines[@]}"; do
     [[ -z ${holds[$i]+set} ]] || closing_lines+=("${lines[i]}")
   done
   for closing in ${closing_lines[@]+"${closing_lines[@]}"}; do
-    parse_item "$closing"
-    condition=${end#until }
-    id=$(item_id "$closing")
-    # shellcheck disable=SC2034 # read by commit_records
-    records_edit=edit_close
-    commit_change "chore: current closed $id: $condition"
-    [[ -n $gone ]] || echo "closed $id: $condition"
-    [[ ! $closing =~ ^-\ (ask|owe)\  ]] || changed_inbox=1
+    close_item "$closing"
   done
   ((${#moved[@]})) || return 0
   # shellcheck disable=SC2034 # read by commit_records
@@ -552,6 +563,35 @@ reconcile_list() {
         [[ ! $old =~ ^-\ (ask|owe)\  ]] || changed_inbox=1
       fi
     done
+  done
+}
+
+# Ask GitHub about each pr item of the list, in turn, and close each whose PR is merged as soon as
+# GitHub says so, so a later item GitHub hangs on takes no close back; one GitHub does not answer
+# for keeps its item, named on stderr: reconcile_prs <name>
+reconcile_prs() {
+  local line url state why rc
+  local -a items=()
+  use_list "$1"
+  [[ -e $current ]] || return 0
+  read_lines
+  for line in "${lines[@]}"; do
+    [[ $line == '- '* ]] || continue
+    parse_item "$line"
+    [[ $end =~ ^until\ pr\ .+\ merged$ && -z $(condition_problem "${end#until }") ]] || continue
+    items+=("$line")
+  done
+  for line in ${items[@]+"${items[@]}"}; do
+    parse_item "$line"
+    url=${end#until pr } rc=0
+    url=${url% merged}
+    state=$(timeout 30 gh pr view "$url" --json state -q .state 2>"$scratch/gh" </dev/null) || rc=$?
+    if ((rc)); then
+      why=$(grep . "$scratch/gh" | tail -n 1 || true)
+      echo "team-current: kept $(item_id "$line"): cannot check ${end#until }: GitHub did not answer (gh exit $rc${why:+: $why})" >&2
+    elif [[ $state == MERGED ]]; then
+      close_item "$line"
+    fi
   done
 }
 
@@ -729,14 +769,17 @@ case $command in
   reconcile)
     (($# == 0)) || usage_error "$usage"
     make_scratch
-    changed_inbox=''
-    if [[ -n $named_list ]]; then
-      reconcile_list "$named_list"
-    else
-      reconcile_list coordinator
-      reconcile_list assistant
-    fi
-    [[ -z $changed_inbox ]] || refresh_inbox
+    reconciled=(coordinator assistant)
+    [[ -z $named_list ]] || reconciled=("$named_list")
+    # What the team's own records settle first, in every list, and waiting.md with it: a GitHub
+    # that hangs, or a caller that stops the run meanwhile, then holds back the pr items alone.
+    for step in reconcile_records reconcile_prs; do
+      changed_inbox=''
+      for name in "${reconciled[@]}"; do
+        "$step" "$name"
+      done
+      [[ -z $changed_inbox ]] || refresh_inbox
+    done
     ;;
   check)
     json=''
