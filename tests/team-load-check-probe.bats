@@ -87,8 +87,9 @@ attempts() {
 # $STUB_FIXTURES/<role>.jsonl: one call per attempt, in order, refused as it expects (hook: the
 # block of the data file's first hook whose message holds the attempt's marker, on the call in the
 # worktree, or a hook's block naming no marker for an attempt that has none; rule: a deny rule,
-# file-rule's shape for a file tool; refused: auto mode; kernel: it ran, a background attempt's
-# call made with run_in_background), or for an attempt named, one call per
+# file-rule's shape for a file tool; refused: auto mode; kernel: it ran with the kernel's refusal
+# as its result, a background attempt's call made with run_in_background), or for an attempt
+# named, one call per
 # outcome given: hook, other-hook (a block by another hook's message), none (a call with no
 # result), skip (no call at all), or any outcome tool_result takes (ran, rule, file-rule, automode,
 # no-verdict, safety-check, user-rejected). A
@@ -110,7 +111,7 @@ probe_transcript() {
       Write) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p, content: "probe"}') ;;
       *) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p}') ;;
     esac
-    case $expect:$tool in hook:*) outcomes=hook ;; rule:Bash) outcomes=rule ;; rule:*) outcomes=file-rule ;; kernel:*) outcomes=ran ;; *) outcomes=automode ;; esac
+    case $expect:$tool in hook:*) outcomes=hook ;; rule:Bash) outcomes=rule ;; rule:*) outcomes=file-rule ;; kernel:*) outcomes=refused-by-kernel ;; *) outcomes=automode ;; esac
     outcomes=${given[$id]:-$outcomes}
     for outcome in ${outcomes//,/ }; do
       [[ $outcome != skip ]] || continue
@@ -131,6 +132,7 @@ probe_transcript() {
           echo "$result" ;;
         other-hook) tool_result "toolu_$role$n" hook $'PreToolUse:Bash hook error: [command hook 1]: Blocked: something else\n' ;;
         none) ;;
+        refused-by-kernel) tool_result "toolu_$role$n" ran "PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
         *) tool_result "toolu_$role$n" "$outcome" ;;
       esac
     done
@@ -270,6 +272,16 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   run_bin -1 team-load-check --probe
   assert_contains "$output" "PASS reviewer kernel-delete: kernel refused it"
   assert_contains "$output" "FAIL reviewer kernel-delete-background: expected kernel, got ran in the foreground"
+  # A foreground attempt whose result holds no refusal by the kernel shows no command ran confined;
+  # a background attempt's result is not read.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript planner kernel-delete=ran kernel-delete-background=ran
+  probe_transcript builder
+  probe_transcript reviewer
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "FAIL planner kernel-delete: expected kernel, got no refusal by the kernel in its result"
+  assert_contains "$output" "PASS planner kernel-delete-background: kernel refused it"
+  assert_contains "$output" "PASS builder kernel-delete: kernel refused it"
   # A kernel attempt never made fails as any other.
   probe_transcript builder kernel-delete=skip
   rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
