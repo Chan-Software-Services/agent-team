@@ -125,7 +125,10 @@ open=$(ledger_jq 'open_tasks[]' -r "$tmp/tasks")
 # One registered project's open PRs, or the error that stopped gh: project_prs <project>
 project_prs() {
   local project=$1 repo dir
+  # The registry's repo at the end of its moves (bin/lib/repo-moves.json), so GitHub is asked for
+  # the repository where it is now, not through the redirect of a name it had.
   repo=$(team_project "$project" repo) || return 1
+  repo=$(canonical_repo "$repo") || return 1
   dir=$(mktemp -d) || return 1
   if github "$dir" list pr list --repo "$repo" --state open --limit 100 \
     --json number,title,url,headRefName,baseRefName,isDraft; then

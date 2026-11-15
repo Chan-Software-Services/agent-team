@@ -724,6 +724,19 @@ squash_merge() {
   run_bin -0 team-close T1
   [[ ! -e $wt ]]
   assert_equal "$(events closed | jq -c .returned)" "$(jq -cn --arg wt "$wt" '[$wt]')"
+  assert_equal "$(stub_calls gh | jq -c '.[:5]' | sort -u)" '["pr","list","--repo","owner/home","--head"]'
+}
+
+@test "a registry naming a moved repo's old owner asks GitHub for the merged PR under the new one" {
+  open_home_task
+  work_and_push "$wt" feature.txt
+  squash_merge "$wt" feat/T1-work
+  sed -i 's#^repo = "owner/home"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
+  stub_reply gh "$(jq -cn --arg head "$(git -C "$wt" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
+
+  run_bin -0 team-close T1
+  [[ ! -e $wt ]]
+  assert_equal "$(stub_calls gh | jq -c '.[:5]' | sort -u)" '["pr","list","--repo","Chan-Software-Services/agent-team","--head"]'
 }
 
 @test "a squash-merged branch whose merged PR had another head has not landed" {

@@ -25,7 +25,8 @@ merge_queue_check() {
     [[ -n $project ]] || continue
     project_registry "$project" 2>/dev/null || continue
     mapfile -d '' -t fields < <(jq --raw-output0 '.repo, .base, .merge_method' <<<"$registry_reply")
-    repo=${fields[0]} base=${fields[1]} method=${fields[2]}
+    # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
+    repo=$(canonical_repo "${fields[0]}") base=${fields[1]} method=${fields[2]}
     if ! rules=$(base_rules "$repo" "$base" 2>"$err"); then
       reasons+=("$base's rules on $repo cannot be read from GitHub: $(first_error)")
       fixes+=("the github login line's fix, then run team-doctor again")

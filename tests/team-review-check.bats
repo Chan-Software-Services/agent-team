@@ -289,8 +289,16 @@ DELETE installation/token"
 @test "a failed installation read or mint posts nothing and has no token to revoke" {
   echo '404 {"message": "Not Found"}' >"$STUB_FIXTURES/curl.installation"
   run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
-  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 404: Not Found; nothing posted"
+  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 404: Not Found (the reviewer App is not installed for Owner, or Owner/agent-team moved and bin/lib/repo-moves.json lacks the move); nothing posted"
   assert_equal "$(curl_calls)" "GET repos/Owner/agent-team/installation"
+  # A moved repository's redirect, which is never followed, has the same two causes; any other
+  # answer has GitHub's alone.
+  echo '301 {"message": "Moved Permanently"}' >"$STUB_FIXTURES/curl.installation"
+  run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
+  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 301: Moved Permanently (the reviewer App is not installed for Owner, or Owner/agent-team moved and bin/lib/repo-moves.json lacks the move); nothing posted"
+  echo '401 {"message": "Bad credentials"}' >"$STUB_FIXTURES/curl.installation"
+  run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
+  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 401: Bad credentials; nothing posted"
   rm "$STUB_FIXTURES/curl.installation" "$STUB_CALLS/curl.calls"
   echo 'exit 7' >"$STUB_FIXTURES/curl.mint"
   run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
@@ -366,7 +374,7 @@ POST app/installations/777/access_tokens"
 @test "GitHub's message is read from a pretty-printed answer, as its REST API answers" {
   printf '404 {\n  "message": "Not Found"\n}\n' >"$STUB_FIXTURES/curl.installation"
   run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
-  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 404: Not Found; nothing posted"
+  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 404: Not Found (the reviewer App is not installed for Owner, or Owner/agent-team moved and bin/lib/repo-moves.json lacks the move); nothing posted"
   rm "$STUB_FIXTURES/curl.installation"
   printf '500 {\n  "message": "Server Error"\n}\n' >"$STUB_FIXTURES/curl.revoke"
   run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
@@ -404,11 +412,11 @@ DELETE installation/token"
   done
 }
 
-@test "a redirect from GitHub is never followed: a 301 is reported as GitHub's answer, and nothing is posted" {
+@test "a redirect from GitHub is never followed: a 301 is reported as GitHub's answer, with its causes on the installation read, and nothing is posted" {
   echo '301 {"message": "Moved Permanently", "url": "https://api.github.com/repositories/42/installation"}' \
     >"$STUB_FIXTURES/curl.installation"
   run_bin --separate-stderr -1 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
-  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 301: Moved Permanently; nothing posted"
+  assert_equal "$stderr" "team-review-check: reading the App's installation on Owner/agent-team failed: GitHub answered HTTP 301: Moved Permanently (the reviewer App is not installed for Owner, or Owner/agent-team moved and bin/lib/repo-moves.json lacks the move); nothing posted"
   assert_equal "$(curl_calls)" "GET repos/Owner/agent-team/installation"
   # curl is never told to follow one.
   assert_equal "$(stub_calls curl | jq -c '[.[] | select(test("^(-L|--location(-trusted)?)$"))]')" "[]"

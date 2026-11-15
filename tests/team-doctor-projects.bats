@@ -642,6 +642,13 @@ queue_on() {
   queue_on Chan-Software-Services/agent-team pin=123456
   run_bin -0 team-doctor
   assert_equal "$output" "PASS merge queue: site (main on owner/site), agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  # A registry still naming a moved repo's old owner reads the repo where it is now, never
+  # through GitHub's redirect of the old name.
+  sed -i 's#^repo = "Chan-Software-Services/agent-team"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
+  : >"$STUB_CALLS/gh.log"
+  run_bin -0 team-doctor
+  assert_contains "$output" "agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456)"
+  assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c chanjdaniel || true)" 0
 }
 
 @test "the merge queue line fails on a queue whose merge method is not the registry's, a strict rule, or classic protection beside it, the first of them" {

@@ -53,7 +53,8 @@ review_app_check() {
       report "review app" FAIL "the registry cannot be read: $(first_error)" "the records line's fix, then run team-doctor again"
       return
     fi
-    repo=$(jq -r .repo <<<"$registry_reply") base=$(jq -r .base <<<"$registry_reply")
+    # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
+    repo=$(canonical_repo "$(jq -r .repo <<<"$registry_reply")") base=$(jq -r .base <<<"$registry_reply")
     if ! rules=$(base_rules "$repo" "$base" 2>"$err"); then
       report "review app" FAIL "$base's rules on $repo cannot be read from GitHub: $(first_error)" \
         "the github login line's fix, then run team-doctor again"

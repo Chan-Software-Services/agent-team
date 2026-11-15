@@ -217,10 +217,11 @@ unlanded() {
   ahead=$(git -C "$wt" rev-list --count "$head" --not --exclude='origin/wip/*' --exclude='origin/salvage/*' --remotes=origin)
   if ((ahead > 0)); then
     # Not on origin: a squash or rebase merge leaves the head only as a merged PR's head.
-    repo=$(team_project "$project" repo) || {
+    # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
+    if ! repo=$(team_project "$project" repo) || ! repo=$(canonical_repo "$repo"); then
       echo "cannot read $project's repo from projects.toml"
       return
-    }
+    fi
     ((ahead == 1)) && ahead="1 commit" || ahead="$ahead commits"
     if [[ -n $base ]]; then
       if ! github "$scratch" prs pr list --repo "$repo" --head "$base" --state merged --json number,headRefOid; then

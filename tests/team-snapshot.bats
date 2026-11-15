@@ -337,6 +337,18 @@ Checks waits to arm unless running: team-next T4 --ci (https://github.com/owner/
   T0-planner 99999999 idle: T0 is the load check's, stray unless one is running"
 }
 
+@test "a registry naming a moved repo's old owner lists its open PRs from the repo under the new one" {
+  opened T3
+  sed -i 's#^repo = "owner/conv"#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
+  open_prs owner/proj '[]'
+  open_prs Chan-Software-Services/Conventioner "[$(pr_json 5 feat/T3-work "The work")]"
+  run_bin -0 team-snapshot --json
+  assert_equal "$(jq -c '.prs | map([.project, .repo, (.prs | length)])' <<<"$output")" \
+    '[["proj","owner/proj",0],["conv","Chan-Software-Services/Conventioner",1]]'
+  assert_equal "$(stub_calls gh | jq -r 'select(.[1] == "list") | .[3]' | sort)" "Chan-Software-Services/Conventioner
+owner/proj"
+}
+
 @test "open PRs come from gh pr list for each registered project, with their task from the branch" {
   opened T3
   open_prs owner/proj "[$(pr_json 5 feat/T3-work "The work"), $(pr_json 6 chore/deps "Bump deps" true)]"

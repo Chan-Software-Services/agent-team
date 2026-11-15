@@ -431,6 +431,13 @@ ruleset_pin() {
   run_bin -0 team-doctor
   assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection and rulesets on Chan-Software-Services/agent-team require agent-review from it, enforced for everyone"
   assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/agent-team/branches/dev"]'$'\n''["api","repos/Chan-Software-Services/agent-team/rules/branches/dev","--paginate"]'
+  # A registry still naming the repo's old owner reads its rules where the repo is now, never
+  # through GitHub's redirect of the old name.
+  sed -i 's#^repo = "Chan-Software-Services/agent-team"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
+  : >"$STUB_CALLS/gh.log"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection and rulesets on Chan-Software-Services/agent-team require agent-review from it, enforced for everyone"
+  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/agent-team/branches/dev"]'$'\n''["api","repos/Chan-Software-Services/agent-team/rules/branches/dev","--paginate"]'
 }
 
 @test "the review app line reads agent-review's pin in a ruleset of dev, and fails on a bypass actor of it or the pin missing from it" {

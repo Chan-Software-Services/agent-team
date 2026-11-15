@@ -48,7 +48,9 @@
 # A call GitHub refuses, or curl cannot make, ends it, exit 1, naming the call and why, and that
 # nothing was posted, but for a post curl could not finish, which may have reached GitHub and is
 # said to be unknown; a redirect is never followed, so a 301 is GitHub's answer, refused as any
-# code but the one expected is. Once the token is minted it is revoked on every exit, a failed post
+# code but the one expected is. An installation read answered 404 or 301 names its two causes: the
+# App is not installed for the repo's owner, or the repo moved and bin/lib/repo-moves.json lacks
+# the move. Once the token is minted it is revoked on every exit, a failed post
 # included, and a revoke that fails is said on stderr (the token expires on its own within the
 # hour), exit 1, after the check run's id when the post was made, so a caller that reads an id on
 # stdout knows the check was posted. A token GitHub answers that is not of a token's characters is
@@ -146,19 +148,27 @@ answered() {
 }
 
 # One call as the App, its answer's body in $answer, held in memory alone (a minted token is in
-# it), or the end of the run naming <what> and why, then <after> (by default "nothing posted"):
-# call <what> <expected code> <method> <path> <bearer> [<body file> [<after>]]
+# it), or the end of the run naming <what> and why, then <after> (by default "nothing posted"); an
+# answer of a code in <causes> (codes between spaces, "" for none) names $cause after GitHub's:
+# call <what> <expected code> <method> <path> <bearer> [<body file> [<after> [<causes>]]]
 call() {
-  local what=$1 expected=$2 after=${7:-nothing posted} code
+  local what=$1 expected=$2 after=${7:-nothing posted} causes=${8:-} code why
   if ! answer=$(review_app_api "$3" "$4" "$5" "${6:-}" 2>"$scratch/curl.err"); then
     die "$what failed: $(grep -m1 . "$scratch/curl.err" || echo "curl failed"); $after"
   fi
   code=${answer##*$'\n'} answer=${answer%$'\n'*}
-  [[ $code == "$expected" ]] || die "$what failed: $(answered "$code"); nothing posted"
+  if [[ $code != "$expected" ]]; then
+    why=$(answered "$code")
+    if [[ " $causes " == *" $code "* ]]; then why+=" ($cause)"; fi
+    die "$what failed: $why; nothing posted"
+  fi
 }
 
 jwt=$(review_app_jwt "$app_id" "$key") || die "the reviewer App's key cannot sign a JWT; nothing posted"
-call "reading the App's installation on $repo" 200 GET "repos/$repo/installation" "$jwt"
+# GitHub answers an installation read 404 where the App is not installed, and 301, which is not
+# followed, or 404 for a repository that moved.
+cause="the reviewer App is not installed for ${repo%%/*}, or $repo moved and bin/lib/repo-moves.json lacks the move"
+call "reading the App's installation on $repo" 200 GET "repos/$repo/installation" "$jwt" "" "" "404 301"
 installation=$(printf '%s' "$answer" | jq -r '.id // empty')
 [[ $installation =~ ^[1-9][0-9]*$ ]] ||
   die "reading the App's installation on $repo failed: GitHub's answer names no installation id; nothing posted"
