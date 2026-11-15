@@ -15,8 +15,18 @@
 # 1), read once before the first command.
 # Prints "team-checks: running <command> on <head>" on stderr before each, and its result on
 # stdout: "local check '<command>' passed on the head <head>", or failed (exit <n>), or could not
-# run yet (exit 75, the lock stayed held), with its last 20 lines indented below. The worktree
-# is removed with git worktree remove --force and its directory by the path mktemp printed.
+# run yet (exit 75, the lock stayed held). One that did not pass says where its whole log is kept,
+# then, indented below, the lines above its last 20 that name a failure (a line starting FAIL or
+# not ok, or holding --- FAIL, panic: or DATA RACE: go's and bats'), the first 20 at most, each
+# cut at 300 characters, with how many there were when more, and then its last 20 lines.
+# The log is kept for the coordinator to read, never in the team home: one file per project, head
+# and check, ${XDG_CACHE_HOME:-~/.cache}/agent-team/checks/<project>/<head>/<n>-<command>.log (the
+# check's number in local_checks and its command, each run of characters outside letters, digits
+# and _ a dash, 60 characters at most), readable by its owner alone, printed with ~ for the home
+# directory. The next run of that check on that head overwrites it, or removes it when it passes,
+# and every run removes the project's kept logs older than 30 days; one that cannot be kept is
+# said in the result's line, which changes no exit. The worktree is removed with git worktree
+# remove --force and its directory by the path mktemp printed.
 # Exit 0 all passed or there are none, 1 any failed, 75 none failed but one could not run yet.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -59,11 +69,24 @@ trap 'git -C "$checkout" worktree remove --force "$scratch/head" 2>/dev/null || 
 git -C "$checkout" worktree add -q --detach "$scratch/head" "$head" 2>"$scratch/error" ||
   die "cannot check out ${head:0:7} for the local checks: $(grep -m1 . "$scratch/error")"
 
+# A failed check's whole log outlives the scratch directory here, a cache and never a record; what
+# is older than 30 days goes, so the heads that failed once do not pile up.
+kept_root=${XDG_CACHE_HOME:-$HOME/.cache}/agent-team/checks/$project
+if [[ -d $kept_root ]]; then
+  find "$kept_root" -type f -name '*.log' -mtime +30 -delete 2>/dev/null || true
+  find "$kept_root" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+fi
+# The lines of a log that name a failure: go test's and bats'.
+failure_lines='^FAIL|--- FAIL|panic:|DATA RACE|^not ok'
+
 TEAM_JOBS=${TEAM_JOBS:-$(TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-capacity" jobs)}
 export TEAM_JOBS
 
-failed=0 later=0
+failed=0 later=0 number=0
 for command in "${local_checks[@]}"; do
+  number=$((number + 1))
+  slug=$(tr '\n' ' ' <<<"$command" | LC_ALL=C sed -E 's/[^A-Za-z0-9_]+/-/g; s/^-//; s/-$//' | cut -c1-60)
+  kept=$kept_root/$head/$number-$slug.log
   echo "team-checks: running $command on ${head:0:7}" >&2
   rm -rf "$scratch/tmp"
   mkdir "$scratch/tmp"
@@ -72,14 +95,32 @@ for command in "${local_checks[@]}"; do
     </dev/null >"$scratch/check.log" 2>&1 || rc=$?
   if ((rc == 0)); then
     echo "local check '$command' passed on the head ${head:0:7}"
+    rm -f "$kept"
+    rmdir "$kept_root/$head" 2>/dev/null || true
     continue
-  elif ((rc == 75)); then
+  fi
+  if (umask 077 && mkdir -p "$kept_root/$head" && cp "$scratch/check.log" "$kept") 2>/dev/null; then
+    where="its whole log is ${kept/#"$HOME/"/"~/"}"
+  else
+    where="its whole log could not be kept at ${kept/#"$HOME/"/"~/"}"
+  fi
+  if ((rc == 75)); then
     later=1
-    echo "local check '$command' could not run on the head ${head:0:7} yet (exit 75, try again later); its last lines:"
+    echo "local check '$command' could not run on the head ${head:0:7} yet (exit 75, try again later); $where"
   else
     failed=1
-    echo "local check '$command' failed on the head ${head:0:7} (exit $rc); its last lines:"
+    echo "local check '$command' failed on the head ${head:0:7} (exit $rc); $where"
   fi
+  # The tail shows its own failure lines, so only the ones above it are named.
+  head -n -20 "$scratch/check.log" | { grep -aE -- "$failure_lines" || true; } >"$scratch/named"
+  named=$(wc -l <"$scratch/named")
+  if ((named > 20)); then
+    echo "    the first 20 of its $named earlier lines that name a failure:"
+  elif ((named > 0)); then
+    echo "    its earlier lines that name a failure:"
+  fi
+  head -n 20 "$scratch/named" | cut -c1-300 | sed 's/^/      /'
+  echo "    its last lines:"
   tail -n 20 "$scratch/check.log" | sed 's/^/      /'
 done
 
