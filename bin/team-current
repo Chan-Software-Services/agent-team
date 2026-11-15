@@ -1,51 +1,136 @@
 #!/usr/bin/env bash
-# Edit the coordinator's current items, the team home's tasks/current.md, by a short id.
+# Keep the coordinator's and the assistant's lists of current items, the team home's
+# tasks/current.md and assistant/current.md, by a short id, each item ending on a close condition
+# the records show or on a review date at most 7 days out.
 #
 # Usage: team-current add <kind> <task or -> <text> --where <detail>
+#                     (--until <condition> | --review | --review-by <YYYY-MM-DD>)
 #        team-current done <id>
+#        team-current renew <id> (--review | --review-by <YYYY-MM-DD>) --reason <text>
 #        team-current list
+#        team-current due [--json]
+#        team-current reconcile
 #        team-current check [--json]
-# The file is "# Current items", then one line per item, "- <kind> <task or -> <text> | <where>".
-# An item's id is the first 6 hex digits of the sha256 of its line without the leading "- ".
+# Each takes --list coordinator|assistant, anywhere on its line: the list it reads or edits,
+# tasks/current.md ("# Current items") for the coordinator, assistant/current.md ("# Assistant
+# items") for the assistant; it defaults to assistant when AGENT_TEAM_ROLE is assistant, else to
+# coordinator. add, done and renew refuse the assistant on the coordinator's list, and any other
+# session (the coordinator, or Daniel's shell) on the assistant's; the reads and reconcile do not.
+# reconcile reads and edits both lists unless --list names one.
+# A list is its title, then one line per item, "- <kind> <task or -> <text> | <where> | <end> |
+# added <UTC time>", <end> being "until <condition>" or "review <YYYY-MM-DD>", and added the time
+# it was added or renewed (as 2026-11-15T10:00:00Z). A line of the old form, "- <kind> <task or ->
+# <text> | <where>", with no end, is read until reconcile moves it over.
+# An item's id is the first 6 hex digits of the sha256 of its line without the leading "- ", so a
+# renewed or moved item takes a new id.
+# The close conditions, a fixed grammar:
+#   handoff H<n> answered      assistant/handoffs.jsonl has an answered of H<n>
+#   task T<n> opened           the ledger has T<n>'s opened (closed, merged: its closed, merged)
+#   ledger T<n> <kind>         the ledger has an event of that contract kind on T<n>, at or after
+#                              the item's added
+#   pr <GitHub PR URL> merged  GitHub says the PR is merged (gh pr view --json state)
+#   file <path>                the team home holds <path>, relative to it, with no ".." in it
 # add appends the item's line (making the file, with its title, when there is none) and prints its
-# id; the text is the words between the task and --where, joined by spaces. done removes the one
-# item whose id is <id> or starts with it (at least 4 hex digits), and prints it. list prints each
-# item as "<id> <its line without "- ">". check prints each line that add would refuse, as
-# "tasks/current.md:<n>: <reasons>", and every line that is neither the title, blank nor an item;
-# and each item whose task (T<n>) is closed in the ledger, as "tasks/current.md:<n>: T<n> closed
-# at <its last closed's ts>; done it (team-current done <id>) or add it again under an open task",
-# after that line's reasons, if any. It exits 1 when it names any line, and never writes. With
-# --json it prints instead {schema: "team-current-check/1", problems: [{line, id, item,
-# reasons}], closed: [{line, id, item, task, closed_at}]}, exiting the same: line is the line's
-# number, id its item id (null for a line that is not an item), item the line without "- ",
-# reasons each reason as a string, and closed_at the task's last closed's ts.
+# id; the text is the words between the task and the first option, joined by spaces. It takes
+# exactly one end, else refuses "an item needs a close condition (--until) or a review date
+# (--review, 3 days out, or --review-by, at most 7)": --until <condition>, which must parse, naming
+# its task (T<n>), hand-off (H<n>), ledger kind, PR (https://github.com/<owner>/<repo>/pull/<n>)
+# or path well; --review, the UTC date 3 days out; or --review-by <date>, from today to 7 days out.
+# done removes the one item whose id is <id> or starts with it (at least 4 hex digits), and
+# prints it. renew replaces a review item's date, its added becoming now, and prints "renewed <id>
+# as <new id>: <the line without "- ">"; it refuses an until item, which closes on its condition,
+# an old-form line, which reconcile moves over first, and a reason that is empty or holds a
+# newline. list prints each item as "<id> <its line without "- ">". due prints, as list does, the
+# items whose review date has come (on or before today, UTC); with --json, {schema:
+# "team-current-due/1", list, file, today, items: [{line, id, item, review}]}, line the line's
+# number; it exits 0 whatever it finds.
+# reconcile, for each list in turn: removes each until item whose condition holds, one commit
+# each, printing "closed <id>: <condition>"; and rewrites each old-form line with "| review <the
+# date 3 days out> | added <now>", one commit for the list, printing "migrated <id> as <new id>:
+# review <date>" each. A condition it cannot check (GitHub unreachable or refusing for a pr, a
+# condition that does not parse) keeps its item, named on stderr as "team-current: kept <id>:
+# cannot check <condition>: <why>"; it exits 0 then, and 1 only when a commit fails.
+# check prints each line that add would refuse, as "<file>:<n>: <reasons>", and every line that is
+# neither the title, blank nor an item; a line of the old form, a line with no end or no added, an
+# end that is neither form, a condition that does not parse, and a review date more than 7 days
+# after its added are among its reasons. It also names each item whose task (T<n>) is closed in the
+# ledger, as "<file>:<n>: T<n> closed at <its last closed's ts>; done it (team-current done <id>)
+# or add it again under an open task", after that line's reasons, if any. It exits 1 when it names
+# any line, and never writes. With --json it prints instead {schema: "team-current-check/1",
+# problems: [{line, id, item, reasons}], closed: [{line, id, item, task, closed_at}]}, exiting the
+# same: line is the line's number, id its item id (null for a line that is not an item), item the
+# line without "- ", reasons each reason as a string, and closed_at the task's last closed's ts.
 # add refuses: a kind other than ask, owe, next or watch (queued work is a file in tasks/queued/,
 # with front matter, which team-queue index lists, and a queued line is refused saying so); a task
-# that is not T<n> or -; text holding " | " or a newline; a line over 300 characters; a line already in the file; and a
-# where that is none of these: an http(s) URL (a Discord link is one), a Discord id (optionally
-# "Discord <id>"), "ledger <UTC time>" (as 2026-11-01T07:08:11Z), or a file in the team home,
-# named relative to it, in full or under ~/. A where under /tmp/, /var/tmp/, /var/folders/,
-# /private/var/folders/, $TMPDIR or ~/.claude/jobs/ is refused as a temp path.
-# add and done change the file under the ledger's lock and commit it alone (commit_records), as
-# "chore: current <kind> <task>" and "chore: current done <id>", then push the team home's
-# branch. A commit the team home's hooks refuse undoes the change and exits 1; a push that fails
-# keeps the commit for the next checkpoint to push, saying so on stderr, and exits 0. An ask or owe
-# item added or done then brings the team home's waiting.md up to date, which lists them
-# (refresh_inbox in bin/lib/team.sh: team-inbox; a failure is one line on stderr, and the exit
-# stays 0).
+# that is not T<n> or -; text holding " | " or a newline; a line over 300 characters, counted up to
+# its where; an item already in the list (the same line up to its where); and a where that is none
+# of these: an http(s) URL (a Discord link is one), a Discord id (optionally "Discord <id>"),
+# "ledger <UTC time>" (as 2026-11-01T07:08:11Z), or a file in the team home, named relative to it,
+# in full or under ~/. A where under /tmp/, /var/tmp/, /var/folders/, /private/var/folders/,
+# $TMPDIR or ~/.claude/jobs/ is refused as a temp path.
+# Each change is made under the ledger's lock and committed alone (commit_records), as "chore:
+# current <kind> <task>", "chore: current done <id>", "chore: current renew <id> to <date>:
+# <reason>", "chore: current closed <id>: <condition>" or "chore: current migrated <n> item(s)",
+# then the team home's branch is pushed. A commit the team home's hooks refuse undoes the change
+# and exits 1; a push that fails keeps the commit for the next checkpoint to push, saying so on
+# stderr, and exits 0. A change to an ask or owe item then brings the team home's waiting.md up to
+# date, which lists both lists' (refresh_inbox in bin/lib/team.sh: team-inbox; a failure is one
+# line on stderr, and the exit stays 0).
+# TEAM_CURRENT_NOW (a UTC time, as 2026-11-15T10:00:00Z) stands for now, the tests' seam.
 # Exit codes: 0 done, 1 refused or a check failed, 2 a malformed command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
-usage="usage: team-current add <kind> <task or -> <text> --where <detail> | done <id> | list | check [--json]"
-current=$TEAM_HOME/tasks/current.md
-rel=tasks/current.md
-title="# Current items"
+usage="usage: team-current add <kind> <task or -> <text> --where <detail> (--until <condition> | --review | --review-by <YYYY-MM-DD>) | done <id> | renew <id> (--review | --review-by <YYYY-MM-DD>) --reason <text> | list | due [--json] | reconcile | check [--json], each with [--list coordinator|assistant]"
 max_length=300
+# A review date's days out: --review's, and the most --review-by and check allow.
+review_days=3
+max_review_days=7
+utc_time='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+end_needed="an item needs a close condition (--until) or a review date (--review, 3 days out, or --review-by, at most 7)"
+grammar="handoff H<n> answered, task T<n> opened|closed|merged, ledger T<n> <kind>, pr <GitHub PR URL> merged, or file <path>"
+
+now=${TEAM_CURRENT_NOW:-$(date -u +%FT%TZ)}
+[[ $now =~ $utc_time ]] || usage_error "TEAM_CURRENT_NOW \"$now\" is not a UTC time as 2026-11-15T10:00:00Z"
+today=${now:0:10}
 
 # The id of an item line: item_id <line>
 item_id() {
   printf '%s' "${1#- }" | sha256sum | cut -c1-6
+}
+
+# Whether <date> is a real YYYY-MM-DD date: is_date <date>
+is_date() {
+  [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ $(date -u -d "$1" +%F 2>/dev/null) == "$1" ]]
+}
+
+# The whole days from the date <from> to the date <to>: days_between <from> <to>
+days_between() {
+  echo $((($(date -u -d "$2" +%s) - $(date -u -d "$1" +%s)) / 86400))
+}
+
+# The date <n> days after today: days_out <n>
+days_out() {
+  date -u -d "$today + $1 days" +%F
+}
+
+# Point current, rel and title at the list <name>: use_list <name>
+use_list() {
+  list_name=$1
+  case $1 in
+    coordinator) rel=tasks/current.md title="# Current items" ;;
+    assistant) rel=assistant/current.md title="# Assistant items" ;;
+  esac
+  current=$TEAM_HOME/$rel
+}
+
+# Refuse an edit of the list by a session whose list it is not: own_list
+own_list() {
+  if [[ ${AGENT_TEAM_ROLE:-} == assistant && $list_name == coordinator ]]; then
+    die "tasks/current.md is the coordinator's list: the assistant keeps its own, assistant/current.md (--list assistant), and hands the coordinator a note for its"
+  elif [[ ${AGENT_TEAM_ROLE:-} != assistant && $list_name == assistant ]]; then
+    die "assistant/current.md is the assistant's list, which only the assistant edits; the coordinator keeps tasks/current.md (--list coordinator)"
+  fi
 }
 
 # The team home, resolved, and the temp directories, each resolved (macOS's /var/folders is /private/var/folders), / never one.
@@ -86,12 +171,106 @@ where_problem() {
   fi
 }
 
-# Why an item of <kind>, <task>, <text> and <where> may not be the line <line> of the file, one
-# reason per line, nothing when it may; <lines> names the array of the file's lines, for the
-# duplicate, and <at> the line's own index in it (-1 for a new line): item_problems <kind> <task>
-# <text> <where> <line> <lines> <at>
+# The ledger's kinds, from the contract, one per line, read once: ledger_kinds
+ledger_kinds() {
+  [[ -n ${kinds:-} ]] || kinds=$(jq -r '.kinds | keys[]' "$TEAM_LIB/ledger-contract.json")
+  printf '%s\n' "$kinds"
+}
+
+# Why <condition> is no close condition, or nothing when it is one: condition_problem <condition>
+condition_problem() {
+  local condition=$1 path part
+  if [[ $condition =~ ^handoff\ H[1-9][0-9]*\ answered$ ||
+    $condition =~ ^task\ T[1-9][0-9]*\ (opened|closed|merged)$ ||
+    $condition =~ ^pr\ https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[1-9][0-9]*/?\ merged$ ]]; then
+    return 0
+  elif [[ $condition =~ ^ledger\ T[1-9][0-9]*\ ([^[:space:]]+)$ ]]; then
+    grep -qxF -- "${BASH_REMATCH[1]}" <(ledger_kinds) ||
+      echo "the condition's kind '${BASH_REMATCH[1]}' is not a ledger kind (team-log --help lists them)"
+  elif [[ $condition =~ ^file\ (.+)$ ]]; then
+    path=${BASH_REMATCH[1]}
+    local -a parts
+    IFS=/ read -ra parts <<<"$path"
+    for part in "${parts[@]}"; do
+      if [[ $part == .. ]]; then
+        echo "the condition's path '$path' is not in the team home: it holds '..'"
+        return 0
+      fi
+    done
+    # shellcheck disable=SC2088 # a literal ~/, which names no path in the team home
+    [[ $path != /* && $path != '~'* ]] || echo "the condition's path '$path' is not relative to the team home"
+  else
+    echo "the condition '$condition' is not one of: $grammar"
+  fi
+}
+
+# Why <end> and <added> may not end an item, one reason per line, nothing when they may:
+# end_problems <end> <added>
+end_problems() {
+  local end=$1 added=$2 date time=${2#added }
+  if [[ -z $end ]]; then
+    echo "the line has no end (| until <condition> or | review <YYYY-MM-DD>)"
+  elif [[ $end == 'until '* ]]; then
+    condition_problem "${end#until }"
+  elif [[ $end == 'review '* ]]; then
+    date=${end#review }
+    if ! is_date "$date"; then
+      echo "the review date '$date' is not a YYYY-MM-DD date"
+    elif [[ $added == "added $time" && $time =~ $utc_time ]] && (($(days_between "${time:0:10}" "$date") > max_review_days)); then
+      echo "the review date $date is more than $max_review_days days after the item was added (${time:0:10})"
+    fi
+  else
+    echo "the end '$end' is not until <condition> or review <YYYY-MM-DD>"
+  fi
+  if [[ -z $added ]]; then
+    echo "the line has no added time (| added <UTC time>)"
+  elif [[ $added != "added $time" || ! $time =~ $utc_time ]]; then
+    echo "the added '$added' is not added <UTC time>"
+  fi
+}
+
+# Split an item line into its parts: kind, task, text, where, end and added (end and added empty
+# when absent), short (the line up to its where) and bars (how many " | " it holds): parse_item <line>
+parse_item() {
+  local rest=${1#- } part
+  local -a parts=()
+  while [[ $rest == *' | '* ]]; do
+    parts+=("${rest%% | *}")
+    rest=${rest#* | }
+  done
+  parts+=("$rest")
+  bars=$((${#parts[@]} - 1))
+  head=${parts[0]} where=${parts[1]-} end='' added=''
+  kind='' task='' text=''
+  read -r kind task text <<<"$head" || true
+  if ((bars == 2)); then
+    part=${parts[2]}
+    if [[ $part == 'added '* ]]; then added=$part; else end=$part; fi
+  elif ((bars == 3)); then
+    end=${parts[2]} added=${parts[3]}
+  fi
+  # added keeps its word, so end_problems can tell a malformed one; the time is ${added#added }.
+  short="- $head | $where"
+}
+
+# The line up to its where of the item line <line>, or the line itself without a where: short_of <line>
+short_of() {
+  local rest=$1 first
+  [[ $rest == *' | '* ]] || {
+    printf '%s' "$rest"
+    return
+  }
+  first=${rest%% | *}
+  rest=${rest#* | }
+  printf '%s | %s' "$first" "${rest%% | *}"
+}
+
+# Why an item of <kind>, <task>, <text> and <where> may not be the line whose part up to its where
+# is <short>, one reason per line, nothing when it may; <lines> names the array of the file's
+# lines, for the duplicate, and <at> the line's own index in it (-1 for a new line): item_problems
+# <kind> <task> <text> <where> <short> <lines> <at>
 item_problems() {
-  local kind=$1 task=$2 text=$3 where=$4 line=$5 at=$7 i length
+  local kind=$1 task=$2 text=$3 where=$4 short=$5 at=$7 i length
   local -n others=$6
   if [[ $kind == queued ]]; then
     echo "queued work is a file in tasks/queued/ with front matter, which team-queue index lists, never a current item"
@@ -109,25 +288,24 @@ item_problems() {
   else
     where_problem "$where"
   fi
-  length=$(jq -rn --arg line "$line" '$line | length')
+  length=$(jq -rn --arg line "$short" '$line | length')
   ((length <= max_length)) || echo "the line is $length characters, over $max_length"
   for ((i = 0; i < ${#others[@]} && (at < 0 || i < at); i++)); do
-    if [[ ${others[i]} == "$line" ]]; then
-      echo "the line is already in $rel, at line $((i + 1))"
+    if [[ ${others[i]} == '- '* && $(short_of "${others[i]}") == "$short" ]]; then
+      echo "the item is already in $rel, at line $((i + 1))"
       break
     fi
   done
 }
 
-# item_problems' reasons on one line, joined by "; ", nothing when there are none: problems_line
-# <item_problems' arguments>
-problems_line() {
+# The reasons, one per line, on stdin, joined by "; " on one line, nothing when there are none: joined
+joined() {
   local -a reasons
-  local IFS=$'\x1f' joined
-  mapfile -t reasons < <(item_problems "$@")
+  local IFS=$'\x1f' all
+  mapfile -t reasons
   ((${#reasons[@]})) || return 0
-  joined="${reasons[*]}"
-  printf '%s\n' "${joined//$'\x1f'/; }"
+  all="${reasons[*]}"
+  printf '%s\n' "${all//$'\x1f'/; }"
 }
 
 # The file's lines, into the array lines (none when there is no file): read_lines
@@ -141,13 +319,28 @@ write_lines() {
   printf '%s\n' "${lines[@]}" >"$current"
 }
 
+# The index in the array lines of the item line <line>, as found, or -1: find_line <line>
+find_line() {
+  local i
+  found=-1
+  for i in "${!lines[@]}"; do
+    if [[ ${lines[i]} == "$1" ]]; then
+      found=$i
+      return
+    fi
+  done
+}
+
 # The edits, each run by commit_records under the ledger's lock, so the change and its commit are
 # one step; each reads the file afresh there and keeps it in $scratch/before and $scratch/after.
 edit_add() {
   local problems
   read_lines
   keep before
-  problems=$(problems_line "$kind" "$task" "$text" "$where" "$line" lines -1)
+  problems=$({
+    item_problems "$kind" "$task" "$text" "$where" "$short" lines -1
+    end_problems "$end" "$added"
+  } | joined)
   [[ -z $problems ]] || die "refusing the item: $problems"
   ((${#lines[@]})) || lines=("$title")
   lines+=("$line")
@@ -167,6 +360,45 @@ edit_done() {
   write_lines || die "cannot write $current"
   keep after
   echo "removed $id ${removed#- }"
+}
+
+edit_renew() {
+  read_lines
+  keep before
+  find_match
+  [[ $(item_id "${lines[match]}") == "$id" ]] || die "$rel changed meanwhile; run it again"
+  lines[match]=$renewed
+  write_lines || die "cannot write $current"
+  keep after
+  echo "renewed $id as $(item_id "$renewed"): ${renewed#- }"
+}
+
+# Remove the line $closing, when it is still there (gone, when it is not).
+edit_close() {
+  read_lines
+  keep before
+  find_line "$closing"
+  gone=''
+  if ((found < 0)); then
+    gone=1
+  else
+    unset 'lines[found]'
+    lines=("${lines[@]}")
+    write_lines || die "cannot write $current"
+  fi
+  keep after
+}
+
+# Rewrite each line of the array moving that is still there as its value in moved.
+edit_migrate() {
+  local i
+  read_lines
+  keep before
+  for i in "${!lines[@]}"; do
+    [[ -z ${moved[${lines[i]}]+set} ]] || lines[i]=${moved[${lines[i]}]}
+  done
+  write_lines || die "cannot write $current"
+  keep after
 }
 
 # The index in the array lines of the one item whose id starts with $prefix, as match; refuses an
@@ -196,7 +428,7 @@ keep() {
 # the file still holds it, and exit 1: commit_change <message>
 commit_change() {
   local rc=0
-  mkdir -p "$TEAM_HOME/tasks"
+  mkdir -p "$(dirname "$current")"
   commit_records "$1" "$rel" || rc=$?
   ((rc)) || return 0
   if git -C "$TEAM_HOME" show "HEAD:$rel" 2>/dev/null | cmp -s - "$scratch/after"; then
@@ -212,29 +444,183 @@ commit_change() {
   die "$rel: not committed, so the change is undone"
 }
 
+# The scratch directory the edits keep the file in, removed on exit: make_scratch
+make_scratch() {
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  NET_ERR=$scratch/err
+}
+
+# The review end an option asks for, into review (its date), refusing a date out of range:
+# review_date <--review or --review-by> [<date>]
+review_date() {
+  if [[ $1 == --review ]]; then
+    review=$(days_out "$review_days")
+    return
+  fi
+  review=$2
+  is_date "$review" || die "the review date '$review' is not a YYYY-MM-DD date"
+  [[ ! $review < $today ]] || die "the review date $review is before today ($today)"
+  local last
+  last=$(days_out "$max_review_days")
+  [[ ! $review > $last ]] || die "the review date $review is more than $max_review_days days out (at most $last)"
+}
+
+# Which of the conditions given, as JSON lines {i, condition, added} on stdin, hold by the ledger
+# and the hand-off log, printed as their i, one per line; the pr and file conditions are left to
+# the caller: records_hold
+records_hold() {
+  local conditions
+  conditions=$(jq -sc '[.[] | . + (.condition | capture("^(?<what>task|ledger|handoff) (?<id>\\S+) (?<event>\\S+)$") // {})
+    | select(.what != null)]')
+  {
+    jq -nRr --argjson conditions "$conditions" '
+      [$conditions[] | select(.what != "handoff")] as $wanted
+      | reduce (inputs | fromjson? | objects) as $e ({};
+          reduce ($wanted[] | select(.id == $e.task and .event == $e.event
+            and (.what == "task" or ((($e.ts // "") | tostring) >= (.added | ltrimstr("added ")))))) as $c (.; .[$c.i | tostring] = true))
+      | keys[]' < <(cat "$TEAM_HOME/ledger.jsonl" 2>/dev/null || true)
+    jq -nRr --argjson conditions "$conditions" '
+      [$conditions[] | select(.what == "handoff")] as $wanted
+      | reduce (inputs | fromjson? | objects) as $e ({};
+          reduce ($wanted[] | select(.id == $e.id and $e.event == "answered")) as $c (.; .[$c.i | tostring] = true))
+      | keys[]' < <(cat "$TEAM_HOME/assistant/handoffs.jsonl" 2>/dev/null || true)
+  }
+}
+
+# Close each until item of the list whose condition holds and move its old-form lines over,
+# committing and printing each change; sets changed_inbox when an ask or owe line changed:
+# reconcile_list <name>
+reconcile_list() {
+  local i condition url state why rc old
+  local -a checks=() closing_lines=()
+  local -A holds=() moved=()
+  use_list "$1"
+  [[ -e $current ]] || return 0
+  read_lines
+  for i in "${!lines[@]}"; do
+    [[ ${lines[i]} == '- '* ]] || continue
+    parse_item "${lines[i]}"
+    if ((bars == 1)); then
+      moved[${lines[i]}]="${lines[i]} | review $(days_out "$review_days") | added $now"
+    elif [[ $end == 'until '* ]]; then
+      condition=${end#until }
+      why=$(condition_problem "$condition")
+      if [[ -n $why ]]; then
+        echo "team-current: kept $(item_id "${lines[i]}"): cannot check $condition: $why" >&2
+      elif [[ $condition =~ ^file\ (.+)$ ]]; then
+        [[ ! -e $TEAM_HOME/${BASH_REMATCH[1]} ]] || holds[$i]=1
+      elif [[ $condition =~ ^pr\ (.+)\ merged$ ]]; then
+        url=${BASH_REMATCH[1]} rc=0
+        state=$(timeout 30 gh pr view "$url" --json state -q .state 2>"$scratch/gh" </dev/null) || rc=$?
+        if ((rc)); then
+          why=$(grep . "$scratch/gh" | tail -n 1 || true)
+          echo "team-current: kept $(item_id "${lines[i]}"): cannot check $condition: GitHub did not answer (gh exit $rc${why:+: $why})" >&2
+        elif [[ $state == MERGED ]]; then
+          holds[$i]=1
+        fi
+      else
+        checks+=("$(jq -cn --argjson i "$i" --arg condition "$condition" --arg added "$added" '{i: $i, condition: $condition, added: $added}')")
+      fi
+    fi
+  done
+  if ((${#checks[@]})); then
+    while IFS= read -r i; do holds[$i]=1; done < <(printf '%s\n' "${checks[@]}" | records_hold)
+  fi
+  for i in "${!lines[@]}"; do
+    [[ -z ${holds[$i]+set} ]] || closing_lines+=("${lines[i]}")
+  done
+  for closing in ${closing_lines[@]+"${closing_lines[@]}"}; do
+    parse_item "$closing"
+    condition=${end#until }
+    id=$(item_id "$closing")
+    # shellcheck disable=SC2034 # read by commit_records
+    records_edit=edit_close
+    commit_change "chore: current closed $id: $condition"
+    [[ -n $gone ]] || echo "closed $id: $condition"
+    [[ ! $closing =~ ^-\ (ask|owe)\  ]] || changed_inbox=1
+  done
+  ((${#moved[@]})) || return 0
+  # shellcheck disable=SC2034 # read by commit_records
+  records_edit=edit_migrate
+  commit_change "chore: current migrated ${#moved[@]} item$( ((${#moved[@]} == 1)) || echo s)"
+  for i in "${!lines[@]}"; do
+    for old in "${!moved[@]}"; do
+      if [[ ${lines[i]} == "${moved[$old]}" ]]; then
+        echo "migrated $(item_id "$old") as $(item_id "${lines[i]}"): review $(days_out "$review_days")"
+        [[ ! $old =~ ^-\ (ask|owe)\  ]] || changed_inbox=1
+      fi
+    done
+  done
+}
+
+# Take --list <name> out of the arguments, wherever it is.
+list_name='' args=()
+while (($#)); do
+  if [[ $1 == --list ]]; then
+    (($# > 1)) && [[ -z $list_name ]] || usage_error "$usage"
+    [[ $2 =~ ^(coordinator|assistant)$ ]] || usage_error "--list is coordinator or assistant, not '$2'"
+    list_name=$2
+    shift 2
+  else
+    args+=("$1")
+    shift
+  fi
+done
+set -- ${args[@]+"${args[@]}"}
+named_list=$list_name
+if [[ -z $list_name ]]; then
+  if [[ ${AGENT_TEAM_ROLE:-} == assistant ]]; then list_name=assistant; else list_name=coordinator; fi
+fi
+use_list "$list_name"
+
 (($#)) || usage_error "$usage"
 command=$1
 shift
 case $command in
   add)
-    where='' has_where='' words=()
+    where='' has_where='' words=() ends=0 end='' condition=''
     while (($#)); do
-      if [[ $1 == --where ]]; then
-        (($# > 1)) || usage_error "$usage"
-        where=$2 has_where=1
-        shift 2
-      else
-        words+=("$1")
-        shift
-      fi
+      case $1 in
+        --where)
+          (($# > 1)) || usage_error "$usage"
+          where=$2 has_where=1
+          shift 2
+          ;;
+        --until)
+          (($# > 1)) || usage_error "$usage"
+          condition=$2 ends=$((ends + 1))
+          end="until $condition"
+          shift 2
+          ;;
+        --review)
+          ends=$((ends + 1)) end=review
+          shift
+          ;;
+        --review-by)
+          (($# > 1)) || usage_error "$usage"
+          ends=$((ends + 1)) end=review-by review=$2
+          shift 2
+          ;;
+        *)
+          words+=("$1")
+          shift
+          ;;
+      esac
     done
     [[ -n $has_where && -n $where && ${#words[@]} -ge 3 ]] || usage_error "$usage"
+    own_list
+    ((ends == 1)) || die "$end_needed"
+    case $end in
+      review) review_date --review && end="review $review" ;;
+      review-by) review_date --review-by "$review" && end="review $review" ;;
+    esac
     kind=${words[0]} task=${words[1]}
     text="${words[*]:2}"
-    line="- $kind $task $text | $where"
-    scratch=$(mktemp -d)
-    trap 'rm -rf "$scratch"' EXIT
-    NET_ERR=$scratch/err
+    added="added $now"
+    short="- $kind $task $text | $where"
+    line="$short | $end | $added"
+    make_scratch
     # shellcheck disable=SC2034 # read by commit_records
     records_edit=edit_add
     commit_change "chore: current $kind $task"
@@ -243,17 +629,65 @@ case $command in
   done)
     (($# == 1)) || usage_error "$usage"
     [[ $1 =~ ^[0-9a-f]{4,6}$ ]] || usage_error "an id is 4 to 6 hex digits, not '$1'"
+    own_list
     prefix=$1 removed=''
     read_lines
     find_match
     id=$(item_id "${lines[match]}")
-    scratch=$(mktemp -d)
-    trap 'rm -rf "$scratch"' EXIT
-    NET_ERR=$scratch/err
+    make_scratch
     # shellcheck disable=SC2034 # read by commit_records
     records_edit=edit_done
     commit_change "chore: current done $id"
     [[ ! $removed =~ ^-\ (ask|owe)\  ]] || refresh_inbox
+    ;;
+  renew)
+    (($#)) || usage_error "$usage"
+    prefix=$1
+    shift
+    [[ $prefix =~ ^[0-9a-f]{4,6}$ ]] || usage_error "an id is 4 to 6 hex digits, not '$prefix'"
+    ends=0 option='' review='' reason='' has_reason=''
+    while (($#)); do
+      case $1 in
+        --review)
+          ends=$((ends + 1)) option=--review
+          shift
+          ;;
+        --review-by)
+          (($# > 1)) || usage_error "$usage"
+          ends=$((ends + 1)) option=--review-by review=$2
+          shift 2
+          ;;
+        --reason)
+          (($# > 1)) || usage_error "$usage"
+          reason=$2 has_reason=1
+          shift 2
+          ;;
+        *) usage_error "$usage" ;;
+      esac
+    done
+    [[ -n $has_reason ]] || usage_error "$usage"
+    own_list
+    ((ends == 1)) || die "renew takes one new review date: --review (3 days out) or --review-by <YYYY-MM-DD> (at most 7)"
+    [[ -n ${reason//[[:space:]]/} ]] || die "the reason is empty: say why the item still stands"
+    [[ $reason != *$'\n'* ]] || die "the reason holds a newline"
+    review_date "$option" "$review"
+    read_lines
+    find_match
+    id=$(item_id "${lines[match]}")
+    parse_item "${lines[match]}"
+    if [[ $end == 'until '* ]]; then
+      die "$id closes on its condition ($end), so it takes no review date; done it once it is done"
+    elif ((bars == 1)); then
+      die "$id is in the old form, with no end: team-current reconcile moves it over first"
+    elif [[ $end != 'review '* || -n $(end_problems "$end" "$added") ]]; then
+      die "$id is not a well-formed item: fix what team-current check names first"
+    fi
+    renewed="$short | review $review | added $now"
+    make_scratch
+    # shellcheck disable=SC2034 # read by commit_records
+    records_edit=edit_renew
+    commit_change "chore: current renew $id to $review: $reason"
+    [[ ! $kind =~ ^(ask|owe)$ ]] || refresh_inbox
     ;;
   list)
     (($# == 0)) || usage_error "$usage"
@@ -262,6 +696,46 @@ case $command in
       [[ $item == '- '* ]] && printf '%s %s\n' "$(item_id "$item")" "${item#- }"
     done
     true
+    ;;
+  due)
+    json=''
+    if (($# == 1)) && [[ $1 == --json ]]; then
+      json=1
+    elif (($#)); then
+      usage_error "$usage"
+    fi
+    read_lines
+    rows=''
+    for i in "${!lines[@]}"; do
+      item=${lines[i]}
+      [[ $item == '- '* ]] || continue
+      parse_item "$item"
+      [[ $end =~ ^review\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]] || continue
+      [[ ! ${BASH_REMATCH[1]} > $today ]] || continue
+      if [[ -n $json ]]; then
+        rows+=$(jq -cn --argjson line "$((i + 1))" --arg id "$(item_id "$item")" --arg item "${item#- }" \
+          --arg review "${BASH_REMATCH[1]}" '{line: $line, id: $id, item: $item, review: $review}')$'\n'
+      else
+        printf '%s %s\n' "$(item_id "$item")" "${item#- }"
+      fi
+    done
+    if [[ -n $json ]]; then
+      jq -cn --arg rows "$rows" --arg list "$list_name" --arg file "$rel" --arg today "$today" \
+        '{schema: "team-current-due/1", list: $list, file: $file, today: $today,
+          items: [$rows | split("\n")[] | select(. != "") | fromjson]}'
+    fi
+    ;;
+  reconcile)
+    (($# == 0)) || usage_error "$usage"
+    make_scratch
+    changed_inbox=''
+    if [[ -n $named_list ]]; then
+      reconcile_list "$named_list"
+    else
+      reconcile_list coordinator
+      reconcile_list assistant
+    fi
+    [[ -z $changed_inbox ]] || refresh_inbox
     ;;
   check)
     json=''
@@ -275,32 +749,35 @@ case $command in
     rows=''
     for i in "${!lines[@]}"; do
       item=${lines[i]}
-      reasons=() task='' id=''
+      reasons=() id=''
       if [[ -z $item || $item == "$title" ]]; then
         continue
       elif [[ $item != '- '* ]]; then
-        reasons=("not an item line (- <kind> <task or -> <text> | <where>)")
+        task=''
+        reasons=("not an item line (- <kind> <task or -> <text> | <where> | <end> | added <UTC time>)")
       else
         id=$(item_id "$item")
-        body=${item#- }
-        bars=${body//' | '/$'\x1f'}
-        bars=${bars//[!$'\x1f']/}
-        head=${body%% | *}
-        read -r kind task text <<<"$head" || true
-        if ((${#bars} == 0)); then
+        parse_item "$item"
+        if ((bars == 0)); then
           reasons=("the line has no ' | <where>'")
-        elif ((${#bars} > 1)); then
-          reasons=("the line holds ' | ' more than once")
+        elif ((bars > 3)); then
+          reasons=("the line holds ' | ' more than 3 times")
         else
-          where=${body#* | }
-          mapfile -t reasons < <(item_problems "$kind" "${task:-}" "${text:-}" "$where" "$item" lines "$i")
+          mapfile -t reasons < <(
+            item_problems "$kind" "${task:-}" "${text:-}" "$where" "$short" lines "$i"
+            if ((bars == 1)); then
+              echo "the line is in the old form, with no end and no added time: team-current reconcile moves it over"
+            else
+              end_problems "$end" "$added"
+            fi
+          )
         fi
-        [[ ${task:-} =~ ^T[1-9][0-9]*$ ]] || task=''
       fi
+      [[ ${task:-} =~ ^T[1-9][0-9]*$ ]] || task=''
       ((${#reasons[@]})) || [[ -n $task ]] || continue
       rows+=$(jq -cn --argjson line "$((i + 1))" --arg id "$id" --arg item "${item#- }" --arg task "$task" \
         '{line: $line, id: (if $id == "" then null else $id end), item: $item, task: $task, reasons: $ARGS.positional}' \
-        --args "${reasons[@]}")$'\n'
+        --args ${reasons[@]+"${reasons[@]}"})$'\n'
     done
     # The rows, with each closed task's last closed from the ledger (none when there is no ledger).
     report=$(jq -nR -L "$TEAM_LIB" --arg rows "$rows" '
