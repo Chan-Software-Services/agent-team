@@ -93,7 +93,7 @@ docs/agents/issue-tracker.md   the tracker contract the skills read
 ### What `AGENTS.md` keeps
 
 Only what nearly every session would get wrong without, before it knows which area it is in:
-what the project is; the stack; the branch and release rules; irreversible-safety rules; how to run the suites; the graph's contract; one index line per sharp-edge area ("Before changing X, read [node]"); where plans live.
+what the project is; the stack; the branch and release rules; irreversible-safety rules; how to run the suites; the graph's contract; one index line per sharp-edge area that a path lookup does not find ("Before changing X, read [node]"); where plans live.
 Everything else is a node.
 Aim for under 200 lines.
 
