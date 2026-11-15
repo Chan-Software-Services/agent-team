@@ -297,3 +297,24 @@ SH
       checking the head
       needed.txt is missing"
 }
+
+@test "a passing check whose kept log cannot be removed still passes, and the checks after it run" {
+  cat >"$primary/flip.sh" <<'SH'
+#!/usr/bin/env bash
+[[ ! -e $CHECKS_DIR/fails ]]
+SH
+  chmod +x "$primary/flip.sh"
+  commit_file flip.sh "test: a check that flips"
+  registry '["./flip.sh", "echo after"]'
+  local kept=$HOME/.cache/agent-team/checks/proj/$head
+  touch "$CHECKS_DIR/fails"
+  run_bin -1 team-checks proj "$head" --from "$primary"
+  [[ -f $kept/1-flip-sh.log ]]
+  rm "$CHECKS_DIR/fails"
+  chmod 500 "$kept"
+  run_bin --separate-stderr team-checks proj "$head" --from "$primary"
+  chmod 700 "$kept"
+  assert_equal "$status" 0
+  assert_equal "$output" "local check './flip.sh' passed on the head ${head:0:7}
+local check 'echo after' passed on the head ${head:0:7}"
+}

@@ -25,7 +25,7 @@
 # and _ a dash, 60 characters at most), readable by its owner alone, printed with ~ for the home
 # directory. The next run of that check on that head overwrites it, or removes it when it passes,
 # and every run removes the project's kept logs older than 30 days; one that cannot be kept is
-# said in the result's line, which changes no exit. The worktree is removed with git worktree
+# said in the result's line, and neither that nor one that cannot be removed changes an exit. The worktree is removed with git worktree
 # remove --force and its directory by the path mktemp printed.
 # Exit 0 all passed or there are none, 1 any failed, 75 none failed but one could not run yet.
 set -euo pipefail
@@ -95,7 +95,7 @@ for command in "${local_checks[@]}"; do
     </dev/null >"$scratch/check.log" 2>&1 || rc=$?
   if ((rc == 0)); then
     echo "local check '$command' passed on the head ${head:0:7}"
-    rm -f "$kept"
+    rm -f "$kept" 2>/dev/null || true
     rmdir "$kept_root/$head" 2>/dev/null || true
     continue
   fi
