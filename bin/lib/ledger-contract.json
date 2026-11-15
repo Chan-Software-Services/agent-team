@@ -64,6 +64,20 @@
       "required": {"pr": "number", "merge": "string", "head": "string", "by": "string"},
       "optional": {"project": "string", "branch": "string", "discord_message": "id", "discord_channel": "id", "url": "string", "local_checks": "array", "approval": ["head", "default", "plan", "standing"], "phases_left": "numbers", "check_run": "number"}
     },
+    "queued": {
+      "inbox": true,
+      "writer": "team-merge",
+      "about": "team-merge put the PR in its base's merge queue, or found it there with no queued of it standing, and waits on it with team-land: url is the PR's; head the full sha it enqueued, the head the word and the checks held for; it stands until a later dequeued or merged of the url",
+      "required": {"url": "string", "head": "string"},
+      "optional": {"project": "string"}
+    },
+    "dequeued": {
+      "inbox": true,
+      "writer": "team-merge",
+      "about": "the merge queue dropped the PR unmerged, or never took it: url is the PR's; head the full sha that was enqueued; reason GitHub's reason for the removal, or why it was not enqueued, as team-land gives it; failed the failures team-ci-wait classed on the dropped trial commit, each {name, class, kind, link, step}, as a ci event carries them, absent when it classed none",
+      "required": {"url": "string", "head": "string", "reason": "string"},
+      "optional": {"failed": "array"}
+    },
     "history-rewritten": {
       "writer": "team-clean-messages",
       "required": {"branch": "string", "old_head": "string", "head": "string"},

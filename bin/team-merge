@@ -82,7 +82,35 @@
 # must pass (exit 75: the lock stayed held, try again later); the head read again after must not
 # have moved.
 # Any failure is exit 1 with every reason, and gh pr merge is never called.
-# Then: gh pr merge <number> --repo <repo> --<merge_method> --match-head-commit <head>, never
+# On a base with a merge queue (base_rules' queue), run it with Bash run_in_background, since it
+# ends only when the queue does. The checks above are the same, a PR behind its base still no
+# reason to refuse, with two more: the project's merge_method is merge, the only one the team
+# proves a trial commit for, and the PR's queue entry can be read. Then it takes the task's lock,
+# ~/.local/state/agent-team/merge/T<n>.lock, whose file holds its pid: while another team-merge
+# holds it, this one prints "team-merge is already landing <url> (pid <n>)" and exits 0, changing
+# nothing. It logs queued (url, head, project) and runs team-land <url> <head>, never gh pr merge,
+# showing team-land's lines on stderr; team-land enqueues the PR, posts agent-review on each trial
+# commit and waits, and on its outcome:
+#   merged    the PR's merge commit is the one team-land names, and everything below follows as
+#             after gh pr merge;
+#   dequeued  the queue dropped it: dequeued is logged (url, head, reason, and failed, the
+#             failures on the trial commit, when there are any), and it is exit 1 naming the
+#             reason, each failure and the next step: with a failure of the PR's own, the
+#             builder-merge-base brief, since the trial merge failed what the head passed, else
+#             to run team-merge again once the reason is fixed;
+#   waiting   team-land's deadline came, or the team holds offline: nothing more is logged, and
+#             it is exit 75, saying to run team-merge again with run_in_background;
+#   refused   team-land enqueued nothing: a queued this run logged is ended by a dequeued with
+#             why, and it is exit 1.
+# A team-land that ends with no result is exit 1, the queued left standing, since the PR may be in
+# the queue. Run again on a PR already in the queue, it holds the word and the checks again, logs
+# no second queued while the task's latest queued, with no dequeued or merged of the PR since,
+# names the head (else it logs one), and goes on waiting. Run on a PR GitHub shows merged at the
+# head such a standing queued names, which the queue landed while no team-merge waited, it refuses
+# nothing: it says what does not hold now and logs merged, with no local checks run; when the word
+# does not hold now, merged carries no approval or Discord message, its by names the queued event
+# it stood on, and nothing is posted.
+# On a base with no queue: gh pr merge <number> --repo <repo> --<merge_method> --match-head-commit <head>, never
 # --auto or --admin; the PR is read again and must be merged (if gh left it open with auto-merge
 # on, auto-merge is turned off and it is exit 1); then merged is appended with pr, merge, head,
 # by (naming the Discord message and its author, or "the plan the coordinator approved at <ts>"),
@@ -125,6 +153,8 @@
 # stderr says so, and the exit stays 0.
 # Refused, exit 1, before it reads or changes anything: a worker session (an AGENT_TEAM_ROLE but
 # coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers.
+# Exit 0 merged, or another team-merge is landing the PR; 1 refused, the merge failed, or the queue
+# dropped the PR; 2 a malformed command line; 75 the PR is still in the queue: run it again.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 why=$(worker_refusal "" "merges no PR") && die "$why"
@@ -193,7 +223,11 @@ add_reasons() {
 
 # GitHub's facts: the checks and the base's rules (in $scratch/rules, for an open PR) from pr_part,
 # the rest from one more view and the commit list.
-head='' branch='' rules_read=''
+# queue is the base's merge queue rule, when it has one; entry the state of the PR's entry in it,
+# when it is in the queue; standing the task's queued event of the PR that no later dequeued or
+# merged of it ended; landed is set for a PR GitHub shows merged at the head that event names,
+# which the queue landed while no team-merge waited.
+head='' branch='' rules_read='' queue='' entry='' standing='' landed=''
 if jq -e 'has("error")' <<<"$facts" >/dev/null; then
   merge_reasons+=("GitHub cannot be read: $(jq -r .error <<<"$facts")")
 elif ! github "$scratch" pr pr view "$number" --repo "$repo" --json isDraft,mergeable,headRefName,headRefOid,changedFiles ||
@@ -202,13 +236,35 @@ elif ! github "$scratch" pr pr view "$number" --repo "$repo" --json isDraft,merg
 else
   head=$(jq -r .head <<<"$facts") branch=$(jq -r .headRefName "$scratch/pr")
   state=$(jq -r .state <<<"$facts")
-  [[ $state == open ]] || merge_reasons+=("PR #$number is $state, not open")
-  [[ $(jq -r .isDraft "$scratch/pr") != true ]] || merge_reasons+=("PR #$number is a draft")
-  case $(jq -r .mergeable "$scratch/pr") in
-    MERGEABLE) ;;
-    CONFLICTING) merge_reasons+=("PR #$number conflicts with its base") ;;
-    *) merge_reasons+=("GitHub has not worked out yet whether PR #$number conflicts with its base; try again in a minute") ;;
-  esac
+  standing=$(jq -c --arg url "${url%/}" '[.[] | select(.event | IN("queued", "dequeued", "merged"))
+    | select((.url | strings | rtrimstr("/")) == $url)] | last | select(.event == "queued")' <<<"$events") || jq_failed $?
+  if [[ $state == merged && -n $standing && $(jq -r .head <<<"$standing") == "$head" ]]; then landed=1; fi
+  if [[ -z $landed ]]; then
+    [[ $state == open ]] || merge_reasons+=("PR #$number is $state, not open")
+    [[ $(jq -r .isDraft "$scratch/pr") != true ]] || merge_reasons+=("PR #$number is a draft")
+    case $(jq -r .mergeable "$scratch/pr") in
+      MERGEABLE) ;;
+      CONFLICTING) merge_reasons+=("PR #$number conflicts with its base") ;;
+      *) merge_reasons+=("GitHub has not worked out yet whether PR #$number conflicts with its base; try again in a minute") ;;
+    esac
+  fi
+  # A base with a merge queue lands the PR through it: the team proves a trial commit only as a
+  # merge commit, and a PR already in the queue is waited on, never enqueued twice.
+  queue=$(jq -c '.queue // empty' <<<"$facts")
+  if [[ -n $queue ]]; then
+    [[ $method == merge ]] ||
+      merge_reasons+=("$base merges through its merge queue, which the team lands only with merge_method merge, not $project's $method")
+    rm -f "$scratch/error"
+    # shellcheck disable=SC2016 # the query's variables are GraphQL's
+    if github "$scratch" entry api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { mergeQueueEntry { state } } } }' \
+      -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$number" &&
+      jq -e '.data.repository.pullRequest | objects' "$scratch/entry" >/dev/null 2>&1; then
+      entry=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.state // empty' "$scratch/entry")
+    else
+      merge_reasons+=("GitHub cannot be read: PR #$number's merge queue entry ($(grep -m1 . "$scratch/error" 2>/dev/null || echo "gh api graphql gave no pull request"))")
+    fi
+  fi
   [[ $(jq -r .base <<<"$facts") == "$base" ]] || merge_reasons+=("PR #$number targets $(jq -r .base <<<"$facts"), not $project's base $base")
   [[ $(jq -r .headRefOid "$scratch/pr") == "$head" ]] || merge_reasons+=("the head moved while it was read (${head:0:7}, then $(jq -r '.headRefOid[:7]' "$scratch/pr")); run team-merge again")
   # agent-review is the reviewer App's check run on the team's own project with the App on
@@ -474,7 +530,9 @@ fi
 # the per-head word's reasons (when a merge-approved names the PR, or the task logged no plan
 # approval either), the default word's and then the checks every merge gets, each reason once,
 # and a line saying to ask Daniel for the per-head word; else, on a word that holds, the checks
-# alone.
+# alone. A PR the queue landed already is never refused, since it is merged: what does not hold now
+# is said, and when that is its word, the merged event names the queued event it stood on in place
+# of a word, and nothing is posted.
 refuse_on_problems() {
   local all=() reasons=() reason unheld=''
   local -A seen=()
@@ -492,6 +550,19 @@ refuse_on_problems() {
       reasons+=("$reason")
     fi
   done
+  if [[ -n $landed ]]; then
+    local queued_at
+    queued_at=$(jq -r .ts <<<"$standing")
+    echo "team-merge: PR #$number is merged, and $task's queued event of its head ${head:0:7} at $queued_at stands: the queue landed it with no team-merge waiting" >&2
+    if ((${#reasons[@]})); then
+      echo "team-merge: what does not hold now, the merge standing:" >&2
+      printf '  %s\n' "${reasons[@]}" >&2
+    fi
+    if [[ -n $unheld || -z $by ]]; then
+      word='' message='' channel='' by="the word team-merge queued it on at $queued_at, which does not hold now"
+    fi
+    return 0
+  fi
   ((${#reasons[@]})) || return 0
   {
     echo "team-merge: $task cannot merge PR #$number, so nothing changed:"
@@ -507,9 +578,27 @@ refuse_on_problems() {
 }
 refuse_on_problems
 
+# Through the queue, one team-merge lands a task's PR at a time: the task's lock, held until this
+# run ends and by the team-land it starts, its file holding this run's pid. A second run says who
+# holds it and ends, so two waits never post on the same trial commit.
+landing=''
+if [[ -n $queue || -n $landed ]]; then
+  landing=1
+  lock=$HOME/.local/state/agent-team/merge/$task.lock
+  mkdir -p "${lock%/*}"
+  exec {lock_fd}>>"$lock"
+  if ! flock -n "$lock_fd"; then
+    echo "team-merge is already landing $url (pid $(grep -m1 -E '^[0-9]+$' "$lock" || echo unknown))"
+    exit 0
+  fi
+  echo $$ >"$lock"
+fi
+
 # The project's local checks, last since they are the slowest: team-checks runs them in a detached
-# worktree of the primary checkout at the PR's exact head, then the head is read again.
-mapfile -t local_checks < <(team_project "$project" local_checks | jq -r '.[]')
+# worktree of the primary checkout at the PR's exact head, then the head is read again. A PR the
+# queue landed already has none run.
+local_checks=()
+if [[ -z $landed ]]; then mapfile -t local_checks < <(team_project "$project" local_checks | jq -r '.[]'); fi
 if ((${#local_checks[@]})); then
   primary=$(team_project "$project" path)
   if ! git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>"$scratch/fetch-error" ||
@@ -542,23 +631,88 @@ else
   echo "team-merge: cannot read $task's tickets ($(grep -m 1 . "$scratch/tickets-error" || echo "team-tickets failed")), so its merged names no phases left" >&2
 fi
 
-gh pr merge "$number" --repo "$repo" "--$method" --match-head-commit "$head" >&2 ||
-  die "gh pr merge did not merge PR #$number (exit $?); nothing was logged"
-
-github "$scratch" after pr view "$number" --repo "$repo" --json state,mergeCommit,headRefOid,autoMergeRequest ||
-  die "PR #$number's state cannot be read after gh pr merge ($(<"$scratch/error")); check it on GitHub before logging anything"
-if [[ $(jq -r .state "$scratch/after") != MERGED ]]; then
-  if [[ $(jq -r .autoMergeRequest "$scratch/after") != null ]]; then
-    gh pr merge "$number" --repo "$repo" --disable-auto >&2 ||
-      die "PR #$number is still open after gh pr merge, with auto-merge on, and turning it off failed: turn it off on GitHub"
-    die "PR #$number is still open after gh pr merge, with auto-merge on; turned auto-merge off, so nothing merges unseen"
+if [[ -n $landing ]]; then
+  # Through the queue: queued is logged unless one stands for the head that is in the queue now (a
+  # run before this one logged it, and this one goes on waiting) or the queue landed it already;
+  # then team-land enqueues it, posts agent-review on each trial commit and waits, its lines shown
+  # on stderr as it goes and its last the result.
+  logged_queued=''
+  if [[ -z $landed ]] && ! [[ -n $entry && -n $standing && $(jq -r .head <<<"$standing") == "$head" ]]; then
+    ledger_append "$(jq -cn --arg task "$task" --arg url "$url" --arg head "$head" --arg project "$project" \
+      '{ts: (now | todate), task: $task, event: "queued", url: $url, head: $head, project: $project}')"
+    logged_queued=1
+    refresh_inbox
   fi
-  die "PR #$number is $(jq -r '.state | ascii_downcase' "$scratch/after") after gh pr merge, not merged; nothing was logged"
+  rc=0
+  TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-land" "$url" "$head" | tee "$scratch/land" >&2 || rc=${PIPESTATUS[0]}
+  landed_as=$(tail -n 1 "$scratch/land")
+  outcome=$(jq -er 'select(.schema == "team-land/1") | .outcome | strings' <<<"$landed_as" 2>/dev/null) ||
+    die "team-land ended with no result (exit $rc), so whether PR #$number is in the queue is not known: run team-merge $task again"
+  reason=$(jq -r '.reason // "team-land gave no reason"' <<<"$landed_as")
+  # dequeued <reason>: the dequeued event, with the failures team-land's result names.
+  dequeued() {
+    ledger_append "$(jq -c --arg task "$task" --arg url "$url" --arg head "$head" --arg reason "$1" \
+      '{ts: (now | todate), task: $task, event: "dequeued", url: $url, head: $head, reason: $reason}
+        + if (.failed // []) == [] then {} else {failed} end' <<<"$landed_as")"
+    refresh_inbox
+  }
+  case $outcome in
+    merged)
+      merge=$(jq -r '.merge // empty' <<<"$landed_as")
+      [[ -n $merge ]] || die "PR #$number is merged but GitHub names no merge commit; log it by hand with what GitHub shows"
+      ;;
+    dequeued)
+      dequeued "$reason"
+      {
+        echo "team-merge: the merge queue dropped PR #$number, which is not merged: $reason"
+        jq -r '.failed // [] | .[] | "  \(.name) failed on the trial merge"
+          + (if .class == "pr" then "" else " as \(.class)" end)
+          + (if (.step // "") == "" then "" else " (\(.step))" end)
+          + (if (.link // "") == "" then "" else ": \(.link)" end)' <<<"$landed_as"
+        if jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
+          echo "  the trial merge failed what the head ${head:0:7} passed: render team-brief $task builder-merge-base for the builder, then a rereview"
+        else
+          echo "  run team-merge $task again once $reason is fixed"
+        fi
+      } >&2
+      exit 1
+      ;;
+    waiting)
+      {
+        echo "team-merge: $reason"
+        echo "team-merge: the PR is still in the queue: run team-merge $task again with run_in_background to go on waiting"
+      } >&2
+      exit 75
+      ;;
+    refused)
+      # Nothing was enqueued: a queued this run logged is ended, so none stands for a PR in no queue.
+      if [[ -n $logged_queued ]]; then
+        dequeued "$reason"
+        die "PR #$number did not join the merge queue: $reason"
+      fi
+      die "team-land refused PR #$number: $reason"
+      ;;
+    *) die "team-land ended $outcome, which is no outcome of its: check PR #$number on GitHub, then run team-merge $task again" ;;
+  esac
+else
+  gh pr merge "$number" --repo "$repo" "--$method" --match-head-commit "$head" >&2 ||
+    die "gh pr merge did not merge PR #$number (exit $?); nothing was logged"
+
+  github "$scratch" after pr view "$number" --repo "$repo" --json state,mergeCommit,headRefOid,autoMergeRequest ||
+    die "PR #$number's state cannot be read after gh pr merge ($(<"$scratch/error")); check it on GitHub before logging anything"
+  if [[ $(jq -r .state "$scratch/after") != MERGED ]]; then
+    if [[ $(jq -r .autoMergeRequest "$scratch/after") != null ]]; then
+      gh pr merge "$number" --repo "$repo" --disable-auto >&2 ||
+        die "PR #$number is still open after gh pr merge, with auto-merge on, and turning it off failed: turn it off on GitHub"
+      die "PR #$number is still open after gh pr merge, with auto-merge on; turned auto-merge off, so nothing merges unseen"
+    fi
+    die "PR #$number is $(jq -r '.state | ascii_downcase' "$scratch/after") after gh pr merge, not merged; nothing was logged"
+  fi
+  merge=$(jq -r '.mergeCommit.oid // empty' "$scratch/after")
+  [[ -n $merge ]] || die "PR #$number is merged but GitHub names no merge commit; log it by hand with what GitHub shows"
+  [[ $(jq -r .headRefOid "$scratch/after") == "$head" ]] ||
+    die "PR #$number was merged at $(jq -r '.headRefOid[:7]' "$scratch/after"), not at the checked head ${head:0:7}; check it on GitHub"
 fi
-merge=$(jq -r '.mergeCommit.oid // empty' "$scratch/after")
-[[ -n $merge ]] || die "PR #$number is merged but GitHub names no merge commit; log it by hand with what GitHub shows"
-[[ $(jq -r .headRefOid "$scratch/after") == "$head" ]] ||
-  die "PR #$number was merged at $(jq -r '.headRefOid[:7]' "$scratch/after"), not at the checked head ${head:0:7}; check it on GitHub"
 
 trap 'status=$?; rm -rf "$scratch"; ((status == 0)) || echo "team-merge: PR #$number is merged (merge $merge), but its merged event was not logged" >&2' EXIT
 ledger_append "$(jq -cn --arg task "$task" --argjson pr "$number" --arg merge "$merge" --arg head "$head" \
@@ -568,7 +722,7 @@ ledger_append "$(jq -cn --arg task "$task" --argjson pr "$number" --arg merge "$
   '{ts: (now | todate), task: $task, event: "merged", pr: $pr, merge: $merge, head: $head, by: $by,
     project: $project, branch: $branch}
     + if $message == "" then {} else {discord_message: $message, discord_channel: $channel} end
-    + {url: $url, approval: $approval}
+    + {url: $url} + if $approval == "" then {} else {approval: $approval} end
     + if $check_run == null then {} else {check_run: $check_run} end
     + if $checks == [] then {} else {local_checks: $checks} end
     + if $left == null then {} else {phases_left: $left} end')"

@@ -108,8 +108,10 @@ checks() {
 # gh answers from the files under $GH_DIR (the second read of the PR from pr-again.json when a
 # test wrote one; the head's agent-review check runs from check-runs.json and its commit statuses
 # from status.json, which app_on writes; the base's classic protection, any base's, from
-# branch.json, its rulesets' rules from rules.json and ruleset <id> from ruleset-<id>.json, which pinned writes). pr merge
-# marks the PR merged (or runs merge.sh when a test wrote one); anything unplanned fails.
+# branch.json, its rulesets' rules from rules.json and ruleset <id> from ruleset-<id>.json, which
+# pinned and with_queue write; the GraphQL read of the PR's queue entry from entry.json, which
+# with_queue and in_queue write). pr merge marks the PR merged (or runs merge.sh when a test wrote
+# one); anything unplanned fails.
 stub_gh() {
   stub_script gh <<'EOF'
 case "$*" in
@@ -124,6 +126,7 @@ case "$*" in
   "api repos/owner/proj/pulls/5/files --paginate") cat "$GH_DIR/files.json" ;;
   "api repos/owner/proj/commits/"*"/check-runs?check_name=agent-review&filter=latest&per_page=100") cat "$GH_DIR/check-runs.json" ;;
   "api repos/owner/proj/commits/"*"/status") cat "$GH_DIR/status.json" ;;
+  "api graphql "*) cat "$GH_DIR/entry.json" ;;
   "pr merge 5 --repo owner/proj "*)
     if [[ -f $GH_DIR/merge.sh ]]; then source "$GH_DIR/merge.sh"; exit; fi
     jq --arg m "$MERGE_SHA" '.state = "MERGED" | .mergeCommit = {oid: $m}' "$GH_DIR/pr.json" >"$GH_DIR/pr.next"
@@ -539,4 +542,73 @@ pinned() {
 unprotected() {
   echo '{"name": "dev", "protected": true, "protection": {"enabled": false,
     "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}}' >"$gh_dir/branch.json"
+}
+
+# dev merges through a merge queue: ruleset 42 holds its merge_queue rule, with no bypass actor,
+# proj merges with a merge commit, as a queued project does, PR #5 is in no queue, and the scripts
+# run from a copy of bin/ (CODE_CHECKOUT, made here when the test made none) whose team-land is a
+# stub: it adds its arguments to $GH_DIR/land.calls and ends as land says (merged by default).
+with_queue() {
+  sed -i 's/^merge_method = "squash"$/merge_method = "merge"/' "$TEAM_HOME/projects.toml"
+  queue_rule
+  in_queue no
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/team-land"
+  cat >"$CODE_CHECKOUT/bin/team-land" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_DIR/land.calls"
+source "$GH_DIR/land.sh"
+SH
+  chmod +x "$CODE_CHECKOUT/bin/team-land"
+  land merged
+}
+
+# dev's rules hold the merge queue rule of ruleset 42, which has no bypass actor; green_pr and
+# merge_again take it away again: queue_rule
+queue_rule() {
+  jq -n '[{type: "merge_queue", ruleset_source_type: "Repository", ruleset_source: "owner/proj", ruleset_id: 42,
+      parameters: {merge_method: "MERGE", grouping_strategy: "ALLGREEN", max_entries_to_build: 5, max_entries_to_merge: 5,
+        min_entries_to_merge: 1, min_entries_to_merge_wait_minutes: 0, check_response_timeout_minutes: 180}}]' >"$gh_dir/rules.json"
+  echo '{"id": 42, "name": "dev", "target": "branch", "enforcement": "active", "bypass_actors": []}' >"$gh_dir/ruleset-42.json"
+}
+
+# PR #5's queue entry as GitHub's GraphQL answers team-merge's read: in_queue [no]
+in_queue() {
+  if [[ ${1:-} == no ]]; then
+    echo '{"data": {"repository": {"pullRequest": {"mergeQueueEntry": null}}}}' >"$gh_dir/entry.json"
+  else
+    echo '{"data": {"repository": {"pullRequest": {"mergeQueueEntry": {"state": "AWAITING_CHECKS"}}}}}' >"$gh_dir/entry.json"
+  fi
+}
+
+# How the stub team-land ends, after one line of progress, its last line team-land's JSON and its
+# exit team-land's for the outcome (merged 0, waiting 75, else 1); a merged one marks PR #5 merged
+# as $MERGE_SHA: land <outcome> [<reason> [<failed, a JSON list>]]
+land() {
+  local code=1
+  case $1 in
+    merged) code=0 ;;
+    waiting) code=75 ;;
+  esac
+  {
+    echo 'echo "team-land: at work on $1"'
+    if [[ $1 == merged ]]; then
+      echo 'jq --arg m "$MERGE_SHA" '"'"'.state = "MERGED" | .mergeCommit = {oid: $m}'"'"' "$GH_DIR/pr.json" >"$GH_DIR/pr.next"'
+      echo 'mv "$GH_DIR/pr.next" "$GH_DIR/pr.json"'
+    fi
+    printf 'jq -cn --arg outcome %q --arg url "$1" --arg head "$2" --arg reason %q --argjson failed %q \\\n' "$1" "${2:-}" "${3:-[]}"
+    echo '  '"'"'{schema: "team-land/1", outcome: $outcome, url: $url, head: $head,'
+    echo '    merge: (if $outcome == "merged" then env.MERGE_SHA else null end),'
+    echo '    reason: (if $reason == "" then null else $reason end), failed: $failed}'"'"
+    echo "exit $code"
+  } >"$gh_dir/land.sh"
+}
+
+# The ledger's queue events and merges of T14, in order, their times left out.
+queue_events() {
+  jq -c 'select(.event | IN("queued", "dequeued", "merged")) | del(.ts)' "$TEAM_HOME/ledger.jsonl"
 }
