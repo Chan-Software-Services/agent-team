@@ -464,7 +464,10 @@ not JSON
 {"ts":"2026-11-01T00:05:00Z","task":"T2","event":"answered","id":"a1","by":"Daniel"}
 LEDGER
   assert_equal "$status" 0
-  assert_equal "$output" '{"total":8,"from":null,"bad":[{"line":5,"task":"T3","event":"asked","ts":"2026-11-01T00:02:00Z","problems":["T3 is not opened (no opened event), and it takes only thread and opened before its opened, not asked"]},{"line":8,"task":"T2","event":"answered","ts":"2026-11-01T00:05:00Z","problems":["T2 is closed, and a closed task takes no answered"]}]}'
+  # from is the table's own lifecycle_from, whatever the checkout sets it to.
+  local from
+  from=$(jq -c '.lifecycle_from' "$REPO_ROOT/bin/lib/lifecycle.json")
+  assert_equal "$output" '{"total":8,"from":'"$from"',"bad":[{"line":5,"task":"T3","event":"asked","ts":"2026-11-01T00:02:00Z","problems":["T3 is not opened (no opened event), and it takes only thread and opened before its opened, not asked"]},{"line":8,"task":"T2","event":"answered","ts":"2026-11-01T00:05:00Z","problems":["T2 is closed, and a closed task takes no answered"]}]}'
 }
 
 @test "each typed park is ended by exactly the events its cause's row names, and by nothing else" {
