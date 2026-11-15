@@ -39,7 +39,8 @@ The lines must equal the cap, so a raised `manual_lines` passes only beside a lo
 A `manual_bytes` raised past the slack passes only beside a bigger manual.
 Every change to `roles/coordinator.md` matches the `roles/.*` line of `bin/lib/guarded`, the short list.
 So a PR that grows the manual never merges on the approved plan: it comes back to Daniel for the word on its head (`sops/merging.md`).
-A raised cap always comes back to Daniel because the manual's size is a cost every coordinator session pays, and only they decide that a rule is worth it.
+A bigger manual, and so every raise the check passes only beside one, always comes back to Daniel, because the manual's size is a cost every coordinator session pays, and only they decide that a rule is worth it.
+A `manual_bytes` raised within the slack passes with the manual unchanged and touches no guarded path, but the manual itself still grows only through a `roles/` change.
 A PR that raises either constant names the constant, its old value and its new one in its body, so Daniel sees the rise when they are asked for the word.
 
 ## No task number
