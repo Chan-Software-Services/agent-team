@@ -1,13 +1,13 @@
 # SOP: the drills
 
-A drill runs, for real, a path the team rests on and seldom takes: a move between machines, a stolen lease, a production prompt, a fresh machine, a compaction, a phase's tickets built at once.
+A drill runs, for real, a path the team rests on and seldom takes: a move between machines, a stolen lease, a production prompt, a fresh machine, a compaction, a phase's tickets built at once, two PRs landed through a merge queue.
 `tests/drill.bats` and the rest of the suite run the same scripts in a sandbox on stubs; a drill is the run on the real machines, the real Claude Code and the real GitHub.
 `bin/lib/drills.json` registers each drill: its name, what it is, who runs it and the code it proves.
 
 ## The record
 
 - Each run appends one line to `drills.jsonl` in the team home: the drill, the machine, the code commit, the Claude Code version, the verdict and one line of detail.
-- The drills write it themselves: `team-load-check`, `tests/compaction-drill` and `team-drill import <run id>` (for the Bootstrap workflow's jobs) record their own run, and a by-hand drill ends with `team-drill record <drill> --verdict pass|fail --detail <text>`.
+- The drills write it themselves: `team-load-check`, `tests/compaction-drill`, `tests/merge-queue-drill` and `team-drill import <run id>` (for the Bootstrap workflow's jobs) record their own run, and a by-hand drill ends with `team-drill record <drill> --verdict pass|fail --detail <text>`.
 - A failed run is recorded as failed; what it found goes in the detail and into a task of its own.
 - The checkpoint commits and pushes the file with the other records.
 - `team-drill status` lists every drill with its last run and whether it is due.
@@ -69,6 +69,23 @@ A drill runs, for real, a path the team rests on and seldom takes: a move betwee
   2. Read its `== <passed> of <checks> checks passed` line.
 - Passes when every check passes: the compaction ran, and the session still names each open task's wait and every current item.
 - Record: the drill's own.
+
+## `merge-queue`: two PRs through a merge queue at once
+
+- Who: the coordinator, on a scratch repository Daniel set up once.
+  Duration: about 15 minutes.
+- When: after a change to `team-land`, `team-merge`, `team-review-check`, `team-review-status` or `team-ci-wait`, before a base's rules first get a merge queue, and when the doctor's line names it.
+- It opens and merges two real PRs in the scratch repository and posts there as the reviewer App; it touches no registered project, and refuses a repository whose `dev` lacks the drill's own file.
+- Once, before the first run:
+  1. Daniel creates a public repository in the organization, `Chan-Software-Services/merge-queue-drill`, empty.
+  2. The coordinator runs `tests/merge-queue-drill --setup Chan-Software-Services/merge-queue-drill`, which pushes the base commit to `dev`: a CI of one job, `check`, on `pull_request` and `merge_group`.
+  3. Daniel turns on CodeQL's default setup, and gives `dev` a ruleset as agent-team's `dev` has it (`sops/merging.md`, "Daniel's steps, in order"): the merge queue with the merge method `MERGE`, no bypass actor, and the required checks `check` (GitHub Actions), `CodeQL` and `agent-review` pinned to the reviewer App's id.
+- Steps:
+  1. `tests/merge-queue-drill Chan-Software-Services/merge-queue-drill`, with Bash `run_in_background`, since it ends only when the queue does: at most 30 minutes for the landing (`TEAM_LAND_DEADLINE_SECONDS` replaces its seconds), after the wait on the two heads' checks.
+  2. Read its `== <passed> of <checks> checks passed ...` line, each `FAIL` line, and the lines under `== CodeQL on the trial commits`.
+  3. A run where CodeQL did not report on a trial commit goes to Daniel before a project that requires `CodeQL` gets a queue, since the queue would drop every PR there at its check timeout.
+- Passes when every check passes: `team-land` landed both PRs, each merged at the head the drill pushed, so nothing caught it up; each merge commit is that head merged cleanly onto a commit holding the `dev` the PR was opened from, was the trial commit of a branch under `gh-readonly-queue/dev/`, and carries the reviewer App's `agent-review` success, which the queue took for the pinned check; and one PR landed on top of the other, behind `dev`'s tip.
+- Record: the drill's own, its detail naming the PRs and on how many trial commits CodeQL reported; a run that stops before it opened a PR (the rules lack the queue or the pin) records nothing.
 
 ## `bootstrap-arch` and `bootstrap-macos`: a fresh machine
 
