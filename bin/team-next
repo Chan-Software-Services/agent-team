@@ -229,9 +229,9 @@
 # launch of no role (closed, Daniel's hold, an ask open), "T<n>'s latest review is not a pass on
 # an open PR, so no checks wait for a merge" when checks_wait in bin/lib/ledger.jq is null (in a
 # task whose reviews were made in several projects it is, of each project's latest review that is
-# a pass on an open PR, the first that can still be armed (waiting, pending or infrastructure),
-# else the latest that passed, else the latest that failed, and the wait's end reads that pass,
-# its project's PR and its project's holder), "the
+# a pass on an open PR, the first that is waiting or pending, else the first that ended blocked
+# (infrastructure), else the latest that passed, else the latest that failed, and the wait's end
+# reads that pass, its project's PR and its project's holder), "the
 # checks of <short> failed and went back as a round on <ts>" when its state is failed (until the
 # round's builder logs a done with no pr of the PR at another head since, a rerun that passed, which
 # waits again), and, once a wait ended, "the checks wait of T<n> moved to <url> at <short> while it

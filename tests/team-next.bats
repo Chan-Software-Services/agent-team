@@ -2008,6 +2008,34 @@ SH
     "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "passed"}')"
 }
 
+@test "--ci waits on a pass in one repository though another repository's wait ended blocked on infrastructure before it" {
+  own_app
+  two_repos
+  both_on_github
+  # proj's pass, whose wait ends blocked: a check queued with no runner, which is never rerun.
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  ci_wait_ends failed "$sha" 1 "team-ci-wait: the checks on ${sha:0:7} did not pass" "$(infra build queued 5 50 | jq -sc .)"
+  run_bin -1 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=infrastructure"
+  assert_contains "$(tail -n 1 <<<"$output")" "blocked: the checks build of $url at ${sha:0:8} failed as infrastructure with no runner for 20 minutes"
+  # other's pass, logged after it, has its own wait, ahead of the blocked one.
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 -- "T7 DONE pass $url_other $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(url=$url_other arm_line "$head_other")"
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "waiting"}')"
+  ci_wait_ends passed "$head_other"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_equal "$(stub_calls team-ci-wait | tail -n 1)" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", $url, $h]')"
+  # With nothing else waiting, the blocked wait is the task's again, ahead of the passed one.
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url" --arg h "$sha" '{url: $url, head: $h, state: "infrastructure"}')"
+}
+
 @test "--ci's passed end, with a pass in each of two repositories, ends on the arm line of the other repository's wait" {
   own_app
   two_repos
