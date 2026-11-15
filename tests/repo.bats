@@ -2430,6 +2430,36 @@ shellcheck_checkout() {
   assert_contains "$output" tests/run
 }
 
+# The forms shellcheck -x follows beyond a line's first word: a . after another command, a source
+# on a line with an earlier #, and a file under a nested command substitution.
+@test "tests/run shellcheck --changed reads a . that is not first on its line, a source after a #, and a nested command substitution" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  printf '%s\n' '#!/usr/bin/env bash' 'dir=$(dirname "$0")' '[[ ! -f $dir/lib/zzlib.sh ]] || . "$dir/lib/zzlib.sh"' >"$copy/bin/team-zzdot"
+  printf '%s\n' '#!/usr/bin/env bash' 'if [[ -n ${1:-} ]]; then . "$(dirname "$0")/lib/zzlib.sh"; fi' >"$copy/bin/team-zzthen"
+  printf '%s\n' '#!/usr/bin/env bash' 'list=(a b)' 'n=${#list[@]}; source "$(dirname "$0")/lib/zzlib.sh"' >"$copy/bin/team-zzhash"
+  printf '%s\n' '#!/usr/bin/env bash' 'source "$(cd "$(dirname "$0")" && pwd)/lib/zzlib.sh"' >"$copy/bin/team-zznested"
+  changed_rebase "$copy"
+  echo 'zzlib() { false; }' >"$copy/bin/lib/zzlib.sh"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" $'bin/lib/zzlib.sh\nbin/lib/zzmid.sh\nbin/team-zzdot\nbin/team-zzgamma\nbin/team-zzhash\nbin/team-zznested\nbin/team-zzthen\ntests/zzlib.bats'
+}
+
+# A script the reader cannot read fails the run, never a shorter selection.
+@test "tests/run shellcheck --changed fails when it cannot read a script's lines" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  [[ $EUID -ne 0 ]] || skip "root reads every file"
+  shellcheck_checkout "$copy"
+  echo 'zzlib() { false; }' >"$copy/bin/lib/zzlib.sh"
+  chmod 000 "$copy/tests/zzlib.bats"
+  run -1 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" ""
+  assert_contains "$stderr" "run: could not read the paths changed since base"
+  chmod 644 "$copy/tests/zzlib.bats"
+}
+
 # A deleted path is never handed to shellcheck, which would fail on the missing file, but its
 # sourcers are, and so is the new side of a rename.
 @test "tests/run shellcheck --changed checks a deleted library's sourcers, never the deleted path, and both sides of a rename by what exists" {
