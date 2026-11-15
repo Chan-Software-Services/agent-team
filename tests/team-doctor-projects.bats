@@ -12,15 +12,15 @@ setup() {
   doctor_machine
 }
 
-@test "each registered project's lines pass for a correct clone; Conventioner's pool is Conventioner-d4c77a" {
+@test "each registered project's lines pass for a correct clone; Conventioner's pool is Conventioner-3930b8" {
   only_checks 200-projects.sh
   tools_at arch
   run_bin -0 team-doctor
   assert_equal "$(grep -E '^.... [a-z ]+ (conventioner|site): ' <<<"$output")" "PASS checkout conventioner: ~/projects/Conventioner, a primary checkout
-PASS origin conventioner: https://github.com/chanjdaniel/Conventioner.git
+PASS origin conventioner: https://github.com/Chan-Software-Services/Conventioner.git
 PASS task dir conventioner: git ignores .scratch/task/
 PASS gate conventioner: no-mistakes has a gate for it
-PASS slots conventioner: every slot is in the pool Conventioner-d4c77a, as treehouse names it from origin
+PASS slots conventioner: every slot is in the pool Conventioner-3930b8, as treehouse names it from origin
 PASS leases conventioner: no slot of the pool is leased
 PASS trust conventioner: claude starts background sessions in ~/projects/Conventioner
 PASS branches conventioner: every local branch is on origin
@@ -32,14 +32,14 @@ PASS trust site: claude starts background sessions in ~/projects/site
 PASS branches site: every local branch is on origin
 PASS changes site: the primary checkout is clean"
   # The gate was asked in its checkout, which the doctor left as it was.
-  assert_equal "$(git -C "$CONVENTIONER" status --porcelain)" ""
+  assert_equal "$(git -C "${CONVENTIONER:?}" status --porcelain)" ""
 }
 
 @test "a missing clone fails its checkout line with the clone command, and its other lines are skipped" {
   only_checks 200-projects.sh
   tools_at arch
   local clone="git clone https://github.com/owner/site.git ~/projects/site"
-  rm -rf "$SITE"
+  rm -rf "${SITE:?}"
   run_bin -1 team-doctor
   assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is missing; fix: $clone"
   # A folder that is no git checkout, or a worktree of another checkout, is no primary checkout.
@@ -47,7 +47,7 @@ PASS changes site: the primary checkout is clean"
   run_bin -1 team-doctor
   assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is not a git checkout; fix: move it aside, then $clone"
   rmdir "$SITE"
-  git -C "$CONVENTIONER" worktree add -q --detach "$SITE"
+  git -C "${CONVENTIONER:?}" worktree add -q --detach "$SITE"
   # The whole doctor, since the last assertion reads every line.
   TEAM_DOCTOR_CHECKS='' run_bin -1 team-doctor
   assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then $clone"
@@ -60,62 +60,170 @@ PASS changes site: the primary checkout is clean"
   tools_at arch
   local url
   for url in git@github.com:owner/site.git https://github.com/owner/site; do
-    git -C "$SITE" remote set-url origin "$url"
+    git -C "${SITE:?}" remote set-url origin "$url"
     run_bin -1 team-doctor
     assert_equal "$(line_of 'origin site')" "FAIL origin site: origin is $url, not https://github.com/owner/site.git; fix: git -C ~/projects/site remote set-url origin https://github.com/owner/site.git"
   done
-  git -C "$SITE" remote remove origin
+  git -C "${SITE:?}" remote remove origin
   run_bin -1 team-doctor
   assert_equal "$(line_of 'origin site')" "FAIL origin site: no remote origin; fix: git -C ~/projects/site remote add origin https://github.com/owner/site.git"
 
-  url=git@github.com:chanjdaniel/Conventioner.git
-  git -C "$CONVENTIONER" remote set-url origin "$url"
+  url=git@github.com:Chan-Software-Services/Conventioner.git
+  git -C "${CONVENTIONER:?}" remote set-url origin "$url"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'slots conventioner')" "FAIL slots conventioner: not in the pool Conventioner-$(printf '%s' "$url" | sha256sum | cut -c1-6), as treehouse names it from origin $url: ~/.treehouse/Conventioner-d4c77a/1/Conventioner, ~/.treehouse/Conventioner-d4c77a/2/Conventioner; fix: the origin line's fix"
-  git -C "$CONVENTIONER" remote remove origin
+  assert_equal "$(line_of 'slots conventioner')" "FAIL slots conventioner: not in the pool Conventioner-$(printf '%s' "$url" | sha256sum | cut -c1-6), as treehouse names it from origin $url: ~/.treehouse/Conventioner-3930b8/1/Conventioner, ~/.treehouse/Conventioner-3930b8/2/Conventioner; fix: the origin line's fix"
+  git -C "${CONVENTIONER:?}" remote remove origin
   run_bin -1 team-doctor
   assert_equal "$(line_of 'slots conventioner')" "FAIL slots conventioner: unknown, since treehouse names the pool from origin, which is missing; fix: the origin line's fix"
 }
 
+@test "a treehouse project's origin on a moved repository gets the pool move fix, never a bare set-url" {
+  only_checks 200-projects.sh
+  tools_at arch
+  local url fix="move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  for url in https://github.com/chanjdaniel/Conventioner.git git@github.com:ChanJDaniel/Conventioner; do
+    git -C "${CONVENTIONER:?}" remote set-url origin "$url"
+    run_bin -1 team-doctor
+    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, not https://github.com/Chan-Software-Services/Conventioner.git; fix: $fix"
+  done
+  # Another form of the registry's URL is set back, which names the registry's pool again.
+  url=git@github.com:Chan-Software-Services/Conventioner.git
+  git -C "${CONVENTIONER:?}" remote set-url origin "$url"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, not https://github.com/Chan-Software-Services/Conventioner.git; fix: git -C ~/projects/Conventioner remote set-url origin https://github.com/Chan-Software-Services/Conventioner.git"
+  # A missing origin is added.
+  git -C "${CONVENTIONER:?}" remote remove origin
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: no remote origin; fix: git -C ~/projects/Conventioner remote add origin https://github.com/Chan-Software-Services/Conventioner.git"
+}
+
+@test "a project's origin already on the new owner of the repository the registry still names by its old one gets the registry edit, never a set-url back" {
+  only_checks 200-projects.sh
+  tools_at arch
+  sed -i 's#^repo = "Chan-Software-Services/Conventioner"$#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
+  local url fix="set conventioner's repo = \"Chan-Software-Services/Conventioner\" in projects.toml, as team-project --check names it, and leave the origin as it is"
+  for url in https://github.com/Chan-Software-Services/Conventioner.git git@github.com:chan-software-services/Conventioner; do
+    git -C "${CONVENTIONER:?}" remote set-url origin "$url"
+    run_bin -1 team-doctor
+    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, on Chan-Software-Services/Conventioner, where the registry's chanjdaniel/Conventioner moved (bin/lib/repo-moves.json); fix: $fix"
+  done
+  # An origin still on the old owner, in another form than the registry's URL, is no origin on the
+  # new one: a treehouse project's gets the pool move, as before.
+  for url in git@github.com:chanjdaniel/Conventioner.git https://github.com/chanjdaniel/Conventioner; do
+    git -C "${CONVENTIONER:?}" remote set-url origin "$url"
+    run_bin -1 team-doctor
+    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, not https://github.com/chanjdaniel/Conventioner.git; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  done
+  # The registry's own URL still passes, and another repository is set back as before.
+  git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
+  run_bin team-doctor
+  assert_equal "$(line_of 'origin conventioner')" "PASS origin conventioner: https://github.com/chanjdaniel/Conventioner.git"
+  git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/someone/Conventioner.git
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is https://github.com/someone/Conventioner.git, not https://github.com/chanjdaniel/Conventioner.git; fix: git -C ~/projects/Conventioner remote set-url origin https://github.com/chanjdaniel/Conventioner.git"
+}
+
+@test "moved origins passes on a machine whose origins name no moved repository, saying how many it read" {
+  only_checks 084-moved-origins.sh
+  tools_at arch
+  # The team home's origin is the sandbox's bare repository, the projects' their GitHub URLs, and
+  # the code checkout has none, so three are read.
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS team home: $TEAM_HOME, named by TEAM_HOME: a checkout of its own on dev, with an origin
+PASS moved origins: read 3 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+  # The new owner in any case is no move's from.
+  git -C "${CODE_CHECKOUT:?}" remote add origin https://github.com/chan-software-services/agent-team.git
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+  # Nor is an SSH remote of the new owner, or of the old owner's repository that never moved.
+  git -C "${CONVENTIONER:?}" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
+  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/no-mistakes.git/
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+}
+
+@test "moved origins names each checkout whose origin, HTTPS or SSH, names a moved repository, with its fix, and a treehouse project's pool move" {
+  only_checks 084-moved-origins.sh
+  tools_at arch
+  register intone chanjdaniel/intone_app direct-pr git
+  local intone=$HOME/projects/intone_app
+  git -C "${CODE_CHECKOUT:?}" remote add origin https://github.com/chanjdaniel/agent-team.git
+  git -C "${TEAM_HOME:?}" remote set-url origin git@github.com:chanjdaniel/agent-team-records.git
+  git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/ChanJDaniel/Conventioner/
+  git -C "${intone:?}" remote set-url origin ssh://git@github.com/chanjdaniel/intone_app.git/
+  run_bin -1 team-doctor
+  # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
+  assert_equal "$(line_of 'moved origins')" "FAIL moved origins: the code checkout $CODE_CHECKOUT has origin https://github.com/chanjdaniel/agent-team.git, a repository that moved to Chan-Software-Services/agent-team; the team home $TEAM_HOME has origin git@github.com:chanjdaniel/agent-team-records.git, a repository that moved to Chan-Software-Services/agent-team-records; conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; intone's checkout ~/projects/intone_app has origin ssh://git@github.com/chanjdaniel/intone_app.git/, a repository that moved to Chan-Software-Services/intone_app; fix: git -C $CODE_CHECKOUT remote set-url origin https://github.com/Chan-Software-Services/agent-team.git; git -C $TEAM_HOME remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git; move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner; git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git"
+  # Each fix, run, clears its checkout; the doctor itself changed nothing.
+  assert_equal "$(git -C "${CODE_CHECKOUT:?}" remote get-url origin)" https://github.com/chanjdaniel/agent-team.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team.git
+  git -C "${TEAM_HOME:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git
+  git -C "${intone:?}" remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'moved origins')" "FAIL moved origins: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+}
+
+@test "moved origins reads a primary checkout once, the code checkout's from a worktree of it, and skips a missing checkout" {
+  only_checks 084-moved-origins.sh
+  tools_at arch
+  # The code checkout is also a registered project's primary checkout, by a link at the path the
+  # registry names, read from a worktree of it.
+  ln -s "$CODE_CHECKOUT" "$HOME/agent-team"
+  printf '%s\n' '[agent-team]' 'repo = "Chan-Software-Services/agent-team"' 'path = "agent-team"' 'base = "dev"' \
+    'delivery = "direct-pr"' 'merge_method = "merge"' 'required_checks = []' 'task_dir = ".scratch/task"' 'docs = []' \
+    'toolkits = []' '[agent-team.pool]' 'provider = "git"' 'slots = []' >>"$TEAM_HOME/projects.toml"
+  git -C "${CODE_CHECKOUT:?}" remote add origin git@github.com:chanjdaniel/agent-team
+  git -C "${CODE_CHECKOUT:?}" checkout -q -b feat/T1-thing
+  git -C "${CODE_CHECKOUT:?}" add -A
+  git -C "${CODE_CHECKOUT:?}" commit -q -m "chore: the code"
+  git -C "${CODE_CHECKOUT:?}" worktree add -q "$BATS_TEST_TMPDIR/wt" -b feat/T2-other
+  rm -rf "${SITE:?}"
+  CODE_CHECKOUT=$BATS_TEST_TMPDIR/wt run_bin -1 team-doctor
+  assert_equal "$(line_of 'moved origins')" "FAIL moved origins: the code checkout $CODE_CHECKOUT has origin git@github.com:chanjdaniel/agent-team, a repository that moved to Chan-Software-Services/agent-team; fix: git -C $CODE_CHECKOUT remote set-url origin https://github.com/Chan-Software-Services/agent-team.git"
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team.git
+  CODE_CHECKOUT=$BATS_TEST_TMPDIR/wt run_bin -0 team-doctor
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 3 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+}
+
 @test "a treehouse slot outside the pool its origin names fails the slots line" {
   tools_at arch
-  sed -i 's#\.treehouse/Conventioner-d4c77a/2/#.treehouse/Conventioner-8e12e0/2/#' "$TEAM_HOME/projects.toml"
+  sed -i 's#\.treehouse/Conventioner-3930b8/2/#.treehouse/Conventioner-8e12e0/2/#' "$TEAM_HOME/projects.toml"
   run_bin -1 team-doctor
-  assert_equal "$(grep -v '^PASS ' <<<"$output")" "FAIL slots conventioner: not in the pool Conventioner-d4c77a, as treehouse names it from origin: ~/.treehouse/Conventioner-8e12e0/2/Conventioner; fix: put conventioner's pool.slots in projects.toml under the pool's directory, ~/.treehouse/Conventioner-d4c77a/ unless its treehouse.toml sets another root"
+  assert_equal "$(grep -v '^PASS ' <<<"$output")" "FAIL slots conventioner: not in the pool Conventioner-3930b8, as treehouse names it from origin: ~/.treehouse/Conventioner-8e12e0/2/Conventioner; fix: put conventioner's pool.slots in projects.toml under the pool's directory, ~/.treehouse/Conventioner-3930b8/ unless its treehouse.toml sets another root"
 }
 
 @test "slots: a slot that is a worktree of another clone of the same origin warns, naming it and how many slots are the team's (report F13)" {
   only_checks 200-projects.sh
   tools_at arch
-  local pool=$HOME/.treehouse/Conventioner-d4c77a other=$HOME/firstmate/projects/Conventioner shown remove
+  local pool=$HOME/.treehouse/Conventioner-3930b8 other=$HOME/firstmate/projects/Conventioner shown remove
   # Slot 2 is this checkout's worktree and slot 1 does not exist: both pass, as treehouse makes 1.
-  git -C "$CONVENTIONER" worktree add -q --detach "$pool/2/Conventioner"
+  git -C "${CONVENTIONER:?}" worktree add -q --detach "$pool/2/Conventioner"
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-d4c77a, as treehouse names it from origin"
+  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-3930b8, as treehouse names it from origin"
 
   # Another clone with the same folder name and origin shares the pool, and owns slot 1.
   git clone -q "$CONVENTIONER" "$other"
-  git -C "$other" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
-  git -C "$other" worktree add -q --detach "$pool/1/Conventioner"
+  git -C "${other:?}" remote set-url origin https://github.com/Chan-Software-Services/Conventioner.git
+  git -C "${other:?}" worktree add -q --detach "$pool/1/Conventioner"
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  shown='~/.treehouse/Conventioner-d4c77a'
+  shown='~/.treehouse/Conventioner-3930b8'
   remove="git -C ~/firstmate/projects/Conventioner worktree remove"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'slots conventioner')" "WARN slots conventioner: slot 1 is a worktree of ~/firstmate/projects/Conventioner, so 1 of 2 slots are the team's; fix: Daniel's, once nothing in it is needed by that clone: $remove $shown/1/Conventioner"
 
   # Its slot 3, which the registry does not list, is the pool's too.
-  git -C "$other" worktree add -q --detach "$pool/3/Conventioner"
+  git -C "${other:?}" worktree add -q --detach "$pool/3/Conventioner"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'slots conventioner')" "WARN slots conventioner: slot 1 is a worktree of ~/firstmate/projects/Conventioner; slot 3 is a worktree of ~/firstmate/projects/Conventioner, so 1 of 3 slots are the team's; fix: Daniel's, once nothing in it is needed by that clone: $remove $shown/1/Conventioner; $remove $shown/3/Conventioner"
   # The doctor only looked.
-  assert_equal "$(git -C "$other" worktree list --porcelain | grep -c '^worktree ')" 3
+  assert_equal "$(git -C "${other:?}" worktree list --porcelain | grep -c '^worktree ')" 3
 }
 
 @test "slots: a slot that is an empty folder, or holds no worktree, warns (T45)" {
   only_checks 200-projects.sh
   tools_at arch
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  local pool=$HOME/.treehouse/Conventioner-d4c77a shown='~/.treehouse/Conventioner-d4c77a'
+  local pool=$HOME/.treehouse/Conventioner-3930b8 shown='~/.treehouse/Conventioner-3930b8'
   # A removed worktree leaves its numbered folder, which treehouse does not make a slot in again.
   mkdir -p "$pool/1" "$pool/2/Conventioner" "$pool/4"
   run_bin -0 team-doctor
@@ -127,9 +235,9 @@ PASS changes site: the primary checkout is clean"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'slots conventioner')" "WARN slots conventioner: slot 2 holds no git worktree; fix: Daniel looks at $shown/2/Conventioner and moves it aside"
 
-  rm -r "$pool/2"
+  rm -r "${pool:?}/2"
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-d4c77a, as treehouse names it from origin"
+  assert_equal "$(line_of 'slots conventioner')" "PASS slots conventioner: every slot is in the pool Conventioner-3930b8, as treehouse names it from origin"
 }
 
 # ledger_opened <task> <slot>: <task> opened in Conventioner, in its slot <slot> (relative to HOME).
@@ -142,14 +250,14 @@ ledger_opened() {
 @test "leases: each slot the pool leases is an open task's worktree there, or a WARN naming it with the return" {
   only_checks 200-projects.sh
   tools_at arch
-  local pool=.treehouse/Conventioner-d4c77a fix
+  local pool=.treehouse/Conventioner-3930b8 fix
   ledger_opened T1 "$pool/1/Conventioner"
   ledger_opened T2 "$pool/2/Conventioner"
   leased_slots "$pool/1/Conventioner" T1 "$pool/2/Conventioner" T2
   run_bin -0 team-doctor
   assert_equal "$(line_of 'leases conventioner')" "PASS leases conventioner: every leased slot (2) is an open task's worktree here"
   # The lease is asked of treehouse in the checkout.
-  assert_equal "$(git -C "$CONVENTIONER" status --porcelain)" ""
+  assert_equal "$(git -C "${CONVENTIONER:?}" status --porcelain)" ""
 
   # A closed task, an open task whose worktree is elsewhere (a lease a failed team-open left), and
   # a holder that is no task: each is named, with the return for Daniel.
@@ -179,7 +287,7 @@ ledger_opened() {
   local other
   mkdir -p "$HOME/$pool/5/Conventioner"
   other=$(other_spelling "$HOME/.treehouse")
-  ledger_opened T5 "${other##*/}/Conventioner-d4c77a/5/Conventioner"
+  ledger_opened T5 "${other##*/}/Conventioner-3930b8/5/Conventioner"
   leased_slots "$pool/3/Conventioner" T2 "$pool/5/Conventioner" T5
   run_bin -0 team-doctor
   assert_equal "$(line_of 'leases conventioner')" "PASS leases conventioner: every leased slot (2) is an open task's worktree here"
@@ -206,9 +314,9 @@ ledger_opened() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" "FAIL task dir site: git does not ignore .scratch/task/; fix: echo /.scratch/task/ >> ~/projects/site/.git/info/exclude"
   # Ignored by the project's own .gitignore, it passes.
   echo .scratch/ >"$SITE/.gitignore"
-  git -C "$SITE" add .gitignore
-  git -C "$SITE" commit -q -m "chore: ignore the scratch"
-  git -C "$SITE" push -q origin HEAD 2>/dev/null || git -C "$SITE" update-ref refs/remotes/origin/main HEAD
+  git -C "${SITE:?}" add .gitignore
+  git -C "${SITE:?}" commit -q -m "chore: ignore the scratch"
+  git -C "${SITE:?}" push -q origin HEAD 2>/dev/null || git -C "${SITE:?}" update-ref refs/remotes/origin/main HEAD
   run_bin -0 team-doctor
   assert_equal "$(line_of 'task dir site')" "PASS task dir site: git ignores .scratch/task/"
 }
@@ -312,20 +420,20 @@ $SITE"
 @test "unpushed local branches and a dirty primary checkout warn, each by name" {
   tools_at arch
   # Pushed with no upstream, as team-open makes a task's branch: nothing to warn about.
-  git -C "$SITE" branch feat/pushed
-  git -C "$SITE" update-ref refs/remotes/origin/feat/pushed feat/pushed
+  git -C "${SITE:?}" branch feat/pushed
+  git -C "${SITE:?}" update-ref refs/remotes/origin/feat/pushed feat/pushed
   # On no origin branch: a branch of its own, and one ahead of its upstream.
-  git -C "$SITE" switch -q -c wip
-  git -C "$SITE" commit -q --allow-empty -m "wip: one"
-  git -C "$SITE" switch -q -c feat/ahead --track origin/main
-  git -C "$SITE" commit -q --allow-empty -m "feat: one"
-  git -C "$SITE" commit -q --allow-empty -m "feat: two"
+  git -C "${SITE:?}" switch -q -c wip
+  git -C "${SITE:?}" commit -q --allow-empty -m "wip: one"
+  git -C "${SITE:?}" switch -q -c feat/ahead --track origin/main
+  git -C "${SITE:?}" commit -q --allow-empty -m "feat: one"
+  git -C "${SITE:?}" commit -q --allow-empty -m "feat: two"
   # A checkpoint's wip/site/T7 holding feat/ahead's head is no origin branch, whether fetched from
   # the team home's origin by team-open --resume or on origin (a project whose origin is the team
   # home's): it still warns.
-  git -C "$SITE" update-ref refs/remotes/team-home/wip/site/T7 feat/ahead
-  git -C "$SITE" update-ref refs/remotes/origin/wip/site/T7 feat/ahead
-  git -C "$SITE" switch -q main
+  git -C "${SITE:?}" update-ref refs/remotes/team-home/wip/site/T7 feat/ahead
+  git -C "${SITE:?}" update-ref refs/remotes/origin/wip/site/T7 feat/ahead
+  git -C "${SITE:?}" switch -q main
   echo changed >>"$SITE/README.md"
   echo note >"$SITE/notes.txt"
   run_bin -0 team-doctor
@@ -337,12 +445,12 @@ WARN changes site: changes to tracked files: README.md; untracked files: notes.t
   only_checks 200-projects.sh
   tools_at arch
   local task_wt=$HOME/site-wt/1 ticket_wt=$HOME/site-wt/2
-  git -C "$SITE" worktree add -q -b feat/T7-x "$task_wt" origin/main
-  git -C "$SITE" update-ref refs/remotes/origin/feat/T7-x feat/T7-x
-  git -C "$SITE" worktree add -q -b feat/T7-x--02 "$ticket_wt" feat/T7-x
-  git -C "$ticket_wt" commit -q --allow-empty -m "feat: ticket 02's"
+  git -C "${SITE:?}" worktree add -q -b feat/T7-x "$task_wt" origin/main
+  git -C "${SITE:?}" update-ref refs/remotes/origin/feat/T7-x feat/T7-x
+  git -C "${SITE:?}" worktree add -q -b feat/T7-x--02 "$ticket_wt" feat/T7-x
+  git -C "${ticket_wt:?}" commit -q --allow-empty -m "feat: ticket 02's"
   # Another task's branch with the same suffix and no ticket worktree still warns.
-  git -C "$SITE" branch feat/T8-y--02 feat/T7-x--02
+  git -C "${SITE:?}" branch feat/T8-y--02 feat/T7-x--02
   jq -cn --arg wt "$task_wt" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "opened", project: "site",
     path: "small", type: "feat", title: "x", branch: "feat/T7-x", base: "main", base_sha: "0000000", worktree: $wt}' \
     >>"$TEAM_HOME/ledger.jsonl"
@@ -388,9 +496,9 @@ if [[ -e "$BATS_TEST_TMPDIR/$project-config.fail" ]]; then echo "compose.sh: no 
 jq -n --arg name "\$COMPOSE_PROJECT_NAME" '{name: \$name, services: $services}'
 SCRIPT
   chmod +x "$path/scripts/compose.sh"
-  git -C "$path" add scripts/compose.sh
-  git -C "$path" commit -q -m "feat: add the stack's wrapper"
-  git -C "$path" update-ref refs/remotes/origin/main HEAD
+  git -C "${path:?}" add scripts/compose.sh
+  git -C "${path:?}" commit -q -m "feat: add the stack's wrapper"
+  git -C "${path:?}" update-ref refs/remotes/origin/main HEAD
   printf '\n[%s.stack]\ncompose = "scripts/compose.sh"\nseed = "scripts/seed.sh"\nlog_services = ["s0"]\n' "$project" \
     >>"$TEAM_HOME/projects.toml"
 }
@@ -427,9 +535,9 @@ SCRIPT
   touch "$BATS_TEST_TMPDIR/site-config.fail"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'stack memory')" "PASS stack memory: with nothing else running, full's budget is 26.6 GiB of 30.6 GiB, which holds a stack of each project: conventioner's 2.8 GiB of mem_limits; unknown for site, since scripts/compose.sh config --format json failed: compose.sh: no docker-compose.yml in '$SITE'"
-  git -C "$CONVENTIONER" rm -q scripts/compose.sh
-  git -C "$CONVENTIONER" commit -q -m "chore: drop the wrapper"
-  git -C "$CONVENTIONER" update-ref refs/remotes/origin/main HEAD
+  git -C "${CONVENTIONER:?}" rm -q scripts/compose.sh
+  git -C "${CONVENTIONER:?}" commit -q -m "chore: drop the wrapper"
+  git -C "${CONVENTIONER:?}" update-ref refs/remotes/origin/main HEAD
   run_bin -0 team-doctor
   assert_equal "$(line_of 'stack memory')" "PASS stack memory: unknown for conventioner, since its checkout has no scripts/compose.sh; unknown for site, since scripts/compose.sh config --format json failed: compose.sh: no docker-compose.yml in '$SITE'"
 
@@ -469,8 +577,8 @@ SCRIPT
   assert_equal "$(line_of 'trust team home')" "PASS trust team home: not probed apart, since ~/projects/site is site's primary checkout, which the trust site line probes"
 
   # Still by identity: a worktree of another checkout is no primary checkout, however spelled.
-  rm -rf "$SITE"
-  git -C "$CONVENTIONER" worktree add -q --detach "$SITE"
+  rm -rf "${SITE:?}"
+  git -C "${CONVENTIONER:?}" worktree add -q --detach "$SITE"
   run_bin -1 team-doctor
   assert_equal "$(line_of 'checkout site')" "FAIL checkout site: ~/projects/${site##*/} is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then git clone https://github.com/owner/site.git ~/projects/${site##*/}"
 }

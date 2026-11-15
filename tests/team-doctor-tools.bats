@@ -139,7 +139,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" ""
   local expected
   expected=$(printf '%s\n' os; lock_tools arch | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker chrome servers machine 'team home' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' 'records hooks' 'claude login' 'github login' 'review app' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' 'records hooks' 'claude login' 'github login' 'review app' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
@@ -170,7 +170,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" ""
   local expected
   expected=$(printf '%s\n' os homebrew; lock_tools macos | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker chrome servers machine 'team home' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' 'records hooks' 'claude login' 'github login' 'review app' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' 'records hooks' 'claude login' 'github login' 'review app' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
@@ -408,7 +408,7 @@ EOF
   # The whole doctor, since the lease line shows every check before it ran to its end without them.
   on_macos
   tools_at macos
-  rm -r "$HOMEBREW_PREFIX/opt/gnu-sed" "$HOMEBREW_PREFIX/opt/flock"
+  rm -r "${HOMEBREW_PREFIX:?}/opt/gnu-sed" "${HOMEBREW_PREFIX:?}/opt/flock"
   run_bin -1 team-doctor
   assert_equal "$(line_of homebrew)" 'FAIL homebrew: missing Homebrew packages: gnu-sed flock; fix: run `brew install gnu-sed flock`'
   assert_equal "$(line_of machine)" "PASS machine: home-pc"

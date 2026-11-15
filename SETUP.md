@@ -25,7 +25,7 @@ The rules for what you never touch (secrets, `op`, the lease) are in `sops/machi
 ## Stage 1: git, gh and the two checkouts
 
 This stage is the one Daniel's sentence describes, so it may be done before you read this file: get `gh`, sign Daniel in, clone the code and the team home, write `agent-team-records` to `~/.config/agent-team/home`, read this file.
-The code (`chanjdaniel/agent-team`) is public, but the team home (`chanjdaniel/agent-team-records`) is private, so its clone needs the GitHub login first.
+The code (`Chan-Software-Services/agent-team`) is public, but the team home (`Chan-Software-Services/agent-team-records`) is private, so its clone needs the GitHub login first.
 Skip each step whose check already passes.
 
 1. **macOS only, Xcode Command Line Tools.** Check: `xcode-select -p` prints a path.
@@ -40,13 +40,13 @@ Skip each step whose check already passes.
    Otherwise run `gh auth login --web --git-protocol https --hostname github.com` yourself in the background: it prints a one-time code and https://github.com/login/device, then waits.
    Give Daniel the code and the link to open in a browser, and wait for the command to finish.
    Then run `gh auth setup-git`, so git uses the same login.
-5. **The code checkout.** Check: `git -C ~/agent-team remote get-url origin` prints `https://github.com/chanjdaniel/agent-team.git`.
-   Otherwise run `git clone https://github.com/chanjdaniel/agent-team.git ~/agent-team` (exactly this URL: the doctor checks it).
+5. **The code checkout.** Check: `git -C ~/agent-team remote get-url origin` prints `https://github.com/Chan-Software-Services/agent-team.git`.
+   Otherwise run `git clone https://github.com/Chan-Software-Services/agent-team.git ~/agent-team` (exactly this URL: the doctor checks it).
    When the check passes, look at the history too, after `git -C ~/agent-team fetch -q origin`.
    A branch only behind origin's (no local commits, and a common commit) is yours to bring level: `git -C ~/agent-team merge --ff-only @{u}`.
    A branch with no commit in common with origin's, or with local commits origin's lacks, is Daniel's call: show Daniel the ahead and behind counts (`git -C ~/agent-team rev-list --left-right --count HEAD...@{u}`) and whether `git -C ~/agent-team merge-base HEAD @{u}` finds a common commit, and ask before any reset.
-6. **The team home checkout.** Check: `git -C ~/agent-team-records remote get-url origin` prints `https://github.com/chanjdaniel/agent-team-records.git`.
-   Otherwise run `git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records`, then `git -C ~/agent-team-records remote set-branches --add origin lease` and `git -C ~/agent-team-records fetch origin` (it needs step 4's login, since the repository is private).
+6. **The team home checkout.** Check: `git -C ~/agent-team-records remote get-url origin` prints `https://github.com/Chan-Software-Services/agent-team-records.git`.
+   Otherwise run `git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records`, then `git -C ~/agent-team-records remote set-branches --add origin lease` and `git -C ~/agent-team-records fetch origin` (it needs step 4's login, since the repository is private).
    The team home fetches only `dev` and `lease`: its origin's `wip/*` and `salvage/*` branches are whole project histories, which the scripts reach by URL; the doctor's `team home fetch` line checks it, and the bootstrap's machine stage narrows an older clone.
    Its records guard (`core.hooksPath`) is Daniel's to turn on, at `sops/machine-setup.md`'s stage 7, Daniel's steps, since every team session is denied setting it.
    When the check passes, look at its history: `git -C ~/agent-team-records fetch origin dev` (`dev` alone, since an older clone still fetches every branch), then `git -C ~/agent-team-records merge-base HEAD origin/dev`.

@@ -7,9 +7,9 @@ setup() {
   sandbox
   primary=$(make_repo proj)
   echo ".scratch/" >"$primary/.gitignore"
-  git -C "$primary" add .gitignore
-  git -C "$primary" commit -q -m "chore: ignore scratch"
-  git -C "$primary" push -q origin main
+  git -C "${primary:?}" add .gitignore
+  git -C "${primary:?}" commit -q -m "chore: ignore scratch"
+  git -C "${primary:?}" push -q origin main
   slots=$HOME/slots/proj
   cat >"$TEAM_HOME/projects.toml" <<'TOML'
 [proj]
@@ -39,27 +39,27 @@ events() {
 advance_origin() {
   local other=$BATS_TEST_TMPDIR/other
   [[ -d $other ]] || git clone -q "$BATS_TEST_TMPDIR/origin/proj.git" "$other" 2>/dev/null
-  git -C "$other" pull -q
-  git -C "$other" commit -q --allow-empty -m "feat: $1"
-  git -C "$other" push -q origin main
-  git -C "$other" rev-parse HEAD
+  git -C "${other:?}" pull -q
+  git -C "${other:?}" commit -q --allow-empty -m "feat: $1"
+  git -C "${other:?}" push -q origin main
+  git -C "${other:?}" rev-parse HEAD
 }
 
 @test "a task opens in the first slot, on a new branch from the fetched base" {
   run_bin -0 --separate-stderr team-open proj feature feat team-tooling "The team's own tooling"
   local worktree=$slots/1 base_sha
-  base_sha=$(git -C "$primary" rev-parse origin/main)
+  base_sha=$(git -C "${primary:?}" rev-parse origin/main)
 
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" --arg home "$TEAM_HOME" '{
     task: "T1", project: "proj", path: "feature", title: "The team'"'"'s own tooling",
     branch: "feat/T1-team-tooling", base: "main", base_sha: $sha, worktree: $wt,
     task_dir: "\($wt)/.scratch/task", thread: "1563000000000000001", plan: "\($home)/tasks/T1/plan.md"}')"
 
-  assert_equal "$(git -C "$worktree" rev-parse --abbrev-ref HEAD)" "feat/T1-team-tooling"
-  assert_equal "$(git -C "$worktree" rev-parse HEAD)" "$base_sha"
-  run -128 git -C "$worktree" rev-parse --abbrev-ref '@{upstream}'
+  assert_equal "$(git -C "${worktree:?}" rev-parse --abbrev-ref HEAD)" "feat/T1-team-tooling"
+  assert_equal "$(git -C "${worktree:?}" rev-parse HEAD)" "$base_sha"
+  run -128 git -C "${worktree:?}" rev-parse --abbrev-ref '@{upstream}'
   [[ -d $worktree/.scratch/task ]]
-  assert_equal "$(git -C "$worktree" status --porcelain)" ""
+  assert_equal "$(git -C "${worktree:?}" status --porcelain)" ""
 
   assert_equal "$(stub_calls curl | wc -l)" "1"
   assert_equal "$(stub_calls curl | jq -r 'index("-d") as $i | .[$i + 1] | fromjson | .name')" \
@@ -133,7 +133,7 @@ advance_origin() {
   assert_equal "$stderr" "team-open: proj's backlog has no story E40/F01/S03 (a file projects/proj/backlog/E40-*/F01-*/S03-*.md whose id is E40/F01/S03)"
   assert_equal "$(events opened | wc -l)" 1
   [[ ! -e $TEAM_HOME/tasks/T7 ]]
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" 2
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" 2
 
   run_bin -2 team-open --story E40-F01 proj feature feat page "The page"
   assert_contains "$output" "story must look like E<nn>/F<nn>/S<nn>, got 'E40-F01'"
@@ -150,7 +150,7 @@ advance_origin() {
   assert_contains "$output" "T5 is already open"
   assert_equal "$(events opened | wc -l)" "1"
   assert_equal "$(stub_calls curl | wc -l)" "1"
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" "2"
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "2"
 }
 
 @test "malformed arguments are usage errors that change nothing" {
@@ -186,12 +186,12 @@ advance_origin() {
 @test "the branch starts at the fetched origin base even when the local base is behind" {
   local ahead
   ahead=$(advance_origin "moved on")
-  [[ $(git -C "$primary" rev-parse main) != "$ahead" ]]
+  [[ $(git -C "${primary:?}" rev-parse main) != "$ahead" ]]
   run_bin -0 --separate-stderr team-open proj feature feat late "Late"
   assert_equal "$(jq -r .base_sha <<<"$output")" "$ahead"
-  assert_equal "$(git -C "$slots/1" rev-parse HEAD)" "$ahead"
-  assert_equal "$(git -C "$primary" rev-parse origin/main)" "$ahead"
-  run -128 git -C "$slots/1" rev-parse --abbrev-ref '@{upstream}'
+  assert_equal "$(git -C "${slots:?}/1" rev-parse HEAD)" "$ahead"
+  assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$ahead"
+  run -128 git -C "${slots:?}/1" rev-parse --abbrev-ref '@{upstream}'
 }
 
 @test "a primary checkout on the base, clean and behind, is fast-forwarded to origin's, untracked files aside" {
@@ -201,8 +201,8 @@ advance_origin() {
   run_bin -0 --separate-stderr team-open proj feature feat late "Late"
   assert_contains "$stderr" "team-open: the primary checkout $primary: main fast-forwarded to ${ahead:0:7}"
   assert_equal "$(grep -c 'primary checkout' <<<"$stderr")" 1
-  assert_equal "$(git -C "$primary" rev-parse main)" "$ahead"
-  assert_equal "$(git -C "$primary" status --porcelain)" "?? notes.txt"
+  assert_equal "$(git -C "${primary:?}" rev-parse main)" "$ahead"
+  assert_equal "$(git -C "${primary:?}" status --porcelain)" "?? notes.txt"
   # Level with origin's, there is nothing to say.
   run_bin -0 --separate-stderr team-open proj feature feat later "Later"
   assert_equal "$(grep -c 'primary checkout' <<<"$stderr")" 0
@@ -212,36 +212,36 @@ advance_origin() {
   local ahead before
   sed -i 's|^slots = .*|slots = ["slots/proj/1", "slots/proj/2", "slots/proj/3"]|' "$TEAM_HOME/projects.toml"
   ahead=$(advance_origin "moved on")
-  before=$(git -C "$primary" rev-parse main)
-  git -C "$primary" switch -q -c elsewhere
+  before=$(git -C "${primary:?}" rev-parse main)
+  git -C "${primary:?}" switch -q -c elsewhere
   run_bin -0 --separate-stderr team-open proj feature feat one "One"
   assert_contains "$stderr" "team-open: the primary checkout $primary is left as it is: it is on elsewhere, not main"
-  git -C "$primary" switch -q main
+  git -C "${primary:?}" switch -q main
   echo changed >"$primary/README.md"
   run_bin -0 --separate-stderr team-open proj feature feat two "Two"
   assert_contains "$stderr" "team-open: the primary checkout $primary is left as it is: it has local changes to README.md"
-  assert_equal "$(git -C "$primary" rev-parse main)" "$before"
-  git -C "$primary" checkout -q README.md
-  git -C "$primary" merge -q --ff-only origin/main
-  git -C "$primary" commit -q --allow-empty -m "feat: only here"
-  before=$(git -C "$primary" rev-parse main)
+  assert_equal "$(git -C "${primary:?}" rev-parse main)" "$before"
+  git -C "${primary:?}" checkout -q README.md
+  git -C "${primary:?}" merge -q --ff-only origin/main
+  git -C "${primary:?}" commit -q --allow-empty -m "feat: only here"
+  before=$(git -C "${primary:?}" rev-parse main)
   run_bin -0 --separate-stderr team-open proj feature feat three "Three"
   assert_contains "$stderr" "team-open: the primary checkout $primary is left as it is: main has 1 commit origin's lacks"
-  assert_equal "$(git -C "$primary" rev-parse main)" "$before"
-  [[ $ahead == "$(git -C "$primary" rev-parse origin/main)" ]]
+  assert_equal "$(git -C "${primary:?}" rev-parse main)" "$before"
+  [[ $ahead == "$(git -C "${primary:?}" rev-parse origin/main)" ]]
 }
 
 @test "with branch.autoSetupMerge=always the branch still has no upstream" {
   git config --global branch.autoSetupMerge always
   run_bin -0 team-open proj feature feat track "Track"
-  run -128 git -C "$slots/1" rev-parse --abbrev-ref '@{upstream}'
+  run -128 git -C "${slots:?}/1" rev-parse --abbrev-ref '@{upstream}'
 }
 
 @test "a slot that is already a registered worktree is skipped" {
-  git -C "$primary" worktree add -q "$slots/1" -b someone-else origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b someone-else origin/main
   run_bin -0 --separate-stderr team-open proj feature feat next "Next"
   assert_equal "$(jq -r .worktree <<<"$output")" "$slots/2"
-  assert_equal "$(git -C "$slots/1" rev-parse --abbrev-ref HEAD)" "someone-else"
+  assert_equal "$(git -C "${slots:?}/1" rev-parse --abbrev-ref HEAD)" "someone-else"
 }
 
 @test "slots the registry spells otherwise than git lists them are the same slots (report F6)" {
@@ -250,7 +250,7 @@ advance_origin() {
   other=$(other_spelling "$HOME/slots")
   sed -i "s#\"slots/proj/#\"${other##*/}/proj/#g" "$TEAM_HOME/projects.toml"
   # git lists slot 1 as it was added, by the other spelling.
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
   run_bin -0 --separate-stderr team-open proj feature feat next "Next"
   assert_equal "$(jq -r .worktree <<<"$output")" "$other/proj/2"
   run_bin -75 --separate-stderr team-open proj feature feat late "Late"
@@ -258,7 +258,7 @@ advance_origin() {
     "  $other/proj/1: T3 (feat/T3-busy)" "  $other/proj/2: T1 (feat/T1-next)")"
 
   # A half-open task is finished in the slot holding its branch.
-  git -C "$primary" worktree remove "$slots/1"
+  git -C "${primary:?}" worktree remove "$slots/1"
   stub_reply curl '{"message":"Missing Access"}'
   run_bin -1 --separate-stderr team-open proj feature feat flaky "Flaky"
   stub_reply curl '{"id":"1563000000000000009"}'
@@ -267,35 +267,35 @@ advance_origin() {
 }
 
 @test "with every slot taken it exits 75 naming the holders, and gives the number back" {
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
-  git -C "$primary" worktree add -q --detach "$slots/2" origin/main
-  git -C "$primary" worktree add -q "$HOME/elsewhere" -b spare origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q --detach "$slots/2" origin/main
+  git -C "${primary:?}" worktree add -q "$HOME/elsewhere" -b spare origin/main
   run_bin -75 --separate-stderr team-open proj feature feat late "Late"
   assert_equal "$output" ""
   assert_equal "$stderr" "$(printf '%s\n' "team-open: every slot of proj is taken:" \
     "  $slots/1: T3 (feat/T3-busy)" "  $slots/2: no task (detached HEAD)")"
   [[ ! -e $TEAM_HOME/tasks/T1 ]]
-  assert_equal "$(git -C "$HOME/elsewhere" rev-parse --abbrev-ref HEAD)" "spare"
+  assert_equal "$(git -C "${HOME:?}/elsewhere" rev-parse --abbrev-ref HEAD)" "spare"
   assert_equal "$(stub_calls curl)" ""
   assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" ""
 }
 
 @test "the task's branch checked out outside the slots is refused" {
-  git -C "$primary" worktree add -q "$HOME/elsewhere" -b feat/T4-x origin/main
+  git -C "${primary:?}" worktree add -q "$HOME/elsewhere" -b feat/T4-x origin/main
   run_bin -1 team-open --task T4 proj feature feat x "X"
   assert_contains "$output" "feat/T4-x is checked out in $HOME/elsewhere, which is not one of proj's slots"
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" "2"
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "2"
 }
 
 @test "a task directory git does not ignore is refused and the slot removed again" {
-  git -C "$primary" rm -q .gitignore
-  git -C "$primary" commit -q -m "chore: stop ignoring scratch"
-  git -C "$primary" push -q origin main
+  git -C "${primary:?}" rm -q .gitignore
+  git -C "${primary:?}" commit -q -m "chore: stop ignoring scratch"
+  git -C "${primary:?}" push -q origin main
   run_bin -1 team-open proj feature feat leak "Leak"
   assert_contains "$output" "git does not ignore .scratch/task in proj"
   [[ ! -e $slots/1 ]]
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" "1"
-  run git -C "$primary" branch --list 'feat/T1-leak'
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "1"
+  run git -C "${primary:?}" branch --list 'feat/T1-leak'
   assert_equal "$output" ""
   [[ ! -e $TEAM_HOME/tasks/T1 ]]
   assert_equal "$(stub_calls curl)" ""
@@ -306,16 +306,16 @@ advance_origin() {
   run_bin -1 --separate-stderr team-open proj feature feat flaky "Flaky Discord"
   assert_contains "$stderr" "Discord did not return a thread id"
   assert_contains "$stderr" "T1 is half open in $slots/1; finish it with: team-open --task T1 proj feature feat flaky Flaky\\ Discord"
-  assert_equal "$(git -C "$slots/1" rev-parse --abbrev-ref HEAD)" "feat/T1-flaky"
+  assert_equal "$(git -C "${slots:?}/1" rev-parse --abbrev-ref HEAD)" "feat/T1-flaky"
   echo "# T1: edited before the retry" >"$TEAM_HOME/tasks/T1/plan.md"
   advance_origin "moved on" >/dev/null
   local start
-  start=$(git -C "$slots/1" rev-parse HEAD)
+  start=$(git -C "${slots:?}/1" rev-parse HEAD)
 
   stub_reply curl '{"id":"1563000000000000009"}'
   run_bin -0 --separate-stderr team-open --task T1 proj feature feat flaky "Flaky Discord"
   assert_equal "$(jq -r '"\(.worktree) \(.thread) \(.base_sha)"' <<<"$output")" "$slots/1 1563000000000000009 $start"
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" "2"
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "2"
   [[ ! -e $slots/2 ]]
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "# T1: edited before the retry"
   assert_equal "$(stub_calls curl | wc -l)" "2"
@@ -341,28 +341,28 @@ LEDGER
 @test "under each other open task, stderr lists the files its branch changes against the base" {
   # T2 pushed its branch, then made a commit it has not pushed; T3 has only a local branch;
   # T4 has no branch; T5's branch changes nothing yet. The base then moves on.
-  git -C "$primary" branch -q --no-track fix/T3-local origin/main
-  git -C "$primary" branch -q --no-track fix/T5-same origin/main
+  git -C "${primary:?}" branch -q --no-track fix/T3-local origin/main
+  git -C "${primary:?}" branch -q --no-track fix/T5-same origin/main
   local clone=$BATS_TEST_TMPDIR/work
   git clone -q "$BATS_TEST_TMPDIR/origin/proj.git" "$clone" 2>/dev/null
-  git -C "$clone" switch -q -c fix/T2-pushed
+  git -C "${clone:?}" switch -q -c fix/T2-pushed
   mkdir -p "$clone/bin" "$clone/docs"
   echo a >"$clone/bin/a" && echo b >"$clone/docs/b"
-  git -C "$clone" add bin/a docs/b && git -C "$clone" commit -q -m "fix: a and b"
-  git -C "$clone" push -q origin fix/T2-pushed
-  git -C "$clone" push -q origin origin/main:refs/heads/fix/T5-same
-  git -C "$primary" fetch -q origin "+refs/heads/fix/T2-pushed:refs/heads/fix/T2-pushed"
-  git -C "$primary" worktree add -q "$BATS_TEST_TMPDIR/t2" fix/T2-pushed
+  git -C "${clone:?}" add bin/a docs/b && git -C "${clone:?}" commit -q -m "fix: a and b"
+  git -C "${clone:?}" push -q origin fix/T2-pushed
+  git -C "${clone:?}" push -q origin origin/main:refs/heads/fix/T5-same
+  git -C "${primary:?}" fetch -q origin "+refs/heads/fix/T2-pushed:refs/heads/fix/T2-pushed"
+  git -C "${primary:?}" worktree add -q "$BATS_TEST_TMPDIR/t2" fix/T2-pushed
   echo c >"$BATS_TEST_TMPDIR/t2/unpushed"
-  git -C "$BATS_TEST_TMPDIR/t2" add unpushed && git -C "$BATS_TEST_TMPDIR/t2" commit -q -m "fix: unpushed"
-  git -C "$primary" worktree add -q "$BATS_TEST_TMPDIR/t3" fix/T3-local
+  git -C "${BATS_TEST_TMPDIR:?}/t2" add unpushed && git -C "${BATS_TEST_TMPDIR:?}/t2" commit -q -m "fix: unpushed"
+  git -C "${primary:?}" worktree add -q "$BATS_TEST_TMPDIR/t3" fix/T3-local
   echo d >"$BATS_TEST_TMPDIR/t3/local"
-  git -C "$BATS_TEST_TMPDIR/t3" add local && git -C "$BATS_TEST_TMPDIR/t3" commit -q -m "fix: local"
-  git -C "$clone" switch -q main
-  echo e >"$clone/base-only" && git -C "$clone" add base-only && git -C "$clone" commit -q -m "feat: base"
-  git -C "$clone" push -q origin main
+  git -C "${BATS_TEST_TMPDIR:?}/t3" add local && git -C "${BATS_TEST_TMPDIR:?}/t3" commit -q -m "fix: local"
+  git -C "${clone:?}" switch -q main
+  echo e >"$clone/base-only" && git -C "${clone:?}" add base-only && git -C "${clone:?}" commit -q -m "feat: base"
+  git -C "${clone:?}" push -q origin main
   local base
-  base=$(git -C "$clone" rev-parse HEAD)
+  base=$(git -C "${clone:?}" rev-parse HEAD)
   cat >"$TEAM_HOME/ledger.jsonl" <<'LEDGER'
 {"ts":"2026-10-22T02:00:00Z","task":"T2","event":"opened","project":"proj","path":"small","type":"fix","title":"Pushed","branch":"fix/T2-pushed","base":"main","base_sha":"abc1234","worktree":"/w/2"}
 {"ts":"2026-10-22T02:00:01Z","task":"T3","event":"opened","project":"proj","path":"small","type":"fix","title":"Local","branch":"fix/T3-local","base":"main","base_sha":"abc1234","worktree":"/w/3"}
@@ -380,10 +380,10 @@ LEDGER
 }
 
 @test "the other tasks' local branches are listed when origin cannot be read after the open" {
-  git -C "$primary" branch -q --no-track fix/T2-local origin/main
-  git -C "$primary" worktree add -q "$BATS_TEST_TMPDIR/t2" fix/T2-local
+  git -C "${primary:?}" branch -q --no-track fix/T2-local origin/main
+  git -C "${primary:?}" worktree add -q "$BATS_TEST_TMPDIR/t2" fix/T2-local
   echo a >"$BATS_TEST_TMPDIR/t2/a"
-  git -C "$BATS_TEST_TMPDIR/t2" add a && git -C "$BATS_TEST_TMPDIR/t2" commit -q -m "fix: a"
+  git -C "${BATS_TEST_TMPDIR:?}/t2" add a && git -C "${BATS_TEST_TMPDIR:?}/t2" commit -q -m "fix: a"
   cat >"$TEAM_HOME/ledger.jsonl" <<'LEDGER'
 {"ts":"2026-10-22T02:00:00Z","task":"T2","event":"opened","project":"proj","path":"small","type":"fix","title":"Local","branch":"fix/T2-local","base":"main","base_sha":"abc1234","worktree":"/w/2"}
 LEDGER
@@ -408,7 +408,7 @@ FIXTURE
 }
 
 @test "the task's branch existing with no worktree is refused" {
-  git -C "$primary" branch feat/T6-x origin/main
+  git -C "${primary:?}" branch feat/T6-x origin/main
   run_bin -1 team-open --task T6 proj feature feat x "X"
   assert_contains "$output" "branch feat/T6-x already exists in $primary but no slot holds it"
   [[ ! -e $slots/1 ]]
@@ -435,8 +435,8 @@ holding() {
 }
 
 @test "a full pool is refused with its own message" {
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
-  git -C "$primary" worktree add -q "$slots/2" -b feat/T4-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/2" -b feat/T4-busy origin/main
   run_bin -75 --separate-stderr team-open proj feature feat late "Late"
   assert_equal "$stderr" "$(printf '%s\n' "team-open: every slot of proj is taken:" \
     "  $slots/1: T3 (feat/T3-busy)" "  $slots/2: T4 (feat/T4-busy)")"
@@ -492,7 +492,7 @@ EOF
 }
 
 @test "two runs at once for a git pool with one free slot: one takes it, the other exits 75 on a full pool" {
-  git -C "$primary" worktree add -q "$slots/2" -b feat/T9-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/2" -b feat/T9-busy origin/main
   open_two_at_once
   local race=$BATS_TEST_TMPDIR/race
   assert_equal "$(cat "$race/1.rc" "$race/2.rc" | sort | paste -sd ' ')" "0 75"
@@ -525,4 +525,158 @@ EOF
   assert_equal "${lines[0]}" "$(sed -n '2s/^# //p' "$REPO_ROOT/bin/team-open")"
   AGENT_TEAM_ROLE=coordinator run_bin -0 --separate-stderr team-open proj feature feat tooling "The team's own tooling"
   assert_equal "$(jq -r .task <<<"$output")" T1
+}
+
+# Write tasks/queued/<name>, a ready item of proj with the front matter lines given after its
+# summary, then a title line when <title> is not empty, and make the team home a git checkout
+# that ignores the ledger's lock, so team-queue take commits: queued_item <name> <title> [<key>: <value>]...
+queued_item() {
+  local name=$1 title=$2
+  shift 2
+  mkdir -p "$TEAM_HOME/tasks/queued"
+  { echo ---; echo "summary: the summary of $name"; printf '%s\n' "$@"; echo ---; [[ -z $title ]] || echo "# $title"; } \
+    >"$TEAM_HOME/tasks/queued/$name"
+  if [[ ! -d $TEAM_HOME/.git ]]; then
+    printf 'ledger.jsonl.lock\n' >"$TEAM_HOME/.gitignore"
+    make_team_home >/dev/null
+  fi
+}
+
+# Nothing taken since the test began: no task number, slot, thread or event.
+nothing_taken() {
+  [[ -z $(find "$TEAM_HOME/tasks" -mindepth 1 -maxdepth 1 -name 'T*') ]]
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "1"
+  assert_equal "$(stub_calls curl | wc -l)" "0"
+  assert_equal "$(wc -c <"$TEAM_HOME/ledger.jsonl")" "0"
+}
+
+@test "--queued <file> opens the item's task with the arguments it derives, says so in the plan and links the item" {
+  queued_item fix-the-sign-in-limit.md "Fix the sign-in limit" "project: proj" "priority: 1" "size: S"
+  run_bin -0 --separate-stderr team-open --queued fix-the-sign-in-limit.md
+  assert_equal "$(jq -r '[.task, .project, .path, .branch, .title] | join(" ")' <<<"$output")" \
+    "T1 proj small fix/T1-fix-the-sign-in-limit Fix the sign-in limit"
+  assert_equal "$(events opened | jq -r '[.path, .type, .title] | join(" ")')" "small fix Fix the sign-in limit"
+  local plan=$TEAM_HOME/tasks/T1/plan.md
+  assert_equal "$(sed -n '/^## Why$/,/^## Scope$/p' "$plan")" "## Why
+
+$(sed -n '/^## Why$/{n;n;p}' "$REPO_ROOT/templates/plan.md")
+
+From the queue: \`tasks/queued/fix-the-sign-in-limit.md\`: the summary of fix-the-sign-in-limit.md
+
+## Scope"
+  assert_equal "$(grep '^opened:' "$TEAM_HOME/tasks/queued/fix-the-sign-in-limit.md")" "opened: T1"
+  assert_equal "$(git -C "${TEAM_HOME:?}" log -1 --format=%s)" "chore: queued take T1"
+  assert_contains "$stderr" "team-open: took fix-the-sign-in-limit.md for T1"
+  run_bin -0 team-log --check
+}
+
+@test "--queued <file> takes path feature and type feat for sizes M and L, a long name's slug cut at its last dash, and the summary for a missing title" {
+  # 41 characters, the 41st no "-": cut to 40 at its last "-" within them, so "-setup" goes.
+  queued_item queue-priority-and-diagnosis-of-the-setup.md "" "project: proj" "priority: 2" "size: M"
+  run_bin -0 --separate-stderr team-open --queued queue-priority-and-diagnosis-of-the-setup.md
+  assert_equal "$(jq -r '[.path, .branch, .title] | join(" ")' <<<"$output")" \
+    "feature feat/T1-queue-priority-and-diagnosis-of-the the summary of queue-priority-and-diagnosis-of-the-setup.md"
+  # A "-" as the 41st character cuts at 40, keeping the whole word before it.
+  queued_item queue-priority-and-diagnosis-of-the-abcd-ef.md "Large" "project: proj" "priority: 2" "size: L"
+  stub_reply curl '{"id":"1563000000000000002"}'
+  run_bin -0 --separate-stderr team-open --queued queue-priority-and-diagnosis-of-the-abcd-ef.md
+  assert_equal "$(jq -r '[.path, .branch, .title] | join(" ")' <<<"$output")" \
+    "feature feat/T2-queue-priority-and-diagnosis-of-the-abcd Large"
+}
+
+@test "--queued with every argument takes them as given, and --task and --story combine with both forms" {
+  backlog_story proj E40-history/F01-the-markets/S02-every-write.md E40/F01/S02
+  queued_item given.md "Given" "project: proj" "priority: 2" "size: S"
+  run_bin -0 --separate-stderr team-open --task T13 --story E40/F01/S02 --queued given.md proj bug fix own-slug "Its own title"
+  assert_equal "$(jq -r '[.task, .path, .branch, .title, .story] | join(" ")' <<<"$output")" \
+    "T13 bug fix/T13-own-slug Its own title E40/F01/S02"
+  assert_equal "$(grep '^opened:' "$TEAM_HOME/tasks/queued/given.md")" "opened: T13"
+  queued_item short.md "Short" "project: proj" "priority: 2" "size: M"
+  stub_reply curl '{"id":"1563000000000000002"}'
+  run_bin -0 --separate-stderr team-open --queued short.md --task T14 --story E40/F01/S02
+  assert_equal "$(jq -r '[.task, .path, .branch, .story] | join(" ")' <<<"$output")" "T14 feature feat/T14-short E40/F01/S02"
+  assert_equal "$(grep '^opened:' "$TEAM_HOME/tasks/queued/short.md")" "opened: T14"
+}
+
+@test "--queued refuses an item that is not ready, and a project that is not the item's, before anything is taken" {
+  printf '%s\n' '{"ts":"2026-01-01T00:00:00Z","task":"T4","event":"opened","project":"proj","path":"feature","type":"feat","title":"X","branch":"feat/T4-x","base":"main","base_sha":"0000000000000000000000000000000000000000","worktree":"/w/T4"}' \
+    >"$BATS_TEST_TMPDIR/t4.jsonl"
+  queued_item ready.md "Ready" "project: proj" "priority: 2" "size: S"
+  queued_item unranked.md "Unranked" "project: proj" "priority: 5" "size: S"
+  queued_item waiting.md "Waiting" "project: proj" "priority: 2" "size: S" "after: T4 merged, 2999-01-01" "waits: Daniel's word"
+  queued_item opened.md "Opened" "project: proj" "priority: 2" "size: S" "opened: T4"
+  queued_item bundle.md "Bundle" "project: proj" "priority: 2" "size: M" "takes: taken.md"
+  queued_item taken.md "Taken" "project: proj" "priority: 2" "size: S"
+  # T4 is only in a copy of the ledger until the refusals that read it, so nothing_taken holds.
+  run_bin -1 --separate-stderr team-open --queued gone.md
+  assert_equal "$stderr" "team-open: gone.md is not queued (team-queue list)"
+  run_bin -1 --separate-stderr team-open --queued index.md
+  assert_equal "$stderr" "team-open: index.md is not queued (team-queue list)"
+  run_bin -1 --separate-stderr team-open --queued unranked.md
+  assert_equal "$stderr" "team-open: unranked.md is unranked: priority \"5\" is not 1, 2, 3 or 4; fix it first (team-queue index --check names it)"
+  run_bin -1 --separate-stderr team-open --queued taken.md
+  assert_equal "$stderr" "team-open: taken.md is taken by bundle.md: open its taker instead"
+  run_bin -1 --separate-stderr team-open --queued ready.md other feature feat ready "Ready"
+  assert_equal "$stderr" "team-open: ready.md is proj's, not other's"
+  nothing_taken
+  cp "$BATS_TEST_TMPDIR/t4.jsonl" "$TEAM_HOME/ledger.jsonl"
+  run_bin -1 --separate-stderr team-open --queued waiting.md
+  assert_equal "$stderr" "team-open: waiting.md waits for Daniel's word, T4 merged, 2999-01-01; open it without --queued and link it with team-queue take when that is meant"
+  run_bin -1 --separate-stderr team-open --queued opened.md
+  assert_equal "$stderr" "team-open: opened.md is opened by T4, which builds it"
+  [[ -z $(find "$TEAM_HOME/tasks" -mindepth 1 -maxdepth 1 -name 'T*') ]]
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "1"
+  assert_equal "$(stub_calls curl | wc -l)" "0"
+  cmp "$BATS_TEST_TMPDIR/t4.jsonl" "$TEAM_HOME/ledger.jsonl"
+  assert_equal "$(grep -c '^opened:' "$TEAM_HOME/tasks/queued/ready.md")" "0"
+}
+
+@test "--queued refuses a derived slug that is no valid one, naming the form with every argument, before anything is taken" {
+  queued_item Big_Item.md "Big" "project: proj" "priority: 2" "size: S"
+  run_bin -1 --separate-stderr team-open --queued Big_Item.md
+  assert_equal "$stderr" "team-open: the slug \"Big_Item\" from Big_Item.md is not lower-case kebab case of at most 40 characters; give every argument: team-open --queued Big_Item.md <project> <path> <type> <slug> <title...>"
+  nothing_taken
+  run_bin -0 team-open --queued Big_Item.md proj small fix big-item "Big"
+  assert_equal "$(grep '^opened:' "$TEAM_HOME/tasks/queued/Big_Item.md")" "opened: T1"
+}
+
+@test "a take that fails after the open is one line on stderr naming the command, and the open succeeds" {
+  queued_item hook-refused.md "Hook refused" "project: proj" "priority: 2" "size: S"
+  printf '#!/bin/sh\necho "refused by the test hook" >&2\nexit 1\n' >"$TEAM_HOME/.git/hooks/pre-commit"
+  chmod +x "$TEAM_HOME/.git/hooks/pre-commit"
+  run_bin -0 --separate-stderr team-open --queued hook-refused.md
+  assert_equal "$(jq -r .task <<<"$output")" "T1"
+  assert_equal "$(grep -c 'team-queue take' <<<"$stderr")" "1"
+  assert_contains "$stderr" "team-open: team-queue take T1 hook-refused.md failed (team-queue: team home: cannot commit the records: refused by the test hook); run it to link the item: team-queue take T1 hook-refused.md"
+  assert_contains "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "From the queue: \`tasks/queued/hook-refused.md\`: the summary of hook-refused.md"
+}
+
+@test "a --queued open that fails after the slot is taken names the command that finishes it, --queued kept, and that command links the item" {
+  queued_item half-open.md "Half open" "project: proj" "priority: 2" "size: S"
+  stub_reply curl '{"message":"Missing Access"}'
+  run_bin -1 --separate-stderr team-open --queued half-open.md
+  assert_contains "$stderr" "T1 is half open in $slots/1; finish it with: team-open --task T1 --queued half-open.md proj small fix half-open Half\\ open"
+  assert_equal "$(grep -c '^opened:' "$TEAM_HOME/tasks/queued/half-open.md" || true)" 0
+
+  local finish
+  finish=$(sed -n 's/^team-open: T1 is half open in .*; finish it with: //p' <<<"$stderr")
+  stub_reply curl '{"id":"1563000000000000009"}'
+  eval "run_bin -0 --separate-stderr $finish"
+  assert_equal "$(jq -r '[.task, .worktree] | join(" ")' <<<"$output")" "T1 $slots/1"
+  assert_equal "$(grep '^opened:' "$TEAM_HOME/tasks/queued/half-open.md")" "opened: T1"
+  assert_contains "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "From the queue: \`tasks/queued/half-open.md\`: the summary of half-open.md"
+  run_bin -0 team-queue list --json
+  assert_equal "$(jq -c '[.ready[].file]' <<<"$output")" "[]"
+}
+
+@test "--queued goes only with a new task, and takes the file alone or every argument" {
+  run_bin -2 team-open --queued
+  run_bin -2 team-open --queued a.md proj feature feat slug
+  assert_contains "$output" "usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] --queued <file> [<project> <path> <type> <slug> <title...>]"
+  run_bin -2 team-open --queued a.md --queued b.md
+  run_bin -2 team-open --task T1 --queued a.md --add proj feat more
+  assert_contains "$output" "--queued goes only with a new task, not with --add, --resume or --ticket"
+  run_bin -2 team-open --task T1 --queued a.md --resume proj
+  run_bin -2 team-open --task T1 --queued a.md --ticket 01
+  assert_equal "$(wc -c <"$TEAM_HOME/ledger.jsonl")" "0"
 }

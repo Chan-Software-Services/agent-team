@@ -124,7 +124,7 @@ echo "  - Token: gho_fakefakefakefake"
 EOF2
   mkdir -p "$CONVENTIONER"
   run_bin -1 team-bootstrap
-  assert_equal "$(tail -n1 <<<"$output")" "projects: Daniel: move it aside, then git clone https://github.com/chanjdaniel/Conventioner.git ~/projects/Conventioner (~/projects/Conventioner is not a git checkout)"
+  assert_equal "$(tail -n1 <<<"$output")" "projects: Daniel: move it aside, then git clone https://github.com/Chan-Software-Services/Conventioner.git ~/projects/Conventioner (~/projects/Conventioner is not a git checkout)"
   [[ ! -e $STUB_CALLS/git-clone.log ]]
 }
 
@@ -140,10 +140,24 @@ $CONVENTIONER
 $SITE"
 }
 
+@test "a new Docker veth getting an IPv6 link-local address is Daniel's sysctl step, right after Docker's, and leaves the machine set up" {
+  tools_at arch
+  veth_addr_gen_mode 0
+  run_bin -0 team-bootstrap --stage check
+  assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: docker veth: Daniel runs echo 'net.ipv6.conf.default.addr_gen_mode = 1' | sudo tee /etc/sysctl.d/90-docker-no-ll6.conf, then sudo sysctl --system (net.ipv6.conf.default.addr_gen_mode is 0, so each new Docker veth gets an IPv6 link-local address, and Chromium beside a container that starts or stops can fail with net::ERR_NETWORK_CHANGED)"
+  assert_equal "$(stage_lines check | tail -n1)" "summary: set up, and this machine holds the lease"
+  # After the daemon's own step, which the sysctl is no use without.
+  printf '%s\n' 'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2' \
+    'exit 1' >"$TOOL_ANSWERS/docker/info_--format_{{.ServerVersion}}.sh"
+  run_bin -1 team-bootstrap --stage check
+  assert_equal "$(stage_lines check | grep '^Daniel' | cut -d: -f1-2)" "Daniel 1: docker
+Daniel 2: docker veth"
+}
+
 @test "the dev guard and the records guard, off, are Daniel's steps, in that order" {
   tools_at arch
-  git -C "$CODE_CHECKOUT" config --unset core.hooksPath
-  git -C "$TEAM_HOME" config --unset core.hooksPath
+  git -C "${CODE_CHECKOUT:?}" config --unset core.hooksPath
+  git -C "${TEAM_HOME:?}" config --unset core.hooksPath
   run_bin -1 team-bootstrap --stage check
   assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: git hooks: Daniel runs git -C $CODE_CHECKOUT config core.hooksPath bin/hooks/git (core.hooksPath is unset, so git runs none of bin/hooks/git)
 Daniel 2: records hooks: Daniel runs git -C $TEAM_HOME config core.hooksPath $CODE_CHECKOUT/bin/hooks/records-git (the team home's core.hooksPath is unset, so git runs no data check on its commits)"
@@ -229,7 +243,7 @@ $SITE"
 @test "check lists the team home's re-clone as Daniel's first step while its history line fails, ahead of the logins" {
   tools_at arch
   rewrite_origin_dev
-  git -C "$TEAM_HOME" fetch -q origin
+  git -C "${TEAM_HOME:?}" fetch -q origin
   stub_script gh <<'EOF2'
 exit 1
 EOF2
@@ -284,7 +298,7 @@ machine: done: the team home shares history with origin's dev"
   assert_contains "$output" "machine: named the team home ~/agent-team-records (~/.config/agent-team/home)"
   assert_contains "$output" "check: doctor: "
   # The stages after it read the doctor on that team home: its projects are cloned.
-  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/chanjdaniel/Conventioner.git $CONVENTIONER
+  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/Chan-Software-Services/Conventioner.git $CONVENTIONER
 clone -q https://github.com/owner/site.git $SITE"
   assert_contains "$output" "check: doctor: "
   [[ $output != *" team home: "* && $output != *" records: "* && $output != *"FAIL checkout "* ]]
@@ -296,7 +310,7 @@ clone -q https://github.com/owner/site.git $SITE"
   echo laptop >"$HOME/.config/agent-team/machine"
   unset TEAM_HOME
   run -1 "$CODE_CHECKOUT/bin/team-bootstrap"
-  assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
+  assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
   [[ ! -e $STUB_CALLS/git-clone.log ]]
   # Once it is cloned, only naming it is left; the check stage says the same.
   mkdir "$HOME/agent-team-records"
@@ -304,6 +318,6 @@ clone -q https://github.com/owner/site.git $SITE"
   assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: name the team home's checkout for this machine: team-bootstrap --home agent-team-records"
   rmdir "$HOME/agent-team-records"
   run -1 "$CODE_CHECKOUT/bin/team-bootstrap" --stage check
-  assert_contains "$output" "check: Daniel 1: team home: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records (~/.config/agent-team/home is missing)"
+  assert_contains "$output" "check: Daniel 1: team home: clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/Chan-Software-Services/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records (~/.config/agent-team/home is missing)"
   [[ $output != *"these failed: "*"team home"* ]]
 }

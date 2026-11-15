@@ -52,9 +52,13 @@
 #              shell's rc file (~/.zshrc or ~/.bashrc) when PATH lacks them.
 #   projects   Each registered project with a failing checkout, origin, task dir or gate line:
 #              cloned from https://github.com/<repo>.git to its registry path, that exact origin
-#              (treehouse names its pool from it), the task directory and the folder of a git
-#              pool's slots inside the checkout in .git/info/exclude unless git ignores them, and
-#              `no-mistakes init` for a no-mistakes project without a gate.
+#              (treehouse names its pool from it, so a treehouse project whose origin names a
+#              moved repository of bin/lib/repo-moves.json stops the run as Daniel's pool move,
+#              its origin left as it is, and an origin already on the new owner of a repository
+#              the registry still names by its old one is left for the registry edit), the task
+#              directory and the folder of a git pool's slots inside the checkout in
+#              .git/info/exclude unless git ignores them, and `no-mistakes init` for a no-mistakes
+#              project without a gate.
 #   config     The marketplaces and plugins of machine/claude/plugins.txt (claude plugin), then
 #              team-config apply when none of what it would replace differs here (a file or skill
 #              changed on this machine is Daniel's call, apply or capture), then the Discord plugin
@@ -64,8 +68,8 @@
 #   check      The doctor again, then Daniel's remaining steps in order, one line each with its
 #              command (the machine's name, the team home's setting once ~/agent-team-records is
 #              there, the team home's re-clone while its history line fails, logins, Docker
-#              access, the 1Password app and team-secrets restore (each failing secret with its
-#              reason, and the gate's config.yaml while it is missing),
+#              access, the Docker veth sysctl, the 1Password app and team-secrets restore (each
+#              failing secret with its reason, and the gate's config.yaml while it is missing),
 #              #coordinator's group in the Discord plugin's access.json letting in only Daniel,
 #              the gate's config.yaml running the gate on its opencode wrapper, trust in the team
 #              home, where the coordinator starts, and in each project root, Chrome, then the
@@ -278,7 +282,7 @@ clone_home() {
   if [[ -d $HOME/agent-team-records ]]; then
     echo "name the team home's checkout for this machine: team-bootstrap --home agent-team-records"
   else
-    echo "clone the team home, then name it for this machine: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
+    echo "clone the team home, then name it for this machine: git clone --single-branch --branch dev $(team_home_url) ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git && team-bootstrap --home agent-team-records"
   fi
 }
 
@@ -507,7 +511,7 @@ name_gate_wrapper() {
 
 # Set up one registered project whose checkout, origin, task dir or gate line failed.
 setup_project() {
-  local project=$1 facts path repo task_dir url check verdict reason fix origin exclude out
+  local project=$1 facts path repo task_dir url check verdict reason fix origin moved on exclude out
   facts=$(team_project "$project")
   path=$(jq -r .path <<<"$facts") repo=$(jq -r .repo <<<"$facts") task_dir=$(jq -r .task_dir <<<"$facts")
   url=https://github.com/$repo.git
@@ -528,7 +532,17 @@ setup_project() {
   origin=$(git -C "$path" remote get-url origin 2>/dev/null) || origin=''
   if [[ -z $origin ]]; then
     act "git -C $(printf %q "$path") remote add origin $url"
+  elif moved=$(moved_origin "$url") && on=$(origin_repo "$origin") && [[ -n $moved && ${on,,} == "${moved,,}" && -z $(moved_origin "$origin") ]]; then
+    # The origin already followed the move, and the registry has yet to: a set-url would put it
+    # back on the old owner.
+    say "left the origin $origin as it is: it is on $moved, where the registry's $repo moved; set $project's repo = \"$moved\" in projects.toml, as team-project --check names it"
   elif [[ $origin != "$url" ]]; then
+    moved=$(moved_origin "$origin")
+    # treehouse names the pool from the origin URL, so the origin moves with the pool, by hand.
+    if [[ -n $moved && $(jq -r .pool.provider <<<"$facts") == treehouse ]]; then
+      daniel "$(pool_move_fix "$project") (origin $origin, a repository that moved to $moved)"
+      return
+    fi
     act "git -C $(printf %q "$path") remote set-url origin $url"
   fi
   exclude=$(git -C "$path" rev-parse --path-format=absolute --git-path info/exclude)
@@ -654,6 +668,7 @@ stage_check() {
   step '^claude login$' FAIL
   step '^github login$' FAIL ", then gh auth setup-git"
   step '^docker$' FAIL
+  step '^docker veth$' WARN
   step '^1password$' WARN
   secrets=$(lines '^secret ' | awk -F'\t' '{ sub(/^secret /, "", $1); print $1 ": " $3 }' | paste -sd ';' - | sed 's/;/; /g')
   mapfile -t -O "${#covered[@]}" covered < <(lines '^secret ' | cut -f1)

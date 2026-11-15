@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # tests/compaction-drill, dry-run against a stub claude: the sandbox it builds from its fixture,
-# the three print-mode turns it asks for and the purge after them, its checks' verdicts on canned
-# answers, and the compaction line it records in the team home's drills.jsonl through
-# bin/team-drill. The real drill starts Claude sessions, which only the coordinator runs.
+# whose digest shows the fixture's tasks, sessions, items and queue (its one ready item, through
+# team-queue list), the three print-mode turns it asks for and the purge after them, its checks'
+# verdicts on canned answers, and the compaction line it records in the team home's drills.jsonl
+# through bin/team-drill. The real drill starts Claude sessions, which only the coordinator runs.
 load helpers/common
 
 setup() {
@@ -94,8 +95,8 @@ drill_lines() {
 
 # The one compaction line a run should have recorded, but at: drill_line <verdict> <detail>
 drill_line() {
-  jq -cn --arg commit "$(git -C "$REPO_ROOT" rev-parse HEAD)" --argjson dirty \
-    "$([[ -z $(git -C "$REPO_ROOT" status --porcelain --untracked-files=no) ]] && echo false || echo true)" \
+  jq -cn --arg commit "$(git -C "${REPO_ROOT:?}" rev-parse HEAD)" --argjson dirty \
+    "$([[ -z $(git -C "${REPO_ROOT:?}" status --porcelain --untracked-files=no) ]] && echo false || echo true)" \
     --arg verdict "$1" --arg detail "$2" \
     '{drill: "compaction", machine: "home-pc", commit: $commit, dirty: $dirty, claude: "2.1.321",
       verdict: $verdict, detail: $detail}'
@@ -138,8 +139,8 @@ turn 2 (/compact): 20 2000 40000 200 0.50
 turn 3 (the question): 30 3000 60000 300 0.75
 total: 60 6000 120000 600 1.50
 == 10 of 10 checks passed
-team-drill: recorded compaction pass on home-pc at $(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)"
-  assert_equal "${lines[-1]}" "team-drill: recorded compaction pass on home-pc at $(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)"
+team-drill: recorded compaction pass on home-pc at $(git -C "${REPO_ROOT:?}" rev-parse --short=7 HEAD)"
+  assert_equal "${lines[-1]}" "team-drill: recorded compaction pass on home-pc at $(git -C "${REPO_ROOT:?}" rev-parse --short=7 HEAD)"
   # One line in the team home the drill was run with, never the sandbox's.
   assert_equal "$(drill_lines)" "$(drill_line pass "10 of 10 checks passed, 1.50 USD")"
 }
@@ -211,7 +212,7 @@ Pending asks (1):
 Current items (2):
   - owe - the weekly status report Daniel asked for, mine to send | https://discord.com/channels/1100000000000000000/1200000000000000000/1300000000000000001
   - next T91 open the licence file task once Daniel answers q1, mine | ledger T91 asked q1
-Queued work: 1 file, listed in tasks/queued/index.md
+Queue: 1 ready, 0 waiting, 0 opened; no room: no reading of the machine's load, so no budget; next: lint-cleanup.md (drill, priority 2, M): the drill project's lint cleanup, approved by Daniel
 "
   # Turn 3's digest has the promise turn 1 wrote.
   assert_contains "$(cat "$STUB_FIXTURES/turn-3.digest")" "Current items (3):"
