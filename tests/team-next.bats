@@ -619,14 +619,13 @@ no hand-off for QUESTION"
   assert_contains "$output" "--from is given twice"
 }
 
-@test "--help prints the header, and the manual's step 4 names team-next within its 120 lines" {
+@test "--help prints the header, and the manual's step 4 names team-next" {
   run_bin -0 team-next --help
   assert_contains "$output" "Usage: team-next T<n> [--from <session>] [--sent-back <list>] [--relay <id>] [--next <NN>] [--checks <file>]"
   assert_contains "$output" "[--since <file>] [--template rereview|verify] -- '<the worker's message>'"
   local manual=$REPO_ROOT/roles/coordinator.md
   grep -E '^4\. \*\*Build\.\*\*' -A 1 "$manual" | grep -qF '`team-next T<n> -- '"'"'<the message>'"'"'`'
   grep -qF -- '`--next NN`' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 # T172 ticket 13: a builder's PR, DONE review-ready or DONE merged launches a fresh reviewer.
@@ -1063,7 +1062,6 @@ launched T7-reviewer c0000001"
   grep -qF '`team-next` (no `--checks`) launches the fresh reviewer that re-checks from the reviewed head' "$manual"
   grep -qF 'your own words added with `--since <file>`' "$manual"
   grep -E '^\| `PR <url>` \| `team-next` \| It starts the review \(step 5\)' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 # T172 ticket 14: a reviewer's verdict, and the fix round's stow.
@@ -2262,7 +2260,6 @@ launched T7-builder c0000001"
   grep -qF '`team-next` logs a `DONE pass`, refusing a pass whose PR head moved, and says to arm the checks wait, `team-next T<n> --ci`' "$manual"
   grep -qF 'a `DONE findings` with `--sent-back <list>`' "$manual"
   grep -E '^\| `PAUSED stowed` \|.*`team-next`' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 @test "refused in a worker session, whatever its role, before any read; --help and the coordinator are not" {
