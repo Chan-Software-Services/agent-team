@@ -133,6 +133,7 @@ lock_has_its_shape() {
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
+    echo 'assistant channel'
     echo gate-agent
     echo records
     echo drills
@@ -164,6 +165,7 @@ lock_has_its_shape() {
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
+    echo 'assistant channel'
     echo gate-agent
     echo records
     echo drills

@@ -15,6 +15,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `records-git/`: git's hooks for the team home.
   - `bin/lib/`: the shared library.
     - `capacity.jq`: `team-capacity`'s settings of `capacity.json`, the worktrees held, a reading of the machine's load and the team's use per task, the cost samples and estimates, the reservations and the admission rule, the stow and resume plans, and their texts.
+    - `channel-access.sh`: the bot's permissions in one Discord channel, worked out as Discord does from its roles and the channel's overwrites, which the doctor's interview and assistant channel lines read.
     - `chrome.sh`: the one lookup of a machine's Chrome, its executable and its app, which `team-doctor`'s `chrome` line and `team-tickets --graph` both take.
     - `code`: the paths every tracked path matches.
     - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
@@ -37,7 +38,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `opencode-gate`: the gate's opencode wrapper, which `team-bootstrap` installs in `~/.no-mistakes/bin` and Daniel's no-mistakes config names on an opencode gate.
     - `outbound.py`: whether a Bash command's `curl` or `wget` sends a request body or a file to a literal host outside the team's own local ones, directly or through a proxy, decided on each command of `command_text.py`'s walk, for `command_rules.py`'s upload row.
     - `prices.json`: each model's list prices per million tokens with the date read and the source, the weights `team-tokens` gives each reply.
-    - `probe.json`: the refusal probe's data, each attempt `team-load-check --probe` has a worker role make and the layer that should refuse it, every deny rule of the worker roles' settings sorted into a family, and their PreToolUse hooks, each with an attempt or the reason it has none.
+    - `probe.json`: the refusal probe's data, each attempt `team-load-check --probe` has a worker role or the assistant make and the layer that should refuse it, every deny rule of their settings sorted into a family, and their PreToolUse hooks, each with an attempt or the reason it has none.
     - `queue.jq`: the queue module, the one place that says an item's state, when its `after:` is met, how items rank, the room for one more task, the problems `team-queue index --check` names, the index's and the list's text, the sweep's findings and what `set`, `take` and `tidy` write.
     - `reading.sh`: one reading of the machine's load (its memory, its processes by directory and descent, the team's stacks), which `team-capacity sample` takes.
     - `records`: the team home's paths, which no tracked path matches.

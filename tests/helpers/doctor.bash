@@ -180,10 +180,12 @@ EOF
     chmod 600 "$HOME/$target"
   done < <(jq -r '.secrets[] | select(.enabled != false) | .target' "$TEAM_HOME/machine/secrets.json")
   access_json "[\"$DANIEL_ID\"]" "[\"$DANIEL_ID\"]"
-  # The bot token is the one line the Discord API reads; the interview channel lets the bot in.
+  # The bot token is the one line the Discord API reads; the interview channel and #assistant let
+  # the bot in.
   echo "DISCORD_BOT_TOKEN=$FAKE_DISCORD_TOKEN" >"$HOME/.claude/channels/discord/.env"
-  export TEAM_INTERVIEW_CHANNEL=$INTERVIEW_ID
-  interview_server "$(interview_bits 10 15 16 35 38)" '[]'
+  export TEAM_INTERVIEW_CHANNEL=$INTERVIEW_ID TEAM_ASSISTANT_CHANNEL=$ASSISTANT_ID
+  interview_server "$(interview_bits 6 10 11 15 16 35 38)" '[]'
+  assistant_channel '[]'
   export TEAM_1PASSWORD_APP=$BATS_TEST_TMPDIR/1Password
   touch "$TEAM_1PASSWORD_APP"
   # The Docker daemon answers, and a browser is installed.
@@ -449,9 +451,11 @@ access_json() {
 }
 
 # The interview channel's fixture ids: its own, its server's (also @everyone's role), the bot's
-# and the bot's role.
+# and the bot's role; and #assistant's, in the same server.
 # shellcheck disable=SC2034 # read by the tests
 INTERVIEW_ID=700000000000000040 GUILD_ID=700000000000000041 BOT_ID=700000000000000042 BOT_ROLE=700000000000000043
+# shellcheck disable=SC2034 # read by the tests
+ASSISTANT_ID=700000000000000044
 
 # The permission number with each bit <n> set: interview_bits <n>...
 interview_bits() {
@@ -472,6 +476,15 @@ interview_server() {
   jq -n --arg role "$BOT_ROLE" '{roles: [$role]}' >"$api/guilds/$GUILD_ID/members/$BOT_ID.json"
   jq -n --arg guild "$GUILD_ID" --arg role "$BOT_ROLE" --arg perms "$1" \
     '[{id: $guild, name: "@everyone", permissions: "0"}, {id: $role, name: "team-bot", permissions: $perms}]' >"$api/guilds/$GUILD_ID/roles.json"
+}
+
+# #assistant in interview_server's server, with the channel overwrites <overwrites> (a JSON
+# array), the bot's role keeping the permissions interview_server gave it: assistant_channel
+# <overwrites>
+assistant_channel() {
+  jq -n --arg id "$ASSISTANT_ID" --arg guild "$GUILD_ID" --argjson overwrites "$1" \
+    '{id: $id, type: 0, guild_id: $guild, name: "assistant", permission_overwrites: $overwrites}' \
+    >"$STUB_FIXTURES/discord/channels/$ASSISTANT_ID.json"
 }
 
 # The checks of the output, one name per line.

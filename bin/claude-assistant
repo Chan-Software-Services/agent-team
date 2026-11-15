@@ -38,23 +38,62 @@
 # it too.
 #
 # Usage: claude-assistant [--prompt <text>]   (always in the team home)
-#   --prompt  the session's first prompt, in place of "You are the assistant. Daniel talks to you
-#             in #assistant on Discord. Wait for their messages."
+#        claude-assistant --load-check <worktree> [--prompt <text>]
+#   --prompt      the session's first prompt, in place of "You are the assistant. Daniel talks to
+#                 you in #assistant on Discord. Wait for their messages."
+#   --load-check  team-load-check's form, for its --probe and --context of the assistant: it
+#                 launches T0-assistant in <worktree> with the assistant's settings and role prompt
+#                 but the Discord plugin off (its server denied with the others) and no --channels,
+#                 and prints the session's id alone, as team-worker does. Its settings and MCP
+#                 config are ~/.local/state/agent-team/assistant-load-check.settings.json and
+#                 .mcp.json, so the live assistant's stay as they are. It is no assistant, so it
+#                 takes no launch lock and none of the refusals above but a malformed command line
+#                 (exit 2) and a <worktree> that is no directory, and writes no Discord state.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/launch.sh
 source "$TEAM_LIB/launch.sh"
 
-usage="usage: claude-assistant [--prompt <text>]"
+usage="usage: claude-assistant [--prompt <text>] | claude-assistant --load-check <worktree> [--prompt <text>]"
 prompt="You are the assistant. Daniel talks to you in #assistant on Discord. Wait for their messages."
-if [[ ${1:-} == --prompt ]]; then
+load_check='' given=''
+while (($#)); do
   [[ $# -ge 2 && -n $2 ]] || usage_error "$usage"
-  prompt=$2
+  case $1 in
+    --prompt) [[ $given != *p* ]] || usage_error "$usage"; prompt=$2 given+=p ;;
+    --load-check) [[ $given != *l* ]] || usage_error "$usage"; load_check=$2 given+=l ;;
+    *) usage_error "$usage" ;;
+  esac
   shift 2
-fi
-(($# == 0)) || usage_error "$usage"
+done
 # The role, the settings and the hooks are code: they come from this checkout, beside bin/.
 code=$(dirname "$(dirname "$TEAM_LIB")")
+state=$HOME/.claude/channels/discord-assistant
+
+# The load check's assistant: the same settings and role prompt, the Discord plugin off and no
+# --channels, so it hears and posts nothing; named T0-assistant, so it is no assistant to the
+# singleton check, the fence or the heartbeat.
+if [[ -n $load_check ]]; then
+  [[ -d $load_check ]] || die "no worktree at $load_check for the load check's assistant"
+  cd "$load_check"
+  mcp=$LAUNCH_STATE/assistant-load-check.mcp.json
+  settings=$LAUNCH_STATE/assistant-load-check.settings.json
+  mkdir -p "$LAUNCH_STATE"
+  template=$(mktemp "$LAUNCH_STATE/assistant-load-check.template.XXXXXX")
+  trap 'rm -f -- "$template"' EXIT
+  jq '.enabledPlugins["discord@claude-plugins-official"] = false' "$code/assistant.settings.json" >"$template"
+  launch_settings "$template" "" "" "$settings" "$mcp" "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
+  out=$(claude --bg --name T0-assistant \
+    --autocompact 200k \
+    --mcp-config "$mcp" \
+    --dangerously-skip-permissions \
+    --append-system-prompt-file "$code/roles/assistant.md" \
+    --settings "$settings" \
+    "$prompt")
+  id=$(grep -oE '\b[0-9a-f]{8}\b' <<<"$out" | head -n 1) || die "could not read the session id from: $out"
+  echo "$id"
+  exit 0
+fi
 cd "$TEAM_HOME"
 
 launch_lock assistant
@@ -65,7 +104,6 @@ launch_unlocked lease_gate "an assistant"
 
 # The coordinator's Discord state, whose token the assistant's links to and whose ids it hears.
 discord=$HOME/.claude/channels/discord
-state=$HOME/.claude/channels/discord-assistant
 discord_token >/dev/null ||
   die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, which the assistant's Discord state links to: run team-secrets check"
 daniel=$(jq -ce '.allowFrom | select(type == "array") | map(tostring | select(test("^[0-9]+$"))) | select(length > 0)' \
