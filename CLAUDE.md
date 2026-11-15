@@ -8,7 +8,8 @@ The team's own work on this repo goes through a task and a PR to `dev`, like any
 
 One path per bullet and one thing per line, alphabetical within each list, so two PRs that add different things edit different lines.
 
-- `bin/`: the team's commands, `team-*` and `claude-coordinator`.
+- `assistant.settings.json`: the assistant's own settings, which `claude-assistant` fills in: its Discord state directory, its memory, its hooks and its denials.
+- `bin/`: the team's commands, `team-*`, `claude-assistant` and `claude-coordinator`.
   - `bin/hooks/`: the sessions' hooks.
     - `git/`: git's hooks for the code checkout.
     - `records-git/`: git's hooks for the team home.
@@ -27,6 +28,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `gate-config.awk`: reads and sets the one key the team writes in Daniel's no-mistakes config (`agent_path_override`'s opencode), and reads `agent_args_override`'s list for one agent.
     - `guarded`: the short list, one extended regular expression per line with its area, `@<project>` or `@own` for one project's line, any changed path of which brings a merge on the default word, the approved plan, back to Daniel for the per-head word, read by `team-merge` from its own checkout.
     - `health.jq`: the health module, the one place that says what unhealthy means: the fold of each heartbeat run into the health record, the ledger's one-pass scan, every health threshold, and the view `team-timers health` prints, its problems and its line in markup and plain text.
+    - `launch.sh`: the launchers' shared parts, which `claude-coordinator` and `claude-assistant` take: the launch lock, the check that no session of the name is live, and the writer of the session's settings and MCP config.
     - `ledger-contract.json` and `ledger.jq`: the ledger contract and its jq.
     - `lifecycle.json`: the task lifecycle's table, its statuses, phases, start states, what each kind may follow and does, the park causes and what ends each, and the `lifecycle_from` and `asked_parks_from` cutovers, which `ledger.jq` imports.
     - `messages.jq`: reads a worker's message into the events the coordinator's message table gives it, for `team-log --from-message`.
@@ -57,7 +59,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
-- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
+- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's and the assistant's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
 - `servers/`: the MCP servers the toolkits and sessions run, the MCP client `ui-capture` speaks with, the `chrome-devtools-axi` client the browser toolkit's test runs, and the packages the effect toolkit's tests check its skill, hook and Foldkit DevTools server against.
   - `install`: puts them in the gitignored `servers/node_modules/`, as `team-bootstrap` does while `team-doctor`'s `servers` line fails.
   - `package.json` and `package-lock.json`: the packages and their pins, among them:
@@ -126,10 +128,11 @@ It holds:
 | `projects.toml` | The project registry, read only through `bin/team-project`, whose `--help` documents every key |
 | `tasks/` | Each task's plan, briefs and archived scratch; history, kept as written |
 | `projects/` | Each project's planning (Conventioner's backlog) |
-| `memory/` | Each registered project's Claude Code auto memory, `memory/<project>/`, which every machine and worktree of it shares once `team-config apply` points the project at it (a worker of it through `team-worker`'s settings), and the coordinator's, `memory/coordinator/`, the team home's own while it is no project's primary checkout |
+| `memory/` | Each registered project's Claude Code auto memory, `memory/<project>/`, which every machine and worktree of it shares once `team-config apply` points the project at it (a worker of it through `team-worker`'s settings), and the coordinator's, `memory/coordinator/`, the team home's own while it is no project's primary checkout, and the assistant's, `memory/assistant/`, which its settings name |
 | `machine/` | What a machine needs to run the team, beyond the tools `bin/lib/tools.lock` pins: `claude/`, the Claude user config every machine shares (instructions, settings, skills, plugins), which `team-config` applies and captures; `secrets.json`, every secret file a machine needs, never a value, which `team-secrets` checks and restores from 1Password, described for Daniel in `secrets.md` |
 | `usage/` | Each machine's Claude usage, `usage/<machine>/<YYYY-MM-DD>.jsonl`, one line per assistant reply (token counts, model, session, never content), and `usage/<machine>/time/<YYYY-MM-DD>.jsonl`, one row per launched worker session and day of where its time went (durations and tool or command names only), which `team-tokens export` writes from that machine's transcripts at each checkpoint and handoff, so they outlive Claude Code's 30-day transcript cleanup |
-| `manual-steps.md` | The steps only Daniel can take |
+| `manual-steps.md` | The steps only Daniel can take, which the assistant keeps |
+| `assistant/` | The assistant's records: its hand-offs with the coordinator, `handoffs/H<n>.md` (one per hand-off) and their log `handoffs.jsonl`, which `team-assistant` writes; its spikes' reports, `research/<YYYY-MM-DD>-<slug>.md`; and its stow note, `handoff.md` |
 
 - The scripts find it as `TEAM_HOME` when set, else the first line of `~/.config/agent-team/home` (a path relative to `$HOME`, or absolute); the library and `team-project` find it the same way, and refuse to start when neither names a directory, naming the fix (`echo agent-team-records > ~/.config/agent-team/home`), never falling back to the code checkout.
 - Code never comes from the team home, and records never go into this repo: `bin/lib/records` lists the records paths, and the `pre-push` hook (below) keeps a tree holding any of them away from every repository but the team home's origin.
@@ -188,7 +191,7 @@ It holds:
   A test runs `git -C`, `--git-dir`, `--work-tree`, `rm -r` or a git line's `cd` on a variable path only as `${var:?}`, so an empty variable stops its line instead of reaching the code checkout or the team home, which `tests/guard-paths --check` holds through `tests/repo.bats`, and `tests/guard-paths` rewrites.
   The check reads only what the test file's own shell expands, so a single-quoted `bash -c` body or a quoted heredoc's stub, which expands its variables when it runs, is guarded by hand.
   No test file or helper runs a bare `wait`, which `tests/repo.bats` holds: bats runs a test's time limit countdown as a background job of the test's own shell, so a bare `wait` waits out the whole limit, and a test waits on the processes it started, by their pids.
-- Every PreToolUse hook entry, in `settings/*.json`, `coordinator.settings.json` and a toolkit's `hooks/hooks.json`, sets `"onFailure": "block"` and a whole-number `timeout` from 1 to 120 seconds beside its `command`, which `tests/repo.bats` holds, so a guard hook that fails or hangs blocks the call; `team-doctor`'s `guard hooks` line runs `scratch-only-edits`, `command-guard` and `lease-fence` on a harmless Bash call, since a guard that always fails then blocks every call it sees.
+- Every PreToolUse hook entry, in `settings/*.json`, `coordinator.settings.json`, `assistant.settings.json` and a toolkit's `hooks/hooks.json`, sets `"onFailure": "block"` and a whole-number `timeout` from 1 to 120 seconds beside its `command`, which `tests/repo.bats` holds, so a guard hook that fails or hangs blocks the call; `team-doctor`'s `guard hooks` line runs `scratch-only-edits`, `command-guard` and `lease-fence` in each of its modes on a harmless Bash call, and `assistant-discord-guard` on a read of `#assistant`, since a guard that always fails then blocks every call it sees.
 
 ## Script conventions
 
