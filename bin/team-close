@@ -11,9 +11,10 @@
 # files are fine), and the head on a remote-tracking branch of origin (not wip/* or salvage/*,
 # which a project whose origin is the team home's fetches, holding work that has not landed) or
 # the head of a merged PR of the branch in the project's repo (gh); a worktree with no commits of
-# its own has landed. A ticket worktree (team-open --ticket) is open too: its ticket branch is
-# never pushed, so its head lands held by a remote-tracking branch of origin (the pushed task
-# branch it was integrated into) or by the head of a merged PR of the task branch.
+# its own has landed. A ticket worktree (team-open --ticket) is open too: its head lands held by a
+# remote-tracking branch of origin (the pushed task branch it was integrated into, or its own
+# ticket branch, which its builder may push for CI's run and which is deleted there only once the
+# task branch holds it, as below) or by the head of a merged PR of the task branch.
 # Any failure is exit 1 with every reason. --keep-worktree keeps unlanded worktrees instead of
 # refusing, and --stop-busy stops busy sessions instead of refusing (an ops session through
 # team-ops-end, like an idle one).
@@ -47,7 +48,18 @@
 # each return appending worktree-returned (with ticket for a ticket worktree, whose ticket branch
 # is then deleted when the task branch's local tip holds its tip, "deleted <branch> at <sha8>,
 # which <task branch> holds", else kept, "kept <branch> at <sha8>: the task branch does not hold
-# it", on stderr, one that cannot be deleted reported with the command that deletes it); the task's
+# it", on stderr, one that cannot be deleted reported with the command that deletes it; and
+# origin's ticket branch, when the project's origin lists one (git ls-remote from the primary
+# checkout), its builder having pushed it for CI's run, is deleted there (git push origin --delete,
+# only while origin still has it at the tip read) when the task branch's local tip holds its tip,
+# "deleted origin's <branch> at <sha8>, which <task branch> holds", else kept, "kept origin's
+# <branch> at <sha8>: the task branch does not hold it; delete it by hand: git -C <primary> push
+# origin --delete <branch>", and kept the same way, saying so, when its tip is no commit of the
+# primary checkout, which is never fetched to decide; an origin that cannot be read, or a delete
+# that fails, is one line on stderr with that command, failing nothing); then each other
+# <task branch>--NN the origin of a project of the task lists (a ticket worktree returned before
+# its branch could be deleted there) deleted or kept by the same rule, held by the task branch's
+# local tip or by origin's task branch; the task's
 # wip/<project>/T<n> and every wip/<project>/T<n>--NN of a ticket worktree (team-checkpoint's
 # snapshots) deleted on the team home's origin, as origin lists them, and their copies under
 # refs/remotes/team-home/ (team-open --resume's) in the project's primary checkout, one that
@@ -81,7 +93,9 @@
 # with worktree-returned and the ticket branch's rule above, then the ticket's wip/<project>/T<n>--NN
 # deleted on the team home's origin and in the primary checkout, by the rule above (an origin
 # that cannot be reached is one line, and no failure). Prints {task, ticket, stopped,
-# removed, archive (null when nothing was archived), returned, branch, branch_deleted}. A failure
+# removed, archive (null when nothing was archived), returned, branch, branch_deleted,
+# origin_branch}, origin_branch being what became of origin's ticket branch: deleted, kept, none
+# (origin had none) or unread (origin could not be read, or the delete failed). A failure
 # after the checks leaves it half returned: fix the cause and run it again.
 # Refused, exit 1, before it reads or changes anything: a worker session (an AGENT_TEAM_ROLE but
 # coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers.
@@ -186,6 +200,11 @@ linked_part() {
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
+# What became of origin's ticket branch at the last return of a ticket worktree (deleted, kept,
+# none or unread), and each "<primary> <branch>" this run has settled on origin.
+origin_branch=none
+declare -A origin_settled=()
+
 # Whether a merged PR's head in <prs> (gh pr list's JSON) holds <head>, read in the worktree <wt>,
 # whose repository has each head the task branch reached: held_by_pr <wt> <head> <prs>
 held_by_pr() {
@@ -198,7 +217,7 @@ held_by_pr() {
 
 # Why the worktree <wt> of <project> on <branch> has not landed, or nothing when it has; <base>,
 # for a ticket worktree, is the task branch, whose merged PR may hold its head, since a ticket
-# branch is never pushed.
+# branch has no PR of its own (its builder pushes it only for CI's run).
 unlanded() {
   local wt=$1 project=$2 branch=$3 base=${4:-} head ahead repo found=()
   git -C "$wt" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
@@ -260,8 +279,8 @@ sort_landed() {
 }
 
 # Return the worktree <wt> (one entry of worktrees) through its project's pool, append its
-# worktree-returned and add it to returned; for a ticket worktree, then drop_ticket_branch:
-# return_worktree <wt>
+# worktree-returned and add it to returned; for a ticket worktree, then drop_ticket_branch and
+# drop_origin_ticket_branch: return_worktree <wt>
 return_worktree() {
   local project branch path ticket_of facts primary shots linked return_cmd task_dir
   project=$(field project "$1") branch=$(field branch "$1") path=$(field worktree "$1") ticket_of=$(field ticket "$1")
@@ -302,12 +321,15 @@ return_worktree() {
     '{ts: (now | todate), task: $task, event: "worktree-returned", project: $project, worktree: $worktree}
       + (if $branch == "" then {} else {branch: $branch} end) + if $ticket == "" then {} else {ticket: $ticket} end')"
   returned+=("$path")
-  [[ -z $ticket_of || -z $branch ]] || drop_ticket_branch "$primary" "$branch" "$(field base "$1")"
+  [[ -n $ticket_of && -n $branch ]] || return 0
+  drop_ticket_branch "$primary" "$branch" "$(field base "$1")"
+  drop_origin_ticket_branch "$primary" "$branch" "$(field base "$1")"
 }
 
 # Delete the ticket branch <branch> of the repository of <primary> when the task branch <base>
 # there holds its tip, else keep it, a line on stderr either way, setting branch_deleted (true or
-# false); the branch is local, never pushed: drop_ticket_branch <primary> <branch> <base>
+# false); this is the local branch, and drop_origin_ticket_branch has origin's:
+# drop_ticket_branch <primary> <branch> <base>
 drop_ticket_branch() {
   local primary=$1 branch=$2 base=$3 tip
   branch_deleted=false
@@ -320,6 +342,89 @@ drop_ticket_branch() {
   else
     echo "team-close: cannot delete $branch ($(grep -m1 . "$scratch/error" || echo "no reason given")); delete it by hand: git -C $primary branch -D $branch" >&2
   fi
+}
+
+# The first line of what the last command wrote to $scratch/error, for a "cannot ..." line.
+last_error() { grep -m1 . "$scratch/error" || echo "no reason given"; }
+
+# Whether <tip> is a commit of the repository of <primary> that <ref> there holds:
+# holds_tip <primary> <ref> <tip>
+holds_tip() {
+  git -C "$1" cat-file -e "$3^{commit}" 2>/dev/null && git -C "$1" merge-base --is-ancestor "$3" "$2" 2>/dev/null
+}
+
+# Delete the ticket branch <branch>, which the origin of <primary> lists at <tip>, there, when the
+# task branch <base>'s local tip holds <tip>, or <origin base>, when given, origin's tip of the
+# task branch, does; else keep it. A tip that is no commit of <primary> is kept too, never fetched
+# to decide. One line on stderr either way, a kept one's and a failed delete's with the command
+# that deletes it, and origin_branch set (deleted, kept, or unread for a delete that failed). The
+# delete goes through only while origin still has the branch at <tip>, so a head pushed since is
+# never lost: settle_origin_branch <primary> <branch> <tip> <base> [<origin base>]
+settle_origin_branch() {
+  local primary=$1 branch=$2 tip=$3 base=$4 origin_base=${5:-} holder=''
+  local hand="git -C $primary push origin --delete $branch"
+  origin_settled["$primary $branch"]=1
+  origin_branch=kept
+  if ! git -C "$primary" cat-file -e "$tip^{commit}" 2>/dev/null; then
+    echo "team-close: kept origin's $branch at ${tip:0:8}: $primary has no such commit, so the task branch is not known to hold it; delete it by hand: $hand" >&2
+    return 0
+  fi
+  if [[ -n $base ]] && holds_tip "$primary" "refs/heads/$base" "$tip"; then
+    holder=$base
+  elif [[ -n $origin_base ]] && holds_tip "$primary" "$origin_base" "$tip"; then
+    holder="origin's $base"
+  fi
+  if [[ -z $holder ]]; then
+    echo "team-close: kept origin's $branch at ${tip:0:8}: the task branch does not hold it; delete it by hand: $hand" >&2
+  elif GIT_TERMINAL_PROMPT=0 git -C "$primary" push -q "--force-with-lease=refs/heads/$branch:$tip" origin --delete "refs/heads/$branch" 2>"$scratch/error"; then
+    echo "team-close: deleted origin's $branch at ${tip:0:8}, which $holder holds" >&2
+    origin_branch=deleted
+  else
+    echo "team-close: cannot delete origin's $branch ($(last_error)); delete it by hand: $hand" >&2
+    origin_branch=unread
+  fi
+}
+
+# What becomes of the ticket branch <branch> on the origin of <primary>, where its builder may have
+# pushed it for CI's run, once its worktree is returned: none there sets origin_branch to none,
+# one there is settled against the task branch <base> (settle_origin_branch), and an origin that
+# cannot be read is one line on stderr with the command that deletes it, origin_branch unread,
+# failing nothing: drop_origin_ticket_branch <primary> <branch> <base>
+drop_origin_ticket_branch() {
+  local primary=$1 branch=$2 base=$3 listed tip
+  origin_branch=unread
+  origin_settled["$primary $branch"]=1
+  if ! listed=$(GIT_TERMINAL_PROMPT=0 git -C "$primary" ls-remote origin "refs/heads/$branch" 2>"$scratch/error"); then
+    echo "team-close: cannot read origin's $branch ($(last_error)); delete it by hand if origin has it: git -C $primary push origin --delete $branch" >&2
+    return 0
+  fi
+  tip=$(awk -v ref="refs/heads/$branch" '$2 == ref {print $1}' <<<"$listed")
+  if [[ -z $tip ]]; then
+    origin_branch=none
+    return 0
+  fi
+  settle_origin_branch "$primary" "$branch" "$tip" "$base"
+}
+
+# Settle each ticket branch <base>--NN the origin of <project> still lists, <base> being the task's
+# branch there: one a return of this close settled already is left as it was, each other is deleted
+# or kept as settle_origin_branch says, held by the task branch's local tip or by origin's task
+# branch. An origin that cannot be read is one line on stderr with the command that deletes them,
+# failing nothing: drop_origin_ticket_branches <project> <base>
+drop_origin_ticket_branches() {
+  local project=$1 base=$2 primary listed tip ref name origin_base=''
+  primary=$(team_project "$project" | jq -r .path)
+  if ! listed=$(GIT_TERMINAL_PROMPT=0 git -C "$primary" ls-remote origin "refs/heads/$base" "refs/heads/$base--*" 2>"$scratch/error"); then
+    echo "team-close: cannot read origin's ticket branches of $base ($(last_error)); delete them by hand: git -C $primary push origin --delete <each $base--NN that git -C $primary ls-remote origin 'refs/heads/$base--*' lists>" >&2
+    return 0
+  fi
+  origin_base=$(awk -v ref="refs/heads/$base" '$2 == ref {print $1}' <<<"$listed")
+  while read -r tip ref; do
+    name=${ref#refs/heads/}
+    [[ $ref == "refs/heads/$base--"* && ${name#"$base"} =~ ^--[0-9]{2}$ ]] || continue
+    [[ -z ${origin_settled["$primary $name"]:-} ]] || continue
+    settle_origin_branch "$primary" "$name" "$tip" "$base" "$origin_base"
+  done <<<"$listed"
 }
 
 # Mirror the task directory of the worktree <wt> (one entry of worktrees) into tasks/T<n>/<its
@@ -451,16 +556,17 @@ if [[ -n $ticket ]]; then
       echo "team-close: claude rm $id failed; remove it by hand if it still exists" >&2
     fi
   done
-  returned=() branch_deleted=false
+  returned=() branch_deleted=false origin_branch=none
   return_worktree "$wt"
   drop_wip "$project" "$ticket"
 
   jq -n --arg task "$task" --arg ticket "$ticket" --argjson stopped "$(jq -cn '$ARGS.positional' --args "${stopped[@]}")" \
     --argjson removed "$(jq -cn '$ARGS.positional' --args "${removed[@]}")" --arg archive "${archived[0]:-}" \
     --arg returned "${returned[0]}" --arg branch "$(field branch "$wt")" --argjson deleted "$branch_deleted" \
+    --arg origin_branch "$origin_branch" \
     '{task: $task, ticket: $ticket, stopped: $stopped, removed: $removed,
       archive: (if $archive == "" then null else $archive end), returned: $returned, branch: $branch,
-      branch_deleted: $deleted}'
+      branch_deleted: $deleted, origin_branch: $origin_branch}'
   exit 0
 fi
 
@@ -565,6 +671,13 @@ returned=()
 for wt in "${returning[@]}"; do
   return_worktree "$wt"
 done
+
+# Settle the ticket branches the origin of each of the task's projects still lists, pushed there
+# for CI's run: one whose worktree was returned before its branch could be deleted there.
+while IFS=$'\t' read -r project base; do
+  drop_origin_ticket_branches "$project" "$base"
+done < <(ledger_jq '. as $events | [.[] | select(.event | IN("opened", "worktree-added")) | .project | strings]
+  | unique[] | . as $project | ($events | task_branch($project)) | strings | "\($project)\t\(.)"' -r <<<"$events")
 
 # Delete the task's work-in-progress snapshots, its task worktrees' and its ticket worktrees', now
 # that nothing is left to recover from them; a project without one is fine, and one that cannot be

@@ -37,8 +37,24 @@
 # worktree, task_dir, plan, thread, interview_thread (the task's latest interview-thread, unset
 # without one), team_home, team_code (this code checkout, where a brief points for code such as
 # sops/), team_bin, local_checks (the project's, each in backticks and joined with ", ", or
-# "none"), ui, task_branch and task_worktree (the task worktree's branch and path, the same as
-# branch and worktree without --ticket), parallel and captures, from the ledger and projects.toml.
+# "none"), tests (the tests a builder runs: with the project's changed_tests, "Run only the tests
+# your change reaches, never the whole suite, which CI runs on every head you push: " and its text;
+# without, "Nothing but you runs <project>'s whole suite, so run it once at your end, as the
+# project's docs say, beside the tests your change reaches as you go."; with its branch_ci too,
+# "Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch's
+# head: " and its changed_tests), ui, task_branch and task_worktree (the task worktree's branch and
+# path, the same as branch and worktree without --ticket), parallel, captures and ci, from the
+# ledger and projects.toml.
+# ci is empty unless the project has branch_ci: then a newline and two lines, each a list item's
+# continuation, telling the builder to push the brief's branch, if that head is not on origin yet,
+# to run team_bin's team-ci-run <project> <branch> <the full sha it pushed> with Bash
+# run_in_background, and to report nothing until it exits 0, fixing a failure of the branch's own,
+# rerunning an infrastructure one and running it again on exit 75; for builder-ticket under the
+# plan's ## Disclosure section (text past its HTML comments), one line instead, to push nothing,
+# since CI first runs at the delivery. builder-ticket places it after its tests, the direct-PR
+# delivery after its captures, where the PR is open (so builder-deliver, builder-fix and
+# builder-round have it there), and builder-merge-base after its push; the no-mistakes delivery
+# has none, since branch_ci needs a direct-PR one.
 # captures is empty unless the brief's session has the browser toolkit (--toolkit browser, else the
 # task's latest launch of the template's role, for rereview its latest reviewer launch else its
 # latest builder launch, as team-next's hand-off launches with): then, for builder-fix,
@@ -51,7 +67,9 @@
 # is empty without --ticket; with it, a newline and three lines telling a ticket worktree's
 # builder that its branch is local and never pushed, where the task branch is, to merge the task
 # branch's tip into its branch and run its checks again on that head before its DONE, listing it
-# last, and to do so again when the coordinator answers that the task branch moved; builder-ticket
+# last, and to do so again when the coordinator answers that the task branch moved; on a project
+# with branch_ci and no Disclosure section, that its branch is its alone, pushed to origin only
+# for CI's run on it, and that the checks on the merged head are CI's run with them; builder-ticket
 # places it after its ui, and resume and resume-crash after their worktree line, so a ticket
 # builder relaunched after a stow or a crash (team-next --fill) has it too. tickets,
 # what builder-deliver delivers, is "every ticket" unless set (team-next sets a phase's tickets for that phase's deliverer);
@@ -148,7 +166,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 code=$(dirname "$(dirname "$TEAM_LIB")")
 briefs=$code/templates/briefs
 usage="usage: team-brief T<n> <template> [--project <name>] [--ticket <NN>] [--toolkit <name>]... [--set key=value]... [--set-file key=path]... [--name <suffix>] [--force]"
-fact_keys=(task title path project repo base branch worktree task_dir plan thread interview_thread team_home team_code team_bin local_checks ui task_branch task_worktree parallel captures)
+fact_keys=(task title path project repo base branch worktree task_dir plan thread interview_thread team_home team_code team_bin local_checks tests ui task_branch task_worktree parallel captures ci)
 
 positionals=() project='' ticket='' name='' force='' toolkits=()
 declare -A sets=()
@@ -267,9 +285,10 @@ else
 fi
 facts=$(team_project "$project")
 # The project's facts and the chosen worktree's, in one jq run.
-repo='' base='' task_dir='' local_checks='' delivery='' branch='' chosen_wt=''
+repo='' base='' task_dir='' local_checks='' changed_tests='' branch_ci='' delivery='' branch='' chosen_wt=''
 json_vars repo='.repo | tostring' base='.base | tostring' task_dir='.task_dir | tostring' \
   local_checks='.local_checks | if . == [] then "none" else map("`\(.)`") | join(", ") end' \
+  changed_tests='.changed_tests | tostring' branch_ci='.branch_ci | tostring' \
   delivery='.delivery | tostring' branch='$chosen.branch | tostring' chosen_wt='$chosen.worktree | tostring' \
   -- --argjson chosen "$chosen" <<<"$facts"
 # The task worktree's branch and path; with --ticket, the brief's own are the ticket worktree's.
@@ -277,6 +296,36 @@ task_branch=$branch task_worktree=$chosen_wt
 if [[ -n $ticket ]]; then
   json_vars branch='.branch | tostring' chosen_wt='.worktree | tostring' <<<"$ticket_wt"
 fi
+
+# plan_text <section>: the first line of text of the plan's ## <section>, past any HTML comment
+# and without a list marker; nothing when the plan or the section has none.
+plan_file=$TEAM_HOME/tasks/$task/plan.md
+plan_text() {
+  [[ -f $plan_file && -r $plan_file ]] || return 0
+  awk -v section="$1" '
+    $0 ~ "^## " section "[[:space:]]*$" { in_section = 1; next }
+    !in_section { next }
+    !in_comment && /^#{1,2} / { exit }
+    {
+      # The line without its HTML comments, which may span lines.
+      line = $0; out = ""
+      while (1) {
+        if (in_comment) {
+          if (!(at = index(line, "-->"))) break
+          line = substr(line, at + 3); in_comment = 0
+        }
+        if (!(at = index(line, "<!--"))) { out = out line; break }
+        out = out substr(line, 1, at - 1); line = substr(line, at + 4); in_comment = 1
+      }
+      sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, "", out)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", out)
+      if (out != "") { print out; exit }
+    }' "$plan_file"
+}
+
+# The plan's Disclosure section, when it holds text: its builder pushes nothing before the review
+# passes the branch's wording.
+disclosure=$(plan_text Disclosure)
 
 declare -A values=(
   [task]=$task
@@ -293,17 +342,43 @@ declare -A values=(
   [team_code]=$(tilde "$code")
   [team_bin]=$(dirname "$TEAM_LIB")
   [local_checks]=$local_checks
+  [tests]="Nothing but you runs $project's whole suite, so run it once at your end, as the project's docs say, beside the tests your change reaches as you go."
   [tickets]="every ticket"
   [task_branch]=$task_branch
   [task_worktree]=$(tilde "$task_worktree")
   [parallel]=''
+  [ci]=''
 )
+# A project whose CI (or the local checks its reviewer and team-merge run) runs the whole suite
+# names the tests a builder's change reaches; one whose builders run CI on their branch
+# (branch_ci), the tests a builder wrote or changed.
+if [[ -n $changed_tests && -n $branch_ci ]]; then
+  values[tests]="Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch's head: $changed_tests"
+elif [[ -n $changed_tests ]]; then
+  values[tests]="Run only the tests your change reaches, never the whole suite, which CI runs on every head you push: $changed_tests"
+fi
+# A builder of a project with branch_ci ends its round with CI's run of the head it pushed, which
+# team-ci-run finds or starts and waits on; under a Disclosure section a ticket's builder pushes
+# nothing, and CI first runs at the delivery, whose push comes after the review.
+pushed_for_ci=''
+if [[ -n $branch_ci && -n $disclosure && $template == builder-ticket ]]; then
+  values[ci]=$'\n'"   Push nothing: under the plan's Disclosure section CI first runs at the delivery, once the review has passed the wording."
+elif [[ -n $branch_ci ]]; then
+  values[ci]=$'\n'"   Then push \`$branch\`, if that head is not on origin yet, and run \`${values[team_bin]}/team-ci-run $project $branch <the full sha you pushed>\` with Bash \`run_in_background\`: it waits on CI's run of that head on GitHub, starting one when none is running, and always ends."
+  values[ci]+=$'\n'"   Report nothing until it exits 0: fix a failure it names as the branch's own, commit, push and run it again; rerun an infrastructure one as its line says, then run \`team-ci-run\` again; on exit 75, run it again."
+  [[ -n $disclosure ]] || pushed_for_ci=1
+fi
 # A ticket worktree's builder works beside other tickets' builders, and lands its ticket on the
 # task branch only as a tested fast-forward.
 if [[ -n $ticket ]]; then
   values[ticket]=$ticket
-  values[parallel]=$'\n'"You build in a ticket worktree of your own, beside other tickets' builders: your branch \`$branch\` is local and never pushed, and the task branch \`$task_branch\` is in \`${values[task_worktree]}\`."
-  values[parallel]+=$'\n'"Before your DONE: commit, merge the task branch's tip into your branch (\`git merge $task_branch\`), resolving any conflict within your ticket, run your checks again on the merged head, and list that head last in your DONE."
+  # Its branch stays on this machine, but for CI's run on it where the project has branch_ci.
+  kept="is local and never pushed," checks="run your checks again on the merged head,"
+  if [[ -n $pushed_for_ci ]]; then
+    kept="is yours alone, pushed to origin only for CI's run on it," checks+=" CI's run with them,"
+  fi
+  values[parallel]=$'\n'"You build in a ticket worktree of your own, beside other tickets' builders: your branch \`$branch\` $kept and the task branch \`$task_branch\` is in \`${values[task_worktree]}\`."
+  values[parallel]+=$'\n'"Before your DONE: commit, merge the task branch's tip into your branch (\`git merge $task_branch\`), resolving any conflict within your ticket, $checks and list that head last in your DONE."
   values[parallel]+=$'\n'"If the coordinator answers that the task branch moved, merge it again, run the checks again and send DONE again."
 fi
 # What Daniel pointed at, when team-ui or team-thread wait kept it: the files at the top of ui/
@@ -363,32 +438,6 @@ fi
 [[ -z $thread ]] || values[thread]=$thread
 [[ -z $interview ]] || values[interview_thread]=$interview
 
-# plan_text <section>: the first line of text of the plan's ## <section>, past any HTML comment
-# and without a list marker; nothing when the plan or the section has none.
-plan_file=$TEAM_HOME/tasks/$task/plan.md
-plan_text() {
-  [[ -f $plan_file && -r $plan_file ]] || return 0
-  awk -v section="$1" '
-    $0 ~ "^## " section "[[:space:]]*$" { in_section = 1; next }
-    !in_section { next }
-    !in_comment && /^#{1,2} / { exit }
-    {
-      # The line without its HTML comments, which may span lines.
-      line = $0; out = ""
-      while (1) {
-        if (in_comment) {
-          if (!(at = index(line, "-->"))) break
-          line = substr(line, at + 3); in_comment = 0
-        }
-        if (!(at = index(line, "<!--"))) { out = out line; break }
-        out = out substr(line, 1, at - 1); line = substr(line, at + 4); in_comment = 1
-      }
-      sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, "", out)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", out)
-      if (out != "") { print out; exit }
-    }' "$plan_file"
-}
-
 # The task's latest pr event in this project's repo, while its PR is open: a later phase's review
 # has no PR once the earlier phase's merged. The events' URLs are canonical, a moved repo under its
 # new owner, so the registry's repo is compared in canonical form too, whichever owner it names.
@@ -398,7 +447,7 @@ pr=$(ledger_jq '. as $events | task_prs as $prs | [$prs[]
 # Before the PR: a gated project's builder stops before its gate, and a direct-PR task's under a
 # Disclosure section pushes nothing before the review passes.
 before_pr=''
-if [[ -z $pr && ! -v sets[pr] ]] && [[ $delivery == no-mistakes || -n $(plan_text Disclosure) ]]; then
+if [[ -z $pr && ! -v sets[pr] ]] && [[ $delivery == no-mistakes || -n $disclosure ]]; then
   before_pr=1
 fi
 
