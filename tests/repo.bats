@@ -2023,7 +2023,7 @@ YAML
 @test "tests/run, the team-heavy lock it runs under, and servers/install, which its toolkit tests run, need no team home" {
   unset TEAM_HOME
   run -2 --separate-stderr "$REPO_ROOT/tests/run" nothing
-  assert_equal "$stderr" "run: usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
   run -0 --separate-stderr "$REPO_ROOT/bin/team-heavy" run -- echo ran
   assert_equal "$output" ran
   run -2 --separate-stderr "$REPO_ROOT/servers/install" nothing
@@ -2098,7 +2098,7 @@ YAML
   for k in '--shard 0/3' '--shard 4/3' '--shard 1/0' '--shard 1/3x' '--list' '--shard' '--shard 1/3 --list x'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/run" bats $k
-    assert_equal "$stderr" "run: usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
   done
   run -2 --separate-stderr "$REPO_ROOT/tests/run" toolkits --shard 1/3
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
@@ -2362,10 +2362,160 @@ changed_rebase() {
     run -2 --separate-stderr "$copy/tests/run" bats --changed $k
   done
   run -2 --separate-stderr "$copy/tests/run" bats --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
   run -2 --separate-stderr "$copy/tests/run" bats --shard 1/3 --changed
   run -1 --separate-stderr "$copy/tests/run" bats --changed --list
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run bats --changed <base>)"
+}
+
+# changed_checkout with a library, bin/lib/zzlib.sh, the library that sources it by a directive,
+# bin/lib/zzmid.sh, the script that sources that one beside itself, bin/team-zzgamma, the bats file
+# that sources zzlib.sh with ., and bin/team-zzdelta, which only names it; committed as the base.
+# Its shellcheck is a stub, version 9.9.9, which logs its arguments.
+shellcheck_checkout() {
+  local copy=$1
+  changed_checkout "$copy"
+  echo 'zzlib() { true; }' >"$copy/bin/lib/zzlib.sh"
+  printf '%s\n' '# shellcheck source=bin/lib/zzlib.sh' 'source "$TEAM_LIB/zzlib.sh"' >"$copy/bin/lib/zzmid.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'source "$(dirname "${BASH_SOURCE[0]}")/lib/zzmid.sh" "$@"' >"$copy/bin/team-zzgamma"
+  printf '%s\n' '#!/usr/bin/env bash' '# source lib/zzlib.sh, said a comment' 'cat "$(dirname "$0")/lib/zzlib.sh"' >"$copy/bin/team-zzdelta"
+  printf '%s\n' 'setup() {' '  . "$BATS_TEST_DIRNAME/../bin/lib/zzlib.sh"' '}' '@test "zz" { zzlib; }' >"$copy/tests/zzlib.bats"
+  changed_rebase "$copy"
+  stub_command shellcheck
+  echo 'if [[ $1 == --version ]]; then echo "version: 9.9.9"; fi' >"$STUB_FIXTURES/shellcheck.sh"
+}
+
+# A changed script is checked alone, never the script that runs it, committed since the base or in
+# the working tree alike, with the scripts printed first and handed to one shellcheck -x.
+@test "tests/run shellcheck --changed checks only a changed script, printed first, against an explicit base or origin/dev" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  rm "$copy/bin/team-zzalpha"
+  printf '#!/usr/bin/env bash\necho alpha again\n' >"$copy/bin/team-zzalpha"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" bin/team-zzalpha
+  [[ ! -e $STUB_CALLS/shellcheck.log ]]
+  git -C "${copy:?}" switch -qc work
+  git -C "${copy:?}" commit -qam 'change team-zzalpha'
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base
+  [[ $(head -n 1 <<<"$output") =~ ^shellcheck\ 9\.9\.9\ --changed\ base:\ 1\ of\ [1-9][0-9]+\ scripts$ ]]
+  assert_equal "$(sed -n 2p <<<"$output")" "  bin/team-zzalpha"
+  assert_contains "$output" "tests/run shellcheck: 0m 0"
+  assert_equal "$(grep -v '"--version"' "$STUB_CALLS/shellcheck.log")" '["-x","bin/team-zzalpha"]'
+  # The base defaults to origin/dev, and a finding fails the run.
+  git -C "${copy:?}" update-ref refs/remotes/origin/dev base
+  echo 'exit 1' >>"$STUB_FIXTURES/shellcheck.sh"
+  run -1 --separate-stderr "$copy/tests/run" shellcheck --changed
+  [[ $(head -n 1 <<<"$output") =~ ^shellcheck\ 9\.9\.9\ --changed\ origin/dev:\ 1\ of\ [1-9][0-9]+\ scripts$ ]]
+}
+
+# A changed library is checked where it is read: by each script that sources it, with source or .
+# or by a shellcheck directive, and each that sources one of those, never one that only names it.
+@test "tests/run shellcheck --changed checks each script that sources a changed library, directly or through another" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  echo 'zzlib() { false; }' >"$copy/bin/lib/zzlib.sh"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" $'bin/lib/zzlib.sh\nbin/lib/zzmid.sh\nbin/team-zzgamma\ntests/zzlib.bats'
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base
+  assert_equal "$(grep -v '"--version"' "$STUB_CALLS/shellcheck.log")" '["-x","bin/lib/zzlib.sh","bin/lib/zzmid.sh","bin/team-zzgamma","tests/zzlib.bats"]'
+  # The library in the middle reaches only its own sourcers.
+  git -C "${copy:?}" checkout -q -- bin/lib/zzlib.sh
+  echo '# more' >>"$copy/bin/lib/zzmid.sh"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" $'bin/lib/zzmid.sh\nbin/team-zzgamma'
+  # A changed .shellcheckrc checks every script.
+  git -C "${copy:?}" checkout -q -- bin/lib/zzmid.sh
+  echo 'disable=SC2016' >"$copy/.shellcheckrc"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_contains "$output" $'bin/team-zzalpha\nbin/team-zzbeta\nbin/team-zzdelta\nbin/team-zzgamma'
+  assert_contains "$output" tests/run
+}
+
+# The forms shellcheck -x follows beyond a line's first word: a . after another command, a source
+# on a line with an earlier #, and a file under a nested command substitution.
+@test "tests/run shellcheck --changed reads a . that is not first on its line, a source after a #, and a nested command substitution" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  printf '%s\n' '#!/usr/bin/env bash' 'dir=$(dirname "$0")' '[[ ! -f $dir/lib/zzlib.sh ]] || . "$dir/lib/zzlib.sh"' >"$copy/bin/team-zzdot"
+  printf '%s\n' '#!/usr/bin/env bash' 'if [[ -n ${1:-} ]]; then . "$(dirname "$0")/lib/zzlib.sh"; fi' >"$copy/bin/team-zzthen"
+  printf '%s\n' '#!/usr/bin/env bash' 'list=(a b)' 'n=${#list[@]}; source "$(dirname "$0")/lib/zzlib.sh"' >"$copy/bin/team-zzhash"
+  printf '%s\n' '#!/usr/bin/env bash' 'source "$(cd "$(dirname "$0")" && pwd)/lib/zzlib.sh"' >"$copy/bin/team-zznested"
+  changed_rebase "$copy"
+  echo 'zzlib() { false; }' >"$copy/bin/lib/zzlib.sh"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" $'bin/lib/zzlib.sh\nbin/lib/zzmid.sh\nbin/team-zzdot\nbin/team-zzgamma\nbin/team-zzhash\nbin/team-zznested\nbin/team-zzthen\ntests/zzlib.bats'
+}
+
+# A script the reader cannot read fails the run, never a shorter selection.
+@test "tests/run shellcheck --changed fails when it cannot read a script's lines" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  [[ $EUID -ne 0 ]] || skip "root reads every file"
+  shellcheck_checkout "$copy"
+  echo 'zzlib() { false; }' >"$copy/bin/lib/zzlib.sh"
+  chmod 000 "$copy/tests/zzlib.bats"
+  run -1 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" ""
+  assert_contains "$stderr" "run: could not read the paths changed since base"
+  chmod 644 "$copy/tests/zzlib.bats"
+}
+
+# A deleted path is never handed to shellcheck, which would fail on the missing file, but its
+# sourcers are, and so is the new side of a rename.
+@test "tests/run shellcheck --changed checks a deleted library's sourcers, never the deleted path, and both sides of a rename by what exists" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  git -C "${copy:?}" switch -qc dropped
+  git -C "${copy:?}" rm -q bin/lib/zzlib.sh
+  git -C "${copy:?}" commit -qm 'drop zzlib.sh'
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" $'bin/lib/zzmid.sh\nbin/team-zzgamma\ntests/zzlib.bats'
+  git -C "${copy:?}" switch -qc renamed base
+  git -C "${copy:?}" mv bin/team-zzdelta bin/team-zzomega
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" bin/team-zzomega
+  # A deleted script that nothing sources leaves nothing to check.
+  git -C "${copy:?}" switch -qfc gone base
+  git -C "${copy:?}" rm -q bin/team-zzalpha
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base
+  assert_equal "$(head -n 1 <<<"$output")" "shellcheck: no shell script changed since base, so none is checked"
+  [[ ! -e $STUB_CALLS/shellcheck.log ]]
+}
+
+@test "tests/run shellcheck --changed checks nothing, and says so, when no shell script changed" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base
+  assert_equal "$(head -n 1 <<<"$output")" "shellcheck: no shell script changed since base, so none is checked"
+  echo 'more' >>"$copy/sops/rules.md"
+  echo '{}' >"$copy/bin/lib/zzdata.json"
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base --list
+  assert_equal "$output" ""
+  run -0 --separate-stderr "$copy/tests/run" shellcheck --changed base
+  assert_equal "$(head -n 1 <<<"$output")" "shellcheck: no shell script changed since base, so none is checked"
+  assert_contains "$output" "tests/run shellcheck: 0m 0"
+  [[ ! -e $STUB_CALLS/shellcheck.log ]]
+}
+
+@test "tests/run shellcheck --changed refuses a base that is no commit, any word after --list, and a missing origin/dev, and plain shellcheck any word but --changed" {
+  local copy=$BATS_TEST_TMPDIR/copy k
+  unset TEAM_HOME
+  shellcheck_checkout "$copy"
+  for k in '--changed x/y' '--changed --list --list' '--changed base --list x' '--changed base x' '--changed -x' '--list' '--shard 1/3' 'base'; do
+    # shellcheck disable=SC2086 # each form splits into its words
+    run -2 --separate-stderr "$copy/tests/run" shellcheck $k
+  done
+  run -2 --separate-stderr "$copy/tests/run" shellcheck --changed x/y
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  run -1 --separate-stderr "$copy/tests/run" shellcheck --changed
+  assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run shellcheck --changed <base>)"
+  [[ ! -e $STUB_CALLS/shellcheck.log ]]
 }
 
 # tests/run in a checkout of its own, whose bats files are quick.bats, timed above what it takes,

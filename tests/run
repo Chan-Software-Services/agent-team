@@ -21,8 +21,18 @@
 # waits for another suite or a gate's end-to-end run instead of overlapping it; under a heavy run
 # already (TEAM_HEAVY_HELD set, as a local check team-checks runs), it runs at once.
 #
-# Usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]
+# Usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]
 #        (default: all three)
+# With --changed, shellcheck checks only the shell scripts a change touches, in seconds, as a
+# builder does on its machine while CI checks every script: each shell script among the paths
+# changed since <base> and in the working tree (the paths bats --changed starts from, below), and
+# each shell script that sources a changed path, by its file name, where a line runs source or .
+# (first or after another command) or in a "# shellcheck source=" directive, the file read past
+# its command substitutions, and each that sources one of those in turn, so a
+# changed library is checked where it is read; a deleted path is never checked itself, only its
+# sourcers. A changed .shellcheckrc checks every script. It prints the scripts first, checks
+# nothing, and says so, when the change reaches no shell script, and --list prints them, one path
+# per line, and checks none.
 # With --shard, bats runs shard k of n of the files as tests/shards splits them, by each file's
 # seconds in CI (tests/timings.tsv), as CI's shard jobs do; --list prints that shard's files and
 # runs none. A shard with no file (n above the file count) passes, running nothing.
@@ -67,9 +77,9 @@ team_home_report=1
 # shellcheck source=bin/lib/team.sh
 source "$root/bin/lib/team.sh" "$@"
 
-usage="usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+usage="usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
 what=${1:-all} shard='' changed='' base='' list=''
-if [[ $what == bats && $# -gt 1 && $2 == --changed ]]; then
+if [[ ($what == bats || $what == shellcheck) && $# -gt 1 && $2 == --changed ]]; then
   changed=1 base=origin/dev
   rest=("${@:3}")
   if [[ ${#rest[@]} -gt 0 && ${rest[0]} != -* ]]; then base=${rest[0]} rest=("${rest[@]:1}"); fi
@@ -78,7 +88,7 @@ if [[ $what == bats && $# -gt 1 && $2 == --changed ]]; then
     list=1
   fi
   if ! git -C "${root:?}" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    [[ $# -gt 2 && $3 == "$base" ]] || die "no $base to compare with in $root: fetch it, or name a base (tests/run bats --changed <base>)"
+    [[ $# -gt 2 && $3 == "$base" ]] || die "no $base to compare with in $root: fetch it, or name a base (tests/run $what --changed <base>)"
     usage_error "--changed: no commit $base; $usage"
   fi
 elif [[ $what == bats && $# -gt 1 ]]; then
@@ -118,7 +128,7 @@ shell_scripts() {
   local file
   while IFS= read -r file; do
     if [[ $file == *.sh || $file == *.bash || $file == *.bats ]] ||
-      head -n 1 "$file" | grep -Eq '^#!.*\b(ba)?sh\b'; then
+      head -n 1 "$root/$file" | grep -Eq '^#!.*\b(ba)?sh\b'; then
       echo "$file"
     fi
   done < <(cd "$root" && find bin tests servers toolkits \( -path tests/vendor -o -path servers/node_modules -o -path 'servers/.*' \) -prune -o -type f -print | sort)
@@ -133,6 +143,63 @@ bats_files() {
   "$root/tests/shards" "$n" | awk -F'\t' -v k="$k" -v root="$root" -v changed="$changed" -v selected="$selected" '
     BEGIN { n = split(selected, list, "\n"); for (i = 1; i <= n; i++) chosen[list[i]] = 1 }
     $1 == k && (changed == "" || $3 in chosen) { print root "/" $3 }'
+}
+
+# The shell scripts shellcheck --changed checks (see the header), one path per line, sorted.
+changed_scripts() {
+  local paths scripts checked lines status=0
+  paths=$(changed_paths | sort -u) || return 1
+  scripts=$(shell_scripts)
+  mapfile -t checked <<<"$scripts"
+  if grep -qxF .shellcheckrc <<<"$paths"; then
+    echo "$scripts"
+    return
+  fi
+  # Each script's lines that may source a file, as "<script>:<line>", then the changed paths, then
+  # the scripts: a script is checked when it changed, or when a file such a line sources has the
+  # file name of a changed path or of a script checked for that.
+  lines=$(cd "$root" && grep -HE '(^|[^[:alnum:]_.-])source[[:space:]]|(^|[;&|[:space:]])\.[[:space:]]|#[[:space:]]*shellcheck[[:space:]]+source=' -- "${checked[@]}") ||
+    status=$?
+  ((status <= 1)) || return 1
+  {
+    [[ -z $lines ]] || echo "$lines"
+    echo
+    echo "$paths"
+    echo
+    echo "$scripts"
+  } | awk '
+    function name(path) { sub(/.*[\/=]/, "", path); return path }
+    $0 == "" { part++; next }
+    part == 0 {
+      script = $0; sub(/:.*/, "", script)
+      line = substr($0, length(script) + 2)
+      # A comment sources nothing but by its directive; any other line wherever it runs source or
+      # ., after another command or a # as well as first.
+      runs = "#[[:space:]]*shellcheck[[:space:]]+source="
+      if (line !~ /^[[:space:]]*#/) runs = runs "|(^|[^[:alnum:]_.-])source[[:space:]]+|(^|[;&|[:space:]])\\.[[:space:]]+"
+      while (match(line, runs)) {
+        line = substr(line, RSTART + RLENGTH)
+        # The file is the first word, past its command substitutions, nested ones from the inside
+        # out, such as $(dirname "$0") or $(cd "$(dirname "$0")" && pwd).
+        file = line
+        while (gsub(/\$\([^()]*\)/, "", file)) {}
+        sub(/[[:space:];].*/, "", file)
+        gsub(/["\047\\]/, "", file)
+        if (file != "") sourcers[name(file)] = sourcers[name(file)] "\n" script
+      }
+      next
+    }
+    part == 1 { changed[$0] = 1; queue[++last] = name($0); next }
+    { scripts[$0] = 1; if ($0 in changed) pick[$0] = 1 }
+    END {
+      for (at = 1; at <= last; at++) {
+        if (queue[at] in followed) continue
+        followed[queue[at]] = 1
+        n = split(sourcers[queue[at]], users, "\n")
+        for (i = 2; i <= n; i++) if (!(users[i] in pick)) { pick[users[i]] = 1; queue[++last] = name(users[i]) }
+      }
+      for (script in pick) if (script in scripts) print script
+    }' | LC_ALL=C sort
 }
 
 # The paths --changed starts from (see the header), one per line, relative to the checkout.
@@ -390,7 +457,9 @@ run_bats() {
 }
 
 selected=''
-if [[ -n $changed ]]; then
+if [[ -n $changed && $what == shellcheck ]]; then
+  selected=$(changed_scripts) || die "could not read the paths changed since $base"
+elif [[ -n $changed ]]; then
   selected=$(changed_selection | LC_ALL=C sort -u) || die "could not read the paths changed since $base"
 fi
 if [[ -n $list && -n $changed ]]; then
@@ -403,7 +472,14 @@ elif [[ -n $list ]]; then
 fi
 fail=0 jobs=''
 SECONDS=0
-if [[ $what == all || $what == shellcheck ]]; then
+if [[ -n $changed && $what == shellcheck && -z $selected ]]; then
+  echo "shellcheck: no shell script changed since $base, so none is checked"
+elif [[ -n $changed && $what == shellcheck ]]; then
+  mapfile -t scripts <<<"$selected"
+  echo "shellcheck $(shellcheck --version | sed -n 's/^version: //p') --changed $base: ${#scripts[@]} of $(shell_scripts | wc -l) scripts"
+  printf '  %s\n' "${scripts[@]}"
+  (cd "$root" && shellcheck -x "${scripts[@]}") || fail=1
+elif [[ $what == all || $what == shellcheck ]]; then
   mapfile -t scripts < <(shell_scripts)
   echo "shellcheck $(shellcheck --version | sed -n 's/^version: //p'): ${#scripts[@]} scripts"
   (cd "$root" && shellcheck -x "${scripts[@]}") || fail=1
