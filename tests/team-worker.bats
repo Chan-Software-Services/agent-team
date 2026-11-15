@@ -276,6 +276,30 @@ base_files() {
   git -C "${repo:?}" push -q origin main
 }
 
+# origin_files <repo> <file> <text> [<file> <text>]...: commit each file with its text on main of
+# <repo>'s origin from a clone of its own and push it, as a merge on GitHub lands, so <repo>'s own
+# origin/main stays where it stood until something fetches it; prints the new commit.
+origin_files() {
+  local clone
+  clone=$(mktemp -d "$BATS_TEST_TMPDIR/merge.XXXXXX")
+  git clone -q "$(git -C "${1:?}" remote get-url origin)" "$clone"
+  shift
+  while (($#)); do
+    printf '%s\n' "$2" >"$clone/$1"
+    git -C "${clone:?}" add -- "$1"
+    shift 2
+  done
+  git -C "${clone:?}" commit -q -m "docs: instructions merged on origin"
+  git -C "${clone:?}" push -q origin main
+  git -C "${clone:?}" rev-parse HEAD
+}
+
+# The line a launch of T7's <role> in $wt1 prints when its fetch of origin/main fails, as a regular
+# expression, git's reason any text of one line: fetch_failed <role>
+fetch_failed() {
+  echo "^team-worker: could not fetch origin/main in $wt1's repository \\([^[:cntrl:]]+\\), so T7-$1 gets proj's instructions as origin/main last stood here\$"
+}
+
 # A launch's stderr <stderr> but the lines for the earlier sessions it leaves running: notes <stderr>
 notes() {
   grep -v '^team-worker: left T7-' <<<"$1" || true
@@ -453,16 +477,102 @@ base_link() {
   done
 }
 
-@test "an origin/<base> the worktree's repository cannot read refuses the launch, nothing started, stopped or logged" {
+@test "a launch after origin's base moved reads the new instructions under the new commit, with no fetch in the primary checkout" {
   thread T7
   opened T7 proj feat/T7-one "$wt1"
+  base_files "$primary" CLAUDE.md "OLD-CLAUDE-MARKER"
+  local old sha role
+  old=$(git -C "${primary:?}" rev-parse origin/main)
+  for role in planner builder reviewer; do
+    sha=$(origin_files "$primary" CLAUDE.md "NEW-CLAUDE-MARKER-$role")
+    assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$old"
+    : >"$STUB_CALLS/claude.log"
+    run_bin -0 --separate-stderr team-worker T7 "$role" "$wt1" -- go
+    assert_equal "$output" "4f2a9c1e"
+    assert_equal "$(notes "$stderr")" ""
+    grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
+    grep -qxF "NEW-CLAUDE-MARKER-$role" "$(prompt_file)"
+    run -1 grep -F "OLD-CLAUDE-MARKER" "$(prompt_file)"
+    assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$sha"
+    old=$sha
+  done
+}
+
+@test "instruction files a merge added on origin alone are given, and the launch does not say the project has none" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  # The base as the primary checkout last fetched it has neither file.
+  git -C "${primary:?}" rm -q CLAUDE.md
+  git -C "${primary:?}" commit -q -m "docs: drop the instructions"
+  git -C "${primary:?}" push -q origin main
+  assert_equal "$(git -C "${primary:?}" ls-tree --name-only origin/main -- CLAUDE.md AGENTS.md)" ""
+  local sha
+  sha=$(origin_files "$primary" CLAUDE.md "MERGED-CLAUDE-MARKER" AGENTS.md "MERGED-AGENTS-MARKER")
+  run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
+  assert_equal "$output" "4f2a9c1e"
+  assert_equal "$stderr" ""
+  grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
+  grep -qxF "MERGED-CLAUDE-MARKER" "$(prompt_file)"
+  grep -qxF "MERGED-AGENTS-MARKER" "$(prompt_file)"
+}
+
+@test "a fetch that fails is said on stderr, and the launch goes on with origin/<base> as last fetched" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  base_files "$primary" CLAUDE.md "LAST-FETCHED-MARKER"
+  local sha
+  sha=$(git -C "${primary:?}" rev-parse origin/main)
+  origin_files "$primary" CLAUDE.md "UNREACHED-MARKER" >/dev/null
+  git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/no-repository"
+  run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
+  assert_equal "$output" "4f2a9c1e"
+  [[ $stderr =~ $(fetch_failed builder) ]] || assert_equal "$stderr" "the fetch line alone"
+  grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
+  grep -qxF "LAST-FETCHED-MARKER" "$(prompt_file)"
+  run -1 grep -F "UNREACHED-MARKER" "$(prompt_file)"
+  assert_equal "$(launches | jq -r .role)" builder
+}
+
+@test "an origin/<base> the worktree's repository lacks and cannot fetch refuses the launch after the fetch line, nothing started, stopped or logged" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  # Origin still answers, so the fetch brings a deleted ref back and the launch goes.
   git -C "${primary:?}" update-ref -d refs/remotes/origin/main
+  run_bin -0 --separate-stderr team-worker T7 reviewer "$wt1" -- go
+  assert_equal "$stderr" ""
+  git -C "${primary:?}" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null
+
+  rm -r -- "${TEAM_HOME:?}/tasks/T7" "${HOME:?}/.local/state/agent-team/prompts/T7"
+  sed -i '/"event":"launch"/d' "$TEAM_HOME/ledger.jsonl"
+  : >"$STUB_CALLS/claude.log"
+  git -C "${primary:?}" update-ref -d refs/remotes/origin/main
+  git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/no-repository"
   run_bin -1 team-worker T7 reviewer "$wt1" -- go
-  assert_equal "$output" "team-worker: $wt1's repository has no origin/main, where proj's instructions for T7-reviewer come from: fetch it (git -C $wt1 fetch origin main) and launch again"
+  assert_equal "${#lines[@]}" 2
+  [[ ${lines[0]} =~ $(fetch_failed reviewer) ]] || assert_equal "${lines[0]}" "the fetch line"
+  assert_equal "${lines[1]}" "team-worker: $wt1's repository has no origin/main, where proj's instructions for T7-reviewer come from: fetch it (git -C $wt1 fetch origin main) and launch again"
   assert_equal "$(stub_calls claude)" ""
   assert_equal "$(launches)" ""
   [[ ! -e $TEAM_HOME/tasks/T7/settings.reviewer.proj.json ]]
   [[ ! -e $HOME/.local/state/agent-team/prompts/T7 ]]
+}
+
+@test "an ops launch and a launch with no project fetch nothing" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  ops_stub
+  local old loose
+  old=$(git -C "${primary:?}" rev-parse origin/main)
+  origin_files "$primary" CLAUDE.md "MOVED-MARKER" >/dev/null
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$old"
+
+  loose=$(make_repo loose)
+  git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
+  old=$(git -C "${loose:?}" rev-parse origin/main)
+  origin_files "$loose" CLAUDE.md "LOOSE-MOVED-MARKER" >/dev/null
+  run_bin -0 team-worker T0 planner "$HOME/slots/loose/1" -- go
+  assert_equal "$(git -C "${loose:?}" rev-parse origin/main)" "$old"
 }
 
 @test "a launch with no project gets no memory directory and no project instructions, said on stderr" {
