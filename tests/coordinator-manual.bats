@@ -794,7 +794,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF "On \`T<n> DONE <path>\`, run \`team-next T<n> -- '<the message>'\`" "$plugin/skills/retro/SKILL.md"
 }
 
-@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 120 lines and 29786 bytes" {
+@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 120 lines and 29785 bytes" {
   local files=("$manual" "$plugin"/skills/*/SKILL.md) found
   # A worker's report is logged only by team-next or team-log --from-message; a paused of a cause
   # no worker reports (the usage limit, the machine's load, the machine off) is the coordinator's own.
@@ -843,10 +843,10 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # four words that never come through it, and its hand-off row acted on Daniel's own message,
   # and 29406 once its BLOCKED row said the one that took a command-guard refusal's allowed way
   # is logged denied, parks nothing and waits for the status report, with no ping of its own,
-  # and 120 lines and 29786 bytes once each current item took a close condition or a review date,
+  # and 120 lines and 29785 bytes once each current item took a close condition or a review date,
   # and a due one was a finding until done or renewed).
   (($(wc -l <"$manual") <= 120))
-  (($(wc -c <"$manual") <= 29786))
+  (($(wc -c <"$manual") <= 29785))
 }
 
 @test "a worker goes on by a command-guard refusal's allowed way and reports it, which the coordinator logs denied and lists in its status report" {
