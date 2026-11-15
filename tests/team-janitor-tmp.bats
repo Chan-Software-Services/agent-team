@@ -20,10 +20,10 @@ setup() {
   LIST=$REPO_ROOT/bin/lib/tmp-leftovers
 }
 
-# Stop what a test left running, each by its pid, and let bats remove a root a test made read-only.
+# Stop what a test left running, each by its pid, and let bats remove what a test made read-only.
 teardown() {
   stop_background
-  chmod u+w "$TMP_ROOT" "$VAR_ROOT" 2>/dev/null || true
+  chmod -R u+w "$TEAM_SYSTEM_ROOT" 2>/dev/null || true
 }
 
 # Note the process just started in the background ($!), for stop_background.
@@ -355,4 +355,182 @@ removed $VAR_ROOT/git-template-3 (0 MB, untouched 2 h; no-mistakes)"
   assert_contains "$output" "team-janitor tmp [--dry-run]"
   assert_contains "$output" "bin/lib/tmp-leftovers"
   assert_contains "$output" "another team-janitor tmp is running; skipped"
+}
+
+# closed_task T<n>: an opened task, then its closed, in the sandbox's ledger.
+closed_task() {
+  opened_task "$1"
+  jq -cn --arg task "$1" '{ts: "2026-01-02T00:00:00Z", task: $task, event: "closed", archive: [], returned: [], kept: []}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+}
+
+@test "team-janitor tmp removes a closed task's session tmp and task-named scratch from both roots, and leaves an open task's" {
+  closed_task T367
+  opened_task T394
+  local root task expected=''
+  # The session tmp, holding a read-only tree, which team-close's plain rm -rf cannot remove.
+  stale_dir "$TMP_ROOT/agent-team-T367/go/pkg/mod"
+  chmod -R a-w "$TMP_ROOT/agent-team-T367/go"
+  touch -d '125 minutes ago' "$TMP_ROOT/agent-team-T367"
+  for root in "$TMP_ROOT" "$VAR_ROOT"; do
+    for task in 367 394; do
+      stale_dir "$root/t$task.x"
+      stale_file "$root/T$task-review.x"
+      stale_file "$root/t${task}_x.md"
+    done
+  done
+  stale_dir "$VAR_ROOT/agent-team-T367"
+  stale_dir "$TMP_ROOT/agent-team-T394" 600
+  stale_dir "$VAR_ROOT/agent-team-T394" 600
+  for root in "$TMP_ROOT" "$VAR_ROOT"; do
+    expected+="removed $root/T367-review.x (0 MB, untouched 2 h; T367 is closed)"$'\n'
+    expected+="removed $root/agent-team-T367 (0 MB, untouched 2 h; T367 is closed)"$'\n'
+    expected+="removed $root/t367.x (0 MB, untouched 2 h; T367 is closed)"$'\n'
+    expected+="removed $root/t367_x.md (0 MB, untouched 2 h; T367 is closed)"$'\n'
+  done
+
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "${expected%$'\n'}"
+  assert_equal "$(grep -c 'T367 is closed)$' "$DAY_FILE")" 8
+  # The open task's, whatever their age, are all left.
+  assert_equal "$(find "$TMP_ROOT" "$VAR_ROOT" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | uniq -c | sed 's/^ *//')" \
+    "2 T394-review.x
+2 agent-team-T394
+2 t394.x
+2 t394_x.md"
+}
+
+@test "team-janitor tmp leaves a task-named entry of a number the ledger does not know, and names that are not the task rule's" {
+  closed_task T5
+  local name
+  for name in t6.x T6-review.x agent-team-T6 t5 T5 t5x T5x t5- t5. agent-team-T5x agent-team-t5 xt5.x T05.x; do
+    stale_dir "$TMP_ROOT/$name"
+    stale_file "$VAR_ROOT/$name"
+  done
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  assert_equal "$(find "$TMP_ROOT" "$VAR_ROOT" -mindepth 1 -maxdepth 1 | wc -l)" 26
+}
+
+@test "team-janitor tmp leaves every task-named entry when the ledger cannot be read, says so once, and still removes the listed ones" {
+  stale_dir "$TMP_ROOT/agent-team-T3"
+  stale_file "$TMP_ROOT/t3.x"
+  stale_file "$VAR_ROOT/T4-review.x"
+  stale_dir "$TMP_ROOT/nm-cli-home-1"
+  rm "$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  assert_equal "$stderr" "team-janitor: could not read the ledger, $TEAM_HOME/ledger.jsonl, so no entry named for a task was removed"
+  [[ -d $TMP_ROOT/agent-team-T3 && -f $TMP_ROOT/t3.x && -f $VAR_ROOT/T4-review.x ]]
+
+  # A ledger jq fails on is no ledger either.
+  closed_task T3
+  stale_dir "$TMP_ROOT/git-template-1"
+  fails_on_call jq ledger_events
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/git-template-1 (0 MB, untouched 2 h; no-mistakes)"
+  assert_equal "$stderr" "team-janitor: could not read the ledger, $TEAM_HOME/ledger.jsonl, so no entry named for a task was removed"
+  [[ -d $TMP_ROOT/agent-team-T3 && -f $TMP_ROOT/t3.x && -f $VAR_ROOT/T4-review.x ]]
+}
+
+@test "team-janitor tmp removes a listed stale entry inside an open task's session tmp and a gate session's, and leaves each session tmp" {
+  opened_task T394
+  stale_dir "$TMP_ROOT/agent-team-T394/nm-cli-home-1"
+  stale_file "$TMP_ROOT/agent-team-T394/git-template-2"
+  stale_dir "$TMP_ROOT/agent-team-T394/t394.x"
+  stale_dir "$TMP_ROOT/agent-team-T394/tmp.AbCdEfGhIj"
+  stale_dir "$TMP_ROOT/agent-team-T394/nm-cli-home-3" 10
+  touch -d '125 minutes ago' "$TMP_ROOT/agent-team-T394"
+  stale_dir "$TMP_ROOT/agent-team-gate-a1B2-c3d/bats-run-AbC123"
+  touch -d '125 minutes ago' "$TMP_ROOT/agent-team-gate-a1B2-c3d"
+  # Only a session tmp under /tmp is read into.
+  stale_dir "$VAR_ROOT/agent-team-T394/nm-cli-home-1"
+
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "removed $TMP_ROOT/agent-team-T394/git-template-2 (0 MB, untouched 2 h; no-mistakes)
+removed $TMP_ROOT/agent-team-T394/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)
+removed $TMP_ROOT/agent-team-gate-a1B2-c3d/bats-run-AbC123 (0 MB, untouched 2 h; bats)"
+  assert_equal "$(find "$TMP_ROOT/agent-team-T394" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" "nm-cli-home-3
+t394.x
+tmp.AbCdEfGhIj"
+  [[ -d $TMP_ROOT/agent-team-gate-a1B2-c3d && -d $VAR_ROOT/agent-team-T394/nm-cli-home-1 ]]
+}
+
+@test "team-janitor tmp removes a closed task's session tmp whole, and reads into it only while a process keeps it" {
+  closed_task T367
+  stale_dir "$TMP_ROOT/agent-team-T367/nm-cli-home-1"
+  touch -d '125 minutes ago' "$TMP_ROOT/agent-team-T367"
+  run_bin -0 team-janitor tmp --dry-run
+  assert_equal "$output" "would remove $TMP_ROOT/agent-team-T367 (0 MB, untouched 2 h; T367 is closed)"
+
+  (cd "$TMP_ROOT/agent-team-T367" && exec sleep 300) >/dev/null 2>&1 3>&- &
+  started
+  running "$!" "sleep 300"
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/agent-team-T367/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  [[ -d $TMP_ROOT/agent-team-T367 ]]
+  stop_background
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" ""
+  touch -d '125 minutes ago' "$TMP_ROOT/agent-team-T367"
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/agent-team-T367 (0 MB, untouched 2 h; T367 is closed)"
+}
+
+@test "team-janitor tmp leaves a gate session's tmp at 23 hours, removes it at 25, and leaves a live one" {
+  stale_dir "$TMP_ROOT/agent-team-gate-abcd1234" $((23 * 60))
+  stale_dir "$TMP_ROOT/agent-team-gate-efgh5678" $((25 * 60))
+  stale_dir "$TMP_ROOT/agent-team-gate-ijkl9012" $((25 * 60))
+  stale_dir "$VAR_ROOT/agent-team-gate-mnop-345" $((25 * 60))
+  # Not the gate rule's: seven characters, nine, and one that is no letter, digit or dash.
+  stale_dir "$TMP_ROOT/agent-team-gate-abc1234" $((25 * 60))
+  stale_dir "$TMP_ROOT/agent-team-gate-abcd12345" $((25 * 60))
+  stale_dir "$TMP_ROOT/agent-team-gate-abcd_234" $((25 * 60))
+  TMPDIR=$TMP_ROOT/agent-team-gate-ijkl9012 sleep 300 >/dev/null 2>&1 3>&- &
+  started
+  running "$!" "sleep 300"
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "removed $TMP_ROOT/agent-team-gate-efgh5678 (0 MB, untouched 25 h; a gate session's tmp)
+removed $VAR_ROOT/agent-team-gate-mnop-345 (0 MB, untouched 25 h; a gate session's tmp)"
+  assert_equal "$(find "$TMP_ROOT" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" "agent-team-gate-abc1234
+agent-team-gate-abcd1234
+agent-team-gate-abcd12345
+agent-team-gate-abcd_234
+agent-team-gate-ijkl9012"
+}
+
+@test "team-janitor tmp neither removes nor reads into a session tmp that is a symbolic link or another owner's" {
+  closed_task T367
+  opened_task T394
+  mkdir -p "$OUTSIDE/session"
+  stale_dir "$OUTSIDE/session/nm-cli-home-1"
+  ln -s "$OUTSIDE/session" "$TMP_ROOT/agent-team-T367"
+  ln -s "$OUTSIDE/session" "$TMP_ROOT/agent-team-T394"
+  ln -s "$OUTSIDE/session" "$TMP_ROOT/agent-team-gate-abcd1234"
+  touch -h -d '2 days ago' "$TMP_ROOT/agent-team-T367" "$TMP_ROOT/agent-team-T394" "$TMP_ROOT/agent-team-gate-abcd1234"
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  [[ -L $TMP_ROOT/agent-team-T367 && -d $OUTSIDE/session/nm-cli-home-1 ]]
+
+  rm "$TMP_ROOT/agent-team-T367" "$TMP_ROOT/agent-team-T394"
+  stale_dir "$TMP_ROOT/agent-team-T367/nm-cli-home-1"
+  stale_dir "$TMP_ROOT/agent-team-T394/nm-cli-home-1"
+  touch -d '125 minutes ago' "$TMP_ROOT/agent-team-T367" "$TMP_ROOT/agent-team-T394"
+  TEAM_TMP_UID=$(($(id -u) + 1)) run_bin -0 team-janitor tmp
+  assert_equal "$output" ""
+  [[ -d $TMP_ROOT/agent-team-T367/nm-cli-home-1 && -d $TMP_ROOT/agent-team-T394/nm-cli-home-1 ]]
+}
+
+@test "team-janitor --help documents the task rule and the gate rule" {
+  run_bin -0 team-janitor --help
+  assert_contains "$output" "T367 is closed"
+  assert_contains "$output" "a gate session's tmp"
+  assert_contains "$output" "agent-team-T<n>"
+  assert_contains "$output" "agent-team-gate-"
+  assert_contains "$output" "24 hours"
 }

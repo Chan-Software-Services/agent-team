@@ -43,14 +43,22 @@
 # The sweep of temporary files (bin/lib/tmp.sh), which reads nothing of Docker: it removes the
 # team's stale leftovers from /tmp and /var/tmp, each root resolved once (realpath) and a missing
 # one skipped, and nothing outside them. It reads only the entries directly under a root, and
-# removes one only when every rule holds, each checked again on the entry itself (lstat) just
-# before the removal:
+# those directly inside a session tmp (agent-team-T<n> or agent-team-gate-<8 characters>, a real
+# directory of this user's directly under the /tmp root, never a link), and removes one only when
+# every rule holds, each checked again on the entry itself (lstat) just before the removal:
 #   type      a real directory or a regular file; never a symbolic link, whatever it points at,
 #             a socket, a device or a pipe
 #   owner     the user running the sweep
-#   name      a line of bin/lib/tmp-leftovers, read from this checkout, matches the whole name:
-#             the names only the team's test runs make, each with its maker
-#   age       it was last modified at least 60 minutes ago
+#   name      one of these rules names it whole; inside a session tmp, only the list:
+#               list  a line of bin/lib/tmp-leftovers, read from this checkout: the names only
+#                     the team's test runs make, each with its maker
+#               task  agent-team-T<n>, a session tmp, or t<n> or T<n> followed by a -, a . or an
+#                     _ and more, a worker's scratch, when the ledger knows task T<n> and it is
+#                     not open; a number the ledger does not know is kept, and so is every such
+#                     entry when the ledger cannot be read, which the run says once on stderr
+#                     and which fails nothing
+#               gate  agent-team-gate-<8 letters, digits or dashes>, a gate session's tmp
+#   age       it was last modified at least 60 minutes ago, or 24 hours for the gate rule
 #   not live  no process of this user names it: its full path, followed by a /, a space, a :, a
 #             line break or the end, is in no process's working directory, command line or
 #             environment (/proc on Linux; lsof and ps on macOS), this run's own process and its
@@ -58,11 +66,13 @@
 #             rules above; when they cannot be read, nothing is removed and the run exits 1
 #             saying why.
 # A directory is made writable first (chmod -R, which changes no link), so a read-only tree goes
-# too, and removed with rm -rf --one-file-system; a file with rm -f.
+# too, and removed with rm -rf --one-file-system; a file with rm -f. A session tmp removed whole
+# takes its entries with it; one kept, an open task's or a live one, has the list applied inside.
 # Each removal is one line on stdout, with the entry's size (du, in MB below 1024 MB, else in GiB)
 # and its age (in minutes below 120, else in whole hours):
 #   removed /tmp/nm-cli-home-123 (373 MB, untouched 5 h; no-mistakes)
-# and the same line, as "- HH:MM <line>" in local time, is appended to the day's file,
+# whose last part is the list line's maker, "T367 is closed" for the task rule, or "a gate
+# session's tmp" for the gate rule, and the same line, as "- HH:MM <line>" in local time, is appended to the day's file,
 # ~/.local/state/agent-team/janitor/tmp-<local date>.md, made with the title "# Temp files removed
 # on <machine>, <date>" at the day's first removal. A run that removes nothing prints nothing.
 # A removal that fails is said on stderr ("team-janitor: could not remove <path>: <rm's last
@@ -72,7 +82,8 @@
 # --dry-run removes nothing, writes nothing, takes no lock, and prints "would remove" for
 # "removed".
 # Test seams: TEAM_SYSTEM_ROOT stands for / in both roots, TEAM_TMP_UID for the user's uid as the
-# owner rule reads it, and TEAM_TMP_AGE_MINUTES for the 60 minutes.
+# owner rule reads it, and TEAM_TMP_AGE_MINUTES for the 60 minutes (never the gate rule's 24
+# hours).
 #
 # Exit 0 done, nothing to remove included, 1 a removal failed, the processes or a root could not
 # be read, or the day's file could not be written, 2 usage error.

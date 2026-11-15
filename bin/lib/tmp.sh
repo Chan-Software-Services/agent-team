@@ -5,7 +5,9 @@
 #   source "$TEAM_LIB/tmp.sh"
 #
 # It provides tmp_main [--dry-run], the whole run, which ends the script with the run's exit code.
-# The names it may remove are the lines of bin/lib/tmp-leftovers, read from this checkout.
+# The names it may remove are the lines of bin/lib/tmp-leftovers, read from this checkout, a
+# task's session tmp and scratch once the ledger says the task is not open, and a gate session's
+# tmp a day old; inside a session tmp under /tmp, only the list's.
 # Test seams: TEAM_SYSTEM_ROOT stands for / in both roots, as in the library's tool_dirs;
 # TEAM_TMP_UID for the uid whose entries are the sweep's to judge (id -u), so a test shows another
 # owner's entry left alone; TEAM_TMP_AGE_MINUTES for the minutes an entry must have gone
@@ -15,10 +17,17 @@
 # The run's scratch, removed when the script ends, and the lists the run fills: the list's makers
 # and expressions, and the candidates, each a path, the same path under the root as named before
 # it was resolved (on macOS /tmp is a link to /private/tmp, and a process may name either), and
-# the last part of its line.
+# the last part of its line, and the session tmp it is inside, empty for an entry of a root.
 TMP_WORK=''
 TMP_MAKERS=() TMP_NAMES=()
-TMP_PATHS=() TMP_ALIASES=() TMP_WHYS=()
+TMP_PATHS=() TMP_ALIASES=() TMP_WHYS=() TMP_PARENTS=()
+# The session tmps directly under the /tmp root, by name, whose entries are read too; and the
+# directories removed (or, on a dry run, that would be), whose entries go with them.
+TMP_SESSIONS=() TMP_GONE=()
+# The ledger's tasks, each "open" or "closed", read at the first stale entry named for a task:
+# TMP_LEDGER is empty until then, then "read", or "none" when it could not be read.
+declare -gA TMP_TASKS=()
+TMP_LEDGER=''
 # Set when the run ends with exit 1.
 TMP_FAILED=''
 
@@ -35,18 +44,52 @@ tmp_read_list() {
   done <"$tmp_list"
 }
 
-# Whether a rule names the entry <name>: sets tmp_why, the last part of its line, and
-# tmp_minutes, the minutes it must have gone unmodified: tmp_named <name>
+# Whether a rule names the entry <name>: sets tmp_why, the last part of its line, tmp_minutes,
+# the minutes it must have gone unmodified, and tmp_task, the task whose closing it waits on
+# (empty for the list's and the gate's). Inside a session tmp only the list names an entry:
+# tmp_named <name> [inside]
 tmp_named() {
   local tmp_i
-  tmp_minutes=${TEAM_TMP_AGE_MINUTES:-60}
+  tmp_minutes=${TEAM_TMP_AGE_MINUTES:-60} tmp_task=''
   for tmp_i in "${!TMP_NAMES[@]}"; do
     if [[ $1 =~ ^(${TMP_NAMES[tmp_i]})$ ]]; then
       tmp_why=${TMP_MAKERS[tmp_i]}
       return 0
     fi
   done
+  [[ -z ${2:-} ]] || return 1
+  # The task rule: a session tmp, or a worker's scratch named for its task.
+  if [[ $1 =~ ^agent-team-T([0-9]+)$ || $1 =~ ^[tT]([0-9]+)[-._]. ]]; then
+    tmp_task=T${BASH_REMATCH[1]}
+    tmp_why="$tmp_task is closed"
+    return 0
+  fi
+  # The gate rule: a gate session's tmp, a day old.
+  if [[ $1 =~ ^agent-team-gate-[A-Za-z0-9-]{8}$ ]]; then
+    tmp_minutes=1440
+    tmp_why="a gate session's tmp"
+    return 0
+  fi
   return 1
+}
+
+# Whether the ledger knows <task> and it is not open; the ledger is read once, at the first call,
+# and when it cannot be read no task is, which the run says once: tmp_task_closed <task>
+tmp_task_closed() {
+  local tmp_file=$TEAM_HOME/ledger.jsonl tmp_states tmp_id tmp_state
+  if [[ -z $TMP_LEDGER ]]; then
+    TMP_LEDGER=none
+    if [[ -r $tmp_file ]] && tmp_states=$(ledger_jq 'ledger_events | by_task | to_entries[]
+        | "\(.key) \(if .value | is_open then "open" else "closed" end)"' -nRr "$tmp_file" 2>/dev/null); then
+      TMP_LEDGER='read'
+      while read -r tmp_id tmp_state; do
+        [[ -z $tmp_id ]] || TMP_TASKS[$tmp_id]=$tmp_state
+      done <<<"$tmp_states"
+    else
+      echo "${0##*/}: could not read the ledger, $tmp_file, so no entry named for a task was removed" >&2
+    fi
+  fi
+  [[ $TMP_LEDGER == read && ${TMP_TASKS[$1]:-} == closed ]]
 }
 
 # Whether an entry of <type> (find's %y, or stat's %F), <owner> and <modified> (epoch seconds)
@@ -62,9 +105,14 @@ tmp_removable() {
 }
 
 # Add the candidates directly under <dir>, each entry there that passes every rule but the live
-# one; <named> is <dir> as named before it was resolved: tmp_scan <dir> <named>
+# one; <named> is <dir> as named before it was resolved. With "sessions", the /tmp root's scan, it
+# notes each session tmp there, a real directory of this user's, in TMP_SESSIONS; with "inside",
+# <dir> is a session tmp, whose entries only the list names:
+# tmp_scan <dir> <named> [sessions | inside]
 tmp_scan() {
-  local tmp_dir=$1 tmp_named_dir=$2 tmp_record tmp_type tmp_owner tmp_modified tmp_name tmp_why tmp_minutes
+  local tmp_dir=$1 tmp_named_dir=$2 tmp_mode=${3:-} tmp_record tmp_type tmp_owner tmp_modified tmp_name
+  local tmp_why tmp_minutes tmp_task tmp_parent=''
+  [[ $tmp_mode != inside ]] || tmp_parent=$tmp_dir
   if ! find "$tmp_dir" -mindepth 1 -maxdepth 1 -printf '%y %U %T@ %f\0' 2>"$TMP_WORK/find.err" |
     LC_ALL=C sort -z -t ' ' -k 4 >"$TMP_WORK/entries"; then
     echo "${0##*/}: could not list $tmp_dir: $(tmp_last_line "$TMP_WORK/find.err")" >&2
@@ -78,11 +126,17 @@ tmp_scan() {
     tmp_modified=${tmp_record%% *} tmp_name=${tmp_record#* }
     # A name with a line break is no one's the rules know, and the process text is read by line.
     [[ $tmp_name != *$'\n'* ]] || continue
-    tmp_named "$tmp_name" || continue
+    if [[ $tmp_mode == sessions && $tmp_type == d && $tmp_owner == "$tmp_uid" &&
+      $tmp_name =~ ^agent-team-(T[0-9]+|gate-[A-Za-z0-9-]{8})$ ]]; then
+      TMP_SESSIONS+=("$tmp_name")
+    fi
+    tmp_named "$tmp_name" ${tmp_parent:+inside} || continue
     tmp_removable "$tmp_type" "$tmp_owner" "${tmp_modified%%.*}" "$tmp_minutes" || continue
+    if [[ -n $tmp_task ]]; then tmp_task_closed "$tmp_task" || continue; fi
     TMP_PATHS+=("$tmp_dir/$tmp_name")
     TMP_ALIASES+=("$tmp_named_dir/$tmp_name")
     TMP_WHYS+=("$tmp_minutes $tmp_why")
+    TMP_PARENTS+=("$tmp_parent")
   done <"$TMP_WORK/entries"
 }
 
@@ -192,10 +246,20 @@ tmp_record() {
 }
 
 # Remove the candidate <path> unless a process names it or <alias>, or it no longer passes the
-# rules, and say so: tmp_remove <path> <alias> <minutes> <why>
+# rules, or it went with a directory removed before it, and say so; <parent> is the session tmp it
+# is inside, empty for an entry of a root: tmp_remove <path> <alias> <minutes> <why> <parent>
 tmp_remove() {
-  local tmp_path=$1 tmp_minutes=$3 tmp_why=$4 tmp_stat tmp_type tmp_owner tmp_modified tmp_kb tmp_line
+  local tmp_path=$1 tmp_minutes=$3 tmp_why=$4 tmp_parent=$5 tmp_stat tmp_type tmp_owner tmp_modified tmp_kb
+  local tmp_line tmp_gone
+  for tmp_gone in "${TMP_GONE[@]}"; do
+    [[ $tmp_path != "$tmp_gone"/* ]] || return 0
+  done
   if [[ $1 == "$2" ]]; then tmp_live "$1" && return 0; else tmp_live "$1" "$2" && return 0; fi
+  # The session tmp it is inside is still a real directory of this user's, so nothing is reached
+  # through a link put in its place.
+  if [[ -n $tmp_parent && $(stat -c '%F|%u' -- "$tmp_parent" 2>/dev/null) != "directory|$tmp_uid" ]]; then
+    return 0
+  fi
   # Each rule again, on the entry as it is now and never through a link.
   tmp_stat=$(stat -c '%F|%u|%Y' -- "$tmp_path" 2>/dev/null) || return 0
   IFS='|' read -r tmp_type tmp_owner tmp_modified <<<"$tmp_stat"
@@ -204,6 +268,7 @@ tmp_remove() {
   tmp_kb=${tmp_kb%%[!0-9]*}
   tmp_line="$tmp_path ($(tmp_size "${tmp_kb:-0}"), untouched $(tmp_age $((tmp_now - tmp_modified))); $tmp_why)"
   if [[ -n $tmp_dry ]]; then
+    [[ $tmp_type != directory ]] || TMP_GONE+=("$tmp_path")
     echo "would remove $tmp_line"
     return 0
   fi
@@ -219,6 +284,7 @@ tmp_remove() {
     TMP_FAILED=1
     return 0
   fi
+  [[ $tmp_type != directory ]] || TMP_GONE+=("$tmp_path")
   echo "removed $tmp_line"
   tmp_record "removed $tmp_line"
 }
@@ -226,7 +292,7 @@ tmp_remove() {
 # The run: tmp_main [--dry-run]
 tmp_main() {
   local tmp_usage="usage: team-janitor tmp [--dry-run]" tmp_arg tmp_dry='' tmp_uid tmp_now tmp_machine
-  local tmp_state=$HOME/.local/state/agent-team tmp_lock tmp_root tmp_named_root tmp_i tmp_reason
+  local tmp_state=$HOME/.local/state/agent-team tmp_lock tmp_root tmp_named_root tmp_session tmp_i tmp_reason
   for tmp_arg in "$@"; do
     case $tmp_arg in
       --dry-run) tmp_dry=1 ;;
@@ -255,7 +321,15 @@ tmp_main() {
   for tmp_named_root in "${TEAM_SYSTEM_ROOT:-}/tmp" "${TEAM_SYSTEM_ROOT:-}/var/tmp"; do
     [[ -d $tmp_named_root ]] || continue
     tmp_root=$(realpath -- "$tmp_named_root") || continue
-    tmp_scan "$tmp_root" "$tmp_named_root"
+    if [[ $tmp_named_root == */var/tmp ]]; then
+      tmp_scan "$tmp_root" "$tmp_named_root"
+      continue
+    fi
+    # A session tmp's entries come after it, so one removed whole takes them with it.
+    tmp_scan "$tmp_root" "$tmp_named_root" sessions
+    for tmp_session in "${TMP_SESSIONS[@]}"; do
+      tmp_scan "$tmp_root/$tmp_session" "$tmp_named_root/$tmp_session" inside
+    done
   done
 
   if ((${#TMP_PATHS[@]})); then
@@ -263,7 +337,8 @@ tmp_main() {
     tmp_reason=$(tmp_read_processes 2>&1) ||
       die "could not read this user's processes, so nothing was removed: $tmp_reason"
     for tmp_i in "${!TMP_PATHS[@]}"; do
-      tmp_remove "${TMP_PATHS[tmp_i]}" "${TMP_ALIASES[tmp_i]}" "${TMP_WHYS[tmp_i]%% *}" "${TMP_WHYS[tmp_i]#* }"
+      tmp_remove "${TMP_PATHS[tmp_i]}" "${TMP_ALIASES[tmp_i]}" "${TMP_WHYS[tmp_i]%% *}" "${TMP_WHYS[tmp_i]#* }" \
+        "${TMP_PARENTS[tmp_i]}"
     done
   fi
   [[ -z $TMP_FAILED ]] || exit 1
