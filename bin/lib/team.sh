@@ -16,7 +16,7 @@
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
@@ -2419,12 +2419,46 @@ ticket_graph_dir() {
   [[ -z $file ]] || printf '%s\n' "${file%/tickets/*}"
 }
 
+# Whether a process holds a task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, which
+# team-merge keeps for as long as it lands the task's PR through the merge queue, and team-land
+# under it. Read without taking it, since a reader that took it, for an instant, would have a
+# team-merge started in that instant say another one is landing the PR: the lock is held while a
+# process has the file open, since only team-merge opens it, and only to lock it, so on Linux it
+# reads each process's open files (/proc/<pid>/fd, its own user's) and elsewhere lsof's. Not
+# held with no such file, and when lsof cannot be run. Test seam: TEAM_PROC, the /proc to read,
+# one with no self/fd being a machine that has none: merge_lock_held T<n>
+merge_lock_held() {
+  local lock=$HOME/.local/state/agent-team/merge/$1.lock proc=${TEAM_PROC:-/proc} real
+  [[ -f $lock ]] || return 1
+  real=$(realpath -- "$lock") || return 1
+  if [[ -d $proc/self/fd ]]; then
+    # Counted, never cut short: find fails on another user's processes, and the count stands all the same.
+    (($(find "$proc"/[0-9]*/fd -maxdepth 1 -type l -printf '%l\n' 2>/dev/null | grep -cxF -- "$real" || true) > 0))
+  else
+    [[ -n $(lsof -t -- "$real" 2>/dev/null) ]]
+  fi
+}
+
+# The tasks whose merge lock a process holds (merge_lock_held), as one JSON array of their ids,
+# [] with none: merge_locks_held
+merge_locks_held() {
+  local locks_file locks_task locks_tasks=()
+  for locks_file in "$HOME"/.local/state/agent-team/merge/T*.lock; do
+    locks_task=${locks_file##*/} locks_task=${locks_task%.lock}
+    if [[ $locks_task =~ ^T[1-9][0-9]*$ ]] && merge_lock_held "$locks_task"; then locks_tasks+=("$locks_task"); fi
+  done
+  jq -cn '$ARGS.positional' --args "${locks_tasks[@]}"
+}
+
 # A task's state, as team-state --json prints it but compact, from its events (one JSON array in
 # ledger order), the live session list, its live workers' transcripts and, when it has a pr event,
 # GitHub. GitHub failures are carried in the pr part; a broken registry or an unreadable session
-# list fails with the reason on stderr: task_state_json '<events>'
+# list fails with the reason on stderr. The pr part's queued is the PR's place in the merge queue,
+# {since, head, waited_on} while the task's latest queued, dequeued or merged of it is a queued
+# (queue_state in bin/lib/ledger.jq), waited_on whether a process holds the task's merge lock
+# (merge_lock_held), else null: task_state_json '<events>'
 task_state_json() (
-  local events=$1 state pr dir session_id context contexts=() out authority
+  local events=$1 state pr dir session_id context contexts=() out authority in_queue waited_on
   local task tickets graph_dir html png fresh page_digest
   live_sessions
   while IFS= read -r session_id; do
@@ -2466,7 +2500,15 @@ task_state_json() (
     trap 'rm -rf "$dir"' EXIT
     pr=$(pr_part "$events" "$pr" "$dir") || exit 1
     authority=$(pr_merge_authority "$events" "$state" "$pr" "$dir") || exit 1
-    state=$(jq -c --argjson pr "$pr" --argjson authority "$authority" '.pr = $pr | .pr.merge_authority = $authority' <<<"$state") || exit 1
+    in_queue=$(ledger_jq 'queue_state($url) | if .state? == "queued" then {since, head} else null end' -c \
+      --arg url "$(jq -r .url <<<"$pr")" <<<"$events") || exit 1
+    if [[ $in_queue != null ]]; then
+      waited_on=false
+      if merge_lock_held "$task"; then waited_on=true; fi
+      in_queue=$(jq -c --argjson waited_on "$waited_on" '.waited_on = $waited_on' <<<"$in_queue") || exit 1
+    fi
+    state=$(jq -c --argjson pr "$pr" --argjson authority "$authority" --argjson queued "$in_queue" \
+      '.pr = $pr | .pr.merge_authority = $authority | .pr.queued = $queued' <<<"$state") || exit 1
   fi
   printf '%s\n' "$state"
 )

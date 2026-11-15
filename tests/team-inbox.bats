@@ -785,6 +785,24 @@ $RANKED"
   assert_equal "$(waiting_items_shown | grep 'pull/5')" "- **3** T5 Task T5: ready to merge <https://github.com/owner/conv/pull/5> - unblocks 2 (1 task, 1 PR)"
 }
 
+@test "a PR in the merge queue is left out of the PRs ready to merge, until the queue drops it" {
+  registry
+  ready_pr T7 proj 7
+  ready_pr T8 conv 8
+  # Listed while no word covers it on the ledger, as a PR whose default word was withdrawn since
+  # team-merge queued it would be.
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+  log_events '{"task":"T7","event":"queued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","project":"proj"}'
+  run_bin -0 --separate-stderr team-inbox
+  assert_equal "$stderr" ""
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 0
+  assert_equal "$(waiting_items_shown | grep -c 'pull/8')" 1
+  log_events '{"task":"T7","event":"dequeued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","reason":"GitHub gives no reason"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+}
+
 @test "the team's own project's PR is listed whatever approval it has, by its repo or its path as well as by its name" {
   registry
   approved_pr T4 proj 4

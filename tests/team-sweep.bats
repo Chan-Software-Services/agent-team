@@ -925,6 +925,59 @@ due() {
   assert_contains "$output" "T3 no-worker: merged and not closed"
 }
 
+@test "queue-wait: a PR in the merge queue with no team-merge holding the task's lock, and no merge-due for it" {
+  local url=https://github.com/owner/proj/pull/5 pid
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 queue-wait: PR $url is in the merge queue since 2026-10-22T03:00:00Z with no team-merge waiting on it; next: run team-merge T3 with Bash run_in_background, which goes on waiting and logs how it ends"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .session, .name, .next])' <<<"$output")" \
+    '[["T3","queue-wait",null,null,"run team-merge T3 with Bash run_in_background, which goes on waiting and logs how it ends"]]'
+  # A lock file nobody holds, as a team-merge that ended leaves it, changes nothing.
+  mkdir -p "$HOME/.local/state/agent-team/merge"
+  echo 4242 >"$HOME/.local/state/agent-team/merge/T3.lock"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T3 queue-wait"
+  # While a team-merge holds the lock, nothing is found, and the sweep takes no lock of its own:
+  # the holder's is still the only one.
+  pid=$(hold_merge_lock T3)
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # Another task's lock is not this one's.
+  release_merge_lock "$pid"
+  pid=$(hold_merge_lock T4)
+  run_bin -1 team-sweep
+  assert_contains "$output" "T3 queue-wait"
+  release_merge_lock "$pid"
+  # Dropped from the queue, the PR is merge-due again; queued again and merged, it is neither.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "GitHub gives no reason"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  event T3 merged '{pr: 5, merge: "9999999", head: "a1b2c3d", by: "the approved plan", url: "https://github.com/owner/proj/pull/5"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 no-worker: merged and not closed, with every live worker idle (latest T3-reviewer 11111111); next: close it with team-close T3"
+  no_github
+}
+
+@test "merge-due: none while a team-merge holds the task's lock, before its queued is logged" {
+  local pid
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  pid=$(hold_merge_lock T3)
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  release_merge_lock "$pid"
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+}
+
 @test "merge-due: none while the latest review, a pass logged through team-log, sent findings back" {
   opened T3
   launch T3 builder 11111111

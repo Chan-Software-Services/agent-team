@@ -1247,6 +1247,25 @@ def bypass_text($on):
     then "has bypass actors that cannot be read, so who may merge past its required checks is not known"
     else "lets \(.actors | join(", ")) merge past its required checks" end;
 
+# Where the PR at $url stands with its base's merge queue, over the task's events, or null: by the
+# latest queued, dequeued or merged naming the URL (a trailing slash aside), which team-merge logs
+# as it lands a PR through the queue, {state: "queued", since, head} for a queued (its ts and
+# head), {state: "dequeued", since, reason} for a dequeued, and null for a merged or with none.
+def queue_state($url):
+  ($url | rtrimstr("/")) as $u
+  | [.[] | select(.event | IN("queued", "dequeued", "merged")) | select((.url | strings | rtrimstr("/")) == $u)] | last
+  | if . == null then null
+    elif .event == "queued" then {state: "queued", since: .ts, head}
+    elif .event == "dequeued" then {state: "dequeued", since: .ts, reason}
+    else null end;
+# The task's PRs not merged that stand in the merge queue (queue_state is queued), from task_prs,
+# each with since, the queued's ts.
+def queued_prs:
+  . as $events
+  | task_prs as $prs
+  | [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
+     | ($events | queue_state($pr.url)) | select(.state? == "queued") | $pr + {since}];
+
 # What waits on the checks of a pass, over the task's events, or null: null unless the task's
 # latest review is a pass on one of its PRs not merged, the PR whose head the pass names (by the
 # shorter prefix), else the latest PR whose first pr event came before the pass (a fix's head, which
@@ -1432,8 +1451,10 @@ def task_state($sessions; $home):
 # A task's state (team-state's JSON) as one line of text, each live worker's context in thousands
 # and the brief it is on, then the tickets done, with the graph fresh or stale when there is one,
 # the latest review, the PR, the state of the checks wait of its latest pass while one stands
-# ("checks <state>", checks_wait's), the words on the PR, the walk, a stow under way, and last the
-# standing parks:
+# ("checks <state>", checks_wait's), the PR's place in the merge queue while it stands in it
+# ("in the merge queue since <ts>, team-merge is waiting", or ", no team-merge waits on it: run
+# team-merge T<n>", the pr's queued), the words on the PR, the walk, a stow under way, and last
+# the standing parks:
 # T14 agent-team feature building | T14-builder idle 302k on build-04 | tickets 3/7, graph stale | review 4 findings, sent back 5, 6 | PR #5 a1b2c3d 16 behind dev checks 2/2 agent-review missing
 def state_line:
   .task as $task
@@ -1470,6 +1491,9 @@ def state_line:
          end
      end)
   + (if .checks_wait == null then "" else " | checks \(.checks_wait.state)" end)
+  + (if .pr.queued? == null then ""
+     else " | in the merge queue since \(.pr.queued.since), " + if .pr.queued.waited_on then "team-merge is waiting"
+       else "no team-merge waits on it: run team-merge \($task)" end end)
   + (if (.rehome_failures // []) == [] then ""
      else " | not re-homed: " + (.rehome_failures
        | map("\(.project)\(if .ticket then "--\(.ticket)" else "" end) on \(.machine): \(.reason)") | join("; ")) end)
@@ -1556,23 +1580,37 @@ def default_holds($pr; $withdrawals; $own):
 # team-merge read them: the sweep reads no GitHub, so a guarded path a reviewer did not name, a
 # plan changed since its approval, Daniel's message not reading back or the App's check is
 # team-merge's to find, and of two open PRs the later review stands for both); only such PRs are
-# named. $withdrawals is default_events' and $own own_projects' {projects, app} (own_in), or null
-# when the registry cannot be read, which raises none.
-def merge_due_finding($withdrawals; $sessions; $own):
+# named, and none that stands in the merge queue (queued_prs), which team-merge is landing or
+# queue-wait names; nor any PR of a task whose merge lock is held ($landing, the tasks a
+# team-merge is landing a PR of now). $withdrawals is default_events' and $own own_projects'
+# {projects, app} (own_in), or null when the registry cannot be read, which raises none.
+def merge_due_finding($withdrawals; $sessions; $own; $landing):
   .[0].task as $task
   | . as $events
   | lifecycle as $state
   | if $own != null and ($state | lifecycle_phase) == "awaiting-merge" and $state.asks == [] and $state.parks == []
-      and ($events | checks_wait | .state) == "passed" then
+      and ($events | checks_wait | .state) == "passed" and ($task | IN($landing[]) | not) then
       select($events | merge_base_round($sessions) | not)
       | task_prs as $prs
-      | [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
+      | [$events | queued_prs[] | .url] as $queued
+      | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
          | select($events | default_holds($pr; $withdrawals; $own)) | .url] as $due
       | select($due != [])
       | finding($task; "merge-due"; null; null;
           "awaiting the merge of \($due | join(", ")) on the default word, the approved plan, with no ask open";
           "run team-merge \($task); on a refusal, ask Daniel for the per-head word with team-ask")
     else empty end;
+
+# team-sweep's queue-wait findings, over a task's events, one for each of its PRs that stands in
+# the merge queue (queued_prs) while no process holds the task's merge lock ($landing, the tasks
+# whose lock is held): the queue lands or drops it with no team-merge to log either.
+def queue_wait_findings($landing):
+  .[0].task as $task
+  | select($task | IN($landing[]) | not)
+  | queued_prs[]
+  | finding($task; "queue-wait"; null; null;
+      "PR \(.url) is in the merge queue since \(.since) with no team-merge waiting on it";
+      "run team-merge \($task) with Bash run_in_background, which goes on waiting and logs how it ends");
 
 # team-sweep's stowing finding, over a task's events, or nothing: its stowing (a stow under way)
 # has stood 30 minutes with no stowed or stow-failed, whatever parks the task, since the worker
@@ -1912,21 +1950,23 @@ def coordinator_twin_findings($self):
 # team-sweep's findings, over every ledger event as one array, the session list, the stow plan
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
-# every task's withdrawals), else its findings unless it is parked, then its ci-due, then the stray sessions (named
+# every task's withdrawals), else its findings unless it is parked, then its queue-wait findings,
+# then its ci-due, then the stray sessions (named
 # like a team worker whose task is closed or not in the ledger, never the load check's T0, whose
 # session the coordinator waits on for up to 30 minutes), in task number order; then the
 # coordinator-twin, activity, level, retro-due and health findings. $own is the registered projects
 # that are the team's own, or null, as merge_due_finding takes it, $health the health view, as
-# health_findings takes it, and $self the sweep's own session id, as coordinator_twin_findings takes
-# it.
-def sweep($sessions; $plan; $activity; $own; $health; $self):
+# health_findings takes it, $self the sweep's own session id, as coordinator_twin_findings takes
+# it, and $landing the tasks whose merge lock a process holds, as merge_due_finding takes it.
+def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
   . as $events
   | by_task as $tasks
   | default_events as $withdrawals
   | ([($tasks[] | select(is_open) | stowing_finding,
-        ([merge_due_finding($withdrawals; $sessions; $own)] as $due
+        ([merge_due_finding($withdrawals; $sessions; $own; $landing)] as $due
          | if $due != [] then $due[] elif parked then empty
            else task_findings($sessions; $activity) end),
+        queue_wait_findings($landing),
         ci_due_finding),
       (team_sessions($tasks; $sessions)[] | select(.task_state | IN("closed", "unknown"))
         | finding(.task; "stray"; .session; .name;
@@ -2134,15 +2174,17 @@ def approves_pr($pr):
   and (.head == null or same_head(.head; $pr.head));
 
 # The task's PRs that wait on Daniel's word to merge, from task_prs: none unless its phase is
-# awaiting-merge, then each not merged that no merge-approved names at its head (approves_pr), and
-# whose default word does not hold on the ledger
+# awaiting-merge, then each not merged that no merge-approved names at its head (approves_pr),
+# that does not stand in the merge queue (queued_prs: its word was given, and team-merge is landing
+# it), and whose default word does not hold on the ledger
 # (default_holds over $withdrawals, default_events', and $own, own_projects' {projects, app}, the
 # team's own and the reviewer App; with $own null, as when the registry cannot be read, none holds).
 def merge_ready_prs($withdrawals; $own):
   . as $events
   | task_prs as $prs
   | if phase != "awaiting-merge" then []
-    else [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
+    else [$events | queued_prs[] | .url] as $queued
+    | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
       | select(any($events[]; approves_pr($pr)) | not)
       | select($own != null and ($events | default_holds($pr; $withdrawals; $own)) | not)] end;
 

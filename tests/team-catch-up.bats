@@ -584,3 +584,14 @@ SH
   rm "$GH_DIR/ruleset-42.json"
   refused "team-catch-up: GitHub cannot be read: gh api repos/owner/proj/rulesets/42: cat: "
 }
+
+@test "on a base with a merge queue a clean catch-up is refused naming team-merge, a conflict as on any base, and a head that holds the base is nothing to merge" {
+  echo '[{"type": "merge_queue", "ruleset_id": 42, "parameters": {"merge_method": "MERGE"}}]' >"$GH_DIR/rules.json"
+  echo '{"id": 42, "name": "dev", "bypass_actors": []}' >"$GH_DIR/ruleset-42.json"
+  run_bin -0 --separate-stderr team-catch-up T14
+  assert_equal "$output" "team-catch-up: $url holds dev already; nothing to merge"
+  base_moves >/dev/null
+  refused "team-catch-up: dev merges through its queue, which needs no catch-up: run team-merge T14"
+  base_moves src/tool.py >/dev/null
+  refused "team-catch-up: $url conflicts with dev on src/tool.py: the holder merges it (builder-merge-base), then a rereview"
+}

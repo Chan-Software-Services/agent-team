@@ -532,7 +532,7 @@ reply_line() {
     required: ["build", "shellcheck", "test"], required_missing: ["test"],
     agent_review: "success", merge_approved: true, behind_by: 0,
     queue: {merge_method: "MERGE", grouping_strategy: "ALLGREEN"},
-    review_app: null, review_check: null, review_check_run: null, review_check_by: null}')"
+    review_app: null, review_check: null, review_check_run: null, review_check_by: null, queued: null}')"
   # The words, as merge_authority derives them: a legacy merge-approved, naming no head, holds on
   # the ledger for the PR's latest pr event; no plan is approved.
   assert_equal "$(jq -c '.pr.merge_authority | [.word, [.words[] | .word, .applies, .holds]]' <<<"$output")" \
@@ -686,7 +686,7 @@ EOF
   assert_equal "$(jq -c '.pr | del(.merge_authority)' <<<"$output")" "$(jq -cn --arg head "$head" '{
     url: "https://github.com/owner/proj/pull/5", number: 5, repo: "owner/proj", project: "proj",
     ledger_head: $head, merge_approved: true,
-    error: "gh pr view: error connecting to api.github.com"}')"
+    error: "gh pr view: error connecting to api.github.com", queued: null}')"
   assert_equal "$(jq -c '[.phase, .title, .thread, .workers[0].live, (.worktrees | length)]' <<<"$output")" \
     '["in-review","The tooling","1563",true,1]'
 
@@ -1096,6 +1096,70 @@ files_read() {
   assert_equal "$(jq -c .checks_wait <<<"$output")" null
   run_bin -0 team-state T14
   assert_equal "$output" "T14 proj feature in-review | no live worker | review 2 findings, sent back 1 | PR #5 a1b2c3d checks 1/1 agent-review missing"
+}
+
+@test "a PR in the merge queue shows since when, and whether a team-merge holds the task's lock, until its dequeued or merged" {
+  local url=https://github.com/owner/proj/pull/5 line pid lock
+  awaiting_merge
+  line="T14 proj feature awaiting-merge | no live worker | review 1 pass | PR #5 a1b2c3d checks 1/1 agent-review missing | checks waiting"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued <<<"$output")" null
+  ledger_line --arg url "$url" --arg head "$head" \
+    '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "queued", url: $url, head: $head, project: "proj"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued <<<"$output")" "{\"since\":\"2026-10-22T03:00:00Z\",\"head\":\"$head\",\"waited_on\":false}"
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, no team-merge waits on it: run team-merge T14"
+  # The lock file a team-merge that ended left, which nobody holds, is no wait.
+  lock=$HOME/.local/state/agent-team/merge/T14.lock
+  mkdir -p "${lock%/*}"
+  echo 4242 >"$lock"
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, no team-merge waits on it: run team-merge T14"
+  # Held, a team-merge is waiting; the read takes no lock, so one more holder could not have it
+  # while the first does, and can the moment it ends.
+  pid=$(hold_merge_lock T14)
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, team-merge is waiting"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.waited_on <<<"$output")" true
+  run ! flock -n "$lock" true
+  release_merge_lock "$pid"
+  flock -n "$lock" true
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, no team-merge waits on it: run team-merge T14"
+  # A URL under the repo's old owner or with a trailing slash is the same PR; dropped, it is in no queue.
+  ledger_line --arg url "$url/" --arg head "$head" \
+    '{ts: "2026-10-22T03:30:00Z", task: "T14", event: "dequeued", url: $url, head: $head, reason: "GitHub gives no reason"}'
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line"
+  # Queued again, then merged: in no queue.
+  ledger_line --arg url "$url" --arg head "$head" \
+    '{ts: "2026-10-22T04:00:00Z", task: "T14", event: "queued", url: $url, head: $head, project: "proj"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.since <<<"$output")" '"2026-10-22T04:00:00Z"'
+  event T14 merged "{pr: 5, merge: \"9999999\", head: \"$head\", by: \"the approved plan\", url: \"$url\"}"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued <<<"$output")" null
+}
+
+@test "on a machine with no /proc, the merge lock is read from lsof, and one lsof cannot read is not held" {
+  local url=https://github.com/owner/proj/pull/5 lock
+  awaiting_merge
+  ledger_line --arg url "$url" --arg head "$head" \
+    '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "queued", url: $url, head: $head, project: "proj"}'
+  lock=$HOME/.local/state/agent-team/merge/T14.lock
+  mkdir -p "${lock%/*}" "$BATS_TEST_TMPDIR/no-proc"
+  echo 4242 >"$lock"
+  export TEAM_PROC=$BATS_TEST_TMPDIR/no-proc
+  stub_command lsof
+  stub_script lsof <<<'echo 4242'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.waited_on <<<"$output")" true
+  assert_equal "$(stub_calls lsof)" "[\"-t\",\"--\",\"$(realpath "$lock")\"]"
+  stub_script lsof <<<'exit 1'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.waited_on <<<"$output")" false
 }
 
 # The task T14 of project proj opened in a worktree that is a real directory, with <n> tickets in

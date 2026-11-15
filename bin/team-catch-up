@@ -22,7 +22,10 @@
 # reviewed head (clean_base_merges in bin/lib/team.sh), else it is refused naming the first that is
 # not. A head that holds the base already prints "nothing to merge", exit 0, logging nothing.
 # A merge that conflicts (git merge-tree, base_merge in bin/lib/team.sh) makes nothing and names
-# the conflicted files and the holder's builder-merge-base step, exit 1. A clean one is made with
+# the conflicted files and the holder's builder-merge-base step, exit 1. A clean one on a base
+# with a merge queue (the queue of its rules, base_rules in bin/lib/team.sh) makes nothing either,
+# exit 1: "<base> merges through its queue, which needs no catch-up: run team-merge T<n>", since
+# the queue tests the PR merged onto what is ahead of it. Else a clean one is made with
 # git commit-tree in the primary checkout, under its git identity, with the head and origin's base
 # as parents and git's own message, "Merge remote-tracking branch 'origin/<base>' into
 # <branch>", touching no worktree, index or branch, and pushed to origin's branch, never forced
@@ -163,6 +166,8 @@ if ((rc == 1)); then
   die "$url conflicts with $base on $(paste -sd, <<<"$tree" | sed 's/,/, /g'): the holder merges it (builder-merge-base), then a rereview"
 elif ((rc)); then
   die "$url cannot be merged with $base in $primary: $tree"
+elif jq -e '.queue != null' <<<"$facts" >/dev/null; then
+  die "$base merges through its queue, which needs no catch-up: run team-merge $task"
 fi
 merge=$(git -C "$primary" commit-tree "$tree" -p "$head" -p "$onto" \
   -m "Merge remote-tracking branch 'origin/$base' into $branch")

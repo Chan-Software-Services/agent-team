@@ -279,7 +279,9 @@
 # once the PR's branch and the base are fetched there: "run team-catch-up T<n>, which needs no
 # rereview" when the reviewed head merges the base cleanly, then "then, once the checks pass on its
 # merge: " and the merge line above for the reviewed head with no checks (its guarded areas, risky
-# reviews and before notes as they are), else the builder-merge-base brief for the holder under
+# reviews and before notes as they are), or, on a base with a merge queue (the pr part's queue),
+# which needs no catch-up, the merge line above alone, as for a PR up to date; else the
+# builder-merge-base brief for the holder under
 # 250k, else a fresh builder, after the holder's STOW when it is live, with "conflicts on <files>"
 # after the behind count for a conflict, or "(whether the merge is clean is not known: <why>)" when
 # the fetch or git fails.
@@ -438,7 +440,7 @@ read_state() {
   # that head is the reviewed one; the fix round's findings (sent), the reviewed head's first 8
   # characters, and the PR's facts for a merge base.
   pr='' holder='' session='' holds='' context='' pr_error='' pr_url='' pr_reason='' live_head='' reviewed=''
-  same='' sent='' short='' behind='' base='' pr_project='' branch='' before=''
+  same='' sent='' short='' behind='' base='' pr_project='' branch='' before='' queue=''
   json_vars --ledger pr='.pr | if (.state? // "") == "merged" then null else . end | tojson' holder='[.workers[] | select(.role == "builder")] | last | . != null' \
     session='[.workers[] | select(.role == "builder")] | last | .session | tostring' \
     holds='[.workers[] | select(.role == "builder")] | last
@@ -451,6 +453,7 @@ read_state() {
     sent='$review.sent_back // [] | tojson' short='$review.head[:8] | tostring' \
     behind='.pr | objects | .behind_by // 0' base='.pr | objects | .base | tostring' \
     pr_project='.pr | objects | .project // empty' branch='.pr | objects | .branch // empty' \
+    queue='.pr | objects | .queue != null' \
     before='$review.before // [] | map(tostring)
       | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' \
     -- --argjson review "$review" <<<"$state"
@@ -475,9 +478,9 @@ round_line() {
 # read_state's variables and the task's events: the merge ask or the default word's merge, or for a
 # PR behind its base the merge base step (see the header).
 merge_line() {
-  local url caught behind_by project primary rc fetched merged step risky default own withdrawals
+  local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up
   url=$pr_url
-  caught=''
+  caught='' no_catch_up=''
   if ((behind > 0)); then
     # Whether the reviewed head merges the base cleanly, read in the project's primary checkout once
     # the PR's branch and the base are fetched: clean is team-catch-up's, else the holder's step.
@@ -494,15 +497,20 @@ merge_line() {
         "+refs/heads/$base:refs/remotes/origin/$base" 2>&1); then
         behind_by+=" (whether the merge is clean is not known: the PR's branch $branch and $base cannot be fetched into $primary: $(grep -m1 . <<<"$fetched" || echo "git fetch failed"))"
       elif merged=$(base_merge "$primary" "$live_head" "origin/$base") || rc=$?; ((rc == 0)); then
-        echo "merge base: $url is $behind_by, and merges it cleanly: run team-catch-up $task, which needs no rereview (step 6)"
-        caught=1
+        # A base with a merge queue tests the PR merged onto what is ahead of it: no catch-up.
+        if [[ $queue == true ]]; then
+          no_catch_up=1
+        else
+          echo "merge base: $url is $behind_by, and merges it cleanly: run team-catch-up $task, which needs no rereview (step 6)"
+          caught=1
+        fi
       elif ((rc == 1)); then
         behind_by+=" and conflicts on $(and_list "$(jq -Rnc '[inputs | select(. != "")]' <<<"$merged")")"
       else
         behind_by+=" (whether the merge is clean is not known: $merged)"
       fi
     fi
-    if [[ -z $caught ]]; then
+    if [[ -z $caught && -z $no_catch_up ]]; then
       step="merge base: $url is $behind_by, so it merges $base first (step 6):"
       case $holds in
         holds) echo "$step render team-brief $task builder-merge-base, send its path to $who and log team-log $task resumed brief=<its file name without .md>, which holds team-sweep's merge-due" ;;
