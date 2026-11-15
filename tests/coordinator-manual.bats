@@ -732,7 +732,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # Each row's kind and its Run column.
   rows=$(grep -E '^\| `' "$manual" | awk -F ' \\| ' '{ sub(/^\| /, "", $1); print $1 " :: " $2 }')
   assert_equal "$rows" '`QUESTION <text>` :: `team-log --from-message`, or none when `team-ask --from` puts it to Daniel
-`BLOCKED <what> <why>`, `NEED toolkit <name>` :: `team-log --from-message`
+`BLOCKED <what> <why>`, `NEED toolkit <name>` :: `team-log --from-message` (denied if it ends "; took its allowed way")
 `PAUSED <why>` :: `team-log --from-message`
 `PAUSED stowed` :: `team-next`, or during a handoff `team-log --from-message`
 `PR <url>` :: `team-next`
