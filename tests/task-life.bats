@@ -154,6 +154,9 @@ case "$1 $2" in
     elif [[ $2 =~ ^repos/[^/]+/[^/]+/actions/runs\?head_sha=[0-9a-f]+\&per_page=100$ ]]; then
       # No workflow runs: this GitHub runs no Actions, so team-ci-wait's look reads only the checks.
       echo '{"total_count": 0, "workflow_runs": []}'
+    elif [[ $2 =~ ^repos/[^/]+/[^/]+/actions/runs\?status=in_progress\&per_page=1$ ]]; then
+      # Nor has it any run in progress, which the look reads for its queued clock.
+      echo '{"total_count": 0, "workflow_runs": []}'
     elif [[ $2 =~ ^repos/([^/]+/([^/]+))/pulls/([0-9]+)/commits$ ]]; then
       file=$(pr_file "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}")
       git=(git --git-dir "${ORIGINS:?}/${BASH_REMATCH[2]}.git")
