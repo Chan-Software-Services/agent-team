@@ -7,6 +7,8 @@
 # Every case skips, naming the ABI, where the kernel's Landlock ABI is below 2 (no Landlock,
 # ABI 1, macOS). The session tmp is under the machine's /tmp, as the wrapper fixes it, so each
 # test's is named for a task number and a session id no session has, and removed in teardown.
+# lib/confine-shell, the prefix a confined worker's Claude Code runs its shell commands through,
+# is driven as Claude Code calls it, with the command line as one argument.
 
 load helpers/common
 
@@ -427,4 +429,73 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   confined "$WT" --root "$WT" -- python3 -I "$CONFINE" --root "$OUT" -- rm -rf "${OUT:?}/x"
   [[ $status -ne 0 ]]
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+}
+
+# A Bash call as Claude Code 2.1.325 hands it to CLAUDE_CODE_SHELL_PREFIX: its shell runs
+# '<prefix>' '<line>', the line one quoted argument holding what Claude Code puts around the
+# command (the eval of its text, then the working directory written to a file):
+# bash_call <command>
+bash_call() {
+  local line
+  printf -v line 'eval %q && pwd -P >| %q' "$1" "$BOX/cwd"
+  printf -v line '%q %q' "$REPO_ROOT/bin/lib/confine-shell" "$line"
+  run --separate-stderr env -C "$WT" bash -c "$line"
+}
+
+@test "confine-shell: a Bash call's delete outside the worktree leaves it whole, and one inside removes it" {
+  session
+  canary
+  bash_call "rm -rf ${OUT:?}/x"
+  [[ $status -ne 0 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  bash_call "cd ${OUT:?} && rm -rf x; python3 -c 'import shutil; shutil.rmtree(\"x\")'"
+  [[ $status -ne 0 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  mkdir -p "$WT/build/a"
+  : >"$WT/build/a/f"
+  bash_call 'rm -rf build && cd src && echo "it ran in $TMPDIR"'
+  assert_equal "$status" 0
+  assert_equal "$output" "it ran in $TASK_TMP"
+  [[ ! -e $WT/build ]]
+  assert_equal "$(<"$BOX/cwd")" "$(realpath "$WT")/src"
+}
+
+@test "confine-shell: the line is the shell's to read, never the wrapper's options, and any other count of arguments exits 2" {
+  local prefix=$REPO_ROOT/bin/lib/confine-shell
+  session
+  canary
+  # A shell-form hook's command reaches the prefix as it is written.
+  run -127 --separate-stderr env -C "$WT" "$prefix" "--root ${OUT:?} -- rm -rf ${OUT:?}/x"
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  run -127 --separate-stderr env -C "$WT" "$prefix" '--abi'
+  assert_equal "$output" ''
+  run -127 --separate-stderr env -C "$WT" "$prefix" '--help x'
+  assert_equal "$output" ''
+  # --help alone, which is no call's line, is the header.
+  run -0 --separate-stderr env -C "$WT" "$prefix" --help
+  assert_equal "${lines[0]}" "The prefix a confined worker's Claude Code runs its shell commands through: team-worker names"
+  run --separate-stderr env -C "$WT" "$prefix"
+  assert_equal "$status" 2
+  assert_equal "$stderr" "confine-shell: takes one argument, the command line, as Claude Code's CLAUDE_CODE_SHELL_PREFIX passes it"
+  run --separate-stderr env -C "$WT" "$prefix" echo ran
+  assert_equal "$status" 2
+  assert_equal "$output" ''
+}
+
+@test "confine-shell: the shell is CLAUDE_CODE_SHELL, else SHELL, when an executable bash or zsh, else bash" {
+  local prefix=$REPO_ROOT/bin/lib/confine-shell
+  session
+  mkdir -p "$BOX/bin" "$BOX/other"
+  ln -s "$(command -v bash)" "$BOX/bin/zsh"
+  ln -s "$(command -v bash)" "$BOX/other/bash"
+  ln -s "$(command -v bash)" "$BOX/bin/fish"
+  with SHELL="$BOX/bin/zsh"
+  run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
+  assert_equal "$output" "$BOX/bin/zsh"
+  with CLAUDE_CODE_SHELL="$BOX/other/bash"
+  run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
+  assert_equal "$output" "$BOX/other/bash"
+  with CLAUDE_CODE_SHELL="$BOX/bin/fish" SHELL="$BOX/missing/bash"
+  run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
+  assert_equal "$output" bash
 }
