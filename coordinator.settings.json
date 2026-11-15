@@ -35,6 +35,8 @@
       "Bash(gh pr merge*)",
       "Bash(gh-axi pr merge*)",
       "Bash(gh api*pulls/*/merge*)",
+      "Bash(team-land **)",
+      "Bash(*/team-land **)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git push * --force*)",

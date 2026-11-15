@@ -1272,6 +1272,7 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
 }
 
 @test "--ci on a base with a merge queue gives a PR only behind it the merge line, with no catch-up, and a conflict the builder-merge-base step" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
   export GH_QUEUE=1
   on_origin
   reviewing "$sha"
@@ -1292,6 +1293,25 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   assert_equal "$(tail -n 1 <<<"$output")" \
     "merge base: $url is 3 behind main and conflicts on one.txt, so it merges main first (step 6): render team-brief T7 builder-merge-base, send its path to T7-builder (b0000001, 120k) and log team-log T7 resumed brief=<its file name without .md>, which holds team-sweep's merge-due"
   assert_equal "$(outside_calls)" ""
+}
+
+@test "--ci on a PR the merge queue dropped for a failure of its own prints the builder-merge-base step, never the merge line, until it is reviewed again" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 0
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7"
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed checks",
+      failed: [{name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"}, {name: "lint", class: "pr", kind: "failed", link: "", step: ""}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge base: $url failed test and lint on the merge queue's trial merge, which dropped it at 2026-10-23T10:00:00Z, so the builder fixes it on the branch (step 6): render team-brief T7 builder-merge-base, send its path to T7-builder (b0000001, 120k) and log team-log T7 resumed brief=<its file name without .md>, which holds team-sweep's merge-due"
+  [[ $output != *"run team-merge"* ]]
 }
 
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {

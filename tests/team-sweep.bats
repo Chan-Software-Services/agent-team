@@ -1000,6 +1000,54 @@ due() {
   no_github
 }
 
+@test "a queued of a head the task has since moved past stands for no PR in the queue: merge-due again, and no queue-wait" {
+  local url=https://github.com/owner/proj/pull/5
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  # A push took the PR out of the queue with no team-merge waiting, so no dequeued was logged;
+  # the new head is logged, reviewed and passed, and its checks are green.
+  event T3 pr '{url: "https://github.com/owner/proj/pull/5", head: "b2c3d4e5f6"}'
+  event T3 review '{verdict: "pass", head: "b2c3d4e5f6", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ci T3 passed b2c3d4e5f6
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  # A fix after findings is reviewed at a head no pr event logs: the review alone moves past it.
+  jq -c 'select(.event != "pr" or .head != "b2c3d4e5f6")' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  no_github
+}
+
+@test "trial-failed: a PR the queue dropped for a failure of its own goes to the merge-base round, with no merge-due, until it is reviewed again" {
+  local url=https://github.com/owner/proj/pull/5
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "failed checks",
+    failed: [{name: "test", class: "pr", kind: "failed", link: "https://github.com/owner/proj/actions/runs/1/job/2", step: "Run tests"},
+      {name: "data", class: "infrastructure", kind: "setup", link: "", step: ""}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 trial-failed: PR $url failed test on the merge queue's trial merge, which dropped it at 2026-10-22T03:30:00Z; next: run team-next T3 --ci, which names the builder-merge-base step and who takes it, then a rereview; never team-merge T3 on the same head"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .session, .name])' <<<"$output")" '[["T3","trial-failed",null,null]]'
+  # The round's rereview ends it: the default word's merge is due again.
+  event T3 review '{verdict: "pass", head: "c3d4e5f6a7", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ci T3 passed c3d4e5f6a7
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  # A drop with no failure of the PR's own is merge-due as before.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "dequeued", url: $url, head: "c3d4e5f6a7", reason: "the checks timed out",
+    failed: [{name: "data", class: "infrastructure", kind: "setup", link: "", step: ""}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  no_github
+}
+
 @test "merge-due: none while a team-merge holds the task's lock, before its queued is logged" {
   local pid
   opened T3

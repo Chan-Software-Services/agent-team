@@ -133,7 +133,8 @@
 # --merge-group waits on the trial commit the merge queue built for the PR, with the same clocks,
 # classes, deadlines and outcomes, --json's head the trial commit, and these differences. Each look
 # reads the PR's state and its queue entry's head commit (gh api graphql), the commit's check runs
-# (gh api repos/<repo>/commits/<trial sha>/check-runs?filter=latest&per_page=100) and its statuses
+# (gh api repos/<repo>/commits/<trial sha>/check-runs?filter=latest&per_page=100 --paginate, so
+# every page of them) and its statuses
 # (gh api repos/<repo>/commits/<trial sha>/status?per_page=100) in place of gh pr checks, each
 # read as gh pr checks reads a check (a check run's html_url its link; a conclusion of success
 # passed, of skipped or neutral skipped, of cancelled cancelled, any other a failure), and the
@@ -290,10 +291,10 @@ read_group() {
     echo "gh api graphql: no such pull request" >"$dir/error"
     return 1
   fi
-  github "$dir" check-runs api "repos/$repo/commits/$group/check-runs?filter=latest&per_page=100" || return 1
+  github "$dir" check-runs api "repos/$repo/commits/$group/check-runs?filter=latest&per_page=100" --paginate || return 1
   github "$dir" statuses api "repos/$repo/commits/$group/status?per_page=100" || return 1
   jq -n --slurpfile runs "$dir/check-runs" --slurpfile statuses "$dir/statuses" '
-    [($runs[0].check_runs[] | (if .status == "completed" then .conclusion // "" else .status end) as $state
+    [($runs[].check_runs[] | (if .status == "completed" then .conclusion // "" else .status end) as $state
       | {name, state: ($state | ascii_upcase), link: (.html_url // ""),
          bucket: ({success: "pass", skipped: "skipping", neutral: "skipping", cancelled: "cancel"}[$state]
            // (if .status == "completed" then "fail" else "pending" end))}),

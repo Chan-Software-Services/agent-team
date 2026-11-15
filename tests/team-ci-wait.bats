@@ -95,7 +95,7 @@ case "$*" in
   "pr checks 217 --repo owner/proj --json name,state,bucket,link,workflow") what=checks ;;
   "api repos/owner/proj/actions/runs?head_sha="*"&per_page=100") what=runs ;;
   "api graphql "*) what=entry ;;
-  "api repos/owner/proj/commits/"*"/check-runs?filter=latest&per_page=100") what=check-runs ;;
+  "api repos/owner/proj/commits/"*"/check-runs?filter=latest&per_page=100 --paginate") what=check-runs ;;
   "api repos/owner/proj/commits/"*"/status?per_page=100") what=statuses ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") what=running ;;
   "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${2%/jobs*} what=jobs-${what##*/} ;;
@@ -1157,6 +1157,19 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["agent-review","pr","failed"]]'
 }
 
+@test "--merge-group reads every page of the trial commit's check runs: a check still running on a later page holds the pass" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  # Two pages, as gh api --paginate prints them: one JSON document after the other.
+  answer 0 check-runs "$(jq -cn --argjson a "$(check_run test completed success)" '{total_count: 2, check_runs: [$a]}')
+$(jq -cn --argjson b "$(check_run late in_progress)" '{total_count: 2, check_runs: [$b]}')"
+  head_runs 0
+  statuses 0
+  TEAM_CI_WAIT_DEADLINE_SECONDS=0 run_bin team-ci-wait --merge-group "$trial" --json "$url"
+  assert_equal "$(jq -r '.outcome' <<<"${lines[-1]}")" deadline
+  assert_contains "$output" "late"
+}
+
 @test "--merge-group waits on the trial commit's check runs and statuses, and passes once each passed for 2 minutes" {
   trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
   entry 0 OPEN "$trial"
@@ -1177,7 +1190,7 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   # It reads the trial commit alone: never the PR's own checks, and the runs of the trial commit.
   if grep -E '^pr (view|checks) ' "$GH_DIR/calls"; then return 1; fi
   grep -Fxq "api repos/owner/proj/actions/runs?head_sha=$trial&per_page=100" "$GH_DIR/calls"
-  grep -Fxq "api repos/owner/proj/commits/$trial/check-runs?filter=latest&per_page=100" "$GH_DIR/calls"
+  grep -Fxq "api repos/owner/proj/commits/$trial/check-runs?filter=latest&per_page=100 --paginate" "$GH_DIR/calls"
   grep -Fxq "api repos/owner/proj/commits/$trial/status?per_page=100" "$GH_DIR/calls"
   grep -q "^api graphql .*mergeQueueEntry.* owner=owner -f name=proj -F number=217$" <(tr '\n' ' ' <"$GH_DIR/calls" | sed 's/ api /\napi /g; s/ *$/\n/')
 }

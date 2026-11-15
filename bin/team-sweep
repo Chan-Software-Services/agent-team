@@ -91,14 +91,25 @@
 #                  a message does not read back. When the registry cannot be read, no task is
 #                  merge-due and a line on stderr says why. A PR that stands in the merge queue
 #                  (queue_state in bin/lib/ledger.jq: the task's latest queued, dequeued or merged
-#                  of it is a queued) is never named, nor any PR of a task whose merge lock a
-#                  process holds, which team-merge is landing
+#                  of it is a queued, with no other head of the PR logged or reviewed since) is
+#                  never named, nor one the queue dropped for a failure of its own, which
+#                  trial-failed names, nor any PR of a task whose merge lock a process holds,
+#                  which team-merge is landing
 #   queue-wait     an open task's PR that stands in the merge queue while no process holds the
 #                  task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
 #                  taking it (merge_lock_held in bin/lib/team.sh), with session null: "PR <url> is
 #                  in the merge queue since <the queued's time> with no team-merge waiting on it;
 #                  next: run team-merge T<n> with Bash run_in_background, which goes on waiting and
 #                  logs how it ends", beside the task's other findings
+#   trial-failed   an open task in awaiting-merge, with no ask open and nothing parking it and no
+#                  merge-base round in flight, whose PR the merge queue dropped for a failure of
+#                  its own on the trial merge (its latest queued, dequeued or merged is a dequeued
+#                  whose failed holds one of class pr, with no pr event of it and no review since;
+#                  queue_state's round_due in bin/lib/ledger.jq), with session null: "PR <url>
+#                  failed <checks> on the merge queue's trial merge, which dropped it at <the
+#                  dequeued's time>; next: run team-next T<n> --ci, which names the
+#                  builder-merge-base step and who takes it, then a rereview; never team-merge
+#                  T<n> on the same head", beside the task's other findings
 #   ticket-gone    a running ticket of an open task, not parked (its latest launch in its ticket
 #                  worktree with no done of its session and no ticket-done of its ticket since),
 #                  whose builder's session is not live, with no stowed after that launch and no

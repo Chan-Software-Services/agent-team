@@ -52,7 +52,8 @@
 # unasked), so team-merge merges it on that word; one it refuses comes back as the coordinator's
 # ask, its text naming the PR's URL, listed with the asks. A PR that stands in the merge queue
 # (queue_state in bin/lib/ledger.jq: the task's latest queued, dequeued or merged of it is a
-# queued) is left out too, since team-merge is landing it. While the reviewer App is off (no
+# queued, with no other head of the PR logged or reviewed since) is left out too, since
+# team-merge is landing it. While the reviewer App is off (no
 # bin/lib/review-app), the team's own project's ready PRs are listed, since they merge only on the
 # per-head word.
 # While a withdrawal of the default word stands (the latest merge-default-withdrawn or

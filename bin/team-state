@@ -68,8 +68,8 @@
 # with none), queued and merge_authority. When GitHub cannot be read, pr carries error instead of
 # GitHub's facts, the text says "GitHub unavailable", and the exit is still 0.
 # queued is the PR's place in the merge queue, read from the ledger, never GitHub: null unless the
-# task's latest queued, dequeued or merged of the PR is a queued (queue_state in
-# bin/lib/ledger.jq), else {since, head, waited_on}, the queued's time and head, and whether a
+# task's latest queued, dequeued or merged of the PR is a queued with no other head of the PR
+# logged or reviewed since (queue_state in bin/lib/ledger.jq), else {since, head, waited_on}, the queued's time and head, and whether a
 # process holds the task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
 # taking it (merge_lock_held in bin/lib/team.sh); the text form says, after the checks wait, "in
 # the merge queue since <since>, team-merge is waiting", or ", no team-merge waits on it: run

@@ -188,7 +188,7 @@ team-land: $url merged as 0e0e0e0
   assert_equal "$(enqueues)" "-f pr=PR_kwDOtest5 -f head=$head"
   assert_equal "$(posted_on)" "--merge-group $url $t1"
   # The wait on the trial commit is team-ci-wait's: the commit's check runs, never the PR's checks.
-  grep -Fxq "api repos/owner/proj/commits/$t1/check-runs?filter=latest&per_page=100" "$GH_DIR/calls"
+  grep -Fxq "api repos/owner/proj/commits/$t1/check-runs?filter=latest&per_page=100 --paginate" "$GH_DIR/calls"
   if grep -E '^pr ' "$GH_DIR/calls"; then return 1; fi
 }
 
@@ -586,6 +586,15 @@ SH
   assert_contains "$output" "team-land: posted agent-review success on the trial commit 6f6f6f6 as the reviewer App's check run 4243, but the installation token could not be revoked: HTTP 500"
 }
 
+@test "a PR found merged at another head than the one it lands is refused, never reported merged at that head" {
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test in_progress)"
+  PR_HEAD=$t2 pr_at 1 MERGED
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(end_json)" "[\"refused\",null,\"$url was merged at 6f6f6f6, not at the head a1b2c3d this run lands: check it on GitHub\",[]]"
+}
+
 @test "with the real team-review-status, a trial commit that is the reviewed head merged cleanly gets the status and the PR lands; one that is not gets none and leaves the queue" {
   ln -f "$BATS_RUN_TMPDIR/shared/bin/team-review-status" "$CODE_CHECKOUT/bin/team-review-status"
   queue_repo proj
@@ -623,13 +632,4 @@ SH
   assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
   assert_equal "$(end_json)" "[\"dequeued\",null,\"agent-review was not posted on the trial commit ${bad:0:7}: ${bad:0:7} changes more than the merge of its parents; nothing set\",[]]"
   if grep "^api --method " "$GH_DIR/calls"; then return 1; fi
-}
-
-@test "a PR found merged at another head than the one it lands is refused, never reported merged at that head" {
-  pr_at 0 OPEN "$t1"
-  trial_checks 0 "$t1" "$(check_run test in_progress)"
-  PR_HEAD=$t2 pr_at 1 MERGED
-  run_bin team-land "$url" "$head"
-  assert_equal "$status" 1
-  assert_equal "$(end_json)" "[\"refused\",null,\"$url was merged at 6f6f6f6, not at the head a1b2c3d this run lands: check it on GitHub\",[]]"
 }

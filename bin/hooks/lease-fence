@@ -18,7 +18,7 @@
 #     the team holds offline, one that runs git push, gh, gh-axi, team-ci-wait, team-ci-run or
 #     team-thread wait is blocked with the hold (offline_hold: "GitHub is unreachable (since
 #     13:05); the team is holding: ..."), so no worker retries or waits on.
-#   Bash (the coordinator, --coordinator): a command that runs git push, team-merge,
+#   Bash (the coordinator, --coordinator): a command that runs git push, team-merge, team-land,
 #     team-catch-up, team-open or team-close is blocked as a Discord post is, so a coordinator
 #     left running on a machine that lost the lease merges, opens, closes and pushes nothing while
 #     the holder's does.
@@ -100,7 +100,7 @@ case $tool in
     # gh or gh-axi where a command starts, as COMMAND_START in bin/lib/team.sh reads it.
     gh=$COMMAND_START'gh(-axi)?([[:space:]]|$)'
     # The team commands that write to GitHub and the ledger, where a command starts, as gh.
-    team_write=$COMMAND_START'team-(merge|catch-up|open|close)([[:space:]]|$)'
+    team_write=$COMMAND_START'team-(merge|land|catch-up|open|close)([[:space:]]|$)'
     # The assistant's hand-offs and kept lists, where a command starts, as gh.
     assistant_write=$COMMAND_START'team-(assistant|current)([[:space:]]|$)'
     # team-post, team-ask, which posts through it, or team-inbox, which writes waiting.md, posts

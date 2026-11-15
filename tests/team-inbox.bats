@@ -841,6 +841,20 @@ $RANKED"
   assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
 }
 
+@test "a PR whose queued names a head it has since moved past is listed as ready to merge again, with no dequeued logged" {
+  registry
+  ready_pr T7 proj 7
+  log_events '{"task":"T7","event":"queued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","project":"proj"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 0
+  # A push took it out of the queue while no team-merge waited; its new head is reviewed and passed.
+  log_events '{"task":"T7","event":"pr","url":"https://github.com/owner/proj/pull/7","head":"bcd2345efa"}' \
+    '{"task":"T7","event":"review","head":"bcd2345efa","verdict":"pass","guarded":[],
+      "findings":{"blocking":0,"correctness":0,"security":0,"real-data":0,"note-change":0,"note-before":0}}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+}
+
 @test "the team's own project's PR is listed whatever approval it has, by its repo or its path as well as by its name" {
   registry
   approved_pr T4 proj 4

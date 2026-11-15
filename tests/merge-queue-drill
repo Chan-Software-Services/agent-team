@@ -19,7 +19,7 @@
 # check, CodeQL and agent-review, the last pinned to the reviewer App.
 #
 # The drill itself, in order:
-#   it reads dev's rules (gh api repos/<repo>/rules/branches/dev) and stops, with nothing opened
+#   it reads dev's rules (gh api repos/<repo>/rules/branches/dev --paginate) and stops, with nothing opened
 #   or recorded, unless they hold a merge queue that merges with MERGE and require agent-review
 #   from the App bin/lib/review-app names;
 #   it builds a sandbox, a new directory under ~/.cache/agent-team, since the registry takes a
@@ -192,7 +192,7 @@ fi
 echo "== the merge queue drill on $repo, in $sandbox"
 app=$(sed -n 's/^id=\([1-9][0-9]*\)$/\1/p' "$root/bin/lib/review-app" 2>/dev/null | head -n 1) || app=''
 [[ -n $app ]] || die "the reviewer App is off (no id in bin/lib/review-app), so nothing can post agent-review on a trial commit"
-rules=$(gh api "repos/$repo/rules/branches/dev") || die "cannot read $repo's rules for dev"
+rules=$(gh api "repos/$repo/rules/branches/dev" --paginate | jq -s 'add // []') || die "cannot read $repo's rules for dev"
 problem=$(jq -r --argjson app "$app" '
   ([.[] | select(.type == "merge_queue")] | first) as $queue
   | [.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?] as $required
@@ -361,7 +361,8 @@ for i in 0 1; do
   trials+=("$trial")
   echo '{"check_runs": []}' >"$sandbox/runs-$i.json"
   if [[ -n $trial ]]; then
-    gh api "repos/$repo/commits/$trial/check-runs?filter=latest&per_page=100" >"$sandbox/runs-$i.json" 2>/dev/null ||
+    gh api "repos/$repo/commits/$trial/check-runs?filter=latest&per_page=100" --paginate 2>/dev/null |
+      jq -s '{check_runs: map(.check_runs[]?)}' >"$sandbox/runs-$i.json" ||
       echo '{"check_runs": []}' >"$sandbox/runs-$i.json"
   fi
   # Each commit's short name where the check names it, nothing where there is none.
