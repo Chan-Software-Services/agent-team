@@ -21,20 +21,26 @@
 #                  team-stow exits 75); a stack that would not stop or go down is said, and the
 #                  handoff goes on. Once per handoff: a run again skips it, so a run started with
 #                  --here finishes only with --here, and one without only without.
-#   3. config      team-config capture, each captured item listed; a capture that fails or refuses
+#   3. assistant   Every session named assistant in any state but stopped (claude agents --json
+#                  --all, which also lists one whose turn is done) stopped and removed (claude
+#                  stop, claude rm), "assistant: stopped <id>" each, or "assistant: none
+#                  live"; with or without --here, and again on a run again. One
+#                  that will not stop, or no session list, refuses the handoff with nothing
+#                  released; one stopped whose removal fails is said, and the handoff goes on.
+#   4. config      team-config capture, each captured item listed; a capture that fails or refuses
 #                  is said, and the handoff goes on.
-#   4. commit      team-tokens export --through-now first, so today's usage is in too (its lines
+#   5. commit      team-tokens export --through-now first, so today's usage is in too (its lines
 #                  prefixed "usage: "; a failed export is said, and the handoff goes on); then
 #                  every records path committed on the team home's branch as "chore: handoff
 #                  from <machine>" and pushed, the same set team-checkpoint commits, the stowed
 #                  events with them.
-#   5. heartbeat   team-timers disable.
-#   6. release     team-lease release.
-#   7. The message: "Released at 14:05 from home-pc. The `team-resume --wait` started on the other
+#   6. heartbeat   team-timers disable.
+#   7. release     team-lease release.
+#   8. The message: "Released at 14:05 from home-pc. The `team-resume --wait` started on the other
 #      machine takes the team now; with none running there, run `team-resume` there.", or with
 #      --here "Released at 14:05 from home-pc for a restart here. After the restart, run
 #      `team-resume` here.", then "Config captured: CLAUDE.md (new), skills/stow (changed)."
-#      naming what step 3 captured, or "Config captured: nothing.", then a line for each thing it
+#      naming what step 4 captured, or "Config captured: nothing.", then a line for each thing it
 #      did not capture ("Config: settings.json left to Daniel: it has an env key, which may hold a
 #      secret.").
 #      --json prints {machine, epoch, released_at, here, message, captured, tasks} instead, here
@@ -45,7 +51,7 @@
 # detached process (its own session) that, 3 s after the call returns, runs claude stop
 # and claude rm for each live session named coordinator, logging to retire.log.
 # In ~/.local/state/agent-team/: handoff.json, this handoff's progress (the lease's epoch and
-# taken_at, the last step done, whether it is --here's and what step 3 captured); handoff.lock,
+# taken_at, the last step done, whether it is --here's and what step 4 captured); handoff.lock,
 # one handoff at a time; retire.log.
 # TEAM_HANDOFF_STOP_AFTER=<n> exits 1 right after step n, as an interruption, and
 # TEAM_HANDOFF_RETIRE_SECONDS replaces --retire's 3 s (the tests' seams).
@@ -148,7 +154,7 @@ team() {
   TEAM_HOME=$TEAM_HOME "$bin/$1" "${@:2}" {lock_fd}>&-
 }
 
-# Write this handoff's progress: the last step done, whether it is --here's and what step 3
+# Write this handoff's progress: the last step done, whether it is --here's and what step 4
 # captured.
 save_progress() {
   jq -n --argjson epoch "$epoch" --arg taken "$taken_at" --argjson n "$done_before" \
@@ -194,7 +200,7 @@ config=$(jq -c '.config | objects' <<<"$saved")
 finished=''
 if ((held_rc)); then
   if jq -e --arg machine "$machine" '.state == "released" and .holder == $machine' <<<"$lease" >/dev/null &&
-    ((done_before >= 5)); then
+    ((done_before >= 6)); then
     finished=1
     echo "lease: released by this handoff already, epoch $epoch"
   else
@@ -239,9 +245,29 @@ if [[ -z $finished ]]; then
   fi
   step_done 2
 
-  # 3. This machine's Claude config, captured for the team, and what was captured kept for the
+  # 3. The assistant, which runs only beside the coordinator on the lease holder: stopped and
+  # removed, so it posts nothing once the team moves; its stow note is in the records already.
+  # The list is --all's, as launch_singleton reads it, since without it one whose turn is done is
+  # left out, though a message wakes it; a stopped one, which nothing wakes, is left.
+  sessions=$(claude agents --json --all 2>"$err" {lock_fd}>&- | jq -ce 'select(type == "array")' 2>/dev/null) ||
+    die "assistant: cannot read the session list (claude agents --json --all); nothing was released"
+  assistants=0
+  while read -r id; do
+    assistants=1
+    claude stop "$id" </dev/null >/dev/null 2>"$err" {lock_fd}>&- ||
+      die "assistant: could not stop $id: $(first_error); run team-handoff again; nothing was released"
+    if claude rm "$id" </dev/null >/dev/null 2>"$err" {lock_fd}>&-; then
+      echo "assistant: stopped $id"
+    else
+      echo "team-handoff: assistant: stopped $id, but claude rm failed ($(first_error)); remove it by hand; the handoff goes on" >&2
+    fi
+  done < <(jq -r '.[] | select(.name == "assistant" and .state != "stopped") | .id // ((.sessionId // "")[:8])' <<<"$sessions")
+  ((assistants)) || echo "assistant: none live"
+  step_done 3
+
+  # 4. This machine's Claude config, captured for the team, and what was captured kept for the
   # message.
-  if ((done_before >= 3)); then
+  if ((done_before >= 4)); then
     echo "config: captured earlier in this handoff"
   else
     rc=0
@@ -256,22 +282,22 @@ if [[ -z $finished ]]; then
       '{captured: [$out | splits("\n") | select(startswith("captured ")) | ltrimstr("captured ")],
         refused: [$refused | splits("\n") | select(. != "")]}')
   fi
-  step_done 3
+  step_done 4
 
-  # 4. The records, in the handoff's own commit, with this machine's usage to now.
+  # 5. The records, in the handoff's own commit, with this machine's usage to now.
   rc=0
   out=$(team team-tokens export --through-now 2>"$err") || rc=$?
   [[ -z $out ]] || prefixed usage <<<"$out"
   ((rc == 0)) || echo "team-handoff: usage: $(first_error); the handoff goes on" >&2
   commit_records "chore: handoff from $machine" || die "commit: the records are not on origin; nothing was released"
-  step_done 4
-
-  # 5. The heartbeat.
-  out=$(team team-timers disable 2>"$err") || die "heartbeat: $(first_error); nothing was released"
-  echo "heartbeat: $out"
   step_done 5
 
-  # 6. The lease.
+  # 6. The heartbeat.
+  out=$(team team-timers disable 2>"$err") || die "heartbeat: $(first_error); nothing was released"
+  echo "heartbeat: $out"
+  step_done 6
+
+  # 7. The lease.
   rc=0
   out=$(team team-lease release 2>"$err") || rc=$?
   if ((rc == 75)); then
@@ -280,10 +306,10 @@ if [[ -z $finished ]]; then
   fi
   ((rc == 0)) || die "release: $(first_error)"
   echo "lease: $out"
-  step_done 6
+  step_done 7
 fi
 
-# 7. The message.
+# 8. The message.
 released_at=$(jq -r '.written_at // empty' "$record" 2>/dev/null) || released_at=''
 [[ -n $released_at ]] || released_at=$(date -u +%FT%TZ)
 if [[ $here == true ]]; then
@@ -291,7 +317,7 @@ if [[ $here == true ]]; then
 else
   message="Released at $(date -d "$released_at" +%H:%M) from $machine. The \`team-resume --wait\` started on the other machine takes the team now; with none running there, run \`team-resume\` there."
 fi
-# What step 3 captured and what it refused, as the message's config lines.
+# What step 4 captured and what it refused, as the message's config lines.
 captured=$(jq -c '[if . == null then "Config captured: unknown (no record of this handoff'"'"'s capture)."
   else "Config captured: \(.captured | if . == [] then "nothing" else join(", ") end).",
     (.refused[] | "Config: \(.).") end]' <<<"$config")

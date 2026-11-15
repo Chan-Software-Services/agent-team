@@ -5,7 +5,10 @@
 # tests pass a stub doctor (TEAM_DOCTOR, from helpers/load-check, with the code checkout and the
 # registry).
 # The planner form: the planner it launches through team-worker, in a detached worktree of the code
-# checkout (a sandbox repo, TEAM_LOAD_CHECK_CHECKOUT) at .claude/worktrees/load-check, reports its
+# checkout (a sandbox repo, TEAM_LOAD_CHECK_CHECKOUT) at its lowest free .claude/worktrees/<n>, locked
+# as team-load-check <its pid> (the stub copies git worktree list --porcelain at its launch to
+# $BATS_TEST_TMPDIR/worktrees, and blocks while $STUB_FIXTURES/block exists until
+# $STUB_FIXTURES/go does, writing where in $STUB_FIXTURES/blocked), reports its
 # MCP tools and skills, and the check fails on anything production or coordinator-only. The session
 # is a claude stub that writes the inventory from $STUB_FIXTURES/inventory.txt, notes in
 # $BATS_TEST_TMPDIR/launch where it started, and writes outside.txt where it started when
@@ -32,6 +35,12 @@ case $1 in
     { pwd -P; git rev-parse HEAD; git symbolic-ref -q HEAD || echo detached
       git check-ignore -q .scratch/inventory.txt && echo '.scratch ignored'
       ls -A | grep -vx -e .git -e .gitignore -e README.md -e CLAUDE.md -e .scratch -e .claude || true; } >"$BATS_TEST_TMPDIR/launch"
+    git worktree list --porcelain >"$BATS_TEST_TMPDIR/worktrees"
+    # One launch blocks while $STUB_FIXTURES/block exists, saying so, until $STUB_FIXTURES/go does.
+    if [[ -e $STUB_FIXTURES/block ]]; then
+      rm "$STUB_FIXTURES/block" && pwd -P >"$STUB_FIXTURES/blocked"
+      for _ in {1..600}; do [[ ! -e $STUB_FIXTURES/go ]] || break; sleep 0.1; done
+    fi
     rm -rf "$BATS_TEST_TMPDIR/planted-claude" && cp -R .claude "$BATS_TEST_TMPDIR/planted-claude" 2>/dev/null || true
     cp CLAUDE.md "$BATS_TEST_TMPDIR/planted-claude.md" 2>/dev/null || true
     [[ ! -e $STUB_FIXTURES/write-outside ]] || echo planner >outside.txt
@@ -234,25 +243,118 @@ toolkit_checkout() {
   run_bin -0 team-load-check --toolkit plain
 }
 
-@test "the planner runs in a fresh worktree of the code checkout, detached at its HEAD, which is removed at the end" {
+# lock_line <path>: the lock line git worktree list --porcelain gave the worktree <path> at the launch
+lock_line() {
+  awk -v wt="worktree $1" '$0 == wt { found = 1; next } /^worktree / { found = 0 } found && /^locked/' \
+    "$BATS_TEST_TMPDIR/worktrees"
+}
+
+@test "the planner runs in the lowest free numbered worktree of the code checkout, detached at its HEAD and locked as team-load-check, which is removed at the end" {
   inventory --- tdd
   run_bin -0 team-load-check
-  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "$code" rev-parse HEAD)" detached '.scratch ignored')"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "${code:?}" rev-parse HEAD)" detached '.scratch ignored')"
+  [[ $(lock_line "$wt") =~ ^locked\ team-load-check\ [1-9][0-9]*$ ]]
   left_nothing
 
-  # What an earlier run left there, registered or not, is replaced by a fresh worktree.
-  git -C "$code" worktree add -q -b stale "$wt"
-  touch "$wt/stale.txt"
+  # A numbered worktree a task holds is passed over for the next number, and kept.
+  git -C "${code:?}" worktree add -q -b task "$code/.claude/worktrees/1"
   run_bin -0 team-load-check
-  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "$code" rev-parse HEAD)" detached '.scratch ignored')"
-  git -C "$code" branch -q -D stale
+  assert_equal "$(sed -n 1p "$BATS_TEST_TMPDIR/launch")" "$code/.claude/worktrees/2"
+  [[ $(lock_line "$code/.claude/worktrees/2") =~ ^locked\ team-load-check\ [1-9][0-9]*$ ]]
+  assert_equal "$(lock_line "$code/.claude/worktrees/1")" ""
+  [[ ! -e $code/.claude/worktrees/2 ]]
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/1")"
+  git -C "${code:?}" worktree remove "$code/.claude/worktrees/1"
+  git -C "${code:?}" branch -q -D task
   left_nothing
-  mkdir -p "$wt"
-  touch "$wt/junk.txt"
+}
+
+@test "the planner runs in a linked code checkout's main checkout, at the linked checkout's HEAD" {
+  inventory --- tdd
+  git -C "${code:?}" worktree add -q -b other "$BATS_TEST_TMPDIR/linked"
+  git -C "${BATS_TEST_TMPDIR:?}/linked" commit -q --allow-empty -m "chore: ahead of main"
+  TEAM_LOAD_CHECK_CHECKOUT=$BATS_TEST_TMPDIR/linked run_bin -0 team-load-check
+  assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "${BATS_TEST_TMPDIR:?}/linked" rev-parse HEAD)")"
+  [[ ! -e $wt ]]
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | grep -c '^worktree ')" 2
+}
+
+@test "what a run that is gone left, a worktree locked as team-load-check with no live load check's pid or the old load-check folder, is removed at the start" {
+  inventory --- tdd
+  # A killed run's worktree, with work in it, at a number past the one this run takes, and the old
+  # fixed folder, registered, then not.
+  git -C "${code:?}" worktree add -q --detach --lock --reason team-load-check "$code/.claude/worktrees/3"
+  touch "$code/.claude/worktrees/3/stale.txt"
+  # A run that is gone, by its pid, and a pid that is alive but no load check's.
+  local gone
+  gone=$(bash -c 'echo $$')
+  git -C "${code:?}" worktree add -q --detach --lock --reason "team-load-check $gone" "$code/.claude/worktrees/4"
+  sleep 600 3>&- &
+  local other=$!
+  git -C "${code:?}" worktree add -q --detach --lock --reason "team-load-check $other" "$code/.claude/worktrees/5"
+  git -C "${code:?}" worktree add -q -b stale "$code/.claude/worktrees/load-check"
+  touch "$code/.claude/worktrees/load-check/stale.txt"
+  # A worktree locked for another reason is no load check's.
+  git -C "${code:?}" worktree add -q --detach --lock --reason other "$code/.claude/worktrees/2"
   run_bin -0 team-load-check
-  assert_equal "$(sed -n 1p "$BATS_TEST_TMPDIR/launch")" "$wt"
+  kill "$other"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "${code:?}" rev-parse HEAD)" detached '.scratch ignored')"
+  [[ ! -e $code/.claude/worktrees/3 && ! -e $code/.claude/worktrees/4 && ! -e $code/.claude/worktrees/5 ]]
+  [[ ! -e $code/.claude/worktrees/load-check && -e $code/.claude/worktrees/2 ]]
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/2")"
+  git -C "${code:?}" worktree remove --force --force "$code/.claude/worktrees/2"
+  git -C "${code:?}" branch -q -D stale
+  left_nothing
+
+  mkdir -p "$code/.claude/worktrees/load-check"
+  touch "$code/.claude/worktrees/load-check/junk.txt"
+  run_bin -0 team-load-check
   assert_equal "$(sed -n 5p "$BATS_TEST_TMPDIR/launch")" ""
+  [[ ! -e $code/.claude/worktrees/load-check ]]
   left_nothing
+}
+
+@test "a load check that runs while another one's planner works leaves that one's worktree, and each removes its own" {
+  inventory --- tdd
+  touch "$STUB_FIXTURES/block"
+  "$REPO_ROOT/bin/team-load-check" >"$BATS_TEST_TMPDIR/a.out" 2>&1 3>&- &
+  local a=$! i
+  for i in {1..300}; do [[ ! -e $STUB_FIXTURES/blocked ]] || break; sleep 0.1; done
+  assert_equal "$(cat "$STUB_FIXTURES/blocked")" "$wt"
+  # B runs to its end in the next number while A's planner is still at work in 1.
+  run_bin -0 team-load-check
+  assert_equal "$(sed -n 1p "$BATS_TEST_TMPDIR/launch")" "$code/.claude/worktrees/2"
+  [[ -d $wt && ! -e $code/.claude/worktrees/2 ]]
+  touch "$STUB_FIXTURES/go"
+  local rc=0
+  wait "$a" || rc=$?
+  assert_equal "$rc: $(tail -n 1 "$BATS_TEST_TMPDIR/a.out")" "0: PASS"
+  left_nothing
+}
+
+@test "a free registered slot is never taken while a team-open holds the pool's lock: the load check waits on it, then takes the next number" {
+  inventory --- tdd
+  local lock=$code/.git/team-open-pool.lock fd
+  # The code checkout's pool lists 1, which is free: a team-open holding the lock may be taking it.
+  {
+    project code
+    printf '%s\n' '[code.pool]' 'provider = "git"' "slots = [\"projects/code/.claude/worktrees/1\"]"
+    project site
+    printf '%s\n' '[site.pool]' 'provider = "git"' 'slots = []'
+  } >"$TEAM_HOME/projects.toml"
+  exec {fd}<>"$lock"
+  flock -x "$fd"
+  TEAM_OPEN_POOL_WAIT_SECONDS=1 run_bin -75 --separate-stderr team-load-check
+  assert_contains "$stderr" "team-load-check: another run held the pool lock $lock of $code for 1 seconds; run this again"
+  [[ ! -e $BATS_TEST_TMPDIR/launch && ! -e $code/.claude/worktrees/1 ]]
+  left_nothing
+
+  # The open takes 1 and lets go: the load check takes 2, and leaves 1 to the task.
+  git -C "${code:?}" worktree add -q -b task "$code/.claude/worktrees/1"
+  exec {fd}>&-
+  run_bin -0 team-load-check
+  assert_equal "$(sed -n 1p "$BATS_TEST_TMPDIR/launch")" "$code/.claude/worktrees/2"
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/1")"
 }
 
 @test "a planner that writes outside .scratch/ fails the check, and the worktree is still removed" {
@@ -347,7 +449,7 @@ toolkit_checkout() {
 
 # isolation_pass: the PASS line of a planner none of whose worktree's markers reached it
 isolation_pass() {
-  echo "PASS planner: no marker of its worktree reached it (the line in CLAUDE.md, the file in .claude/rules/, the SessionStart hook in .claude/settings.json), its project instructions are headed 'Project instructions: code, from origin/main at $(git -C "$code" rev-parse origin/main)', its memory directory is $TEAM_HOME/memory/code, and it works in $wt"
+  echo "PASS planner: no marker of its worktree reached it (the line in CLAUDE.md, the file in .claude/rules/, the SessionStart hook in .claude/settings.json), its project instructions are headed 'Project instructions: code, from origin/main at $(git -C "${code:?}" rev-parse origin/main)', its memory directory is $TEAM_HOME/memory/code, and it works in $wt"
 }
 
 @test "the planner's worktree gets a CLAUDE.md line, a .claude/rules/ file and a .claude/settings.json hook and allow rule, and a planner that reports none of them passes" {
@@ -356,8 +458,8 @@ isolation_pass() {
   # instructions' ref.
   mkdir -p "$code/.claude"
   echo '{"worktree": {"bgIsolation": "none"}}' >"$code/.claude/settings.json"
-  git -C "$code" add .claude/settings.json
-  git -C "$code" commit -q -m "chore: settings"
+  git -C "${code:?}" add .claude/settings.json
+  git -C "${code:?}" commit -q -m "chore: settings"
   run_bin -0 team-load-check
   assert_contains "$output" "$(isolation_pass)"
   assert_equal "${lines[-1]}" PASS
@@ -387,7 +489,7 @@ isolation_pass() {
 
 @test "each worktree marker that reaches the planner and each wrong value it reports is its own FAIL line, and the worktree is still removed" {
   inventory --- tdd
-  sha=$(git -C "$code" rev-parse origin/main)
+  sha=$(git -C "${code:?}" rev-parse origin/main)
   # fails_with <fixture> <FAIL line>: the planner with <fixture> fails on that line alone
   fails_with() {
     run_bin -1 team-load-check
@@ -438,12 +540,12 @@ isolation_pass() {
 lease_setup() {
   primary=$(make_repo proj)
   printf '%s\n' .scratch/ node_modules/ >"$primary/.gitignore"
-  git -C "$primary" add .gitignore
-  git -C "$primary" commit -q -m "chore: ignore scratch"
-  git -C "$primary" push -q origin main
+  git -C "${primary:?}" add .gitignore
+  git -C "${primary:?}" commit -q -m "chore: ignore scratch"
+  git -C "${primary:?}" push -q origin main
   local pool=$HOME/.treehouse/proj-abc123 slot
   slots=("$pool/1/proj" "$pool/2/proj")
-  for slot in "${slots[@]}"; do git -C "$primary" worktree add -q --detach "$slot" origin/main; done
+  for slot in "${slots[@]}"; do git -C "${primary:?}" worktree add -q --detach "$slot" origin/main; done
   printf '%s\n' "${slots[@]}" >"$BATS_TEST_TMPDIR/free"
   fake_pool_commands "$primary"
   registry "$(printf '%s\n' '[proj.pool]' 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' \
@@ -482,7 +584,7 @@ lease_holder() {
 @test "a numbered slot in the pool's folder that the registry does not list is rehearsed as a slot (T45)" {
   lease_setup
   local slot=$HOME/.treehouse/proj-abc123/5/proj
-  git -C "$primary" worktree add -q --detach "$slot" origin/main
+  git -C "${primary:?}" worktree add -q --detach "$slot" origin/main
   echo "$slot" >"$BATS_TEST_TMPDIR/free"
   run_bin -0 team-load-check
   assert_contains "$output" "PASS lease proj: slot $slot leased, pre-warmed and clean, returned"
@@ -496,7 +598,7 @@ lease_holder() {
   assert_contains "$output" "FAIL lease proj: slot ${slots[0]} is not clean after the pre-warm: changes to tracked files: README.md; untracked files: new.lock; returned"
   assert_equal "${lines[-1]}" "load check FAILED (inventory in tasks/T0/)"
   assert_equal "$(pool_leases)" ""
-  assert_equal "$(git -C "${slots[0]}" status --porcelain)" ""
+  assert_equal "$(git -C "${slots[0]:?}" status --porcelain)" ""
 
   # A non-empty task directory fails it as team-open would.
   rm "$BATS_TEST_TMPDIR/prewarm"
@@ -544,7 +646,7 @@ lease_holder() {
   wait "$pid" || status=$?
   assert_equal "$status" 143
   assert_equal "$(pool_leases)" ""
-  assert_equal "$(git -C "${slots[0]}" status --porcelain)" ""
+  assert_equal "$(git -C "${slots[0]:?}" status --porcelain)" ""
   assert_equal "$(stub_calls claude)" ""
 }
 
@@ -565,7 +667,7 @@ ops_setup() {
   registry "$(printf '%s\n' '[proj.pool]' 'provider = "git"' 'slots = []')"
   clone=$(make_repo proj)
   wt=$HOME/wt/proj-1
-  git -C "$clone" worktree add -q -b load "$wt"
+  git -C "${clone:?}" worktree add -q -b load "$wt"
   stub_script claude <<'SH'
 transcript=$HOME/.claude/projects/-wt/6f93fe38-4a6e-4b35-8f39-776a26bc624b.jsonl
 case $1 in
@@ -1293,7 +1395,7 @@ reviewer    45003       2               2            0"
   assert_equal "${lines[0]}" "FAIL os: Ubuntu 24.04.3 LTS is neither Arch Linux nor macOS, so no tool is checked; fix: run the team on Arch Linux or macOS"
   assert_equal "$stderr" "load check: team-doctor reports a FAIL above; fix it, then run the load check again"
   [[ ! -e $wt ]]
-  assert_equal "$(git -C "$code" worktree list --porcelain | grep -c '^worktree ')" 1
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | grep -c '^worktree ')" 1
   # claude was asked only the doctor's questions, its login, its plugins and its trust probes of
   # the team home and of code, the one project with a checkout here (which the stub's reply never
   # starts): no session of the load check's.
@@ -1329,7 +1431,7 @@ planner     42006       3               3            0"
 
 @test "a FAIL of the code checkout's own project stops the load check before any worktree, as does every FAIL but another project's and the gate's" {
   # The code checkout's own project is the one at its main checkout, run from a linked worktree.
-  git -C "$code" worktree add -q --detach "$HOME/code-wt"
+  git -C "${code:?}" worktree add -q --detach "$HOME/code-wt"
   export TEAM_LOAD_CHECK_CHECKOUT=$HOME/code-wt
   local check
   for check in 'trust code' 'checkout code' 'claude login' 'trust team home' projects 'trust nowhere' 'tool jq'; do
@@ -1338,7 +1440,7 @@ planner     42006       3               3            0"
     assert_equal "${lines[2]}" "FAIL $check: broken; fix: repair it"
     assert_equal "$stderr" "$stopped"
     [[ ! -e $wt ]]
-    assert_equal "$(git -C "$code" worktree list --porcelain | grep -c '^worktree ')" 2
+    assert_equal "$(git -C "${code:?}" worktree list --porcelain | grep -c '^worktree ')" 2
     assert_equal "$(stub_calls claude)" ""
   done
 }
@@ -1418,12 +1520,12 @@ $(going_on 'gate proj')"
   run_bin -0 team-load-check --toolkit served --toolkit plain
   # Run from the toolkit checkout, which is no repository, team-drill cannot read its HEAD.
   assert_contains "$output" "load check: not recorded: team-drill: cannot read the HEAD of the code checkout $CODE_CHECKOUT"
-  git -C "$CODE_CHECKOUT" init -q
-  git -C "$CODE_CHECKOUT" add -A
-  git -C "$CODE_CHECKOUT" commit -q -m "chore: the toolkit checkout"
+  git -C "${CODE_CHECKOUT:?}" init -q
+  git -C "${CODE_CHECKOUT:?}" add -A
+  git -C "${CODE_CHECKOUT:?}" commit -q -m "chore: the toolkit checkout"
   run_bin -0 team-load-check --toolkit served --toolkit plain
   assert_equal "$(jq -r '[.drill, .verdict, .detail, .commit] | join(" ")' "$TEAM_HOME/drills.jsonl")" \
-    "load-check-planner pass toolkits: served plain $(git -C "$CODE_CHECKOUT" rev-parse HEAD)"
+    "load-check-planner pass toolkits: served plain $(git -C "${CODE_CHECKOUT:?}" rev-parse HEAD)"
 }
 
 @test "a planner form that ends early after its launch records fail: no inventory within 5 minutes" {

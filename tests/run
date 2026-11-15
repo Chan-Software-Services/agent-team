@@ -7,16 +7,32 @@
 # (every test is sandboxed, so files share nothing), the slowest first by tests/shards' weights:
 # one line per file as it ends, then the whole output of each file that failed, each skipped
 # test's line as "tests/<file>.bats: ok <n> <name> # skip <reason>" (a skip counts as passed),
-# and the count of tests passed. How many at once is TEAM_JOBS when set (a whole number above 0, else refused),
-# else, when a team home is found, team-capacity jobs (the floor of the level's CPU budget, at
+# and the count of tests passed. Each test has a time limit, TESTS_TEST_SECONDS (default 600, as
+# bats' BATS_TEST_TIMEOUT), past which bats fails it as "not ok <n> <name> # timeout after <s>s";
+# each file one, TESTS_FILE_MINUTES (default 40), past which it is stopped (timeout -k 30) as
+# "not ok tests/<name>.bats (<n>s): stopped at its <m>-minute limit", its output so far printed as a
+# failed file's, with a line saying the test after its last line was still running or a process
+# it left held its output open; each a whole number above 0, else refused.
+# How many at once is TEAM_JOBS when set (a whole number above 0, else refused), else, when a
+# team home is found, team-capacity jobs (the floor of the level's CPU budget, at
 # least 1: 3 at minor on 12 cores), else nproc (CI, a fresh clone).
 # Every part but shellcheck alone and a --list (a shard's or --changed's) runs under the
 # machine's heavy-run lock (team-heavy run, whose cost sample is heavy:tests-run), so a suite
 # waits for another suite or a gate's end-to-end run instead of overlapping it; under a heavy run
 # already (TEAM_HEAVY_HELD set, as a local check team-checks runs), it runs at once.
 #
-# Usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]
+# Usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]
 #        (default: all three)
+# With --changed, shellcheck checks only the shell scripts a change touches, in seconds, as a
+# builder does on its machine while CI checks every script: each shell script among the paths
+# changed since <base> and in the working tree (the paths bats --changed starts from, below), and
+# each shell script that sources a changed path, by its file name, where a line runs source or .
+# (first or after another command) or in a "# shellcheck source=" directive, the file read past
+# its command substitutions, and each that sources one of those in turn, so a
+# changed library is checked where it is read; a deleted path is never checked itself, only its
+# sourcers. A changed .shellcheckrc checks every script. It prints the scripts first, checks
+# nothing, and says so, when the change reaches no shell script, and --list prints them, one path
+# per line, and checks none.
 # With --shard, bats runs shard k of n of the files as tests/shards splits them, by each file's
 # seconds in CI (tests/timings.tsv), as CI's shard jobs do; --list prints that shard's files and
 # runs none. A shard with no file (n above the file count) passes, running nothing.
@@ -61,9 +77,9 @@ team_home_report=1
 # shellcheck source=bin/lib/team.sh
 source "$root/bin/lib/team.sh" "$@"
 
-usage="usage: tests/run [shellcheck|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+usage="usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
 what=${1:-all} shard='' changed='' base='' list=''
-if [[ $what == bats && $# -gt 1 && $2 == --changed ]]; then
+if [[ ($what == bats || $what == shellcheck) && $# -gt 1 && $2 == --changed ]]; then
   changed=1 base=origin/dev
   rest=("${@:3}")
   if [[ ${#rest[@]} -gt 0 && ${rest[0]} != -* ]]; then base=${rest[0]} rest=("${rest[@]:1}"); fi
@@ -71,8 +87,8 @@ if [[ $what == bats && $# -gt 1 && $2 == --changed ]]; then
     [[ ${#rest[@]} -eq 1 && ${rest[0]} == --list ]] || usage_error "$usage"
     list=1
   fi
-  if ! git -C "$root" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    [[ $# -gt 2 && $3 == "$base" ]] || die "no $base to compare with in $root: fetch it, or name a base (tests/run bats --changed <base>)"
+  if ! git -C "${root:?}" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+    [[ $# -gt 2 && $3 == "$base" ]] || die "no $base to compare with in $root: fetch it, or name a base (tests/run $what --changed <base>)"
     usage_error "--changed: no commit $base; $usage"
   fi
 elif [[ $what == bats && $# -gt 1 ]]; then
@@ -92,6 +108,13 @@ fi
 if [[ -n ${TESTS_SLOWER_BY+set} && ! $TESTS_SLOWER_BY =~ ^[0-9]+$ ]]; then
   die "TESTS_SLOWER_BY is the seconds a bats file may take over its timing, a whole number, not '$TESTS_SLOWER_BY'"
 fi
+if [[ -n ${TESTS_TEST_SECONDS+set} && ! $TESTS_TEST_SECONDS =~ ^[1-9][0-9]*$ ]]; then
+  die "TESTS_TEST_SECONDS is the seconds a bats test may run, a whole number above 0, not '$TESTS_TEST_SECONDS'"
+fi
+if [[ -n ${TESTS_FILE_MINUTES+set} && ! $TESTS_FILE_MINUTES =~ ^[1-9][0-9]*$ ]]; then
+  die "TESTS_FILE_MINUTES is the minutes a bats file may run, a whole number above 0, not '$TESTS_FILE_MINUTES'"
+fi
+test_seconds=${TESTS_TEST_SECONDS:-600} file_minutes=${TESTS_FILE_MINUTES:-40}
 
 # Every part but shellcheck alone and a --list runs under the machine's heavy-run lock
 # (bin/team-heavy).
@@ -105,7 +128,7 @@ shell_scripts() {
   local file
   while IFS= read -r file; do
     if [[ $file == *.sh || $file == *.bash || $file == *.bats ]] ||
-      head -n 1 "$file" | grep -Eq '^#!.*\b(ba)?sh\b'; then
+      head -n 1 "$root/$file" | grep -Eq '^#!.*\b(ba)?sh\b'; then
       echo "$file"
     fi
   done < <(cd "$root" && find bin tests servers toolkits \( -path tests/vendor -o -path servers/node_modules -o -path 'servers/.*' \) -prune -o -type f -print | sort)
@@ -122,15 +145,72 @@ bats_files() {
     $1 == k && (changed == "" || $3 in chosen) { print root "/" $3 }'
 }
 
+# The shell scripts shellcheck --changed checks (see the header), one path per line, sorted.
+changed_scripts() {
+  local paths scripts checked lines status=0
+  paths=$(changed_paths | sort -u) || return 1
+  scripts=$(shell_scripts)
+  mapfile -t checked <<<"$scripts"
+  if grep -qxF .shellcheckrc <<<"$paths"; then
+    echo "$scripts"
+    return
+  fi
+  # Each script's lines that may source a file, as "<script>:<line>", then the changed paths, then
+  # the scripts: a script is checked when it changed, or when a file such a line sources has the
+  # file name of a changed path or of a script checked for that.
+  lines=$(cd "$root" && grep -HE '(^|[^[:alnum:]_.-])source[[:space:]]|(^|[;&|[:space:]])\.[[:space:]]|#[[:space:]]*shellcheck[[:space:]]+source=' -- "${checked[@]}") ||
+    status=$?
+  ((status <= 1)) || return 1
+  {
+    [[ -z $lines ]] || echo "$lines"
+    echo
+    echo "$paths"
+    echo
+    echo "$scripts"
+  } | awk '
+    function name(path) { sub(/.*[\/=]/, "", path); return path }
+    $0 == "" { part++; next }
+    part == 0 {
+      script = $0; sub(/:.*/, "", script)
+      line = substr($0, length(script) + 2)
+      # A comment sources nothing but by its directive; any other line wherever it runs source or
+      # ., after another command or a # as well as first.
+      runs = "#[[:space:]]*shellcheck[[:space:]]+source="
+      if (line !~ /^[[:space:]]*#/) runs = runs "|(^|[^[:alnum:]_.-])source[[:space:]]+|(^|[;&|[:space:]])\\.[[:space:]]+"
+      while (match(line, runs)) {
+        line = substr(line, RSTART + RLENGTH)
+        # The file is the first word, past its command substitutions, nested ones from the inside
+        # out, such as $(dirname "$0") or $(cd "$(dirname "$0")" && pwd).
+        file = line
+        while (gsub(/\$\([^()]*\)/, "", file)) {}
+        sub(/[[:space:];].*/, "", file)
+        gsub(/["\047\\]/, "", file)
+        if (file != "") sourcers[name(file)] = sourcers[name(file)] "\n" script
+      }
+      next
+    }
+    part == 1 { changed[$0] = 1; queue[++last] = name($0); next }
+    { scripts[$0] = 1; if ($0 in changed) pick[$0] = 1 }
+    END {
+      for (at = 1; at <= last; at++) {
+        if (queue[at] in followed) continue
+        followed[queue[at]] = 1
+        n = split(sourcers[queue[at]], users, "\n")
+        for (i = 2; i <= n; i++) if (!(users[i] in pick)) { pick[users[i]] = 1; queue[++last] = name(users[i]) }
+      }
+      for (script in pick) if (script in scripts) print script
+    }' | LC_ALL=C sort
+}
+
 # The paths --changed starts from (see the header), one per line, relative to the checkout.
 changed_paths() {
   local entry
-  git -C "$root" diff --name-only --no-renames "$base...HEAD"
+  git -C "${root:?}" diff --name-only --no-renames "$base...HEAD"
   while IFS= read -r -d '' entry; do
     echo "${entry:3}"
     # A rename or copy's entry is followed by its source's path.
     if [[ ${entry:0:2} == *[RC]* ]]; then IFS= read -r -d '' entry && echo "$entry"; fi
-  done < <(git -C "$root" status --porcelain=v1 -z --untracked-files=all)
+  done < <(git -C "${root:?}" status --porcelain=v1 -z --untracked-files=all)
 }
 
 # The files the selection reads, from the checkout's root: the bats files that grep "$@" matches,
@@ -315,13 +395,15 @@ slow_files() {
     }' "$timings" -
 }
 
-# The bats files (bats_files), in parallel (see the header); fails if any file fails.
+# The bats files (bats_files), in parallel, each test and file under its time limit (see the
+# header); fails if any file fails.
 run_bats() {
-  local file failed=0 names
+  local file failed=0 names minutes="$file_minutes minutes"
+  ((file_minutes != 1)) || minutes='1 minute'
   out=$(mktemp -d)
   trap 'rm -rf "$out"' EXIT
-  # Each file's output goes to $out/<file>, with $out/<file>.failed beside it when it fails and
-  # $out/<file>.seconds its seconds.
+  # Each file's output goes to $out/<file>, with $out/<file>.failed beside it when it fails,
+  # $out/<file>.stopped when its time limit stopped it, and $out/<file>.seconds its seconds.
   bats_files >"$out/files" || { echo "bats: tests/shards could not split the files"; return 1; }
   if [[ -n $changed ]]; then
     if [[ ! -s $out/files ]]; then
@@ -335,18 +417,35 @@ run_bats() {
     echo "bats: shard $shard has no file"
     return 0
   fi
+  # timeout ends 124 when its TERM stopped the file, 137 when its kill did. It runs the file in a
+  # process group of its own, so its kill reaches what the file left behind, but a signal to this
+  # run's group (team-heavy stop with no scope, a Ctrl-C) does not: each file's bash passes an
+  # INT, TERM or HUP on to its timeout as TERM, which signals that group, and ends once it has;
+  # the trap is set before timeout starts and reads $! when it fires, so a signal that comes
+  # first ends the bash before it starts one, and any later one reaches it.
   # shellcheck disable=SC2016 # expanded by each file's bash
   tr '\n' '\0' <"$out/files" |
-    xargs -0 -r -n 1 -P "$jobs" bash -c '
-      name=${2##*/} verdict=ok
-      "$0/tests/vendor/bats-core/bin/bats" "$2" >"$1/$name" 2>&1 || { verdict="not ok"; touch "$1/$name.failed"; }
+    BATS_TEST_TIMEOUT=$test_seconds xargs -0 -r -n 1 -P "$jobs" bash -c '
+      name=${3##*/} verdict=ok rc=0 stopped=""
+      trap "[[ -z \$! ]] || { kill -TERM \$! 2>/dev/null; wait \$!; }; exit 143" INT TERM HUP
+      timeout -k 30 "$2m" "$0/tests/vendor/bats-core/bin/bats" "$3" >"$1/$name" 2>&1 &
+      wait "$!" || rc=$?
+      if ((rc != 0)); then verdict="not ok"; touch "$1/$name.failed"; fi
+      if ((rc == 124 || rc == 137)) && ((SECONDS >= $2 * 60)); then
+        touch "$1/$name.stopped"
+        stopped=": stopped at its $2-minute limit"
+      fi
       echo "$SECONDS" >"$1/$name.seconds"
-      printf "%s tests/%s (%ds)\n" "$verdict" "$name" "$SECONDS"' "$root" "$out"
+      printf "%s tests/%s (%ds)%s\n" "$verdict" "$name" "$SECONDS" "$stopped"' "$root" "$out" "$file_minutes"
   for file in "$out"/*.bats; do
     [[ -e $file.failed ]] || continue
     failed=$((failed + 1))
     printf '\n--- tests/%s\n' "${file##*/}"
     cat "$file"
+    # A file stopped mid-line ends that line first.
+    [[ ! -s $file || -z $(tail -c 1 "$file") ]] || echo
+    [[ ! -e $file.stopped ]] ||
+      echo "tests/run: tests/${file##*/} ran past $minutes; the test after the last line above was still running, or a process it left held the file's output open"
   done
   # A skipped test counts as passed, so each one is named, which a file's ok line never shows.
   for file in "$out"/*.bats; do
@@ -358,7 +457,9 @@ run_bats() {
 }
 
 selected=''
-if [[ -n $changed ]]; then
+if [[ -n $changed && $what == shellcheck ]]; then
+  selected=$(changed_scripts) || die "could not read the paths changed since $base"
+elif [[ -n $changed ]]; then
   selected=$(changed_selection | LC_ALL=C sort -u) || die "could not read the paths changed since $base"
 fi
 if [[ -n $list && -n $changed ]]; then
@@ -371,7 +472,14 @@ elif [[ -n $list ]]; then
 fi
 fail=0 jobs=''
 SECONDS=0
-if [[ $what == all || $what == shellcheck ]]; then
+if [[ -n $changed && $what == shellcheck && -z $selected ]]; then
+  echo "shellcheck: no shell script changed since $base, so none is checked"
+elif [[ -n $changed && $what == shellcheck ]]; then
+  mapfile -t scripts <<<"$selected"
+  echo "shellcheck $(shellcheck --version | sed -n 's/^version: //p') --changed $base: ${#scripts[@]} of $(shell_scripts | wc -l) scripts"
+  printf '  %s\n' "${scripts[@]}"
+  (cd "$root" && shellcheck -x "${scripts[@]}") || fail=1
+elif [[ $what == all || $what == shellcheck ]]; then
   mapfile -t scripts < <(shell_scripts)
   echo "shellcheck $(shellcheck --version | sed -n 's/^version: //p'): ${#scripts[@]} scripts"
   (cd "$root" && shellcheck -x "${scripts[@]}") || fail=1

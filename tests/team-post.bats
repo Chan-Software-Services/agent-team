@@ -110,7 +110,8 @@ image_line() {
 
 # The stand-in for Discord: the stub runs the real curl, sending the real request to a server on
 # the loopback, which keeps its body in <file>, so a test reads what would reach Discord. The
-# server takes one request, and stops within 30 s if none comes: real_discord <file>
+# server takes one request, and stops within 30 s if none comes; its pid is real_server:
+# real_discord <file>
 real_discord() {
   local real port=$BATS_TEST_TMPDIR/port
   real=$(type -ap curl | grep -vF "$BATS_TEST_TMPDIR/stubs/" | head -n 1)
@@ -133,6 +134,7 @@ with open(sys.argv[2] + ".new", "w") as out:
 os.rename(sys.argv[2] + ".new", sys.argv[2])
 server.handle_request()
 PY
+  real_server=$!
   until [[ -s $port ]]; do sleep 0.05; done
   stub_script curl <<EOF
 exec "$real" "\${@:1:\$#-1}" "http://127.0.0.1:$(<"$port")/"
@@ -207,6 +209,9 @@ run_of() {
     AGENT_TEAM_ROLE=$role AGENT_TEAM_TASK=T7 run_bin -1 team-post T7 --thread interview --file "$IMAGES/q.md"
     assert_equal "$output" "team-post: a $role session posts to Discord: that is the coordinator's; send it your message"
   done
+  # The assistant is refused as a worker is, with the article its name takes.
+  AGENT_TEAM_ROLE=assistant run_bin -1 team-post --coordinator --file "$IMAGES/q.md"
+  assert_equal "$output" "team-post: an assistant session posts to Discord: that is the coordinator's; send it your message"
   assert_equal "$(channels)" "5555"
 
   # The coordinator posts anywhere, as Daniel's own shell does.
@@ -405,7 +410,7 @@ EOF
   real_discord "$sent"
   run_bin -0 team-post T7 --thread interview --file "$IMAGES/q.md" --attach "$dir/ti;le,1.png"
   assert_equal "$output" "1564000000000000001"
-  wait
+  wait "$real_server"
   grep -aqF 'name="payload_json"' "$sent"
   grep -aqF '{"content":"Tile 1 is the bar as it is, tile 2 the new one.","allowed_mentions":{"parse":["users"]}}' "$sent"
   grep -aqF 'name="files[0]"; filename="ti;le,1.png"' "$sent"
@@ -499,7 +504,7 @@ EOF
     "$IMAGES/link.png|it is a link" "$IMAGES/inner-link.png|it is a link"
     "$IMAGES/text.png|$bytes" "$IMAGES/empty.png|$bytes" "$IMAGES/bitmap.png|$bytes"
     "$IMAGES/almost.png|$bytes" "$IMAGES/sound.png|$bytes"
-    "$ui/capture-1/page.png|it is in a capture of the page Daniel is on, and nothing proves that page held no real data"
+    "$ui/capture-1/page.png|capture-1 holds no ui-page.md, so nothing says where its page came from"
   )
   local case
   for case in "${refused[@]}"; do

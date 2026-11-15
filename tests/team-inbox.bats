@@ -123,6 +123,44 @@ $RANKED"
   assert_equal "$output" "wrote waiting.md: 1 item"
 }
 
+@test "a walk under way is numbered as an interview is, by the thread it runs in, once, until it stops, and holds its task" {
+  opened T9 "Nine" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T9","event":"thread","discord_thread":"9000"}' \
+    '{"task":"T9","event":"interview-thread","discord_thread":"9999"}' \
+    '{"task":"T9","event":"walk","state":"on","thread":"interview"}'
+  opened T12 "Twelve" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T12","event":"thread","discord_thread":"1212"}' \
+    '{"task":"T12","event":"walk","state":"on"}'
+  opened T14 "Fourteen" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T14","event":"walk","state":"on"}'
+  run_bin -0 team-inbox
+  assert_equal "$output" "wrote waiting.md: 3 items"
+  # An interview walk is no interview too, and a walk with no thread to link still shows.
+  assert_equal "$(waiting_items_shown)" "- **1** T9 Nine: walk under way <#9999> - unblocks 1 (1 task)
+- **2** T12 Twelve: walk under way <#1212> - unblocks 1 (1 task)
+- **3** T14 Fourteen: walk under way - unblocks 1 (1 task)
+$RANKED"
+  assert_equal "$(jq -c '.items[0] | {key, kind, thread}' "$TEAM_HOME/waiting.json")" \
+    '{"key":"walk T9 2026-10-01T11:00:00Z","kind":"walk","thread":"9999"}'
+  # --item names a walk by its task and thread, or its task alone with none.
+  run_bin -0 team-inbox --item 1
+  assert_equal "$output" "walk T9 9999"
+  run_bin -0 team-inbox --item 3
+  assert_equal "$output" "walk T14"
+  # Stopped, an interview's thread goes back to being an interview, and a task's walk leaves the list.
+  log_events '{"task":"T9","event":"walk","state":"off"}' '{"task":"T12","event":"walk","state":"off"}' \
+    '{"task":"T14","event":"walk","state":"off"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "- **1** T9 Nine: interview under way <#9999> - unblocks 1 (1 task)
+$RANKED"
+  # A walk left on ends with its task.
+  log_events '{"task":"T12","event":"walk","state":"on"}' \
+    '{"task":"T12","event":"closed","archive":[],"returned":[],"kept":[]}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "- **1** T9 Nine: interview under way <#9999> - unblocks 1 (1 task)
+$RANKED"
+}
+
 # The id team-current gives an item line: the first 6 hex digits of the sha256 of the line without
 # its "- ".
 item_id() {
@@ -652,15 +690,15 @@ $RANKED"
   assert_equal "$stderr" ""
   # A holder that steals the lease after a crash reads origin's waiting.json, so the post's
   # reservation is there at once, its commit holding the two files alone.
-  assert_equal "$(git -C "$origin" log -1 --format=%s dev)" "chore: waiting list posted"
-  assert_equal "$(git -C "$origin" show --format= --name-only dev | sort)" "$(printf '%s\n' waiting.json waiting.md)"
-  assert_equal "$(git -C "$origin" show dev:waiting.json | jq -c '[.posted.items[].n]')" '[1]'
-  assert_equal "$(git -C "$origin" show dev:waiting.md)" "$(cat "$TEAM_HOME/waiting.md")"
+  assert_equal "$(git -C "${origin:?}" log -1 --format=%s dev)" "chore: waiting list posted"
+  assert_equal "$(git -C "${origin:?}" show --format= --name-only dev | sort)" "$(printf '%s\n' waiting.json waiting.md)"
+  assert_equal "$(git -C "${origin:?}" show dev:waiting.json | jq -c '[.posted.items[].n]')" '[1]'
+  assert_equal "$(git -C "${origin:?}" show dev:waiting.md)" "$(cat "$TEAM_HOME/waiting.md")"
 
   # A plain run pushes nothing: the checkpoint commits what it wrote.
   log_events '{"task":"T3","event":"asked","id":"b","text":"B?"}'
   run_bin -0 team-inbox
-  assert_equal "$(git -C "$origin" show dev:waiting.json | jq -c '[.items[].n]')" '[1]'
+  assert_equal "$(git -C "${origin:?}" show dev:waiting.json | jq -c '[.items[].n]')" '[1]'
 
   # Held offline, it does not try; with origin unreachable, the push fails; either way the post
   # stands, recorded here, and the next checkpoint pushes it.
@@ -670,12 +708,12 @@ $RANKED"
   assert_contains "$stderr" ", and the team is holding); the next checkpoint pushes them"
   assert_equal "$(jq -c .posted.messages "$TEAM_HOME/waiting.json")" '["1569000000000000002"]'
   rm "$HOME/.local/state/agent-team/offline"
-  git -C "$TEAM_HOME" remote set-url origin "$BATS_TEST_TMPDIR/nowhere.git"
+  git -C "${TEAM_HOME:?}" remote set-url origin "$BATS_TEST_TMPDIR/nowhere.git"
   run_bin -0 --separate-stderr team-inbox --post
   assert_contains "$stderr" "team-inbox: the post's numbers are not on origin yet ("
   assert_contains "$stderr" "); the next checkpoint pushes them"
   assert_equal "$(jq -c .posted.messages "$TEAM_HOME/waiting.json")" '["1569000000000000003"]'
-  assert_equal "$(git -C "$origin" show dev:waiting.json | jq -c .posted.messages)" '["1569000000000000001"]'
+  assert_equal "$(git -C "${origin:?}" show dev:waiting.json | jq -c .posted.messages)" '["1569000000000000001"]'
 }
 
 @test "--post without the token refuses before writing anything, and a failed guild read refuses as Discord's refusal says" {
@@ -811,7 +849,7 @@ $RANKED"
   export CODE_CHECKOUT
   CODE_CHECKOUT=$(make_repo conv)
   copy_bin "$CODE_CHECKOUT/bin"
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/Owner/proj/
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/Owner/proj/
   run_bin -0 --separate-stderr team-inbox
   assert_equal "$stderr" ""
   assert_equal "$(waiting_items_shown)" "- **1** T4 Task T4: ready to merge <https://github.com/owner/proj/pull/4> - unblocks 2 (1 task, 1 PR)

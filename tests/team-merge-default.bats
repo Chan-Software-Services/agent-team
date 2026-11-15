@@ -22,7 +22,7 @@ daniel_plan() {
 # The PR is of the team's own project by repo: proj's repo is the origin of the code checkout.
 own_by_repo() {
   code_checkout
-  git -C "$CODE_CHECKOUT" remote set-url origin git@github.com:Owner/Proj.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin git@github.com:Owner/Proj.git
 }
 
 # The reason the default word gives on a PR of the team's own project.
@@ -300,7 +300,7 @@ discord_has() {
 
 @test "another project merges on the default word with the team's own registered beside it" {
   code_checkout
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/owner/agent-team.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/owner/agent-team.git
   cat >>"$TEAM_HOME/projects.toml" <<'TOML'
 
 [agent-team]
@@ -581,9 +581,12 @@ file_reasons() {
   own_by_repo
   local path paths=() expected=()
   for path in bin/team-merge bin/team-checks bin/team-heavy bin/team-review-status bin/team-ask bin/team-run-approved \
-    bin/team-worker bin/team-lease bin/claude-coordinator bin/lib/guarded bin/lib/ledger-contract.json bin/lib/data-check \
-    bin/lib/records bin/lib/code bin/lib/command_rules.py bin/lib/command_text.py bin/lib/outbound.py bin/hooks/git/pre-push \
+    bin/team-worker bin/team-lease bin/claude-coordinator bin/claude-assistant bin/lib/launch.sh bin/lib/guarded \
+    bin/lib/ledger-contract.json bin/lib/data-check bin/lib/records bin/lib/code bin/lib/command_rules.py \
+    bin/lib/command_text.py bin/lib/outbound.py bin/lib/kill_rules.py bin/lib/delete_rules.py \
+    bin/lib/gate-claude-settings.json bin/lib/opencode-gate bin/lib/opencode-guard.js bin/hooks/git/pre-push \
     bin/hooks/records-git/pre-commit bin/hooks/lease-fence settings/worker.json settings/reviewer.json coordinator.settings.json \
+    assistant.settings.json \
     bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/team-next \
     bin/team-catch-up bin/team-review-check bin/team-log bin/team-project bin/lib/lifecycle.json roles/reviewer.md \
     roles/coordinator.md; do

@@ -13,8 +13,8 @@ setup() {
   # The base branch has the project's instructions, so a launch has nothing to say of them.
   base_files "$primary" CLAUDE.md "# proj"
   wt1=$HOME/slots/proj/1 wt2=$HOME/slots/proj/2
-  git -C "$primary" worktree add -q -b feat/T7-one "$wt1"
-  git -C "$primary" worktree add -q -b feat/T8-two "$wt2"
+  git -C "${primary:?}" worktree add -q -b feat/T7-one "$wt1"
+  git -C "${primary:?}" worktree add -q -b feat/T8-two "$wt2"
   registry proj other
   # The session list holds the session just launched, its process alive, so team-capacity place
   # (on Linux) places it and says nothing.
@@ -207,6 +207,7 @@ run_fake() {
   for role in planner builder reviewer ops; do
     run_bin -2 team-worker T7 "$role" "$wt1" --toolkit frontend -- go
     assert_contains "$output" "toolkit 'frontend' is Daniel's own"
+    assert_contains "$output" "D1 of T216's report"
   done
   run_bin -2 team-worker T0 planner "$wt1" --toolkit browser --toolkit frontend -- go
   assert_contains "$output" "toolkit 'frontend' is Daniel's own"
@@ -269,11 +270,11 @@ base_files() {
   shift
   while (($#)); do
     printf '%s\n' "$2" >"$repo/$1"
-    git -C "$repo" add -- "$1"
+    git -C "${repo:?}" add -- "$1"
     shift 2
   done
-  git -C "$repo" commit -q -m "docs: instructions"
-  git -C "$repo" push -q origin main
+  git -C "${repo:?}" commit -q -m "docs: instructions"
+  git -C "${repo:?}" push -q origin main
 }
 
 # A launch's stderr <stderr> but the lines for the earlier sessions it leaves running: notes <stderr>
@@ -321,11 +322,11 @@ prompt_file() {
   opened T7 proj feat/T7-one "$wt1"
   base_files "$primary" CLAUDE.md "BASE-CLAUDE-MARKER" AGENTS.md "BASE-AGENTS-MARKER"
   local sha
-  sha=$(git -C "$primary" rev-parse origin/main)
+  sha=$(git -C "${primary:?}" rev-parse origin/main)
   # The worktree's branch has its own CLAUDE.md, the change a PR would bring.
   echo "WORKTREE-CLAUDE-MARKER" >"$wt1/CLAUDE.md"
-  git -C "$wt1" add CLAUDE.md
-  git -C "$wt1" commit -q -m "docs: change the instructions"
+  git -C "${wt1:?}" add CLAUDE.md
+  git -C "${wt1:?}" commit -q -m "docs: change the instructions"
   local role file
   for role in planner builder reviewer; do
     : >"$STUB_CALLS/claude.log"
@@ -353,12 +354,12 @@ prompt_file() {
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   # Neither file: the role alone, said on stderr.
-  git -C "$primary" rm -q CLAUDE.md
-  git -C "$primary" commit -q -m "docs: drop the instructions"
-  git -C "$primary" push -q origin main
+  git -C "${primary:?}" rm -q CLAUDE.md
+  git -C "${primary:?}" commit -q -m "docs: drop the instructions"
+  git -C "${primary:?}" push -q origin main
   run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
   assert_equal "$output" "4f2a9c1e"
-  assert_equal "$stderr" "team-worker: proj has no CLAUDE.md or AGENTS.md at origin/main ($(git -C "$primary" rev-parse origin/main)), so T7-builder gets no project instructions"
+  assert_equal "$stderr" "team-worker: proj has no CLAUDE.md or AGENTS.md at origin/main ($(git -C "${primary:?}" rev-parse origin/main)), so T7-builder gets no project instructions"
   assert_equal "$(cat "$(prompt_file)")" "$(cat "$REPO_ROOT/roles/builder.md")"
 
   # Two copies: the second is left out, and a line says so.
@@ -382,9 +383,9 @@ team-worker: proj's AGENTS.md at origin/main imports @./ (line 4), which is not 
   grep -qxF "AGENTS-MARKER" "$(prompt_file)"
 
   # An @AGENTS.md with no AGENTS.md to follow is named too.
-  git -C "$primary" rm -q AGENTS.md
-  git -C "$primary" commit -q -m "docs: drop AGENTS.md"
-  git -C "$primary" push -q origin main
+  git -C "${primary:?}" rm -q AGENTS.md
+  git -C "${primary:?}" commit -q -m "docs: drop AGENTS.md"
+  git -C "${primary:?}" push -q origin main
   : >"$STUB_CALLS/claude.log"
   run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
   assert_contains "$(notes "$stderr")" "team-worker: proj's CLAUDE.md at origin/main imports @AGENTS.md (line 2), which is not inlined"
@@ -394,9 +395,9 @@ team-worker: proj's AGENTS.md at origin/main imports @./ (line 4), which is not 
 # main and push it.
 base_link() {
   ln -sfn -- "$3" "$1/$2"
-  git -C "$1" add -- "$2"
-  git -C "$1" commit -q -m "docs: link $2"
-  git -C "$1" push -q origin main
+  git -C "${1:?}" add -- "$2"
+  git -C "${1:?}" commit -q -m "docs: link $2"
+  git -C "${1:?}" push -q origin main
 }
 
 @test "a root CLAUDE.md or AGENTS.md that links to the other is given once with nothing on stderr; a link inside the base is followed, one leaving it or to no file is named" {
@@ -417,7 +418,7 @@ base_link() {
   done
 
   # The other way round: AGENTS.md a link to CLAUDE.md.
-  git -C "$primary" rm -q CLAUDE.md AGENTS.md
+  git -C "${primary:?}" rm -q CLAUDE.md AGENTS.md
   base_files "$primary" CLAUDE.md "OTHER-WAY-MARKER"
   base_link "$primary" AGENTS.md ./CLAUDE.md
   : >"$STUB_CALLS/claude.log"
@@ -427,7 +428,7 @@ base_link() {
   grep -qF '`AGENTS.md` at `origin/main` is the same file as `CLAUDE.md`, so it is given once.' "$(prompt_file)"
 
   # A link to a file elsewhere in the base is given that file's text, as the base has it.
-  git -C "$primary" rm -q CLAUDE.md AGENTS.md
+  git -C "${primary:?}" rm -q CLAUDE.md AGENTS.md
   mkdir -p "$primary/docs"
   base_files "$primary" docs/instructions.md "DOCS-MARKER"
   base_link "$primary" CLAUDE.md docs/../docs/instructions.md
@@ -441,7 +442,7 @@ base_link() {
   local target sha
   for target in ../outside.md /etc/hostname missing.md docs; do
     base_link "$primary" CLAUDE.md "$target"
-    sha=$(git -C "$primary" rev-parse origin/main)
+    sha=$(git -C "${primary:?}" rev-parse origin/main)
     : >"$STUB_CALLS/claude.log"
     run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
     case $target in
@@ -456,7 +457,7 @@ base_link() {
 @test "an origin/<base> the worktree's repository cannot read refuses the launch, nothing started, stopped or logged" {
   thread T7
   opened T7 proj feat/T7-one "$wt1"
-  git -C "$primary" update-ref -d refs/remotes/origin/main
+  git -C "${primary:?}" update-ref -d refs/remotes/origin/main
   run_bin -1 team-worker T7 reviewer "$wt1" -- go
   assert_equal "$output" "team-worker: $wt1's repository has no origin/main, where proj's instructions for T7-reviewer come from: fetch it (git -C $wt1 fetch origin main) and launch again"
   assert_equal "$(stub_calls claude)" ""
@@ -468,7 +469,7 @@ base_link() {
 @test "a launch with no project gets no memory directory and no project instructions, said on stderr" {
   local loose
   loose=$(make_repo loose)
-  git -C "$loose" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
+  git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
   base_files "$loose" CLAUDE.md "LOOSE-MARKER"
   run_bin -0 --separate-stderr team-worker T0 planner "$HOME/slots/loose/1" -- go
   assert_equal "$stderr" "team-worker: $HOME/slots/loose/1 is a worktree of $loose, which is no registered project's primary checkout in projects.toml, so T0-planner gets no project instructions and no memory directory"
@@ -792,7 +793,7 @@ command-guard block 10"
 
 @test "T0, the load check, needs no thread and no lease, and is not logged" {
   # No lease anywhere: no origin to read one from, and no team name to hold one under.
-  git -C "$TEAM_HOME" remote remove origin
+  git -C "${TEAM_HOME:?}" remote remove origin
   rm "$HOME/.config/agent-team/machine"
   run_bin -0 team-worker T0 planner "$wt1" -- go
   assert_equal "$output" "4f2a9c1e"
@@ -838,7 +839,7 @@ command-guard block 10"
 @test "an opened task launches in a worktree added from a second project" {
   local other
   other=$(make_repo other)
-  git -C "$other" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
+  git -C "${other:?}" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   ledger_line --arg wt "$HOME/slots/other/1" '{ts: (now | todate), task: "T7", event: "worktree-added",
@@ -851,7 +852,7 @@ command-guard block 10"
 @test "a builder of a second project's worktree leaves the first project's builder its own settings, MCP config and prompt" {
   local other
   other=$(make_repo other)
-  git -C "$other" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
+  git -C "${other:?}" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   ledger_line --arg wt "$HOME/slots/other/1" '{ts: (now | todate), task: "T7", event: "worktree-added",
@@ -905,7 +906,7 @@ command-guard block 10"
   registry --first 'models = { builder = "sonnet" }' other proj
   local other
   other=$(make_repo other)
-  git -C "$other" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
+  git -C "${other:?}" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   ledger_line --arg wt "$HOME/slots/other/1" '{ts: (now | todate), task: "T7", event: "worktree-added",
@@ -994,14 +995,14 @@ command-guard block 10"
 @test "after a worktree-moved the task launches in the new worktree, not the recorded one" {
   thread T7
   opened T7 proj feat/T7-one /home/someone/slots/proj/1
-  git -C "$primary" worktree remove "$wt2"
-  git -C "$primary" worktree move "$wt1" "$wt2"
+  git -C "${primary:?}" worktree remove "$wt2"
+  git -C "${primary:?}" worktree move "$wt1" "$wt2"
   ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T7", event: "worktree-moved", project: "proj",
     branch: "feat/T7-one", from: "/home/someone/slots/proj/1", worktree: $wt, machine: "home-pc"}'
   run_bin -0 team-worker T7 builder "$wt2" -- go
   assert_equal "$(launches | jq -c '[.project, .branch, .worktree]')" \
     "$(jq -cn --arg wt "$wt2" '["proj", "feat/T7-one", $wt]')"
-  git -C "$primary" worktree add -q -b feat/T9-other "$wt1"
+  git -C "${primary:?}" worktree add -q -b feat/T9-other "$wt1"
   run_bin -1 team-worker T7 builder "$wt1" -- go
   assert_contains "$output" "$wt1 is not one of T7's open worktrees:"$'\n'"  $wt2 (proj, feat/T7-one)"
   run_bin -0 team-log --check
@@ -1034,7 +1035,7 @@ command-guard block 10"
 @test "with GitHub unreachable it refuses: a worker never starts offline" {
   open_task T7
   cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/before"
-  git -C "$TEAM_HOME" remote set-url origin https://127.0.0.1:9/agent-team.git
+  git -C "${TEAM_HOME:?}" remote set-url origin https://127.0.0.1:9/agent-team.git
   run_bin -1 --separate-stderr team-worker T7 planner "$wt1" -- go
   assert_equal "$output" ""
   assert_contains "$stderr" "team-lease: GitHub is unreachable"
@@ -1189,14 +1190,14 @@ fixture_projects() {
   local repo
   for repo in "$conv" "$at"; do
     git init -q -b main "$repo"
-    git -C "$repo" commit -q --allow-empty -m "chore: start"
+    git -C "${repo:?}" commit -q --allow-empty -m "chore: start"
     # The base branches a launch reads the project's instructions from, holding none.
-    git -C "$repo" update-ref refs/remotes/origin/dev HEAD
-    git -C "$repo" update-ref refs/remotes/origin/main HEAD
+    git -C "${repo:?}" update-ref refs/remotes/origin/dev HEAD
+    git -C "${repo:?}" update-ref refs/remotes/origin/main HEAD
   done
-  git -C "$conv" worktree add -q -b feat/T8-conv "$conv_wt"
-  git -C "$conv" worktree add -q -b feat/T9-conv "$conv_wt2"
-  git -C "$at" worktree add -q -b feat/T7-team "$at_wt"
+  git -C "${conv:?}" worktree add -q -b feat/T8-conv "$conv_wt"
+  git -C "${conv:?}" worktree add -q -b feat/T9-conv "$conv_wt2"
+  git -C "${at:?}" worktree add -q -b feat/T7-team "$at_wt"
 }
 
 # The tail of every refusal of a toolkit its project does not list.
@@ -1391,16 +1392,30 @@ allowed_in() {
   for command in "$bin/team-post T7 --thread interview --file $HOME/w/.scratch/task/q1.md" \
     "$bin/team-post T7 --thread interview --file $HOME/w/.scratch/task/q1.md --attach $HOME/w/.scratch/task/shots/1.png --attach $HOME/w/.scratch/task/shots/2.png" \
     "$bin/team-post T7 --thread interview --retract 1564000000000000001" \
-    "$bin/team-thread wait T7" "$bin/team-thread wait T7 --after 1564000000000000001"; do
+    "$bin/team-thread wait T7" "$bin/team-thread wait T7 --after 1564000000000000001" \
+    "$bin/team-ui T7 --capture" "$bin/team-ui T7 --capture --note-file $HOME/w/.scratch/task/note-1.md"; do
     allowed_in "$settings" "$command" || { echo "planner may not: $command" >&2; return 1; }
   done
   for command in "$bin/team-post T17 --thread interview --file q.md" "$bin/team-post T7 --file q.md" \
     "$bin/team-post T17 --thread interview --retract 1" "$bin/team-post T7 --retract 1" \
     "$bin/team-post T7 --thread task --retract 1" "$bin/team-post T17 --thread interview --file q.md --attach a.png" \
     "$bin/team-post T7 --file q.md --attach a.png" "$bin/team-post --coordinator --file q.md --attach a.png" \
-    "$bin/team-thread wait T17" "$bin/team-thread wait T7; $bin/team-post --coordinator --file q.md"; do
+    "$bin/team-thread wait T17" "$bin/team-thread wait T7; $bin/team-post --coordinator --file q.md" \
+    "$bin/team-ui T17 --capture" "$bin/team-ui T17 --capture --note-file n" "$bin/team-ui T7 --walk start" \
+    "$bin/team-ui T7 --walk stop" "$bin/team-ui T7 --attach a.png" "$bin/team-ui T7 --attach a.png --capture" \
+    "$HOME/agent-team/bin/team-ui T7 --capture"; do
     if allowed_in "$settings" "$command"; then echo "planner may: $command" >&2; return 1; fi
   done
+}
+
+# Daniel's decision: a walk's planner captures through team-ui, and its walk gives it no MCP server.
+@test "a planner launched while its interview walk is on gets no frontend server, and is still refused the toolkit" {
+  open_task T7
+  jq -cn '{ts: "2026-10-25T10:02:00Z", task: "T7", event: "walk", state: "on", thread: "interview"}' >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -2 team-worker T7 planner "$wt1" --toolkit frontend -- go
+  assert_contains "$output" "toolkit 'frontend' is Daniel's own"
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(jq -c '.mcpServers | has("frontend")' "$TEAM_HOME/tasks/T7/mcp.planner.proj.json")" false
 }
 
 # T177's builder was refused gh pr ready on its own draft PR, which no rule allowed.
@@ -1421,6 +1436,33 @@ allowed_in() {
     run_bin -0 team-worker T7 "$role" "$wt1" -- go
     settings=$TEAM_HOME/tasks/T7/settings.$role.proj.json
     for command in "gh pr ready https://github.com/me/shop/pull/5" "gh-axi pr ready 5"; do
+      if allowed_in "$settings" "$command"; then echo "$role may: $command" >&2; return 1; fi
+    done
+  done
+}
+
+# A branch_ci project's builder ends its round with team-ci-run on the head it pushed, and reruns
+# or cancels the run an infrastructure failure's line names; no other role's brief has either.
+@test "a builder may run team-ci-run on its branch and rerun or cancel a CI run, never start a workflow by hand, and no other role may" {
+  open_task T7
+  local role settings command bin=$REPO_ROOT/bin sha=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  local -a ci=("$bin/team-ci-run proj feat/T7-one $sha" "$bin/team-ci-run proj feat/T7-one--03 $sha"
+    "gh run rerun 7001 --repo me/proj" "gh run rerun 7001 --job 9001 --repo me/proj" "gh run cancel 7001 --repo me/proj"
+    "gh-axi run rerun 7001 --repo me/proj" "gh-axi run cancel 7001 --repo me/proj")
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  settings=$TEAM_HOME/tasks/T7/settings.builder.proj.json
+  for command in "${ci[@]}"; do
+    allowed_in "$settings" "$command" || { echo "builder may not: $command" >&2; return 1; }
+  done
+  # Only the code checkout's team-ci-run, and only it starts a workflow's run.
+  for command in "team-ci-run proj feat/T7-one $sha" "/elsewhere/bin/team-ci-run proj feat/T7-one $sha" \
+    "gh workflow run ci.yml --repo me/proj --ref feat/T7-one" "gh-axi workflow run ci.yml --repo me/proj --ref feat/T7-one"; do
+    if allowed_in "$settings" "$command"; then echo "builder may: $command" >&2; return 1; fi
+  done
+  for role in planner reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    settings=$TEAM_HOME/tasks/T7/settings.$role.proj.json
+    for command in "${ci[@]}"; do
       if allowed_in "$settings" "$command"; then echo "$role may: $command" >&2; return 1; fi
     done
   done
@@ -1457,6 +1499,8 @@ allowed_in() {
   refused_launch "T7 has an unanswered ask, scope, since 2026-11-11T09:30:00Z; launch past it with --past-ask scope" \
     T7 reviewer "$wt1" -- go
   refused_launch "--past-ask nope names no unanswered ask of T7" T7 reviewer "$wt1" --past-ask scope --past-ask nope -- go
+  # An id that starts with a dash reaches jq as an id, not an option.
+  refused_launch "--past-ask --x names no unanswered ask of T7" T7 reviewer "$wt1" --past-ask scope --past-ask --x -- go
   run_bin -0 team-worker T7 reviewer "$wt1" --past-ask scope --past-ask scope -- go
   assert_equal "$(launches | jq -c .past_ask)" '["scope"]'
   run_bin -0 team-log --check
@@ -1465,6 +1509,23 @@ allowed_in() {
     discord_message: "1563000000000000045"}'
   run_bin -0 team-worker T7 builder "$wt1" -- go
   assert_equal "$(launches | jq -c 'has("past_ask")')" $'true\nfalse'
+}
+
+@test "an ask that names tickets refuses only a builder of one of them, read from its brief, and the task's other launches go" {
+  open_task T7
+  ledger_line '{ts: "2026-11-11T09:30:00Z", task: "T7", event: "asked", id: "prune", text: "Prune phase 2?", tickets: ["03"]}'
+  mkdir -p "$TEAM_HOME/tasks/T7"
+  echo "Build ticket 03." >"$TEAM_HOME/tasks/T7/brief-build-03.md"
+  echo "Build ticket 02." >"$TEAM_HOME/tasks/T7/brief-build-02.md"
+  refused_launch "T7 has an unanswered ask, prune, since 2026-11-11T09:30:00Z; launch past it with --past-ask prune" \
+    T7 builder "$wt1" -- "Read your brief at $TEAM_HOME/tasks/T7/brief-build-03.md"
+  run_bin -0 team-worker T7 builder "$wt1" -- "Read your brief at $TEAM_HOME/tasks/T7/brief-build-02.md"
+  run_bin -0 team-worker T7 reviewer "$wt1" -- go
+  run_bin -0 team-worker T7 builder "$wt1" --past-ask prune -- "Read your brief at $TEAM_HOME/tasks/T7/brief-build-03.md"
+  assert_equal "$(launches | jq -c '[.brief, .past_ask]')" '["brief-build-02",null]
+[null,null]
+["brief-build-03",["prune"]]'
+  run_bin -0 team-log --check
 }
 
 @test "a feature task's builder or reviewer waits for its plan; its planner, and a research or small task's builder, go" {
@@ -2501,7 +2562,7 @@ LINES
 # slots/proj/<NN> on feat/T7-one--NN, logged as team-open --ticket logs it. Sets $twt.
 ticket_worktree() {
   twt=$HOME/slots/proj/$1
-  git -C "$primary" worktree add -q -b "feat/T7-one--$1" "$twt" feat/T7-one
+  git -C "${primary:?}" worktree add -q -b "feat/T7-one--$1" "$twt" feat/T7-one
   ledger_line --arg wt "$twt" --arg n "$1" '{ts: (now | todate), task: "T7", event: "worktree-added",
     project: "proj", branch: "feat/T7-one--\($n)", base: "feat/T7-one", base_sha: "0123456", worktree: $wt, ticket: $n}'
 }

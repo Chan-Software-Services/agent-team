@@ -3,10 +3,15 @@
 # theirs, log it as the ask's answer and clear the ask's wait, then print its text for the
 # coordinator to send on. team-ask put the question.
 #
-# Usage: team-answer T<n> <id> <discord message id>
+# Usage: team-answer T<n> <id> <discord message id> [--channel <channel id>]
 #        team-answer --item <n> <discord message id>
 # The first form takes a reply to task T<n>'s ask <id>, as one in the task's thread; the second, a
 # reply that answers by number the waiting list team-inbox keeps (below).
+# --channel takes an answer Daniel gave in #assistant (ASSISTANT_CHANNEL) or a thread under it,
+# which the assistant handed on by its message id (team-assistant): the channel must be one of
+# them, as Discord says (assistant_place in bin/lib/team.sh), and is the first place the message
+# is read from. It is refused for the ask plan and for an ask logged with a script, since a plan
+# approval and a script's yes count only in the task's thread or #coordinator, and with --item.
 # The task must be open and have logged asked id=<id>, and no answered of <id> from that message
 # yet; a later message for the same ask is an addition, logged as another answered. It is the one
 # writer of an answered that names a message, which team-log refuses. The message is read with
@@ -27,8 +32,9 @@
 # the answer stands.
 # --item <n> (n from 1 to 999), for one reply that answers several items ("3 yes, 5 no"): the ask
 # is the item this checkout's team-inbox --item <n> names, refused with its reason when it names
-# none. A PR's number is refused, naming the merge word's team-log line, an interview's, naming its
-# thread, and an ask of tasks/current.md's, naming its team-current done, logging nothing. For an ask it does all the first form does, and also refuses
+# none. A PR's number is refused, naming the merge word's team-log line, an interview's or a
+# walk's, naming its thread, and an ask of tasks/current.md's, naming its team-current done,
+# logging nothing. For an ask it does all the first form does, and also refuses
 # a message whose numbered parts name no part n: each line, a leading bullet (- or *) dropped, is
 # split before each comma, semicolon, & or "and" that a number follows, and a part is an optional
 # #, a number, an optional . ) : or -, then spaces and its text, a part with none taking the text
@@ -36,7 +42,7 @@
 # bin/lib/ledger.jq). It logs answered as the first form does, the whole message verbatim, with
 # item=<n>, which team-log refuses.
 # It refuses on a machine that is fenced or that lost the lease (lease_refusal in bin/lib/team.sh),
-# before reading Discord, and in a worker session (worker_refusal).
+# before reading Discord, and in a worker session (worker_refusal), the assistant's included.
 # Prints the message's text verbatim, or with --item the text of each part naming n, one per line;
 # an empty line is a part that named n with no text of its own and none after it on its line,
 # which answers nothing (ask Daniel what they meant), as "approve 3 and 5" names 5 alone, since a
@@ -45,8 +51,14 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
-USAGE="usage: team-answer T<n> <id> <discord message id>, or team-answer --item <n> <discord message id>"
+USAGE="usage: team-answer T<n> <id> <discord message id> [--channel <channel id>], or team-answer --item <n> <discord message id>"
 
+channel=''
+if (($# == 5)); then
+  [[ $4 == --channel && $5 =~ ^[1-9][0-9]{0,19}$ ]] || usage_error "$USAGE"
+  channel=$5
+  set -- "${@:1:3}"
+fi
 (($# == 3)) || usage_error "$USAGE"
 item=''
 if [[ $1 == --item ]]; then
@@ -58,6 +70,8 @@ else
     usage_error "$USAGE"
 fi
 why=$(worker_refusal "$task" "logs no answer of Daniel's") && die "$why"
+[[ -z $channel || -z $item ]] ||
+  die "an answer by number is read from #coordinator alone; for an ask answered in #assistant, give its task and id: team-answer T<n> <id> <message id> --channel <channel id>"
 
 # By number: the ask the waiting list numbers <n>, as team-inbox --item names it.
 if [[ -n $item ]]; then
@@ -68,6 +82,11 @@ if [[ -n $item ]]; then
     ask) ;;
     pr) die "item $item is $task's PR $id, which Daniel's word merges: on a merge word, log team-log $task merge-approved url=$id discord_message=$message head=<the full sha you asked on>, then run team-merge $task" ;;
     interview) die "item $item is $task's interview, which Daniel answers in <#$id>; nothing is logged" ;;
+    walk)
+      where="its task's thread"
+      [[ -z $id ]] || where="<#$id>"
+      die "item $item is $task's walk, whose notes Daniel posts in $where; nothing is logged"
+      ;;
     note) die "item $item is the current item $id of tasks/current.md, an ask with no asked, which no answer is logged for: act on the answer, then team-current done $id" ;;
     *) die "item $item is $named, which no answer is logged for" ;;
   esac
@@ -80,10 +99,20 @@ jq -e --arg id "$id" 'any(.[]; .event == "asked" and .id == $id)' <<<"$events" >
 ! ledger_jq 'answered_from($id; $message)' -e --arg id "$id" --arg message "$message" <<<"$events" >/dev/null ||
   die "$task already logged answered id=$id from Discord message $message"
 
+# From #assistant, never a plan approval or a script's yes, which team-merge and team-run-approved
+# read only from the task's thread and #coordinator.
+place='' does="logs no answer; the coordinator on the holder takes Daniel's answers."
+if [[ -n $channel ]]; then
+  never="a plan approval and a script's yes count only in the task's thread or #coordinator, never #assistant"
+  [[ $id != plan ]] || die "$task's plan is a plan approval: $never"
+  ! jq -e --arg id "$id" 'map(select(.event == "asked" and .id == $id)) | last | has("script")' <<<"$events" >/dev/null ||
+    die "$task's $id asks for a script's yes: $never"
+  if why=$(lease_refusal "$does"); then die "$why"; fi
+fi
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-word=$(answer_message "$task" "$id" "$message" "$events" \
-  "logs no answer; the coordinator on the holder takes Daniel's answers." 2>"$scratch/error") || die "$(<"$scratch/error")"
+if [[ -n $channel ]]; then place=$(assistant_place "$channel" 2>"$scratch/error") || die "$(<"$scratch/error")"; fi
+word=$(answer_message "$task" "$id" "$message" "$events" "$does" "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
 answer=$(jq -r '.message.content | strings' <<<"$word")
 [[ $answer =~ [^[:space:]] ]] || die "Discord message $message has no text to log as the answer"
 # By number, the reply must name the number, and what is printed is the text of its parts that do.

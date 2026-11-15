@@ -95,7 +95,7 @@ phase_of() {
 # combined status from $GH_DIR/status.json: app_on
 app_on() {
   code_checkout
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/owner/proj.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/owner/proj.git
   rm -f "$CODE_CHECKOUT/bin/lib/review-app"
   printf 'id=123456\nslug=team-reviewer\n' >"$CODE_CHECKOUT/bin/lib/review-app"
   export GH_DIR=$BATS_TEST_TMPDIR/gh GH_HEAD=$head
@@ -605,12 +605,12 @@ reply_line() {
   event T14 pr "{url: \"https://github.com/owner/proj/pull/5\", head: \"$head\", project: \"proj\"}"
   app_on
   # proj is not the team's own once the code checkout's origin is another repo.
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/owner/other.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/owner/other.git
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -c '.pr | [.review_app, .review_check, .agent_review, .error]' <<<"$output")" '[null,null,"success",null]'
   [[ -z $(stub_calls gh | jq -c 'select(.[1] // "" | test("/commits/"))') ]]
   # The team's own again, with GitHub refusing the check runs.
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/owner/proj.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/owner/proj.git
   run_bin -0 team-state T14
   assert_equal "$output" "T14 proj feature in-review | no live worker | PR #5 GitHub unavailable"
 }
@@ -897,6 +897,18 @@ EOF
   ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "walk", state: "on"}'
   run_bin -0 team-state T14
   assert_equal "$output" "T14 proj feature building | no live worker | walk on since 2026-10-22T05:00:00Z | parks: waiting-1 daniel since 2026-10-22T02:00:00Z: walk the import page"
+  # A walk in the task's interview thread says so, in both forms.
+  ledger_line '{ts: "2026-10-22T05:10:00Z", task: "T14", event: "walk", state: "off"}'
+  ledger_line '{ts: "2026-10-22T05:20:00Z", task: "T14", event: "walk", state: "on", thread: "interview"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .walk <<<"$output")" '{"since":"2026-10-22T05:20:00Z","thread":"interview"}'
+  run_bin -0 team-state T14
+  assert_equal "$output" "T14 proj feature building | no live worker | walk on since 2026-10-22T05:20:00Z in its interview thread | parks: waiting-1 daniel since 2026-10-22T02:00:00Z: walk the import page"
+  # Daniel's word that the primary stack was reseeded goes with it, in the JSON.
+  ledger_line '{ts: "2026-10-22T05:30:00Z", task: "T14", event: "walk", state: "off"}'
+  ledger_line '{ts: "2026-10-22T05:40:00Z", task: "T14", event: "walk", state: "on", thread: "interview", reseeded: "1564000000000000020", reseeded_port: 5173}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .walk <<<"$output")" '{"since":"2026-10-22T05:40:00Z","thread":"interview","reseeded":"1564000000000000020","reseeded_port":5173}'
   # A walk left on ends with its task.
   ledger_line '{ts: "2026-10-22T06:00:00Z", task: "T14", event: "closed", archive: [], returned: [], kept: []}'
   run_bin -0 team-state T14 --json
@@ -981,7 +993,7 @@ files_read() {
   approved
   # proj's repo is the code checkout's origin, so proj is the team's own.
   code_checkout
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/owner/proj.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/owner/proj.git
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -c '.pr.merge_authority | [.word, .words[1].reasons]' <<<"$output")" \
     "[null,[\"the team's own project merges unattended only behind the reviewer App's check, which is not set up\"]]"
@@ -1354,6 +1366,7 @@ SH
   assert_contains "$output" "(caught up cleanly with <base>)"
   assert_contains "$output" "walk on since <ts>"
   assert_contains "$output" '{"since": "<ts>"}'
+  assert_contains "$output" '"thread": "interview"'
   assert_contains "$output" "checks_wait"
   assert_contains "$output" '"checks <state>"'
 }

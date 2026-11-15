@@ -51,7 +51,8 @@ stow_say() {
 # STOW_NOTES, the branches to push in STOW_PUSHES ("<label>\t<repo>\t<branch>\t<head>"); a branch
 # that is neither here nor on origin, or has diverged from origin's, refuses its task
 # (STOW_REFUSED, and "<task>: <reason>" in STOW_PROBLEMS). An origin that cannot be read refuses
-# the run (die). A ticket worktree's branch is never pushed, nor read on origin: unless <quiet>,
+# the run (die). A ticket worktree's branch is neither pushed here nor read on origin (its builder
+# pushes it only for CI's run, on a project with branch_ci): unless <quiet>,
 # once the checkpoint has run, its wip/<project>/T<n>--NN on the team home's origin must hold its
 # head, or its snapshot (stow_wip_holds), with the worktree on its ticket branch, or its task is
 # refused as stow_ticket says. stow_branches [quiet]
@@ -153,7 +154,9 @@ stow_wip_holds() {
   REPLY+=" $ref"
 }
 
-# The ticket worktree <wt> of <task>'s ticket <NN>, on its ticket branch <branch>, never pushed:
+# The ticket worktree <wt> of <task>'s ticket <NN>, on its ticket branch <branch>, which the stow
+# neither pushes nor reads on origin (its builder pushes it only for CI's run, on a project with
+# branch_ci):
 # kept when wip/<project>/<task>--<NN> on the team home's origin holds its work (stow_wip_holds)
 # with the worktree on <branch>, added to the caller's list (with ticket, and uncommitted for a
 # snapshot) and note, else its task refused ("<branch> (<project>, ticket <NN>) is not kept: ...").
@@ -165,7 +168,7 @@ stow_ticket() {
     mine=$(git -C "$wt" rev-parse -q --verify "refs/heads/$branch^{commit}") && stow_wip_holds "$task" "$wip" "$wt"; then
     kind=${REPLY%% *} ref=${REPLY#* }
   else
-    problem="$branch ($project, ticket $ticket) is not kept: $wip on the team home's origin does not hold the head and uncommitted changes of $wt on $branch, and a ticket branch is never pushed"
+    problem="$branch ($project, ticket $ticket) is not kept: $wip on the team home's origin does not hold the head and uncommitted changes of $wt on $branch, and a ticket branch is kept only by the checkpoint"
     STOW_PROBLEMS+=("$task: $problem")
     [[ -n ${STOW_REFUSED[$task]:-} ]] || STOW_REFUSED[$task]=$problem
     return 0

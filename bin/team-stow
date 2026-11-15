@@ -40,7 +40,9 @@
 #               another checkpoint still running) stops it with that line, exit 75.
 #   branches    Each task's branches pushed to their project's origin when strictly ahead of
 #               origin's (a plain push), checked again first; one that cannot be pushed refuses
-#               its task. Each ticket worktree, never pushed, is kept when its
+#               its task. Each ticket worktree, whose branch the stow neither pushes nor
+#               reads on origin (its builder pushes it only for CI's run, on a project with
+#               branch_ci), is kept when its
 #               wip/<project>/T<n>--NN on the team home's origin holds its head, or its
 #               uncommitted changes on its head, with the worktree on its ticket branch
 #               ("branches: T<n> <project>--NN: <branch> is kept as wip/<project>/T<n>--NN at

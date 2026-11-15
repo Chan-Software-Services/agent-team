@@ -17,7 +17,7 @@ setup() {
   home_slots=("$HOME/slots/home/1" "$HOME/slots/home/2")
   conv_slots=("$HOME/.treehouse/conv-abc123/1/conv" "$HOME/.treehouse/conv-abc123/2/conv")
   local slot
-  for slot in "${conv_slots[@]}"; do git -C "$conv" worktree add -q --detach "$slot" origin/main; done
+  for slot in "${conv_slots[@]}"; do git -C "${conv:?}" worktree add -q --detach "$slot" origin/main; done
   printf '%s\n' "${conv_slots[@]}" >"$BATS_TEST_TMPDIR/free"
   fake_pool_commands "$conv"
   cat >"$TEAM_HOME/projects.toml" <<'TOML'
@@ -67,7 +67,7 @@ SH
 case $1 in
   agents) cat "$BATS_TEST_TMPDIR/sessions.json" ;;
   stop | rm)
-    echo "$1 $2 archive:$(find "$TEAM_HOME/tasks" -path '*/scratch*' -type f 2>/dev/null | wc -l) worktrees:$(git -C "$HOME/projects/home" worktree list | wc -l)" \
+    echo "$1 $2 archive:$(find "$TEAM_HOME/tasks" -path '*/scratch*' -type f 2>/dev/null | wc -l) worktrees:$(git -C "${HOME:?}/projects/home" worktree list | wc -l)" \
       >>"$BATS_TEST_TMPDIR/order"
     ;;
   *) exit 64 ;;
@@ -78,9 +78,9 @@ SH
 # Commit and push a .gitignore with .scratch/ and .env in the primary checkout <path>.
 ignore_scratch() {
   printf '.scratch/\n.env\n' >"$1/.gitignore"
-  git -C "$1" add .gitignore
-  git -C "$1" commit -q -m "chore: ignore scratch"
-  git -C "$1" push -q origin main
+  git -C "${1:?}" add .gitignore
+  git -C "${1:?}" commit -q -m "chore: ignore scratch"
+  git -C "${1:?}" push -q origin main
 }
 
 # session <short id> <name> <status> [<state>]: one background session as claude agents --json
@@ -120,9 +120,9 @@ claude_actions() {
 # Commit a file in <worktree> and push its branch to origin.
 work_and_push() {
   echo "$2" >"$1/$2"
-  git -C "$1" add "$2"
-  git -C "$1" commit -q -m "feat: $2"
-  git -C "$1" push -q origin HEAD
+  git -C "${1:?}" add "$2"
+  git -C "${1:?}" commit -q -m "feat: $2"
+  git -C "${1:?}" push -q origin HEAD
 }
 
 @test "a landed git-pool task stops its sessions, archives, removes them, returns the slot and closes" {
@@ -151,8 +151,8 @@ rm 4f2a9c1e archive:2 worktrees:2"
   assert_equal "$(cd "$TEAM_HOME/tasks/T1/scratch" && find . -type f | sort)" "./notes/01.md
 ./spec.md"
   [[ ! -e $slot ]]
-  assert_equal "$(git -C "$home" worktree list | wc -l)" "1"
-  git -C "$home" show-ref -q --verify refs/heads/feat/T1-work
+  assert_equal "$(git -C "${home:?}" worktree list | wc -l)" "1"
+  git -C "${home:?}" show-ref -q --verify refs/heads/feat/T1-work
 
   assert_equal "$(events worktree-returned)" "$(jq -cn --arg wt "$slot" \
     '{task: "T1", event: "worktree-returned", project: "home", worktree: $wt, branch: "feat/T1-work"}')"
@@ -167,13 +167,13 @@ rm 4f2a9c1e archive:2 worktrees:2"
   run_bin -0 team-open home feature feat work "Do the work"
   local slot=${home_slots[0]} tip
   work_and_push "$slot" feature.txt
-  tip=$(git -C "$team_origin" rev-parse dev)
+  tip=$(git -C "${team_origin:?}" rev-parse dev)
   run_bin -0 --separate-stderr team-close T1
   [[ $stderr != *"not on origin"* ]]
-  assert_equal "$(git -C "$team_origin" rev-parse dev^)" "$tip"
-  assert_equal "$(git -C "$team_origin" log -1 --format=%s dev)" "chore: ledger T1 worktree-returned closed"
-  assert_equal "$(git -C "$team_origin" diff-tree -r --no-commit-id --name-only dev)" "ledger.jsonl"
-  assert_equal "$(git -C "$team_origin" show dev:ledger.jsonl | jq -r .event | tail -n 2)" "worktree-returned
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev^)" "$tip"
+  assert_equal "$(git -C "${team_origin:?}" log -1 --format=%s dev)" "chore: ledger T1 worktree-returned closed"
+  assert_equal "$(git -C "${team_origin:?}" diff-tree -r --no-commit-id --name-only dev)" "ledger.jsonl"
+  assert_equal "$(git -C "${team_origin:?}" show dev:ledger.jsonl | jq -r .event | tail -n 2)" "worktree-returned
 closed"
 }
 
@@ -318,9 +318,9 @@ EOF
   mkdir -p "$other/.scratch/shots"
   echo png >"$other/.scratch/shots/page.png"
   echo plan >"$other/.scratch/task/spec.md"
-  rm -r "$slot/.scratch"
+  rm -r "${slot:?}/.scratch"
   ln -s "$other/.scratch" "$slot/.scratch"
-  echo .scratch >>"$(git -C "$slot" rev-parse --git-path info/exclude)"
+  echo .scratch >>"$(git -C "${slot:?}" rev-parse --git-path info/exclude)"
   work_and_push "$slot" move.txt
   run_bin -0 --separate-stderr team-close T1
   [[ -f $other/.scratch/shots/page.png ]]
@@ -544,7 +544,7 @@ rehome_ledger() {
   rehome_ledger /home/someone
   local slot=${home_slots[1]}
   # This machine's resume found the recorded slot taken and moved the task to the next one.
-  git -C "$home" worktree move "${home_slots[0]}" "$slot"
+  git -C "${home:?}" worktree move "${home_slots[0]}" "$slot"
   ledger_line --arg wt "$slot" '{ts: "2026-10-22T02:00:00Z", task: "T1", event: "worktree-moved", project: "home",
     branch: "feat/T1-work", from: "/home/someone/slots/home/1", worktree: $wt, machine: "laptop"}'
   echo "spec" >"$slot/.scratch/task/spec.md"
@@ -575,7 +575,7 @@ open_home_task() {
 
 # The home project's registered worktrees.
 home_worktrees() {
-  git -C "$home" worktree list --porcelain | grep '^worktree '
+  git -C "${home:?}" worktree list --porcelain | grep '^worktree '
 }
 
 # Remember the ledger and the home worktrees for assert_unchanged.
@@ -597,16 +597,16 @@ assert_unchanged() {
   open_home_task
   work_and_push "$wt" pushed.txt
   echo one >"$wt/a.txt"
-  git -C "$wt" add a.txt
-  git -C "$wt" commit -q -m "feat: a"
+  git -C "${wt:?}" add a.txt
+  git -C "${wt:?}" commit -q -m "feat: a"
   echo two >"$wt/b.txt"
-  git -C "$wt" add b.txt
-  git -C "$wt" commit -q -m "feat: b"
+  git -C "${wt:?}" add b.txt
+  git -C "${wt:?}" commit -q -m "feat: b"
   stub_reply gh '[]'
 
   run_bin -1 team-close T1
   assert_contains "$output" "team-close: T1 cannot close, so nothing changed:"
-  assert_contains "$output" "$wt (home, feat/T1-work) has not landed: head $(git -C "$wt" rev-parse --short=7 HEAD) is on no branch of origin (2 commits not pushed) and is not the head of a merged PR"
+  assert_contains "$output" "$wt (home, feat/T1-work) has not landed: head $(git -C "${wt:?}" rev-parse --short=7 HEAD) is on no branch of origin (2 commits not pushed) and is not the head of a merged PR"
   assert_contains "$output" "--keep-worktree"
   assert_equal "$(stub_calls gh)" '["pr","list","--repo","owner/home","--head","feat/T1-work","--state","merged","--json","number,headRefOid"]'
   assert_unchanged
@@ -616,17 +616,17 @@ assert_unchanged() {
   open_home_task
   work_and_push "$wt" pushed.txt
   echo one >"$wt/a.txt"
-  git -C "$wt" add a.txt
-  git -C "$wt" commit -q -m "feat: a"
+  git -C "${wt:?}" add a.txt
+  git -C "${wt:?}" commit -q -m "feat: a"
   # A project whose origin is the team home's (agent-team until the split) fetches the team's
   # snapshots and salvages with its branches; none of them is where the work landed.
-  git -C "$wt" push -q origin HEAD:refs/heads/wip/agent-team/T1 HEAD:refs/heads/wip/T1 \
+  git -C "${wt:?}" push -q origin HEAD:refs/heads/wip/agent-team/T1 HEAD:refs/heads/wip/T1 \
     HEAD:refs/heads/salvage/agent-team/T1-laptop
   stub_reply gh '[]'
 
   run_bin -1 team-close T1
-  assert_contains "$output" "$wt (home, feat/T1-work) has not landed: head $(git -C "$wt" rev-parse --short=7 HEAD) is on no branch of origin (1 commit not pushed) and is not the head of a merged PR"
-  assert_equal "$(git -C "$wt" for-each-ref --contains HEAD --format='%(refname)' refs/remotes/origin | paste -sd ,)" \
+  assert_contains "$output" "$wt (home, feat/T1-work) has not landed: head $(git -C "${wt:?}" rev-parse --short=7 HEAD) is on no branch of origin (1 commit not pushed) and is not the head of a merged PR"
+  assert_equal "$(git -C "${wt:?}" for-each-ref --contains HEAD --format='%(refname)' refs/remotes/origin | paste -sd ,)" \
     "refs/remotes/origin/salvage/agent-team/T1-laptop,refs/remotes/origin/wip/T1,refs/remotes/origin/wip/agent-team/T1"
   assert_unchanged
 }
@@ -671,9 +671,9 @@ assert_unchanged() {
 advance_origin() {
   local other=$BATS_TEST_TMPDIR/other-$1
   [[ -d $other ]] || git clone -q "$BATS_TEST_TMPDIR/origin/$1.git" "$other" 2>/dev/null
-  git -C "$other" pull -q
-  git -C "$other" commit -q --allow-empty -m "feat: $2"
-  git -C "$other" push -q origin main
+  git -C "${other:?}" pull -q
+  git -C "${other:?}" commit -q --allow-empty -m "feat: $2"
+  git -C "${other:?}" push -q origin main
 }
 
 # Squash-merge <worktree>'s pushed branch <branch> into origin main and delete the branch on
@@ -681,21 +681,21 @@ advance_origin() {
 squash_merge() {
   local other=$BATS_TEST_TMPDIR/other-home
   [[ -d $other ]] || git clone -q "$BATS_TEST_TMPDIR/origin/home.git" "$other" 2>/dev/null
-  git -C "$other" fetch -q origin
-  git -C "$other" merge -q --squash "origin/$2" >/dev/null
-  git -C "$other" commit -q -m "feat: the work (#7)"
-  git -C "$other" push -q origin main ":$2"
+  git -C "${other:?}" fetch -q origin
+  git -C "${other:?}" merge -q --squash "origin/$2" >/dev/null
+  git -C "${other:?}" commit -q -m "feat: the work (#7)"
+  git -C "${other:?}" push -q origin main ":$2"
 }
 
 @test "the landed check fetches origin first, so a head pushed from elsewhere counts" {
   open_home_task
   echo one >"$wt/a.txt"
-  git -C "$wt" add a.txt
-  git -C "$wt" commit -q -m "feat: a"
+  git -C "${wt:?}" add a.txt
+  git -C "${wt:?}" commit -q -m "feat: a"
   # Pushed, but this checkout's remote-tracking ref is gone, as on a machine that never fetched it.
-  git -C "$wt" push -q origin HEAD
-  git -C "$wt" update-ref -d refs/remotes/origin/feat/T1-work
-  [[ -z $(git -C "$wt" branch -r --contains HEAD) ]]
+  git -C "${wt:?}" push -q origin HEAD
+  git -C "${wt:?}" update-ref -d refs/remotes/origin/feat/T1-work
+  [[ -z $(git -C "${wt:?}" branch -r --contains HEAD) ]]
 
   run_bin -0 team-close T1
   [[ ! -e $wt ]]
@@ -705,8 +705,8 @@ squash_merge() {
 @test "a branch deleted on origin without a merge has not landed, though this checkout still has its ref" {
   open_home_task
   work_and_push "$wt" feature.txt
-  git -C "$BATS_TEST_TMPDIR/origin/home.git" branch -q -D feat/T1-work
-  git -C "$wt" rev-parse -q --verify refs/remotes/origin/feat/T1-work
+  git -C "${BATS_TEST_TMPDIR:?}/origin/home.git" branch -q -D feat/T1-work
+  git -C "${wt:?}" rev-parse -q --verify refs/remotes/origin/feat/T1-work
   stub_reply gh '[]'
 
   run_bin -1 team-close T1
@@ -718,8 +718,8 @@ squash_merge() {
   open_home_task
   work_and_push "$wt" feature.txt
   squash_merge "$wt" feat/T1-work
-  [[ -z $(git -C "$BATS_TEST_TMPDIR/origin/home.git" branch --contains "$(git -C "$wt" rev-parse HEAD)") ]]
-  stub_reply gh "$(jq -cn --arg head "$(git -C "$wt" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
+  [[ -z $(git -C "${BATS_TEST_TMPDIR:?}/origin/home.git" branch --contains "$(git -C "${wt:?}" rev-parse HEAD)") ]]
+  stub_reply gh "$(jq -cn --arg head "$(git -C "${wt:?}" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
 
   run_bin -0 team-close T1
   [[ ! -e $wt ]]
@@ -771,7 +771,7 @@ SH
   run_bin -0 --separate-stderr team-close T1 --keep-worktree
   assert_equal "$(jq -c '[.returned, .kept]' <<<"$output")" "$(jq -cn --arg wt "$wt" '[[], [$wt]]')"
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/scratch/spec.md")" "spec"
-  assert_equal "$(git -C "$wt" diff --name-only)" "README.md"
+  assert_equal "$(git -C "${wt:?}" diff --name-only)" "README.md"
   [[ -f $wt/.scratch/task/spec.md ]]
   assert_equal "$(events worktree-returned)" ""
   assert_equal "$(events closed)" "$(jq -cn --arg wt "$wt" \
@@ -787,9 +787,9 @@ home_stack() {
   mkdir -p "$home/scripts"
   cp "$REPO_ROOT/tests/fixtures/stack/compose.sh" "$home/scripts/compose.sh"
   cp "$REPO_ROOT/tests/fixtures/stack/docker-compose.yml" "$home/docker-compose.yml"
-  git -C "$home" add scripts docker-compose.yml
-  git -C "$home" commit -q -m "feat: add the stack"
-  git -C "$home" push -q origin main
+  git -C "${home:?}" add scripts docker-compose.yml
+  git -C "${home:?}" commit -q -m "feat: add the stack"
+  git -C "${home:?}" push -q origin main
   cat >>"$TEAM_HOME/projects.toml" <<'TOML'
 
 [home.stack]
@@ -912,9 +912,9 @@ team-stack: stackfix-1 is removed, its logs in $wt/.scratch/task/stack-logs"
 case $1 in
   agents) cat "$BATS_TEST_TMPDIR/sessions.json" ;;
   stop)
-    echo late >"$LATE_IN/late.txt"
-    git -C "$LATE_IN" add late.txt
-    git -C "$LATE_IN" commit -q -m "feat: late"
+    echo late >"${LATE_IN:?}/late.txt"
+    git -C "${LATE_IN:?}" add late.txt
+    git -C "${LATE_IN:?}" commit -q -m "feat: late"
     ;;
   rm) ;;
   *) exit 64 ;;
@@ -932,7 +932,7 @@ SH
   assert_equal "$(home_worktrees)" "$(cat "$BATS_TEST_TMPDIR/worktrees.before")"
 
   # With --keep-worktree, the worktree that stopped landing is kept instead.
-  git -C "$wt" reset -q --hard HEAD~1
+  git -C "${wt:?}" reset -q --hard HEAD~1
   : >"$STUB_CALLS/claude.log"
   run_bin -0 --separate-stderr team-close T1 --stop-busy --keep-worktree
   assert_equal "$(jq -c '[.stopped, .returned, .kept]' <<<"$output")" "$(jq -cn --arg wt "$wt" '[["4f2a9c1e"], [], [$wt]]')"
@@ -1070,7 +1070,7 @@ SH
   [[ ! -e $home_wt ]]
   # The treehouse slot stays on disk, detached, its task directory emptied, back in the pool.
   [[ -d $conv_wt/.scratch/task && -z $(ls -A "$conv_wt/.scratch/task") ]]
-  run -1 git -C "$conv_wt" symbolic-ref -q HEAD
+  run -1 git -C "${conv_wt:?}" symbolic-ref -q HEAD
   assert_equal "$(stub_calls th-return.sh)" "$(jq -cn --arg cwd "$conv" --arg wt "$conv_wt" '{cwd: $cwd, args: [$wt]}')"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/free")" "${conv_slots[1]}
 $conv_wt"
@@ -1092,24 +1092,24 @@ $conv_wt"
   work_and_push "$conv_wt" move.txt
   # team-checkpoint's snapshots: T1's of home alone (conv has none, which is fine), and T2's,
   # which stays; and a same-named branch on home's own origin, which is not the team's to delete.
-  git -C "$home_wt" push -q "$team_origin" HEAD:refs/heads/wip/home/T1
-  git -C "${home_slots[1]}" push -q "$team_origin" HEAD:refs/heads/wip/home/T2
-  git -C "$home_wt" push -q origin HEAD:refs/heads/wip/home/T1
+  git -C "${home_wt:?}" push -q "$team_origin" HEAD:refs/heads/wip/home/T1
+  git -C "${home_slots[1]:?}" push -q "$team_origin" HEAD:refs/heads/wip/home/T2
+  git -C "${home_wt:?}" push -q origin HEAD:refs/heads/wip/home/T1
   # The order: home's wip/home/T1 is still there when the last slot goes back.
   echo 'git -C "$BATS_TEST_TMPDIR/origin/agent-team.git" for-each-ref --format="%(refname)" refs/heads/wip/home/T1 >>"$BATS_TEST_TMPDIR/wip-at-return"' \
     >>"$conv/scripts/th-return.sh"
 
   # team-open --resume's copies of the snapshots in the primary checkouts: T1's go, T2's stays.
-  git -C "$home" update-ref refs/remotes/team-home/wip/home/T1 "$(git -C "$home_wt" rev-parse HEAD)"
-  git -C "$home" update-ref refs/remotes/team-home/wip/home/T2 "$(git -C "${home_slots[1]}" rev-parse HEAD)"
-  git -C "$conv" update-ref refs/remotes/team-home/wip/conv/T1 "$(git -C "$conv_wt" rev-parse HEAD)"
+  git -C "${home:?}" update-ref refs/remotes/team-home/wip/home/T1 "$(git -C "${home_wt:?}" rev-parse HEAD)"
+  git -C "${home:?}" update-ref refs/remotes/team-home/wip/home/T2 "$(git -C "${home_slots[1]:?}" rev-parse HEAD)"
+  git -C "${conv:?}" update-ref refs/remotes/team-home/wip/conv/T1 "$(git -C "${conv_wt:?}" rev-parse HEAD)"
 
   run_bin -0 --separate-stderr team-close T1
   [[ $stderr != *"cannot delete"* ]]
-  assert_equal "$(git -C "$team_origin" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/home/T2"
-  assert_equal "$(git -C "$home" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T2"
-  assert_equal "$(git -C "$conv" for-each-ref --format='%(refname)' refs/remotes/team-home/)" ""
-  assert_equal "$(git -C "$BATS_TEST_TMPDIR/origin/home.git" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/home/T1"
+  assert_equal "$(git -C "${team_origin:?}" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/home/T2"
+  assert_equal "$(git -C "${home:?}" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T2"
+  assert_equal "$(git -C "${conv:?}" for-each-ref --format='%(refname)' refs/remotes/team-home/)" ""
+  assert_equal "$(git -C "${BATS_TEST_TMPDIR:?}/origin/home.git" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/home/T1"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/wip-at-return")" "refs/heads/wip/home/T1"
 }
 
@@ -1117,7 +1117,7 @@ $conv_wt"
   run_bin -0 team-open home feature feat work "Do the work"
   local slot=${home_slots[0]}
   work_and_push "$slot" feature.txt
-  git -C "$slot" push -q "$team_origin" HEAD:refs/heads/wip/home/T1
+  git -C "${slot:?}" push -q "$team_origin" HEAD:refs/heads/wip/home/T1
   # The team home's origin refuses every ref update from here on.
   printf '#!/bin/sh\nexit 1\n' >"$team_origin/hooks/pre-receive"
   chmod +x "$team_origin/hooks/pre-receive"
@@ -1155,7 +1155,7 @@ SH
   assert_contains "$output" "scripts/th-return.sh failed for $slot"
   assert_contains "$output" "T1 is half closed; fix the cause above and run team-close T1 again"
   assert_equal "$(events worktree-returned)$(events closed)" ""
-  git -C "$slot" symbolic-ref -q HEAD
+  git -C "${slot:?}" symbolic-ref -q HEAD
 }
 
 @test "a missing or empty task directory is reported and nothing is archived from it" {
@@ -1240,7 +1240,7 @@ team-close: ${conv_slots[0]}/.scratch/task is empty, so nothing was archived fro
 # agent-team slot, with <worktree> (a home slot) on <branch>, pushed, its task directory holding a
 # handoff.
 legacy_task() {
-  git -C "$home" worktree add -q --no-track -b "$2" "$1" origin/main
+  git -C "${home:?}" worktree add -q --no-track -b "$2" "$1" origin/main
   mkdir -p "$1/.scratch/task"
   echo "handoff" >"$1/.scratch/task/handoff.md"
   work_and_push "$1" work.txt
@@ -1299,15 +1299,15 @@ legacy_task() {
   run_bin -1 team-close T5 --worktree "$slot"
   assert_equal "$output" "team-close: $slot is on feat/T50-other-task, which does not name T5"
 
-  git -C "$slot" switch -q -c fix/T5-again
+  git -C "${slot:?}" switch -q -c fix/T5-again
   run_bin -1 team-close T5 --worktree "$HOME/projects/home"
   assert_equal "$output" "team-close: $HOME/projects/home is not a trusted slot of any project in projects.toml"
 
-  git -C "$home" worktree add -q --no-track -b feat/T5-elsewhere "${home_slots[0]}" origin/main
+  git -C "${home:?}" worktree add -q --no-track -b feat/T5-elsewhere "${home_slots[0]}" origin/main
   run_bin -1 team-close T5 --worktree "${home_slots[0]}"
   assert_equal "$output" "team-close: ${home_slots[0]} appears in none of T5's launch events"
 
-  git -C "$slot" switch -q --detach
+  git -C "${slot:?}" switch -q --detach
   run_bin -1 team-close T5 --worktree "$slot"
   assert_equal "$output" "team-close: $slot is not on a branch, so it cannot be T5's"
 
@@ -1343,14 +1343,15 @@ open_ticket() {
 # Commit a file in the worktree <wt>, pushing nothing: commit_in <wt> <file>
 commit_in() {
   echo "$2" >"$1/$2"
-  git -C "$1" add "$2"
-  git -C "$1" commit -q -m "feat: $2"
+  git -C "${1:?}" add "$2"
+  git -C "${1:?}" commit -q -m "feat: $2"
 }
 
 # Fast-forward the task branch in its worktree (default $wt) to the ticket branch's head, as an
 # integration does: integrate [<task worktree>]
 integrate() {
-  git -C "${1:-$wt}" merge -q --ff-only "$tbranch"
+  local task_wt=${1:-$wt}
+  git -C "${task_wt:?}" merge -q --ff-only "$tbranch"
 }
 
 @test "--ticket stops the ticket's idle builder, archives, removes it, returns the slot and deletes its integrated branch" {
@@ -1364,11 +1365,12 @@ integrate() {
   commit_in "$twt" three.txt
   integrate
   local head
-  head=$(git -C "$twt" rev-parse HEAD)
+  head=$(git -C "${twt:?}" rev-parse HEAD)
 
   run_bin -0 --separate-stderr team-close T1 --ticket 03
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$twt" '{task: "T1", ticket: "03", stopped: ["7c7c7c7c"],
-    removed: ["7c7c7c7c"], archive: "tasks/T1/scratch--03", returned: $wt, branch: "feat/T1-work--03", branch_deleted: true}')"
+    removed: ["7c7c7c7c"], archive: "tasks/T1/scratch--03", returned: $wt, branch: "feat/T1-work--03", branch_deleted: true,
+    origin_branch: "none"}')"
   # Stopped before the archive, removed after it, both before the slot was returned; the task's
   # own builder is never touched.
   assert_equal "$(cat "$BATS_TEST_TMPDIR/order")" "stop 7c7c7c7c archive:0 worktrees:3
@@ -1378,10 +1380,10 @@ rm 7c7c7c7c archive:3 worktrees:3"
 ./tickets/03-t.md"
   [[ ! -e $twt ]]
   [[ -f $wt/.scratch/task/spec.md ]]
-  assert_equal "$(git -C "$home" worktree list | wc -l)" "2"
+  assert_equal "$(git -C "${home:?}" worktree list | wc -l)" "2"
   assert_contains "$stderr" "team-close: deleted feat/T1-work--03 at ${head:0:8}, which feat/T1-work holds"
-  run -1 git -C "$home" show-ref -q --verify refs/heads/feat/T1-work--03
-  git -C "$home" show-ref -q --verify refs/heads/feat/T1-work
+  run -1 git -C "${home:?}" show-ref -q --verify refs/heads/feat/T1-work--03
+  git -C "${home:?}" show-ref -q --verify refs/heads/feat/T1-work
 
   assert_equal "$(events worktree-returned)" "$(jq -cn --arg wt "$twt" \
     '{task: "T1", event: "worktree-returned", project: "home", worktree: $wt, branch: "feat/T1-work--03", ticket: "03"}')"
@@ -1396,12 +1398,12 @@ rm 7c7c7c7c archive:3 worktrees:3"
   open_ticket 03
   commit_in "$twt" three.txt
   local head
-  head=$(git -C "$twt" rev-parse HEAD)
+  head=$(git -C "${twt:?}" rev-parse HEAD)
 
   run_bin -0 --separate-stderr team-close T1 --ticket 03
   assert_equal "$(jq -c '[.stopped, .removed, .branch_deleted]' <<<"$output")" '[[],[],false]'
   assert_contains "$stderr" "team-close: kept feat/T1-work--03 at ${head:0:8}: the task branch does not hold it"
-  assert_equal "$(git -C "$home" rev-parse refs/heads/feat/T1-work--03)" "$head"
+  assert_equal "$(git -C "${home:?}" rev-parse refs/heads/feat/T1-work--03)" "$head"
   [[ ! -e $twt ]]
   assert_equal "$(events worktree-returned | jq -r .ticket)" "03"
 }
@@ -1423,9 +1425,12 @@ case $1 in
 esac
 SH
 
+  # The close's own reads of the session list, after the open's (its room check's reading).
+  local before
+  before=$(stub_calls claude | jq -c 'select(.[0] == "agents")' | wc -l)
   TEAM_CLOSE_IDLE_SECONDS=10 run_bin -0 --separate-stderr team-close T1 --ticket 03
   assert_equal "$(jq -c .stopped <<<"$output")" '["7c7c7c7c"]'
-  assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "agents")' | wc -l)" "2"
+  assert_equal "$(($(stub_calls claude | jq -c 'select(.[0] == "agents")' | wc -l) - before))" "2"
   [[ ! -e $twt ]]
 }
 
@@ -1475,11 +1480,11 @@ rm 8d8d8d8d"
 
   run_bin -0 --separate-stderr team-close T1 --ticket 02
   assert_equal "$(jq -c '[.archive, .returned, .branch_deleted]' <<<"$output")" "$(jq -cn --arg wt "$twt" '["tasks/T1/scratch--02", $wt, true]')"
-  run -1 git -C "$twt" symbolic-ref -q HEAD
+  run -1 git -C "${twt:?}" symbolic-ref -q HEAD
   [[ -d $twt/.scratch/task && -z $(ls -A "$twt/.scratch/task") ]]
   assert_equal "$(stub_calls th-return.sh)" "$(jq -cn --arg cwd "$conv" --arg wt "$twt" '{cwd: $cwd, args: [$wt]}')"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/free")" "$twt"
-  run -1 git -C "$conv" show-ref -q --verify refs/heads/feat/T1-move--02
+  run -1 git -C "${conv:?}" show-ref -q --verify refs/heads/feat/T1-move--02
   assert_equal "$(events worktree-returned)" "$(jq -cn --arg wt "$twt" \
     '{task: "T1", event: "worktree-returned", project: "conv", worktree: $wt, branch: "feat/T1-move--02", ticket: "02"}')"
 }
@@ -1550,16 +1555,16 @@ rm 8d8d8d8d"
   launch T1 builder 7c7c7c7c "$twt"
   commit_in "$twt" three.txt
   integrate
-  git -C "$wt" push -q origin HEAD
+  git -C "${wt:?}" push -q origin HEAD
   local head
-  head=$(git -C "$twt" rev-parse HEAD)
+  head=$(git -C "${twt:?}" rev-parse HEAD)
 
   run_bin -0 --separate-stderr team-close T1
   assert_equal "$(jq -c '[.archive, .returned, .kept]' <<<"$output")" "$(jq -cn --arg wt "$wt" --arg twt "$twt" \
     '[["tasks/T1/scratch", "tasks/T1/scratch--03"], [$wt, $twt], []]')"
   [[ ! -e $wt && ! -e $twt ]]
   assert_contains "$stderr" "team-close: deleted feat/T1-work--03 at ${head:0:8}, which feat/T1-work holds"
-  run -1 git -C "$home" show-ref -q --verify refs/heads/feat/T1-work--03
+  run -1 git -C "${home:?}" show-ref -q --verify refs/heads/feat/T1-work--03
   assert_equal "$(events worktree-returned)" "$(jq -cn --arg wt "$wt" --arg twt "$twt" \
     '{task: "T1", event: "worktree-returned", project: "home", worktree: $wt, branch: "feat/T1-work"},
      {task: "T1", event: "worktree-returned", project: "home", worktree: $twt, branch: "feat/T1-work--03", ticket: "03"}' | jq -c .)"
@@ -1573,9 +1578,9 @@ rm 8d8d8d8d"
   commit_in "$twt" three.txt
   integrate
   commit_in "$wt" after.txt
-  git -C "$wt" push -q origin HEAD
+  git -C "${wt:?}" push -q origin HEAD
   squash_merge "$wt" feat/T1-work
-  stub_reply gh "$(jq -cn --arg head "$(git -C "$wt" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
+  stub_reply gh "$(jq -cn --arg head "$(git -C "${wt:?}" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
 
   run_bin -0 --separate-stderr team-close T1
   assert_equal "$(jq -c .returned <<<"$output")" "$(jq -cn --arg wt "$wt" --arg twt "$twt" '[$wt, $twt]')"
@@ -1592,13 +1597,13 @@ rm 8d8d8d8d"
   remember_before
 
   run_bin -1 team-close T1
-  assert_contains "$output" "  $twt (home, feat/T1-work--03) has not landed: head $(git -C "$twt" rev-parse --short=7 HEAD) is on no branch of origin (1 commit not pushed) and no merged PR of feat/T1-work holds it"
+  assert_contains "$output" "  $twt (home, feat/T1-work--03) has not landed: head $(git -C "${twt:?}" rev-parse --short=7 HEAD) is on no branch of origin (1 commit not pushed) and no merged PR of feat/T1-work holds it"
   assert_unchanged
 
   run_bin -0 --separate-stderr team-close T1 --keep-worktree
   assert_equal "$(jq -c '[.returned, .kept]' <<<"$output")" "$(jq -cn --arg wt "$wt" --arg twt "$twt" '[[$wt], [$twt]]')"
   [[ -d $twt ]]
-  git -C "$home" show-ref -q --verify refs/heads/feat/T1-work--03
+  git -C "${home:?}" show-ref -q --verify refs/heads/feat/T1-work--03
   [[ $stderr != *"feat/T1-work--03 at"* ]]
   assert_equal "$(events worktree-returned | jq -r .worktree)" "$wt"
 }
@@ -1634,15 +1639,15 @@ team-close: T1's ticket 03 worktree $twt is half returned; fix the cause above a
   # team-checkpoint's snapshots of the task worktree and two ticket worktrees, and team-open
   # --resume's copies of them in the primary checkout.
   for ref in wip/home/T1 wip/home/T1--02 wip/home/T1--03; do
-    git -C "$wt" push -q "$team_origin" "HEAD:refs/heads/$ref"
-    git -C "$home" update-ref "refs/remotes/team-home/$ref" "$(git -C "$wt" rev-parse HEAD)"
+    git -C "${wt:?}" push -q "$team_origin" "HEAD:refs/heads/$ref"
+    git -C "${home:?}" update-ref "refs/remotes/team-home/$ref" "$(git -C "${wt:?}" rev-parse HEAD)"
   done
 
   run_bin -0 --separate-stderr team-close T1 --ticket 03
   [[ $stderr != *"cannot delete"* ]]
-  assert_equal "$(git -C "$team_origin" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/home/T1
+  assert_equal "$(git -C "${team_origin:?}" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/home/T1
 refs/heads/wip/home/T1--02"
-  assert_equal "$(git -C "$home" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T1
+  assert_equal "$(git -C "${home:?}" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T1
 refs/remotes/team-home/wip/home/T1--02"
 }
 
@@ -1651,7 +1656,7 @@ refs/remotes/team-home/wip/home/T1--02"
   open_ticket 03
   commit_in "$twt" three.txt
   integrate
-  git -C "$wt" push -q "$team_origin" HEAD:refs/heads/wip/home/T1--03
+  git -C "${wt:?}" push -q "$team_origin" HEAD:refs/heads/wip/home/T1--03
   mv "$team_origin" "$team_origin.away"
 
   run_bin -0 --separate-stderr team-close T1 --ticket 03
@@ -1669,21 +1674,204 @@ refs/remotes/team-home/wip/home/T1--02"
   open_ticket 03
   commit_in "$twt" three.txt
   integrate
-  git -C "$wt" push -q origin HEAD
+  git -C "${wt:?}" push -q origin HEAD
   run_bin -0 team-close T1 --ticket 03
   local ref
   # Ticket 03's ref left behind (its return could not reach origin), ticket 05's whose worktree was
   # returned on another machine, and T10's and T1's of another project, which stay.
   for ref in wip/home/T1 wip/home/T1--03 wip/home/T1--05 wip/home/T10 wip/home/T10--03 wip/conv/T1--03; do
-    git -C "$wt" push -q "$team_origin" "HEAD:refs/heads/$ref"
+    git -C "${wt:?}" push -q "$team_origin" "HEAD:refs/heads/$ref"
   done
-  git -C "$home" update-ref refs/remotes/team-home/wip/home/T1--05 "$(git -C "$wt" rev-parse HEAD)"
-  git -C "$home" update-ref refs/remotes/team-home/wip/home/T10--03 "$(git -C "$wt" rev-parse HEAD)"
+  git -C "${home:?}" update-ref refs/remotes/team-home/wip/home/T1--05 "$(git -C "${wt:?}" rev-parse HEAD)"
+  git -C "${home:?}" update-ref refs/remotes/team-home/wip/home/T10--03 "$(git -C "${wt:?}" rev-parse HEAD)"
 
   run_bin -0 --separate-stderr team-close T1
   [[ $stderr != *"cannot delete"* ]]
-  assert_equal "$(git -C "$team_origin" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/conv/T1--03
+  assert_equal "$(git -C "${team_origin:?}" for-each-ref --format='%(refname)' refs/heads/wip/)" "refs/heads/wip/conv/T1--03
 refs/heads/wip/home/T10
 refs/heads/wip/home/T10--03"
-  assert_equal "$(git -C "$home" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T10--03"
+  assert_equal "$(git -C "${home:?}" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T10--03"
+}
+
+# A ticket branch on the project's origin, where its builder pushed it for CI's run: deleted there
+# once the task branch holds it, on a real bare origin (one with no pre-push hook of the team's).
+
+# The branches of home's origin, one name per line.
+origin_branches() {
+  git -C "$(git -C "${home:?}" remote get-url origin)" for-each-ref --format='%(refname:short)' refs/heads/
+}
+
+# Push the ticket branch of the ticket worktree $twt to origin, as its builder does for CI's run.
+push_ticket() {
+  git -C "${twt:?}" push -q origin "$tbranch"
+}
+
+@test "--ticket deletes origin's ticket branch once the task branch holds it, and says deleted" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  local head
+  head=$(git -C "${twt:?}" rev-parse HEAD)
+  assert_contains "$(origin_branches)" "feat/T1-work--03"
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch, .branch_deleted, .origin_branch]' <<<"$output")" '["feat/T1-work--03",true,"deleted"]'
+  assert_contains "$stderr" "team-close: deleted origin's feat/T1-work--03 at ${head:0:8}, which feat/T1-work holds"
+  assert_equal "$(origin_branches)" "main"
+  [[ ! -e $twt ]]
+}
+
+@test "--ticket keeps origin's ticket branch the task branch does not hold, with the command that deletes it" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  local head
+  head=$(git -C "${twt:?}" rev-parse HEAD)
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch_deleted, .origin_branch]' <<<"$output")" '[false,"kept"]'
+  assert_contains "$stderr" "team-close: kept origin's feat/T1-work--03 at ${head:0:8}: the task branch does not hold it; delete it by hand: git -C $home push origin --delete feat/T1-work--03"
+  assert_equal "$(git -C "${home:?}" ls-remote origin refs/heads/feat/T1-work--03 | cut -f1)" "$head"
+  [[ ! -e $twt ]]
+}
+
+@test "--ticket keeps origin's ticket branch whose tip is no commit here, fetching nothing to decide" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  # Another machine's builder pushed one more commit to origin's ticket branch.
+  local other=$BATS_TEST_TMPDIR/other tip
+  git clone -q --branch feat/T1-work--03 "$(git -C "${home:?}" remote get-url origin)" "$other"
+  commit_in "$other" elsewhere.txt
+  git -C "${other:?}" push -q origin HEAD
+  tip=$(git -C "${other:?}" rev-parse HEAD)
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch_deleted, .origin_branch]' <<<"$output")" '[true,"kept"]'
+  assert_contains "$stderr" "team-close: kept origin's feat/T1-work--03 at ${tip:0:8}: $home has no such commit, so the task branch is not known to hold it; delete it by hand: git -C $home push origin --delete feat/T1-work--03"
+  assert_equal "$(git -C "${home:?}" ls-remote origin refs/heads/feat/T1-work--03 | cut -f1)" "$tip"
+  run ! git -C "${home:?}" cat-file -e "$tip^{commit}"
+}
+
+@test "--ticket with the project's origin unreachable says so in one line, unread, and still returns the worktree" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  local origin
+  origin=$(git -C "${home:?}" remote get-url origin)
+  mv "$origin" "$origin.away"
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  mv "$origin.away" "$origin"
+  assert_equal "$(jq -c '[.returned, .branch_deleted, .origin_branch]' <<<"$output")" "$(jq -cn --arg wt "$twt" '[$wt, true, "unread"]')"
+  assert_equal "$(grep -c "origin's feat/T1-work--03" <<<"$stderr")" 1
+  assert_contains "$stderr" "team-close: cannot read origin's feat/T1-work--03 ("
+  assert_contains "$stderr" "delete it by hand if origin has it: git -C $home push origin --delete feat/T1-work--03"
+  [[ ! -e $twt ]]
+  assert_contains "$(origin_branches)" "feat/T1-work--03"
+  assert_equal "$(events worktree-returned | jq -r .ticket)" "03"
+}
+
+@test "--ticket whose delete origin refuses says so in one line with the command, unread, and fails nothing" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  local origin
+  origin=$(git -C "${home:?}" remote get-url origin)
+  printf '#!/bin/sh\necho "deletes are off" >&2\nexit 1\n' >"$origin/hooks/pre-receive"
+  chmod +x "$origin/hooks/pre-receive"
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch_deleted, .origin_branch]' <<<"$output")" '[true,"unread"]'
+  assert_equal "$(grep -c "origin's feat/T1-work--03" <<<"$stderr")" 1
+  assert_contains "$stderr" "team-close: cannot delete origin's feat/T1-work--03 ("
+  assert_contains "$stderr" "delete it by hand: git -C $home push origin --delete feat/T1-work--03"
+  assert_contains "$(origin_branches)" "feat/T1-work--03"
+  [[ ! -e $twt ]]
+}
+
+@test "the close deletes each held ticket branch origin still lists, once, and keeps and names the rest" {
+  open_home_task
+  local origin head3 head4 head5 head6
+  origin=$(git -C "${home:?}" remote get-url origin)
+  # Ticket 03: pushed and integrated, its worktree still open at the close.
+  open_ticket 03
+  local twt3=$twt
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  head3=$(git -C "${twt:?}" rev-parse HEAD)
+  # Ticket 04: pushed, never integrated, its worktree returned earlier, its branch kept on origin.
+  open_ticket 04
+  commit_in "$twt" four.txt
+  push_ticket
+  head4=$(git -C "${twt:?}" rev-parse HEAD)
+  run_bin -0 team-close T1 --ticket 04
+  # Ticket 05: pushed and integrated, returned while origin refused the delete.
+  open_ticket 05
+  commit_in "$twt" five.txt
+  push_ticket
+  integrate
+  head5=$(git -C "${twt:?}" rev-parse HEAD)
+  printf '#!/bin/sh\nexit 1\n' >"$origin/hooks/pre-receive"
+  chmod +x "$origin/hooks/pre-receive"
+  run_bin -0 --separate-stderr team-close T1 --ticket 05
+  assert_equal "$(jq -r .origin_branch <<<"$output")" "unread"
+  rm "$origin/hooks/pre-receive"
+  # Ticket 06, integrated on another machine: origin's task branch holds it, this one's does not.
+  git -C "${home:?}" push -q origin "$head5:refs/heads/feat/T1-work"
+  local other=$BATS_TEST_TMPDIR/other
+  git clone -q --branch feat/T1-work "$origin" "$other"
+  commit_in "$other" six.txt
+  head6=$(git -C "${other:?}" rev-parse HEAD)
+  git -C "${other:?}" push -q origin HEAD HEAD:refs/heads/feat/T1-work--06
+  # Another task's ticket branch, and names that are no ticket branch of T1's, which stay.
+  git -C "${home:?}" push -q origin "$head3:refs/heads/feat/T10-work--03" "$head3:refs/heads/feat/T1-work--033" \
+    "$head3:refs/heads/feat/T1-work--x"
+
+  run_bin -0 --separate-stderr team-close T1
+  assert_equal "$(jq -c .returned <<<"$output")" "$(jq -cn --arg wt "$wt" --arg twt "$twt3" '[$wt, $twt]')"
+  assert_equal "$(grep "origin's" <<<"$stderr")" "team-close: deleted origin's feat/T1-work--03 at ${head3:0:8}, which feat/T1-work holds
+team-close: kept origin's feat/T1-work--04 at ${head4:0:8}: the task branch does not hold it; delete it by hand: git -C $home push origin --delete feat/T1-work--04
+team-close: deleted origin's feat/T1-work--05 at ${head5:0:8}, which feat/T1-work holds
+team-close: deleted origin's feat/T1-work--06 at ${head6:0:8}, which origin's feat/T1-work holds"
+  assert_equal "$(origin_branches)" "feat/T1-work
+feat/T1-work--033
+feat/T1-work--04
+feat/T1-work--x
+feat/T10-work--03
+main"
+  assert_equal "$(events closed | jq -c .returned)" "$(jq -cn --arg wt "$wt" --arg twt "$twt3" '[$wt, $twt]')"
+  run_bin -0 team-log --check
+}
+
+@test "the close with no ticket branch on origin says nothing of origin's" {
+  open_home_task
+  work_and_push "$wt" feature.txt
+  run_bin -0 --separate-stderr team-close T1
+  [[ $stderr != *"origin's"* ]]
+}
+
+@test "the close whose origin cannot be read says so in one line with the command, and still closes" {
+  open_home_task
+  commit_in "$wt" feature.txt
+  local origin
+  origin=$(git -C "${home:?}" remote get-url origin)
+  mv "$origin" "$origin.away"
+
+  run_bin -0 --separate-stderr team-close T1 --keep-worktree
+  mv "$origin.away" "$origin"
+  assert_equal "$(grep -c "origin's ticket branches" <<<"$stderr")" 1
+  assert_contains "$stderr" "team-close: cannot read origin's ticket branches of feat/T1-work ("
+  assert_contains "$stderr" "delete them by hand: git -C $home push origin --delete <each feat/T1-work--NN that git -C $home ls-remote origin 'refs/heads/feat/T1-work--*' lists>"
+  assert_equal "$(events closed | jq -c .kept)" "$(jq -cn --arg wt "$wt" '[$wt]')"
 }

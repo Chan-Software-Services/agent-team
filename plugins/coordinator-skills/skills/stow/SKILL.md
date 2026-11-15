@@ -1,6 +1,6 @@
 ---
 name: stow
-description: Move every decision and lesson still held only in this conversation to its home on disk. Use before a compaction, a restart, or a handoff to another session or machine.
+description: Move every decision and lesson still held only in this conversation to its home on disk. Use before a compaction, a restart, or a handoff to another session or machine, or when compact-hold says an auto-compaction is held.
 ---
 
 # Stow
@@ -19,13 +19,22 @@ For each decision, answer, wait and lesson in it, write it to its one home:
 | A question to Daniel outside a task, a reply owed to Daniel, a promise with a trigger, a watch you armed | One `team-current add` each, as your manual says, pointing at the detail; task state never goes there |
 | Approved work not yet opened | An item in `tasks/queued/`, its front matter as `team-queue`'s `--help` says |
 | A worker's progress the ledger does not hold (its tickets done, PRs and reviews are there, which `team-state` reads), a plan change, a task's notes | `tasks/T<n>/`: the plan, the brief's "Progress so far", or a note file |
-| A step only Daniel can take | `manual-steps.md` |
+| A step only Daniel can take | A `walkthrough` hand-off to the assistant (`team-assistant send walkthrough`), which keeps `manual-steps.md` |
 | A fact about a project | A ticket for that project's task, so it lands in its docs or knowledge graph through a PR |
-| A lesson about how the team works | A ticket in `tasks/` for a team-home task that changes the manual, a role, a template or a script |
+| A lesson about how the team works | A ticket in `tasks/` for an `agent-team` task that changes the manual, a role, a template or a script through its PR |
 | Daniel's own preference | A one-line proposal to Daniel for `~/.claude/CLAUDE.md`, which only Daniel changes |
 
 Write notes that point at the source of truth (the ledger, a PR URL, a file), never temp paths, versions or ids that rot.
 Writing them is the whole step: the heartbeat's checkpoint commits every record within five minutes, so never commit one by hand; `team-checkpoint --force` when one must be durable now.
+Then run `team-stowed`, which records the stow, so an auto-compaction `compact-hold` is holding runs.
+
+## When an auto-compaction is held
+
+A note after a tool call that begins `compact-hold: an auto-compaction of this conversation is held until you stow` means Claude Code tried to compact this conversation and the `compact-hold` hook refused it until you have stowed.
+Stow before any other work: walk the conversation as above and end with `team-stowed`, and the compaction runs the next time Claude Code tries it, its summary told the time of your stow.
+A stow 10 minutes old or more when that comes no longer lets it run: it is held again, and you are told again.
+Unstowed 15 minutes after that tell, it runs anyway, from the time the tell names, and its summary is all that is left of what you had not written down.
+While the hold stands unstowed, each new prompt carries the same note as a reminder, and the first end of a turn is refused with it, each naming the time the first tell set.
 
 ## Before a restart
 

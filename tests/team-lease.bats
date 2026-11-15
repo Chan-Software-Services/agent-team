@@ -15,17 +15,17 @@ setup() {
 # untracked files and the working tree's contents, read without refreshing the index.
 checkout_state() {
   local dir=$1
-  git -C "$dir" symbolic-ref HEAD
-  git -C "$dir" rev-parse HEAD
+  git -C "${dir:?}" symbolic-ref HEAD
+  git -C "${dir:?}" rev-parse HEAD
   sha256sum <"$dir/.git/index"
-  git -C "$dir" --no-optional-locks status --porcelain=v2 --untracked-files=all
-  git -C "$dir" --no-optional-locks diff
-  git -C "$dir" --no-optional-locks diff --cached
+  git -C "${dir:?}" --no-optional-locks status --porcelain=v2 --untracked-files=all
+  git -C "${dir:?}" --no-optional-locks diff
+  git -C "${dir:?}" --no-optional-locks diff --cached
   (cd "$dir" && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha256sum)
 }
 
 @test "A takes a fresh lease, creating the branch; B is refused naming A, and sees A hold it" {
-  run git -C "$origin" rev-parse -q --verify refs/heads/lease
+  run git -C "${origin:?}" rev-parse -q --verify refs/heads/lease
   assert_equal "$status" 1
 
   run_bin -0 --separate-stderr team-lease take
@@ -34,16 +34,16 @@ checkout_state() {
     and .ttl_minutes == 60 and .stolen_from == null and .taken_at == .renewed_at
     and (.renewed_at | fromdateiso8601) > now - 120'
   # A root commit holding only lease.json.
-  assert_equal "$(git -C "$origin" rev-list --count lease)" 1
-  assert_equal "$(git -C "$origin" ls-tree --name-only lease)" lease.json
+  assert_equal "$(git -C "${origin:?}" rev-list --count lease)" 1
+  assert_equal "$(git -C "${origin:?}" ls-tree --name-only lease)" lease.json
   # This machine's record of its last write.
-  jq -e --arg tip "$(git -C "$origin" rev-parse lease)" \
+  jq -e --arg tip "$(git -C "${origin:?}" rev-parse lease)" \
     '.commit == $tip and .epoch == 1 and .holder == "home-pc" and .state == "held"' \
     "$HOME/.local/state/agent-team/lease.json"
 
   on_machine laptop run_bin -1 --separate-stderr team-lease take
   assert_contains "$stderr" "held by home-pc (epoch 1), fresh: renewed 0 minutes ago"
-  assert_equal "$(git -C "$origin" rev-list --count lease)" 1
+  assert_equal "$(git -C "${origin:?}" rev-list --count lease)" 1
   [[ ! -e $BATS_TEST_TMPDIR/machines/laptop/home/.local/state/agent-team/lease.json ]]
 
   on_machine laptop run_bin -0 team-lease status
@@ -163,11 +163,11 @@ checkout_state() {
 
 @test "with origin unreachable, status shows the last known lease unconfirmed and nothing changes" {
   run_bin -0 team-lease take
-  git -C "$TEAM_HOME" remote set-url origin https://127.0.0.1:9/agent-team.git
+  git -C "${TEAM_HOME:?}" remote set-url origin https://127.0.0.1:9/agent-team.git
   local tip record refs
-  tip=$(git -C "$origin" rev-parse lease)
+  tip=$(git -C "${origin:?}" rev-parse lease)
   record=$(cat "$HOME/.local/state/agent-team/lease.json")
-  refs=$(git -C "$TEAM_HOME" for-each-ref)
+  refs=$(git -C "${TEAM_HOME:?}" for-each-ref)
 
   run_bin -75 --separate-stderr team-lease status
   assert_equal "${lines[0]}" "UNCONFIRMED: GitHub is unreachable; this is the last known lease"
@@ -184,9 +184,9 @@ checkout_state() {
     assert_contains "$stderr" "team-lease: GitHub is unreachable (git ls-remote:"
     assert_contains "$stderr" "nothing changed"
   done
-  assert_equal "$(git -C "$origin" rev-parse lease)" "$tip"
+  assert_equal "$(git -C "${origin:?}" rev-parse lease)" "$tip"
   assert_equal "$(cat "$HOME/.local/state/agent-team/lease.json")" "$record"
-  assert_equal "$(git -C "$TEAM_HOME" for-each-ref)" "$refs"
+  assert_equal "$(git -C "${TEAM_HOME:?}" for-each-ref)" "$refs"
 }
 
 @test "status --json carries every field, and check exits 0 held, 1 not held" {
@@ -251,7 +251,7 @@ checkout_state() {
   local state=$HOME/.local/state/agent-team
   stub_script claude <<'EOF'
 case $1 in
-  agents) echo '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "81f08540", "name": "T5-builder"}, {"id": "1baf2408", "name": "notes"}]' ;;
+  agents) echo '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "a55157a7", "name": "assistant"}, {"id": "81f08540", "name": "T5-builder"}, {"id": "1baf2408", "name": "notes"}]' ;;
   stop) [[ $2 != 81f08540 ]] || { echo "error: no such session" >&2; exit 1; } ;;
 esac
 EOF
@@ -265,9 +265,9 @@ EOF
   jq -e '.lost == false and .mine == true' <<<"$output"
 
   run_bin -1 --separate-stderr team-lease renew
-  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd); the heartbeat is not installed; nothing to disable; could not stop T5-builder (81f08540): error: no such session; team-lease take clears the fence"
+  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), assistant (a55157a7); the heartbeat is not installed; nothing to disable; could not stop T5-builder (81f08540): error: no such session; team-lease take clears the fence"
   jq -e '.holder == "laptop" and .epoch == 2' "$state/fenced"
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","a55157a7"]' '["stop","81f08540"]')"
   lease_json | jq -e '.holder == "laptop"'
   run_bin -1 --separate-stderr team-lease check
   assert_contains "$stderr" "home-pc is fenced since"
@@ -278,6 +278,22 @@ EOF
   [[ ! -e $state/fenced ]]
   run_bin -0 team-lease status --json
   jq -e '.lost == false and .mine == true and .fenced == null and .epoch == 3' <<<"$output"
+}
+
+@test "the fence stops an assistant whose turn is done, which only agents --json --all lists, and leaves a stopped one" {
+  stub_script claude <<'EOF'
+case "$*" in
+  'agents --json') echo '[{"id": "3169fcbd", "name": "coordinator"}]' ;;
+  'agents --json --all') echo '[{"id": "3169fcbd", "name": "coordinator", "state": "working"},
+    {"id": "a55157a7", "name": "assistant", "state": "done"}, {"id": "c7737929", "name": "assistant", "state": "stopped"}]' ;;
+  stop*) ;;
+esac
+EOF
+  run_bin -0 team-lease take
+  steal_lease laptop home-pc
+  run_bin -1 --separate-stderr team-lease renew
+  assert_contains "$stderr" "fenced home-pc: stopped coordinator (3169fcbd), assistant (a55157a7);"
+  assert_equal "$(stub_calls claude | grep stop)" "$(printf '%s\n' '["stop","3169fcbd"]' '["stop","a55157a7"]')"
 }
 
 @test "the fence ends an ops session with team-ops-end, deleting its transcript; one it cannot end is stopped and said" {
@@ -335,7 +351,7 @@ stop aaaaaaaa"
 @test "the team home's branch, index and working tree are the same after every command" {
   # A checkout mid-work: a staged change, an unstaged change and an untracked file.
   echo staged >"$TEAM_HOME/staged.txt"
-  git -C "$TEAM_HOME" add staged.txt
+  git -C "${TEAM_HOME:?}" add staged.txt
   echo unstaged >>"$TEAM_HOME/ledger.jsonl"
   echo untracked >"$TEAM_HOME/untracked.txt"
   local before args tty=$BATS_TEST_TMPDIR/tty
@@ -369,23 +385,24 @@ stop aaaaaaaa"
   echo laptop >"$tty"
   TEAM_LEASE_TTY=$tty run_bin -0 team-lease take --steal
   run_bin -2 team-lease status --json --bogus
-  assert_equal "$(git -C "$origin" log --format=%s lease)" "$(printf '%s\n' \
+  assert_equal "$(git -C "${origin:?}" log --format=%s lease)" "$(printf '%s\n' \
     "lease: home-pc steal from laptop, epoch 3" \
     "lease: laptop take, epoch 2" \
     "lease: home-pc release, epoch 1" \
     "lease: home-pc renew, epoch 1" \
     "lease: home-pc take, epoch 1")"
   # Every commit holds lease.json alone, on a branch of its own history.
-  assert_equal "$(git -C "$origin" log --format='%P' lease | tail -n 1)" ""
-  assert_equal "$(git -C "$origin" log --format= --name-only lease | sort -u | grep .)" lease.json
+  assert_equal "$(git -C "${origin:?}" log --format='%P' lease | tail -n 1)" ""
+  assert_equal "$(git -C "${origin:?}" log --format= --name-only lease | sort -u | grep .)" lease.json
   # The team home's own view of origin follows.
-  assert_equal "$(git -C "$TEAM_HOME" rev-parse origin/lease)" "$(git -C "$origin" rev-parse lease)"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse origin/lease)" "$(git -C "${origin:?}" rev-parse lease)"
 }
 
 @test "lease commands on one machine wait for each other's lock" {
   local state=$HOME/.local/state/agent-team start
   mkdir -p "$state"
   flock -x "$state/lease.lock" sleep 2 &
+  local holder=$!
   # Once the holder has the lock, however long a busy machine takes to start it, up to 10 s.
   local tries=0
   until [[ -f $state/lease.lock ]] && ! flock -n "$state/lease.lock" true; do
@@ -394,7 +411,7 @@ stop aaaaaaaa"
   done
   start=$(date +%s%N)
   run_bin -0 team-lease take
-  wait
+  wait "$holder"
   # It waited for the lock's holder before taking the lease.
   (($(date +%s%N) - start >= 1000000000))
   [[ -f $state/lease.lock ]]
@@ -407,7 +424,7 @@ stop aaaaaaaa"
   run_bin -2 team-lease take --steal --again
   run_bin -2 team-lease status --steal
   run_bin -2 team-lease renew --json
-  git -C "$TEAM_HOME" remote remove origin
+  git -C "${TEAM_HOME:?}" remote remove origin
   run_bin -1 --separate-stderr team-lease status
   assert_contains "$stderr" "team-lease: the team home $TEAM_HOME has no git remote origin"
   rm "$HOME/.config/agent-team/machine"

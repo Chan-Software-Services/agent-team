@@ -11,7 +11,7 @@
     "refusing_writers are the scripts whose events are their own records, logged before anything else happens, whose events the table may refuse from lifecycle_from on (null: never, warn only); every other writer acts first and logs after."
   ],
   "asked_parks_from": "2026-11-12T12:00:00Z",
-  "lifecycle_from": null,
+  "lifecycle_from": "2026-11-15T11:58:29Z",
   "refusing_writers": ["team-answer", "team-log", "team-ui"],
   "start": {"feature": "planning", "research": "planning", "retro": "planning", "small": "building", "bug": "building"},
   "phases": ["planning", "building", "in-review", "awaiting-merge", "merged-part", "merged"],
