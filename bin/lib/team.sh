@@ -16,7 +16,7 @@
 # pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
@@ -2327,7 +2327,7 @@ queue_commit_problems() {
 
 # queue_commit_problems' reading, with its locals and <dir> for its files: queue_commit_proof <dir>
 queue_commit_proof() {
-  local dir=$1 rc=0 entry state trial base head primary method tree short=${queue_sha:0:7}
+  local dir=$1 rc=0 entry state trial base head primary method tree line short=${queue_sha:0:7}
   local -a parents
   # shellcheck disable=SC2016 # the query's variables are GraphQL's
   bounded 30 gh api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
@@ -2366,7 +2366,12 @@ queue_commit_proof() {
     grep -m1 . "$dir/fetch.stderr" || echo "git fetch failed"
     return 2
   fi
-  read -r -a parents <<<"$(git -C "$primary" rev-list --parents -n 1 "$queue_sha")"
+  if ! line=$(git -C "$primary" rev-list --parents -n 1 "$queue_sha" 2>"$dir/parents.stderr"); then
+    printf "the parents of the trial commit %s cannot be read in %s: " "$short" "$primary"
+    grep -m1 . "$dir/parents.stderr" || echo "git rev-list failed"
+    return 2
+  fi
+  read -r -a parents <<<"$line"
   parents=("${parents[@]:1}")
   if ((${#parents[@]} < 2)); then
     echo "$short is a commit of its own, not a merge of the PR's head"
@@ -2398,6 +2403,22 @@ queue_commit_proof() {
     return 1
   fi
   printf '%s\n' "$head"
+}
+
+# Take a pull request out of its base's merge queue, by its GraphQL node id, with the mutation
+# dequeuePullRequest (given 30 seconds): team-merge and team-land do, for a PR whose merge no
+# longer holds or whose trial commit agent-review is refused on. Fails with GitHub's reason, one
+# line, on stdout: dequeue_pr <pull request node id>
+dequeue_pr() {
+  local dequeue_rc=0 dequeue_error
+  # shellcheck disable=SC2016 # the mutation's variable is GraphQL's
+  dequeue_error=$(bounded 30 gh api graphql -f query='mutation($pr: ID!) {
+  dequeuePullRequest(input: {id: $pr}) { mergeQueueEntry { id } } }' -f pr="$1" 2>&1 >/dev/null </dev/null) || dequeue_rc=$?
+  ((dequeue_rc != 0)) || return 0
+  dequeue_error=$(grep -m1 . <<<"$dequeue_error") || dequeue_error="exit $dequeue_rc"
+  ((dequeue_rc != 124)) || dequeue_error="no answer in 30 seconds"
+  echo "gh api graphql: ${dequeue_error#gh: }"
+  return 1
 }
 
 # The task of a pull request: the task of the latest pr event naming <url>, both in canonical form

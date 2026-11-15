@@ -18,7 +18,9 @@
 # problem with (not the head commit of the PR's queue entry, read from GitHub at the call, an
 # entry that is UNMERGEABLE, a commit that is not exactly the PR's head merged cleanly onto a
 # commit holding the entry's base, a project whose merge_method is not merge) or cannot read, and
-# a PR's head whose latest review in the task's ledger is not a pass (review_refusal there).
+# a PR's head whose latest review in the task's ledger is not a pass (review_refusal there); on
+# such a refusal team-land takes the PR out of the queue. What could not be read or set now (the
+# entry, the commit, the ledger, a status GitHub refuses) is exit 75 there, to try again.
 # Refused, exit 1 before anything is read: a planner, builder or ops session (AGENT_TEAM_ROLE), so
 # only a reviewer, the coordinator (team-catch-up runs it while the App is off) and a terminal
 # set a status.
@@ -54,13 +56,21 @@ bar=$(own_bar "$project") || exit 1
 [[ -z $(jq -r '.app? // empty' <<<"$bar") ]] ||
   die "the reviewer App posts agent-review on $project: send your verdict to the coordinator, whose team-next posts it"
 
+# What could not be read or set now ends a --merge-group run with exit 75, to try again, and the
+# head's form as die does: later <why>
+later() {
+  echo "${0##*/}: $1" >&2
+  [[ -z $group ]] || exit 75
+  exit 1
+}
 if [[ -n $group ]]; then
   task=$(pr_task "$url")
   [[ -n $task ]] || die "no task's pr event names $url, so no review of it is logged; nothing set"
   rc=0
   head=$(queue_commit_problems "$project" "$repo" "$number" "$reviewed") || rc=$?
+  ((rc != 2)) || later "$head; nothing set"
   ((rc == 0)) || die "$head; nothing set"
-  refusal=$(review_refusal "$task" "$head" success) || die "the ledger's reviews of $task cannot be read"
+  refusal=$(review_refusal "$task" "$head" success) || later "the ledger's reviews of $task cannot be read"
   [[ -z $refusal ]] || die "$refusal; nothing set"
   description="the merge queue's clean merge of the reviewed head ${head:0:7}"
 else
@@ -71,5 +81,5 @@ else
 fi
 gh api --method POST "repos/$repo/statuses/$reviewed" \
   -f state="$state" -f context=agent-review -f description="$description" >/dev/null ||
-  die "GitHub refused the status on $repo@$reviewed"
+  later "GitHub refused the status on $repo@$reviewed"
 echo "agent-review $state on $repo@$reviewed"

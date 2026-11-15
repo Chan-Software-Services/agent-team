@@ -4,11 +4,16 @@
 # dropped it, or the deadline came. It is the landing alone, with no merge word and no ledger
 # event: team-merge is how the coordinator merges, and runs this on a base with a queue.
 #
-# Usage: team-land <pr url> <head>
+# Usage: team-land [--task T<n>] <pr url> <head>
 #   pr url  https://github.com/<owner>/<name>/pull/<n>, in a registered project's repo
 #   head    the full 40-hex sha of the PR's head to land, the reviewed one
+#   --task  the task whose merge word the landing stands on, which team-merge gives: before
+#           agent-review goes on a trial commit, team-merge T<n> --pr <pr url> --holds <head> must
+#           say the word and the checks still hold
 # Refused, exit 1, before it reads or changes anything, with no JSON: a worker session (an
-# AGENT_TEAM_ROLE but coordinator; worker_refusal in bin/lib/team.sh); --help still answers.
+# AGENT_TEAM_ROLE but coordinator; worker_refusal in bin/lib/team.sh), a PR in no registered
+# project's repo (registered_pr there), and a project whose bar cannot be read (own_bar there);
+# --help still answers.
 # Every 30 seconds (WAIT_SECONDS) it reads the PR from GitHub with one GraphQL query (gh api
 # graphql: its state, head, merge commit, queue entry and latest removal from the queue), and:
 #   at the first look, a PR that cannot be read, is closed, or whose head is not <head> is
@@ -16,17 +21,26 @@
 #   a PR in no queue that it has not enqueued yet is enqueued with GraphQL's enqueuePullRequest
 #   and expectedHeadOid <head>, which errors where gh pr merge would turn auto-merge on; a PR
 #   already in the queue is not enqueued again; an enqueue GitHub refuses ends it, refused;
-#   on each trial commit the entry names (its headCommit), once per sha, it posts agent-review
-#   there: team-review-check --merge-group, the reviewer App's check run, on a project whose
-#   agent-review the App posts (own_bar in bin/lib/team.sh), else team-review-status
-#   --merge-group, the commit status; either posts only once the trial commit is proved to be the
-#   reviewed head merged cleanly onto what is ahead of it. A post that is refused or fails is
-#   said, and tried again at each look while the entry stays on that commit;
+#   on each trial commit the entry names (its headCommit), once per sha, with --task it first
+#   holds the merge again (team-merge --holds): a merge that no longer holds (exit 1: the word
+#   withdrawn, a later review with findings, a check gone) has the PR taken out of the queue
+#   (GraphQL's dequeuePullRequest; dequeue_pr in bin/lib/team.sh) and ends it, dequeued, and one
+#   that cannot be told now (exit 75) is said and held again at each look, nothing posted;
+#   then it posts agent-review there: team-review-check --merge-group, the reviewer App's check
+#   run, on a project whose agent-review the App posts (own_bar in bin/lib/team.sh), else
+#   team-review-status --merge-group, the commit status; either posts only once the trial commit
+#   is proved to be the reviewed head merged cleanly onto what is ahead of it. A post that could
+#   not be made now (the poster's exit 75) is said, and tried again at each look while the entry
+#   stays on that commit; one that is refused (its exit 1), the entry read again and still on
+#   that commit, has the PR taken out of the queue and ends it, dequeued, so a commit that will
+#   never get agent-review does not hold the queue until its timeout. A PR GitHub does not let
+#   out of the queue is said, and tried again at each look;
 #   once posted, it waits on the trial commit's checks with team-ci-wait --merge-group <trial sha>
 #   --json <pr url>, once per sha, which classes a failure as the PR's own or infrastructure as
 #   on a head, and ends when the entry leaves that commit; team-ci-wait's deadline is what is
 #   left of this script's, at most its own 90 minutes;
-#   a merged PR ends it, merged;
+#   a merged PR ends it, merged, when its head is still <head>; merged at another head, it ends
+#   refused, naming both;
 #   a PR that left the queue unmerged was dropped: its latest removal (RemovedFromMergeQueueEvent)
 #   is not the one of the first look, or, when GitHub shows no new removal within 2 minutes of
 #   looks, it is taken as dropped with no reason given. When team-ci-wait classed failures on the
@@ -41,13 +55,15 @@
 #   merge    the PR's merge commit when merged, else null
 #   reason   null when merged; when dequeued, GitHub's reason for the removal (or that the PR
 #            was closed), then an enqueue once more that failed and an agent-review that could
-#            not be posted on the last trial commit; when waiting or refused, why
+#            not be posted on the last trial commit, or why this run took the PR out of the
+#            queue; when waiting or refused, why
 #   failed   the failures team-ci-wait classed on the dropped trial commit, each {name, class,
 #            kind, link, step}, as the ledger's ci event carries them; [] on any other end
 # Exit 0 merged; 1 dequeued or refused; 2 a malformed command line; 75 waiting: the deadline, 4
 # hours from its start (TEAM_LAND_DEADLINE_SECONDS replaces its seconds), came with the PR left in
-# the queue, or the team holds offline (offline_hold): run it again to go on waiting, which
-# enqueues nothing while the PR is in the queue.
+# the queue (or, as its reason then says, not shown in it, or GitHub unread at the last look), or
+# the team holds offline (offline_hold): run it again to go on waiting, which enqueues nothing
+# while the PR is in the queue.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 why=$(worker_refusal "" "lands no PR") && die "$why"
@@ -60,7 +76,13 @@ CI_WAIT_SECONDS=5400
 DEADLINE_SECONDS=${TEAM_LAND_DEADLINE_SECONDS:-14400}
 
 [[ $DEADLINE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_LAND_DEADLINE_SECONDS must be a number of seconds"
-usage="usage: team-land <pr url> <head>"
+usage="usage: team-land [--task T<n>] <pr url> <head>"
+task=''
+if [[ ${1:-} == --task ]]; then
+  [[ ${2:-} =~ ^T[1-9][0-9]*$ ]] || usage_error "$usage"
+  task=$2
+  shift 2
+fi
 [[ $# -eq 2 ]] || usage_error "$usage"
 [[ $2 =~ ^[0-9a-f]{40}$ ]] || usage_error "the head is a full 40-hex commit sha, got '$2'"
 land_head=$2
@@ -97,9 +119,9 @@ read_pr() {
   # shellcheck disable=SC2016 # the query's variables are GraphQL's
   github "$dir" pr api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    id state headRefOid mergeCommit { oid } mergeQueueEntry { state position enqueuedAt headCommit { oid } }
+    id state headRefOid mergeCommit { oid } mergeQueueEntry { state headCommit { oid } }
     timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
-      nodes { ... on RemovedFromMergeQueueEvent { id createdAt reason } } } } } }' \
+      nodes { ... on RemovedFromMergeQueueEvent { id reason } } } } } }' \
     -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$number" || return 1
   if ! jq -e '.data.repository.pullRequest | objects' "$dir/pr" >/dev/null 2>&1; then
     echo "gh api graphql: no such pull request" >"$dir/error"
@@ -126,8 +148,50 @@ enqueue() {
   return 1
 }
 
+# said <text>: note <text> unless it is what was said last, so a look that finds what the look
+# before found adds no line.
+said() {
+  [[ $1 == "$said_last" ]] || note "$1"
+  said_last=$1
+}
+
+# Take the PR out of the queue and end, dequeued with <reason>; where GitHub does not let it out,
+# say so and fail, to try again at the next look: take_out <reason>
+take_out() {
+  local error
+  if error=$(dequeue_pr "$pr_id"); then
+    note "took $url out of the merge queue: $1"
+    finish dequeued 1 "$1"
+  fi
+  said "$url could not be taken out of the merge queue ($error); trying again at each look"
+  return 1
+}
+
+# With --task, hold the merge again before agent-review goes on the trial commit <sha>, once per
+# sha once it holds: team-merge --holds, which changes nothing. A merge that does not hold takes
+# the PR out of the queue; one that cannot be told now fails, with why in unposted.
+hold() {
+  [[ -n $task && -z ${held[$1]:-} ]] || return 0
+  local rc=0 why
+  TEAM_HOME=$TEAM_HOME "$bin/team-merge" "$task" --pr "$url" --holds "$land_head" >/dev/null 2>"$dir/hold.stderr" || rc=$?
+  if ((rc == 0)); then
+    held[$1]=1
+    return 0
+  fi
+  why=$(sed -n '/^  (/d; s/^  //p' "$dir/hold.stderr" | paste -sd '|' | sed 's/|/; /g')
+  [[ -n $why ]] || why=$(grep . "$dir/hold.stderr" | tail -n 1) || why="team-merge --holds failed (exit $rc)"
+  if ((rc == 1)); then
+    take_out "the merge of $task does not hold now, so agent-review is not posted on the trial commit ${1:0:7}: $why" || true
+  else
+    unposted="agent-review was not posted on the trial commit ${1:0:7}: whether the merge of $task still holds cannot be told now: $why"
+    said "$unposted; trying again at each look"
+  fi
+  return 1
+}
+
 # Post agent-review on the trial commit <sha>, through the project's poster; fails with why in
-# unposted, said once per reason.
+# unposted, said once per reason. A poster that refuses the commit (its exit 1) while the entry,
+# read again, is still on it takes the PR out of the queue.
 post() {
   local out rc=0 warn
   if [[ $poster == team-review-check ]]; then
@@ -141,13 +205,20 @@ post() {
       note "posted agent-review success on the trial commit ${1:0:7} as the reviewer App's check run $out, but ${warn#team-review-check: }"
       return 0
     fi
-  elif TEAM_HOME=$TEAM_HOME "$bin/team-review-status" --merge-group "$url" "$1" >/dev/null 2>"$dir/post.stderr"; then
-    note "set agent-review success on the trial commit ${1:0:7}"
-    return 0
+  else
+    TEAM_HOME=$TEAM_HOME "$bin/team-review-status" --merge-group "$url" "$1" >/dev/null 2>"$dir/post.stderr" || rc=$?
+    if ((rc == 0)); then
+      note "set agent-review success on the trial commit ${1:0:7}"
+      return 0
+    fi
   fi
   out=$(grep . "$dir/post.stderr" | tail -n 1) || out="$poster failed"
   out="agent-review was not posted on the trial commit ${1:0:7}: ${out#"$poster": }"
-  [[ $out == "$unposted" ]] || note "$out; trying again at each look"
+  if ((rc == 1)) && read_pr && [[ $state == OPEN && $trial == "$1" ]]; then
+    take_out "$out" || true
+  else
+    said "$out; trying again at each look"
+  fi
   unposted=$out
   return 1
 }
@@ -180,12 +251,17 @@ dropped() {
 }
 
 first=true enqueued=false retried=false start_removal='' gone_n='' on_trial='' unposted='' enqueue_error='' ci_outcome=''
-declare -A posted=() waited=()
+said_last='' seen=''
+declare -A posted=() waited=() held=()
 while :; do
-  if hold=$(offline_hold); then
-    finish waiting 75 "$hold"
+  if offline=$(offline_hold); then
+    finish waiting 75 "$offline"
   fi
+  # seen is what the look showed, for the deadline's text: queued, out (the PR in no queue) or
+  # unread.
+  seen=unread
   if read_pr; then
+    seen=out
     if $first; then
       if [[ $head != "$land_head" ]]; then
         finish refused 1 "the head of $url is ${head:0:7}, not ${land_head:0:7}: nothing enqueued"
@@ -198,22 +274,25 @@ while :; do
         note "$url is already in the merge queue: waiting on it, with no second enqueue"
       fi
     fi
-    if [[ $state == MERGED ]]; then
+    if [[ $state == MERGED && $head != "$land_head" ]]; then
+      finish refused 1 "$url was merged at ${head:0:7}, not at the head ${land_head:0:7} this run lands: check it on GitHub"
+    elif [[ $state == MERGED ]]; then
       note "$url merged as ${merge:0:7}"
       finish merged 0 "" "$merge"
     elif [[ $state != OPEN ]]; then
       dropped "$url is ${state,,}"
     fi
     if [[ -n $entry ]]; then
-      gone_n=''
+      gone_n='' seen=queued
       if [[ -n $trial ]]; then
         if [[ $trial != "$on_trial" ]]; then
           # A new trial commit: what failed or could not be posted on an earlier one is not its.
           on_trial=$trial unposted=''
           echo '[]' >"$dir/failed"
         fi
-        if [[ -z ${posted[$trial]:-} ]] && post "$trial"; then posted[$trial]=1 unposted=''; fi
-        if [[ -n ${posted[$trial]:-} && -z ${waited[$trial]:-} ]]; then
+        if [[ -z ${posted[$on_trial]:-} ]] && hold "$on_trial" && post "$on_trial"; then posted[$on_trial]=1 unposted=''; fi
+        if [[ -n ${posted[$on_trial]:-} && -z ${waited[$on_trial]:-} ]]; then
+          trial=$on_trial
           ci_wait "$trial"
           case $ci_outcome in
             passed | none | failed | other-head | closed)
@@ -258,7 +337,12 @@ while :; do
     finish refused 1 "GitHub cannot be read: $(cat "$dir/error"): nothing enqueued"
   fi
   if ((SECONDS >= DEADLINE_SECONDS)); then
-    finish waiting 75 "$url is still in the merge queue after $((DEADLINE_SECONDS / 60)) minutes: run team-land again to go on waiting"
+    case $seen in
+      queued) seen="$url is still in the merge queue" ;;
+      out) seen="$url is not shown in the merge queue" ;;
+      *) seen="GitHub could not be read at the last look, so whether $url is in the merge queue is not known," ;;
+    esac
+    finish waiting 75 "$seen after $((DEADLINE_SECONDS / 60)) minutes: run team-land again to go on waiting"
   fi
   sleep "$WAIT_SECONDS"
 done

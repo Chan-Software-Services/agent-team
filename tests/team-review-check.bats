@@ -140,9 +140,9 @@ queued_pr() {
   head_check 123456 success
 }
 
-# --merge-group on <sha> is refused, exit 1, with <text> in what it says, and no call as the App.
+# --merge-group on <sha> is refused, exit 1 (or GROUP_STATUS), with <text> in what it says, and no call as the App.
 group_refused() {
-  run_bin -1 team-review-check --merge-group "$URL" "$1"
+  run_bin "-${GROUP_STATUS:-1}" team-review-check --merge-group "$URL" "$1"
   assert_contains "$output" "$2"
   assert_contains "$output" "nothing posted"
   assert_equal "$(curl_calls)" ""
@@ -551,24 +551,37 @@ DELETE installation/token"
   run_bin -0 team-review-check --merge-group "$URL" "$trial"
 }
 
-@test "--merge-group posts nothing when the queue entry or the trial commit cannot be read" {
+@test "--merge-group posts nothing, exit 75 to try again, when the queue entry or the trial commit cannot be read" {
   queued_pr
   local trial
   trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
   queue_entry "$trial"
   echo "HTTP 502: Bad Gateway" >"$GH_DIR/entry.error"
-  group_refused "$trial" "the merge queue entry of Owner/agent-team#5 cannot be read: gh api graphql: HTTP 502: Bad Gateway"
+  GROUP_STATUS=75 group_refused "$trial" "the merge queue entry of Owner/agent-team#5 cannot be read: gh api graphql: HTTP 502: Bad Gateway"
   rm "$GH_DIR/entry.error"
   echo '{"data": {"repository": {"pullRequest": null}}}' >"$GH_DIR/entry.json"
-  group_refused "$trial" "the merge queue entry of Owner/agent-team#5 cannot be read: gh api graphql: no such pull request"
+  GROUP_STATUS=75 group_refused "$trial" "the merge queue entry of Owner/agent-team#5 cannot be read: gh api graphql: no such pull request"
   # A trial commit origin does not hold.
   local gone=1111111111111111111111111111111111111111
   queue_entry "$gone"
-  group_refused "$gone" "the trial commit 1111111 and the head ${QUEUE_HEAD:0:7} cannot be fetched into $QUEUE_PRIMARY: "
+  GROUP_STATUS=75 group_refused "$gone" "the trial commit 1111111 and the head ${QUEUE_HEAD:0:7} cannot be fetched into $QUEUE_PRIMARY: "
   # The head's check runs unread.
   queue_entry "$trial"
   echo "not json" >"$GH_DIR/runs.json"
   group_refused "$trial" "carries no agent-review success"
+}
+
+@test "--merge-group ends with exit 75, to try again, when a call as the App fails with no check run posted" {
+  queued_pr
+  local trial
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  echo "exit 7" >"$STUB_FIXTURES/curl.mint"
+  run_bin -75 team-review-check --merge-group "$URL" "$trial"
+  assert_contains "$output" "minting the App's token for Owner/agent-team failed"
+  assert_contains "$output" "nothing posted"
+  # The head's form still ends such a failure with exit 1.
+  run_bin -1 team-review-check "$URL" "$QUEUE_HEAD" success "no blocking findings"
 }
 
 @test "--merge-group takes a PR URL and a full sha, nothing more or less" {

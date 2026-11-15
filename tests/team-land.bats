@@ -26,6 +26,7 @@ setup() {
   land_gh
   stub_sleep
   answer 0 enqueue '{"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}'
+  answer 0 dequeue '{"data": {"dequeuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}'
 }
 
 # poster <script> <stdout> [<status>]: the project's poster of agent-review is the logging stub,
@@ -36,7 +37,7 @@ poster() {
   stub_reply "$1" "$2" "${3:-0}"
 }
 
-# answer <look> <what> <answer>: from look <look> on, gh answers <what> (pr, enqueue,
+# answer <look> <what> <answer>: from look <look> on, gh answers <what> (pr, enqueue, dequeue,
 # checks-<short trial sha> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub)
 # or "refuse: <text>" (GitHub's GraphQL error).
 answer() {
@@ -84,7 +85,8 @@ job() {
 }
 
 # gh answers team-land's read of the PR and team-ci-wait's read of its entry (one answer, pr), an
-# enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a trial commit's check runs, no
+# enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables
+# kept in $GH_DIR/dequeues), a trial commit's check runs, no
 # status and no workflow run of it, a job, and a status POST, each from the latest answer at or
 # before the current look. Anything unplanned fails.
 land_gh() {
@@ -98,6 +100,10 @@ case "$1 $2" in
       what=enqueue
       [[ $4 == *"expectedHeadOid: \$head"* && $4 == *"pullRequestId: \$pr"* ]] || { echo "not the planned mutation" >&2; exit 1; }
       printf '%s\n' "${*:5}" >>"$GH_DIR/enqueues"
+    elif [[ $4 == *dequeuePullRequest* ]]; then
+      what=dequeue
+      [[ $4 == *"dequeuePullRequest(input: {id: \$pr})"* ]] || { echo "not the planned mutation" >&2; exit 1; }
+      printf '%s\n' "${*:5}" >>"$GH_DIR/dequeues"
     fi
     ;;
   "api --method") echo '{"state": "success"}'; exit 0 ;;
@@ -144,6 +150,10 @@ ended_at() {
 
 enqueues() {
   cat "$GH_DIR/enqueues" 2>/dev/null || true
+}
+
+dequeues() {
+  cat "$GH_DIR/dequeues" 2>/dev/null || true
 }
 
 posted_on() {
@@ -335,8 +345,8 @@ team-land: $url merged as 0e0e0e0
   trial_checks 0 "$t1" "$(check_run test in_progress)"
   stub_script team-review-status <<'SH'
 if (($(cat "$GH_DIR/look") < 2)); then
-  echo "team-review-status: 5e5e5e5 changes more than the merge of its parents; nothing set" >&2
-  exit 1
+  echo "team-review-status: the merge queue entry of owner/proj#5 cannot be read: gh api graphql: HTTP 502; nothing set" >&2
+  exit 75
 fi
 echo "agent-review success"
 SH
@@ -346,7 +356,7 @@ SH
   assert_equal "$(ended_at)" 4
   # Said once, tried at looks 0, 1 and 2, and waited on only once posted.
   assert_equal "$(grep -c "agent-review was not posted" <<<"$output")" 1
-  assert_contains "$output" "team-land: agent-review was not posted on the trial commit 5e5e5e5: 5e5e5e5 changes more than the merge of its parents; nothing set; trying again at each look"
+  assert_contains "$output" "team-land: agent-review was not posted on the trial commit 5e5e5e5: the merge queue entry of owner/proj#5 cannot be read: gh api graphql: HTTP 502; nothing set; trying again at each look"
   assert_equal "$(posted_on | wc -l)" 3
   assert_contains "$output" "team-land: set agent-review success on the trial commit 5e5e5e5"
   # Never posted: no wait on its checks, and the drop names why. With no removal shown by GitHub,
@@ -355,13 +365,142 @@ SH
   rm "$GH_DIR"/pr.* "$GH_DIR/calls"
   pr_at 0 OPEN "$t1"
   pr_at 2 OPEN ''
-  poster team-review-status "" 1
+  poster team-review-status "" 75
   rm -f "$STUB_FIXTURES/team-review-status.sh"
   run_bin team-land "$url" "$head"
   assert_equal "$status" 1
   assert_equal "$(ended_at)" 6
   assert_equal "$(end_json)" '["dequeued",null,"GitHub shows no removal and no reason; agent-review was not posted on the trial commit 5e5e5e5: team-review-status failed",[]]'
   if grep check-runs "$GH_DIR/calls"; then return 1; fi
+  assert_equal "$(dequeues)" ""
+}
+
+@test "an agent-review the poster refuses on a trial commit takes the PR out of the queue and ends dequeued, unless the entry moved on" {
+  pr_at 0 OPEN "$t1"
+  stub_script team-review-status <<'SH'
+echo "team-review-status: 5e5e5e5 changes more than the merge of its parents; nothing set" >&2
+exit 1
+SH
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(end_json)" '["dequeued",null,"agent-review was not posted on the trial commit 5e5e5e5: 5e5e5e5 changes more than the merge of its parents; nothing set",[]]'
+  assert_contains "$output" "team-land: took $url out of the merge queue: agent-review was not posted on the trial commit 5e5e5e5"
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
+  assert_equal "$(posted_on | wc -l)" 1
+  # A PR GitHub does not let out is said once, and tried again at each look, until the queue ends it.
+  rm "$GH_DIR/dequeues"
+  answer 0 dequeue "refuse: the pull request is locked"
+  pr_at 3 OPEN '' RMQE_1 "the checks timed out"
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 3
+  assert_equal "$(grep -c "could not be taken out of the merge queue (gh api graphql: the pull request is locked); trying again at each look" <<<"$output")" 1
+  assert_equal "$(dequeues | wc -l)" 3
+  # The entry on another trial commit by the time it is read again: the refusal was of a commit
+  # the queue left, so nothing is taken out, and the next look posts on the new one.
+  echo 0 >"$GH_DIR/look"
+  rm "$GH_DIR"/pr.* "$GH_DIR/dequeues" "$STUB_CALLS/team-review-status.log"
+  answer 0 dequeue '{"data": {"dequeuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}'
+  pr_at 0 OPEN "$t1"
+  stub_script team-review-status <<SH
+if [[ \$3 == $t1 ]]; then
+  cp "$GH_DIR/pr.moved" "$GH_DIR/pr.0"
+  echo "team-review-status: 5e5e5e5 is not the trial commit of owner/proj#5's queue entry, which is 6f6f6f6; nothing set" >&2
+  exit 1
+fi
+echo "agent-review success"
+SH
+  pr_at 0 OPEN "$t2"
+  mv "$GH_DIR/pr.0" "$GH_DIR/pr.moved"
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t2" "$(check_run test in_progress)"
+  pr_at 2 MERGED
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(dequeues)" ""
+  assert_equal "$(posted_on)" "--merge-group $url $t1
+--merge-group $url $t2"
+}
+
+@test "with --task the merge is held again before each trial commit's agent-review, and one that no longer holds takes the PR out of the queue" {
+  # Held on each new trial commit, once each, and posted on while it holds.
+  poster team-merge ""
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test in_progress)"
+  pr_at 2 OPEN "$t2"
+  trial_checks 2 "$t2" "$(check_run test in_progress)"
+  pr_at 4 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(stub_calls team-merge | jq -r 'join(" ")')" "T14 --pr $url --holds $head
+T14 --pr $url --holds $head"
+  assert_equal "$(posted_on | wc -l)" 2
+  assert_equal "$(dequeues)" ""
+  # The word withdrawn while it waited: the second trial commit gets no agent-review, and the PR
+  # is taken out of the queue with team-merge's reasons.
+  echo 0 >"$GH_DIR/look"
+  rm "$STUB_CALLS/team-merge.log" "$STUB_CALLS/team-review-status.log"
+  stub_script team-merge <<'SH'
+if (($(cat "$GH_DIR/look") < 2)); then exit 0; fi
+{
+  echo "team-merge: T14 cannot merge PR #5, so nothing changed:"
+  echo "  Daniel withdrew the default word for T14 at 2026-11-15T10:00:00Z"
+  echo "  the latest review of a1b2c3d has findings"
+  echo "  (Daniel's default word does not hold: ask them for the per-head word)"
+} >&2
+exit 1
+SH
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 2
+  assert_equal "$(end_json)" '["dequeued",null,"the merge of T14 does not hold now, so agent-review is not posted on the trial commit 6f6f6f6: Daniel withdrew the default word for T14 at 2026-11-15T10:00:00Z; the latest review of a1b2c3d has findings",[]]'
+  assert_equal "$(posted_on)" "--merge-group $url $t1"
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
+  # A merge that cannot be told now (GitHub unread) posts nothing and takes nothing out: held
+  # again at each look, said once.
+  echo 0 >"$GH_DIR/look"
+  rm "$STUB_CALLS/team-review-status.log" "$GH_DIR/dequeues" "$GH_DIR"/pr.*
+  stub_script team-merge <<'SH'
+if (($(cat "$GH_DIR/look") >= 2)); then exit 0; fi
+{
+  echo "team-merge: T14 cannot merge PR #5, so nothing changed:"
+  echo "  GitHub cannot be read: gh pr view: error connecting to api.github.com"
+} >&2
+exit 75
+SH
+  pr_at 0 OPEN "$t1"
+  pr_at 3 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(grep -c "whether the merge of T14 still holds cannot be told now: GitHub cannot be read: gh pr view: error connecting to api.github.com; trying again at each look" <<<"$output")" 1
+  assert_equal "$(posted_on)" "--merge-group $url $t1"
+  assert_equal "$(dequeues)" ""
+  # Without --task nothing is held: the landing alone, as the drill runs it.
+  run_bin -2 team-land --task 14 "$url" "$head"
+}
+
+@test "at the deadline the reason says where the PR was at the last look: not shown in the queue, or GitHub unread" {
+  pr_at 0 OPEN
+  answer 1 pr fail
+  TEAM_LAND_DEADLINE_SECONDS=0 run_bin team-land "$url" "$head"
+  assert_equal "$status" 75
+  assert_equal "$(end_json)" "[\"waiting\",null,\"$url is not shown in the merge queue after 0 minutes: run team-land again to go on waiting\",[]]"
+  # The first look reads the queued PR; the deadline, a second on, comes on a look GitHub does
+  # not answer.
+  rm "$GH_DIR"/pr.*
+  pr_at 0 OPEN none
+  answer 1 pr fail
+  local real_sleep
+  real_sleep=$(PATH=/usr/bin:/bin command -v sleep)
+  stub_script sleep <<EOF
+echo \$((\$(cat "$GH_DIR/look") + 1)) >"$GH_DIR/look"
+exec "$real_sleep" 1
+EOF
+  TEAM_LAND_DEADLINE_SECONDS=1 run_bin team-land "$url" "$head"
+  assert_equal "$status" 75
+  assert_equal "$(ended_at)" 1
+  assert_equal "$(end_json)" "[\"waiting\",null,\"GitHub could not be read at the last look, so whether $url is in the merge queue is not known, after 0 minutes: run team-land again to go on waiting\",[]]"
 }
 
 @test "refused, exit 1, with nothing enqueued: a head that is not the PR's, a closed PR, a PR GitHub cannot read, and an enqueue GitHub refuses" {
@@ -447,7 +586,7 @@ SH
   assert_contains "$output" "team-land: posted agent-review success on the trial commit 6f6f6f6 as the reviewer App's check run 4243, but the installation token could not be revoked: HTTP 500"
 }
 
-@test "with the real team-review-status, a trial commit that is the reviewed head merged cleanly gets the status and the PR lands; one that is not gets none" {
+@test "with the real team-review-status, a trial commit that is the reviewed head merged cleanly gets the status and the PR lands; one that is not gets none and leaves the queue" {
   ln -f "$BATS_RUN_TMPDIR/shared/bin/team-review-status" "$CODE_CHECKOUT/bin/team-review-status"
   queue_repo proj
   land_gh
@@ -472,15 +611,25 @@ SH
   assert_contains "$output" "team-land: set agent-review success on the trial commit ${trial:0:7}"
   assert_equal "$(grep -c "^api --method " "$GH_DIR/calls")" 1
   grep -Fxq "api --method description=the merge queue's clean merge of the reviewed head ${QUEUE_HEAD:0:7}" "$GH_DIR/calls"
-  # A trial commit that holds more than the merge: no status, said, and the drop names it.
+  # A trial commit that holds more than the merge: no status, and the PR is taken out of the
+  # queue, naming it.
   echo 0 >"$GH_DIR/look"
   rm "$GH_DIR"/pr.* "$GH_DIR/calls"
   bad=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD" "$QUEUE_HEAD")
   pr_at 0 OPEN "$bad"
   entry_at 0
-  pr_at 1 OPEN '' RMQE_1 "the checks timed out"
   run_bin team-land "$url" "$head"
   assert_equal "$status" 1
-  assert_equal "$(end_json)" "[\"dequeued\",null,\"the checks timed out; agent-review was not posted on the trial commit ${bad:0:7}: ${bad:0:7} changes more than the merge of its parents; nothing set\",[]]"
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
+  assert_equal "$(end_json)" "[\"dequeued\",null,\"agent-review was not posted on the trial commit ${bad:0:7}: ${bad:0:7} changes more than the merge of its parents; nothing set\",[]]"
   if grep "^api --method " "$GH_DIR/calls"; then return 1; fi
+}
+
+@test "a PR found merged at another head than the one it lands is refused, never reported merged at that head" {
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test in_progress)"
+  PR_HEAD=$t2 pr_at 1 MERGED
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(end_json)" "[\"refused\",null,\"$url was merged at 6f6f6f6, not at the head a1b2c3d this run lands: check it on GitHub\",[]]"
 }

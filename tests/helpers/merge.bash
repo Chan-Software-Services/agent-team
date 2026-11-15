@@ -110,7 +110,9 @@ checks() {
 # from status.json, which app_on writes; the base's classic protection, any base's, from
 # branch.json, its rulesets' rules from rules.json and ruleset <id> from ruleset-<id>.json, which
 # pinned and with_queue write; the GraphQL read of the PR's queue entry from entry.json, which
-# with_queue and in_queue write). pr merge marks the PR merged (or runs merge.sh when a test wrote
+# with_queue and in_queue write, after running entry.sh when a test wrote one; a dequeue is kept
+# in $GH_DIR/dequeues, its last argument, and fails with dequeue.error's text when a test wrote
+# one). pr merge marks the PR merged (or runs merge.sh when a test wrote
 # one); anything unplanned fails.
 stub_gh() {
   stub_script gh <<'EOF'
@@ -126,7 +128,13 @@ case "$*" in
   "api repos/owner/proj/pulls/5/files --paginate") cat "$GH_DIR/files.json" ;;
   "api repos/owner/proj/commits/"*"/check-runs?check_name=agent-review&filter=latest&per_page=100") cat "$GH_DIR/check-runs.json" ;;
   "api repos/owner/proj/commits/"*"/status") cat "$GH_DIR/status.json" ;;
-  "api graphql "*) cat "$GH_DIR/entry.json" ;;
+  "api graphql "*dequeuePullRequest*)
+    printf '%s\n' "${*: -1}" >>"$GH_DIR/dequeues"
+    if [[ -f $GH_DIR/dequeue.error ]]; then echo "gh: $(<"$GH_DIR/dequeue.error")" >&2; exit 1; fi
+    echo '{"data": {"dequeuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}' ;;
+  "api graphql "*)
+    if [[ -f $GH_DIR/entry.sh ]]; then source "$GH_DIR/entry.sh"; fi
+    cat "$GH_DIR/entry.json" ;;
   "pr merge 5 --repo owner/proj "*)
     if [[ -f $GH_DIR/merge.sh ]]; then source "$GH_DIR/merge.sh"; exit; fi
     jq --arg m "$MERGE_SHA" '.state = "MERGED" | .mergeCommit = {oid: $m}' "$GH_DIR/pr.json" >"$GH_DIR/pr.next"
@@ -561,6 +569,7 @@ with_queue() {
   cat >"$CODE_CHECKOUT/bin/team-land" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_DIR/land.calls"
+[[ $1 != --task ]] || shift 2
 source "$GH_DIR/land.sh"
 SH
   chmod +x "$CODE_CHECKOUT/bin/team-land"
@@ -576,13 +585,20 @@ queue_rule() {
   echo '{"id": 42, "name": "dev", "target": "branch", "enforcement": "active", "bypass_actors": []}' >"$gh_dir/ruleset-42.json"
 }
 
-# PR #5's queue entry as GitHub's GraphQL answers team-merge's read: in_queue [no]
+# PR #5's queue entry as GitHub's GraphQL answers team-merge's read, the PR open, or with merged,
+# out of the queue and merged: in_queue [no|merged]
 in_queue() {
-  if [[ ${1:-} == no ]]; then
-    echo '{"data": {"repository": {"pullRequest": {"mergeQueueEntry": null}}}}' >"$gh_dir/entry.json"
-  else
-    echo '{"data": {"repository": {"pullRequest": {"mergeQueueEntry": {"state": "AWAITING_CHECKS"}}}}}' >"$gh_dir/entry.json"
-  fi
+  case ${1:-} in
+    no) echo '{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "OPEN", "mergeQueueEntry": null}}}}' ;;
+    merged) echo '{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "MERGED", "mergeQueueEntry": null}}}}' ;;
+    *) echo '{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "OPEN",
+      "mergeQueueEntry": {"state": "AWAITING_CHECKS"}}}}}' ;;
+  esac >"$gh_dir/entry.json"
+}
+
+# The dequeues gh was asked for, the PR's node id of each.
+dequeues() {
+  cat "$gh_dir/dequeues" 2>/dev/null || true
 }
 
 # How the stub team-land ends, after one line of progress, its last line team-land's JSON and its

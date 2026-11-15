@@ -55,6 +55,11 @@
 # hour), exit 1, after the check run's id when the post was made, so a caller that reads an id on
 # stdout knows the check was posted. A token GitHub answers that is not of a token's characters is
 # never sent.
+# With --merge-group, exit 1 is a refusal that stands while nothing changes (the commit is not the
+# proved merge, the head has no passing review or no success of the App's), on which team-land
+# takes the PR out of the queue, and exit 75 says the check could not be posted now, to try again:
+# an entry, a commit, the ledger or the head's check runs that cannot be read, and any call as
+# the App that fails with no check run posted.
 # Exit 2, posting nothing: any other command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -96,20 +101,28 @@ pr=$(registered_pr "$url")
 
 task=$(pr_task "$url")
 [[ -n $task ]] || die "no task's pr event names $url, so no review of it is logged; nothing posted"
+# What could not be read or posted now ends a --merge-group run with exit 75, to try again, and
+# the head's form as die does: later <why>
+later() {
+  echo "${0##*/}: $1" >&2
+  [[ -z $group ]] || exit 75
+  exit 1
+}
 # The head whose review stands for the sha: the sha itself, or the PR's head a trial commit merges.
 reviewed=$sha
 if [[ -n $group ]]; then
   rc=0
   reviewed=$(queue_commit_problems "$project" "$repo" "$number" "$sha") || rc=$?
+  ((rc != 2)) || later "$reviewed; nothing posted"
   ((rc == 0)) || die "$reviewed; nothing posted"
   summary="the merge queue's clean merge of the reviewed head ${reviewed:0:7}"
 fi
-refusal=$(review_refusal "$task" "$reviewed" "$conclusion") || die "the ledger's reviews of $task cannot be read"
+refusal=$(review_refusal "$task" "$reviewed" "$conclusion") || later "the ledger's reviews of $task cannot be read"
 [[ -z $refusal ]] || die "$refusal; nothing posted"
 
 if [[ -n $group ]]; then
   runs=$(bounded 30 gh api "repos/$repo/commits/$reviewed/check-runs?check_name=agent-review&filter=latest&per_page=100" </dev/null) ||
-    die "gh cannot read the agent-review check runs of $url's head $reviewed; nothing posted"
+    later "gh cannot read the agent-review check runs of $url's head $reviewed; nothing posted"
   jq -e --argjson app "$app_id" --arg head "$reviewed" '[.check_runs[]?
     | select(.name == "agent-review" and .app.id == $app and .head_sha == $head)] | max_by(.id)
     | .status == "completed" and .conclusion == "success"' <<<"$runs" >/dev/null ||
@@ -122,9 +135,11 @@ fi
 scratch=$(mktemp -d)
 token='' posted='' answer=''
 # On every exit once a token is minted, it is revoked; a revoke that fails is said and fails the run,
-# after the check run's id when the post was made.
+# after the check run's id when the post was made. A --merge-group run that fails from here on
+# with no check run posted ends with exit 75: the commit was not refused, and the post is tried again.
 finish() {
   local status=$? code
+  [[ -z $group || -n $posted || $status != 1 ]] || status=75
   if [[ $token =~ ^[A-Za-z0-9._-]+$ ]]; then
     if ! code=$(review_app_api DELETE installation/token "$token" 2>"$scratch/curl.err"); then
       echo "${0##*/}: revoking the App's token failed: $(grep -m1 . "$scratch/curl.err" || echo "curl failed"); it expires on its own within the hour" >&2

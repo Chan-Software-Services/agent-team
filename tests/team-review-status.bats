@@ -54,7 +54,7 @@ status_posts() {
 
 # --merge-group on <sha> is refused, exit 1, with <text> in what it says, and no status set.
 group_refused() {
-  run_bin -1 team-review-status --merge-group "$URL" "$1"
+  run_bin "-${GROUP_STATUS:-1}" team-review-status --merge-group "$URL" "$1"
   assert_contains "$output" "$2"
   assert_contains "$output" "nothing set"
   assert_equal "$(status_posts)" ""
@@ -260,9 +260,9 @@ SH
   queue_entry "$clean"
   sed -i 's/^merge_method = "merge"/merge_method = "squash"/' "$TEAM_HOME/projects.toml"
   group_refused "$clean" "proj merges with squash, and a trial commit is proved only for merge"
-  # An entry that cannot be read.
+  # An entry that cannot be read: exit 75, to try again.
   echo "HTTP 502: Bad Gateway" >"$GH_DIR/entry.error"
-  group_refused "$clean" "the merge queue entry of Owner/Proj#5 cannot be read: gh api graphql: HTTP 502: Bad Gateway"
+  GROUP_STATUS=75 group_refused "$clean" "the merge queue entry of Owner/Proj#5 cannot be read: gh api graphql: HTTP 502: Bad Gateway"
 }
 
 @test "--merge-group refuses a clean trial commit of a PR no task logged, or of a head whose latest review is not a pass" {
