@@ -492,13 +492,18 @@ TABLE
   # tasks/current.md's ask a1b2c3, numbered 6.
   jq '.items += [{n: 6, key: "note a1b2c3", kind: "note", task: "-", title: null, id: "a1b2c3", text: "Open it?", where: "1563000000000000045"}]' \
     "$TEAM_HOME/waiting.json" >"$BATS_TEST_TMPDIR/w" && mv "$BATS_TEST_TMPDIR/w" "$TEAM_HOME/waiting.json"
-  message "$COORDINATOR" 1564000000000000010 757 "2 yes, 4 yes, 6 yes"
+  # assistant/current.md's ask d4e5f6, numbered 7: the assistant's to act on and done.
+  jq '.items += [{n: 7, key: "note d4e5f6", kind: "note", task: "-", title: null, id: "d4e5f6", text: "Which login?", where: "1563000000000000046", list: "assistant"}]' \
+    "$TEAM_HOME/waiting.json" >"$BATS_TEST_TMPDIR/w" && mv "$BATS_TEST_TMPDIR/w" "$TEAM_HOME/waiting.json"
+  message "$COORDINATOR" 1564000000000000010 757 "2 yes, 4 yes, 6 yes, 7 yes"
   run_bin -1 --separate-stderr team-answer --item 2 1564000000000000010
   assert_equal "$stderr" "team-answer: item 2 is T9's PR https://github.com/o/r/pull/9, which Daniel's word merges: on a merge word, log team-log T9 merge-approved url=https://github.com/o/r/pull/9 discord_message=1564000000000000010 head=<the full sha you asked on>, then run team-merge T9"
   run_bin -1 --separate-stderr team-answer --item 4 1564000000000000010
   assert_equal "$stderr" "team-answer: item 4 is T10's interview, which Daniel answers in <#1010>; nothing is logged"
   run_bin -1 --separate-stderr team-answer --item 6 1564000000000000010
   assert_equal "$stderr" "team-answer: item 6 is the current item a1b2c3 of tasks/current.md, an ask with no asked, which no answer is logged for: act on the answer, then team-current done a1b2c3"
+  run_bin -1 --separate-stderr team-answer --item 7 1564000000000000010
+  assert_equal "$stderr" "team-answer: item 7 is the assistant's item d4e5f6 of assistant/current.md, an ask with no asked, which no answer is logged for and only the assistant dones: hand it the answer with team-assistant send note"
   assert_equal "$(reads)" ""
   assert_equal "$(logged_since)" ""
 }

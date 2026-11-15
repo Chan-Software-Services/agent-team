@@ -2441,7 +2441,8 @@ def waiting_item($n):
     | if $item != null then
         {item: (if $item.kind == "ask" then "ask \($item.task) \($item.id)"
           elif $item.kind == "pr" then "pr \($item.task) \($item.url)"
-          elif $item.kind == "note" then "note \($item.task) \($item.id)"
+          elif $item.kind == "note" then
+            "note \($item.task) \($item.id)" + (if $item.list == "assistant" then " assistant" else "" end)
           else "\($item.kind) \($item.task) \($item.thread)" end)}
       elif $shown != null then {refusal: "item \($n) no longer waits: the list posted \(.posted.at) showed it as \($shown.line)"}
       else {refusal: ("no item \($n) waits; "

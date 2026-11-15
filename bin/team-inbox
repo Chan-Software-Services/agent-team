@@ -89,7 +89,8 @@
 # read or a message cannot be posted.
 # --item <n>, n from 1 to 999, for routing Daniel's numbered reply ("3 yes, 5 no"; team-answer
 # --item runs it): prints the standing item numbered n, as "ask <task> <id>", "pr <task> <url>",
-# "interview <task> <thread>" or "note <task or -> <id>". It reads waiting.json alone, with no
+# "interview <task> <thread>" or "note <task or -> <id>", a note of the assistant's list with
+# " assistant" after it. It reads waiting.json alone, with no
 # lock, no Discord and no lease check (the lease-fence hook blocks it on a fenced machine), and
 # refuses with exit 1 a number no standing item holds: "item <n> no longer waits: the list posted
 # <time> showed it as <its line>" when the latest post showed it, else "no item <n> waits; the

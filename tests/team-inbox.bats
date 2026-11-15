@@ -187,6 +187,11 @@ $RANKED
   assert_equal "$(jq -c '[.items[] | [.key, .list]]' "$TEAM_HOME/waiting.json")" \
     "[[\"note $(item_id "$old_ask")\",\"coordinator\"],[\"note $(item_id "$new_ask")\",\"coordinator\"],[\"note $(item_id "$own_ask")\",\"assistant\"]]"
   assert_equal "$(jq -c '[.owed[] | .list]' "$TEAM_HOME/waiting.json")" '["coordinator","assistant"]'
+  # --item names the assistant's note with its list, and the coordinator's without.
+  run_bin -0 team-inbox --item 3
+  assert_equal "$output" "note - $(item_id "$own_ask") assistant"
+  run_bin -0 team-inbox --item 1
+  assert_equal "$output" "note - $(item_id "$old_ask")"
   # The assistant's list alone, with no coordinator's, is listed too; one that cannot be read is
   # left out, saying why, and the other still listed.
   rm "$TEAM_HOME/tasks/current.md"
