@@ -272,7 +272,7 @@ refuses_wrapped() {
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), which reaches every task's processes and the team's own sessions; the allowed way: find your own process's PID (pgrep -af <pattern>, or the \$! you noted when you started it) and kill that literal PID in a call of its own, which passes when the process is yours and its working directory is inside your worktree or your job's tmp. A guardrail: do not reach it another way."
   refuses "a recursive delete of $TMP/x, $OUTSIDE" "$DELETE_WAY" 'rm -rf "$T" . /tmp/x'
   refuses "a recursive delete of $WT, $KEPT" "$DELETE_WAY" 'rm -rf "$T" .'
-  git -C "$WT" init -q
+  git -C "${WT:?}" init -q
   refuses "a recursive delete of $WT/.git, $GIT" "$GIT_WAY" 'E=; rm -rf "$T" "$E" .git'
   refuses "a recursive delete of \$E, $EMPTY" "$EMPTY_WAY" 'E=; rm -rf "$T" "$E"'
 }
@@ -440,14 +440,14 @@ refuses_wrapped() {
   refuses "$FIND $BATS_TEST_TMPDIR, $OUTSIDE" "$DELETE_WAY" "find .. -delete"
   refuses "a recursive delete of $HOME, $OUTSIDE" "$DELETE_WAY" "rm -rf ~" 'rm -rf "$HOME"' 'rm -rf ${HOME}/'
   refuses "a recursive delete of /, $OUTSIDE" "$DELETE_WAY" "rm -rf /"
-  git -C "$WT" init -q
-  git -C "$JOB/tmp/check" init -q
+  git -C "${WT:?}" init -q
+  git -C "${JOB:?}/tmp/check" init -q
   ln -s "$JOB/tmp/check/.git" "$WT/gitlink"
   refuses_wrapped "a recursive delete of $WT/.git, $GIT" "$GIT_WAY" "rm -rf .git"
   refuses "a recursive delete of $WT/.git, $GIT" "$GIT_WAY" "rm -rf .git/" "rm -rf ./src/../.git"
   refuses "a recursive delete of $JOB/tmp/check/.git, $GIT" "$GIT_WAY" 'rm -rf "$CLAUDE_JOB_DIR/tmp/check/.git"' \
     "rm -rf gitlink"
-  git -C "$WT/src/sub" init -q
+  git -C "${WT:?}/src/sub" init -q
   refuses "a recursive delete of $WT/src/*/.git, $GIT" "$GIT_WAY" "rm -rf src/*/.git"
   refuses "a recursive delete of $WT/src/sub/.git, $GIT" "$GIT_WAY" "rm -rf src/sub/.git"
   refuses "$FIND $WT/.git, $GIT" "$GIT_WAY" "find .git -delete"
