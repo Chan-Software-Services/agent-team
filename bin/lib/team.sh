@@ -225,11 +225,13 @@ LEDGER_TASKS=() LEDGER_KINDS=() LEDGER_PUSH_DUE='' LEDGER_INBOX_DUE=''
 # Under the lock, the event of a writer in bin/lib/lifecycle.json's refusing_writers is checked
 # against the task's state, its events read from the ledger and folded in one jq run
 # (transition_problems in bin/lib/ledger.jq), so no other writer appends between the read and the
-# append. An event the table takes is appended with nothing said. One it refuses is, while the
-# table's lifecycle_from is null or after the event's ts, appended with one line on stderr per
-# problem, "<script>: lifecycle: <problem> (logged anyway; bin/lib/lifecycle.json refuses it from
-# its lifecycle_from, not set yet)", or "..., <lifecycle_from>)"; from lifecycle_from on, refused,
-# "refusing a ledger event: lifecycle: <problems joined by ; >", with nothing appended. Any other
+# append. An event the table takes is appended with nothing said. One it refuses is, from the
+# table's lifecycle_from on, refused, "refusing a ledger event: lifecycle: <problems joined by ; >",
+# with nothing appended; the table's is 2026-11-15T11:58:29Z, so it refuses every event logged now.
+# With a lifecycle_from that is null or after the event's ts, as a test sets one, it is appended
+# with one line on stderr per problem, "<script>: lifecycle: <problem> (logged anyway;
+# bin/lib/lifecycle.json refuses it from its lifecycle_from, not set yet)", or
+# "..., <lifecycle_from>)". Any other
 # writer acted before it logs, so its event is appended unchecked, saying nothing, and team-log
 # --check-lifecycle names it. With <seconds>, the lock is waited on at most that long, and a lock
 # still held then is a refusal, before any lifecycle check, and so is a lock or ledger that cannot

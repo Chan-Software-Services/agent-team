@@ -20,6 +20,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `code`: the paths every tracked path matches.
     - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
     - `command_text.py`: a Bash command's code text (heredoc bodies out unless a shell may read one, `-c` strings and what is piped into a shell in) and the walk of each simple command it runs, past wrappers, into tools' strings, for `command_rules.py`; `team-tokens` takes its heredoc rule.
+    - `compact-hold.sh`: the record of the coordinator's held auto-compaction, one file per session, written under its lock, and its log of each hold, tell, reminder, stow and release, for `bin/hooks/compact-hold` and `team-stowed`.
     - `data-check`: the one scan the CI's `data` job and the records' hook refuse with.
     - `delete_rules.py`: `command_rules.py`'s delete rows, refusing a recursive delete (`rm -r`, `find -delete`, `find -exec rm`) outside the worktree and the job's tmp, of either, its `.scratch/task` or what holds one, of a `.git`, an empty variable or no `find` start path, or of an unread path.
     - `doctor.d/`: `team-doctor`'s checks, one file each, which it sources in the order of their names (a new check is a new file, its number between its neighbours').
