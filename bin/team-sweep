@@ -328,9 +328,9 @@ own_covered() {
 
 # The findings now, as JSON in FINDINGS, from the ledger, a fresh read of the session list, the
 # stow plan and the live sessions' transcripts; fails with the reason on stderr when the session
-# list cannot be read.
+# list cannot be read, and with the sweep's exit code when its jq fails.
 look() {
-  local sessions plan activity plan_file own health plan_pid health_pid queue current queue_pid='' current_pid='' found
+  local sessions plan activity plan_file own health plan_pid health_pid queue current queue_pid='' current_pid='' found rc=0
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
   plan_file=$(mktemp)
   printf '%s\n' "$sessions" >"$plan_file.sessions"
@@ -359,12 +359,15 @@ look() {
   own=$(own_covered)
   found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self)' -nRc \
     --argjson sessions "$sessions" --argjson plan "$plan" --argjson activity "$activity" --argjson own "$own" \
-    --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" "$ledger")
+    --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" "$ledger") || rc=$?
   [[ -z $queue_pid ]] || wait "$queue_pid" || true
   [[ -z $current_pid ]] || wait "$current_pid" || true
   queue=$(cat "$plan_file.queue")
   current=$(cat "$plan_file.current")
   rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.queue" "$plan_file.current"
+  # A failed sweep fails the look with its exit code, once its scripts are waited for and its
+  # files gone: --wait calls it as a condition, where set -e stops nothing.
+  ((rc == 0)) || return "$rc"
   [[ -n $queue ]] || queue='{"error": "team-queue list printed nothing"}'
   [[ -n $current ]] || current='{"error": "team-current check printed nothing"}'
   FINDINGS=$(ledger_jq '. + sweep_views($queue; $current)' -c --argjson queue "$queue" --argjson current "$current" \
