@@ -211,9 +211,12 @@ $RANKED"
   printf '%s\n' "# Current items" "$old_ask" "$new_ask" "$until_owe" \
     "- next T4 open the Node pin task | ledger 2026-11-01T07:08:11Z$end" \
     "- ask - a line of neither form | 1563000000000000045 | soon" >"$TEAM_HOME/tasks/current.md"
-  printf '%s\n' "# Assistant items" "$own_ask" "$own_owe" >"$TEAM_HOME/assistant/current.md"
+  printf '%s\n' "# Assistant items" "$own_ask" "$own_owe" "- owe - no added time | 1563000000000000047 | review 2026-11-18" \
+    "- owe T4a a task that is none | 1563000000000000048$end" >"$TEAM_HOME/assistant/current.md"
   run_bin -0 --separate-stderr team-inbox
-  assert_equal "$stderr" ""
+  # A line team-current reads as an item and this list cannot is left out, and named.
+  assert_equal "$stderr" "team-inbox: leaves out 1 ask or owe line of tasks/current.md that is no item as team-current writes one ($(item_id "- ask - a line of neither form | 1563000000000000045 | soon")): team-current check --list coordinator says why
+team-inbox: leaves out 2 ask or owe lines of assistant/current.md that are no item as team-current writes one ($(item_id "- owe - no added time | 1563000000000000047 | review 2026-11-18"), $(item_id "- owe T4a a task that is none | 1563000000000000048$end")): team-current check --list assistant says why"
   assert_equal "$output" "wrote waiting.md: 3 items"
   assert_equal "$(waiting_items_shown)" "- **1** which domain for the docs site <https://discord.com/channels/1/2/3> - unblocks 0
 - **2** T4 open a research task on Fable one-shots? - unblocks 0
@@ -233,7 +236,7 @@ $RANKED
   # The assistant's list alone, with no coordinator's, is listed too; one that cannot be read is
   # left out, saying why, and the other still listed.
   rm "$TEAM_HOME/tasks/current.md"
-  run_bin -0 team-inbox
+  run_bin -0 --separate-stderr team-inbox
   assert_equal "$output" "wrote waiting.md: 1 item"
   rm "$TEAM_HOME/assistant/current.md"
   mkdir "$TEAM_HOME/assistant/current.md"

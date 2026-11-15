@@ -36,7 +36,9 @@
 # in their order: "-# Owed you: <"Assistant: " when the assistant's><task unless -> <text> <where
 # when a URL>". With none, the list says "Nothing waits on you.". An ask's line is cut at 150
 # characters of its text, a title at 80. A list that cannot be read leaves its asks and owe lines
-# out, with a line on stderr saying why.
+# out, with a line on stderr saying why, and so does an ask or owe line that is no item as
+# team-current writes one: "team-inbox: leaves out <n> ask or owe line(s) of <file> that is (are) no
+# item as team-current writes one (<their ids>): team-current check --list <list> says why".
 # Numbers: an item is keyed "ask <task> <id> <the asked's ts>" (so a re-ask of the same id is a new
 # item), "pr <url>" (its trailing slash dropped), "interview <task> <thread>", "walk <task> <the
 # walk's start>" (so a walk stopped and started again is a new item) or "note <id>", id
@@ -306,7 +308,9 @@ fi
 # The asks and owed replies of both lists, tasks/current.md's and the assistant's
 # assistant/current.md, team-current's ask and owe lines in either form (current_item in
 # bin/lib/ledger.jq), as [{kind, task, text, where, id, list}], id team-current's and list the
-# list's name; a list that cannot be read is left out, saying why.
+# list's name; a list that cannot be read is left out, saying why, and so is each ask or owe line
+# that is no item to current_item (an end with no added, an end of neither form, a task that is
+# neither T<n> nor -), named by its id.
 notes='[]'
 for list in coordinator assistant; do
   case $list in
@@ -319,11 +323,22 @@ for list in coordinator assistant; do
   if ((rc > 1)); then
     echo "team-inbox: leaves out the asks and owed replies of $rel, since it cannot be read: $(grep -m 1 . "$scratch/current" | sed 's/^grep: //' || echo "grep failed")" >&2
   elif [[ -n $found ]]; then
-    notes=$(while IFS= read -r line; do
+    read_list=$(while IFS= read -r line; do
       printf '%s %s\n' "$(printf '%s' "${line#- }" | sha256sum | cut -c1-6)" "${line#- }"
-    done <<<"$found" | ledger_jq '$notes + [inputs | .[:6] as $id | .[7:] | current_item
-      | select(. != null and (.kind | IN("ask", "owe")) and (.task | test("^(T[0-9]+|-)$")))
-      | {kind, task, text, where, id: $id, list: $list}]' -nRc --argjson notes "$notes" --arg list "$list")
+    done <<<"$found" | ledger_jq '[inputs | .[:6] as $id | .[7:] | current_item
+        | if . != null and (.kind | IN("ask", "owe")) and (.task | test("^(T[0-9]+|-)$"))
+          then {kind, task, text, where, id: $id, list: $list} else {left: $id} end]
+      | {notes: ($notes + map(select(.left == null))), left: map(.left | strings)}' \
+      -nRc --argjson notes "$notes" --arg list "$list")
+    notes=$(jq -c .notes <<<"$read_list")
+    left=$(jq -r '.left | join(", ")' <<<"$read_list")
+    if [[ -n $left ]]; then
+      if [[ $left == *,* ]]; then
+        echo "team-inbox: leaves out $(jq -r '.left | length' <<<"$read_list") ask or owe lines of $rel that are no item as team-current writes one ($left): team-current check --list $list says why" >&2
+      else
+        echo "team-inbox: leaves out 1 ask or owe line of $rel that is no item as team-current writes one ($left): team-current check --list $list says why" >&2
+      fi
+    fi
   fi
 done
 
