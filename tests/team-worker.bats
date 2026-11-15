@@ -1436,8 +1436,25 @@ skills_only_kit() {
     'echo "echo run" >skills/look/run.sh'
     'mkdir skills/look/scripts'
     'echo "loose" >skills/loose.md'
-    'rm -r skills && ln -s ../kit-a skills'
-    'rm README.md && ln -s ../kit-a/.mcp.json README.md'
+    # A symbolic link at each level, each to the same entry of a skills-only kit, so only the
+    # link is the change.
+    'rm README.md && ln -s ../kit-s/README.md README.md'
+    'rm -r evals && ln -s ../kit-s/evals evals'
+    'rm -r .claude-plugin && ln -s ../kit-s/.claude-plugin .claude-plugin'
+    'rm .claude-plugin/plugin.json && ln -s ../../kit-s/.claude-plugin/plugin.json .claude-plugin/plugin.json'
+    'rm -r agents && ln -s ../kit-s/agents agents'
+    'rm agents/reader.md && ln -s ../../kit-s/agents/reader.md agents/reader.md'
+    'rm -r skills && ln -s ../kit-s/skills skills'
+    'rm -r skills/look && ln -s ../../kit-s/skills/look skills/look'
+    'rm skills/look/SKILL.md && ln -s ../../../kit-s/skills/look/SKILL.md skills/look/SKILL.md'
+    # A key of a frontmatter nested under another, in single quotes, as a YAML explicit key, and
+    # in a file that opens with a byte order mark.
+    'printf "%s\n" --- "name: reader" "meta:" "  hooks: {}" --- "You read." >agents/reader.md'
+    "printf '%s\n' --- \"'hooks': {}\" 'name: look' --- '# Look' >skills/look/SKILL.md"
+    'printf "%s\n" --- "name: reader" "? hooks" ": {}" --- "You read." >agents/reader.md'
+    'printf "%s\n" --- "name: look" "? mcpServers" ": {}" --- "# Look" >skills/look/SKILL.md'
+    'sed -i "2i hooks:" agents/reader.md && sed -i "1s/^/\xEF\xBB\xBF/" agents/reader.md'
+    'sed -i "2i mcpServers:" skills/look/SKILL.md && sed -i "1s/^/\xEF\xBB\xBF/" skills/look/SKILL.md'
   )
   for change in "${changes[@]}"; do
     n=$((n + 1))
@@ -1453,12 +1470,37 @@ skills_only_kit() {
   done
 }
 
+@test "a toolkit name that is no plain directory name is refused at the command line, a skills-only directory outside toolkits/ included" {
+  fake_checkout
+  skills_only_kit kit-s
+  # A directory outside toolkits/ that reads as skills-only, as one a worker could write.
+  mkdir -p "$code/elsewhere/kit"
+  echo "# kit" >"$code/elsewhere/kit/README.md"
+  open_task T7
+  local name calls logged
+  calls=$(bg_calls | wc -l) logged=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+  for name in ../elsewhere/kit kit-s/ kit-s/evals kit-s/../kit-s ./kit-s . .. ../toolkits/kit-s "$code/toolkits/kit-s" ''; do
+    run_fake T7 planner "$wt1" --toolkit "$name" -- go
+    assert_equal "'$name': $status" "'$name': 2"
+    assert_contains "$output" "unknown toolkit '$name'"
+    assert_equal "'$name': $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "'$name': $calls $logged"
+  done
+  # So a delivery's own toolkit is never passed twice under a second spelling.
+  template_brief T7 builder-deliver
+  run_bin -2 team-worker T7 builder "$wt1" --toolkit spec-review/ -- "$brief_prompt"
+  assert_contains "$output" "unknown toolkit 'spec-review/'"
+  assert_equal "$(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$calls $logged"
+}
+
 @test "the help states the delivery toolkits, the skills-only exemption, its reason and the property" {
   run_bin -0 team-worker --help
   assert_contains "$output" "A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets"
   assert_contains "$output" "A skills-only toolkit needs no line in its project's toolkits list, on any launch"
   assert_contains "$output" "the list keeps MCP servers and production access per project, and a skills-only toolkit starts"
-  assert_contains "$output" "skills_only_toolkit"
+  assert_contains "$output" "Skills-only is read from the toolkit's own files at each launch"
+  assert_contains "$output" "none a symbolic link"
+  assert_contains "$output" "has hooks or mcpServers before a colon, or a line opening with"
+  assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 
 @test "the worker settings take away the tools and skills no worker uses, and the check notices a named one" {
