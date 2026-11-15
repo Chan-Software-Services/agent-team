@@ -555,14 +555,16 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'queue each plain `before` note as a follow-up' "$manual"
   grep -qF '`change` when it is on a line the PR adds or changes, `before` when it is on code the PR did not change' <<<"$reviewer"
   grep -qF 'a plain `note` goes back when its scope is `change`, and is queued as a follow-up, never sent back, when it is `before`' <<<"$reviewer"
-  # Every round, a notes-only one too, reports at the push and stops: no builder waits on CI or
-  # pushes a fix under a review, and a red check comes back as a fix round from the checks wait.
-  grep -qF '   The delivery ends at the `PR` it sends (on a gated project, once the gate'"'"'s run, its ci step skipped, or the base'"'"'s merge after it has pushed), with no wait on the PR'"'"'s GitHub checks and nothing more pushed' \
+  # Every round, a notes-only one too, reports at the push, or once the CI run of its head that
+  # its brief has it wait on is green, and stops: no builder waits on the PR's checks or pushes a
+  # fix under a review, and a red check comes back as a fix round from the checks wait.
+  grep -qF '   The delivery ends at the `PR` it sends (on a gated project, once the gate'"'"'s run, its ci step skipped, or the base'"'"'s merge after it has pushed), with no wait after it on the PR'"'"'s GitHub checks and nothing more pushed' \
     "$REPO_ROOT/templates/briefs/builder-round.md"
-  # The round updates the PR body's local checks line before its report.
-  grep -qF 'bring the PR body'"'"'s local checks line up to the head you pushed (`gh pr edit <full url> --body-file <file>`)' \
-    "$REPO_ROOT/templates/briefs/builder-round.md"
-  section builder 'What you do' | grep -qF 'On every delivery, send `PR <full url>` as soon as the push and the PR body are in (on a gated one, once the gate'"'"'s run, its ci step skipped, has opened or updated the PR and you have read the title and body it drafted against the project'"'"'s rules and fixed them on the PR), and on a merge-base round `DONE merged ...` once its push is in, and stop there: you never wait on the PR'"'"'s GitHub checks, since a red check comes back to you from the coordinator as a fix round.'
+  # The PR body names no local checks, so the round has no line of them to bring up to date.
+  if grep -F 'local checks' "$REPO_ROOT/templates/briefs/builder-round.md"; then return 1; fi
+  section builder 'What you do' | grep -qF 'On every delivery, send `PR <full url>` as soon as the push and the PR body are in and, where your brief has you run `team-ci-run`, it has exited 0 (on a gated one, once the gate'"'"'s run, its ci step skipped, has opened or updated the PR and you have read the title and body it drafted against the project'"'"'s rules and fixed them on the PR), and on a merge-base round `DONE merged ...` once its push is in and that run, where your brief has it, has exited 0, and stop there: past the CI run of your head your brief may have you wait on, you never wait on the PR'"'"'s GitHub checks, since a red check comes back to you from the coordinator as a fix round.'
+  section builder 'What you do' | grep -qF 'with the tests your brief names for your project, whatever the `implement` skill says: never the whole suite, which CI runs on every head pushed, unless your brief says nothing else runs it, and where your brief has you run CI on your branch with `team-ci-run`, report only once it exits 0.'
+  if section builder 'What you do' | grep -F -e 'tests/run' -e '--changed'; then return 1; fi
   section builder 'What you do' | grep -qF -- '- Fix the review findings and failed checks the coordinator sends you on the same branch'
   section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read, since the coordinator'"'"'s script waits on the checks of a pass.'
   if section builder 'What you do' | grep -F -e team-ci-wait -e 'When every finding it sends is a plain `note`'; then return 1; fi
@@ -629,7 +631,6 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # Step 3: the ask names the caps, and either approval logs them as parallel=.
   grep -qF 'the merge word, naming the `Parallel:` line'"'"'s caps' <<<"$approve"
   grep -qF '`parallel=<caps>`' <<<"$approve"
-  grep -qF 'a cap above 1 only once T287'"'"'s phase 3 is on `dev`' <<<"$approve"
   # Step 4: the spec's one line on a parallel phase.
   grep -qF 'In a phase whose cap is above 1, `team-next T<n> --fill` starts it and launches each ticket ready under the cap, each in a ticket worktree as `T<n>-builder-NN`; each `DONE <NN>` integrates the ticket (or prints what to send its builder) and fills again; run it with the Bash timeout at 600000, and again once a room refusal clears or after a resume.' <<<"$build"
   # The level and resume skills relaunch a ticket builder with --fill, never by role.
@@ -767,7 +768,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF "On \`T<n> DONE <path>\`, run \`team-next T<n> -- '<the message>'\`" "$plugin/skills/retro/SKILL.md"
 }
 
-@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 120 lines and 29721 bytes" {
+@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 120 lines and 29786 bytes" {
   local files=("$manual" "$plugin"/skills/*/SKILL.md) found
   # A worker's report is logged only by team-next or team-log --from-message; a paused of a cause
   # no worker reports (the usage limit, the machine's load, the machine off) is the coordinator's own.
@@ -814,10 +815,26 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # message table its two rows and manual-steps.md went to it, three lines tightened to fit, and
   # 119 lines and 29340 bytes once the outside-text rule named the assistant's messages and the
   # four words that never come through it, and its hand-off row acted on Daniel's own message,
-  # and 120 lines and 29721 bytes once each current item took a close condition or a review date,
+  # and 29406 once its BLOCKED row said the one that took a command-guard refusal's allowed way
+  # is logged denied, parks nothing and waits for the status report, with no ping of its own,
+  # and 120 lines and 29786 bytes once each current item took a close condition or a review date,
   # and a due one was a finding until done or renewed).
   (($(wc -l <"$manual") <= 120))
-  (($(wc -c <"$manual") <= 29721))
+  (($(wc -c <"$manual") <= 29786))
+}
+
+@test "a worker goes on by a command-guard refusal's allowed way and reports it, which the coordinator logs denied and lists in its status report" {
+  # Each worker role says it in the same words, right after its denial section's first sentence.
+  local sentence="When a \`command-guard\` refusal names an allowed way, take that way and go on, and still send \`T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way\`, which parks nothing; a refusal with no allowed way is as above." role
+  for role in builder planner reviewer ops; do
+    assert_equal "$(grep -A 3 -x '## When something is denied' "$REPO_ROOT/roles/$role.md" | sed -n 4p)" "$sentence"
+  done
+  # The manual's BLOCKED row logs it denied, and the status report lists it.
+  grep -E '^\| `BLOCKED <what> <why>`' "$manual" |
+    grep -qF '; one ending "; took its allowed way" is logged denied, parks nothing and waits for your status report, no ping. |'
+  grep -qF "the snapshot's denials line" "$plugin/skills/status-report/SKILL.md"
+  # The form the role sentence gives is one team-log --from-message reads.
+  grep -qF '"BLOCKED <what> <why>; took its allowed way"' "$REPO_ROOT/bin/lib/messages.jq"
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {

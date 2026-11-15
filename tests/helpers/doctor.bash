@@ -188,8 +188,10 @@ EOF
   assistant_channel '[]'
   export TEAM_1PASSWORD_APP=$BATS_TEST_TMPDIR/1Password
   touch "$TEAM_1PASSWORD_APP"
-  # The Docker daemon answers, and a browser is installed.
+  # The Docker daemon answers, a new veth gets no IPv6 link-local address, as home-pc's sysctl.d
+  # sets (veth_addr_gen_mode), and a browser is installed.
   answer "docker info --format {{.ServerVersion}}" "28.3.3"
+  veth_addr_gen_mode 1
   export TEAM_CHROME=$BATS_TEST_TMPDIR/chrome
   touch "$TEAM_CHROME"
   chmod +x "$TEAM_CHROME"
@@ -407,6 +409,19 @@ on_macos() {
   as_macos
   echo arm64 >"$STUB_FIXTURES/uname-m.out"
   "$CODE_CHECKOUT/bin/team-timers" enable >/dev/null
+}
+
+# The kernel's net.ipv6.conf.default.addr_gen_mode, as /proc/sys under TEAM_CGROUP_ROOT gives it to
+# the docker veth line: veth_addr_gen_mode <value>, or none for a kernel with IPv6 off, which has no
+# /proc/sys/net/ipv6.
+veth_addr_gen_mode() {
+  local dir=$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default
+  if [[ $1 == none ]]; then
+    rm -rf "${TEAM_CGROUP_ROOT:?}/proc/sys/net/ipv6"
+  else
+    mkdir -p "$dir"
+    echo "$1" >"$dir/addr_gen_mode"
+  fi
 }
 
 # The ids of the manifest's enabled secrets, in order.

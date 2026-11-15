@@ -286,6 +286,20 @@ TOML
   done
 }
 
+@test "a git pool may list no slots, and a treehouse pool may not" {
+  sed '/^slots = \["beta/d' "$TEAM_HOME/projects.toml" >"$BATS_TEST_TMPDIR/projects.toml"
+  registry <"$BATS_TEST_TMPDIR/projects.toml"
+  run_bin -0 team-project --check
+  run_bin -0 team-project beta pool
+  assert_equal "$(jq -c . <<<"$output")" '{"provider":"git","slots":[]}'
+  run_bin -0 team-project beta pool.slots
+  assert_equal "$output" "[]"
+  sed '/^slots = \[".treehouse/d' "$TEAM_HOME/projects.toml" >"$BATS_TEST_TMPDIR/projects.toml"
+  registry <"$BATS_TEST_TMPDIR/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" "alpha.pool: a treehouse pool needs 'slots'"
+}
+
 @test "--check refuses a project named coordinator, the team home's memory folder" {
   sed 's/^\[beta/[coordinator/' "$TEAM_HOME/projects.toml" >"$BATS_TEST_TMPDIR/projects.toml"
   registry <"$BATS_TEST_TMPDIR/projects.toml"
@@ -415,6 +429,25 @@ home_setting() {
     '["test -z \"$(gofmt -l .)\"","make lint","go test -race ./...","bash scripts/e2e.sh"]'
   assert_equal "$(jq -c .pool.slots <<<"$output")" \
     "[\"$HOME/Documents/projects/personal/no-mistakes/.claude/worktrees/1\",\"$HOME/Documents/projects/personal/no-mistakes/.claude/worktrees/2\",\"$HOME/Documents/projects/personal/no-mistakes/.claude/worktrees/3\"]"
+
+  # Each project with CI, or the local checks a reviewer and team-merge run, names the tests a
+  # builder's change reaches.
+  local project
+  for project in conventioner agent-team no-mistakes; do
+    run_bin -0 team-project "$project" changed_tests
+    [[ -n $output ]]
+  done
+  run_bin -0 team-project agent-team changed_tests
+  assert_equal "$output" \
+    '`tests/run shellcheck --changed`, and each test file you wrote or changed, alone: `tests/vendor/bats-core/bin/bats tests/<name>.bats` (add `-f '"'<part of its name>'"'` for one test) or `node --test tests/toolkits/<name>.test.mjs`'
+
+  # agent-team's builders run CI on their branch; no other project's do.
+  run_bin -0 team-project agent-team branch_ci
+  assert_equal "$output" ci.yml
+  for project in conventioner no-mistakes; do
+    run_bin -0 team-project "$project" branch_ci
+    assert_equal "$output" ''
+  done
 }
 
 @test "local_checks is optional, defaults to none, and must be one-line commands" {
@@ -729,6 +762,68 @@ TOML
   sed -i 's|^visibility = "private"$|visibility = "internal"|' "$TEAM_HOME/projects.toml"
   run_bin -1 --separate-stderr team-project --check
   assert_contains "$stderr" "alpha.visibility: must be one of public, private"
+}
+
+@test "changed_tests is optional, empty by default, and one line of text" {
+  run_bin -0 team-project alpha changed_tests
+  assert_equal "$output" ''
+  run_bin -0 team-project alpha
+  assert_equal "$(jq -r .changed_tests <<<"$output")" ''
+  sed -i '0,/^toolkits = \[\]$/s||toolkits = []\nchanged_tests = "`make test-changed` on the packages you changed"|' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --check
+  run_bin -0 team-project alpha changed_tests
+  assert_equal "$output" '`make test-changed` on the packages you changed'
+  run_bin -0 team-project beta changed_tests
+  assert_equal "$output" ''
+
+  local bad
+  for bad in '""' '"  "' '"a\\nb"' '["make test"]' '1'; do
+    sed -i "s|^changed_tests = .*|changed_tests = $bad|" "$TEAM_HOME/projects.toml"
+    run_bin -1 --separate-stderr team-project --check
+    assert_contains "$stderr" "alpha.changed_tests: must be one line of text, not empty"
+  done
+}
+
+@test "branch_ci is optional, none by default, and a workflow file name on a direct-pr project with changed_tests" {
+  run_bin -0 team-project beta branch_ci
+  assert_equal "$output" ''
+  run_bin -0 team-project beta
+  assert_equal "$(jq -r .branch_ci <<<"$output")" ''
+  # beta delivers by direct PR.
+  sed -i '/^\[beta\]$/,/^\[beta.pool\]$/s|^toolkits = \[\]$|toolkits = []\nchanged_tests = "`make test-changed`"\nbranch_ci = "ci.yml"|' \
+    "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --check
+  run_bin -0 team-project beta branch_ci
+  assert_equal "$output" ci.yml
+  run_bin -0 team-project alpha branch_ci
+  assert_equal "$output" ''
+
+  local good bad
+  for good in '"test.yaml"' '"CI_2-a.b.yml"'; do
+    sed -i "s|^branch_ci = .*|branch_ci = $good|" "$TEAM_HOME/projects.toml"
+    run_bin -0 team-project --check
+  done
+  for bad in '""' '"ci"' '"ci.yml "' '".github/workflows/ci.yml"' '"ci.yml\\n"' '"ci.toml"' '"c i.yml"' '["ci.yml"]' '1' 'true'; do
+    sed -i "s|^branch_ci = .*|branch_ci = $bad|" "$TEAM_HOME/projects.toml"
+    run_bin -1 --separate-stderr team-project --check
+    assert_contains "$stderr" "beta.branch_ci: must be a workflow's file name under .github/workflows/, such as \"ci.yml\""
+  done
+  sed -i 's|^branch_ci = .*|branch_ci = "ci.yml"|' "$TEAM_HOME/projects.toml"
+
+  # Without changed_tests the briefs have no local tests to name.
+  sed -i '/^changed_tests = /d' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" "beta.branch_ci: needs changed_tests, the tests a builder still runs on the machine"
+  [[ $stderr != *delivery* ]]
+
+  # The gate pushes and opens the PR itself, so a gated project runs no CI on a branch.
+  sed -i '/^\[alpha\]$/,/^\[alpha.pool\]$/s|^toolkits = \[\]$|toolkits = []\nchanged_tests = "`make test-changed`"|' \
+    "$TEAM_HOME/projects.toml"
+  sed -i '/^\[beta\]$/,/^\[beta.pool\]$/{/^branch_ci = /d}' "$TEAM_HOME/projects.toml"
+  sed -i '/^\[alpha\]$/,/^\[alpha.pool\]$/s|^toolkits = \[\]$|toolkits = []\nbranch_ci = "ci.yml"|' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" 'alpha.branch_ci: needs delivery = "direct-pr", not "no-mistakes"'
+  [[ $stderr != *changed_tests* ]]
 }
 
 @test "--check refuses merge_with_plan as retired by T276, and every command with it" {

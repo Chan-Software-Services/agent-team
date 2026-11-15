@@ -86,8 +86,8 @@
 # model, compaction, wait:message, wait:other, wait:error; for a command wait:message (team-thread
 # wait, an interview's wait on Daniel), checks (team-checks, or a
 # name naming a linter, formatter or type checker, go vet), gate (no-mistakes, git push
-# no-mistakes), ci (team-ci-wait, gh or gh-axi pr checks, run watch or run view), tests (tests/run,
-# bats, playwright, pytest, vitest, jest, go, cargo, npm, pnpm, yarn or bun test, npm run test...
+# no-mistakes), ci (team-ci-wait, team-ci-run, gh or gh-axi pr checks, run watch or run view),
+# tests (tests/run, bats, playwright, pytest, vitest, jest, go, cargo, npm, pnpm, yarn or bun test, npm run test...
 # and the like, a program named with test), stacks (team-stack, docker), browser
 # (chrome-devtools-axi, team-ui), git (any other git, gh or gh-axi);
 # for a tool browser (Chrome DevTools'), subagents (Agent), files (Read, Edit, Write, Grep, Glob,

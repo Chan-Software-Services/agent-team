@@ -911,7 +911,7 @@ open_ticket() {
 
   on_machine laptop run_bin -1 --separate-stderr team-resume
   report=$(reported)
-  local reason="feat/T1-work--02 is on no origin, a ticket branch being never pushed, and the team home's origin has no wip/home/T1--02, so T1's ticket 02 worktree in home cannot be made here"
+  local reason="feat/T1-work--02 is on no origin, a ticket branch being kept only by the checkpoint, and the team home's origin has no wip/home/T1--02, so T1's ticket 02 worktree in home cannot be made here"
   assert_contains "$stderr" "team-resume: T1 home--02: not re-homed: $reason"
   assert_contains "$output" "T1 home: $laptop/home/slots/home/1 on feat/T1-work at "
   assert_equal "$(jq -c '.tasks[0] | {worktrees: (.worktrees | map([.project, .ticket])), failures}' "$report")" \

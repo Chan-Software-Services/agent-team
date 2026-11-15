@@ -311,6 +311,24 @@ launched T7-builder c0000001"
   assert_equal "$(bg_calls | wc -l)" 1
 }
 
+@test "an ask that names tickets holds only those tickets, so the hand-off goes on to another" {
+  # T193: the ask held only later tickets, yet ticket 01's DONE was refused.
+  event asked '{id: "prune", text: "Prune 03?", tickets: ["03"]}'
+  run_bin -0 --separate-stderr team-next T7 -- "T7 DONE 01 $sha done"
+  assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-build-02.md"
+  assert_contains "$output" "launched T7-builder c0000001"
+}
+
+@test "a ticket an ask holds is neither the next ready one nor one --next may name, until the ask is answered" {
+  event asked '{id: "prune", text: "Prune 02?", tickets: ["02"]}'
+  refused "--next 02 is not ready once 01 is done: 02 held by the unanswered ask prune" T7 --next 02 -- "T7 DONE 01 $sha done"
+  refused "tickets remain once 01 is done, but none is ready: 02 held by the unanswered ask prune" T7 -- "T7 DONE 01 $sha done"
+  # Answered, it holds nothing.
+  event answered '{id: "prune", answer: "keep it"}'
+  run_bin -0 team-next T7 -- "T7 DONE 01 $sha done"
+  assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-build-02.md"
+}
+
 @test "the brief path in the prompt is the one team-brief printed, and team-worker reads it" {
   run_bin -0 team-next T7 -- "T7 DONE 01 $sha done"
   local brief
@@ -739,6 +757,39 @@ launched T7-reviewer c0000002"
   assert_equal "$(record rereview-3 | jq -r .values.reviewed)" "$fix"
 }
 
+@test "a later phase's first PR is a first review, with --checks and the reviewer brief as review-2, and its next PR a rereview" {
+  # Phase 1's PR passed and merged with phase 2 left.
+  mkdir -p "$TEAM_HOME/tasks/T7"
+  echo "phase 1's review" >"$TEAM_HOME/tasks/T7/brief-review.md"
+  event pr "$(jq -cn --arg url "$url" --arg h "$sha" '{url: $url, head: $h}')"
+  launched r0000001 brief-review '[]' reviewer
+  review_logged pass "$sha" '[]'
+  event 'done' '{role: "reviewer", session: "r0000001"}'
+  event merged "$(jq -cn --arg url "$url" --arg h "$sha" '{pr: 9, merge: "m0", head: $h, by: "team-merge", url: $url, phases_left: [2]}')"
+  local url2=https://github.com/owner/proj/pull/10 head2 fix
+  head2=$(commit phase2.txt "feat: phase 2")
+  on_github 10 "$head2"
+  refused "T7 has no review since its phase merged at 2026-11-01T10:00:00Z, so its first reviewer needs --checks <file>, the review's checks" \
+    T7 -- "T7 PR $url2"
+  run_bin -0 --separate-stderr team-next T7 --checks "$(checks)" -- "T7 PR $url2"
+  assert_equal "$output" "logged pr url=$url2 head=$head2
+brief $TEAM_HOME/tasks/T7/brief-review-2.md
+launched T7-reviewer c0000001"
+  assert_equal "$(record review-2 | jq -c '{template, pr: .values.pr, head: .values.head, checks: .values.checks}')" \
+    "$(jq -cn --arg url "$url2" --arg h "$head2" '{template: "reviewer", pr: $url, head: $h, checks: "1. team-next launches the reviewer."}')"
+
+  # Phase 2's review is the latest since the merge: its next PR is a rereview, and takes no --checks.
+  review_logged findings "$head2" '[1]' '{"blocking": 1}'
+  fix=$(commit phase2-fix.txt "fix: finding 1")
+  on_github 10 "$fix"
+  refused "T7 has a review already, so --checks is for its first reviewer only; a rereview takes --since" \
+    T7 --checks "$(checks)" -- "T7 PR $url2"
+  run_bin -0 --separate-stderr team-next T7 -- "T7 PR $url2"
+  assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
+  assert_equal "$(record rereview-2 | jq -c '{template, reviewed: .values.reviewed}')" \
+    "$(jq -cn --arg r "$head2" '{template: "rereview", reviewed: $r}')"
+}
+
 @test "each review brief names the instruction and settings files the PR changes, and one whose list git cannot give launches nothing" {
   local head fix fix2 before list
   mkdir -p "$wt/.claude"
@@ -1022,9 +1073,9 @@ counts="findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,n
 # pr_on_github <head> [<behind_by>] [<checks as JSON>]: the gh stub answers team-state's reads
 # of PR 9 (open, against main, at <head>), its checks (agent-review passed by default), its
 # required checks (none), the compare of main with <head> (0 behind by default), the real
-# team-ci-wait's look at it (the PR's state and head, and no workflow run of the head), so a
-# findings round's look ends on its first look, and, read only with the reviewer App on, the
-# head's agent-review check runs and commit statuses (none).
+# team-ci-wait's look at it (the PR's state and head, no workflow run of the head and none of the
+# repository in progress), so a findings round's look ends on its first look, and, read only with
+# the reviewer App on, the head's agent-review check runs and commit statuses (none).
 pr_on_github() {
   export GH_HEAD=$1 GH_BEHIND=${2:-0}
   export GH_CHECKS=${3:-'[{"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'}
@@ -1035,6 +1086,7 @@ case "$*" in
       changedFiles: 1}' ;;
   "pr view 9 --repo owner/proj --json state,headRefOid") jq -cn --arg h "$GH_HEAD" '{state: "OPEN", headRefOid: $h}' ;;
   "api repos/owner/proj/actions/runs?head_sha=$GH_HEAD&per_page=100") echo '{"total_count": 0, "workflow_runs": []}' ;;
+  "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") echo '{"total_count": 0, "workflow_runs": []}' ;;
   "pr checks 9 --repo owner/proj --required"*) echo '[]' ;;
   "pr checks 9 --repo owner/proj"*) echo "$GH_CHECKS" ;;
   "api repos/owner/proj/compare/main...$GH_HEAD --jq .behind_by") echo "$GH_BEHIND" ;;
@@ -1079,7 +1131,7 @@ live() {
 outside_calls() {
   stub_calls curl
   stub_calls gh | jq -c 'select((.[0] == "pr" and (.[1] == "view" or .[1] == "checks"))
-    or (.[0] == "api" and (.[1] | test("/compare/|/pulls/[0-9]+/files$|/actions/runs[?]head_sha=|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
+    or (.[0] == "api" and (.[1] | test("/compare/|/pulls/[0-9]+/files$|/actions/runs[?](head_sha=|status=in_progress&)|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
 }
 
 @test "a pass whose PR head moved past the reviewed head is refused naming both, nothing logged" {
@@ -2331,6 +2383,27 @@ launched T7-builder-02 c0000002"
   refused "--next 02 is not ready: 02 running in session c0000002" T7 --fill --next 02
 }
 
+@test "--fill launches no ticket an ask holds, names it held, and refuses it as --next, until the ask is answered" {
+  fill_ready 2
+  ticket 02-second "Blocked by: 01" "Touches: two.txt"
+  ticket 03-third "Blocked by: None" "Touches: three.txt"
+  ticket 04-fourth "Blocked by: None" "Touches: four.txt"
+  event asked '{id: "prune", text: "Prune 03?", tickets: ["03"]}'
+  refused "--next 03 is not ready: 03 held by the unanswered ask prune" T7 --fill --next 03
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_equal "$(grep '^launched' <<<"$output")" "launched T7-builder-02 c0000001
+launched T7-builder-04 c0000002"
+  # With a slot free and only the held ticket left, nothing is launched, and the line says why.
+  event ticket-done '{ticket: "04", commits: ["0123456"]}'
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_equal "$(tail -n 1 <<<"$output")" "nothing to launch: 02 running in session c0000001; 03 held by the unanswered ask prune"
+  assert_equal "$(bg_calls | wc -l)" 2
+  # Answered, it is ready again.
+  event answered '{id: "prune", answer: "keep it"}'
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_equal "$(grep '^launched' <<<"$output")" "launched T7-builder-03 c0000003"
+}
+
 @test "a launch refused for room stops --fill with exit 75 and its line, keeping the worktree, and a rerun launches the rest" {
   fill_ready 2
   ticket 02-second "Blocked by: 01" "Touches: two.txt"
@@ -2359,18 +2432,20 @@ launched T7-builder-03 c0000002"
 "03"'
 }
 
-@test "a ticket worktree the pool has no slot for stops --fill with exit 75 and team-open's reason" {
+@test "a ticket worktree team-open cannot make now stops --fill with exit 75 and team-open's reason" {
   fill_ready 3
-  sed -i 's|slots = \[[^]]*\]|slots = ["slots/proj/1", "slots/proj/2"]|' "$TEAM_HOME/projects.toml"
   ticket 02-second "Blocked by: 01" "Touches: two.txt"
   ticket 03-third "Blocked by: None" "Touches: three.txt"
   ticket 04-fourth "Blocked by: None" "Touches: four.txt"
-  run_bin -75 --separate-stderr team-next T7 --fill
-  assert_equal "$output" "worktree $HOME/slots/proj/2 for ticket 02
-brief $TEAM_HOME/tasks/T7/brief-build-02.md
-launched T7-builder-02 c0000001"
-  assert_equal "$(tail -n 1 <<<"$stderr")" "team-next: no worktree for ticket 03: team-open: every slot of proj is taken; ready and waiting for room: 03, 04; run team-next T7 --fill once there is room"
-  assert_equal "$(bg_calls | wc -l)" 1
+  # Another run holds the pool's lock, a git pool's only exit 75.
+  local lock=$primary/.git/team-open-pool.lock fd
+  exec {fd}<>"$lock"
+  flock -x "$fd"
+  TEAM_OPEN_POOL_WAIT_SECONDS=1 run_bin -75 --separate-stderr team-next T7 --fill
+  exec {fd}>&-
+  assert_equal "$output" ""
+  assert_equal "$(tail -n 1 <<<"$stderr")" "team-next: no worktree for ticket 02: team-open: another run held the pool lock $lock of $primary for 1 seconds; run this again; ready and waiting for room: 02, 03, 04; run team-next T7 --fill once there is room"
+  assert_equal "$(bg_calls | wc -l)" 0
 }
 
 @test "cap 1's --fill launches the lowest ready ticket in the task worktree only when none runs, and each idle case says why" {
