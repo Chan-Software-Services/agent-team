@@ -169,16 +169,16 @@ Chan-Software-Services/Conventioner
   local line origin repo
   for line in "${cases[@]}"; do
     read -r origin repo <<<"$line"
-    git -C "$CODE_CHECKOUT" remote set-url origin "$origin"
+    git -C "${CODE_CHECKOUT:?}" remote set-url origin "$origin"
     sed -i "s#^repo = .*#repo = \"$repo\"#" "$TEAM_HOME/projects.toml"
     own
     assert_equal "$status" 0
   done
   # A repo no move joins to the origin's is not the team's own.
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/chanjdaniel/agent-team.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/chanjdaniel/agent-team.git
   own
   assert_equal "$status" 1
-  git -C "$CODE_CHECKOUT" remote set-url origin https://github.com/chanjdaniel/Conventioner-x.git
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/chanjdaniel/Conventioner-x.git
   own
   assert_equal "$status" 1
 }

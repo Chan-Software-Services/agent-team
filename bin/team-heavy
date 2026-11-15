@@ -50,9 +50,10 @@
 #         scope's working set (its cgroup's memory.current less its reclaimable page cache,
 #         bin/lib/working-set.awk), one more read inside it as the command ends, and the CPU its
 #         CPUUsageNSec, read there too; elsewhere each sample is the resident memory of its
-#         process group, and the CPU the time its processes took. A run that was stopped, or whose
-#         memory no look read, leaves no sample, said on stderr, and a sample that cannot be
-#         written is a line on stderr: neither changes the exit status.
+#         process tree (its process group and every descendant of the command, one in a group of
+#         its own included, as under GNU timeout), and the CPU the time its processes took. A run
+#         that was stopped, or whose memory no look read, leaves no sample, said on stderr, and a
+#         sample that cannot be written is a line on stderr: neither changes the exit status.
 #         An INT, TERM or HUP to team-heavy (a Ctrl-C in its terminal, or stop) ends the
 #         command's whole tree, as stop says, and team-heavy then exits with the command's status.
 #         Under a run already (TEAM_HEAVY_HELD set), the command runs at once, inside its parent's
@@ -172,9 +173,22 @@ group_alive() {
   ps -A -o pgid= -o stat= | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }'
 }
 
-# The resident memory of process group <pgid>, in bytes.
-group_use() {
-  ps -A -o pgid= -o rss= | awk -v g="$1" '$1 == g { s += $2 } END { printf "%d\n", s * 1024 }'
+# The resident memory of the run's process tree, in bytes: every process of process group <pgid>
+# and every descendant of its leader <pgid>, so one that moved to a group of its own (GNU timeout
+# does, as tests/run's per-file limit) still counts.
+tree_use() {
+  ps -A -o pid= -o ppid= -o pgid= -o rss= | awk -v g="$1" '
+    { pid[NR] = $1; parent[$1] = $2; group[$1] = $3; rss[$1] = $4 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        p = pid[i]
+        mine = group[p] == g
+        for (q = p; !mine && q in parent && q > 1 && steps++ < NR; q = parent[q]) mine = q == g
+        steps = 0
+        if (mine) s += rss[p]
+      }
+      printf "%d\n", s * 1024
+    }'
 }
 
 # The working set of the scope <unit>'s cgroup (bin/lib/working-set.awk), in bytes, 0 while it
@@ -411,7 +425,7 @@ cmd_run() {
     TEAM_HEAVY_HELD=1 "$@" {fd}>&- &
     child=$!
     set +m
-    sample_peak "$child" "$tmp/peak" group_use "$child" {fd}>&- &
+    sample_peak "$child" "$tmp/peak" tree_use "$child" {fd}>&- &
     sampler=$!
     wait "$child" || rc=$?
   fi

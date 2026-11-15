@@ -169,7 +169,7 @@ So that admission can rest on what work costs on this machine, each reading also
 | `session:<role>` | the session list no longer has the session | the highest working set the readings saw its scope use (its tree's memory elsewhere) |
 | `stack:<project>` | Docker no longer runs the stack | the highest memory the readings saw it use |
 | `gate` | no gate pipeline runs | the highest memory its daemon used while one ran |
-| `heavy:<kind>` | `team-heavy run` ends | the highest of its scope's working set, sampled every 10 seconds from the first look that reads any and once more inside the scope as the command ends (its process group's resident memory, sampled the same way, elsewhere) |
+| `heavy:<kind>` | `team-heavy run` ends | the highest of its scope's working set, sampled every 10 seconds from the first look that reads any and once more inside the scope as the command ends (elsewhere its process tree's resident memory, its process group and every descendant of the command, one GNU `timeout` moved to a group of its own included, sampled the same way) |
 
 A session list or a Docker that did not answer ends nothing, so a hiccup never writes a false sample.
 The readings are 5 minutes apart, so a session's peak is what they saw, and a session shorter than that may never be seen; a heavy run's samples are 10 seconds apart, so a spike shorter than that may be missed.
