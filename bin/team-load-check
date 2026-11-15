@@ -12,8 +12,8 @@
 # seam), which answers --json.
 #
 # Usage: team-load-check [--toolkit <name>]...
-#        team-load-check --context [--role planner|builder|reviewer] [--toolkit <name>]...
-#        team-load-check --probe [--role planner|builder|reviewer]
+#        team-load-check --context [--role planner|builder|reviewer|assistant] [--toolkit <name>]...
+#        team-load-check --probe [--role planner|builder|reviewer|assistant]
 #        team-load-check --role ops --worktree <path> --request <link> --toolkit <name>...
 # The ops form takes four toolkit sets: prod-read, prod-read with prod-write, vercel-read, or
 # prod-read with vercel-read (in any order); any other is a malformed command line (exit 2). A
@@ -114,8 +114,15 @@
 # one on a PR's head give a change's before and after. The coordinator runs it: workers may not
 # start sessions.
 #
-# The probe form proves, live, what each worker role is refused, and which layer refuses it: a deny
-# rule, a hook or auto mode. It rehearses no lease and takes no toolkit. In the same fresh worktree
+# --role assistant, in the context and probe forms only, launches the assistant instead, through
+# this checkout's bin/claude-assistant --load-check in the same worktree: its own settings and role
+# prompt, in bypass mode, with the Discord plugin off and no --channels, named T0-assistant, so it
+# is no assistant to the singleton check. It takes no --toolkit, and has no effective autoMode to
+# check, which its line says.
+#
+# The probe form proves, live, what each worker role (or with --role assistant, the assistant) is
+# refused, and which layer refuses it: a deny rule, a hook, auto mode, or the script it runs, which
+# refuses the role itself. It rehearses no lease and takes no toolkit. In the same fresh worktree
 # as the planner form, with a bare repository made in it at .scratch/probe.git for the attempts that
 # push, it launches through this checkout's bin/team-worker one T0 session per role (planner,
 # builder and reviewer, or the one --role names; never ops) all at once, and checks each one's
@@ -129,21 +136,25 @@
 # file_path, a relative one also matching an absolute path ending in /<input>), and the layer that
 # decided it is read as the planner form's hook check reads it. An attempt expecting rule passes
 # when a deny rule refused each matching call, one expecting hook when a hook did with the
-# attempt's marker in its message (another hook's block is other-hook), and one expecting refused,
-# auto mode's stand-in, when auto mode, a deny rule, a hook or a built-in safety check did; auto
-# mode's verdict varies from run to run, so a refused attempt's pass is one sample of it and its
-# fail in any run stands. One line per role and attempt:
+# attempt's marker in its message (another hook's block is other-hook), one expecting script when
+# the call ran and what it printed holds the attempt's marker (the script's own refusal of the
+# role, as worker_refusal words it), and one expecting refused, auto mode's stand-in, when auto
+# mode, a deny rule, a hook or a built-in safety check did; auto mode's verdict varies from run to
+# run, so a refused attempt's pass is one sample of it and its fail in any run stands. The
+# assistant runs in bypass mode, so no auto mode judges its calls, and its refused attempt is one
+# whose deny rule and hook both refuse it. One line per role and attempt:
 #   PASS builder sessions: rule refused it
 #   PASS planner upload: hook refused it
+#   PASS assistant coordinator-merge: script refused it
 #   FAIL reviewer write-outside: expected hook, got ran
 #   FAIL planner ops-launch: never attempted
 # A session that did not finish in time is a line of its own (FAIL <role>: its session did not
 # finish its attempts within 10 minutes (state '<state>')), and one whose transcript cannot be read
 # fails each of its role's attempts (FAIL <role> <id>: cannot read its session's transcript). Only
 # ids and outcomes leave the transcripts. Every session is stopped and removed, and the worktree
-# with them, on every path. bin/lib/probe.json also sorts every deny rule of the worker roles'
-# settings into one family and lists their PreToolUse hooks, each with an attempt for each role
-# that holds it or the reason it has none, which tests/repo.bats holds.
+# with them, on every path. bin/lib/probe.json also sorts every deny rule of the worker roles' and
+# the assistant's settings into one family and lists their PreToolUse hooks, each with an attempt
+# for each role that holds it or the reason it has none, which tests/repo.bats holds.
 #
 # The ops form reads production, so Daniel must be at the PC to approve its 1Password prompts (one
 # per toolkit) and, with prod-write, to decline its five write prompts on the phone.
@@ -223,9 +234,9 @@ if [[ -n $probe ]]; then
   [[ -z $request ]] || usage_error "--request is for --role ops only"
   case $role in
     '') probe_roles=(planner builder reviewer) ;;
-    planner | builder | reviewer) probe_roles=("$role") ;;
-    ops) usage_error "--probe tries the roles the load check may start: planner, builder, reviewer; ops needs Daniel" ;;
-    *) usage_error "unknown role '$role'; --probe knows planner, builder, reviewer" ;;
+    planner | builder | reviewer | assistant) probe_roles=("$role") ;;
+    ops) usage_error "--probe tries the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel" ;;
+    *) usage_error "unknown role '$role'; --probe knows planner, builder, reviewer, assistant" ;;
   esac
   roles=("${probe_roles[@]}")
 elif [[ -n $context ]]; then
@@ -233,8 +244,11 @@ elif [[ -n $context ]]; then
   case $role in
     '') context_roles=(planner builder reviewer) ;;
     planner | builder | reviewer) context_roles=("$role") ;;
-    ops) usage_error "--context measures the roles the load check may start: planner, builder, reviewer; ops needs Daniel" ;;
-    *) usage_error "unknown role '$role'; --context knows planner, builder, reviewer" ;;
+    assistant)
+      ((${#expected[@]} == 0)) || usage_error "--role assistant launches the assistant's own settings, so it takes no --toolkit"
+      context_roles=("$role") ;;
+    ops) usage_error "--context measures the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel" ;;
+    *) usage_error "unknown role '$role'; --context knows planner, builder, reviewer, assistant" ;;
   esac
   roles=("${context_roles[@]}")
 else
@@ -242,7 +256,7 @@ else
   case $role in
     planner) [[ -z $worktree ]] || usage_error "--worktree is for --role ops only" ;;
     ops) [[ -n $worktree ]] || usage_error "--role ops needs --worktree <a trusted linked worktree>" ;;
-    *) usage_error "unknown role '$role'; known: planner, ops (and builder, reviewer with --context)" ;;
+    *) usage_error "unknown role '$role'; known: planner, ops (and builder, reviewer and assistant with --context or --probe)" ;;
   esac
   roles=("$role")
 fi
@@ -537,6 +551,10 @@ declared_servers() {
 # must be in the same list of it.
 automode_check() {
   local r=$1 stem=$1 settings kept=$TEAM_HOME/tasks/T0/automode-$1.json missing count line project=''
+  if [[ $r == assistant ]]; then
+    echo "load check: the assistant runs in bypass mode, so it has no effective autoMode to check"
+    return
+  fi
   if [[ $r != ops ]]; then
     project=$(team_project --find path "$(main_checkout "$2")" 2>/dev/null | head -n 1) || project=''
   fi
@@ -784,6 +802,17 @@ mcp_servers() {
   jq -rs "$reply_jq"' listed(reply_index)[] | select(startswith("mcp__")) | split("__")[1]' "$1" 2>/dev/null | sort -u
 }
 
+# launch_role <role> <prompt>: starts the role's T0 session in the worktree and prints its id: a
+# worker's through this checkout's team-worker, the assistant's through its claude-assistant
+# --load-check, with its own settings and role prompt and no Discord.
+launch_role() {
+  if [[ $1 == assistant ]]; then
+    TEAM_HOME=$TEAM_HOME "$home/bin/claude-assistant" --load-check "$wt" --prompt "$2"
+  else
+    TEAM_HOME=$TEAM_HOME "$home/bin/team-worker" T0 "$1" "$wt" "${toolkit_args[@]}" -- "$2"
+  fi
+}
+
 # context_check: one session per role in context_roles, each asked only to reply OK, and a row per
 # role of what its first reply carried.
 context_check() {
@@ -791,7 +820,7 @@ context_check() {
   local -A launched=()
   load_worktree
   for r in "${context_roles[@]}"; do
-    id=$(TEAM_HOME=$TEAM_HOME "$home/bin/team-worker" T0 "$r" "$wt" "${toolkit_args[@]}" -- "Reply with OK and nothing else.")
+    id=$(launch_role "$r" "Reply with OK and nothing else.")
     ids+=("$id") launched[$r]=$id
     echo "load check: $r $id started"
     automode_check "$r" "$wt"
@@ -824,10 +853,13 @@ context_check() {
   done
 
   echo "load check: each role's starting context, the tokens its first reply carried (input + cache write + cache read)"
-  printf '%-8s %8s %7s %15s %12s\n' role context skills 'deferred tools' 'MCP servers'
+  # The role column fits its longest name, at least 8 wide.
+  local width=8
+  for r in "${context_roles[@]}"; do ((${#r} <= width)) || width=${#r}; done
+  printf "%-${width}s %8s %7s %15s %12s\n" role context skills 'deferred tools' 'MCP servers'
   for r in "${rows[@]}"; do
     # shellcheck disable=SC2086 # a row is five words
-    printf '%-8s %8s %7s %15s %12s\n' $r
+    printf "%-${width}s %8s %7s %15s %12s\n" $r
   done
 }
 
@@ -865,8 +897,9 @@ EOF
 # tool's file_path, a relative one also matching an absolute path that ends with /<input>), each
 # call's outcome read by tool_outcome_jq. Every matching call must pass: a rule attempt on rule, a
 # hook attempt on hook with its marker in the result's text (a hook without it is other-hook), a
-# refused attempt on automode, rule, hook or safety-check. Fails when the transcript is not JSON
-# lines. Only ids and outcomes leave the transcript.
+# script attempt on a call that ran with its marker in the result's text (script), a refused
+# attempt on automode, rule, hook or safety-check. Fails when the transcript is not JSON lines.
+# Only ids and outcomes leave the transcript.
 probe_verdicts() {
   jq -rs --arg role "$1" --argjson attempts "$2" "$tool_outcome_jq"'
     def input_of($tool): .input | objects | if $tool == "Bash" then .command else .file_path end;
@@ -875,9 +908,12 @@ probe_verdicts() {
         and ($got | startswith("/")) and ($got | endswith("/" + $a.input)))));
     def outcome_of($a; $result): ($result.entry | outcome) as $outcome
       | if $a.expect == "hook" and $outcome == "hook" and (($result.text // "") | contains($a.marker) | not)
-        then "other-hook" else $outcome end;
+        then "other-hook"
+        elif $a.expect == "script" and $outcome == "ran" and (($result.text // "") | contains($a.marker))
+        then "script" else $outcome end;
     def passes($a): if $a.expect == "rule" then . == "rule"
       elif $a.expect == "hook" then . == "hook"
+      elif $a.expect == "script" then . == "script"
       else IN("automode", "rule", "hook", "safety-check") end;
     (results | map({(.id | tostring): .}) | add // {}) as $results | calls as $calls
     | $attempts[] as $a
@@ -904,7 +940,7 @@ probe_check() {
   done
   drill_detail="0 of $total attempts refused as expected"
   for r in "${probe_roles[@]}"; do
-    id=$(TEAM_HOME=$TEAM_HOME "$home/bin/team-worker" T0 "$r" "$wt" -- "$(probe_prompt "$r" "${made[$r]}")")
+    id=$(launch_role "$r" "$(probe_prompt "$r" "${made[$r]}")")
     ids+=("$id") launched[$r]=$id record_pending=1
     echo "load check: $r $id started, with $(jq length <<<"${made[$r]}") attempts"
     automode_check "$r" "$wt"
