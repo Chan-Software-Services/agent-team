@@ -438,7 +438,16 @@ home_setting() {
     [[ -n $output ]]
   done
   run_bin -0 team-project agent-team changed_tests
-  assert_contains "$output" '`tests/run bats --changed`'
+  assert_equal "$output" \
+    '`tests/run shellcheck`, and each test file you wrote or changed, alone: `tests/vendor/bats-core/bin/bats tests/<name>.bats` (add `-f '"'<part of its name>'"'` for one test) or `node --test tests/toolkits/<name>.test.mjs`'
+
+  # agent-team's builders run CI on their branch; no other project's do.
+  run_bin -0 team-project agent-team branch_ci
+  assert_equal "$output" ci.yml
+  for project in conventioner no-mistakes; do
+    run_bin -0 team-project "$project" branch_ci
+    assert_equal "$output" ''
+  done
 }
 
 @test "local_checks is optional, defaults to none, and must be one-line commands" {
@@ -773,6 +782,48 @@ TOML
     run_bin -1 --separate-stderr team-project --check
     assert_contains "$stderr" "alpha.changed_tests: must be one line of text, not empty"
   done
+}
+
+@test "branch_ci is optional, none by default, and a workflow file name on a direct-pr project with changed_tests" {
+  run_bin -0 team-project beta branch_ci
+  assert_equal "$output" ''
+  run_bin -0 team-project beta
+  assert_equal "$(jq -r .branch_ci <<<"$output")" ''
+  # beta delivers by direct PR.
+  sed -i '/^\[beta\]$/,/^\[beta.pool\]$/s|^toolkits = \[\]$|toolkits = []\nchanged_tests = "`make test-changed`"\nbranch_ci = "ci.yml"|' \
+    "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --check
+  run_bin -0 team-project beta branch_ci
+  assert_equal "$output" ci.yml
+  run_bin -0 team-project alpha branch_ci
+  assert_equal "$output" ''
+
+  local good bad
+  for good in '"test.yaml"' '"CI_2-a.b.yml"'; do
+    sed -i "s|^branch_ci = .*|branch_ci = $good|" "$TEAM_HOME/projects.toml"
+    run_bin -0 team-project --check
+  done
+  for bad in '""' '"ci"' '"ci.yml "' '".github/workflows/ci.yml"' '"ci.yml\\n"' '"ci.toml"' '"c i.yml"' '["ci.yml"]' '1' 'true'; do
+    sed -i "s|^branch_ci = .*|branch_ci = $bad|" "$TEAM_HOME/projects.toml"
+    run_bin -1 --separate-stderr team-project --check
+    assert_contains "$stderr" "beta.branch_ci: must be a workflow's file name under .github/workflows/, such as \"ci.yml\""
+  done
+  sed -i 's|^branch_ci = .*|branch_ci = "ci.yml"|' "$TEAM_HOME/projects.toml"
+
+  # Without changed_tests the briefs have no local tests to name.
+  sed -i '/^changed_tests = /d' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" "beta.branch_ci: needs changed_tests, the tests a builder still runs on the machine"
+  [[ $stderr != *delivery* ]]
+
+  # The gate pushes and opens the PR itself, so a gated project runs no CI on a branch.
+  sed -i '/^\[alpha\]$/,/^\[alpha.pool\]$/s|^toolkits = \[\]$|toolkits = []\nchanged_tests = "`make test-changed`"|' \
+    "$TEAM_HOME/projects.toml"
+  sed -i '/^\[beta\]$/,/^\[beta.pool\]$/{/^branch_ci = /d}' "$TEAM_HOME/projects.toml"
+  sed -i '/^\[alpha\]$/,/^\[alpha.pool\]$/s|^toolkits = \[\]$|toolkits = []\nbranch_ci = "ci.yml"|' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" 'alpha.branch_ci: needs delivery = "direct-pr", not "no-mistakes"'
+  [[ $stderr != *changed_tests* ]]
 }
 
 @test "--check refuses merge_with_plan as retired by T276, and every command with it" {
