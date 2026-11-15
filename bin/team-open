@@ -107,8 +107,10 @@
 # Needs this machine's name; refused for a task that is not open or has no open worktree in
 # <project>; re-running after a failure finishes it.
 # With --resume and --ticket NN (either side of --resume <project>), the same for ticket NN's open
-# ticket worktree in <project>, whose branch, never pushed, is kept only as wip/<project>/T<n>--NN
-# on the team home's origin, by the checkpoint: that ref is always fetched, and refused when it is
+# ticket worktree in <project>, whose branch is kept only as wip/<project>/T<n>--NN
+# on the team home's origin, by the checkpoint (its builder may push it to the project's origin
+# for CI's run, where team-close deletes it, but a resume never reads it there, so an unintegrated
+# ticket still comes from the checkpoint): that ref is always fetched, and refused when it is
 # missing; the ticket branch goes to its head (a clean checkpoint's head, or a snapshot's parent),
 # but a branch here that holds that head is kept, said on stderr, and one with commits it lacks is
 # refused with the push of it as salvage/<project>/T<n>--NN-<machine>. A snapshot is applied as
@@ -124,7 +126,8 @@
 # is printed as below, and said on stderr ("T<n>'s ticket NN already has its worktree <path>"),
 # exit 0. Else the pool steps above, a treehouse lease's holder T<n>--NN, with the start the task
 # branch's local tip (refs/heads/<task branch>) and the branch the ticket branch <task branch>--NN,
-# never pushed; it fetches nothing and the primary checkout does not follow the base, so it runs
+# which its builder may push for CI's run and team-close deletes on origin once the task branch
+# holds it; it fetches nothing and the primary checkout does not follow the base, so it runs
 # offline. A ticket branch that exists already (an unintegrated ticket worktree returned at a
 # close) is moved to the task branch's tip when the tip holds its head, said on stderr, and
 # refused when it has commits the task branch lacks. Then the task directory, refused as above
@@ -460,7 +463,8 @@ link_queued() {
 }
 
 # A new branch starts at origin's base; a resumed one is origin's branch, made here when missing,
-# and a ticket branch, never pushed, its wip ref's head.
+# and a ticket branch its wip ref's head: origin's copy of it, which its builder may have pushed
+# for CI's run, is never read.
 if [[ -n $resume ]]; then
   remote=''
   if [[ -z $ticket ]]; then
@@ -508,7 +512,7 @@ if [[ -n $resume ]]; then
     fi
   fi
   [[ -n $wip || -z $ticket ]] ||
-    die "$branch is on no origin, a ticket branch being never pushed, and the team home's origin has no $wip_ref," \
+    die "$branch is on no origin, a ticket branch being kept only by the checkpoint, and the team home's origin has no $wip_ref," \
       "so $task's ticket $ticket worktree in $project cannot be made here"
   [[ -n $target || -n $here ]] ||
     die "$branch is neither on origin nor here, so $task's worktree in $project cannot be made here"
