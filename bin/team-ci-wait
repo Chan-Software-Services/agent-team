@@ -5,8 +5,8 @@
 # reads its end.
 #
 # Usage: team-ci-wait [--no-agent-review] [--json] [--look] <pr url> [<sha>]
-#        team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>
 #        team-ci-wait [--json] [--look] --run <run url> [<sha>]
+#        team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>
 #   --no-agent-review
 #           leave the agent-review check out of every look, as though GitHub had not reported it:
 #           the checks wait after a pass and the findings round's look (team-next), which run once
@@ -193,8 +193,8 @@ GRACE_SECONDS=${TEAM_CI_WAIT_GRACE_SECONDS:-120}
 [[ $GRACE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_WAIT_GRACE_SECONDS must be a number of seconds"
 [[ $QUEUED_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_WAIT_QUEUED_SECONDS must be a number of seconds"
 usage="usage: team-ci-wait [--no-agent-review] [--json] [--look] <pr url> [<sha>]
-       team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>
-       team-ci-wait [--json] [--look] --run <run url> [<sha>]"
+       team-ci-wait [--json] [--look] --run <run url> [<sha>]
+       team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>"
 without_review=false json=false look=false group='' run_url=''
 while [[ ${1:-} == --* ]]; do
   case $1 in

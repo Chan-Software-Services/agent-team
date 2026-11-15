@@ -588,7 +588,7 @@ file_reasons() {
     bin/hooks/records-git/pre-commit bin/hooks/lease-fence settings/worker.json settings/reviewer.json coordinator.settings.json \
     assistant.settings.json \
     bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/team-next \
-    bin/team-catch-up bin/team-review-check bin/team-log bin/team-project bin/lib/lifecycle.json roles/reviewer.md \
+    bin/team-catch-up bin/team-review-check bin/team-land bin/team-log bin/team-project bin/lib/lifecycle.json roles/reviewer.md \
     roles/coordinator.md; do
     paths+=("$path")
     expected+=("$path is a guarded path (guardrails): a change there comes back to Daniel")

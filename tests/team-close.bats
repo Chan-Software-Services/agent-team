@@ -732,7 +732,7 @@ squash_merge() {
   work_and_push "$wt" feature.txt
   squash_merge "$wt" feat/T1-work
   sed -i 's#^repo = "owner/home"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
-  stub_reply gh "$(jq -cn --arg head "$(git -C "$wt" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
+  stub_reply gh "$(jq -cn --arg head "$(git -C "${wt:?}" rev-parse HEAD)" '[{number: 7, headRefOid: $head}]')"
 
   run_bin -0 team-close T1
   [[ ! -e $wt ]]

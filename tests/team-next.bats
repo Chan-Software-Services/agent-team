@@ -1282,7 +1282,7 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   [[ $output != *"merge base"* && $output != *team-catch-up* ]]
   assert_equal "$(tail -n 1 <<<"$output")" \
     "merge on the default word: run team-merge T7 for $url at $sha, agent-review success, checks green"
-  assert_equal "$(git -C "$primary" status --porcelain)" ""
+  assert_equal "$(git -C "${primary:?}" status --porcelain)" ""
   # A conflict is still the holder's to merge, queue or not.
   echo "dev's own text" >"${BATS_TEST_TMPDIR:?}/other/one.txt"
   git -C "${BATS_TEST_TMPDIR:?}/other" add -A

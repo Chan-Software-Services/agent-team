@@ -83,7 +83,7 @@ if [[ -n ${AGENT_TEAM_ROLE:-} && $AGENT_TEAM_ROLE != coordinator ]]; then
   die "a $AGENT_TEAM_ROLE session may not run the merge queue drill: that is the coordinator's"
 fi
 # Never the repository this code comes from, whatever its dev holds.
-own=$(git -C "$root" remote get-url origin 2>/dev/null) || own=''
+own=$(git -C "${root:?}" remote get-url origin 2>/dev/null) || own=''
 own=${own%/} own=${own%.git}
 if [[ $own =~ [:/]([^/:]+/[^/:]+)$ && ${BASH_REMATCH[1],,} == "${repo,,}" ]]; then
   die "$repo is the origin of this code checkout, not a scratch repository"
@@ -132,7 +132,7 @@ cleanup() {
     tidy
     record "$status"
   fi
-  rm -rf "$sandbox"
+  rm -rf "${sandbox:?}"
   exit "$status"
 }
 trap cleanup EXIT
@@ -150,7 +150,7 @@ if [[ -n $setup ]]; then
     git clone -q --depth 1 --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
     [[ -f $checkout/$marker ]] ||
       die "$repo's dev holds commits that are not the drill's (no $marker): the drill takes a scratch repository only"
-    echo "merge-queue-drill: $repo's dev already holds the drill's base commit, $(git -C "$checkout" rev-parse --short=7 HEAD)"
+    echo "merge-queue-drill: $repo's dev already holds the drill's base commit, $(git -C "${checkout:?}" rev-parse --short=7 HEAD)"
     exit 0
   fi
   git init -q -b dev "$checkout"
@@ -182,10 +182,10 @@ jobs:
     steps:
       - run: echo "the merge queue drill's check"
 EOF
-  git -C "$checkout" add -A
-  git -C "$checkout" commit -q -m "ci: the merge queue drill's base commit"
-  git -C "$checkout" push -q "$remote" dev || die "cannot push the base commit to $repo's dev"
-  echo "merge-queue-drill: pushed the base commit $(git -C "$checkout" rev-parse --short=7 HEAD) to $repo's dev"
+  git -C "${checkout:?}" add -A
+  git -C "${checkout:?}" commit -q -m "ci: the merge queue drill's base commit"
+  git -C "${checkout:?}" push -q "$remote" dev || die "cannot push the base commit to $repo's dev"
+  echo "merge-queue-drill: pushed the base commit $(git -C "${checkout:?}" rev-parse --short=7 HEAD) to $repo's dev"
   exit 0
 fi
 
@@ -208,7 +208,7 @@ required=$(jq -c '[.[] | select(.type == "required_status_checks") | .parameters
 git clone -q --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
 [[ -f $checkout/$marker ]] ||
   die "$repo's dev has no $marker: the drill takes only the scratch repository tests/merge-queue-drill --setup made"
-base_sha=$(git -C "$checkout" rev-parse HEAD)
+base_sha=$(git -C "${checkout:?}" rev-parse HEAD)
 mkdir -p "$team" "$sandbox/slots/1"
 cat >"$team/projects.toml" <<EOF
 [agent-team]
@@ -232,15 +232,15 @@ echo "== two pull requests from dev at ${base_sha:0:7}"
 for i in 0 1; do
   name=$stamp-$([[ $i == 0 ]] && echo a || echo b)
   branch=drill/$name
-  git -C "$checkout" checkout -q -b "$branch" "$base_sha"
+  git -C "${checkout:?}" checkout -q -b "$branch" "$base_sha"
   mkdir -p "$checkout/runs"
   echo "The merge queue drill's run $name." >"$checkout/runs/$name.txt"
-  git -C "$checkout" add "runs/$name.txt"
-  git -C "$checkout" commit -q -m "test: the merge queue drill's run $name"
-  head=$(git -C "$checkout" rev-parse HEAD)
+  git -C "${checkout:?}" add "runs/$name.txt"
+  git -C "${checkout:?}" commit -q -m "test: the merge queue drill's run $name"
+  head=$(git -C "${checkout:?}" rev-parse HEAD)
   started=1
   branches+=("$branch")
-  git -C "$checkout" push -q origin "$branch" || stop "the push of $branch failed"
+  git -C "${checkout:?}" push -q origin "$branch" || stop "the push of $branch failed"
   url=$(gh pr create --repo "$repo" --base dev --head "$branch" --title "test: the merge queue drill's run $name" \
     --body "Opened by agent-team's tests/merge-queue-drill, which lands it through dev's merge queue." | tail -n 1) ||
     stop "gh pr create failed for $branch"
@@ -255,7 +255,7 @@ for i in 0 1; do
     {ts: $ts, task: $task, event: "review", verdict: "pass", head: $head}' >>"$team/ledger.jsonl"
   echo "PR #${numbers[i]} $url at ${head:0:7}"
 done
-git -C "$checkout" checkout -q dev
+git -C "${checkout:?}" checkout -q dev
 
 echo "== agent-review on each head, then the heads' checks"
 for i in 0 1; do
@@ -314,7 +314,7 @@ check() {
     echo "FAIL $1"
   fi
 }
-git -C "$checkout" fetch -q origin dev || true
+git -C "${checkout:?}" fetch -q origin dev || true
 # merged_at_head <i>: GitHub shows the pull request merged, its head the one the drill pushed.
 merged_at_head() {
   [[ $(gh pr view "${urls[$1]}" --json state,headRefOid --jq '"\(.state) \(.headRefOid)"') == "MERGED ${heads[$1]}" ]]
@@ -325,12 +325,12 @@ clean_merge() {
   local merge=${merges[$1]} tree
   local -a parents
   [[ -n $merge ]] || return 1
-  git -C "$checkout" merge-base --is-ancestor "$merge" origin/dev || return 1
-  read -r -a parents <<<"$(git -C "$checkout" rev-list --parents -n 1 "$merge")"
+  git -C "${checkout:?}" merge-base --is-ancestor "$merge" origin/dev || return 1
+  read -r -a parents <<<"$(git -C "${checkout:?}" rev-list --parents -n 1 "$merge")"
   ((${#parents[@]} == 3)) && [[ ${parents[2]} == "${heads[$1]}" ]] || return 1
-  git -C "$checkout" merge-base --is-ancestor "$base_sha" "${parents[1]}" || return 1
-  tree=$(git -C "$checkout" merge-tree --write-tree "${parents[1]}" "${parents[2]}") || return 1
-  [[ $tree == "$(git -C "$checkout" rev-parse "$merge^{tree}")" ]]
+  git -C "${checkout:?}" merge-base --is-ancestor "$base_sha" "${parents[1]}" || return 1
+  tree=$(git -C "${checkout:?}" merge-tree --write-tree "${parents[1]}" "${parents[2]}") || return 1
+  [[ $tree == "$(git -C "${checkout:?}" rev-parse "$merge^{tree}")" ]]
 }
 # on_queue_branch <i>: a listing while the two landed showed the merge commit on a queue branch.
 on_queue_branch() {
@@ -344,8 +344,8 @@ app_check() {
 # stacked: one pull request's merge commit has the other's as its first parent.
 stacked() {
   [[ -n ${merges[0]} && -n ${merges[1]} ]] || return 1
-  [[ $(git -C "$checkout" rev-parse "${merges[0]}^1") == "${merges[1]}" ||
-    $(git -C "$checkout" rev-parse "${merges[1]}^1") == "${merges[0]}" ]]
+  [[ $(git -C "${checkout:?}" rev-parse "${merges[0]}^1") == "${merges[1]}" ||
+    $(git -C "${checkout:?}" rev-parse "${merges[1]}^1") == "${merges[0]}" ]]
 }
 trials=()
 for i in 0 1; do

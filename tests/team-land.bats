@@ -107,6 +107,7 @@ case "$1 $2" in
     ;;
   "api repos/owner/proj/commits/"*"/status?per_page=100") echo '{"state": "pending", "statuses": []}'; exit 0 ;;
   "api repos/owner/proj/actions/runs?head_sha="*) echo '{"total_count": 0, "workflow_runs": []}'; exit 0 ;;
+  "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") echo '{"total_count": 0, "workflow_runs": []}'; exit 0 ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${2##*/} ;;
   *) echo "unplanned gh call: $*" >&2; exit 1 ;;
 esac
