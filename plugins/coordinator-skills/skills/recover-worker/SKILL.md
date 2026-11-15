@@ -19,7 +19,7 @@ The finding names the tool call the worker waits on, whether it runs in the back
 
 - **A call in the background** (the worker's turn has ended): send the worker one line naming the command and what it waits on; a message wakes the session.
 - **A call in the foreground** (it holds the turn): find that command's process among the descendants of the session's `pid` from `claude agents --json` (`ps -A -o pid=,ppid=,args=` lists each process with its parent), kill that exact pid and no other, then send the worker one line saying why.
-- **A CI wait** (a worker's `team-ci-wait`, run by hand): it always ends, naming a stuck check, and the PR's checks are the coordinator's own wait, `team-next T<n> --ci`, which reruns a stuck check itself: free the worker's wait as above and tell it to go on with its brief.
+- **A CI wait** (a worker's `team-ci-wait`, run by hand, or a builder's `team-ci-run` on its branch's head): each always ends, naming a stuck check, and the PR's checks are the coordinator's own wait, `team-next T<n> --ci`, which reruns a stuck check itself: free the worker's wait as above and tell it to go on with its brief, which for a `team-ci-run` is to run it again, since it waits on the same run and the builder reports only once it exits 0.
 - **No tool call running**: the session is stuck inside Claude Code, so go on with rung 2.
 
 When the worker stays stuck, the ladder goes on from rung 2.
