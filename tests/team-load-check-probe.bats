@@ -46,10 +46,15 @@ case $1 in
         '{id: $id, name: $name, state: $state, sessionId: $uuid}'
     done | jq -s .
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
@@ -166,6 +171,11 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
     assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch-$role")" "$(printf '%s\n' "$wt" true)"
   done
   assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(printf '%s\n' "$wt" "$wt" "$wt")"
+  # Each read with the sources team-worker launches the role with, --setting-sources user.
+  assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
+    "$(for role in planner builder reviewer; do
+      echo "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.$role.code.json\",\"auto-mode\",\"config\"]"
+    done)"
   assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c)"
   left_nothing
   # The probe rehearses no lease and keeps no inventory.

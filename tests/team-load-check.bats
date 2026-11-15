@@ -82,10 +82,15 @@ case $1 in
     if [[ ${3:-} == --all ]]; then echo '[{"id": "4f2a9c1e", "state": "done", "sessionId": "4f2a9c1e-0000-4000-8000-000000000001"}]'
     else echo '[]'; fi
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
@@ -133,7 +138,7 @@ hook_passed="load check: the planner's edit hook blocked its write of outside.tx
   assert_contains "$output" "PASS"
   assert_equal "$(cat "$TEAM_HOME/tasks/T0/inventory.txt")" "$(printf '%s\n' --- tdd implement)"
   assert_equal "$(stub_calls claude | jq -c 'select(.[0] != "--bg" and .[0] != "--version")')" \
-    "$(printf '%s\n' "[\"--settings\",\"$TEAM_HOME/tasks/T0/settings.planner.code.json\",\"auto-mode\",\"config\"]" \
+    "$(printf '%s\n' "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.planner.code.json\",\"auto-mode\",\"config\"]" \
       '["agents","--json"]' '["agents","--json","--all"]' '["stop","4f2a9c1e"]' '["rm","4f2a9c1e"]')"
   assert_contains "$output" "$hook_passed"
 }
@@ -686,10 +691,15 @@ case $1 in
       echo '[]'
     fi
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
@@ -738,6 +748,9 @@ oplog_lines() {
   assert_contains "$output" "load check: Daniel, a 1Password prompt is coming on the PC: approve it"
   assert_contains "$output" "load check: ops's effective autoMode holds the $(team_lines ops | wc -l) lines of its settings' autoMode"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(realpath "$wt")"
+  # Read as team-worker launches ops, with no --setting-sources.
+  assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
+    "[\"--settings\",\"$TEAM_HOME/tasks/T0/settings.ops.json\",\"auto-mode\",\"config\"]"
   assert_contains "$output" "load check: 11 MCP tools, 10 built-in tools"
   assert_equal "${lines[-1]}" "PASS"
   # Launched through team-worker as the T0 ops session, in the given worktree.
@@ -1266,10 +1279,15 @@ case $1 in
       jq -cn --arg id "$id" --arg name "T0-$role" --arg uuid "$(uuid "$id")" '{id: $id, name: $name, state: "idle", sessionId: $uuid}'
     done | jq -s .
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
@@ -1298,6 +1316,11 @@ reviewer    45003       2               2            0"
     assert_equal "$(jq -r '.environment[]' "$TEAM_HOME/tasks/T0/automode-$role.json")" "$(echo 'a built-in line'; team_lines "$role")"
   done
   assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(printf '%s\n' "$wt" "$wt" "$wt")"
+  # Each read with the sources team-worker launches the role with, --setting-sources user.
+  assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
+    "$(for role in planner builder reviewer; do
+      echo "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.$role.code.json\",\"auto-mode\",\"config\"]"
+    done)"
   # Only figures leave the transcripts.
   [[ $output != *"never leaves the transcript"* ]]
   assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c)"
