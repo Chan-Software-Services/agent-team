@@ -134,7 +134,7 @@ SH
   echo "$made" >>"$BATS_TEST_TMPDIR/pool"
   run_bin -0 --separate-stderr team-open proj feature feat three "Three"
   assert_equal "$(jq -r .worktree <<<"$output")" "$made"
-  assert_equal "$(git -C "$made" rev-parse --abbrev-ref HEAD)" "feat/T1-three"
+  assert_equal "$(git -C "${made:?}" rev-parse --abbrev-ref HEAD)" "feat/T1-three"
 }
 
 @test "a leased path outside the trusted slots is returned at once and refused" {

@@ -39,9 +39,9 @@ load_check_sandbox() {
   printf '%s\n' .scratch/ .claude/worktrees/ >"$code/.gitignore"
   # The project's instructions, which team-worker gives each session from origin/main.
   echo "# code" >"$code/CLAUDE.md"
-  git -C "$code" add .gitignore CLAUDE.md
-  git -C "$code" commit -q -m "chore: ignore scratch and worktrees"
-  git -C "$code" push -q origin main
+  git -C "${code:?}" add .gitignore CLAUDE.md
+  git -C "${code:?}" commit -q -m "chore: ignore scratch and worktrees"
+  git -C "${code:?}" push -q origin main
   code=$(realpath "$code") wt=$code/.claude/worktrees/1
   export TEAM_LOAD_CHECK_CHECKOUT=$code
   # The doctor's own lines are tests/team-doctor*.bats'.

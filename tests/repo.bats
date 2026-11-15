@@ -1759,7 +1759,7 @@ Bash(gh-axi pr ready *)'
   done
   # No brief starts a wait on CI, which the coordinator's checks wait takes after a pass; the rule
   # stays for a worker's wait by hand.
-  if git -C "$REPO_ROOT" grep -n team-ci-wait -- templates; then return 1; fi
+  if git -C "${REPO_ROOT:?}" grep -n team-ci-wait -- templates; then return 1; fi
   allows builder "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"
   allows builder "$REPO_ROOT/bin/team-ci-wait --no-agent-review https://github.com/me/shop/pull/5"
   if allows builder "team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi

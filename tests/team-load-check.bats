@@ -252,58 +252,58 @@ lock_line() {
 @test "the planner runs in the lowest free numbered worktree of the code checkout, detached at its HEAD and locked as team-load-check, which is removed at the end" {
   inventory --- tdd
   run_bin -0 team-load-check
-  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "$code" rev-parse HEAD)" detached '.scratch ignored')"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "${code:?}" rev-parse HEAD)" detached '.scratch ignored')"
   [[ $(lock_line "$wt") =~ ^locked\ team-load-check\ [1-9][0-9]*$ ]]
   left_nothing
 
   # A numbered worktree a task holds is passed over for the next number, and kept.
-  git -C "$code" worktree add -q -b task "$code/.claude/worktrees/1"
+  git -C "${code:?}" worktree add -q -b task "$code/.claude/worktrees/1"
   run_bin -0 team-load-check
   assert_equal "$(sed -n 1p "$BATS_TEST_TMPDIR/launch")" "$code/.claude/worktrees/2"
   [[ $(lock_line "$code/.claude/worktrees/2") =~ ^locked\ team-load-check\ [1-9][0-9]*$ ]]
   assert_equal "$(lock_line "$code/.claude/worktrees/1")" ""
   [[ ! -e $code/.claude/worktrees/2 ]]
-  assert_equal "$(git -C "$code" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/1")"
-  git -C "$code" worktree remove "$code/.claude/worktrees/1"
-  git -C "$code" branch -q -D task
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/1")"
+  git -C "${code:?}" worktree remove "$code/.claude/worktrees/1"
+  git -C "${code:?}" branch -q -D task
   left_nothing
 }
 
 @test "the planner runs in a linked code checkout's main checkout, at the linked checkout's HEAD" {
   inventory --- tdd
-  git -C "$code" worktree add -q -b other "$BATS_TEST_TMPDIR/linked"
-  git -C "$BATS_TEST_TMPDIR/linked" commit -q --allow-empty -m "chore: ahead of main"
+  git -C "${code:?}" worktree add -q -b other "$BATS_TEST_TMPDIR/linked"
+  git -C "${BATS_TEST_TMPDIR:?}/linked" commit -q --allow-empty -m "chore: ahead of main"
   TEAM_LOAD_CHECK_CHECKOUT=$BATS_TEST_TMPDIR/linked run_bin -0 team-load-check
-  assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "$BATS_TEST_TMPDIR/linked" rev-parse HEAD)")"
+  assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "${BATS_TEST_TMPDIR:?}/linked" rev-parse HEAD)")"
   [[ ! -e $wt ]]
-  assert_equal "$(git -C "$code" worktree list --porcelain | grep -c '^worktree ')" 2
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | grep -c '^worktree ')" 2
 }
 
 @test "what a run that is gone left, a worktree locked as team-load-check with no live load check's pid or the old load-check folder, is removed at the start" {
   inventory --- tdd
   # A killed run's worktree, with work in it, at a number past the one this run takes, and the old
   # fixed folder, registered, then not.
-  git -C "$code" worktree add -q --detach --lock --reason team-load-check "$code/.claude/worktrees/3"
+  git -C "${code:?}" worktree add -q --detach --lock --reason team-load-check "$code/.claude/worktrees/3"
   touch "$code/.claude/worktrees/3/stale.txt"
   # A run that is gone, by its pid, and a pid that is alive but no load check's.
   local gone
   gone=$(bash -c 'echo $$')
-  git -C "$code" worktree add -q --detach --lock --reason "team-load-check $gone" "$code/.claude/worktrees/4"
+  git -C "${code:?}" worktree add -q --detach --lock --reason "team-load-check $gone" "$code/.claude/worktrees/4"
   sleep 600 3>&- &
   local other=$!
-  git -C "$code" worktree add -q --detach --lock --reason "team-load-check $other" "$code/.claude/worktrees/5"
-  git -C "$code" worktree add -q -b stale "$code/.claude/worktrees/load-check"
+  git -C "${code:?}" worktree add -q --detach --lock --reason "team-load-check $other" "$code/.claude/worktrees/5"
+  git -C "${code:?}" worktree add -q -b stale "$code/.claude/worktrees/load-check"
   touch "$code/.claude/worktrees/load-check/stale.txt"
   # A worktree locked for another reason is no load check's.
-  git -C "$code" worktree add -q --detach --lock --reason other "$code/.claude/worktrees/2"
+  git -C "${code:?}" worktree add -q --detach --lock --reason other "$code/.claude/worktrees/2"
   run_bin -0 team-load-check
   kill "$other"
-  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "$code" rev-parse HEAD)" detached '.scratch ignored')"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch")" "$(printf '%s\n' "$wt" "$(git -C "${code:?}" rev-parse HEAD)" detached '.scratch ignored')"
   [[ ! -e $code/.claude/worktrees/3 && ! -e $code/.claude/worktrees/4 && ! -e $code/.claude/worktrees/5 ]]
   [[ ! -e $code/.claude/worktrees/load-check && -e $code/.claude/worktrees/2 ]]
-  assert_equal "$(git -C "$code" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/2")"
-  git -C "$code" worktree remove --force --force "$code/.claude/worktrees/2"
-  git -C "$code" branch -q -D stale
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/2")"
+  git -C "${code:?}" worktree remove --force --force "$code/.claude/worktrees/2"
+  git -C "${code:?}" branch -q -D stale
   left_nothing
 
   mkdir -p "$code/.claude/worktrees/load-check"
@@ -350,11 +350,11 @@ lock_line() {
   left_nothing
 
   # The open takes 1 and lets go: the load check takes 2, and leaves 1 to the task.
-  git -C "$code" worktree add -q -b task "$code/.claude/worktrees/1"
+  git -C "${code:?}" worktree add -q -b task "$code/.claude/worktrees/1"
   exec {fd}>&-
   run_bin -0 team-load-check
   assert_equal "$(sed -n 1p "$BATS_TEST_TMPDIR/launch")" "$code/.claude/worktrees/2"
-  assert_equal "$(git -C "$code" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/1")"
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$(printf '%s\n' "$code" "$code/.claude/worktrees/1")"
 }
 
 @test "a planner that writes outside .scratch/ fails the check, and the worktree is still removed" {

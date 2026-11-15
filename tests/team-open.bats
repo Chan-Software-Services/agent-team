@@ -267,33 +267,33 @@ advance_origin() {
 }
 
 @test "with every listed slot taken a task opens in the lowest numbered worktree, and the next in the one after" {
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
-  git -C "$primary" worktree add -q --detach "$slots/2" origin/main
-  git -C "$primary" worktree add -q "$HOME/elsewhere" -b spare origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q --detach "$slots/2" origin/main
+  git -C "${primary:?}" worktree add -q "$HOME/elsewhere" -b spare origin/main
   local made=$primary/.claude/worktrees base_sha
-  base_sha=$(git -C "$primary" rev-parse origin/main)
+  base_sha=$(git -C "${primary:?}" rev-parse origin/main)
   run_bin -0 --separate-stderr team-open proj feature feat late "Late"
   assert_equal "$(jq -c '{task, branch, base_sha, worktree, task_dir}' <<<"$output")" \
     "$(jq -cn --arg wt "$made/1" --arg sha "$base_sha" \
       '{task: "T1", branch: "feat/T1-late", base_sha: $sha, worktree: $wt, task_dir: "\($wt)/.scratch/task"}')"
-  assert_equal "$(git -C "$made/1" rev-parse --abbrev-ref HEAD)" "feat/T1-late"
-  assert_equal "$(git -C "$made/1" rev-parse --path-format=absolute --git-common-dir)" "$primary/.git"
+  assert_equal "$(git -C "${made:?}/1" rev-parse --abbrev-ref HEAD)" "feat/T1-late"
+  assert_equal "$(git -C "${made:?}/1" rev-parse --path-format=absolute --git-common-dir)" "$primary/.git"
   assert_equal "$(events opened | jq -r .worktree)" "$made/1"
-  assert_equal "$(git -C "$HOME/elsewhere" rev-parse --abbrev-ref HEAD)" "spare"
+  assert_equal "$(git -C "${HOME:?}/elsewhere" rev-parse --abbrev-ref HEAD)" "spare"
 
   run_bin -0 --separate-stderr team-open proj feature feat later "Later"
   assert_equal "$(jq -r '"\(.task) \(.worktree)"' <<<"$output")" "T2 $made/2"
   run_bin -0 team-log --check
 
   # A closed task's worktree, removed, is the lowest free number again.
-  git -C "$primary" worktree remove "$made/1"
+  git -C "${primary:?}" worktree remove "$made/1"
   run_bin -0 --separate-stderr team-open proj feature feat again "Again"
   assert_equal "$(jq -r .worktree <<<"$output")" "$made/1"
 }
 
 @test "a folder in the way that holds files but is no worktree is skipped with one line, and an empty one is taken" {
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
-  git -C "$primary" worktree add -q "$slots/2" -b feat/T4-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/2" -b feat/T4-busy origin/main
   local made=$primary/.claude/worktrees
   mkdir -p "$made/1" "$made/2"
   echo left >"$made/1/notes.txt"
@@ -328,8 +328,8 @@ advance_origin() {
 }
 
 @test "a half-open task in an on-demand worktree is finished there" {
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
-  git -C "$primary" worktree add -q "$slots/2" -b feat/T4-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/2" -b feat/T4-busy origin/main
   local made=$primary/.claude/worktrees
   stub_reply curl '{"message":"Missing Access"}'
   run_bin -1 --separate-stderr team-open proj feature feat flaky "Flaky"
@@ -340,7 +340,7 @@ advance_origin() {
   assert_equal "$(jq -r '"\(.task) \(.worktree)"' <<<"$output")" "T2 $made/2"
   run_bin -0 --separate-stderr team-open --task T1 proj feature feat flaky "Flaky"
   assert_equal "$(jq -r .worktree <<<"$output")" "$made/1"
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" "5"
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "5"
 }
 
 @test "the task's branch checked out outside the slots is refused" {
@@ -504,7 +504,7 @@ holding() {
   assert_equal "$output" ""
   assert_equal "$stderr" "team-open: no room to open a task: no room for session:builder at full (90%): 0.0 GiB of 0.3 GiB reserved, a builder needs 0.5 GiB; room comes when the team's work shrinks or the level rises"
   [[ ! -e $TEAM_HOME/tasks/T1 && ! -e $slots/1 && ! -e $primary/.claude/worktrees ]]
-  assert_equal "$(git -C "$primary" worktree list | wc -l)" "1"
+  assert_equal "$(git -C "${primary:?}" worktree list | wc -l)" "1"
   assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" ""
   assert_equal "$(stub_calls curl)" ""
   [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
@@ -518,8 +518,8 @@ holding() {
   assert_equal "$stderr" "team-open: no room to open a task: no room for session:builder: the team is at level none: nothing starts; room comes when Daniel raises the level"
   [[ ! -e $TEAM_HOME/tasks/T1 ]]
   # Room again: it opens, the listed slots held so on demand.
-  git -C "$primary" worktree add -q "$slots/1" -b feat/T3-busy origin/main
-  git -C "$primary" worktree add -q "$slots/2" -b feat/T4-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/1" -b feat/T3-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/2" -b feat/T4-busy origin/main
   capacity_room $((16 * 1073741824)) full
   run_bin -0 --separate-stderr team-open proj feature feat roomy "Roomy"
   assert_equal "$(jq -r '"\(.task) \(.worktree)"' <<<"$output")" "T1 $primary/.claude/worktrees/1"
@@ -540,7 +540,7 @@ holding() {
   stub_reply curl '{"message":"Missing Access"}'
   run_bin -1 team-open proj feature feat flaky "Flaky"
   # At level none, a room check would refuse; none runs, so team-capacity keeps no state at all.
-  rm -rf "$HOME/.local/state/agent-team"
+  rm -rf "${HOME:?}/.local/state/agent-team"
   jq -cn '{ts: (now | floor | todate), mode: "manual", level: "none", by: "Daniel", machine: "home-pc"}' >>"$TEAM_HOME/level.jsonl"
   stub_reply curl '{"id":"1563000000000000009"}'
   run_bin -0 --separate-stderr team-open --task T1 proj feature feat flaky "Flaky"
@@ -598,7 +598,7 @@ EOF
 }
 
 @test "two runs at once for a git pool with one free slot: one takes it, the other the first on-demand worktree" {
-  git -C "$primary" worktree add -q "$slots/2" -b feat/T9-busy origin/main
+  git -C "${primary:?}" worktree add -q "$slots/2" -b feat/T9-busy origin/main
   open_two_at_once
   local race=$BATS_TEST_TMPDIR/race
   assert_equal "$(cat "$race/1.rc") $(cat "$race/2.rc")" "0 0"

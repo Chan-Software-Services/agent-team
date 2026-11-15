@@ -135,7 +135,7 @@ site is set up in ~/projects/site"
   local intone=$HOME/projects/intone_app old=https://github.com/chanjdaniel/Conventioner.git
   # Its git pool's exclude is in place, as an earlier run left it, so only the origin is set up.
   echo /.claude/worktrees/ >>"$intone/.git/info/exclude"
-  git -C "$intone" remote set-url origin git@github.com:chanjdaniel/intone_app.git
+  git -C "${intone:?}" remote set-url origin git@github.com:chanjdaniel/intone_app.git
   run_bin -0 team-bootstrap --stage projects
   assert_equal "$(stage_lines projects)" "running: git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
 intone is set up in ~/projects/intone_app"
@@ -186,8 +186,8 @@ intone is set up in ~/projects/intone_app"
 running: echo /.scratch/task/ >>~/projects/fork/.git/info/exclude
 running: echo /.claude/worktrees/ >>~/projects/fork/.git/info/exclude
 fork is set up in ~/projects/fork"
-  git -C "$fork" worktree add -q "$fork/.claude/worktrees/1"
-  assert_equal "$(git -C "$fork" status --porcelain)" ""
+  git -C "${fork:?}" worktree add -q "$fork/.claude/worktrees/1"
+  assert_equal "$(git -C "${fork:?}" status --porcelain)" ""
   # A dry run says so before the clone.
   rm -rf "${fork:?}"
   run_bin -1 team-bootstrap --dry-run
@@ -198,7 +198,7 @@ fork is set up in ~/projects/fork"
   tools_at arch
   register bare owner/bare direct-pr git
   local bare=$HOME/projects/bare
-  rm -rf "$bare"
+  rm -rf "${bare:?}"
   run_bin -1 team-bootstrap --dry-run
   assert_contains "$output" "projects: would then set up bare's task directory exclude, its pool's exclude"
   run_bin -0 team-bootstrap
@@ -206,8 +206,8 @@ fork is set up in ~/projects/fork"
 running: echo /.scratch/task/ >>~/projects/bare/.git/info/exclude
 running: echo /.claude/worktrees/ >>~/projects/bare/.git/info/exclude
 bare is set up in ~/projects/bare"
-  git -C "$bare" worktree add -q "$bare/.claude/worktrees/1"
-  assert_equal "$(git -C "$bare" status --porcelain)" ""
+  git -C "${bare:?}" worktree add -q "$bare/.claude/worktrees/1"
+  assert_equal "$(git -C "${bare:?}" status --porcelain)" ""
   # A treehouse pool's checkout gets no such line.
   assert_equal "$(grep -c worktrees "$CONVENTIONER/.git/info/exclude" || true)" 0
 }
