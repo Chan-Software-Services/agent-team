@@ -117,7 +117,7 @@ from typing import Callable
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    ASSIGNMENT, blank_heredocs, code_parts, command_name, commands, from_wrappers, has_blank, heads, leads,
+    ASSIGNMENT, call_commands, command_name, from_wrappers, has_blank, heads, leads,
 )
 import delete_rules  # noqa: E402
 import kill_rules  # noqa: E402
@@ -413,11 +413,7 @@ class RowError(Exception):
 def refusal(command, context=None):
     """The first row, in table order, that refuses any command the text runs, with its reason and
     allowed way, or None; each row is given the call's context."""
-    # The command's own text too, whose heredoc bodies the walk leaves out as Bash reads them: a
-    # line of the code text that an unquoted body keeps from its first $( or backtick on may open
-    # a substitution that never closes (an escaped backtick), which would hide the lines after it.
-    walked = [found for part in code_parts(command) for found in commands(blank_heredocs(part))]
-    walked += commands(command)
+    walked = call_commands(command)
     for row in ROWS:
         for found in walked:
             try:
