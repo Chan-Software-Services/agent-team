@@ -15,7 +15,9 @@
 #   a launch whose 8-character session id begins the session's gives its role and task (task T0
 #     is team-test); the launch's machine is its own, else the machine its session's replies
 #     came from, else that of the other launches under the same /home/<user> or /Users/<user>;
-#   with no launch, the session's directory under ~/.claude/projects (the encoded working
+#   with no launch, a session named assistant (a reply of it carries the name, below), as
+#     claude-assistant names its session, is the assistant, whatever its directory;
+#   with neither, the session's directory under ~/.claude/projects (the encoded working
 #     directory) gives coordinator for the team home (TEAM_HOME's, and the one
 #     ~/.config/agent-team/home names) or the code checkout (the primary checkout above bin/,
 #     never a worktree of it), as this machine has them or under any machine's
@@ -30,13 +32,14 @@
 #   token types      tokens and $w per type: input, cache_write_1h, cache_write_5m, cache_read,
 #                    output
 #   models, machines replies, tokens, $w and the first and last day of each
-#   roles            sessions, replies, tokens by type and $w per role (coordinator, planner,
-#                    builder, reviewer, ops, unlaunched, team-test, daniel), with the share of it
-#                    from subagents
+#   roles            sessions, replies, tokens by type and $w per role (coordinator, assistant,
+#                    planner, builder, reviewer, ops, unlaunched, team-test, daniel), with the
+#                    share of it from subagents
 #   projects, tasks  $w per project; per task its tokens, $w, its planners', builders' and
 #                    reviewers' $w, its launches per machine, merges, tickets done and reviews in
 #                    the window, and whether it is closed by --until
-#   days             tokens and $w per UTC day, and the $w of each worker role and the coordinator
+#   days             tokens and $w per UTC day, and the $w of each worker role, the coordinator
+#                    and the assistant
 #   sessions         per role, its main conversations' replies, $w and context (input plus cache
 #                    writes plus cache read): the median, 90th percentile (nearest rank) and
 #                    largest, and the median starting context, the first reply's, of the sessions
@@ -130,6 +133,8 @@
 #   machine          this machine
 #   session          the session's id; a subagent's reply carries its parent session's
 #   agent            a subagent's reply only: its agent id
+#   name             "assistant", only on a reply of a session its transcript names assistant (an
+#                    agent-name line, as claude --name writes); no other name is kept
 #   project_dir      the transcript's directory under ~/.claude/projects (the encoded cwd)
 #   model            the model id, <synthetic> for Claude Code's own error replies
 #   request          the API request id
@@ -255,11 +260,14 @@ USAGE = (
 # The token counts of a line, in their order; each is the largest of the reply's lines.
 COUNTS = ("input", "cache_write_1h", "cache_write_5m", "cache_read", "output", "thinking")
 # A line's fields, in the order it is written.
-FIELDS = ["ts", "machine", "session", "agent", "project_dir", "model", "request", *COUNTS]
-# Raised to 2 with the time rows, to 3 when a stopped background call came to end at its stop, and
-# to 4 when a command's name came to be read past its heredoc, so the first export after each reads
-# every transcript again and rewrites the rows that change.
-SCAN_VERSION = 4
+FIELDS = ["ts", "machine", "session", "agent", "name", "project_dir", "model", "request", *COUNTS]
+# The one session name a line keeps, claude-assistant's.
+ASSISTANT = "assistant"
+# Raised to 2 with the time rows, to 3 when a stopped background call came to end at its stop, to 4
+# when a command's name came to be read past its heredoc, and to 5 when the assistant's replies
+# came to carry its name, so the first export after each reads every transcript again and rewrites
+# the rows that change.
+SCAN_VERSION = 5
 
 
 def fail(message, status=1):
@@ -374,14 +382,41 @@ def reply(line, machine, project_dir):
 
 
 # Merge the reply <new> into <old>, both lines of one request: the earliest line's fields, each
-# count's largest value. Returns the merged line.
+# count's largest value, and the name either line of the same session carries. Returns the merged
+# line.
 def merge(old, new):
     first, other = (new, old) if new["ts"] < old["ts"] else (old, new)
     merged = dict(first)
     for key in COUNTS:
         if key in other:
             merged[key] = max(merged.get(key, 0), other[key])
+    if "name" in other and other["session"] == merged["session"]:
+        merged["name"] = other["name"]
     return {key: merged[key] for key in sorted(merged, key=FIELDS.index)}
+
+
+# The usage lines of the transcript <path>, those of a session it names assistant carrying the
+# name: transcript_replies <path> <machine> <project_dir>
+def transcript_replies(path, machine, project_dir):
+    rows, named = [], set()
+    with open(path, encoding="utf-8", errors="replace") as file:
+        for line in file:
+            if '"agent-name"' in line:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict) and entry.get("type") == "agent-name":
+                    if entry.get("agentName") == ASSISTANT and isinstance(entry.get("sessionId"), str):
+                        named.add(entry["sessionId"])
+                    continue
+            row = reply(line, machine, project_dir)
+            if row is not None:
+                rows.append(row)
+    for at, row in enumerate(rows):
+        if row["session"] in named:
+            rows[at] = {key: value for key, value in sorted({**row, "name": ASSISTANT}.items(), key=lambda item: FIELDS.index(item[0]))}
+    return rows
 
 
 def dumps(row):
@@ -924,15 +959,11 @@ def export(through_now):
             continue
         read += 1
         project_dir = os.path.relpath(path, projects).split(os.sep)[0]
-        with open(path, encoding="utf-8", errors="replace") as file:
-            for line in file:
-                row = reply(line, machine, project_dir)
-                if row is None:
-                    continue
-                old = replies.get(row["request"])
-                replies[row["request"]] = merge(old, row) if old else row
-                if row["ts"][:10] > last:
-                    pending.add(path)
+        for row in transcript_replies(path, machine, project_dir):
+            old = replies.get(row["request"])
+            replies[row["request"]] = merge(old, row) if old else row
+            if row["ts"][:10] > last:
+                pending.add(path)
         if path in timed:
             for row in time_rows(path, machine, timed[path]):
                 if row["day"] > last:
@@ -994,10 +1025,10 @@ def export(through_now):
 # The report.
 
 TYPES = ("input", "cache_write_1h", "cache_write_5m", "cache_read", "output")
-CLASSES = ["coordinator", "planner", "builder", "reviewer", "ops", "unlaunched", "team-test", "daniel"]
+CLASSES = ["coordinator", "assistant", "planner", "builder", "reviewer", "ops", "unlaunched", "team-test", "daniel"]
 WORKERS = ("planner", "builder", "reviewer", "ops")
 # The roles the sessions, days and rebuild tables show.
-SESSION_ROLES = ("coordinator", "planner", "builder", "reviewer", "ops")
+SESSION_ROLES = ("coordinator", "assistant", "planner", "builder", "reviewer", "ops")
 CONTEXT_EDGES = (0, 50e3, 100e3, 200e3, 400e3, 700e3, 2e6)
 # The context past which a session ran long, as the long sessions table counts it.
 LONG = 250e3
@@ -1110,11 +1141,9 @@ def load_replies(team, home, machine):
         except FileNotFoundError:
             continue
         project_dir = os.path.relpath(path, projects).split(os.sep)[0]
-        with open(path, encoding="utf-8", errors="replace") as file:
-            for line in file:
-                row = reply(line, machine, project_dir)
-                if row is not None and (last is None or row["ts"][:10] >= last):
-                    add(row)
+        for row in transcript_replies(path, machine, project_dir):
+            if last is None or row["ts"][:10] >= last:
+                add(row)
     for row in replies.values():
         try:
             row["t"] = when(row["ts"])
@@ -1150,9 +1179,9 @@ def encode(path):
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
-# Each session's role and task, from the ledger and its directory (the header says how), and each
-# launch's machine as its _machine; <places> are the coordinator's working directories on this
-# machine. classify <rows sorted by time> <launches> <places> <home>
+# Each session's role and task, from the ledger, its name and its directory (the header says how),
+# and each launch's machine as its _machine; <places> are the coordinator's working directories on
+# this machine. classify <rows sorted by time> <launches> <places> <home>
 def classify(rows, launches, places, home):
     exact, under = set(), set()
     for path in places:
@@ -1172,9 +1201,11 @@ def classify(rows, launches, places, home):
         return "daniel"
 
     by_prefix = {e["session"][:8]: e for e in launches}
-    first = {}
+    first, named = {}, set()
     for r in rows:
         first.setdefault(r["session"], r)
+        if r.get("name") == ASSISTANT:
+            named.add(r["session"])
     classes = {}
     for session, r in first.items():
         launch = by_prefix.get(session[:8])
@@ -1182,6 +1213,8 @@ def classify(rows, launches, places, home):
             classes[session] = ("team-test", None)
         elif launch:
             classes[session] = (str(launch.get("role")), launch.get("task"))
+        elif session in named:
+            classes[session] = (ASSISTANT, None)
         else:
             classes[session] = (by_dir(r["project_dir"]), None)
 
