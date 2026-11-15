@@ -1516,10 +1516,11 @@ coordinator_deny_gaps() {
     "docker ps" "git branch -d feat/T1-x" "git reset --soft HEAD~1" "team-merge https://github.com/me/shop/pull/5"; do
     if denied_in "$coordinator" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
-  # The assistant runs in bypass mode too, with every rule of the coordinator's, and its launcher's
-  # header names the same families.
+  # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a
+  # path (a whole tool the coordinator denies is one it does not use, which
+  # tests/claude-assistant.bats lists), and its launcher's header names the same families.
   assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
-  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[]' "$coordinator")" ""
+  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" ""
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \
