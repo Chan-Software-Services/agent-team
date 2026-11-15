@@ -30,7 +30,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `guarded`: the short list, one extended regular expression per line with its area, `@<project>` or `@own` for one project's line, any changed path of which brings a merge on the default word, the approved plan, back to Daniel for the per-head word, read by `team-merge` from its own checkout.
     - `health.jq`: the health module, the one place that says what unhealthy means: the fold of each heartbeat run into the health record, the ledger's one-pass scan, every health threshold, and the view `team-timers health` prints, its problems and its line in markup and plain text.
     - `kill_rules.py`: `command_rules.py`'s kill rows, refusing a kill by name or pattern, tmux's `kill-*`, and a kill of PIDs read from input, of a PID it cannot read, of a process group, every process or PID 0 or 1, or of a literal PID not proven its own, each naming its allowed way.
-    - `launch.sh`: the launchers' shared parts, which `claude-coordinator` and `claude-assistant` take: the launch lock, the check that no session of the name is live, and the writer of the session's settings and MCP config.
+    - `launch.sh`: the launchers' shared parts, which `claude-coordinator` and `claude-assistant` take: the launch lock, the check that no session of the name is live, the writer of the session's settings and MCP config, and the step that turns the user's personal skills off.
     - `ledger-contract.json` and `ledger.jq`: the ledger contract and its jq.
     - `lifecycle.json`: the task lifecycle's table, its statuses, phases, start states, what each kind may follow and does, the park causes and what ends each, and the `lifecycle_from` and `asked_parks_from` cutovers, which `ledger.jq` imports.
     - `messages.jq`: reads a worker's message into the events the coordinator's message table gives it, for `team-log --from-message`.
@@ -58,7 +58,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `vendor/git-filter-repo/`: git filter-repo 2.47.0, vendored with its MIT license.
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
-- `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks and its denials.
+- `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
