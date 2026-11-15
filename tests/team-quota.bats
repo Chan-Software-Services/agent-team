@@ -149,7 +149,7 @@ reading() {
 }
 
 @test "with no team home, only the machine's state file is written" {
-  rm -rf "$TEAM_HOME"
+  rm -rf "${TEAM_HOME:?}"
   line full
   assert_equal "$output" "Opus 5.5 · ctx 42% · 5h 23% · week 61% · Fable 91% · resets Fri 18:00"
   assert_equal "$stderr" ""
@@ -315,7 +315,7 @@ reading() {
   local primary wt
   primary=$(make_repo proj)
   wt=$HOME/slots/proj/1
-  git -C "$primary" worktree add -q -b feat/T7-task "$wt"
+  git -C "${primary:?}" worktree add -q -b feat/T7-task "$wt"
   cat >"$TEAM_HOME/projects.toml" <<'TOML'
 [proj]
 repo = "owner/proj"
