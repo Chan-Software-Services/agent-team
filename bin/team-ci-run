@@ -30,9 +30,12 @@
 #                                                 naming origin's tip and <sha>: push that head,
 #                                                 then run it again
 #   no run, origin at <sha>, and an open PR of    it looks again, since the PR's own run is on its
-#   the branch whose head is <sha>                way; after the grace it starts one, since GitHub
-#                                                 starts none for a PR that conflicts with its base
-#   no run, origin at <sha>, and no such PR       it starts one at once
+#   the branch, at whatever head GitHub shows     way, and GitHub may show the branch at a pushed
+#   it                                            head a moment before the PR's head follows; after
+#                                                 the grace it starts one, since GitHub starts none
+#                                                 for a PR that conflicts with its base
+#   no run, origin at <sha>, and no open PR of    it starts one at once
+#   the branch
 # It starts a run with gh workflow run <branch_ci> --repo <repo> --ref <branch>, once: a dispatch gh
 # fails is exit 1 with gh's reason, never tried again by the same call. The run is the one whose URL
 # gh prints (.../actions/runs/<id>), which it reads (gh api repos/<repo>/actions/runs/<id>): one
@@ -131,9 +134,10 @@ while :; do
         if [[ -n $tip ]]; then at="origin's $branch is at ${tip:0:7}"; else at="origin has no branch $branch"; fi
         end 1 "$at, not $short: push that head, then run team-ci-run again"
       fi
-    elif ((look_n * WAIT_SECONDS >= GRACE_SECONDS)) || ! jq -e --arg sha "$sha" 'any(.[]; .headRefOid == $sha)' "$dir/prs" >/dev/null; then
-      # No run is on its way: a PR that conflicts with its base gets none, and a branch with no PR
-      # at this head has no trigger. Start one, once.
+    elif ((look_n * WAIT_SECONDS >= GRACE_SECONDS)) || ! jq -e 'length > 0' "$dir/prs" >/dev/null; then
+      # No run is on its way: a PR that conflicts with its base gets none, and a branch with no open
+      # PR has no trigger. An open PR at any head holds the start for the grace, since its head may
+      # lag the branch's. Start one, once.
       if ! out=$(gh workflow run "$workflow" --repo "$repo" --ref "$branch" 2>&1); then
         end 1 "could not start a run on $branch: $(grep -m1 . <<<"$out" || echo "gh workflow run failed"); run team-ci-run again, and report BLOCKED if it is refused again"
       fi

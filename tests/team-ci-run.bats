@@ -247,7 +247,20 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$(dispatches)" ""
 }
 
-@test "an open PR at the head whose run never comes within the grace gets one started" {
+@test "an open PR still shown at its old head, origin's branch at the new one: no run is started, and the PR's run of the head is waited on" {
+  # GitHub may show the branch at a pushed head a moment before the PR's head follows.
+  prs 0 12:"$other"
+  prs 1 12:"$head"
+  listed 2 "$(a_run 7001 pull_request completed success)"
+  green 2 pull_request
+  run_bin team-ci-run proj "$branch" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 2
+  assert_equal "${lines[0]}" "team-ci-run: waiting on $run_url (pull_request, found) of a1b2c3d"
+  assert_equal "$(dispatches)" ""
+}
+
+@test "an open PR of the branch whose run of the head never comes within the grace gets one started" {
   prs 0 217:"$head"
   green 0
   run_bin team-ci-run proj "$branch" "$head"
@@ -256,12 +269,12 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$(ended_at)" 12
   assert_equal "${lines[0]}" "team-ci-run: waiting on $run_url (workflow_dispatch, started) of a1b2c3d"
   assert_equal "$(dispatches)" "workflow run ci.yml --repo owner/proj --ref $branch"
-  # An open PR of the branch at another head has no run of this head on its way.
+  # An open PR of the branch that stays at another head holds the start for the grace too.
   prs 0 217:"$other"
   echo 0 >"$GH_DIR/look"
   run_bin team-ci-run proj "$branch" "$head"
   assert_equal "$status" 0
-  assert_equal "$(ended_at)" 0
+  assert_equal "$(ended_at)" 12
 }
 
 @test "TEAM_CI_RUN_GRACE_SECONDS replaces the grace's seconds, and must be a number" {
