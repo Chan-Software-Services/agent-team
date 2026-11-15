@@ -99,7 +99,7 @@ reply() {
   assert_equal "$output" "$(stowed_text)"
   assert_equal "$(jq -c '[.held_at, .told_at, .stowed_at != null, .released_at != null]' "$record")" '[null,null,true,true]'
   assert_equal "$(logged)" $'held\ntold\nstowed\nreleased stowed'
-  assert_equal "$(jq -c 'keys' "$log" | sort -u)" '["at","event","session"]'$'\n''["at","event","session","why"]'
+  assert_equal "$(jq -c 'keys' "$log" | LC_ALL=C sort -u)" '["at","event","session"]'$'\n''["at","event","session","why"]'
   assert_equal "$(jq -r 'select(.session != "'"$session"'" or (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$") | not)) | .event' "$log")" ""
 }
 
