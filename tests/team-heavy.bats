@@ -16,7 +16,21 @@ setup() {
 teardown() {
   # Let a holder a test left go, so bats does not wait on it.
   touch "$BATS_TEST_TMPDIR/release"
-  wait 2>/dev/null || true
+  wait_background
+}
+
+# Note the process just started in the background ($!), for wait_background.
+started() {
+  echo "$!" >>"$BATS_TEST_TMPDIR/background"
+}
+
+# Wait for each process started() noted, and forget them. Never a bare wait, which would wait for
+# bats' own time limit countdown too.
+wait_background() {
+  local pid
+  [[ -f $BATS_TEST_TMPDIR/background ]] || return 0
+  while read -r pid; do wait "$pid" 2>/dev/null || true; done <"$BATS_TEST_TMPDIR/background"
+  : >"$BATS_TEST_TMPDIR/background"
 }
 
 # Wait until <file> exists, up to 20 seconds.
@@ -39,6 +53,7 @@ hold() {
     touch "$0/held"
     until [[ -e $0/release ]]; do sleep 0.1; done
     echo "$1" >>"$0/order"' "$BATS_TEST_TMPDIR" "$1" >/dev/null 2>&1 3>&- &
+  started
   wait_for "$BATS_TEST_TMPDIR/held"
 }
 
@@ -58,6 +73,7 @@ hold() {
   run_bin -0 team-heavy status
   [[ $output =~ ^held\ by\ first\ \(pid\ [0-9]+\)\ since\ [0-9-]{10}\ [0-9:]{8}\ [+-][0-9]{4}$ ]]
   (sleep 1 && touch "$BATS_TEST_TMPDIR/release") &
+  started
   run_bin -0 --separate-stderr team-heavy run --wait 1 --label second -- bash -c 'echo second >>"$0/order"' "$BATS_TEST_TMPDIR"
   assert_equal "$(grep -c waiting <<<"$stderr")" 1
   assert_contains "$stderr" "team-heavy: waiting up to 1 minutes for the heavy-run lock, held by first (pid "
@@ -78,7 +94,7 @@ hold() {
   TEAM_HEAVY_HELD=1 run_bin -0 team-heavy run --wait 0 -- echo nested
   assert_equal "$output" nested
   touch "$BATS_TEST_TMPDIR/release"
-  wait
+  wait_background
   run_bin -0 team-heavy run -- bash -c 'sleep 30 >/dev/null 2>&1 & echo $! >"$0/left"' "$BATS_TEST_TMPDIR"
   run_bin -0 team-heavy status
   kill "$(cat "$BATS_TEST_TMPDIR/left")"
@@ -226,7 +242,7 @@ costs() {
   run_bin -0 team-heavy status
   [[ $output =~ ^held\ by\ first\ \(pid\ [0-9]+,\ T7\)\ since\ [0-9-]{10}\ [0-9:]{8}\ [+-][0-9]{4}$ ]]
   touch "$BATS_TEST_TMPDIR/release"
-  wait
+  wait_background
 
   # Conventioner's scripts/e2e-lock.sh: "<who> since <time>", on the same file.
   exec {held}<>"$HOME/.local/state/agent-team/heavy.lock"
@@ -322,7 +338,7 @@ costs() {
   real_ps=$(command -v ps)
   stub_command ps
   stub_script ps <<SH
-if [[ \$* == "-A -o pgid= -o rss=" && ! -e "$first_look" ]]; then
+if [[ \$1 == -A && \$* == *rss=* && ! -e "$first_look" ]]; then
   touch "$first_look"
   exit 0
 fi
@@ -334,10 +350,28 @@ SH
   jq -e '.kind == "heavy:tests-run" and .peak_bytes > 0' "$COSTS"
 }
 
+@test "with no scope a run's sample counts its whole process tree, a descendant in a process group of its own included" {
+  as_macos
+  # GNU timeout moves itself and its command into a group of their own, as tests/run's per-file
+  # limit does; the hog there holds about 100 MB, its group's leader a few MB. Each look reads
+  # nothing until the hog holds its memory, so the first that reads any sees it.
+  local real_ps ready=$BATS_TEST_TMPDIR/ready hog=$BATS_TEST_TMPDIR/hog.sh
+  real_ps=$(command -v ps)
+  stub_command ps
+  stub_script ps <<SH
+if [[ \$1 == -A && \$* == *rss=* && ! -e "$ready" ]]; then exit 0; fi
+exec "$real_ps" "\$@"
+SH
+  printf '%s\n' 'x=$(head -c 100000000 /dev/zero | tr "\0" a)' ': >"$1"' 'sleep 2' >"$hog"
+  run_bin -0 --separate-stderr team-heavy run --kind tests-run -- bash -c 'timeout 60 bash "$0" "$1"; true' "$hog" "$ready"
+  assert_equal "$stderr" ""
+  jq -e '.kind == "heavy:tests-run" and .peak_bytes > 100000000' "$COSTS"
+}
+
 @test "a cost sample that cannot be written is a line on stderr and the run's status stands" {
   as_macos
   # No team home, so no admission needs the state directory either.
-  rm -r "$HOME/.local/state/agent-team/capacity"
+  rm -r "${HOME:?}/.local/state/agent-team/capacity"
   touch "$HOME/.local/state/agent-team/capacity"
   run -5 --separate-stderr env -u TEAM_HOME "$REPO_ROOT/bin/team-heavy" run -- bash -c 'sleep 1; exit 5'
   assert_contains "$stderr" "team-heavy: could not write the cost sample to ~/.local/state/agent-team/capacity/costs.jsonl"
@@ -358,6 +392,7 @@ stoppable() {
       while :; do sleep 0.1; done' "$BATS_TEST_TMPDIR" >/dev/null 2>"$BATS_TEST_TMPDIR/run.err" 3>&- || rc=$?
     echo "$rc" >"$BATS_TEST_TMPDIR/run.rc"
   ) 3>&- &
+  started
   wait_for "$BATS_TEST_TMPDIR/cmd"
 }
 
@@ -478,6 +513,7 @@ gone() {
     done
   done
     capacity_room $((16 * 1073741824)) full) &
+  started
   TEAM_HEAVY_RECHECK_SECONDS=1 run_bin -0 --separate-stderr team-heavy run --wait 1 --kind tests-run -- jq -c 'map(.kind)' "$ADMITTED"
   assert_equal "$output" '["heavy:tests-run"]'
   assert_equal "$(grep -c 'room' <<<"$stderr")" 1

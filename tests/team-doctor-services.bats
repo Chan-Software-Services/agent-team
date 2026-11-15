@@ -2,7 +2,7 @@
 # shellcheck disable=SC2153 # LOCK and the other globals are helpers/doctor.bash's
 # team-doctor: one PASS, WARN or FAIL line per thing this machine needs, on the machine
 # tests/helpers/doctor.bash builds: every tool a version stub, the OS a stubbed uname.
-# This file: the docker, chrome, power, 1password, secret, discord access, interview channel,
+# This file: the docker, docker veth, chrome, power, 1password, secret, discord access, interview channel,
 # gate-agent and records lines.
 
 load helpers/common
@@ -34,6 +34,52 @@ daemon_refuses() {
   tools_at macos
   run_bin -1 team-doctor
   assert_equal "$(line_of docker)" "FAIL docker: \`docker info\` cannot reach the daemon: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?; fix: Daniel opens Docker Desktop once and accepts its license"
+}
+
+@test "the docker veth line passes while a new veth gets no IPv6 link-local address, warns with Daniel's sysctl otherwise, and is Linux's alone" {
+  only_checks 045-docker-veth.sh
+  tools_at arch
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: net.ipv6.conf.default.addr_gen_mode is 1, so a new Docker veth gets no IPv6 link-local address"
+  local fix="Daniel runs echo 'net.ipv6.conf.default.addr_gen_mode = 1' | sudo tee /etc/sysctl.d/90-docker-no-ll6.conf, then sudo sysctl --system"
+  local because="so each new Docker veth gets an IPv6 link-local address, and Chromium beside a container that starts or stops can fail with net::ERR_NETWORK_CHANGED"
+  # The kernel's default, EUI-64 addresses, and stable privacy ones are link-local addresses too.
+  local mode
+  for mode in 0 2 3; do
+    veth_addr_gen_mode "$mode"
+    run_bin -0 team-doctor
+    assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode is $mode, $because; fix: $fix"
+  done
+  # An empty value, or none under an IPv6 tree, is no setting.
+  veth_addr_gen_mode ''
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode cannot be read, $because; fix: $fix"
+  rm "$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/addr_gen_mode"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode cannot be read, $because; fix: $fix"
+  # A kernel with IPv6 off gives a veth no address at all.
+  veth_addr_gen_mode none
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: IPv6 is off (no /proc/sys/net/ipv6), so a Docker veth gets no IPv6 link-local address"
+  # Nor does a kernel whose new interfaces have IPv6 turned off by sysctl, whatever their mode.
+  veth_addr_gen_mode 0
+  echo 1 >"$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/disable_ipv6"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: net.ipv6.conf.default.disable_ipv6 is 1, so a new Docker veth gets no IPv6 address at all"
+  # Turned back on, the mode is read again.
+  echo 0 >"$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/disable_ipv6"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode is 0, $because; fix: $fix"
+  # Docker Desktop's veths are inside its VM, so macOS has no such line, whatever the file says.
+  on_macos
+  tools_at macos
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" ""
+  # Nor has an OS the tools are not checked for.
+  stub_reply uname Linux
+  printf '%s\n' 'PRETTY_NAME="Ubuntu 24.04.3 LTS"' 'ID=ubuntu' >"$TEAM_OS_RELEASE"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'docker veth')" ""
 }
 
 @test "the chrome line warns without Google Chrome or Chromium that runs, with this OS's install" {
@@ -526,7 +572,7 @@ EOF
   echo '{"lockfileVersion": 3}' >"$CODE_CHECKOUT/servers/package-lock.json"
   run_bin -1 team-doctor
   assert_equal "$(line_of servers)" "FAIL servers: servers/node_modules is not the install of servers/package-lock.json, so a toolkit or chrome-devtools-axi may run another server; fix: $fix"
-  rm -r "$CODE_CHECKOUT/servers/node_modules"
+  rm -r "${CODE_CHECKOUT:?}/servers/node_modules"
   # The whole doctor, since the last assertion reads every line.
   TEAM_DOCTOR_CHECKS='' run_bin -1 team-doctor
   assert_equal "$(line_of servers)" "FAIL servers: servers/node_modules is missing, so the toolkits' servers and the sessions' chrome-devtools-mcp cannot start; fix: $fix"
@@ -627,7 +673,7 @@ captures_pass="PASS captures: the team home's git ignores tasks/*/ui/, every cap
   touch "$TEAM_HOME/tasks/T4/scratch-my site/ui/element.png"
   run_bin team-doctor
   assert_equal "$(line_of captures)" "WARN captures: tasks/T5/ui/, tasks/T4/scratch-my site/ui/ are left behind, by a task that is not open or in an archive (team-close removes a task's captures, and archives leave them out); fix: rm -rf $TEAM_HOME/tasks/T5/ui $TEAM_HOME/tasks/T4/scratch-my\\ site/ui"
-  rm -r "$TEAM_HOME/tasks/T5/ui" "$TEAM_HOME/tasks/T4/scratch-my site/ui"
+  rm -r "${TEAM_HOME:?}/tasks/T5/ui" "${TEAM_HOME:?}/tasks/T4/scratch-my site/ui"
   run_bin team-doctor
   assert_equal "$(line_of captures)" "$captures_pass"
   sed -i '\#^tasks/\*/ui/$#d' "$TEAM_HOME/.git/info/exclude"
@@ -639,7 +685,7 @@ captures_pass="PASS captures: the team home's git ignores tasks/*/ui/, every cap
 # detached as a returned slot is; prints its path: slot_with_shots <n>
 slot_with_shots() {
   local slot=$HOME/.treehouse/Conventioner-3930b8/$1/Conventioner
-  git -C "$CONVENTIONER" worktree add -q --detach "$slot"
+  git -C "${CONVENTIONER:?}" worktree add -q --detach "$slot"
   mkdir -p "$slot/.scratch/shots/builder"
   touch "$slot/.scratch/shots/builder/page.png"
   echo "$slot"
@@ -676,8 +722,8 @@ slot_closed() {
   assert_equal "$(line_of captures)" "WARN captures: $shown/1/Conventioner/.scratch/shots/, $shown/7/Conventioner/.scratch/shots/ are left behind, in slots held by no open task (team-close removes .scratch/shots/ from each worktree it returns); fix: rm -rf $one/.scratch/shots $two/.scratch/shots"
 
   # A git pool's slot counts as well.
-  rm -r "$one/.scratch/shots" "$two/.scratch/shots"
-  git -C "$SITE" worktree add -q --detach "$HOME/projects/site-slots/1"
+  rm -r "${one:?}/.scratch/shots" "${two:?}/.scratch/shots"
+  git -C "${SITE:?}" worktree add -q --detach "$HOME/projects/site-slots/1"
   mkdir -p "$HOME/projects/site-slots/1/.scratch/shots"
   touch "$HOME/projects/site-slots/1/.scratch/shots/page.png"
   run_bin team-doctor
@@ -713,7 +759,7 @@ slot_closed() {
 
   # An empty folder holds nothing to warn about.
   slot=$HOME/.treehouse/Conventioner-3930b8/4/Conventioner
-  git -C "$CONVENTIONER" worktree add -q --detach "$slot"
+  git -C "${CONVENTIONER:?}" worktree add -q --detach "$slot"
   mkdir -p "$slot/.scratch/shots"
   run_bin team-doctor
   assert_equal "$(line_of captures)" "$captures_pass"
@@ -722,7 +768,7 @@ slot_closed() {
   other=$BATS_TEST_TMPDIR/elsewhere
   mkdir -p "$other/shots"
   touch "$other/shots/page.png"
-  rm -r "$slot/.scratch"
+  rm -r "${slot:?}/.scratch"
   ln -s "$other" "$slot/.scratch"
   run_bin team-doctor
   assert_equal "$(line_of captures)" "$captures_pass"
@@ -733,14 +779,14 @@ slot_closed() {
   tools_at arch
   local slot
   slot=$(slot_with_shots 1)
-  git -C "$slot" switch -q -c feat/T5-work
+  git -C "${slot:?}" switch -q -c feat/T5-work
   slot_opened T5 "$slot"
   slot_closed T5 "$slot" kept
   run_bin team-doctor
   assert_equal "$(line_of captures)" "$captures_pass"
 
   # Daniel returned it by hand, so no team-close will remove them.
-  git -C "$slot" switch -q --detach
+  git -C "${slot:?}" switch -q --detach
   run_bin team-doctor
   assert_contains "$(line_of captures)" "WARN captures: ~/.treehouse/Conventioner-3930b8/1/Conventioner/.scratch/shots/ is left behind"
 }
@@ -752,7 +798,7 @@ slot_closed() {
   # A clone sharing the pool owns slot 1, whose screenshots are that clone's.
   git clone -q "$CONVENTIONER" "$other"
   slot=$HOME/.treehouse/Conventioner-3930b8/1/Conventioner
-  git -C "$other" worktree add -q --detach "$slot"
+  git -C "${other:?}" worktree add -q --detach "$slot"
   mkdir -p "$slot/.scratch/shots"
   touch "$slot/.scratch/shots/page.png"
   # A folder holding no worktree at all is the slots line's.

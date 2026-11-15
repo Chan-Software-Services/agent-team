@@ -92,8 +92,8 @@ stopped="load check: team-doctor reports a FAIL above; fix it, then run the load
 
 left_nothing() {
   [[ ! -e $wt ]]
-  assert_equal "$(git -C "$code" worktree list --porcelain | sed -n 's/^worktree //p')" "$code"
-  assert_equal "$(git -C "$code" status --porcelain --ignored)" ""
+  assert_equal "$(git -C "${code:?}" worktree list --porcelain | sed -n 's/^worktree //p')" "$code"
+  assert_equal "$(git -C "${code:?}" status --porcelain --ignored)" ""
 }
 
 drill_lines() {
@@ -101,13 +101,13 @@ drill_lines() {
 }
 
 drill_line() {
-  jq -cn --arg drill "$1" --arg commit "$(git -C "$REPO_ROOT" rev-parse HEAD)" --argjson dirty \
-    "$([[ -z $(git -C "$REPO_ROOT" status --porcelain --untracked-files=no) ]] && echo false || echo true)" \
+  jq -cn --arg drill "$1" --arg commit "$(git -C "${REPO_ROOT:?}" rev-parse HEAD)" --argjson dirty \
+    "$([[ -z $(git -C "${REPO_ROOT:?}" status --porcelain --untracked-files=no) ]] && echo false || echo true)" \
     --arg verdict "$2" --arg detail "${3:-}" \
     '{drill: $drill, machine: "home-pc", commit: $commit, dirty: $dirty, claude: "2.1.321",
       verdict: $verdict, detail: $detail}'
 }
 
 recorded() {
-  echo "team-drill: recorded $1 $2 on home-pc at $(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)"
+  echo "team-drill: recorded $1 $2 on home-pc at $(git -C "${REPO_ROOT:?}" rev-parse --short=7 HEAD)"
 }

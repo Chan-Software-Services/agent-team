@@ -85,18 +85,18 @@ EOF
   "$CODE_CHECKOUT/servers/install"
   rm "$STUB_CALLS/servers-install.log"
   git init -q "$CODE_CHECKOUT"
-  git -C "$CODE_CHECKOUT" config core.hooksPath bin/hooks/git
+  git -C "${CODE_CHECKOUT:?}" config core.hooksPath bin/hooks/git
   # Its first commit, CODE_START, with no file, and every drill passed on it today, so the drills
   # line passes. Made with git's plumbing, as code_commit makes the later ones: the dev guard's
   # pre-commit refuses a commit on main.
   export CODE_START
-  CODE_START=$(git -C "$CODE_CHECKOUT" commit-tree -m 'chore: start the code' 4b825dc642cb6eb9a060e54bf8d69288fbee4904)
-  git -C "$CODE_CHECKOUT" update-ref HEAD "$CODE_START"
+  CODE_START=$(git -C "${CODE_CHECKOUT:?}" commit-tree -m 'chore: start the code' 4b825dc642cb6eb9a060e54bf8d69288fbee4904)
+  git -C "${CODE_CHECKOUT:?}" update-ref HEAD "$CODE_START"
   jq -c --arg at "$(date -u +%FT%TZ)" --arg commit "$CODE_START" '.drills[] | {at: $at, drill: .name,
     machine: "home-pc", commit: $commit, dirty: false, claude: "2.1.321", verdict: "pass", detail: ""}' \
     "$REPO_ROOT/bin/lib/drills.json" >"$TEAM_HOME/drills.jsonl"
   # The team home, with the records guard on, as Daniel turns it on.
-  git -C "$TEAM_HOME" config core.hooksPath "$CODE_CHECKOUT/bin/hooks/records-git"
+  git -C "${TEAM_HOME:?}" config core.hooksPath "$CODE_CHECKOUT/bin/hooks/records-git"
 
   # The OS: Linux, from an Arch os-release file, until a test says Darwin.
   stub_command uname
@@ -186,8 +186,10 @@ EOF
   interview_server "$(interview_bits 10 15 16 35 38)" '[]'
   export TEAM_1PASSWORD_APP=$BATS_TEST_TMPDIR/1Password
   touch "$TEAM_1PASSWORD_APP"
-  # The Docker daemon answers, and a browser is installed.
+  # The Docker daemon answers, a new veth gets no IPv6 link-local address, as home-pc's sysctl.d
+  # sets (veth_addr_gen_mode), and a browser is installed.
   answer "docker info --format {{.ServerVersion}}" "28.3.3"
+  veth_addr_gen_mode 1
   export TEAM_CHROME=$BATS_TEST_TMPDIR/chrome
   touch "$TEAM_CHROME"
   chmod +x "$TEAM_CHROME"
@@ -265,7 +267,7 @@ capacity_reading() {
 register() {
   local project=$1 repo=$2 delivery=$3 provider=$4 clone slot slots=''
   clone=$(make_repo "${repo#*/}")
-  git -C "$clone" remote set-url origin "https://github.com/$repo.git"
+  git -C "${clone:?}" remote set-url origin "https://github.com/$repo.git"
   echo /.scratch/task/ >>"$clone/.git/info/exclude"
   for slot in "${@:5}"; do slots+="\"$slot\", "; done
   {
@@ -407,6 +409,19 @@ on_macos() {
   "$CODE_CHECKOUT/bin/team-timers" enable >/dev/null
 }
 
+# The kernel's net.ipv6.conf.default.addr_gen_mode, as /proc/sys under TEAM_CGROUP_ROOT gives it to
+# the docker veth line: veth_addr_gen_mode <value>, or none for a kernel with IPv6 off, which has no
+# /proc/sys/net/ipv6.
+veth_addr_gen_mode() {
+  local dir=$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default
+  if [[ $1 == none ]]; then
+    rm -rf "${TEAM_CGROUP_ROOT:?}/proc/sys/net/ipv6"
+  else
+    mkdir -p "$dir"
+    echo "$1" >"$dir/addr_gen_mode"
+  fi
+}
+
 # The ids of the manifest's enabled secrets, in order.
 secret_ids() {
   jq -r '.secrets[] | select(.enabled != false) | .id' "$BATS_TEST_DIRNAME/fixtures/secrets.json"
@@ -425,10 +440,10 @@ only_checks() {
 # commit with the team home's, as the records rewrite of 2026-10-28 did: rewrite_origin_dev
 rewrite_origin_dev() {
   local origin=$BATS_TEST_TMPDIR/origin/agent-team.git blob tree commit
-  blob=$(echo rewritten | git -C "$origin" hash-object -w --stdin)
-  tree=$(printf '100644 blob %s\tledger.jsonl\n' "$blob" | git -C "$origin" mktree)
-  commit=$(git -C "$origin" commit-tree "$tree" -m "chore: the rewritten records")
-  git -C "$origin" update-ref refs/heads/dev "$commit"
+  blob=$(echo rewritten | git -C "${origin:?}" hash-object -w --stdin)
+  tree=$(printf '100644 blob %s\tledger.jsonl\n' "$blob" | git -C "${origin:?}" mktree)
+  commit=$(git -C "${origin:?}" commit-tree "$tree" -m "chore: the rewritten records")
+  git -C "${origin:?}" update-ref refs/heads/dev "$commit"
 }
 
 # The line of check <name> in the output.
