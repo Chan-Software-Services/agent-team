@@ -26,8 +26,9 @@
 # With --changed, shellcheck checks only the shell scripts a change touches, in seconds, as a
 # builder does on its machine while CI checks every script: each shell script among the paths
 # changed since <base> and in the working tree (the paths bats --changed starts from, below), and
-# each shell script that sources a changed path, by its file name, on a line that runs source or
-# . or in a "# shellcheck source=" directive, and each that sources one of those in turn, so a
+# each shell script that sources a changed path, by its file name, where a line runs source or .
+# (first or after another command) or in a "# shellcheck source=" directive, the file read past
+# its command substitutions, and each that sources one of those in turn, so a
 # changed library is checked where it is read; a deleted path is never checked itself, only its
 # sourcers. A changed .shellcheckrc checks every script. It prints the scripts first, checks
 # nothing, and says so, when the change reaches no shell script, and --list prints them, one path
@@ -146,7 +147,7 @@ bats_files() {
 
 # The shell scripts shellcheck --changed checks (see the header), one path per line, sorted.
 changed_scripts() {
-  local paths scripts checked
+  local paths scripts checked lines status=0
   paths=$(changed_paths | sort -u) || return 1
   scripts=$(shell_scripts)
   mapfile -t checked <<<"$scripts"
@@ -154,12 +155,14 @@ changed_scripts() {
     echo "$scripts"
     return
   fi
-  # Each script's lines that source a file, as "<script>:<line>", then the changed paths, then the
-  # scripts: a script is checked when it changed, or when the file such a line sources has the
+  # Each script's lines that may source a file, as "<script>:<line>", then the changed paths, then
+  # the scripts: a script is checked when it changed, or when a file such a line sources has the
   # file name of a changed path or of a script checked for that.
+  lines=$(cd "$root" && grep -HE '(^|[^[:alnum:]_.-])source[[:space:]]|(^|[;&|[:space:]])\.[[:space:]]|#[[:space:]]*shellcheck[[:space:]]+source=' -- "${checked[@]}") ||
+    status=$?
+  ((status <= 1)) || return 1
   {
-    (cd "$root" && grep -HE '^[[:space:]]*\.[[:space:]]|^[^#]*(^|[^[:alnum:]_.-])source[[:space:]]|#[[:space:]]*shellcheck[[:space:]]+source=' -- "${checked[@]}") ||
-      (($? == 1))
+    [[ -z $lines ]] || echo "$lines"
     echo
     echo "$paths"
     echo
@@ -170,14 +173,20 @@ changed_scripts() {
     part == 0 {
       script = $0; sub(/:.*/, "", script)
       line = substr($0, length(script) + 2)
-      if (match(line, /#[[:space:]]*shellcheck[[:space:]]+source=/)) file = substr(line, RSTART + RLENGTH)
-      else if (match(line, /(^|[^[:alnum:]_.-])source[[:space:]]+/)) file = substr(line, RSTART + RLENGTH)
-      else { file = line; sub(/^[[:space:]]*\.[[:space:]]+/, "", file) }
-      # The file is the first word, past a command substitution such as $(dirname "$0").
-      gsub(/\$\([^)]*\)/, "", file)
-      sub(/[[:space:];].*/, "", file)
-      gsub(/["\047\\]/, "", file)
-      if (file != "") sourcers[name(file)] = sourcers[name(file)] "\n" script
+      # A comment sources nothing but by its directive; any other line wherever it runs source or
+      # ., after another command or a # as well as first.
+      runs = "#[[:space:]]*shellcheck[[:space:]]+source="
+      if (line !~ /^[[:space:]]*#/) runs = runs "|(^|[^[:alnum:]_.-])source[[:space:]]+|(^|[;&|[:space:]])\\.[[:space:]]+"
+      while (match(line, runs)) {
+        line = substr(line, RSTART + RLENGTH)
+        # The file is the first word, past its command substitutions, nested ones from the inside
+        # out, such as $(dirname "$0") or $(cd "$(dirname "$0")" && pwd).
+        file = line
+        while (gsub(/\$\([^()]*\)/, "", file)) {}
+        sub(/[[:space:];].*/, "", file)
+        gsub(/["\047\\]/, "", file)
+        if (file != "") sourcers[name(file)] = sourcers[name(file)] "\n" script
+      }
       next
     }
     part == 1 { changed[$0] = 1; queue[++last] = name($0); next }
