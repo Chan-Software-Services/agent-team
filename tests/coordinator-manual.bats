@@ -187,6 +187,24 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
 }
 
+@test "the assistant's role keeps its asks and owed replies in its own list, each with a close condition or a review date" {
+  local list
+  list=$(section assistant 'Your list')
+  grep -qF '`assistant/current.md`' <<<"$list"
+  grep -qF '`team-current add ask|owe <task or -> <text> --where <detail>`' <<<"$list"
+  grep -qF 'Each item takes a close condition the records show, `--until <condition>`' <<<"$list"
+  grep -qF 'or a review date, `--review` (3 days out) or `--review-by <YYYY-MM-DD>` (at most 7 days out)' <<<"$list"
+  grep -qF 'stays a finding until you `done` it or renew it with `team-current renew <id> --review --reason' <<<"$list"
+  # Each condition it names is one of team-current's grammar.
+  local help
+  help=$("$REPO_ROOT/bin/team-current" --help)
+  local condition
+  for condition in 'handoff H<n> answered' 'task T<n> opened' 'ledger T<n> <kind>' 'pr <GitHub PR URL> merged' 'file <path>'; do
+    grep -qF "$condition" <<<"$help"
+  done
+  grep -qF 'the hand-offs in flight, your list, then the catch-up' <<<"$(section assistant 'Start, stow and the lease')"
+}
+
 @test "the manual hands the assistant Daniel's walkthroughs, manual steps, logins and spikes, answers its hand-offs, and leaves manual-steps.md to it" {
   local discord rows
   discord=$(section coordinator Discord)
@@ -693,13 +711,17 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 
 @test "the manual and the stow skill edit the current items only with team-current, and keep task progress in the ledger" {
   local items
-  items=$(sed -n '7,8p' "$manual")
-  assert_contains "$items" '`team-current add <kind> <task or -> <text> --where <detail>`'
+  items=$(sed -n '7,9p' "$manual")
+  assert_contains "$items" '`team-current add <kind> <task or -> <text> --where <detail> (--until <condition> | --review | --review-by <date>)`'
   assert_contains "$items" 'Edit the items only with `team-current`'
   assert_contains "$items" '`done <id>`'
   assert_contains "$items" '`check`'
   assert_contains "$items" 'at most 300 characters'
   assert_contains "$items" 'task progress stays in the ledger, which `team-state` reads'
+  # Each item takes a close condition or a review date, and a due one is a finding until done or renewed.
+  assert_contains "$items" 'Each item takes a close condition the records show (`--until`'
+  assert_contains "$items" 'or a review date at most 7 days out'
+  assert_contains "$items" 'a due one (`team-current due`) is a finding until you `done` it or `renew <id> --review --reason <why>`'
   grep -Fq 'One `team-current add` each, as your manual says' "$plugin/skills/stow/SKILL.md"
   run -1 grep -Fq 'One line each in `tasks/current.md`' "$plugin/skills/stow/SKILL.md"
 }
@@ -745,7 +767,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF "On \`T<n> DONE <path>\`, run \`team-next T<n> -- '<the message>'\`" "$plugin/skills/retro/SKILL.md"
 }
 
-@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 119 lines and 29340 bytes" {
+@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 120 lines and 29721 bytes" {
   local files=("$manual" "$plugin"/skills/*/SKILL.md) found
   # A worker's report is logged only by team-next or team-log --from-message; a paused of a cause
   # no worker reports (the usage limit, the machine's load, the machine off) is the coordinator's own.
@@ -791,9 +813,11 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # team-next --fill and its integration, and 28988 once Discord named the assistant, the
   # message table its two rows and manual-steps.md went to it, three lines tightened to fit, and
   # 119 lines and 29340 bytes once the outside-text rule named the assistant's messages and the
-  # four words that never come through it, and its hand-off row acted on Daniel's own message).
-  (($(wc -l <"$manual") <= 119))
-  (($(wc -c <"$manual") <= 29340))
+  # four words that never come through it, and its hand-off row acted on Daniel's own message,
+  # and 120 lines and 29721 bytes once each current item took a close condition or a review date,
+  # and a due one was a finding until done or renewed).
+  (($(wc -l <"$manual") <= 120))
+  (($(wc -c <"$manual") <= 29721))
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {

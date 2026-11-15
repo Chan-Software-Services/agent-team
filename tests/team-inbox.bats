@@ -149,7 +149,7 @@ $RANKED
 -# Owed you: T4 the weekly report, mine to send
 -# Owed you: a reply on the docs budget <https://discord.com/channels/1/2/4>"
   assert_equal "$(jq -c '.items[1] | del(.line)' "$TEAM_HOME/waiting.json")" \
-    "{\"n\":2,\"key\":\"note $(item_id "$research")\",\"kind\":\"note\",\"task\":\"-\",\"title\":null,\"id\":\"$(item_id "$research")\",\"text\":\"open a research task on Fable one-shots?\",\"where\":\"https://discord.com/channels/1/2/3\",\"since\":null,\"unblocks\":{\"tasks\":0,\"tickets\":0,\"prs\":0}}"
+    "{\"n\":2,\"key\":\"note $(item_id "$research")\",\"kind\":\"note\",\"task\":\"-\",\"title\":null,\"id\":\"$(item_id "$research")\",\"text\":\"open a research task on Fable one-shots?\",\"where\":\"https://discord.com/channels/1/2/3\",\"list\":\"coordinator\",\"since\":null,\"unblocks\":{\"tasks\":0,\"tickets\":0,\"prs\":0}}"
   run_bin -0 team-inbox --item 3
   assert_equal "$output" "note T4 $(item_id "$domain")"
 
@@ -159,6 +159,45 @@ $RANKED
   run_bin -0 --separate-stderr team-inbox
   assert_contains "$stderr" "team-inbox: leaves out the asks and owed replies of tasks/current.md, since it cannot be read: "
   assert_equal "$(waiting_items_shown)" "- **1** T3 a: A? - unblocks 1 (1 task)
+$RANKED"
+}
+
+@test "both lists' asks and owed replies are listed, in either form, the assistant's marked Assistant:" {
+  mkdir -p "$TEAM_HOME/tasks" "$TEAM_HOME/assistant"
+  local end=" | review 2026-11-18 | added 2026-11-15T10:00:00Z"
+  local old_ask="- ask - which domain for the docs site | https://discord.com/channels/1/2/3"
+  local new_ask="- ask T4 open a research task on Fable one-shots? | 1563000000000000045$end"
+  local until_owe="- owe - the merge news | https://github.com/owner/proj/pull/7 | until pr https://github.com/owner/proj/pull/7 merged | added 2026-11-15T10:00:00Z"
+  local own_ask="- ask - which login to use for the docs host | https://discord.com/channels/1/9/3$end"
+  local own_owe="- owe T4 the walkthrough of the DNS steps | 1563000000000000046"
+  printf '%s\n' "# Current items" "$old_ask" "$new_ask" "$until_owe" \
+    "- next T4 open the Node pin task | ledger 2026-11-01T07:08:11Z$end" \
+    "- ask - a line of neither form | 1563000000000000045 | soon" >"$TEAM_HOME/tasks/current.md"
+  printf '%s\n' "# Assistant items" "$own_ask" "$own_owe" >"$TEAM_HOME/assistant/current.md"
+  run_bin -0 --separate-stderr team-inbox
+  assert_equal "$stderr" ""
+  assert_equal "$output" "wrote waiting.md: 3 items"
+  assert_equal "$(waiting_items_shown)" "- **1** which domain for the docs site <https://discord.com/channels/1/2/3> - unblocks 0
+- **2** T4 open a research task on Fable one-shots? - unblocks 0
+- **3** Assistant: which login to use for the docs host <https://discord.com/channels/1/9/3> - unblocks 0
+$RANKED
+-# Owed you: the merge news <https://github.com/owner/proj/pull/7>
+-# Owed you: Assistant: T4 the walkthrough of the DNS steps"
+  # The keys stay note <id>, and each names its list.
+  assert_equal "$(jq -c '[.items[] | [.key, .list]]' "$TEAM_HOME/waiting.json")" \
+    "[[\"note $(item_id "$old_ask")\",\"coordinator\"],[\"note $(item_id "$new_ask")\",\"coordinator\"],[\"note $(item_id "$own_ask")\",\"assistant\"]]"
+  assert_equal "$(jq -c '[.owed[] | .list]' "$TEAM_HOME/waiting.json")" '["coordinator","assistant"]'
+  # The assistant's list alone, with no coordinator's, is listed too; one that cannot be read is
+  # left out, saying why, and the other still listed.
+  rm "$TEAM_HOME/tasks/current.md"
+  run_bin -0 team-inbox
+  assert_equal "$output" "wrote waiting.md: 1 item"
+  rm "$TEAM_HOME/assistant/current.md"
+  mkdir "$TEAM_HOME/assistant/current.md"
+  printf '%s\n' "# Current items" "$old_ask" >"$TEAM_HOME/tasks/current.md"
+  run_bin -0 --separate-stderr team-inbox
+  assert_contains "$stderr" "team-inbox: leaves out the asks and owed replies of assistant/current.md, since it cannot be read: "
+  assert_equal "$(waiting_items_shown)" "- **1** which domain for the docs site <https://discord.com/channels/1/2/3> - unblocks 0
 $RANKED"
 }
 

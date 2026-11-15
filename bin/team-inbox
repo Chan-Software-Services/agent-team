@@ -12,8 +12,11 @@
 # the PR not merged and no merge-approved logged at its head), "<task> <title>: ready to merge
 # <its full URL>"; each interview under way (an interview-thread with no planner's done or
 # plan-approved after it), "<task> <title>: interview under way <its thread>"; and the asks of the
-# team home's tasks/current.md (team-current's ask lines, questions to Daniel with no asked), each
-# with its task unless -, its text and its where when that is a URL.
+# team home's two lists, the coordinator's tasks/current.md, then the assistant's
+# assistant/current.md (team-current's ask lines, questions to Daniel with no asked, in the form
+# with an end and added or the old one; current_item in bin/lib/ledger.jq), each with
+# "Assistant: " first when it is the assistant's, its task unless -, its text and its where when
+# that is a URL.
 # They are ranked by what each answer unblocks, the most first: while the item holds its task (an
 # ask no launch went past, a PR ready to merge, an interview under way), its task and each other
 # open task whose standing blocked park is on that task (cause task), and the task's tickets
@@ -28,11 +31,11 @@
 # its answer unblocks, " - unblocks <n>" and, when n is more than 0, each part that is: "- **3** T7
 # plan: Approve the plan? <link> - unblocks 3 (1 task, 2 tickets)"; every URL is in <>, so Discord
 # shows no preview card for it. After the items, a line says how they are ranked ("-# Ranked by what
-# each answer unblocks: ..."), then one line per owe line of current.md, a reply owed to Daniel, in
-# its order: "-# Owed you: <task unless -> <text> <where when a URL>". With none, the list says
-# "Nothing waits on you.". An ask's line is cut at 150 characters of its text, a title at 80. A
-# current.md that cannot be read leaves its asks and owe lines out, with a line on stderr saying
-# why.
+# each answer unblocks: ..."), then one line per owe line of the two lists, a reply owed to Daniel,
+# in their order: "-# Owed you: <"Assistant: " when the assistant's><task unless -> <text> <where
+# when a URL>". With none, the list says "Nothing waits on you.". An ask's line is cut at 150
+# characters of its text, a title at 80. A list that cannot be read leaves its asks and owe lines
+# out, with a line on stderr saying why.
 # Numbers: an item is keyed "ask <task> <id> <the asked's ts>" (so a re-ask of the same id is a new
 # item), "pr <url>" (its trailing slash dropped), "interview <task> <thread>" or "note <id>", id
 # team-current's id of its line. An item the last run listed keeps its number (its stored key read
@@ -295,22 +298,29 @@ if [[ -e $waiting ]]; then
   fi
 fi
 
-# The asks and owed replies of tasks/current.md, team-current's ask and owe lines, as [{kind, task,
-# text, where, id}], id team-current's; one that cannot be read leaves them out, saying why.
+# The asks and owed replies of both lists, tasks/current.md's and the assistant's
+# assistant/current.md, team-current's ask and owe lines in either form (current_item in
+# bin/lib/ledger.jq), as [{kind, task, text, where, id, list}], id team-current's and list the
+# list's name; a list that cannot be read is left out, saying why.
 notes='[]'
-current=$TEAM_HOME/tasks/current.md
-if [[ -e $current ]]; then
+for list in coordinator assistant; do
+  case $list in
+    coordinator) rel=tasks/current.md ;;
+    assistant) rel=assistant/current.md ;;
+  esac
+  [[ -e $TEAM_HOME/$rel ]] || continue
   rc=0
-  found=$(grep -E '^- (ask|owe) (T[0-9]+|-) .+ \| [^|]+$' "$current" 2>"$scratch/current") || rc=$?
+  found=$(grep -E '^- (ask|owe) ' "$TEAM_HOME/$rel" 2>"$scratch/current") || rc=$?
   if ((rc > 1)); then
-    echo "team-inbox: leaves out the asks and owed replies of tasks/current.md, since it cannot be read: $(grep -m 1 . "$scratch/current" | sed 's/^grep: //' || echo "grep failed")" >&2
+    echo "team-inbox: leaves out the asks and owed replies of $rel, since it cannot be read: $(grep -m 1 . "$scratch/current" | sed 's/^grep: //' || echo "grep failed")" >&2
   elif [[ -n $found ]]; then
     notes=$(while IFS= read -r line; do
-      jq -cn --arg line "$line" --arg id "$(printf '%s' "${line#- }" | sha256sum | cut -c1-6)" \
-        '$line | capture("^- (?<kind>ask|owe) (?<task>\\S+) (?<text>.*) \\| (?<where>[^|]+)$") + {id: $id}'
-    done <<<"$found" | jq -sc .)
+      printf '%s %s\n' "$(printf '%s' "${line#- }" | sha256sum | cut -c1-6)" "${line#- }"
+    done <<<"$found" | ledger_jq '$notes + [inputs | .[:6] as $id | .[7:] | current_item
+      | select(. != null and (.kind | IN("ask", "owe")) and (.task | test("^(T[0-9]+|-)$")))
+      | {kind, task, text, where, id: $id, list: $list}]' -nRc --argjson notes "$notes" --arg list "$list")
   fi
-fi
+done
 
 # The ready tickets of each open task with an item, as team-tickets --json says them ({"T<n>": n}),
 # for what each item's answer unblocks; a task whose tickets cannot be read counts none, saying why.
