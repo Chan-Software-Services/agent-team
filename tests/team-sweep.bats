@@ -2565,8 +2565,8 @@ hand-off H5 (research) from the assistant has waited 31 min: read it with team-a
   jq -cn '{ts: "2026-11-15T12:00:00Z", id: "H5", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
   printf '%s\n' '# Current items' "$later" >"$TEAM_HOME/tasks/current.md"
   run_bin -0 team-sweep
-  # The wait is counted to TEAM_SWEEP_NOW: a minute on, the hand-off sent 29 minutes before is
-  # still under 30, and two on it has waited 31.
+  # The wait is counted to TEAM_SWEEP_NOW: a minute on, the hand-off sent 29 minutes before has
+  # waited 30, not past 30, and two on it has waited 31.
   TEAM_SWEEP_NOW=2026-11-15T12:01:00Z run_bin -0 team-sweep
   TEAM_SWEEP_NOW=2026-11-15T12:02:00Z run_bin -1 team-sweep
   assert_equal "$output" "hand-off H2 (decision) from the assistant has waited 31 min: read it with team-assistant show H2, act, and answer it"
