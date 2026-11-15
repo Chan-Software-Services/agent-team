@@ -229,6 +229,9 @@
 # looks, WAIT_SECONDS apart (a test steps it with a stub sleep), and TEAM_SWEEP_BASELINE_SECONDS
 # replaces the 30 minutes' seconds (BASELINE_SECONDS, the tests' seam). Re-arm it after acting on
 # what it printed.
+# TEAM_SWEEP_NOW (a UTC time, as 2026-11-15T10:00:00Z) stands for now where an assistant-handoff's
+# wait is counted, and nowhere else, the tests' seam; a due item's day is team-current's own
+# (TEAM_CURRENT_NOW).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/error-view.sh
@@ -242,6 +245,10 @@ BASELINE_SECONDS=${TEAM_SWEEP_BASELINE_SECONDS:-1800}
 UNREADABLE_SECONDS=300
 
 [[ $BASELINE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_SWEEP_BASELINE_SECONDS must be a number of seconds"
+# The time an assistant-handoff's wait is counted to, when the tests set it; else the clock's.
+SWEEP_NOW=${TEAM_SWEEP_NOW:-}
+[[ -z $SWEEP_NOW || $SWEEP_NOW =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
+  usage_error "TEAM_SWEEP_NOW \"$SWEEP_NOW\" is not a UTC time as 2026-11-15T10:00:00Z"
 
 usage="usage: team-sweep [--json | --wait]"
 mode=text
@@ -429,8 +436,9 @@ look() {
   [[ -n $current ]] || current='{"error": "team-current check printed nothing"}'
   [[ -n $due ]] || due='{"error": "team-current due printed nothing"}'
   [[ -n $handoffs ]] || handoffs='{"error": "team-assistant list printed nothing"}'
-  FINDINGS=$(ledger_jq '. + sweep_views($queue; $current; $due; $handoffs; now)' -c --argjson queue "$queue" \
-    --argjson current "$current" --argjson due "$due" --argjson handoffs "$handoffs" <<<"$found")
+  FINDINGS=$(ledger_jq '. + sweep_views($queue; $current; $due; $handoffs; $at | if . == "" then now else fromdate end)' \
+    -c --argjson queue "$queue" --argjson current "$current" --argjson due "$due" --argjson handoffs "$handoffs" \
+    --arg at "$SWEEP_NOW" <<<"$found")
 }
 
 # The watch's own code, read into memory when it starts: this script and the library's files, one

@@ -2515,29 +2515,33 @@ assistant-twin: assistant 6e6e6e6e (background, done, started at an unknown time
   run_bin -0 team-sweep
 }
 
-# Log a hand-off <id> of <kind> from <from> to <to>, sent <minutes> ago, in
-# assistant/handoffs.jsonl; with answered, answered a minute later.
+# Log a hand-off <id> of <kind> from <from> to <to>, sent <minutes> before the sweep's now
+# (TEAM_SWEEP_NOW when the test sets it, else the clock's), in assistant/handoffs.jsonl; with
+# answered, answered a minute later.
 handoff_sent() {
   mkdir -p "$TEAM_HOME/assistant"
-  jq -cn --arg id "$1" --arg kind "$2" --arg from "$3" --arg to "$4" --argjson m "$5" \
-    '{ts: (now - $m * 60 | floor | todate), id: $id, event: "sent", kind: $kind, from: $from, to: $to}' \
+  jq -cn --arg id "$1" --arg kind "$2" --arg from "$3" --arg to "$4" --argjson m "$5" --arg at "${TEAM_SWEEP_NOW:-}" \
+    '{ts: (($at | if . == "" then now else fromdate end) - $m * 60 | floor | todate), id: $id, event: "sent", kind: $kind, from: $from, to: $to}' \
     >>"$TEAM_HOME/assistant/handoffs.jsonl"
   [[ ${6:-} != answered ]] ||
-    jq -cn --arg id "$1" --argjson m "$5" '{ts: (now - ($m - 1) * 60 | floor | todate), id: $id, event: "answered", by: "coordinator"}' \
+    jq -cn --arg id "$1" --argjson m "$5" --arg at "${TEAM_SWEEP_NOW:-}" \
+      '{ts: (($at | if . == "" then now else fromdate end) - ($m - 1) * 60 | floor | todate), id: $id, event: "answered", by: "coordinator"}' \
       >>"$TEAM_HOME/assistant/handoffs.jsonl"
 }
 
 @test "current-due and assistant-handoff: each due item of the coordinator's list and each hand-off to it waiting past 30 minutes, after current-stale" {
   local today past later legacy assistants
-  today=$(date -u +%F)
-  past="- ask - which login for the docs host | 1563000000000000046 | review $(date -u -d '-2 days' +%F) | added $(date -u -d '-5 days' +%FT%TZ)"
-  later="- next - the spike report | 1563000000000000047 | review $(date -u -d '+2 days' +%F) | added $(date -u +%FT%TZ)"
+  # One now for the sweep's count of a hand-off's wait and for team-current's due day, so 29 and
+  # 31 minutes and today hold however long the test takes and whatever the clock's day.
+  export TEAM_SWEEP_NOW=2026-11-15T12:00:00Z TEAM_CURRENT_NOW=2026-11-15T12:00:00Z
+  past="- ask - which login for the docs host | 1563000000000000046 | review 2026-11-13 | added 2026-11-10T12:00:00Z"
+  later="- next - the spike report | 1563000000000000047 | review 2026-11-17 | added 2026-11-15T12:00:00Z"
   legacy="- watch T9 its checks | ledger 2026-11-01T07:08:11Z"
-  today="- owe - the report | 1563000000000000048 | review $today | added $(date -u -d '-3 days' +%FT%TZ)"
+  today="- owe - the report | 1563000000000000048 | review 2026-11-15 | added 2026-11-12T12:00:00Z"
   mkdir -p "$TEAM_HOME/tasks" "$TEAM_HOME/assistant"
   printf '%s\n' '# Current items' "$past" "$later" "$today" "$legacy" >"$TEAM_HOME/tasks/current.md"
   # The assistant's due items are its Stop hook's, never the coordinator's sweep's.
-  assistants="- owe - the assistant's | 1563000000000000049 | review $(date -u -d '-1 days' +%F) | added $(date -u -d '-3 days' +%FT%TZ)"
+  assistants="- owe - the assistant's | 1563000000000000049 | review 2026-11-14 | added 2026-11-12T12:00:00Z"
   printf '%s\n' '# Assistant items' "$assistants" >"$TEAM_HOME/assistant/current.md"
   handoff_sent H1 task assistant coordinator 45
   handoff_sent H2 decision assistant coordinator 29
@@ -2546,8 +2550,8 @@ handoff_sent() {
   handoff_sent H5 research assistant coordinator 31
   run_bin -1 --separate-stderr team-sweep
   assert_equal "$stderr" ""
-  assert_equal "$output" "current item $(printf '%s' "${past#- }" | sha256sum | cut -c1-6) is due for review since $(date -u -d '-2 days' +%F): done it, or renew it with a reason
-current item $(printf '%s' "${today#- }" | sha256sum | cut -c1-6) is due for review since $(date -u +%F): done it, or renew it with a reason
+  assert_equal "$output" "current item $(printf '%s' "${past#- }" | sha256sum | cut -c1-6) is due for review since 2026-11-13: done it, or renew it with a reason
+current item $(printf '%s' "${today#- }" | sha256sum | cut -c1-6) is due for review since 2026-11-15: done it, or renew it with a reason
 hand-off H1 (task) from the assistant has waited 45 min: read it with team-assistant show H1, act, and answer it
 hand-off H5 (research) from the assistant has waited 31 min: read it with team-assistant show H5, act, and answer it"
   run_bin -1 team-sweep --json
@@ -2557,10 +2561,17 @@ hand-off H5 (research) from the assistant has waited 31 min: read it with team-a
 {\"task\":null,\"kind\":\"assistant-handoff\",\"session\":\"H1\",\"name\":null,\"next\":\"read it with team-assistant show H1, act, and answer it\"}
 {\"task\":null,\"kind\":\"assistant-handoff\",\"session\":\"H5\",\"name\":null,\"next\":\"read it with team-assistant show H5, act, and answer it\"}"
   # Once answered, a hand-off is no finding.
-  jq -cn '{ts: (now | floor | todate), id: "H1", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
-  jq -cn '{ts: (now | floor | todate), id: "H5", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
+  jq -cn '{ts: "2026-11-15T12:00:00Z", id: "H1", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
+  jq -cn '{ts: "2026-11-15T12:00:00Z", id: "H5", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
   printf '%s\n' '# Current items' "$later" >"$TEAM_HOME/tasks/current.md"
   run_bin -0 team-sweep
+  # The wait is counted to TEAM_SWEEP_NOW: a minute on, the hand-off sent 29 minutes before is
+  # still under 30, and two on it has waited 31.
+  TEAM_SWEEP_NOW=2026-11-15T12:01:00Z run_bin -0 team-sweep
+  TEAM_SWEEP_NOW=2026-11-15T12:02:00Z run_bin -1 team-sweep
+  assert_equal "$output" "hand-off H2 (decision) from the assistant has waited 31 min: read it with team-assistant show H2, act, and answer it"
+  TEAM_SWEEP_NOW=noon run_bin -2 team-sweep
+  assert_contains "$output" 'TEAM_SWEEP_NOW "noon" is not a UTC time as 2026-11-15T10:00:00Z'
 }
 
 @test "a team-assistant or team-current due that fails is its one-line finding, and current once when check fails too" {
