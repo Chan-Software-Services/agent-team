@@ -311,12 +311,12 @@ Nothing waits on you."
   opened_task T14
   local before after
   before=$(date -u +%FT%TZ)
-  run_bin -0 team-log T14 pr url=https://github.com/chanjdaniel/agent-team/pull/5 head=a1b2c3d
+  run_bin -0 team-log T14 pr url=https://github.com/Chan-Software-Services/agent-team/pull/5 head=a1b2c3d
   after=$(date -u +%FT%TZ)
   assert_equal "$output" ""
   assert_equal "$(logged_after 2 | wc -l)" "1"
   assert_equal "$(logged_after 2)" \
-    '{"task":"T14","event":"pr","url":"https://github.com/chanjdaniel/agent-team/pull/5","head":"a1b2c3d"}'
+    '{"task":"T14","event":"pr","url":"https://github.com/Chan-Software-Services/agent-team/pull/5","head":"a1b2c3d"}'
   local ts
   ts=$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -r .ts)
   [[ $ts =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
@@ -543,13 +543,13 @@ LINES
 @test "a field the contract types as a string stays a string even when it looks like JSON" {
   opened_task T14
   run_bin -0 team-log T14 ticket-done ticket=12 'commits=["1234567"]'
-  run_bin -0 team-log T14 pr url=https://github.com/chanjdaniel/agent-team/pull/5 head=1234567 note=true
-  run_bin -0 team-log T14 merge-approved url=https://github.com/chanjdaniel/agent-team/pull/5 discord_message=1563000000000000123456789 head=1234567
+  run_bin -0 team-log T14 pr url=https://github.com/Chan-Software-Services/agent-team/pull/5 head=1234567 note=true
+  run_bin -0 team-log T14 merge-approved url=https://github.com/Chan-Software-Services/agent-team/pull/5 discord_message=1563000000000000123456789 head=1234567
   assert_equal "$(logged_after 2)" "$(
     cat <<'LINES'
 {"task":"T14","event":"ticket-done","ticket":"12","commits":["1234567"]}
-{"task":"T14","event":"pr","url":"https://github.com/chanjdaniel/agent-team/pull/5","head":"1234567","note":"true"}
-{"task":"T14","event":"merge-approved","url":"https://github.com/chanjdaniel/agent-team/pull/5","discord_message":"1563000000000000123456789","head":"1234567"}
+{"task":"T14","event":"pr","url":"https://github.com/Chan-Software-Services/agent-team/pull/5","head":"1234567","note":"true"}
+{"task":"T14","event":"merge-approved","url":"https://github.com/Chan-Software-Services/agent-team/pull/5","discord_message":"1563000000000000123456789","head":"1234567"}
 LINES
   )"
 }
@@ -884,6 +884,50 @@ LINES
   run_bin -1 team-log T14 merge-approved url=$five discord_message=1562661774950400000 head=$fix
   assert_equal "$output" "team-log: Discord message 1562661774950400000 was sent at 2026-10-22T03:00:00Z, before the review event that first logged head $fix at $reviewed, so it is not Daniel's word on that head"
   assert_equal "$(logged_after 2 | wc -l)" "2"
+}
+
+# PR #5 of agent-team, under the owner it moved from and the one it moved to (bin/lib/repo-moves.json).
+OLD_FIVE=https://github.com/chanjdaniel/agent-team/pull/5
+NEW_FIVE=https://github.com/Chan-Software-Services/agent-team/pull/5
+
+@test "a url under a moved repo's old owner is logged under the new one, and one under the new as given, for pr, ci, ci-rerun and merge-approved" {
+  opened_task T14
+  local head=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 url
+  for url in $OLD_FIVE https://github.com/ChanJDaniel/Agent-Team/pull/5 $NEW_FIVE; do
+    run_bin -0 team-log T14 pr "url=$url" head=$head
+    run_bin -0 team-log T14 ci "url=$url" head=$head outcome=passed
+    run_bin -0 team-log T14 ci-rerun "url=$url" head=$head check=test run=42 job=43
+    run_bin -0 team-log T14 merge-approved "url=$url" discord_message="$(soon)" head=$head
+  done
+  assert_equal "$(logged_after 2 | jq -r '"\(.event) \(.url)"')" "$(for _ in 1 2 3; do
+    printf '%s\n' "pr $NEW_FIVE" "ci $NEW_FIVE" "ci-rerun $NEW_FIVE" "merge-approved $NEW_FIVE"
+  done)"
+  # A repo no move names, and a name that only begins with a moved one, are logged as given.
+  run_bin -0 team-log T14 pr url=https://github.com/chanjdaniel/agent-teamx/pull/5 head=$head
+  run_bin -0 team-log T14 pr url=https://github.com/owner/proj/pull/5 head=$head
+  assert_equal "$(tail -n 2 "$TEAM_HOME/ledger.jsonl" | jq -r .url)" \
+    "https://github.com/chanjdaniel/agent-teamx/pull/5"$'\n'"https://github.com/owner/proj/pull/5"
+  run_bin -0 team-log --check
+}
+
+@test "merge-approved under either owner holds on a PR the ledger logged under the other, at a head its pr event logged" {
+  opened_task T14
+  opened_task T15
+  local head=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  # T14's PR was logged under the old owner before the move, as the real ledger holds it.
+  jq -cn --arg url "$OLD_FIVE" --arg head "$head" '{ts: (now | todate), task: "T14", event: "pr", url: $url, head: $head}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-log T14 merge-approved url=$NEW_FIVE discord_message="$(soon)" head=$head
+  run_bin -0 team-log T14 merge-approved url=$OLD_FIVE/ discord_message="$(soon)" head=$head
+  assert_equal "$(tail -n 2 "$TEAM_HOME/ledger.jsonl" | jq -r .url)" "$NEW_FIVE"$'\n'"$NEW_FIVE/"
+  # T15's, logged under the new owner, takes Daniel's word under the old.
+  run_bin -0 team-log T15 pr url=$NEW_FIVE head=$head
+  run_bin -0 team-log T15 merge-approved url=$OLD_FIVE discord_message="$(soon)" head=$head
+  assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -r .url)" "$NEW_FIVE"
+  # A head no pr event of the PR logged is refused under either owner, naming the PR under the new.
+  run_bin -1 team-log T14 merge-approved url=$OLD_FIVE discord_message="$(soon)" head=e4f5a6b
+  assert_equal "$output" "team-log: head e4f5a6b is not a head the pr events of $NEW_FIVE, or the reviews since, logged:
+  $head"
 }
 
 # T14 opened in proj, with its worktree at $BATS_TEST_TMPDIR/wt holding the task directory
@@ -1956,6 +2000,22 @@ assert_no_answer_logged() {
     --from-message "T7 PR $URL merged dev conflicts: none"
 }
 
+@test "--from-message logs a PR under either owner of a moved repo under the new, read on GitHub there, with the registry under either" {
+  local old=https://github.com/chanjdaniel/agent-team/pull/12 new=https://github.com/Chan-Software-Services/agent-team/pull/12
+  local registry
+  for registry in chanjdaniel/agent-team Chan-Software-Services/agent-team; do
+    plan_project proj "$registry" >"$TEAM_HOME/projects.toml"
+    : >"$TEAM_HOME/ledger.jsonl"
+    opened T7 proj
+    launched T7 builder b0000001
+    # gh answers the PR only under the new owner.
+    on_github "$new" "$HEAD_A" feat/T7-x
+    logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$new\",\"head\":\"$HEAD_A\"}" --from-message "T7 PR $old"
+    logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$new\",\"head\":\"$HEAD_A\"}" \
+      --from-message "T7 PR $new merged dev conflicts: none"
+  done
+}
+
 @test "--from-message refuses a PR it cannot read on GitHub, in no repo of the task, or followed by anything else" {
   open_t7
   launched T7 builder b0000001
@@ -2389,7 +2449,7 @@ ticket_launched() {
   # What the hook takes is taken: a fixture address, a service, and the team home's own user.email.
   run_bin -0 team-log T7 waiting on=Daniel "reason=mail team@example.com, noreply@$provider"
   git init -q "$TEAM_HOME"
-  git -C "$TEAM_HOME" config user.email "daniel@$provider"
+  git -C "${TEAM_HOME:?}" config user.email "daniel@$provider"
   run_bin -0 team-log T7 waiting on=Daniel "reason=mail daniel@$provider"
   assert_equal "$(wc -l <"$TEAM_HOME/ledger.jsonl")" "$(($(wc -l <<<"$before") + 2))"
   # The line is judged as written, as the hook reads it: a control character right before the
@@ -2408,7 +2468,7 @@ push_home() {
 
 # The subject of the commit at the tip of the team home's dev on its origin.
 origin_subject() {
-  git -C "$team_origin" log -1 --format=%s dev
+  git -C "${team_origin:?}" log -1 --format=%s dev
 }
 
 @test "every push kind team-log writes is committed alone and on origin at once, with no checkpoint; no other kind commits" {
@@ -2429,19 +2489,19 @@ origin_subject() {
       (select($k == "paused") | "cause=limit"), (select($k == "held") | "discord_message=\($soon)"),
       (select($k == "resumed") | "all=true"),
       (.kinds[$k].one_of // [] | .[] | "\(.[0])=x y")' "$CONTRACT")
-    tip=$(git -C "$team_origin" rev-parse dev)
+    tip=$(git -C "${team_origin:?}" rev-parse dev)
     run_bin -0 --separate-stderr team-log T14 "$kind" "${args[@]}"
     assert_equal "$output" ""
     assert_equal "$stderr" ""
     if jq -e --arg k "$kind" '.kinds[$k].push == true' "$CONTRACT" >/dev/null; then
       pushed+=("$kind")
       assert_equal "$(origin_subject)" "chore: ledger T14 $kind"
-      assert_equal "$(git -C "$team_origin" rev-parse dev^)" "$tip"
-      assert_equal "$(git -C "$team_origin" diff-tree -r --no-commit-id --name-only dev)" "ledger.jsonl"
-      assert_equal "$(git -C "$team_origin" show dev:ledger.jsonl)" "$(cat "$TEAM_HOME/ledger.jsonl")"
-      assert_equal "$(git -C "$TEAM_HOME" rev-parse HEAD)" "$(git -C "$team_origin" rev-parse dev)"
+      assert_equal "$(git -C "${team_origin:?}" rev-parse dev^)" "$tip"
+      assert_equal "$(git -C "${team_origin:?}" diff-tree -r --no-commit-id --name-only dev)" "ledger.jsonl"
+      assert_equal "$(git -C "${team_origin:?}" show dev:ledger.jsonl)" "$(cat "$TEAM_HOME/ledger.jsonl")"
+      assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$(git -C "${team_origin:?}" rev-parse dev)"
     else
-      assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
+      assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
     fi
   done < <(jq -r '.kinds | to_entries[] | select(([.value.writer] | flatten | index("team-log")) and (.value.retired | not)) | .key' "$CONTRACT")
   # The answered among them is one given at the terminal, with no discord_message, and the
@@ -2456,12 +2516,12 @@ origin_subject() {
   open_t7
   launched T7 builder b0000001
   local tip head
-  tip=$(git -C "$team_origin" rev-parse dev) head=$(git -C "$TEAM_HOME" rev-parse HEAD)
+  tip=$(git -C "${team_origin:?}" rev-parse dev) head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD)
   run_bin -0 --separate-stderr team-log T7 --from-message 'T7 DONE 01 a1b2c3d done'
   assert_equal "$stderr" ""
   assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -r .event)" "done"
-  assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
-  assert_equal "$(git -C "$TEAM_HOME" rev-parse HEAD)" "$head"
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
 }
 
 @test "a push that fails leaves the exit and stdout as they were, says why in one line, and the next checkpoint pushes the commit" {
@@ -2469,24 +2529,24 @@ origin_subject() {
   plan_registry
   opened T14 proj
   plan_md T14
-  git -C "$TEAM_HOME" remote set-url origin "$BATS_TEST_TMPDIR/gone.git"
+  git -C "${TEAM_HOME:?}" remote set-url origin "$BATS_TEST_TMPDIR/gone.git"
   local tip
-  tip=$(git -C "$team_origin" rev-parse dev)
+  tip=$(git -C "${team_origin:?}" rev-parse dev)
   run_bin -0 --separate-stderr team-log T14 plan-approved by=coordinator
   assert_equal "$output" ""
   assert_equal "$stderr" "team-log: the ledger is not on origin yet (cannot push dev: '$BATS_TEST_TMPDIR/gone.git' does not appear to be a git repository); the next checkpoint pushes it"
-  assert_equal "$(git -C "$TEAM_HOME" log -1 --format=%s)" "chore: ledger T14 plan-approved"
-  assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
+  assert_equal "$(git -C "${TEAM_HOME:?}" log -1 --format=%s)" "chore: ledger T14 plan-approved"
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
 
-  git -C "$TEAM_HOME" remote set-url origin "$team_origin"
+  git -C "${TEAM_HOME:?}" remote set-url origin "$team_origin"
   run_bin -0 team-checkpoint --force
-  assert_equal "$(git -C "$team_origin" log --format=%s "$tip..dev" | grep -c '^chore: ledger T14 plan-approved$')" 1
-  assert_equal "$(git -C "$team_origin" show dev:ledger.jsonl | tail -n 1 | jq -r .event)" "plan-approved"
+  assert_equal "$(git -C "${team_origin:?}" log --format=%s "$tip..dev" | grep -c '^chore: ledger T14 plan-approved$')" 1
+  assert_equal "$(git -C "${team_origin:?}" show dev:ledger.jsonl | tail -n 1 | jq -r .event)" "plan-approved"
 }
 
 @test "a ledger the records hook refuses is the same one line with the hook's reason, and the exit stands" {
   push_home
-  git -C "$TEAM_HOME" config core.hooksPath "$REPO_ROOT/bin/hooks/records-git"
+  git -C "${TEAM_HOME:?}" config core.hooksPath "$REPO_ROOT/bin/hooks/records-git"
   # A line written before the ledger's check, holding an address at a public provider.
   local provider=gmail.com head tip
   plan_registry
@@ -2494,14 +2554,14 @@ origin_subject() {
   plan_md T14
   jq -cn --arg a "someone@$provider" '{ts: "2026-10-22T02:00:00Z", task: "T14", event: "paused", reason: "mail \($a)"}' \
     >>"$TEAM_HOME/ledger.jsonl"
-  head=$(git -C "$TEAM_HOME" rev-parse HEAD) tip=$(git -C "$team_origin" rev-parse dev)
+  head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD) tip=$(git -C "${team_origin:?}" rev-parse dev)
   run_bin -0 --separate-stderr team-log T14 plan-approved by=coordinator
   assert_equal "$output" ""
   assert_equal "$(wc -l <<<"$stderr")" 1
   # The hook's first line, which names the ledger, without the list of refusals it ends with.
   assert_equal "$stderr" "team-log: the ledger is not on origin yet (cannot commit the records: data-check: refused: ledger.jsonl adds an email address at a public provider or an image, which the records never take: other people's addresses and screenshots stay out of git; take each out, then commit again); the next checkpoint pushes it"
-  assert_equal "$(git -C "$TEAM_HOME" rev-parse HEAD)" "$head"
-  assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
   assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -r .event)" "plan-approved"
 }
 
@@ -2511,13 +2571,13 @@ origin_subject() {
   opened T14 proj
   plan_md T14
   local head tip
-  head=$(git -C "$TEAM_HOME" rev-parse HEAD) tip=$(git -C "$team_origin" rev-parse dev)
+  head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD) tip=$(git -C "${team_origin:?}" rev-parse dev)
   echo '{"since": "2026-10-22T14:00:00Z", "holder": "laptop", "epoch": 2}' >"$HOME/.local/state/agent-team/fenced"
   run_bin -0 --separate-stderr team-log T14 plan-approved by=coordinator
   assert_equal "$output" ""
   assert_equal "$stderr" "team-log: the ledger is not on origin yet (home-pc is fenced since 2026-10-22T14:00:00Z (holder seen laptop, epoch 2): a fenced machine commits and pushes no ledger)"
-  assert_equal "$(git -C "$TEAM_HOME" rev-parse HEAD)" "$head"
-  assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
 
   rm "$HOME/.local/state/agent-team/fenced"
   make_machine laptop
@@ -2527,8 +2587,8 @@ origin_subject() {
   run_bin -0 --separate-stderr team-log T14 plan-approved by=coordinator
   assert_equal "$output" ""
   [[ $stderr == "team-log: the ledger is not on origin yet (home-pc no longer holds the lease: origin names laptop ("*"): a machine that lost the lease commits and pushes no ledger)" ]]
-  assert_equal "$(git -C "$TEAM_HOME" rev-parse HEAD)" "$head"
-  assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
   assert_equal "$(logged_after 1 | jq -r .event)" "plan-approved
 plan-approved"
 }
@@ -2539,16 +2599,16 @@ plan-approved"
   opened T14 proj
   plan_md T14
   local head tip
-  head=$(git -C "$TEAM_HOME" rev-parse HEAD) tip=$(git -C "$team_origin" rev-parse dev)
+  head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD) tip=$(git -C "${team_origin:?}" rev-parse dev)
   echo '{"since": "2026-10-22T14:00:00Z"}' >"$HOME/.local/state/agent-team/offline"
   rm -f "$HOME/.local/state/agent-team/probe.json"
   # An origin that would hang every call: the skip makes none.
-  git -C "$TEAM_HOME" remote set-url origin "http://127.0.0.1:9/agent-team.git"
+  git -C "${TEAM_HOME:?}" remote set-url origin "http://127.0.0.1:9/agent-team.git"
   run_bin -0 --separate-stderr team-log T14 plan-approved by=coordinator
   assert_equal "$output" ""
   assert_equal "$stderr" "team-log: the ledger is not on origin yet (GitHub is unreachable since $(date -d 2026-10-22T14:00:00Z +%H:%M), and the team is holding); the next checkpoint pushes it"
-  assert_equal "$(git -C "$TEAM_HOME" rev-parse HEAD)" "$head"
-  assert_equal "$(git -C "$team_origin" rev-parse dev)" "$tip"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+  assert_equal "$(git -C "${team_origin:?}" rev-parse dev)" "$tip"
   [[ ! -e $HOME/.local/state/agent-team/probe.json ]]
 
   # A fenced machine says it is fenced, offline or not.
@@ -2565,11 +2625,11 @@ plan-approved"
   run_bin -0 --separate-stderr team-log T14 plan-approved by=coordinator
   assert_equal "$output" ""
   assert_equal "$stderr" ""
-  git -C "$TEAM_HOME" init -q -b dev
+  git -C "${TEAM_HOME:?}" init -q -b dev
   run_bin -0 --separate-stderr team-log T14 retro-schedule every_hours=48 discord_message="$(soon)"
   assert_equal "$output" ""
   assert_equal "$stderr" ""
-  assert_equal "$(git -C "$TEAM_HOME" rev-list --all | wc -l)" 0
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-list --all | wc -l)" 0
   assert_equal "$(logged_after 1 | jq -r .event)" "plan-approved
 retro-schedule"
 }
