@@ -59,7 +59,7 @@
 # proved merge, the head has no passing review or no success of the App's), on which team-land
 # takes the PR out of the queue, and exit 75 says the check could not be posted now, to try again:
 # an entry, a commit, the ledger or the head's check runs that cannot be read, and any call as
-# the App that fails with no check run posted.
+# the App that fails with no check run posted, whether or not the token's revoke failed after it.
 # Exit 2, posting nothing: any other command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -136,10 +136,10 @@ scratch=$(mktemp -d)
 token='' posted='' answer=''
 # On every exit once a token is minted, it is revoked; a revoke that fails is said and fails the run,
 # after the check run's id when the post was made. A --merge-group run that fails from here on
-# with no check run posted ends with exit 75: the commit was not refused, and the post is tried again.
+# with no check run posted ends with exit 75, a revoke that failed too or not: the commit was not
+# refused, and the post is tried again.
 finish() {
   local status=$? code
-  [[ -z $group || -n $posted || $status != 1 ]] || status=75
   if [[ $token =~ ^[A-Za-z0-9._-]+$ ]]; then
     if ! code=$(review_app_api DELETE installation/token "$token" 2>"$scratch/curl.err"); then
       echo "${0##*/}: revoking the App's token failed: $(grep -m1 . "$scratch/curl.err" || echo "curl failed"); it expires on its own within the hour" >&2
@@ -150,6 +150,7 @@ finish() {
       status=1
     fi
   fi
+  [[ -z $group || -n $posted || $status != 1 ]] || status=75
   rm -rf "$scratch"
   exit "$status"
 }

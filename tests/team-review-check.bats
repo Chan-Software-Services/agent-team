@@ -584,6 +584,23 @@ DELETE installation/token"
   run_bin -1 team-review-check "$URL" "$QUEUE_HEAD" success "no blocking findings"
 }
 
+@test "--merge-group still ends with exit 75 when the check run's post fails and the token's revoke fails too" {
+  queued_pr
+  local trial
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  echo '422 {"message": "No commit found for SHA"}' >"$STUB_FIXTURES/curl.check-run"
+  echo '500 {"message": "Server Error"}' >"$STUB_FIXTURES/curl.revoke"
+  run_bin -75 --separate-stderr team-review-check --merge-group "$URL" "$trial"
+  assert_equal "$output" ""
+  assert_contains "$stderr" "posting the agent-review check run"
+  assert_contains "$stderr" "revoking the App's token failed"
+  # Once the check run is posted, a failed revoke is exit 1 with its id, which team-land reads as posted.
+  rm "$STUB_FIXTURES/curl.check-run"
+  run_bin -1 --separate-stderr team-review-check --merge-group "$URL" "$trial"
+  assert_equal "$output" 4242
+}
+
 @test "--merge-group takes a PR URL and a full sha, nothing more or less" {
   local -a cases=(
     "--merge-group"

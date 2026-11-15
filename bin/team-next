@@ -295,7 +295,8 @@
 # 250k, else a fresh builder, after the holder's STOW when it is live, with "conflicts on <files>"
 # after the behind count for a conflict, or "(whether the merge is clean is not known: <why>)" when
 # the fetch or git fails. A PR the merge queue dropped for a failure of its own on the trial merge
-# that no review followed (queue_state's round_due in bin/lib/ledger.jq) gets that brief's step
+# that no pr event of its URL and no review of the task followed (queue_state's round_due in
+# bin/lib/ledger.jq) gets that brief's step
 # too, whatever its base: "merge base: <url> failed <checks> on the merge queue's trial merge,
 # which dropped it at <ts>, so the builder fixes it on the branch (step 6): ...", never the merge
 # line, which would enqueue the same failing head again.
@@ -495,8 +496,8 @@ merge_line() {
   local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial
   url=$pr_url
   caught='' no_catch_up=''
-  # A PR the merge queue dropped for a failure of its own on the trial merge, not reviewed since
-  # (queue_state's round_due): the head passed what the trial merge failed, so the builder's round.
+  # A PR the merge queue dropped for a failure of its own on the trial merge, with no pr event of
+  # it and no review of the task since (queue_state's round_due): the head passed what the trial merge failed, so the builder's round.
   trial=$(task_event_array "$task" | ledger_jq 'queue_state($url) | select(.round_due? == true)
     | "failed \([.failed[] | select(.class == "pr") | .name] | name_list) on the merge queue'"'"'s trial merge, which dropped it at \(.since)"' \
     -r --arg url "${url%/}") || exit 1

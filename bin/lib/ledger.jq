@@ -1309,10 +1309,11 @@ def bypass_text($on):
 # as it lands a PR through the queue, {state: "queued", since, head} for a queued (its ts and
 # head), {state: "dequeued", since, reason, head, failed, round_due} for a dequeued, and null for
 # a merged or with none. A queued stands only for its head: once the task logged another head
-# after it (a pr event of the URL, or a review, since a fix after findings is reviewed at a head no
-# pr event logs), the PR left the queue with no team-merge to log its dequeued, a push having
-# dropped it, and it is null. round_due says the queue dropped the PR for a failure of its own on
-# the trial merge (a failed of class pr) with no pr event of the URL and no review since: the head
+# after it (a pr event of the URL, or any review of the task, whichever of its PRs it read, since
+# a fix after findings is reviewed at a head no pr event logs and a review names no PR), the PR
+# left the queue with no team-merge to log its dequeued, a push having dropped it, and it is null.
+# round_due says the queue dropped the PR for a failure of its own on the trial merge (a failed
+# of class pr) with no pr event of the URL and no review of the task since: the head
 # passed what the trial merge failed, so it is the builder's merge-base round, then a rereview,
 # never a second enqueue of the same head.
 def queue_state($url):
@@ -2078,9 +2079,9 @@ def coordinator_twin_findings($self):
 # team-sweep's findings, over every ledger event as one array, the session list, the stow plan
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
-# every task's withdrawals), else its findings unless it is parked, then its queue-wait and trial-failed findings,
-# then its walk-stale, parked or not, since a parked task's walk still needs asking about, then its
-# ci-due, then the stray sessions (named
+# every task's withdrawals), else its findings unless it is parked, then its queue-wait and
+# trial-failed findings, then its walk-stale, parked or not, since a parked task's walk still
+# needs asking about, then its ci-due, then the stray sessions (named
 # like a team worker whose task is closed or not in the ledger, never the load check's T0, whose
 # session the coordinator waits on for up to 30 minutes), in task number order; then the
 # coordinator-twin, activity, level, retro-due and health findings. $own is the registered projects
@@ -2326,14 +2327,16 @@ def approves_pr($pr):
 # The task's PRs that wait on Daniel's word to merge, from task_prs: none unless its phase is
 # awaiting-merge, then each not merged that no merge-approved names at its head (approves_pr),
 # that does not stand in the merge queue (queued_prs: its word was given, and team-merge is landing
-# it), and whose default word does not hold on the ledger
+# it), that the queue did not drop for a failure of its own with no head logged since
+# (trial_failed_prs: the round is the builder's, and no word is asked on the head that failed its
+# trial merge), and whose default word does not hold on the ledger
 # (default_holds over $withdrawals, default_events', and $own, own_projects' {projects, app}, the
 # team's own and the reviewer App; with $own null, as when the registry cannot be read, none holds).
 def merge_ready_prs($withdrawals; $own):
   . as $events
   | task_prs as $prs
   | if phase != "awaiting-merge" then []
-    else [$events | queued_prs[] | .url] as $queued
+    else [$events | (queued_prs, trial_failed_prs)[] | .url] as $queued
     | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
       | select(any($events[]; approves_pr($pr)) | not)
       | select($own != null and ($events | default_holds($pr; $withdrawals; $own)) | not)] end;

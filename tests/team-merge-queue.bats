@@ -127,6 +127,17 @@ no_land_call() {
   sed -i '1i echo '"'"'{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "MERGED", "mergeQueueEntry": null}}}}'"'"' >"$GH_DIR/entry.json"' "$gh_dir/land.sh"
   run_bin -75 --separate-stderr team-merge T14
   assert_equal "$(queue_events)" "$(queued)"
+  [[ $stderr != *"still in the queue"* ]]
+  assert_contains "$stderr" "team-merge: PR #5 is merged by now: run team-merge T14 again, which logs how it ended"
+  # Nor is a PR GitHub cannot be asked about said to be in the queue.
+  merge_again
+  queue_rule
+  in_queue
+  land waiting "GitHub could not be read at the last look, so whether $url is in the merge queue is not known, after 240 minutes: run team-land again to go on waiting"
+  sed -i '1i echo "not json" >"$GH_DIR/entry.json"' "$gh_dir/land.sh"
+  run_bin -75 --separate-stderr team-merge T14
+  [[ $stderr != *"the PR is still in the queue"* ]]
+  assert_contains "$stderr" "team-merge: whether PR #5 is still in the queue is not known, GitHub unread: run team-merge T14 again with run_in_background to go on waiting"
 }
 
 @test "a resume that team-land refuses, or that ends with no result, with the PR in no queue by then, ends the standing queued" {
@@ -163,6 +174,10 @@ no_land_call() {
   # Once: the next refusal has no queued standing.
   run_bin -1 --separate-stderr team-merge T14
   assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
+  # The dequeued names the head that was enqueued, the queued's, not the head the PR has now.
+  was_queued 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | tail -n 1 | jq -r .head)" 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
 }
 
 @test "a PR in the queue whose merge no longer holds is taken out of the queue and logged dequeued with the reasons" {
@@ -201,6 +216,79 @@ no_land_call() {
   assert_equal "$(queue_events)" "$before"
 }
 
+@test "a PR in the queue whose local checks could not run now is left in the queue, and one whose local checks failed is taken out" {
+  with_local_checks
+  with_queue
+  was_queued
+  in_queue
+  before=$(queue_events)
+  # team-checks could not take the heavy-run lock: exit 75, nothing failed.
+  mv "$CODE_CHECKOUT/bin/team-checks" "$CODE_CHECKOUT/bin/team-checks.real"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "team-checks: the heavy-run lock stayed held: try again later"' 'exit 75' >"$CODE_CHECKOUT/bin/team-checks"
+  chmod +x "$CODE_CHECKOUT/bin/team-checks"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "(team-checks exit 75)"
+  assert_contains "$stderr" "team-merge: PR #5 is left in the merge queue, since whether its merge holds cannot be told now"
+  assert_equal "$(dequeues)" ""
+  assert_equal "$(queue_events)" "$before"
+  no_land_call
+  # Local checks that ran and failed are a refusal that stands.
+  mv -f "$CODE_CHECKOUT/bin/team-checks.real" "$CODE_CHECKOUT/bin/team-checks"
+  echo 1 >"$gh_dir/check.status"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "(team-checks exit 1)"
+  assert_equal "$(dequeues)" "pr=PR_kwDOtest5"
+  assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
+}
+
+@test "a queued standing for a PR merged at another head is ended by a dequeued of the head it names, by a refusal and after team-land" {
+  with_queue
+  # Merged by hand at the PR's head, while the queued names an earlier one.
+  was_queued 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+  pr_field '.state = "MERGED"'
+  in_queue merged
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  PR #5 is merged, not open"
+  assert_equal "$(queue_events | tail -n 1)" "$(jq -cn --arg h "$head" --arg url "$url" '{task: "T14", event: "dequeued", url: $url,
+    head: "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+    reason: "PR #5 was merged at \($h[:7]), not at 6f6f6f6, the head its queued names, with no team-merge landing it"}')"
+  no_land_call
+  # Once: no queued stands for the next refusal.
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
+  # Merged at another head while team-land waited on a queued that stood before this run.
+  merge_again
+  queue_rule
+  was_queued
+  in_queue
+  land refused "$url was merged at 7a7a7a7, not at the head ${head:0:7} this run lands: check it on GitHub"
+  sed -i '1i echo '"'"'{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "MERGED", "headRefOid": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a", "mergeQueueEntry": null}}}}'"'"' >"$GH_DIR/entry.json"' "$gh_dir/land.sh"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | tail -n 2 | jq -r .event | paste -sd' ')" "queued dequeued"
+  assert_equal "$(queue_events | tail -n 1 | jq -r .reason)" "$url was merged at 7a7a7a7, not at the head ${head:0:7} this run lands: check it on GitHub"
+  assert_contains "$stderr" "team-merge: team-land refused PR #5: $url was merged at 7a7a7a7"
+  # And on a queued this run logged: it is ended, and never said not to have joined the queue.
+  in_queue no
+  land refused "$url was merged at 7a7a7a7, not at the head ${head:0:7} this run lands: check it on GitHub"
+  sed -i '1i echo '"'"'{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "MERGED", "headRefOid": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a", "mergeQueueEntry": null}}}}'"'"' >"$GH_DIR/entry.json"' "$gh_dir/land.sh"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | tail -n 2 | jq -r .event | paste -sd' ')" "queued dequeued"
+  assert_contains "$stderr" "team-merge: team-land refused PR #5: $url was merged at 7a7a7a7"
+  [[ $stderr != *"did not join the merge queue"* ]]
+}
+
+@test "a dequeued another team-merge logged while team-land waited, taking the PR out, is not logged a second time" {
+  with_queue
+  land dequeued "GitHub gives no reason"
+  # The run that refused the merge took the PR out and logged its dequeued, with no lock.
+  sed -i '1i jq -cn --arg h "$2" '"'"'{ts: "2026-10-22T04:00:00Z", task: "T14", event: "dequeued", url: "https://github.com/owner/proj/pull/5", head: $h, reason: "team-merge refused the merge and took PR #5 out of the merge queue: PR #5 is a draft"}'"'"' >>"$TEAM_HOME/ledger.jsonl"' "$gh_dir/land.sh"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
+  assert_equal "$(queue_events | tail -n 1 | jq -r .reason)" "team-merge refused the merge and took PR #5 out of the merge queue: PR #5 is a draft"
+  assert_contains "$stderr" "team-merge: PR #5's dequeued is logged already, by the team-merge that took it out of the queue"
+  assert_contains "$stderr" "team-merge: the merge queue dropped PR #5, which is not merged: GitHub gives no reason"
+}
+
 @test "--holds says whether the merge still holds at the head, changing nothing: 0 it holds, 1 it does not, 75 it cannot be told now" {
   default_word
   with_queue
@@ -234,6 +322,24 @@ no_land_call() {
   run_bin -2 team-merge T14 --holds abc
 }
 
+@test "--holds cannot tell now, exit 75, when the plan's files cannot be read" {
+  default_word
+  with_queue
+  was_queued
+  in_queue
+  # The plan's task directory is its first project's, lib's, which the registry does not hold.
+  jq -c 'if .event == "opened" then .project = "lib" | .branch = "feat/T14-lib" else . end' \
+    "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l"
+  mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  event T14 worktree-added '{project: "proj", branch: "feat/T14-tooling", base: "dev", base_sha: "0123456", worktree: "/w/4"}'
+  run_bin -75 --separate-stderr team-merge T14 --holds "$head"
+  assert_contains "$stderr" "  the plan's files cannot be read"
+  # And the PR in the queue is left there by a team-merge that refuses on it alone.
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "team-merge: PR #5 is left in the merge queue, since whether its merge holds cannot be told now"
+  assert_equal "$(dequeues)" ""
+}
+
 @test "a run that read the PR open while another logged its merge finds the merged under the lock, and logs no second one" {
   with_queue
   was_queued
@@ -251,6 +357,26 @@ SH
   assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued merged"
   assert_equal "$output" "team-merge: another team-merge logged PR #5 merged while this one read it: nothing more to do"
   no_land_call
+}
+
+@test "a run that read a queued standing while another logged its dequeued finds it under the lock, and logs a queued before it lands" {
+  with_queue
+  was_queued
+  in_queue
+  # The other run's dequeued lands between this run's read of the task's events and its lock: the
+  # entry read, the last before the lock, appends it.
+  cat >"$gh_dir/entry.sh" <<'SH'
+if [[ ! -e $GH_DIR/other-dequeued ]]; then
+  : >"$GH_DIR/other-dequeued"
+  jq -cn --arg url "https://github.com/owner/proj/pull/5" --arg h "$(jq -r .headRefOid "$GH_DIR/pr.json")" \
+    '{ts: "2026-10-22T04:00:00Z", task: "T14", event: "dequeued", url: $url, head: $h, reason: "another run took it out"}' >>"$TEAM_HOME/ledger.jsonl"
+fi
+SH
+  land merged
+  run_bin -0 --separate-stderr team-merge T14
+  # The queued is logged before team-land runs, so the PR it enqueues never reads as out of the queue.
+  assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued queued merged"
+  assert_equal "$(wc -l <"$gh_dir/land.calls")" 1
 }
 
 @test "the task's lock is taken after the local checks, so a process one leaves behind never holds it" {

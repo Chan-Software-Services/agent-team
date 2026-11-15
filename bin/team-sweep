@@ -91,7 +91,8 @@
 #                  a message does not read back. When the registry cannot be read, no task is
 #                  merge-due and a line on stderr says why. A PR that stands in the merge queue
 #                  (queue_state in bin/lib/ledger.jq: the task's latest queued, dequeued or merged
-#                  of it is a queued, with no other head of the PR logged or reviewed since) is
+#                  of it is a queued, with no other head logged since, by a pr event of the PR
+#                  or by any review of the task) is
 #                  never named, nor one the queue dropped for a failure of its own, which
 #                  trial-failed names, nor any PR of a task whose merge lock a process holds,
 #                  which team-merge is landing

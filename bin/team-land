@@ -25,7 +25,8 @@
 #   holds the merge again (team-merge --holds): a merge that no longer holds (exit 1: the word
 #   withdrawn, a later review with findings, a check gone) has the PR taken out of the queue
 #   (GraphQL's dequeuePullRequest; dequeue_pr in bin/lib/team.sh) and ends it, dequeued, and one
-#   that cannot be told now (exit 75) is said and held again at each look, nothing posted;
+#   that cannot be told now (exit 75, or any other exit but 0 and 1, a team-merge that could not
+#   run) is said and held again at each look, nothing posted;
 #   then it posts agent-review there: team-review-check --merge-group, the reviewer App's check
 #   run, on a project whose agent-review the App posts (own_bar in bin/lib/team.sh), else
 #   team-review-status --merge-group, the commit status; either posts only once the trial commit
@@ -169,7 +170,8 @@ take_out() {
 
 # With --task, hold the merge again before agent-review goes on the trial commit <sha>, once per
 # sha once it holds: team-merge --holds, which changes nothing. A merge that does not hold takes
-# the PR out of the queue; one that cannot be told now fails, with why in unposted.
+# the PR out of the queue (exit 1); one that cannot be told now (any other exit) fails, with why
+# in unposted.
 hold() {
   [[ -n $task && -z ${held[$1]:-} ]] || return 0
   local rc=0 why
