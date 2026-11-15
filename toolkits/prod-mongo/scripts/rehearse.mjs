@@ -6,11 +6,12 @@
 // Builds Conventioner's back-end image at the commit <sha> (its full sha), restores the dump
 // ~/conventioner-backups/<stamp>/ into a throwaway local MongoDB on a Docker network with no route
 // out, runs each migration script (a file's name under back-end/migrations/) against it in order,
-// and records in the dump's rehearsals/ folder each script's output and what it changed, by counts
-// and ids. Removes the MongoDB, the network and the image. Prints one JSON object on stdout, or
-// with --text the tool's answer, and each step as it starts on stderr; exits 0 when every script
-// exited 0 and nothing was left in Docker, 1 otherwise, and 128 plus the signal's number when
-// stopped by one. Reads no credential and takes no connection string. See servers/prod-mongo/rehearse.mjs.
+// with --dry-run first when its text holds that flag, stopping at a dry run that wrote or a run
+// that exited non-zero, and records in the dump's rehearsals/ folder each run's output and what it
+// changed, by counts and ids. Removes the MongoDB, the network and the image. Prints one JSON object
+// on stdout, or with --text the tool's answer, and each step as it starts on stderr; exits 0 when
+// every script ran, nothing stopped the rehearsal and nothing was left in Docker, 1 otherwise, and
+// 128 plus the signal's number when stopped by one. Reads no credential and takes no connection string. See servers/prod-mongo/rehearse.mjs.
 import { rehearse } from "../../../servers/prod-mongo/rehearse.mjs";
 import { settings } from "./settings.mjs";
 

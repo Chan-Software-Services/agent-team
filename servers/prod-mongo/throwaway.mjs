@@ -15,6 +15,10 @@
 //   removeExpired(now)       removes, by id, every container, network and image labelled
 //                            toolkit=prod-mongo whose expires has passed (what a killed run left),
 //                            in that order; returns [{ type, name, expires, error? }]
+//   removeNamed(names)       removes, by id, every container, network and image labelled
+//                            toolkit=prod-mongo whose name is one of `names` or starts with one
+//                            and a dash (a killed script's own): { gone, left }, as a script's
+//                            cleanup gives it
 //   expiredLines(removed)    an answer's lines for what removeExpired returned: what it removed, and
 //                            each thing it could not
 //   throwawayName(kind)      a new container name, prod-mongo-<kind>-<12 hex>, which the caller
@@ -79,7 +83,9 @@ const kinds = [
   { type: "image", list: ["image", "ls", "--quiet", "--no-trunc"], inspect: "image", labels: (o) => o.Config?.Labels, name: (o) => o.RepoTags?.[0], remove: ["image", "rm", "--force"] },
 ];
 
-export function removeExpired(now = Date.now()) {
+// Removes, by id, every container, network and image labelled toolkit=prod-mongo that `chosen`
+// ({ type, name, labels }) picks, in that order; returns [{ type, name, expires, error? }].
+function removeLabelled(chosen) {
   const removed = [];
   for (const kind of kinds) {
     const listed = docker([...kind.list, "--filter", `label=${teamLabel("toolkit")}=${toolkit}`]);
@@ -91,15 +97,28 @@ export function removeExpired(now = Date.now()) {
       const [object] = JSON.parse(inspected.stdout);
       const labels = kind.labels(object) ?? {};
       if (labels[teamLabel("toolkit")] !== toolkit) continue;
-      const expires = labels[teamLabel("expires")];
-      const at = Date.parse(expires ?? "");
-      if (!Number.isFinite(at) || at >= now) continue;
       const name = kind.name(object) || id.replace(/^sha256:/, "").slice(0, 12);
+      if (!chosen({ type: kind.type, name, labels })) continue;
       const gone = docker([...kind.remove, id]);
-      removed.push({ type: kind.type, name, expires, ...(gone.ok ? {} : { error: gone.why }) });
+      removed.push({ type: kind.type, name, expires: labels[teamLabel("expires")], ...(gone.ok ? {} : { error: gone.why }) });
     }
   }
   return removed;
+}
+
+export function removeExpired(now = Date.now()) {
+  return removeLabelled(({ labels }) => {
+    const at = Date.parse(labels[teamLabel("expires")] ?? "");
+    return Number.isFinite(at) && at < now;
+  });
+}
+
+export function removeNamed(names) {
+  const own = names.filter(Boolean);
+  const left = removeLabelled(({ name }) => own.some((made) => name === made || name.startsWith(`${made}-`)))
+    .filter(({ error }) => error)
+    .map(({ type, name, error }) => `${type} ${name} (${error})`);
+  return { gone: left.length === 0, left };
 }
 
 export function expiredLines(removed = []) {

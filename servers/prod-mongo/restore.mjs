@@ -22,7 +22,7 @@
 //                            when mongorestore or mkfifo could not start
 import { join } from "node:path";
 import { lastLine, runWithConfig, scrubber, toolVersion, yamlConfig } from "./children.mjs";
-import { duration, humanBytes } from "./dump.mjs";
+import { humanBytes, limit } from "./dump.mjs";
 import { Refusal } from "./refusal.mjs";
 import { checkRoot, dumpByStamp } from "./root.mjs";
 
@@ -70,7 +70,7 @@ export async function restoreDump({ database, folder, fifo, uri }) {
     throw new Error(`mkfifo failed: ${scrubbed(error.message)}`);
   }
   if (restored.fedError) return `mongorestore never read its config: ${scrubbed(restored.fedError.message)}`;
-  if (restored.timedOut) return `mongorestore did not finish in ${duration(mongorestoreTimeoutMs)}, so it was killed`;
+  if (restored.timedOut) return `mongorestore did not finish in ${limit(mongorestoreTimeoutMs)}, so it was killed`;
   if (restored.code !== 0) {
     const why = scrubbed(lastLine(restored.stderr));
     return `mongorestore ${restored.signal ? `was killed (${restored.signal})` : `exited ${restored.code}`}${why ? `: ${why}` : ""}`;

@@ -26,7 +26,7 @@ import { childEnv, scrubber } from "../../servers/prod-mongo/children.mjs";
 import { humanBytes } from "../../servers/prod-mongo/dump.mjs";
 import { restoreLimit } from "../../servers/prod-mongo/drill.mjs";
 import { kept } from "../../servers/prod-mongo/list.mjs";
-import { checkoutRefusal } from "../../servers/prod-mongo/rehearse.mjs";
+import { checkoutRefusal, rehearsalAnswer } from "../../servers/prod-mongo/rehearse.mjs";
 import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.mjs";
 import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
 import { opStub, repoRoot, startToolkitServer, stubDir, tempDir, testPath } from "./helpers/mcp.mjs";
@@ -661,7 +661,9 @@ const cmdlineOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/cmdli
 // then the real docker, but for
 // `docker port`, which fails while `fail-port` exists. While `hold-run` exists, `docker run`
 // first writes its pid to `run-held` and to `held-<its --name>`, waits up to 20 seconds for
-// `go-run`, as a first pull of the image does, and then writes `went-on-<its --name>`.
+// `go-run`, as a first pull of the image does, and then writes `went-on-<its --name>`. While
+// `hang-rm` exists, the first removal (`rm`, `network rm` or `image rm`) moves it to `hung-rm`
+// and sleeps two minutes, as a docker daemon that stopped answering does.
 function spyDocker() {
   const dir = tempDir("docker-spy");
   writeFileSync(join(dir, "docker"), `#!/bin/sh
@@ -681,6 +683,7 @@ if [ "$1" = run ] && [ -f "$dir/hold-run" ]; then
   : >"$dir/went-on-$name"
 fi
 if [ "$1" = port ] && [ -f "$dir/fail-port" ]; then echo 'Error: no port, as the test asked' >&2; exit 1; fi
+if { [ "$1" = rm ] || [ "$2" = rm ]; } && mv "$dir/hang-rm" "$dir/hung-rm" 2>/dev/null; then sleep 120; fi
 exec '${realDocker}' "$@"
 `, { mode: 0o755 });
   const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : "");
@@ -1241,6 +1244,19 @@ print("warned: ${printed}", file=sys.stderr)
     "back-end/migrations/exits_three.py": migration(`db.archived.insert_one({"_id": 8})
 sys.exit(3)
 `),
+    // A dry run as Conventioner's migrations take one: --dry-run counts, and only the real run writes.
+    "back-end/migrations/close_small_markets.py": migration(`dry_run = "--dry-run" in sys.argv
+if dry_run:
+    print(f"would close {db.markets.count_documents({'stalls': {'$lt': 20}})} markets")
+else:
+    result = db.markets.update_many({"stalls": {"$lt": 20}}, {"$set": {"phase": "closed"}})
+    print(f"closed {result.modified_count} markets")
+`),
+    // A dry run that writes all the same.
+    "back-end/migrations/leaky_dry_run.py": migration(`dry_run = "--dry-run" in sys.argv
+db.archived.insert_one({"_id": 9 if dry_run else 10})
+print("dry run" if dry_run else "real run")
+`),
     "back-end/migrations/waits.py": migration(`print("waiting", flush=True)
 import time
 
@@ -1326,14 +1342,14 @@ describe("rehearse-migrations", () => {
     });
   });
 
-  test("runs each migration of the commit on a restored dump, and answers what each changed by counts, ids and fields, never its output", async () => {
+  test("runs each migration of the commit on a restored dump, dry first where it takes --dry-run, and answers what each changed by counts, ids and fields, never its output", async () => {
     const stamp = await takeBackup();
     const vendor3 = (await production.client.db("conventioner").collection("applications").findOne({ "vendor.name": "Vendor 3" }))._id.toHexString();
     // This HOME's git cannot reach the origin: the fetch fails, and the commit is one the checkout holds.
     repo.originFor(home, false);
     let text;
     await rehearseServer(async (server) => {
-      const result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py", "tidy_accounts.py"] }, long);
+      const result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py", "tidy_accounts.py", "close_small_markets.py"] }, long);
       assert.ok(!result.isError, result.text);
       text = result.text;
       const backupsListed = await server.callTool("list-backups", {});
@@ -1344,26 +1360,31 @@ describe("rehearse-migrations", () => {
     assert.match(at, /^\d{4}-\d{2}-\d{2}T\d{6}Z$/);
     const opened = [marketIds[0], marketIds[1]].sort();
     assert.deepEqual(timedRehearsal(text).split("\n"), [
-      `Rehearsal of ${repo.base.slice(0, 8)} on ${shownBackup(stamp)}: 2 migrations ran, nothing left running (<time>)`,
-      "1. open_big_markets.py: exit 0 in <time>",
+      `Rehearsal of ${repo.base.slice(0, 8)} on ${shownBackup(stamp)}: 3 migrations ran, nothing left running (<time>)`,
+      "1. open_big_markets.py (no dry run): exit 0 in <time>",
       `   - markets: 3 -> 3, 2 changed (phase: 2): ${opened.join(", ")}`,
-      "2. tidy_accounts.py: exit 0 in <time>",
+      "2. tidy_accounts.py (no dry run): exit 0 in <time>",
       `   - accounts: 2 -> 2, 1 changed (role: 1, other fields: 1): ${hashed(email)}`,
       `   - applications: 5 -> 4, 1 removed: ${vendor3}`,
       "   - archived: 0 -> 1, 1 added: 7",
       "   - markets: 3 -> 3, indexes added: city_1",
-      `Logs, for Daniel to read in a terminal (never quoted here): ${shownBackup(stamp)}/rehearsals/${at}/ (1-open_big_markets.py.run.log, 1 line; 2-tidy_accounts.py.run.log, 2 lines)`,
+      "3. close_small_markets.py --dry-run: exit 0 in <time>, wrote nothing",
+      "   close_small_markets.py: exit 0 in <time>",
+      `   - markets: 3 -> 3, 1 changed (phase: 1): ${marketIds[2]}`,
+      `Logs, for Daniel to read in a terminal (never quoted here): ${shownBackup(stamp)}/rehearsals/${at}/ (1-open_big_markets.py.run.log, 1 line; 2-tidy_accounts.py.run.log, 2 lines; 3-close_small_markets.py.dry-run.log, 1 line; 3-close_small_markets.py.run.log, 1 line)`,
       "git fetch origin failed, so the ref was read as this checkout last fetched it.",
     ]);
 
     // The logs hold the migrations' own output, for Daniel alone; the answer and the report none of it.
     const dir = join(root, stamp, "rehearsals", at);
-    assert.deepEqual(readdirSync(dir).sort(), ["1-open_big_markets.py.run.log", "2-tidy_accounts.py.run.log", "report.json"]);
+    assert.deepEqual(readdirSync(dir).sort(), ["1-open_big_markets.py.run.log", "2-tidy_accounts.py.run.log", "3-close_small_markets.py.dry-run.log", "3-close_small_markets.py.run.log", "report.json"]);
     assert.equal(statSync(join(root, stamp, "rehearsals")).mode & 0o777, 0o700);
     assert.equal(statSync(dir).mode & 0o777, 0o700);
     for (const file of readdirSync(dir)) assert.equal(statSync(join(dir, file)).mode & 0o777, 0o600, file);
     assert.equal(readFileSync(join(dir, "1-open_big_markets.py.run.log"), "utf8"), "opened 2 markets\n");
     assert.deepEqual(readFileSync(join(dir, "2-tidy_accounts.py.run.log"), "utf8").split("\n").filter(Boolean).sort(), [`contact: ${printed}`, `warned: ${printed}`]);
+    assert.equal(readFileSync(join(dir, "3-close_small_markets.py.dry-run.log"), "utf8"), "would close 1 markets\n");
+    assert.equal(readFileSync(join(dir, "3-close_small_markets.py.run.log"), "utf8"), "closed 1 markets\n");
     const reportText = readFileSync(join(dir, "report.json"), "utf8");
     for (const hidden of [printed, "printed-by", email, "opened 2", "Riverside", homedir()]) {
       assert.ok(!text.includes(hidden), `the answer holds ${hidden}`);
@@ -1374,7 +1395,11 @@ describe("rehearse-migrations", () => {
     assert.deepEqual(report.steps.map(({ n, script: name, mode, exit, log, lines }) => ({ n, name, mode, exit, log, lines })), [
       { n: 1, name: "open_big_markets.py", mode: "run", exit: 0, log: "1-open_big_markets.py.run.log", lines: 1 },
       { n: 2, name: "tidy_accounts.py", mode: "run", exit: 0, log: "2-tidy_accounts.py.run.log", lines: 2 },
+      { n: 3, name: "close_small_markets.py", mode: "dry-run", exit: 0, log: "3-close_small_markets.py.dry-run.log", lines: 1 },
+      { n: 3, name: "close_small_markets.py", mode: "run", exit: 0, log: "3-close_small_markets.py.run.log", lines: 1 },
     ]);
+    assert.equal(report.stopped, undefined);
+    assert.deepEqual(report.notRun, []);
     assert.deepEqual(report.steps[0].collections.map(({ collection }) => collection), ["accounts", "applications", "archived", "markets", "open_markets"]);
     assert.deepEqual(report.steps[1].collections.find(({ collection }) => collection === "accounts"), {
       collection: "accounts", before: 2, after: 2, added: [], removed: [], changed: [hashed(email)], fields: { role: 1 }, otherFields: 1, indexesAdded: [], indexesRemoved: [],
@@ -1393,13 +1418,18 @@ describe("rehearse-migrations", () => {
       for (const pair of [`${teamLabel("owner")}=agent-team`, `${teamLabel("kind")}=drill`, `${teamLabel("toolkit")}=prod-mongo`]) assert.ok(call.includes(pair), `docker ${call[0]} has no label ${pair}`);
       assert.ok(call.some((arg) => arg.startsWith(`${teamLabel("expires")}=`)), `docker ${call[0]} has no expires`);
     }
-    assert.equal(runs.length, 3);
+    assert.equal(runs.length, 5);
     const [throwaway, ...migrations] = runs;
     assert.ok(!throwaway.includes("--network"), "the throwaway is not on the default bridge");
     assert.deepEqual(calls.find(([command, sub]) => command === "network" && sub === "connect"), ["network", "connect", "--alias", "mongodb", network, network]);
+    const expected = [
+      [`${network}-run-1`, "open_big_markets.py"], [`${network}-run-2`, "tidy_accounts.py"],
+      [`${network}-dry-run-3`, "close_small_markets.py", "--dry-run"], [`${network}-run-3`, "close_small_markets.py"],
+    ];
     for (const [n, run] of migrations.entries()) {
-      const name = ["open_big_markets.py", "tidy_accounts.py"][n];
-      assert.deepEqual(run.slice(-5), [image, "timeout", "600", "python", `migrations/${name}`]);
+      const [container, name, ...dry] = expected[n];
+      assert.equal(run[run.indexOf("--name") + 1], container);
+      assert.deepEqual(run.slice(run.indexOf(image)), [image, "timeout", "600", "python", `migrations/${name}`, ...dry]);
       assert.deepEqual(run.filter((arg, index) => run[index - 1] === "--network"), [network]);
       assert.deepEqual(run.filter((arg, index) => run[index - 1] === "--env"), ["MONGODB_URI"]);
       for (const pair of ["--rm", "--pull never", "--memory 1g"]) assert.ok(run.join(" ").includes(pair), `docker run has no ${pair}`);
@@ -1433,7 +1463,7 @@ describe("rehearse-migrations", () => {
         const opened = [marketIds[0], marketIds[1]].sort();
         assert.deepEqual(timedRehearsal(result.text).split("\n").slice(0, 3), [
           `Rehearsal of ${repo.release.slice(0, 8)} on ${shownBackup(stamp)}: 1 migration ran, nothing left running (<time>)`,
-          "1. open_big_markets.py: exit 0 in <time>",
+          "1. open_big_markets.py (no dry run): exit 0 in <time>",
           `   - markets: 3 -> 3, 2 changed (opened_by: 2, phase: 2): ${opened.join(", ")}`,
         ]);
         assert.ok(!result.text.includes("git fetch"), result.text);
@@ -1506,18 +1536,36 @@ describe("rehearse-migrations", () => {
     return spawn(command[0], command.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   };
 
-  test("run by hand through team-heavy: one JSON object, a migration's exit code as it gave it and the next one run all the same, and exit 1", async () => {
+  test("run by hand through team-heavy: one JSON object, stopped at a migration that exits non-zero with its exit code, the next not run, and exit 1", async () => {
     const stamp = await takeBackup();
-    const ran = await ended(byHand([stamp, repo.base, "exits_three.py", "open_big_markets.py"]));
+    const ran = await ended(byHand([stamp, repo.base, "exits_three.py", "close_small_markets.py"]));
     assert.equal(ran.code, 1, ran.stderr);
     assert.equal(ran.stdout.split("\n").filter(Boolean).length, 1, ran.stdout);
     const result = JSON.parse(ran.stdout);
-    assert.deepEqual(result.steps.map(({ script: name, exit }) => [name, exit]), [["exits_three.py", 3], ["open_big_markets.py", 0]]);
+    assert.deepEqual(result.steps.map(({ script: name, mode, exit }) => [name, mode, exit]), [["exits_three.py", "run", 3]]);
     assert.deepEqual(result.steps[0].collections.map(({ collection, added }) => [collection, added]), [["archived", { count: 1, ids: ["8"] }]]);
+    assert.deepEqual(result.stopped, { n: 1, script: "exits_three.py", mode: "run", exit: 3, signal: null, timedOut: false, wrote: false });
+    assert.deepEqual(result.notRun, [{ n: 2, script: "close_small_markets.py", mode: "dry-run" }, { n: 2, script: "close_small_markets.py", mode: "run" }]);
     assert.deepEqual(result.cleanup, { gone: true, left: [] });
     assert.equal(result.folder, shownBackup(stamp));
     assert.match(ran.stderr, /^rehearse-migrations: running exits_three\.py \(1 of 2\)$/m);
-    madeAndGone();
+    assert.doesNotMatch(ran.stderr, /running close_small_markets/);
+    // --text prints the tool's own answer to that JSON.
+    const at = result.at;
+    assert.deepEqual(timedRehearsal(rehearsalAnswer(result).text).split("\n"), [
+      `Rehearsal of ${repo.base.slice(0, 8)} on ${shownBackup(stamp)}: stopped at 1 of 2 migrations, nothing left running (<time>)`,
+      "1. exits_three.py (no dry run): exit 3 in <time>",
+      "   - archived: 0 -> 1, 1 added: 8",
+      "Stopped: exits_three.py exited 3.",
+      "Not run: close_small_markets.py --dry-run, close_small_markets.py.",
+      `Logs, for Daniel to read in a terminal (never quoted here): ${shownBackup(stamp)}/rehearsals/${at}/ (1-exits_three.py.run.log, 0 lines)`,
+    ]);
+    assert.equal(rehearsalAnswer(result).isError, true);
+    // The report and the logs so far are kept, and nothing is left in Docker.
+    const report = JSON.parse(readFileSync(join(root, stamp, "rehearsals", at, "report.json"), "utf8"));
+    assert.deepEqual([report.stopped, report.notRun], [result.stopped, result.notRun]);
+    assert.deepEqual(readdirSync(join(root, stamp, "rehearsals", at)).sort(), ["1-exits_three.py.run.log", "report.json"]);
+    assert.equal(madeAndGone().runs.length, 2);
 
     const refused = await ended(byHand([stamp, repo.base.slice(0, 12), "open_big_markets.py", "--text"]));
     assert.equal(refused.code, 1);
@@ -1547,6 +1595,170 @@ describe("rehearse-migrations", () => {
     const [at] = rehearsalsOf(stamp);
     assert.equal(out.logs, `${shownBackup(stamp)}/rehearsals/${at}/`);
     assert.deepEqual(readdirSync(join(root, stamp, "rehearsals", at)), ["1-waits.py.run.log"]);
+  });
+
+  test("stops at a dry run that wrote, naming what it wrote, before its real run and the migrations after it; keeps the report and the logs, and leaves nothing in Docker", async () => {
+    const stamp = await takeBackup();
+    let result;
+    await rehearseServer(async (server) => {
+      result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["close_small_markets.py", "leaky_dry_run.py", "exits_three.py"], backup: stamp }, long);
+    });
+    assert.equal(result.isError, true, result.text);
+    const [at] = rehearsalsOf(stamp);
+    assert.deepEqual(timedRehearsal(result.text).split("\n"), [
+      `Rehearsal of ${repo.base.slice(0, 8)} on ${shownBackup(stamp)}: stopped at 2 of 3 migrations, nothing left running (<time>)`,
+      "1. close_small_markets.py --dry-run: exit 0 in <time>, wrote nothing",
+      "   close_small_markets.py: exit 0 in <time>",
+      `   - markets: 3 -> 3, 1 changed (phase: 1): ${marketIds[2]}`,
+      "2. leaky_dry_run.py --dry-run: exit 0 in <time>",
+      "   - archived: 0 -> 1, 1 added: 9",
+      "Stopped: the dry run of leaky_dry_run.py wrote: archived: 0 -> 1, 1 added.",
+      "Not run: leaky_dry_run.py, exits_three.py.",
+      `Logs, for Daniel to read in a terminal (never quoted here): ${shownBackup(stamp)}/rehearsals/${at}/ (1-close_small_markets.py.dry-run.log, 1 line; 1-close_small_markets.py.run.log, 1 line; 2-leaky_dry_run.py.dry-run.log, 1 line)`,
+    ]);
+    const dir = join(root, stamp, "rehearsals", at);
+    assert.deepEqual(readdirSync(dir).sort(), ["1-close_small_markets.py.dry-run.log", "1-close_small_markets.py.run.log", "2-leaky_dry_run.py.dry-run.log", "report.json"]);
+    for (const file of readdirSync(dir)) assert.equal(statSync(join(dir, file)).mode & 0o777, 0o600, file);
+    const report = JSON.parse(readFileSync(join(dir, "report.json"), "utf8"));
+    assert.deepEqual(report.stopped, { n: 2, script: "leaky_dry_run.py", mode: "dry-run", exit: 0, signal: null, timedOut: false, wrote: true });
+    assert.deepEqual(report.notRun, [{ n: 2, script: "leaky_dry_run.py", mode: "run" }, { n: 3, script: "exits_three.py", mode: "run" }]);
+    // The real run of the leaky script never ran: no container of it, and no document 10.
+    const { runs, network } = madeAndGone();
+    assert.deepEqual(runs.slice(1).map((run) => run[run.indexOf("--name") + 1]), [`${network}-dry-run-1`, `${network}-run-1`, `${network}-dry-run-2`]);
+    assert.deepEqual(runs.at(-1).slice(-2), ["migrations/leaky_dry_run.py", "--dry-run"]);
+  });
+
+  test("a migration reaches the throwaway by its alias, and neither production's MongoDB, by its loopback port or its container, nor a public address", async () => {
+    const stamp = await takeBackup();
+    const inspect = (format, ...what) => execFileSync(realDocker, [...what, "--format", format], { encoding: "utf8" }).trim();
+    const productionIp = inspect("{{.NetworkSettings.Networks.bridge.IPAddress}}", "container", "inspect", production.name);
+    const gateway = inspect("{{(index .IPAM.Config 0).Gateway}}", "network", "inspect", "bridge");
+    assert.match(productionIp, /^\d+\.\d+\.\d+\.\d+$/);
+    // Each place production may be reached from a container, and two outside the machine.
+    const targets = [
+      ["production's loopback port, as the host's own", "127.0.0.1", production.port],
+      ["production's loopback port, by host.docker.internal", "host.docker.internal", production.port],
+      ["production's loopback port, by the default bridge's gateway", gateway, production.port],
+      ["production's loopback port, by this network's first address", "first", production.port],
+      ["production's container, on the default bridge", productionIp, 27017],
+      ["a public address", "1.1.1.1", 443],
+      ["a public name", "example.com", 443],
+    ];
+    const probe = (tries) => `import socket
+tries = ${JSON.stringify(tries)}
+for label, host, port in tries:
+    if host == "first":
+        host = ".".join(socket.gethostbyname(socket.gethostname()).split(".")[:3] + ["1"])
+    try:
+        socket.create_connection((host, port), timeout=3).close()
+        print(f"reached {label}", flush=True)
+    except OSError as error:
+        print(f"could not reach {label}: {type(error).__name__}", flush=True)
+`;
+    // The probe itself reaches production's container from the default bridge, so its failures
+    // below are the internal network's doing.
+    const control = execFileSync(realDocker, ["run", "--rm", "--pull", "never", pythonImage, "python", "-c", probe([targets[4]])], { encoding: "utf8" });
+    assert.equal(control, `reached ${targets[4][0]}\n`);
+    repo.git(repo.work, "checkout", "--quiet", "-b", "reaches-out");
+    repo.write("back-end/migrations/reaches_out.py", `${probe(targets)}import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db_config import get_database
+
+get_database().command("ping")
+print("reached the throwaway as mongodb", flush=True)
+`);
+    repo.git(repo.work, "add", "--all");
+    repo.git(repo.work, "commit", "--quiet", "--message", "reaches out");
+    const sha = repo.git(repo.work, "rev-parse", "HEAD");
+    repo.git(repo.work, "checkout", "--quiet", "main");
+    let result;
+    await rehearseServer(async (server) => {
+      result = await server.callTool("rehearse-migrations", { ref: sha, migrations: ["reaches_out.py"], backup: stamp }, long);
+    });
+    assert.ok(!result.isError, result.text);
+    const [at] = rehearsalsOf(stamp);
+    const log = readFileSync(join(root, stamp, "rehearsals", at, "1-reaches_out.py.run.log"), "utf8").split("\n").filter(Boolean);
+    assert.deepEqual(log.map((line) => line.replace(/: \w+$/, "")), [...targets.map(([what]) => `could not reach ${what}`), "reached the throwaway as mongodb"]);
+    assert.ok(!result.text.includes("could not reach"), result.text);
+    madeAndGone();
+  });
+
+  test("refuses a rehearsal while a backup runs, and answers that the machine is busy while another run holds the heavy-run lock, running nothing", async () => {
+    spy.set("hold");
+    await rehearseServer(async (server) => {
+      const first = server.callTool("backup", {});
+      await until(() => spy.read("held") !== null);
+      const rehearsal = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py"] });
+      assert.deepEqual([rehearsal.isError, rehearsal.text], [true, "rehearse-migrations: a backup is already running"]);
+      spy.set("go");
+      assert.ok(!(await first).isError);
+    });
+    const [stamp] = backups();
+    const lock = join(home, ".local", "state", "agent-team", "heavy.lock");
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, "the test's own run (pid 1) since now\n");
+    const holder = spawn("flock", [lock, "sleep", "300"], { stdio: "ignore" });
+    try {
+      await until(() => spawnSync("flock", ["-n", lock, "true"]).status !== 0);
+      await withServer(async (server) => {
+        const result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py"], backup: stamp });
+        assert.deepEqual([result.isError, result.text], [true, "rehearse-migrations: the machine is busy: the heavy-run lock is held by the test's own run (pid 1) since now; ask again later"]);
+      }, { path: drillPath(), cwd: repo.work, env: { PROD_MONGO_HEAVY_WAIT_MINUTES: "0" } });
+    } finally {
+      holder.kill();
+    }
+    assert.deepEqual(docker.calls(), [], "docker ran");
+    assert.deepEqual(rehearsalsOf(stamp), []);
+  });
+
+  test("answers a back-end image that does not build with docker build's last line, scrubbed, and leaves nothing in Docker", async () => {
+    const stamp = await takeBackup();
+    // A build step that fails, printing a connection string and a document, as a failing step's
+    // command line is echoed in docker build's error.
+    const secret = `buildpw${randomBytes(6).toString("hex")}`;
+    repo.git(repo.work, "checkout", "--quiet", "-b", "broken-build");
+    const dockerfile = readFileSync(join(repo.work, "back-end", "Dockerfile"), "utf8");
+    repo.write("back-end/Dockerfile", `${dockerfile}RUN echo 'mongodb://someone:${secret}@db.internal/x {"email": "${printed}"}' && exit 7\n`);
+    repo.git(repo.work, "commit", "--quiet", "--all", "--message", "a build that fails");
+    const sha = repo.git(repo.work, "rev-parse", "HEAD");
+    repo.git(repo.work, "checkout", "--quiet", "main");
+    let result;
+    await rehearseServer(async (server) => {
+      result = await server.callTool("rehearse-migrations", { ref: sha, migrations: ["open_big_markets.py"], backup: stamp }, long);
+    });
+    assert.equal(result.isError, true, result.text);
+    assert.match(result.text, /^rehearse-migrations: failed: the back-end image could not be built: docker build exited 1: .*\[uri\].*; nothing left running\.$/);
+    for (const hidden of [secret, "someone", printed, "email"]) assert.ok(!result.text.includes(hidden), `the answer holds ${hidden}`);
+    assert.deepEqual(rehearsalsOf(stamp), []);
+    const image = `agent-team-rehearsal:${sha.slice(0, 12)}`;
+    assert.notEqual(spawnSync(realDocker, ["image", "inspect", image], { stdio: "pipe" }).status, 0, `image ${image} is still there`);
+    assert.ok(!docker.calls().some(([command, sub]) => command === "run" || (command === "network" && sub === "create")), "the rehearsal went on past its build");
+  });
+
+  test("the server stops a rehearsal past its bound and removes, by id, what the script made but could not remove", async () => {
+    const stamp = await takeBackup();
+    // The script's own removal hangs, as with a docker daemon that stopped answering, so only the
+    // server's removal by id is left to remove what it made.
+    docker.set("hang-rm");
+    let result;
+    await rehearseServer(async (server) => {
+      result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["waits.py"], backup: stamp }, long);
+    }, { env: { PROD_MONGO_BOUND_SECONDS: "45", PROD_MONGO_KILL_GRACE_SECONDS: "2" } });
+    assert.equal(result.isError, true);
+    assert.equal(result.text, "rehearse-migrations: failed: the rehearsal ran past its 45 s, so it was stopped; what it made in Docker was removed, so nothing was left running.");
+    assert.ok(existsSync(join(docker.dir, "hung-rm")), "the script's removal never hung");
+    // The migration was running when the bound came: its log has its first line.
+    const [at] = rehearsalsOf(stamp).filter((name) => !name.startsWith("."));
+    assert.equal(readFileSync(join(root, stamp, "rehearsals", at, "1-waits.py.run.log"), "utf8"), "waiting\n");
+    const { runs, calls } = madeAndGone();
+    assert.equal(runs.length, 2);
+    // After the hung one, the server's removals, each by its id: the throwaway (the migration's
+    // container ends with its docker run, which the TERM reached), the network and the image.
+    const removals = calls.slice(calls.findIndex(([command]) => command === "rm") + 1).filter(([command, sub]) => command === "rm" || (["network", "image"].includes(command) && sub === "rm"));
+    for (const call of removals) assert.match(call.at(-1), /^(sha256:)?[0-9a-f]{64}$/, call.join(" "));
+    assert.deepEqual([...new Set(removals.map(([command]) => (command === "rm" ? "container" : command)))], ["container", "network", "image"]);
   });
 
   describe("the change engine", () => {

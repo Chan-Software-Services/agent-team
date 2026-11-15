@@ -20,6 +20,7 @@
 //   differs(comparison)      whether a comparison holds any change
 //   capped(comparison)       the comparison with each id list as { count, ids }, at most idLimit ids
 //   changeLine(comparison)   an answer's line for one collection that changed, capped or not
+//   changeCounts(comparison) the same line's counts alone, with no id and no leading "- "
 //   printableId(key, BSON)   the one id any tool prints for a document, from `key`, the BSON bytes
 //                            of a document holding only its _id and its top-level id
 //   fieldName, idLimit       the pattern a field's name is reported by, and 50
@@ -304,18 +305,27 @@ function idList({ count: total, ids }) {
 
 // `- markets: 12 -> 12, 4 changed (phase: 4): <ids>`, each kind of change after a "; ".
 export function changeLine(comparison) {
-  const { collection, before, after, added, removed, changed, fields, otherFields, indexesAdded, indexesRemoved, created, dropped } = capped(comparison);
+  return `- ${described(capped(comparison), true)}`;
+}
+
+// `markets: 12 -> 12, 4 changed (phase: 4)`: changeLine's counts, with no id.
+export function changeCounts(comparison) {
+  return described(capped(comparison), false);
+}
+
+function described({ collection, before, after, added, removed, changed, fields, otherFields, indexesAdded, indexesRemoved, created, dropped }, withIds) {
   const side = (n) => (n === null ? "none" : count(n));
+  const ids = (list) => (withIds ? `: ${idList(list)}` : "");
   const parts = [];
-  if (added.count) parts.push(`${count(added.count)} added: ${idList(added)}`);
-  if (removed.count) parts.push(`${count(removed.count)} removed: ${idList(removed)}`);
+  if (added.count) parts.push(`${count(added.count)} added${ids(added)}`);
+  if (removed.count) parts.push(`${count(removed.count)} removed${ids(removed)}`);
   if (changed.count) {
     const named = Object.entries(fields).map(([name, n]) => `${name}: ${count(n)}`);
     if (otherFields) named.push(`other fields: ${count(otherFields)}`);
-    parts.push(`${count(changed.count)} changed${named.length ? ` (${named.join(", ")})` : ""}: ${idList(changed)}`);
+    parts.push(`${count(changed.count)} changed${named.length ? ` (${named.join(", ")})` : ""}${ids(changed)}`);
   }
   if (indexesAdded.length) parts.push(`indexes added: ${indexesAdded.join(", ")}`);
   if (indexesRemoved.length) parts.push(`indexes removed: ${indexesRemoved.join(", ")}`);
   const whole = [dropped ? `the ${dropped} was dropped` : "", created ? `a ${created} was created` : ""].filter(Boolean).join(" and ");
-  return `- ${collection}: ${whole ? `${whole}, ` : ""}${side(before)} -> ${side(after)}${parts.length ? `, ${parts.join("; ")}` : ""}`;
+  return `${collection}: ${whole ? `${whole}, ` : ""}${side(before)} -> ${side(after)}${parts.length ? `, ${parts.join("; ")}` : ""}`;
 }

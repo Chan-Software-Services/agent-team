@@ -4,13 +4,17 @@
 //   await restoreDrill({ argv, database, root })
 //                            the body of toolkits/prod-mongo/scripts/restore-drill.mjs: prints one
 //                            JSON object on stdout (with --text, drillAnswer's text instead), each
-//                            step as it starts on stderr (`restore-drill: <step>`), and exits 0 on PASS, 1 on FAIL, a refusal or a failure, and 128 plus
-//                            the signal's number when stopped by SIGINT, SIGTERM or SIGHUP
+//                            step as it starts on stderr (`restore-drill: <step>`), the
+//                            throwaway's name before it starts (`restore-drill: docker objects:
+//                            <name>`, heavy.mjs), and exits 0 on PASS, 1 on FAIL, a refusal or a
+//                            failure, and 128 plus the signal's number when stopped by SIGINT,
+//                            SIGTERM or SIGHUP
 //   await drillTool({ input, root, shown, scrubbed, progress })
 //                            the restore-drill tool: runs that script through the server's own
 //                            checkout's bin/team-heavy, relays each step the script writes on its
-//                            stderr (`restore-drill: <step>`) as a progress notification, and
-//                            answers { text, isError }
+//                            stderr (`restore-drill: <step>`) as a progress notification, stops
+//                            it 30 minutes after it starts (runHeavy's bound), and answers
+//                            { text, isError }
 //   drillAnswer(result)      the tool's answer to the script's JSON: { text, isError }
 //   restoreLimit             restore.mjs's, the largest restore a drill takes
 //
@@ -33,7 +37,7 @@ import { existsSync, mkdirSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { stampOf } from "./backup.mjs";
 import { count, dumped, duration, plural } from "./dump.mjs";
-import { checkout, runHeavy, steps } from "./heavy.mjs";
+import { checkout, overtimeText, runHeavy, steps } from "./heavy.mjs";
 import { listRoot } from "./list.mjs";
 import { Refusal } from "./refusal.mjs";
 import { restorableDump, restoreDump, restoreTools } from "./restore.mjs";
@@ -47,7 +51,7 @@ const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
 
 // Each step of the script, one line on its stderr, which drillTool relays as a progress
 // notification and a person running it by hand reads as it goes.
-const { step } = steps("restore-drill");
+const { step, names } = steps("restore-drill");
 
 export async function restoreDrill({ argv, database, root: configuredRoot }) {
   process.umask(0o077);
@@ -106,6 +110,7 @@ async function drill({ rest, database, root, shown, state }) {
   step("removing what earlier drills left past their expiry");
   state.removed = removeExpired(started);
   state.name = throwawayName("drill");
+  names([state.name]);
   step("starting the throwaway MongoDB");
   const throwaway = await startThrowaway({ name: state.name, kind: "drill", MongoClient });
 
@@ -184,10 +189,11 @@ export async function drillTool({ input, root, shown, scrubbed, progress }) {
   dumpByStamp(real, stamp, shownRoot);
 
   progress(`drilling ${stamp}, through the machine's heavy-run lock`);
-  const { busy, result } = await runHeavy({
+  const { busy, overtime, result } = await runHeavy({
     tool: "restore-drill", kind: "restore-drill", noun: "drill", script, args: [stamp], label: `prod-mongo restore-drill ${stamp}`, boundMinutes: 30, progress, scrubbed,
   });
   if (busy !== undefined) return { text: `restore-drill: the machine is busy: ${busy}; ask again later`, isError: true };
+  if (overtime) return { text: overtimeText("restore-drill", "drill", overtime), isError: true };
   const answer = drillAnswer(result);
   return note ? { ...answer, text: `${answer.text}\n${note}` } : answer;
 }

@@ -5,17 +5,22 @@
 //   await rehearse({ argv, database, root, repositories })
 //                            the body of toolkits/prod-mongo/scripts/rehearse.mjs: prints one JSON
 //                            object on stdout (with --text, rehearsalAnswer's text instead), each
-//                            step as it starts on stderr (`rehearse-migrations: <step>`), and exits 0
-//                            when every migration ran and exited 0 and nothing was left in Docker,
-//                            1 otherwise, and 128 plus the signal's number when stopped by SIGINT,
-//                            SIGTERM or SIGHUP
+//                            step as it starts on stderr (`rehearse-migrations: <step>`), the names
+//                            of what it makes in Docker before it makes them (`rehearse-migrations:
+//                            docker objects: <name> <image>`, heavy.mjs), and exits 0 when every
+//                            migration ran, none stopped the rehearsal and nothing was left in
+//                            Docker, 1 otherwise, and 128 plus the signal's number when stopped by
+//                            SIGINT, SIGTERM or SIGHUP
 //   await rehearseTool({ input, root, shown, scrubbed, progress, repositories })
 //                            the rehearse-migrations tool: checks the input, the dump and the
-//                            working directory, fetches, resolves the ref, then runs that script
-//                            through the server's own checkout's bin/team-heavy and answers
-//                            { text, isError }
+//                            working directory, fetches, resolves the ref, marks each script that
+//                            takes a dry run, then runs that script through the server's own
+//                            checkout's bin/team-heavy, stopped 45 minutes after it starts
+//                            (runHeavy's bound), and answers { text, isError }
 //   rehearsalAnswer(result)  the tool's answer to the script's JSON: { text, isError }
 //   rehearseInput            the tool's input schema
+//   takesDryRun(cwd, sha, script)
+//                            whether back-end/migrations/<script>'s text at <sha> holds --dry-run
 //   checkoutRefusal(cwd, repositories)
 //                            why `cwd` is not a checkout of one of `repositories` (owner/name on
 //                            GitHub, the first the one named in a refusal), or undefined
@@ -41,28 +46,34 @@
 //      that network under the alias `mongodb`;
 //   4. restores the dump as the drill does (restore.mjs), its FIFO in the dump's 0700 rehearsals/
 //      folder, and snapshots every collection;
-//   5. runs each script in order as `docker run --rm --pull never --network <the internal network>
-//      --memory 1g --env MONGODB_URI <image> timeout 600 python migrations/<script>`, the URI (the
-//      throwaway's, host `mongodb`) in the docker CLI child's own environment, never an argument
-//      list; its stdout and stderr go to rehearsals/<at>/<n>-<script>.run.log (mode 0600) and
-//      nowhere else; then snapshots again and compares;
+//   5. for each script in order, when it takes a dry run (takesDryRun), runs it with --dry-run,
+//      snapshots and compares; a dry run that changed anything stops the rehearsal there, before
+//      the script's real run. Then runs it for real, snapshots again and compares. Each run is
+//      `docker run --rm --pull never --network <the internal network> --memory 1g --env MONGODB_URI
+//      <image> timeout 600 python migrations/<script> [--dry-run]`, the URI (the throwaway's, host
+//      `mongodb`) in the docker CLI child's own environment, never an argument list; its stdout and
+//      stderr go to rehearsals/<at>/<n>-<script>.<dry-run|run>.log (mode 0600) and nowhere else. A
+//      run that exits non-zero (124 when its `timeout 600` ended it) or whose docker run is killed
+//      10 minutes and 30 seconds on stops the rehearsal there;
 //   6. writes rehearsals/<at>/report.json (mode 0600: each step's exit code, seconds, log and every
-//      collection's comparison with its full id lists) and removes the throwaway, the network and
-//      the image, on every path: at the end, on an error, and on SIGINT, SIGTERM and SIGHUP.
-// Every migration runs once, in order, whatever the one before it exited with.
+//      collection's comparison with its full id lists, what stopped the rehearsal and the steps not
+//      run) and removes the throwaway, the network and the image, on every path: at the end, at a
+//      stop, on an error, and on SIGINT, SIGTERM and SIGHUP.
 // The JSON forms: { refused }; { failed, stamp, folder, sha, logs?, removed, cleanup }; and
-// { stamp, folder, sha, at, logs, report, seconds, steps, removed, cleanup }, each step { n, script,
-// mode: "run", exit, signal, timedOut, seconds, log, lines, collections }, `collections` the
-// comparisons that hold a change, each id list as { count, ids } with at most 50 ids, and
-// `cleanup` { gone, left }; every path written from ~/.
+// { stamp, folder, sha, at, logs, report, seconds, steps, stopped?, notRun, removed, cleanup }, each
+// step { n, script, mode: "dry-run" or "run", exit, signal, timedOut, seconds, log, lines,
+// collections }, `collections` the comparisons that hold a change, each id list as { count, ids }
+// with at most 50 ids; `stopped` { n, script, mode, exit, signal, timedOut, wrote }, the step that
+// stopped the rehearsal, `wrote` true when it was a dry run that changed something; `notRun` the
+// steps after it, each { n, script, mode }; and `cleanup` { gone, left }; every path written from ~/.
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, createReadStream, existsSync, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { stampOf } from "./backup.mjs";
-import { capped, changeLine, compareDatabases, differs, snapshotDatabase } from "./changes.mjs";
+import { capped, changeCounts, changeLine, compareDatabases, differs, snapshotDatabase } from "./changes.mjs";
 import { childEnv, lastLine, run, scrubber } from "./children.mjs";
-import { duration, plural } from "./dump.mjs";
-import { checkout, runHeavy, steps } from "./heavy.mjs";
+import { count, duration, limit, plural } from "./dump.mjs";
+import { checkout, overtimeText, runHeavy, steps } from "./heavy.mjs";
 import { listRoot } from "./list.mjs";
 import { Refusal } from "./refusal.mjs";
 import { restorableDump, restoreDump, restoreTools } from "./restore.mjs";
@@ -72,7 +83,7 @@ import { docker, expiredLines, removeExpired, removeThrowaway, startThrowaway, t
 const tool = "rehearse-migrations";
 const script = join(checkout, "toolkits", "prod-mongo", "scripts", "rehearse.mjs");
 const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
-const { step } = steps(tool);
+const { step, names } = steps(tool);
 
 const refPattern = /^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$/;
 const scriptPattern = /^[A-Za-z0-9_]+\.py$/;
@@ -128,6 +139,11 @@ export function checkoutRefusal(cwd, repositories) {
   return undefined;
 }
 
+export function takesDryRun(cwd, sha, name) {
+  const text = git(cwd, ["cat-file", "blob", `${sha}:back-end/migrations/${name}`]);
+  return text.ok && text.stdout.includes("--dry-run");
+}
+
 // Why the scripts cannot run at the commit, or undefined.
 function scriptsRefusal(cwd, sha, scripts) {
   for (const name of scripts) {
@@ -169,11 +185,13 @@ export async function rehearseTool({ input, root, shown, scrubbed, progress, rep
   const absent = scriptsRefusal(cwd, sha, migrations);
   if (absent) throw new Refusal(absent);
 
-  progress(`rehearsing ${plural(migrations.length, "migration")} of ${sha.slice(0, 8)} on ${stamp}, through the machine's heavy-run lock`);
-  const { busy, result } = await runHeavy({
+  const dry = migrations.filter((name) => takesDryRun(cwd, sha, name)).length;
+  progress(`rehearsing ${plural(migrations.length, "migration")} of ${sha.slice(0, 8)} (${dry ? `${count(dry)} with a dry run` : "no dry run"}) on ${stamp}, through the machine's heavy-run lock`);
+  const { busy, overtime, result } = await runHeavy({
     tool, kind: "rehearsal", noun: "rehearsal", script, args: [stamp, sha, ...migrations], label: `prod-mongo rehearsal ${stamp}`, boundMinutes: 45, progress, scrubbed,
   });
   if (busy !== undefined) return { text: `${tool}: the machine is busy: ${busy}; ask again later`, isError: true };
+  if (overtime) return { text: [overtimeText(tool, "rehearsal", overtime, result?.logs), stale, note].filter(Boolean).join("\n"), isError: true };
   const answer = rehearsalAnswer(result);
   return { ...answer, text: [answer.text, stale, note].filter(Boolean).join("\n") };
 }
@@ -213,7 +231,7 @@ export async function rehearse({ argv, database, root: configuredRoot, repositor
     else result = failed(scrubber(state.uri)(String(error?.message ?? error)));
   }
   print(result);
-  process.exit(result.steps?.every(({ exit }) => exit === 0) && result.cleanup.gone ? 0 : 1);
+  process.exit(result.steps && !result.stopped && result.cleanup.gone ? 0 : 1);
 }
 
 // Removes what `made` still names, in the order that frees each: the docker child still running,
@@ -273,6 +291,7 @@ async function rehearsal({ rest, database, root, shown, repositories, state }) {
   const labels = toolkitLabels({ kind: "drill", expires: `${new Date(started + lifeMs).toISOString().slice(0, 19)}Z` });
   const image = `agent-team-rehearsal:${sha.slice(0, 12)}`;
   const { made } = state;
+  names([name, image]);
   step(`building the back-end image at ${sha.slice(0, 8)}`);
   made.image = image;
   await build({ cwd, sha, image, labels, made });
@@ -300,38 +319,54 @@ async function rehearsal({ rest, database, root, shown, repositories, state }) {
   const uri = `mongodb://root:${throwaway.password}@mongodb:27017/?authSource=admin`;
   const briefSteps = [];
   const fullSteps = [];
+  let stopped;
+  const notRun = [];
   for (const [index, migration] of scripts.entries()) {
     const n = index + 1;
-    const log = `${n}-${migration}.run.log`;
-    step(`running ${migration} (${n} of ${scripts.length})`);
-    made.container = `${name}-run-${n}`;
-    const ranAt = Date.now();
-    const ran = await runLogged(
-      [
-        "run", "--rm", "--pull", "never", "--name", made.container, ...labels,
-        "--network", name, "--memory", "1g", "--env", "MONGODB_URI",
-        image, "timeout", String(runSeconds), "python", `migrations/${migration}`,
-      ],
-      { env: childEnv({ MONGODB_URI: uri }), log: join(dir, log), timeoutMs: (runSeconds + 30) * 1000, made },
-    );
-    const seconds = Math.round((Date.now() - ranAt) / 1000);
-    // --rm removed it, unless its docker run was stopped.
-    const left = removeThrowaway(made.container);
-    if (!left.gone) throw new Error(`docker could not remove ${made.container}: ${left.error}`);
-    made.container = undefined;
-    const after = await snapshotDatabase(db, BSON);
-    const collections = compareDatabases(before, after);
-    before = after;
-    const record = { n, script: migration, mode: "run", exit: ran.code, signal: ran.signal, timedOut: ran.timedOut, seconds, log, lines: await lineCount(join(dir, log)) };
-    fullSteps.push({ ...record, collections });
-    briefSteps.push({ ...record, collections: collections.filter(differs).map(capped) });
+    for (const mode of takesDryRun(cwd, sha, migration) ? ["dry-run", "run"] : ["run"]) {
+      if (stopped) {
+        notRun.push({ n, script: migration, mode });
+        continue;
+      }
+      const dryRun = mode === "dry-run";
+      const log = `${n}-${migration}.${mode}.log`;
+      step(`running ${migration}${dryRun ? " --dry-run" : ""} (${n} of ${scripts.length})`);
+      made.container = `${name}-${mode}-${n}`;
+      const ranAt = Date.now();
+      const ran = await runLogged(
+        [
+          "run", "--rm", "--pull", "never", "--name", made.container, ...labels,
+          "--network", name, "--memory", "1g", "--env", "MONGODB_URI",
+          image, "timeout", String(runSeconds), "python", `migrations/${migration}`, ...(dryRun ? ["--dry-run"] : []),
+        ],
+        { env: childEnv({ MONGODB_URI: uri }), log: join(dir, log), timeoutMs: (runSeconds + 30) * 1000, made },
+      );
+      const seconds = Math.round((Date.now() - ranAt) / 1000);
+      // --rm removed it, unless its docker run was stopped.
+      const left = removeThrowaway(made.container);
+      if (!left.gone) throw new Error(`docker could not remove ${made.container}: ${left.error}`);
+      made.container = undefined;
+      const after = await snapshotDatabase(db, BSON);
+      const collections = compareDatabases(before, after);
+      before = after;
+      const record = { n, script: migration, mode, exit: ran.code, signal: ran.signal, timedOut: ran.timedOut, seconds, log, lines: await lineCount(join(dir, log)) };
+      fullSteps.push({ ...record, collections });
+      briefSteps.push({ ...record, collections: collections.filter(differs).map(capped) });
+      const wrote = dryRun && collections.some(differs);
+      if (ran.code !== 0 || ran.timedOut || wrote) {
+        stopped = { n, script: migration, mode, exit: ran.code, signal: ran.signal, timedOut: ran.timedOut, wrote };
+      }
+    }
   }
 
   step("removing the throwaway MongoDB, the network and the image");
   await throwaway.client.close().catch(() => {});
   const cleaned = cleanup(made);
   const ended = Date.now();
-  const report = { at, stamp, sha, started: new Date(started).toISOString(), ended: new Date(ended).toISOString(), mongorestore, image: throwawayImage, steps: fullSteps };
+  const report = {
+    at, stamp, sha, started: new Date(started).toISOString(), ended: new Date(ended).toISOString(), mongorestore, image: throwawayImage, steps: fullSteps,
+    ...(stopped ? { stopped } : {}), notRun,
+  };
   writeFileSync(join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   return {
     stamp,
@@ -342,6 +377,8 @@ async function rehearsal({ rest, database, root, shown, repositories, state }) {
     report: `${shownDir}/report.json`,
     seconds: Math.round((ended - started) / 1000),
     steps: briefSteps,
+    ...(stopped ? { stopped } : {}),
+    notRun,
     removed: state.removed,
     cleanup: cleaned,
   };
@@ -383,7 +420,7 @@ function build({ cwd, sha, image, labels, made }) {
       clearTimeout(timer);
       made.children = [];
       const of = (what, end, errors) => `${what} ${end.error ? `could not start (${end.error.code ?? end.error.message})` : `exited ${end.code ?? end.signal}`}${errors ? `: ${brief(lastLine(errors))}` : ""}`;
-      if (timedOut) reject(new Error(`the image's build did not finish in ${duration(buildMs)}, so it was stopped`));
+      if (timedOut) reject(new Error(`the image's build did not finish in ${limit(buildMs)}, so it was stopped`));
       else if (archived.error || archived.code !== 0) reject(new Error(`the commit's back-end could not be read: ${of("git archive", archived, archiveErrors())}`));
       else if (builtEnd.error || builtEnd.code !== 0) reject(new Error(`the back-end image could not be built: ${of("docker build", builtEnd, buildErrors())}`));
       else resolve();
@@ -442,8 +479,23 @@ function outcome({ exit, signal, timedOut, seconds }) {
   const took = duration(seconds * 1000);
   if (timedOut) return `stopped after ${took}, past its time`;
   if (exit === null) return `killed (${signal}) after ${took}`;
-  if (exit === 124) return `exit 124 in ${took}, stopped by its ${duration(runSeconds * 1000)} limit`;
+  if (exit === 124) return `exit 124 in ${took}, stopped by its ${limit(runSeconds * 1000)} limit`;
   return `exit ${exit} in ${took}`;
+}
+
+const stepName = ({ script: name, mode }) => `${name}${mode === "dry-run" ? " --dry-run" : ""}`;
+
+// Why the rehearsal stopped, in one sentence.
+function stopLine(stopped, ranSteps) {
+  const what = stopped.mode === "dry-run" ? `the dry run of ${stopped.script}` : stopped.script;
+  if (stopped.wrote) {
+    const at = ranSteps.find(({ n, mode }) => n === stopped.n && mode === stopped.mode);
+    return `Stopped: ${what} wrote: ${at.collections.map(changeCounts).join("; ")}.`;
+  }
+  if (stopped.timedOut) return `Stopped: ${what} did not end in ${limit((runSeconds + 30) * 1000)}, so its docker run was killed.`;
+  if (stopped.exit === null) return `Stopped: ${what} was killed (${stopped.signal}).`;
+  if (stopped.exit === 124) return `Stopped: ${what} ran past its ${limit(runSeconds * 1000)} limit (exit 124).`;
+  return `Stopped: ${what} exited ${stopped.exit}.`;
 }
 
 export function rehearsalAnswer(result) {
@@ -453,14 +505,25 @@ export function rehearsalAnswer(result) {
     if (result.logs) lines.push(`Logs so far, for Daniel to read in a terminal (never quoted here): ${result.logs}`);
     return { text: [...lines, ...expiredLines(result.removed)].join("\n"), isError: true };
   }
-  const { folder, sha, seconds, steps: ran, logs, cleanup: cleaned } = result;
-  const lines = [`Rehearsal of ${sha.slice(0, 8)} on ${folder}: ${plural(ran.length, "migration")} ran, ${cleanupClause(cleaned)} (${duration(seconds * 1000)})`];
+  const { folder, sha, seconds, steps: ran, stopped, notRun = [], logs, cleanup: cleaned } = result;
+  const migrations = new Set([...ran, ...notRun].map(({ n }) => n)).size;
+  const outcomeOf = stopped
+    ? `stopped at ${stopped.n} of ${plural(migrations, "migration")}`
+    : `${plural(migrations, "migration")} ran`;
+  const lines = [`Rehearsal of ${sha.slice(0, 8)} on ${folder}: ${outcomeOf}, ${cleanupClause(cleaned)} (${duration(seconds * 1000)})`];
   for (const ranStep of ran) {
-    lines.push(`${ranStep.n}. ${ranStep.script}: ${outcome(ranStep)}${ranStep.collections.length ? "" : ", changed nothing"}`);
+    const dryRun = ranStep.mode === "dry-run";
+    const first = dryRun || !ran.some(({ n, mode }) => n === ranStep.n && mode === "dry-run");
+    const opening = first ? `${ranStep.n}. ` : "   ";
+    const name = `${stepName(ranStep)}${!dryRun && first ? " (no dry run)" : ""}`;
+    const nothing = dryRun ? ", wrote nothing" : ", changed nothing";
+    lines.push(`${opening}${name}: ${outcome(ranStep)}${ranStep.collections.length ? "" : nothing}`);
     for (const comparison of ranStep.collections) lines.push(`   ${changeLine(comparison)}`);
   }
+  if (stopped) lines.push(stopLine(stopped, ran));
+  if (notRun.length) lines.push(`Not run: ${notRun.map(stepName).join(", ")}.`);
   const logged = ran.map(({ log, lines: n }) => `${log}, ${plural(n, "line")}`).join("; ");
   lines.push(`Logs, for Daniel to read in a terminal (never quoted here): ${logs} (${logged})`);
   lines.push(...expiredLines(result.removed));
-  return { text: lines.join("\n"), isError: !cleaned.gone || ran.some(({ exit }) => exit !== 0) };
+  return { text: lines.join("\n"), isError: !cleaned.gone || Boolean(stopped) };
 }

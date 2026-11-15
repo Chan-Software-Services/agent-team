@@ -108,7 +108,8 @@ export async function startProdMongo({ name, reference, database, root: configur
       description:
         `Rehearse a release's migrations on a dump under ${shown(root)}: build the back-end of ${repositories[0]} at the commit named, ` +
         "restore the dump into a throwaway local MongoDB, and run each migration script against it, in order, in a container with no " +
-        "route to production or the internet. Answers each script's exit code and time and, per collection, the counts before and after " +
+        "route to production or the internet: with --dry-run first when the script takes one, stopping at a dry run that wrote anything " +
+        "or a run that exited non-zero, and naming the steps not run. Answers each run's exit code and time and, per collection, the counts before and after " +
         "and the ids of the documents it added, removed or changed, with the top-level fields it changed; never a document, and never a " +
         "line of a script's output, which goes to logs in the dump's folder for Daniel to read. Removes the MongoDB, the network and " +
         "the image at the end on every path. Runs only in a checkout of that repository, through the machine's heavy-run lock, waiting " +

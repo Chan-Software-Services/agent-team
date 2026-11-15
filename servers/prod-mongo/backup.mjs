@@ -22,7 +22,7 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { lastLine, runWithConfig, yamlConfig } from "./children.mjs";
-import { count, dumped, duration, humanBytes, plural, readDump } from "./dump.mjs";
+import { count, dumped, duration, humanBytes, limit, plural, readDump } from "./dump.mjs";
 import { listRoot, retentionLine, writing } from "./list.mjs";
 import { Refusal } from "./refusal.mjs";
 import { checkRoot } from "./root.mjs";
@@ -155,7 +155,7 @@ async function dump({ value, database, partial, mongodump, scrubbed }) {
     throw new Refusal(`mongodump could not start: ${scrubbed(error.message)}`);
   }
   if (result.fedError) throw new Refusal(`mongodump never read its config: ${scrubbed(result.fedError.message)}`);
-  if (result.timedOut) throw new Refusal(`mongodump did not finish in ${duration(mongodumpTimeoutMs)}, so it was killed and the partial dump removed`);
+  if (result.timedOut) throw new Refusal(`mongodump did not finish in ${limit(mongodumpTimeoutMs)}, so it was killed and the partial dump removed`);
   if (result.code !== 0) {
     const why = scrubbed(lastLine(result.stderr));
     throw new Refusal(`mongodump ${result.signal ? `was killed (${result.signal})` : `exited ${result.code}`}${why ? `: ${why}` : ""}, so the partial dump was removed`);
