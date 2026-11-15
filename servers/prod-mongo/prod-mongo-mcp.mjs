@@ -1,10 +1,11 @@
 // Serve prod-mongo's MCP server over stdio: the body of toolkits/prod-mongo/scripts/start-server.mjs.
 //
-//   await startProdMongo({ name, reference, database, root })
+//   await startProdMongo({ name, reference, database, root, repositories })
 //
 // `reference` is the 1Password secret reference of a connection string, `database` the one
-// database every tool works on, and `root` the backups folder, written from ~/ (PROD_MONGO_ROOT
-// replaces it, for the tests only). Before it answers MCP's initialize it, in order: refuses any
+// database every tool works on, `root` the backups folder, written from ~/ (PROD_MONGO_ROOT
+// replaces it, for the tests only), and `repositories` the names (owner/name) of the repository
+// whose migrations a rehearsal runs. Before it answers MCP's initialize it, in order: refuses any
 // argument; finds mongodump on PATH and reads its version, so no 1Password prompt is spent on a
 // launch that cannot back up; imports the pinned MCP SDK and MongoDB driver; reads the connection
 // string with readSecrets (op-secret.mjs), checked as prod-read's is. On any failure it exits 1
@@ -14,10 +15,12 @@
 // (children.mjs), and every child's or the driver's error text reaches an answer only through
 // scrubbed, applied where that text enters a Refusal (refusal.mjs), or to the whole message of an
 // error that is not one. The umask is 077, so every file and directory it or a child makes is its user's alone.
-// Its tools: backup (backup.mjs), list-backups (list.mjs) and restore-drill (drill.mjs, which runs
-// toolkits/prod-mongo/scripts/restore-drill.mjs through bin/team-heavy), each checking the root
-// against root.mjs's rules before it touches it. One long call runs at a time: a backup or a
-// restore-drill while either runs is refused at once; list-backups takes no such lock. A long tool
+// Its tools: backup (backup.mjs), list-backups (list.mjs), restore-drill (drill.mjs, which runs
+// toolkits/prod-mongo/scripts/restore-drill.mjs through bin/team-heavy) and rehearse-migrations
+// (rehearse.mjs, which runs scripts/rehearse.mjs the same way, in the server's working directory,
+// the session's worktree), each checking the root against root.mjs's rules before it touches it.
+// One long call runs at a time: a backup, a restore-drill or a rehearse-migrations while any of
+// them runs is refused at once; list-backups takes no such lock. A long tool
 // sends a progress notification per step when the call carries a progressToken. A tool's run gives
 // its answer's text, or { text, isError } for an answer that is an error in its own form.
 import { connectionStringRefusal } from "../mongodb-mcp.mjs";
@@ -26,10 +29,11 @@ import { scrubber, toolVersion } from "./children.mjs";
 import { takeBackup } from "./backup.mjs";
 import { drillTool } from "./drill.mjs";
 import { kept, listing } from "./list.mjs";
+import { rehearseInput, rehearseTool } from "./rehearse.mjs";
 import { Refusal } from "./refusal.mjs";
 import { backupsRoot, checkRoot } from "./root.mjs";
 
-export async function startProdMongo({ name, reference, database, root: configuredRoot }) {
+export async function startProdMongo({ name, reference, database, root: configuredRoot, repositories }) {
   const fail = (reason) => {
     process.stderr.write(`${name}: ${reason}\n`);
     process.exit(1);
@@ -98,6 +102,21 @@ export async function startProdMongo({ name, reference, database, root: configur
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       long: true,
       run: ({ input, progress }) => drillTool({ input, root, shown, scrubbed, progress }),
+    },
+    {
+      name: "rehearse-migrations",
+      description:
+        `Rehearse a release's migrations on a dump under ${shown(root)}: build the back-end of ${repositories[0]} at the commit named, ` +
+        "restore the dump into a throwaway local MongoDB, and run each migration script against it, in order, in a container with no " +
+        "route to production or the internet. Answers each script's exit code and time and, per collection, the counts before and after " +
+        "and the ids of the documents it added, removed or changed, with the top-level fields it changed; never a document, and never a " +
+        "line of a script's output, which goes to logs in the dump's folder for Daniel to read. Removes the MongoDB, the network and " +
+        "the image at the end on every path. Runs only in a checkout of that repository, through the machine's heavy-run lock, waiting " +
+        "up to 20 minutes for it, and answers that the machine is busy when it is still held.",
+      inputSchema: rehearseInput,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      long: true,
+      run: ({ input, progress }) => rehearseTool({ input, root, shown, scrubbed, progress, repositories }),
     },
   ];
 

@@ -4,23 +4,29 @@
 // test's own PATH (CI's toolkits job installs them into ~/.local/bin). A spy mongodump first on the
 // server's PATH records the argument list and environment the server starts it with, then runs the
 // real one; files in its directory make it hold after the dump, or lose a collection's documents.
-// Spies of mongorestore and docker stand first on its PATH for the restore drill, which runs
-// through team-heavy (at once under tests/run's heavy-run lock), as the tool and by hand.
+// Spies of mongorestore and docker stand first on its PATH for the restore drill and the migration
+// rehearsal, which run through team-heavy (at once under tests/run's heavy-run lock), as the tool
+// and by hand. The rehearsal's Conventioner is a fixture git repository the test builds, the
+// server's working directory, whose back-end image (a Python image pinned by digest, with a pinned
+// pymongo) the rehearsal builds for real, so its first build needs the network.
 // Every backups folder lives under ~/.cache/agent-team-tests/, since a dump of real data is never
 // kept in a temporary directory, and is removed when the file exits.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, chmodSync, constants, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, beforeEach, describe, test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { roomRefusal, stampOf } from "../../servers/prod-mongo/backup.mjs";
+import { capped, changeLine, compareCollections, compareDatabases, differs, fieldName, idLimit, printableId, snapshotBsonGz, snapshotDatabase, snapshotDump } from "../../servers/prod-mongo/changes.mjs";
 import { childEnv, scrubber } from "../../servers/prod-mongo/children.mjs";
 import { humanBytes } from "../../servers/prod-mongo/dump.mjs";
 import { restoreLimit } from "../../servers/prod-mongo/drill.mjs";
 import { kept } from "../../servers/prod-mongo/list.mjs";
+import { checkoutRefusal } from "../../servers/prod-mongo/rehearse.mjs";
 import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.mjs";
 import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
 import { opStub, repoRoot, startToolkitServer, stubDir, tempDir, testPath } from "./helpers/mcp.mjs";
@@ -31,6 +37,8 @@ const reference = "op://agent-team/conventioner-prod-read/uri";
 // The read user's password, which every connection string the op stub prints carries.
 const marker = `pwmarker${randomBytes(8).toString("hex")}`;
 const email = `vendor-${randomBytes(4).toString("hex")}@example.com`;
+// Each market's top-level id, a UUID, as Conventioner's documents carry beside their _id.
+const marketIds = [randomUUID(), randomUUID(), randomUUID()];
 
 // The lock's Database Tools, from this run's PATH.
 const toolsDir = (process.env.PATH ?? "").split(delimiter).find((dir) => {
@@ -118,14 +126,14 @@ beforeEach(async () => {
   spy = spyMongodump();
 });
 
-// "Production": a collection with a unique index, one of nested documents, an empty one, a view,
-// and one keyed by an email address.
+// "Production": a collection with a unique index and a top-level id beside its _id, one of nested
+// documents, an empty one, a view, and one keyed by an email address.
 async function seed() {
   await production.seed("conventioner", {
     markets: [
-      { name: "Riverside Night Market", city: "Vancouver", stalls: 40 },
-      { name: "Harbour Craft Fair", city: "Victoria", stalls: 25 },
-      { name: "Lakeside Summer Market", city: "Kelowna", stalls: 15 },
+      { id: marketIds[0], name: "Riverside Night Market", city: "Vancouver", stalls: 40 },
+      { id: marketIds[1], name: "Harbour Craft Fair", city: "Victoria", stalls: 25 },
+      { id: marketIds[2], name: "Lakeside Summer Market", city: "Kelowna", stalls: 15 },
     ],
     applications: Array.from({ length: 5 }, (_, n) => ({
       vendor: { name: `Vendor ${n}`, contact: { phone: `555-010${n}` } },
@@ -143,9 +151,9 @@ async function seed() {
 // refusal given with it came before any connection.
 const unreachable = () => `mongodb://ops-read:${marker}@127.0.0.1:1/?authSource=admin&serverSelectionTimeoutMS=2000`;
 
-async function withServer(body, { value = production.uri("ops-read", marker), env = {}, path = serverPath(spy)() } = {}) {
+async function withServer(body, { value = production.uri("ops-read", marker), env = {}, path = serverPath(spy)(), cwd } = {}) {
   const op = opStub({ value });
-  const server = startToolkitServer("prod-mongo", { home, opDir: op.dir, path, env: { PROD_MONGO_ROOT: root, ...env } });
+  const server = startToolkitServer("prod-mongo", { home, opDir: op.dir, path, cwd, env: { PROD_MONGO_ROOT: root, ...env } });
   try {
     await server.initialize();
     await body(server, op);
@@ -197,10 +205,10 @@ test("no file of the toolkit or its server is executable", () => {
   }
 });
 
-test("the tools are backup and list-backups, taking no input, and restore-drill, taking a backup's name or nothing", async () => {
+test("the tools are backup and list-backups, taking no input, restore-drill, taking a backup's name or nothing, and rehearse-migrations", async () => {
   await withServer(async (server) => {
     const tools = await server.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ["backup", "list-backups", "restore-drill"]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["backup", "list-backups", "restore-drill", "rehearse-migrations"]);
     for (const tool of tools.slice(0, 2)) assert.deepEqual(tool.inputSchema, { type: "object", properties: {}, additionalProperties: false }, tool.name);
     assert.equal(tools[1].annotations.readOnlyHint, true);
     const { inputSchema } = tools[2];
@@ -507,7 +515,7 @@ describe("the backups root", () => {
 
   test("refuses one inside a shared temporary directory, TMPDIR or XDG_RUNTIME_DIR", async () => {
     root = join(tempDir("root"), "backups");
-    await refused(/the backups folder \/\S+ is inside a shared temporary directory, \/(tmp|var\/folders|private\/\S+)/);
+    await refused(/the backups folder \/\S+ is inside a shared temporary directory, \/(tmp|var\/tmp|var\/folders|private\/\S+)/);
     root = join(dir("scratch"), "backups");
     await refused("the backups folder ~/scratch/backups is inside a shared temporary directory, ~/scratch", { env: { TMPDIR: join(home, "scratch") } });
     await refused("the backups folder ~/scratch/backups is inside a shared temporary directory, ~/scratch", { env: { XDG_RUNTIME_DIR: join(home, "scratch") } });
@@ -642,25 +650,30 @@ describe("list-backups", () => {
   });
 });
 
-describe("restore-drill", () => {
-  const realDocker = (process.env.PATH ?? "").split(delimiter).map((dir) => join(dir, "docker")).find((path) => existsSync(path));
-  const { MongoClient } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
-  const environOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/environ" : "ps -E -ww -o command= -p $$";
-  const cmdlineOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/cmdline" : "ps -ww -o command= -p $$";
+// What the tests of the two container scripts share: the restore drill's and the rehearsal's.
+const realDocker = (process.env.PATH ?? "").split(delimiter).map((dir) => join(dir, "docker")).find((path) => existsSync(path));
+const { MongoClient } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
+const environOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/environ" : "ps -E -ww -o command= -p $$";
+const cmdlineOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/cmdline" : "ps -ww -o command= -p $$";
 
-  // The spy docker: each call's arguments, one per line and ended by "--- end", in `calls`, and
-  // the environment `docker run` starts with, in `run-environ`; then the real docker, but for
-  // `docker port`, which fails while `fail-port` exists. While `hold-run` exists, `docker run`
-  // first writes its pid to `run-held` and to `held-<its --name>`, waits up to 20 seconds for
-  // `go-run`, as a first pull of the image does, and then writes `went-on-<its --name>`.
-  function spyDocker() {
-    const dir = tempDir("docker-spy");
-    writeFileSync(join(dir, "docker"), `#!/bin/sh
+// The spy docker: each call's arguments, one per line and ended by "--- end", in `calls`, and
+// the environment `docker run` starts with, in `run-environ` and in `run-environ-<its --name>`;
+// then the real docker, but for
+// `docker port`, which fails while `fail-port` exists. While `hold-run` exists, `docker run`
+// first writes its pid to `run-held` and to `held-<its --name>`, waits up to 20 seconds for
+// `go-run`, as a first pull of the image does, and then writes `went-on-<its --name>`.
+function spyDocker() {
+  const dir = tempDir("docker-spy");
+  writeFileSync(join(dir, "docker"), `#!/bin/sh
 dir='${dir}'
 { printf '%s\\n' "$@"; echo '--- end'; } >>"$dir/calls"
-if [ "$1" = run ]; then ${environOf} >"$dir/run-environ"; fi
-if [ "$1" = run ] && [ -f "$dir/hold-run" ]; then
+name=
+if [ "$1" = run ]; then
   name=$(printf '%s\\n' "$@" | sed -n '/^--name$/{n;p;q;}')
+  ${environOf} >"$dir/run-environ"
+  cp "$dir/run-environ" "$dir/run-environ-$name"
+fi
+if [ "$1" = run ] && [ -f "$dir/hold-run" ]; then
   echo $$ >"$dir/held-$name"
   echo $$ >"$dir/run-held"
   n=0
@@ -670,17 +683,17 @@ fi
 if [ "$1" = port ] && [ -f "$dir/fail-port" ]; then echo 'Error: no port, as the test asked' >&2; exit 1; fi
 exec '${realDocker}' "$@"
 `, { mode: 0o755 });
-    const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : "");
-    const calls = () => read("calls").split("--- end\n").filter(Boolean).map((call) => call.split("\n").filter(Boolean));
-    return { dir, read, calls, set: (name) => writeFileSync(join(dir, name), "") };
-  }
+  const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : "");
+  const calls = () => read("calls").split("--- end\n").filter(Boolean).map((call) => call.split("\n").filter(Boolean));
+  return { dir, read, calls, set: (name) => writeFileSync(join(dir, name), "") };
+}
 
-  // The spy mongorestore: its argument list, environment and the kind of its --config file, then
-  // the real one; with `hold` it waits after the restore until `go` exists or its parent is gone,
-  // and with `fail` it then exits 1 with a line naming the throwaway's connection string.
-  function spyMongorestore() {
-    const dir = tempDir("mongorestore-spy");
-    writeFileSync(join(dir, "mongorestore"), `#!/bin/sh
+// The spy mongorestore: its argument list, environment and the kind of its --config file, then
+// the real one; with `hold` it waits after the restore until `go` exists or its parent is gone,
+// and with `fail` it then exits 1 with a line naming the throwaway's connection string.
+function spyMongorestore() {
+  const dir = tempDir("mongorestore-spy");
+  writeFileSync(join(dir, "mongorestore"), `#!/bin/sh
 dir='${dir}'
 real='${join(toolsDir, "mongorestore")}'
 [ "$1" = --version ] && exec "$real" "$@"
@@ -697,45 +710,46 @@ fi
 if [ -f "$dir/fail" ]; then echo "Failed: restoring into $(sed -n 's/^uri: //p' "$config" 2>/dev/null)mongodb://root:x@127.0.0.1 {\"doc\": 1}" >&2; exit 1; fi
 exit $status
 `, { mode: 0o755 });
-    const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : null);
-    return { dir, read, set: (name, text = "") => writeFileSync(join(dir, name), text) };
-  }
+  const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : null);
+  return { dir, read, set: (name, text = "") => writeFileSync(join(dir, name), text) };
+}
 
-  let docker;
-  let restorer;
-  const drillPath = () => [spy.dir, restorer.dir, docker.dir, toolsDir, testPath()].join(":");
-  // Under tests/run the heavy-run lock is held, so the server's team-heavy runs the drill at once;
-  // run alone, this file holds none, and the drill runs at once all the same (the lock test holds
-  // one in the test's HOME).
-  const held = { TEAM_HEAVY_HELD: process.env.TEAM_HEAVY_HELD ?? "1" };
-  const drillServer = (body, options = {}) => withServer(body, { path: drillPath(), ...options, env: { ...held, ...options.env } });
-  beforeEach(() => {
-    docker = spyDocker();
-    restorer = spyMongorestore();
+let docker;
+let restorer;
+const drillPath = () => [spy.dir, restorer.dir, docker.dir, toolsDir, testPath()].join(":");
+// Under tests/run the heavy-run lock is held, so the server's team-heavy runs the drill at once;
+// run alone, this file holds none, and the drill runs at once all the same (the lock test holds
+// one in the test's HOME).
+const held = { TEAM_HEAVY_HELD: process.env.TEAM_HEAVY_HELD ?? "1" };
+const drillServer = (body, options = {}) => withServer(body, { path: drillPath(), ...options, env: { ...held, ...options.env } });
+beforeEach(() => {
+  docker = spyDocker();
+  restorer = spyMongorestore();
+});
+
+async function takeBackup() {
+  await withServer(async (server) => {
+    const result = await server.callTool("backup", {});
+    assert.ok(!result.isError, result.text);
   });
-
-  async function takeBackup() {
-    await withServer(async (server) => {
-      const result = await server.callTool("backup", {});
-      assert.ok(!result.isError, result.text);
-    });
-    return backups().filter((name) => /^\d{4}-\d{2}-\d{2}T\d{6}Z$/.test(name)).sort().at(-1);
+  return backups().filter((name) => /^\d{4}-\d{2}-\d{2}T\d{6}Z$/.test(name)).sort().at(-1);
+}
+const gone = (name) => {
+  const inspected = spawnSync(realDocker, ["container", "inspect", name], { encoding: "utf8" });
+  return inspected.status !== 0 && /no such (container|object)/i.test(inspected.stderr);
+};
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
   }
-  const gone = (name) => {
-    const inspected = spawnSync(realDocker, ["container", "inspect", name], { encoding: "utf8" });
-    return inspected.status !== 0 && /no such (container|object)/i.test(inspected.stderr);
-  };
-  const alive = (pid) => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return error.code !== "ESRCH";
-    }
-  };
-  const timed = (text) => text.replace(/: (PASS|FAIL) in \d+( min \d+)? s, /, ": $1 in <time>, ");
-  const drillsOf = (stamp) => (existsSync(join(root, stamp, "drills")) ? readdirSync(join(root, stamp, "drills")) : []);
+};
+const timed = (text) => text.replace(/: (PASS|FAIL) in \d+( min \d+)? s, /, ": $1 in <time>, ");
+const drillsOf = (stamp) => (existsSync(join(root, stamp, "drills")) ? readdirSync(join(root, stamp, "drills")) : []);
 
+describe("restore-drill", () => {
   test("the throwaway's image and its environment are the test helpers' own", () => {
     assert.equal(throwawayImage, mongoImage);
     assert.deepEqual(throwawayCaches, perThreadCaches);
@@ -1075,15 +1089,6 @@ exit $status
       env: { HOME: home, PATH: path, PROD_MONGO_ROOT: root },
       stdio: ["ignore", "pipe", "pipe"],
     });
-  const ended = (child) =>
-    new Promise((resolve) => {
-      let stdout = "";
-      let stderr = "";
-      child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
-      child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
-      child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
-    });
-
   test("run by hand through team-heavy: --text prints the tool's answer, and without it one JSON object", async () => {
     const stamp = await takeBackup();
     const text = await ended(byHand([stamp, "--text"]));
@@ -1179,6 +1184,454 @@ exit $status
       assert.ok(gone(out.container), out.container);
       assert.deepEqual(drillsOf(copy), []);
     }
+  });
+});
+
+// A fixture Conventioner: a git checkout whose back-end/ builds a small Python image with pymongo
+// and holds migrations, at commit `base` on main; a later commit, `release`, is only on its
+// origin, a bare repository that stands in for GitHub: the checkout's origin is Conventioner's
+// URL, and a HOME's git config (originFor) sends that URL to the bare repository, or nowhere.
+const pythonImage = "python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1";
+// What one fixture migration prints and uses in a field's name: never to reach an answer.
+const printed = "printed-by-a-migration@example.com";
+
+function fixtureConventioner() {
+  const dir = tempDir("conventioner");
+  const work = join(dir, "checkout");
+  const bare = join(dir, "origin.git");
+  const gitHome = join(dir, "home");
+  mkdirSync(gitHome);
+  const identity = { GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.com", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.com" };
+  const git = (cwd, ...args) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: gitHome, GIT_CONFIG_NOSYSTEM: "1", ...identity } }).trim();
+  const migration = (body) => `import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db_config import get_database
+
+db = get_database()
+${body}`;
+  const files = {
+    "README.md": "A fixture of Conventioner for the prod-mongo toolkit's tests.\n",
+    "back-end/Dockerfile": `FROM ${pythonImage}
+RUN pip install --no-cache-dir --disable-pip-version-check pymongo==4.10.1 && useradd -m -u 1000 appuser
+WORKDIR /app
+COPY . .
+USER appuser
+`,
+    "back-end/.dockerignore": "tests/\n",
+    "back-end/db_config.py": `import os
+from pymongo import MongoClient
+
+
+def get_database(db_name="conventioner"):
+    return MongoClient(os.environ["MONGODB_URI"], serverSelectionTimeoutMS=5000)[db_name]
+`,
+    "back-end/migrations/open_big_markets.py": migration(`result = db.markets.update_many({"stalls": {"$gte": 20}}, {"$set": {"phase": "open"}})
+print(f"opened {result.modified_count} markets")
+`),
+    "back-end/migrations/tidy_accounts.py": migration(`db.accounts.update_one({"role": "vendor"}, {"$set": {"role": "seller", "flag for ${printed}": True}})
+db.archived.insert_one({"_id": 7, "note": "kept"})
+db.applications.delete_one({"vendor.name": "Vendor 3"})
+db.markets.create_index("city", name="city_1")
+print("contact: ${printed}")
+print("warned: ${printed}", file=sys.stderr)
+`),
+    "back-end/migrations/exits_three.py": migration(`db.archived.insert_one({"_id": 8})
+sys.exit(3)
+`),
+    "back-end/migrations/waits.py": migration(`print("waiting", flush=True)
+import time
+
+time.sleep(300)
+`),
+  };
+  const write = (path, text) => {
+    mkdirSync(dirname(join(work, path)), { recursive: true });
+    writeFileSync(join(work, path), text);
+  };
+  mkdirSync(work);
+  git(work, "init", "--quiet", "--initial-branch", "main");
+  for (const [path, text] of Object.entries(files)) write(path, text);
+  git(work, "add", "--all");
+  git(work, "commit", "--quiet", "--message", "base");
+  const base = git(work, "rev-parse", "HEAD");
+  git(dir, "clone", "--quiet", "--bare", work, bare);
+  git(work, "remote", "add", "origin", "https://github.com/chanjdaniel/Conventioner.git");
+  // The release's commit, pushed to the origin and then forgotten here: only a fetch brings its branch.
+  git(work, "checkout", "--quiet", "-b", "release");
+  write("back-end/migrations/open_big_markets.py", migration(`db.markets.update_many({"stalls": {"$gte": 20}}, {"$set": {"phase": "open", "opened_by": "release"}})
+`));
+  git(work, "commit", "--quiet", "--all", "--message", "release");
+  const release = git(work, "rev-parse", "HEAD");
+  git(work, "push", "--quiet", bare, "release");
+  git(work, "checkout", "--quiet", "main");
+  git(work, "branch", "--quiet", "-D", "release");
+  // Where a HOME's git finds Conventioner's URL: the bare repository, or with `reachable` false nowhere.
+  const originFor = (forHome, reachable = true) =>
+    writeFileSync(join(forHome, ".gitconfig"), `[url "${reachable ? `file://${bare}` : join(dir, "nowhere.git")}"]\n\tinsteadOf = https://github.com/chanjdaniel/Conventioner.git\n`);
+  return { dir, work, bare, base, release, git, write, originFor };
+}
+
+describe("rehearse-migrations", () => {
+  const { BSON } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
+  const script = join(repoRoot, "toolkits", "prod-mongo", "scripts", "rehearse.mjs");
+  const label = `label=${teamLabel("toolkit")}=prod-mongo`;
+  // The first build pulls the Python image and installs pymongo.
+  const long = { timeoutMs: 15 * 60_000 };
+  let repo;
+  before(() => {
+    repo = fixtureConventioner();
+  });
+  beforeEach(() => repo.originFor(home));
+  const rehearseServer = (body, options = {}) => drillServer(body, { cwd: repo.work, ...options });
+  const timedRehearsal = (text) => text.replace(/ \((\d+ min )?\d+ s\)$/m, " (<time>)").replace(/ in (\d+ min )?\d+ s/g, " in <time>");
+  const rehearsalsOf = (stamp) => (existsSync(join(root, stamp, "rehearsals")) ? readdirSync(join(root, stamp, "rehearsals")) : []);
+  const hashed = (id) => `sha256:${createHash("sha256").update(JSON.stringify(id)).digest("hex").slice(0, 12)}`;
+  const listed = (...args) => execFileSync(realDocker, [...args, "--filter", label], { encoding: "utf8" }).trim();
+  const shownBackup = (stamp) => `~/conventioner-backups/${stamp}`;
+
+  // What the spy docker saw the rehearsal make, each by its name, and that none of it is left, nor
+  // any volume of the toolkit's.
+  function madeAndGone() {
+    const calls = docker.calls();
+    const built = calls.find(([command]) => command === "build");
+    const image = built[built.indexOf("--tag") + 1];
+    const network = calls.find(([command, sub]) => command === "network" && sub === "create").at(-1);
+    const runs = calls.filter(([command]) => command === "run");
+    const containers = runs.map((run) => run[run.indexOf("--name") + 1]);
+    for (const container of containers) assert.ok(gone(container), `${container} is still there`);
+    assert.notEqual(spawnSync(realDocker, ["network", "inspect", network], { stdio: "pipe" }).status, 0, `network ${network} is still there`);
+    assert.notEqual(spawnSync(realDocker, ["image", "inspect", image], { stdio: "pipe" }).status, 0, `image ${image} is still there`);
+    for (const [what, names] of [["container", listed("container", "ls", "--all", "--format", "{{.Names}}")], ["network", listed("network", "ls", "--format", "{{.Name}}")], ["image", listed("image", "ls", "--format", "{{.Repository}}:{{.Tag}}")]]) {
+      for (const name of names.split("\n").filter(Boolean)) assert.ok(!name.includes(network) && name !== image, `the ${what} ${name} is left`);
+    }
+    assert.equal(listed("volume", "ls", "--quiet"), "", "a volume of the toolkit's is left");
+    return { image, network, runs, containers, calls };
+  }
+
+  test("takes a ref, 1 to 20 script names and a backup's name, each held to its pattern", async () => {
+    await withServer(async (server) => {
+      const tool = (await server.listTools()).find(({ name }) => name === "rehearse-migrations");
+      const { properties, required, additionalProperties } = tool.inputSchema;
+      assert.deepEqual(Object.keys(properties), ["ref", "migrations", "backup"]);
+      assert.deepEqual(required, ["ref", "migrations"]);
+      assert.equal(additionalProperties, false);
+      assert.equal(properties.migrations.items.pattern, "^[A-Za-z0-9_]+\\.py$");
+      assert.deepEqual([properties.migrations.minItems, properties.migrations.maxItems], [1, 20]);
+      assert.equal(properties.backup.pattern, "^\\d{4}-\\d{2}-\\d{2}T\\d{6}Z$");
+      assert.ok(new RegExp(properties.ref.pattern).test("origin/release-2026.11_a"));
+      for (const bad of ["--upload-pack=x", "a b", "main;id", "", "x".repeat(201)]) assert.ok(!new RegExp(properties.ref.pattern).test(bad), bad);
+    });
+  });
+
+  test("runs each migration of the commit on a restored dump, and answers what each changed by counts, ids and fields, never its output", async () => {
+    const stamp = await takeBackup();
+    const vendor3 = (await production.client.db("conventioner").collection("applications").findOne({ "vendor.name": "Vendor 3" }))._id.toHexString();
+    // This HOME's git cannot reach the origin: the fetch fails, and the commit is one the checkout holds.
+    repo.originFor(home, false);
+    let text;
+    await rehearseServer(async (server) => {
+      const result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py", "tidy_accounts.py"] }, long);
+      assert.ok(!result.isError, result.text);
+      text = result.text;
+      const backupsListed = await server.callTool("list-backups", {});
+      assert.match(backupsListed.text, new RegExp(`^- ${stamp}: .*, verified; 0 drills, 1 rehearsal, 0 undos, 0 diffs$`, "m"));
+    });
+    const [at] = rehearsalsOf(stamp);
+    assert.deepEqual(rehearsalsOf(stamp), [at]);
+    assert.match(at, /^\d{4}-\d{2}-\d{2}T\d{6}Z$/);
+    const opened = [marketIds[0], marketIds[1]].sort();
+    assert.deepEqual(timedRehearsal(text).split("\n"), [
+      `Rehearsal of ${repo.base.slice(0, 8)} on ${shownBackup(stamp)}: 2 migrations ran, nothing left running (<time>)`,
+      "1. open_big_markets.py: exit 0 in <time>",
+      `   - markets: 3 -> 3, 2 changed (phase: 2): ${opened.join(", ")}`,
+      "2. tidy_accounts.py: exit 0 in <time>",
+      `   - accounts: 2 -> 2, 1 changed (role: 1, other fields: 1): ${hashed(email)}`,
+      `   - applications: 5 -> 4, 1 removed: ${vendor3}`,
+      "   - archived: 0 -> 1, 1 added: 7",
+      "   - markets: 3 -> 3, indexes added: city_1",
+      `Logs, for Daniel to read in a terminal (never quoted here): ${shownBackup(stamp)}/rehearsals/${at}/ (1-open_big_markets.py.run.log, 1 line; 2-tidy_accounts.py.run.log, 2 lines)`,
+      "git fetch origin failed, so the ref was read as this checkout last fetched it.",
+    ]);
+
+    // The logs hold the migrations' own output, for Daniel alone; the answer and the report none of it.
+    const dir = join(root, stamp, "rehearsals", at);
+    assert.deepEqual(readdirSync(dir).sort(), ["1-open_big_markets.py.run.log", "2-tidy_accounts.py.run.log", "report.json"]);
+    assert.equal(statSync(join(root, stamp, "rehearsals")).mode & 0o777, 0o700);
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    for (const file of readdirSync(dir)) assert.equal(statSync(join(dir, file)).mode & 0o777, 0o600, file);
+    assert.equal(readFileSync(join(dir, "1-open_big_markets.py.run.log"), "utf8"), "opened 2 markets\n");
+    assert.deepEqual(readFileSync(join(dir, "2-tidy_accounts.py.run.log"), "utf8").split("\n").filter(Boolean).sort(), [`contact: ${printed}`, `warned: ${printed}`]);
+    const reportText = readFileSync(join(dir, "report.json"), "utf8");
+    for (const hidden of [printed, "printed-by", email, "opened 2", "Riverside", homedir()]) {
+      assert.ok(!text.includes(hidden), `the answer holds ${hidden}`);
+      assert.ok(!reportText.includes(hidden), `the report holds ${hidden}`);
+    }
+    const report = JSON.parse(reportText);
+    assert.deepEqual({ at: report.at, stamp: report.stamp, sha: report.sha, image: report.image }, { at, stamp, sha: repo.base, image: mongoImage });
+    assert.deepEqual(report.steps.map(({ n, script: name, mode, exit, log, lines }) => ({ n, name, mode, exit, log, lines })), [
+      { n: 1, name: "open_big_markets.py", mode: "run", exit: 0, log: "1-open_big_markets.py.run.log", lines: 1 },
+      { n: 2, name: "tidy_accounts.py", mode: "run", exit: 0, log: "2-tidy_accounts.py.run.log", lines: 2 },
+    ]);
+    assert.deepEqual(report.steps[0].collections.map(({ collection }) => collection), ["accounts", "applications", "archived", "markets", "open_markets"]);
+    assert.deepEqual(report.steps[1].collections.find(({ collection }) => collection === "accounts"), {
+      collection: "accounts", before: 2, after: 2, added: [], removed: [], changed: [hashed(email)], fields: { role: 1 }, otherFields: 1, indexesAdded: [], indexesRemoved: [],
+    });
+
+    // In Docker: an image built from the commit on stdin, a network with no route out, the
+    // throwaway on it as `mongodb`, each migration on that network alone, and none of it left.
+    const { image, network, runs, calls } = madeAndGone();
+    assert.equal(image, `agent-team-rehearsal:${repo.base.slice(0, 12)}`);
+    const build = calls.find(([command]) => command === "build");
+    assert.equal(build.at(-1), "-");
+    const created = calls.find(([command, sub]) => command === "network" && sub === "create");
+    assert.ok(created.includes("--internal"), "the network is not --internal");
+    assert.match(network, /^prod-mongo-rehearsal-[0-9a-f]{12}$/);
+    for (const call of [build, created, ...runs]) {
+      for (const pair of [`${teamLabel("owner")}=agent-team`, `${teamLabel("kind")}=drill`, `${teamLabel("toolkit")}=prod-mongo`]) assert.ok(call.includes(pair), `docker ${call[0]} has no label ${pair}`);
+      assert.ok(call.some((arg) => arg.startsWith(`${teamLabel("expires")}=`)), `docker ${call[0]} has no expires`);
+    }
+    assert.equal(runs.length, 3);
+    const [throwaway, ...migrations] = runs;
+    assert.ok(!throwaway.includes("--network"), "the throwaway is not on the default bridge");
+    assert.deepEqual(calls.find(([command, sub]) => command === "network" && sub === "connect"), ["network", "connect", "--alias", "mongodb", network, network]);
+    for (const [n, run] of migrations.entries()) {
+      const name = ["open_big_markets.py", "tidy_accounts.py"][n];
+      assert.deepEqual(run.slice(-5), [image, "timeout", "600", "python", `migrations/${name}`]);
+      assert.deepEqual(run.filter((arg, index) => run[index - 1] === "--network"), [network]);
+      assert.deepEqual(run.filter((arg, index) => run[index - 1] === "--env"), ["MONGODB_URI"]);
+      for (const pair of ["--rm", "--pull never", "--memory 1g"]) assert.ok(run.join(" ").includes(pair), `docker run has no ${pair}`);
+      assert.ok(!run.includes("--publish") && !run.includes("-p"), "a migration's container publishes a port");
+    }
+    // The throwaway's URI, with its password: in each migration's docker run's own environment only.
+    const uri = /^MONGODB_URI=(mongodb:\/\/root:([0-9a-f]{48})@mongodb:27017\/\?authSource=admin)$/m.exec(docker.read(`run-environ-${network}-run-1`));
+    assert.ok(uri, "the migration's docker run has no MONGODB_URI for the host mongodb");
+    for (const call of calls) assert.ok(!call.join(" ").includes(uri[2]), `the password is in docker ${call[0]}'s argument list`);
+    assert.ok(!text.includes(uri[2]) && !reportText.includes(uri[2]));
+    for (const { path, stat } of walk(home)) {
+      assert.ok(!stat.isFIFO(), `${path} is a FIFO`);
+      if (stat.isFile()) assert.ok(!readFileSync(path).includes(uri[2]), `${path} holds the password`);
+    }
+    // Production: untouched.
+    assert.equal(await production.client.db("conventioner").collection("markets").countDocuments({ phase: { $exists: true } }), 0);
+    assert.equal(await production.client.db("conventioner").collection("applications").countDocuments({}), 5);
+  });
+
+  test("fetches, then runs the commit a ref of the origin names, whatever the checkout's own files hold", async () => {
+    const stamp = await takeBackup();
+    // The checkout's own copy of the script, uncommitted, would drop a collection.
+    const own = join(repo.work, "back-end", "migrations", "open_big_markets.py");
+    const committed = readFileSync(own, "utf8");
+    writeFileSync(own, `${committed}db.accounts.drop()\n`);
+    try {
+      assert.throws(() => repo.git(repo.work, "rev-parse", "--verify", "--quiet", "origin/release"), "the checkout already holds origin/release");
+      await rehearseServer(async (server) => {
+        const result = await server.callTool("rehearse-migrations", { ref: "origin/release", migrations: ["open_big_markets.py"], backup: stamp }, long);
+        assert.ok(!result.isError, result.text);
+        const opened = [marketIds[0], marketIds[1]].sort();
+        assert.deepEqual(timedRehearsal(result.text).split("\n").slice(0, 3), [
+          `Rehearsal of ${repo.release.slice(0, 8)} on ${shownBackup(stamp)}: 1 migration ran, nothing left running (<time>)`,
+          "1. open_big_markets.py: exit 0 in <time>",
+          `   - markets: 3 -> 3, 2 changed (opened_by: 2, phase: 2): ${opened.join(", ")}`,
+        ]);
+        assert.ok(!result.text.includes("git fetch"), result.text);
+      });
+      assert.equal(madeAndGone().image, `agent-team-rehearsal:${repo.release.slice(0, 12)}`);
+    } finally {
+      writeFileSync(own, committed);
+    }
+  });
+
+  test("refuses before Docker is touched: a ref that names no commit, a script not at it, another repository's checkout, no checkout, and input outside its patterns", async () => {
+    const stamp = await takeBackup();
+    const other = tempDir("other-repository");
+    repo.git(other, "clone", "--quiet", repo.bare, "checkout");
+    repo.git(join(other, "checkout"), "remote", "set-url", "origin", "https://github.com/chanjdaniel/agent-team.git");
+    const cases = [
+      { input: { ref: "no-such-branch", migrations: ["open_big_markets.py"] }, reason: "no-such-branch names no commit of Chan-Software-Services/Conventioner in this checkout" },
+      { input: { ref: repo.base, migrations: ["open_big_markets.py", "not_there.py"] }, reason: `back-end/migrations/not_there.py is not a file at ${repo.base.slice(0, 8)}` },
+      { input: { ref: repo.base, migrations: ["open_big_markets.py"], backup: "2020-01-01T000000Z" }, reason: "~/conventioner-backups holds no backup 2020-01-01T000000Z" },
+      { input: { ref: "--upload-pack=touch", migrations: ["open_big_markets.py"] }, reason: "ref must be a commit sha, a branch or a tag, of letters, digits and . _ / - only" },
+      { input: { ref: repo.base, migrations: ["../../app.py"] }, reason: "migrations must be 1 to 20 script names, each as migrate_phase.py" },
+      { input: { ref: repo.base, migrations: [] }, reason: "migrations must be 1 to 20 script names, each as migrate_phase.py" },
+      { input: { ref: repo.base, migrations: Array(21).fill("open_big_markets.py") }, reason: "migrations must be 1 to 20 script names, each as migrate_phase.py" },
+      { input: { migrations: ["open_big_markets.py"] }, reason: "ref must be a commit sha, a branch or a tag, of letters, digits and . _ / - only" },
+      { input: { ref: repo.base, migrations: ["open_big_markets.py"], cwd: "/" }, whole: "rehearse-migrations: takes no cwd" },
+      { cwd: join(other, "checkout"), input: { ref: repo.base, migrations: ["open_big_markets.py"] }, reason: "the working directory's origin is not Chan-Software-Services/Conventioner, whose migrations a rehearsal runs" },
+      { cwd: other, input: { ref: repo.base, migrations: ["open_big_markets.py"] }, reason: "the working directory is not a git checkout with an origin, so it is not a checkout of Chan-Software-Services/Conventioner" },
+    ];
+    for (const { cwd = repo.work, input, reason, whole } of cases) {
+      await rehearseServer(async (server) => {
+        const result = await server.callTool("rehearse-migrations", input);
+        assert.ok(result.isError, result.text);
+        assert.equal(result.text, whole ?? `rehearse-migrations: failed: ${reason}`);
+      }, { cwd });
+    }
+    assert.deepEqual(docker.calls(), []);
+    assert.deepEqual(rehearsalsOf(stamp), []);
+  });
+
+  test("a checkout's origin may name the repository under either owner, over https or ssh, and no other", () => {
+    const checkout = join(tempDir("origins"), "checkout");
+    repo.git(dirname(checkout), "clone", "--quiet", repo.bare, "checkout");
+    const repositories = ["Chan-Software-Services/Conventioner", "chanjdaniel/Conventioner"];
+    const refusalOf = (url) => {
+      repo.git(checkout, "remote", "set-url", "origin", url);
+      return checkoutRefusal(checkout, repositories);
+    };
+    for (const url of [
+      "https://github.com/Chan-Software-Services/Conventioner.git", "https://github.com/chanjdaniel/Conventioner", "git@github.com:chan-software-services/conventioner.git",
+      "ssh://git@github.com/chanjdaniel/Conventioner.git", "https://x-access-token:abc@github.com/Chan-Software-Services/Conventioner.git/",
+    ]) {
+      assert.equal(refusalOf(url), undefined, url);
+    }
+    for (const url of [
+      "https://github.com/someone/Conventioner.git", "https://github.com/chanjdaniel/Conventioner-fork.git", "https://example.com/chanjdaniel/Conventioner.git",
+      "https://notgithub.com/chanjdaniel/Conventioner.git", "https://github.com/chanjdaniel/Conventioner/extra.git", repo.bare,
+    ]) {
+      const refusal = refusalOf(url);
+      assert.equal(refusal, "the working directory's origin is not Chan-Software-Services/Conventioner, whose migrations a rehearsal runs", url);
+      assert.ok(!refusal.includes(url));
+    }
+  });
+
+  // The script as Daniel runs it: from the checkout, with no MCP server and no op.
+  const byHand = (args, { cwd = repo.work, heavy = true } = {}) => {
+    const env = { HOME: home, PATH: [docker.dir, toolsDir, testPath()].join(":"), PROD_MONGO_ROOT: root };
+    const command = heavy ? [join(repoRoot, "bin", "team-heavy"), "run", "--kind", "rehearsal", "--", process.execPath, script, ...args] : [process.execPath, script, ...args];
+    return spawn(command[0], command.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+  };
+
+  test("run by hand through team-heavy: one JSON object, a migration's exit code as it gave it and the next one run all the same, and exit 1", async () => {
+    const stamp = await takeBackup();
+    const ran = await ended(byHand([stamp, repo.base, "exits_three.py", "open_big_markets.py"]));
+    assert.equal(ran.code, 1, ran.stderr);
+    assert.equal(ran.stdout.split("\n").filter(Boolean).length, 1, ran.stdout);
+    const result = JSON.parse(ran.stdout);
+    assert.deepEqual(result.steps.map(({ script: name, exit }) => [name, exit]), [["exits_three.py", 3], ["open_big_markets.py", 0]]);
+    assert.deepEqual(result.steps[0].collections.map(({ collection, added }) => [collection, added]), [["archived", { count: 1, ids: ["8"] }]]);
+    assert.deepEqual(result.cleanup, { gone: true, left: [] });
+    assert.equal(result.folder, shownBackup(stamp));
+    assert.match(ran.stderr, /^rehearse-migrations: running exits_three\.py \(1 of 2\)$/m);
+    madeAndGone();
+
+    const refused = await ended(byHand([stamp, repo.base.slice(0, 12), "open_big_markets.py", "--text"]));
+    assert.equal(refused.code, 1);
+    assert.equal(refused.stdout, "rehearse-migrations: failed: takes a backup's name, a commit's full sha and 1 to 20 migration scripts' names, each as migrate_phase.py (and --text for the answer as text)\n");
+    const elsewhere = await ended(byHand([stamp, repo.base, "open_big_markets.py"], { cwd: repo.dir }));
+    assert.deepEqual(JSON.parse(elsewhere.stdout), { refused: "the working directory is not a git checkout with an origin, so it is not a checkout of Chan-Software-Services/Conventioner" });
+  });
+
+  test("removes the migration's container, the throwaway, the network and the image when stopped by a signal, and writes no report", async () => {
+    const stamp = await takeBackup();
+    const child = byHand([stamp, repo.base, "waits.py"], { heavy: false });
+    const done = ended(child);
+    const log = () => {
+      const [at] = rehearsalsOf(stamp).filter((name) => !name.startsWith("."));
+      const path = at && join(root, stamp, "rehearsals", at, "1-waits.py.run.log");
+      return path && existsSync(path) ? readFileSync(path, "utf8") : "";
+    };
+    await until(() => log().includes("waiting") || child.exitCode !== null, 15 * 60_000);
+    child.kill("SIGTERM");
+    const result = await done;
+    assert.equal(result.code, 143, result.stderr + result.stdout);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.failed, "the rehearsal was stopped (SIGTERM)");
+    assert.deepEqual(out.cleanup, { gone: true, left: [] });
+    const { containers } = madeAndGone();
+    assert.equal(containers.length, 2);
+    const [at] = rehearsalsOf(stamp);
+    assert.equal(out.logs, `${shownBackup(stamp)}/rehearsals/${at}/`);
+    assert.deepEqual(readdirSync(join(root, stamp, "rehearsals", at)), ["1-waits.py.run.log"]);
+  });
+
+  describe("the change engine", () => {
+    const id = (document) => printableId(BSON.serialize(document), BSON);
+    const gz = (documents) => {
+      const path = join(tempDir("bson"), "collection.bson.gz");
+      writeFileSync(path, gzipSync(Buffer.concat(documents.map((document) => BSON.serialize(document)))));
+      return path;
+    };
+
+    test("a printable id is the top-level UUID id, else an ObjectId, UUID or integer _id or a document of those, else a hash", () => {
+      const oid = new BSON.ObjectId();
+      const uuid = randomUUID();
+      assert.equal(id({ _id: oid, id: uuid }), uuid);
+      assert.equal(id({ _id: oid, id: "not-a-uuid" }), oid.toHexString());
+      assert.equal(id({ _id: oid }), oid.toHexString());
+      assert.equal(id({ _id: uuid }), uuid);
+      assert.equal(id({ _id: 42 }), "42");
+      assert.equal(id({ _id: BSON.Long.fromString("9007199254740993") }), "9007199254740993");
+      assert.equal(id({ _id: { market: uuid, day: 3, of: oid } }), `{market: ${uuid}, day: 3, of: ${oid.toHexString()}}`);
+      for (const hidden of [email, "Riverside Night Market", 1.5, { name: "Vendor 1" }, { [email]: 1 }, { nested: { day: 1 } }, [1, 2], new Date(0), null, true]) {
+        const printedId = id({ _id: hidden });
+        const canonical = BSON.EJSON.stringify(BSON.deserialize(BSON.serialize({ _id: hidden }), { promoteValues: false, promoteLongs: false })._id, { relaxed: false });
+        assert.equal(printedId, `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`);
+        assert.match(printedId, /^sha256:[0-9a-f]{12}$/);
+      }
+      assert.equal(id({ _id: email }), hashed(email));
+      assert.notEqual(id({ _id: email }), id({ _id: `other-${email}` }));
+    });
+
+    test("a dump's snapshot is the live database's: nothing differs between a backup and what it was taken of", async () => {
+      const stamp = await takeBackup();
+      const fromDump = await snapshotDump(join(root, stamp, "dump", "conventioner"), BSON);
+      const live = await snapshotDatabase(production.client.db("conventioner"), BSON);
+      assert.deepEqual([...fromDump.keys()].sort(), ["accounts", "applications", "archived", "markets", "open_markets"]);
+      assert.deepEqual(fromDump.get("open_markets"), { type: "view" });
+      assert.equal(fromDump.get("applications").documents.size, 5);
+      assert.deepEqual(fromDump.get("markets").indexes, ["_id_", "name_unique"]);
+      const comparisons = compareDatabases(fromDump, live);
+      assert.deepEqual(comparisons.filter(differs), []);
+      assert.deepEqual(comparisons.map(({ collection, before, after }) => [collection, before, after]), [["accounts", 2, 2], ["applications", 5, 5], ["archived", 0, 0], ["markets", 3, 3], ["open_markets", null, null]]);
+      // A write to production then differs from the dump, by that document and field alone.
+      await production.client.db("conventioner").collection("markets").updateOne({ id: marketIds[2] }, { $set: { stalls: 16 } });
+      const after = await snapshotDatabase(production.client.db("conventioner"), BSON);
+      assert.deepEqual(compareDatabases(fromDump, after).filter(differs), [
+        { collection: "markets", before: 3, after: 3, added: [], removed: [], changed: [marketIds[2]], fields: { stalls: 1 }, otherFields: 0, indexesAdded: [], indexesRemoved: [] },
+      ]);
+    });
+
+    test("a comparison names a field only by a plain name, counts the rest as other fields, and lists at most 50 ids of a kind", async () => {
+      const before = Array.from({ length: 60 }, (_, n) => ({ _id: n, name: `Vendor ${n}`, [`note for ${email}`]: 1, kept: true }));
+      const after = [
+        ...before.slice(5).map((document) => ({ ...document, name: `${document.name}!`, ...(document._id < 10 ? { [`note for ${email}`]: 2 } : {}) })),
+        { _id: 100, name: "new" },
+      ];
+      const comparison = compareCollections(
+        { type: "collection", documents: await snapshotBsonGz(gz(before), BSON), indexes: ["_id_", "old_1"] },
+        { type: "collection", documents: await snapshotBsonGz(gz(after), BSON), indexes: ["_id_", "new_1"] },
+      );
+      assert.deepEqual({ ...comparison, changed: comparison.changed.length }, {
+        before: 60, after: 56, added: ["100"], removed: ["0", "1", "2", "3", "4"], changed: 55, fields: { name: 55 }, otherFields: 5, indexesAdded: ["new_1"], indexesRemoved: ["old_1"],
+      });
+      assert.equal(idLimit, 50);
+      const brief = capped(comparison);
+      assert.deepEqual([brief.changed.count, brief.changed.ids.length, brief.added, brief.removed.count], [55, 50, { count: 1, ids: ["100"] }, 5]);
+      const line = changeLine({ collection: "vendors", ...comparison });
+      assert.equal(line, changeLine({ collection: "vendors", ...brief }));
+      assert.equal(line, `- vendors: 60 -> 56, 1 added: 100; 5 removed: 0, 1, 2, 3, 4; 55 changed (name: 55, other fields: 5): ${comparison.changed.slice(0, 50).join(", ")} and 5 more; indexes added: new_1; indexes removed: old_1`);
+      assert.ok(!line.includes("example.com"));
+      assert.ok(fieldName.test("phase_2") && !fieldName.test("2phase") && !fieldName.test("a.b") && !fieldName.test("x".repeat(65)));
+      // A collection made or dropped whole.
+      const made = compareCollections(undefined, { type: "collection", documents: await snapshotBsonGz(gz([{ _id: 1 }]), BSON), indexes: ["_id_"] });
+      assert.equal(changeLine({ collection: "fresh", ...made }), "- fresh: a collection was created, none -> 1, 1 added: 1; indexes added: _id_");
+      const dropped = compareCollections({ type: "view" }, undefined);
+      assert.equal(changeLine({ collection: "open_markets", ...dropped }), "- open_markets: the view was dropped, none -> none");
+      assert.ok(differs(dropped));
+    });
+
+    test("a snapshot refuses a file that is no BSON stream or ends inside a document", async () => {
+      const whole = BSON.serialize({ _id: 1, name: "x" });
+      const cut = join(tempDir("bson"), "cut.bson.gz");
+      writeFileSync(cut, gzipSync(Buffer.concat([whole, whole.subarray(0, 9)])));
+      await assert.rejects(snapshotBsonGz(cut, BSON), /ends inside a document$/);
+      const junk = join(tempDir("bson"), "junk.bson.gz");
+      writeFileSync(junk, gzipSync(Buffer.from([1, 0, 0, 0, 0])));
+      await assert.rejects(snapshotBsonGz(junk, BSON), /is not a BSON stream$/);
+    });
   });
 });
 
@@ -1359,6 +1812,17 @@ describe("the server's rules", () => {
     }
   });
 });
+
+// A child's end: its exit code or signal, and everything it printed.
+function ended(child) {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+    child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
 
 async function until(check, timeoutMs = 60_000) {
   const start = Date.now();

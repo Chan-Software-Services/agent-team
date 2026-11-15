@@ -23,6 +23,7 @@ Every Docker object the team makes says whose it is, in labels under `io.github.
 - Compose hashes labels into its config, so a call with other label values recreates containers and networks and can leave the stack half stopped: every call for an existing stack passes the labels read back from its containers, never recomputed ones.
 - Images carry no ownership labels: the shared images are known by repository name, the `stack` block's `images`.
 - The `prod-mongo` toolkit's throwaway MongoDB (`toolkits/prod-mongo/`, its restore drill) is a lone container, no Compose project's, named `prod-mongo-drill-<12 hex>`, labelled `owner=agent-team`, `kind=drill`, `toolkit=prod-mongo` and `expires`.
+  Its migration rehearsal makes, under the same labels, a throwaway named `prod-mongo-rehearsal-<12 hex>`, an `--internal` network of that name, one container per migration (`<that name>-run-<n>`) and the image `agent-team-rehearsal:<12 hex of the commit>`.
 - Anonymous volumes carry no Compose labels, only Docker's own `com.docker.volume.anonymous`.
   Each Conventioner stack makes two: the frontend's `/app/node_modules` (about 210 MB) and MongoDB's `/data/configdb` (empty).
 
@@ -236,7 +237,7 @@ The janitor runs it daily with `--apply` ("The daily report and its alerts") onc
 
 - The `prod-mongo` toolkit's objects (`toolkit=prod-mongo`) are the toolkit's own to remove.
   The reaper never removes a team container of no stack, and lists it nowhere, since it lists as kept only what is not the team's; it removes such a network once no container uses it (the team network rule), and an image is of its repository's class, as every image is.
-  The toolkit removes its own: its throwaway at the drill's end, on an error and on SIGINT, SIGTERM and SIGHUP; and each drill first removes, by id, every container, network and image labelled `toolkit=prod-mongo` whose `expires` has passed, naming each in its answer.
+  The toolkit removes its own: a drill's throwaway, and a rehearsal's containers, network and image, at the run's end, on an error and on SIGINT, SIGTERM and SIGHUP; and each drill and rehearsal first removes, by id, every container, network and image labelled `toolkit=prod-mongo` whose `expires` has passed, naming each in its answer.
   A throwaway whose maker was killed with SIGKILL ends itself: its command is the image's entrypoint under `timeout 3600`, and `--rm` removes it then.
 - It never runs `docker system prune`, `docker volume prune`, `docker image prune`, `docker network prune`, `docker builder prune` or `docker container prune`: every removal names its object, so this table is the whole of what it can do, and a test checks that `bin/team-stack` holds none of them.
 - "No container uses it" counts containers in every state: a stopped container is on no network's list of containers, but its own settings still name its networks, and Docker would remove such a network under it.

@@ -12,10 +12,7 @@
 //                            stderr (`restore-drill: <step>`) as a progress notification, and
 //                            answers { text, isError }
 //   drillAnswer(result)      the tool's answer to the script's JSON: { text, isError }
-//   restoreLimit             512 MiB: the largest restore a drill takes, read from the manifest's
-//                            restoredBytes (the database's data and indexes, uncompressed, never the
-//                            gzipped dump's size), since tmpfs in the throwaway's 2 GiB cap, beside
-//                            mongod's own cache, could not hold much more
+//   restoreLimit             restore.mjs's, the largest restore a drill takes
 //
 // The script takes exactly one argument, a backup's stamp (and --text), never a path or a
 // connection string: it reads no credential, so it cannot reach production. Before Docker is
@@ -33,29 +30,24 @@
 // { verdict, stamp, folder, at, record, seconds, mongorestore, container, collections,
 // restoreError?, removed, cleanup }, every path written from ~/.
 import { existsSync, mkdirSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { stampOf } from "./backup.mjs";
-import { childEnv, lastLine, run, runWithConfig, scrubber, toolVersion, yamlConfig } from "./children.mjs";
-import { count, dumped, duration, humanBytes, plural } from "./dump.mjs";
+import { count, dumped, duration, plural } from "./dump.mjs";
+import { checkout, runHeavy, steps } from "./heavy.mjs";
 import { listRoot } from "./list.mjs";
 import { Refusal } from "./refusal.mjs";
+import { restorableDump, restoreDump, restoreTools } from "./restore.mjs";
 import { backupsRoot, checkRoot, dumpByStamp } from "./root.mjs";
-import { removeExpired, removeThrowaway, startThrowaway, throwawayImage, throwawayName } from "./throwaway.mjs";
+import { expiredLines, removeExpired, removeThrowaway, startThrowaway, throwawayImage, throwawayName } from "./throwaway.mjs";
 
-export const restoreLimit = 512 * 1024 ** 2;
+export { restoreLimit } from "./restore.mjs";
 
-const mongorestoreTimeoutMs = 20 * 60_000;
-const checkout = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const teamHeavy = join(checkout, "bin", "team-heavy");
 const script = join(checkout, "toolkits", "prod-mongo", "scripts", "restore-drill.mjs");
 const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
 
 // Each step of the script, one line on its stderr, which drillTool relays as a progress
 // notification and a person running it by hand reads as it goes.
-const stepPrefix = "restore-drill: ";
-const step = (text) => writeSync(2, `${stepPrefix}${text}\n`);
-const stepLine = (line) => (line.startsWith(stepPrefix) ? line.slice(stepPrefix.length) : undefined);
+const { step } = steps("restore-drill");
 
 export async function restoreDrill({ argv, database, root: configuredRoot }) {
   process.umask(0o077);
@@ -101,26 +93,9 @@ async function drill({ rest, database, root, shown, state }) {
   if (rest.length !== 1 || rest[0].startsWith("-")) {
     throw new Refusal("takes exactly one argument, a backup's name, its UTC start as 2026-11-08T142305Z (and --text for the answer as text)");
   }
-  const shownRoot = shown(root);
-  const { real, missing } = checkRoot(root, { shown });
-  if (missing) throw new Refusal(`${shownRoot} does not exist yet, so it holds no backup to drill`);
-  const { stamp, folder, manifest } = dumpByStamp(real, rest[0], shownRoot);
-  const shownFolder = `${shownRoot}/${stamp}`;
+  const { stamp, folder, shownFolder, manifest } = restorableDump({ root, shown, stamp: rest[0], database, verb: "drill", noun: "a drill" });
   Object.assign(state, { stamp, folder: shownFolder });
-  if (manifest.database !== database) throw new Refusal(`${shownFolder} is a dump of ${JSON.stringify(String(manifest.database)).slice(0, 40)}, not of ${database}`);
-  const restoredBytes = Number(manifest.totals?.restoredBytes);
-  if (!Number.isFinite(restoredBytes) || restoredBytes < 0) throw new Refusal(`${shownFolder}'s manifest gives no restored size`);
-  if (restoredBytes > restoreLimit) {
-    throw new Refusal(`${shownFolder} restores to ${humanBytes(restoredBytes)} of data and indexes, more than the ${humanBytes(restoreLimit)} a drill holds in memory`);
-  }
-  const { version: mongorestore, reason } = toolVersion("mongorestore");
-  if (reason) throw new Refusal(reason);
-  let MongoClient;
-  try {
-    ({ MongoClient } = await import("mongodb"));
-  } catch {
-    throw new Refusal("the pinned MongoDB driver is not installed: run servers/install");
-  }
+  const { mongorestore, MongoClient } = await restoreTools();
 
   // Docker from here on.
   const started = Date.now();
@@ -133,27 +108,10 @@ async function drill({ rest, database, root, shown, state }) {
   state.name = throwawayName("drill");
   step("starting the throwaway MongoDB");
   const throwaway = await startThrowaway({ name: state.name, kind: "drill", MongoClient });
-  const scrubbed = scrubber(throwaway.uri);
 
   mkdirSync(drills, { recursive: true, mode: 0o700 });
-  let restoreError;
   step("restoring the dump");
-  try {
-    const restored = await runWithConfig(
-      "mongorestore",
-      (fifo) => [`--config=${fifo}`, "--nsInclude", `${database}.*`, "--gzip", "--dir", join(folder, "dump")],
-      { fifo: join(drills, `.${at}.config.fifo`), config: yamlConfig("uri", throwaway.uri), timeoutMs: mongorestoreTimeoutMs },
-    );
-    if (restored.fedError) restoreError = `mongorestore never read its config: ${scrubbed(restored.fedError.message)}`;
-    else if (restored.timedOut) restoreError = `mongorestore did not finish in ${duration(mongorestoreTimeoutMs)}, so it was killed`;
-    else if (restored.code !== 0) {
-      const why = scrubbed(lastLine(restored.stderr));
-      restoreError = `mongorestore ${restored.signal ? `was killed (${restored.signal})` : `exited ${restored.code}`}${why ? `: ${why}` : ""}`;
-    }
-  } catch (error) {
-    if (!error.mkfifo) throw new Error(`mongorestore could not start: ${scrubbed(error.message)}`);
-    throw new Error(`mkfifo failed: ${scrubbed(error.message)}`);
-  }
+  const restoreError = await restoreDump({ database, folder, fifo: join(drills, `.${at}.config.fifo`), uri: throwaway.uri });
 
   step("comparing each collection with the manifest");
   const collections = await compare(throwaway.client, database, manifest);
@@ -225,47 +183,11 @@ export async function drillTool({ input, root, shown, scrubbed, progress }) {
   if (stamp === undefined) throw new Refusal(`${shownRoot} holds no verified backup to drill: take one with backup first`);
   dumpByStamp(real, stamp, shownRoot);
 
-  // PROD_MONGO_HEAVY_WAIT_MINUTES replaces the 20 minutes, for the tests only.
-  const wait = /^\d+$/.test(process.env.PROD_MONGO_HEAVY_WAIT_MINUTES ?? "") ? process.env.PROD_MONGO_HEAVY_WAIT_MINUTES : "20";
-  // What team-heavy needs beyond childEnv: the team home and systemd's user manager, for its
-  // admission and its scope; PROD_MONGO_ROOT when the server has one.
-  const extra = {};
-  for (const key of ["PROD_MONGO_ROOT", "TEAM_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) {
-    if (process.env[key] !== undefined) extra[key] = process.env[key];
-  }
   progress(`drilling ${stamp}, through the machine's heavy-run lock`);
-  const args = ["run", "--wait", wait, "--kind", "restore-drill", "--label", `prod-mongo restore-drill ${stamp}`, "--", process.execPath, script, stamp];
-  // The script's steps, relayed as they come; its other stderr lines are kept for a failure's reason.
-  const relay = (child) => {
-    let partial = "";
-    child.stderr.on("data", (chunk) => {
-      const lines = (partial + chunk).split("\n");
-      partial = lines.pop();
-      for (const line of lines) {
-        const text = stepLine(line);
-        if (text !== undefined) progress(text);
-      }
-    });
-  };
-  let ran;
-  try {
-    // TERM, so the script removes its throwaway before it ends.
-    ran = await run(teamHeavy, args, { env: childEnv(extra), timeoutMs: (Number(wait) + 30) * 60_000, killSignal: "SIGTERM", onSpawn: relay });
-  } catch (error) {
-    throw new Refusal(`team-heavy could not start: ${scrubbed(error.message)}`);
-  }
-  ran.stderr = ran.stderr.split("\n").filter((line) => stepLine(line) === undefined).join("\n");
-  if (ran.code === 75) {
-    const why = scrubbed(lastLine(ran.stderr)).replace(/^team-heavy: /, "");
-    return { text: `restore-drill: the machine is busy: ${why}; ask again later`, isError: true };
-  }
-  let result;
-  try {
-    result = JSON.parse(ran.stdout.trim().split("\n").at(-1));
-  } catch {
-    const why = scrubbed(lastLine(ran.stderr));
-    throw new Refusal(`the drill gave no result (${ran.timedOut ? "stopped after its time ran out" : `exit ${ran.code ?? ran.signal}`})${why ? `: ${why}` : ""}`);
-  }
+  const { busy, result } = await runHeavy({
+    tool: "restore-drill", kind: "restore-drill", noun: "drill", script, args: [stamp], label: `prod-mongo restore-drill ${stamp}`, boundMinutes: 30, progress, scrubbed,
+  });
+  if (busy !== undefined) return { text: `restore-drill: the machine is busy: ${busy}; ask again later`, isError: true };
   const answer = drillAnswer(result);
   return note ? { ...answer, text: `${answer.text}\n${note}` } : answer;
 }
@@ -291,18 +213,10 @@ function cleanupClause({ container, cleanup }) {
   return `the throwaway MongoDB ${container} could not be removed (${cleanup?.error ?? "unknown"}), but it ends itself within the hour`;
 }
 
-function removedLines(removed = []) {
-  const lines = [];
-  const gone = removed.filter(({ error }) => !error);
-  if (gone.length) lines.push(`Removed what an earlier run left past its expiry: ${gone.map(({ type, name }) => `${type} ${name}`).join(", ")}.`);
-  for (const { type, name, error } of removed.filter(({ error }) => error)) lines.push(`Could not remove the expired ${type} ${name}: ${error}.`);
-  return lines;
-}
-
 export function drillAnswer(result) {
   if (result.refused) return { text: `restore-drill: failed: ${result.refused}`, isError: true };
   if (result.failed) {
-    return { text: [`restore-drill: failed: ${result.failed}, so ${result.folder ?? "the dump"} has no verdict; ${cleanupClause(result)}.`, ...removedLines(result.removed)].join("\n"), isError: true };
+    return { text: [`restore-drill: failed: ${result.failed}, so ${result.folder ?? "the dump"} has no verdict; ${cleanupClause(result)}.`, ...expiredLines(result.removed)].join("\n"), isError: true };
   }
   const { verdict, folder, seconds, mongorestore, collections, restoreError, record } = result;
   const expected = collections.filter(({ expected: e }) => e !== null).map(({ expected: e }) => e);
@@ -317,6 +231,6 @@ export function drillAnswer(result) {
     lines.push(...bad.map(mismatch));
   }
   lines.push(`Recorded in ${record}; ${cleanupClause(result)}.`);
-  lines.push(...removedLines(result.removed));
+  lines.push(...expiredLines(result.removed));
   return { text: lines.join("\n"), isError: verdict !== "PASS" };
 }

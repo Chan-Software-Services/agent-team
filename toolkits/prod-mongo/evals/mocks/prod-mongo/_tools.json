@@ -49,6 +49,47 @@
         "idempotentHint": false,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "rehearse-migrations",
+      "description": "Rehearse a release's migrations on a dump under ~/conventioner-backups: build the back-end of Chan-Software-Services/Conventioner at the commit named, restore the dump into a throwaway local MongoDB, and run each migration script against it, in order, in a container with no route to production or the internet. Answers each script's exit code and time and, per collection, the counts before and after and the ids of the documents it added, removed or changed, with the top-level fields it changed; never a document, and never a line of a script's output, which goes to logs in the dump's folder for Daniel to read. Removes the MongoDB, the network and the image at the end on every path. Runs only in a checkout of that repository, through the machine's heavy-run lock, waiting up to 20 minutes for it, and answers that the machine is busy when it is still held.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$",
+            "description": "The commit of the project's repository whose migrations to rehearse: a commit sha, a branch or a tag, the release's own sha by preference."
+          },
+          "migrations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_]+\\.py$",
+              "maxLength": 100
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "The migration scripts to run, in the release's order: each a file's name under back-end/migrations/ at that commit (migrate_phase.py)."
+          },
+          "backup": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{6}Z$",
+            "description": "The backup's name, its UTC start as list-backups gives it (2026-11-08T142305Z); the newest verified backup when left out."
+          }
+        },
+        "required": [
+          "ref",
+          "migrations"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
     }
   ]
 }

@@ -11,6 +11,7 @@ The MCP tools, from the server's own `tools/list` (`evals/mocks/prod-mongo/_tool
 ```text
 mcp__prod-mongo__backup
 mcp__prod-mongo__list-backups
+mcp__prod-mongo__rehearse-migrations
 mcp__prod-mongo__restore-drill
 ```
 
@@ -28,13 +29,16 @@ Each launch raises one 1Password prompt, even for a session that only drills or 
 
 - One stdio MCP server, `prod-mongo`, declared in `.mcp.json`: `node @TEAM_CODE@/toolkits/prod-mongo/scripts/start-server.mjs`, with a 90-minute `timeout`, which raises Claude Code's 30-minute idle limit for a long call.
   `team-worker` replaces `@TEAM_CODE@` with its checkout, since Claude Code does not substitute `${CLAUDE_PLUGIN_ROOT}` under `--mcp-config`.
-- The launcher holds only the settings (`scripts/settings.mjs`: the name, the reference, the database `conventioner` and the folder `~/conventioner-backups`), and calls the body, `servers/prod-mongo/prod-mongo-mcp.mjs`.
+- The launcher holds only the settings (`scripts/settings.mjs`: the name, the reference, the database `conventioner`, the folder `~/conventioner-backups` and the repository whose migrations a rehearsal runs), and calls the body, `servers/prod-mongo/prod-mongo-mcp.mjs`.
   Before it reads the secret, the body checks `mongodump` is on `PATH` (the lock's MongoDB Database Tools, which `team-doctor` names the install of), so no prompt is spent on a launch that cannot back up; it then reads the reference with `op read`, signs `op` out, and keeps the value in its own memory only.
 - `backup` connects with the pinned MongoDB driver (`servers/package.json`), counts every collection before and after, and runs `mongodump --config=<fifo> --db conventioner --gzip`, the connection string written once to a FIFO inside the dump's own 0700 folder and unlinked at once, so it is never in an argument list, an environment, a file at rest or a log.
   It then counts the documents in each dumped file and reads its index names, and removes a dump that does not match.
 - `list-backups` reads only the folder: no database, no child process.
 - `restore-drill` runs `bin/team-heavy run --wait 20 --kind restore-drill -- node scripts/restore-drill.mjs <stamp>`, so a drill queues behind the machine's other heavy runs; the script starts the throwaway MongoDB with `docker` (`servers/prod-mongo/throwaway.mjs`), restores the dump into it with `mongorestore --config=<fifo>`, compares, records, and removes the throwaway, naming each step on its stderr, which the server relays as a progress notification.
   The script reads no credential and takes no connection string.
+- `rehearse-migrations` runs only where the server's working directory, the session's worktree, is a checkout of Conventioner: it fetches, resolves the ref to a commit, checks each script is a file under `back-end/migrations/` at it, then runs `bin/team-heavy run --wait 20 --kind rehearsal -- node scripts/rehearse.mjs <stamp> <sha> <script>...` there.
+  The script builds the back-end image from `git archive <sha>:back-end` piped to `docker build -`, starts the throwaway on an `--internal` Docker network under the alias `mongodb`, restores the dump, and runs each script once, in order, in a container on that network alone, the throwaway's URI in `docker run`'s own environment; after each it compares hashes of every collection's documents with those before it (`servers/prod-mongo/changes.mjs`).
+  It writes each script's output to `rehearsals/<at>/<n>-<script>.run.log` and the comparisons to `rehearsals/<at>/report.json` in the dump's folder (mode 0600), answers with counts, ids and field names only, and removes the throwaway, the network and the image, on SIGINT, SIGTERM and SIGHUP too.
 - Every child process gets an environment built from a short list (`childEnv`, `servers/prod-mongo/children.mjs`), never the server's own, and every child's error reaches an answer only scrubbed of connection strings, the secret and its hosts.
 - Only an ops launch starts it: every other session's settings deny a shell command that runs a `start-server.mjs` (with `node`, `bun`, `deno` or `env`, or by its path, though no file here is executable), one that names the server's body (`servers/prod-mongo/prod-mongo-mcp.mjs`, whose start a `node -e` import could call), the launcher's settings (`scripts/settings.mjs`) or the 1Password read every server body shares (`servers/op-secret.mjs`, whose `readSecrets` takes any reference) after `node`, or behind `env`, `bun` or `deno`, and a `claude` given a production toolkit by `--plugin-dir` or `--mcp-config`; reading the files stays allowed, and the refusal probe (`team-load-check --probe`) proves each worker role's shell is refused the body's import and the 1Password read's.
   These are speed bumps (`tests/repo.bats`): Daniel's rule of approving a 1Password prompt only right after an announced launch is what holds.
@@ -46,10 +50,11 @@ Each launch raises one 1Password prompt, even for a session that only drills or 
 
 ## What it leaves behind
 
-- On disk, only under `~/conventioner-backups` (mode 0700): each dump's folder, `<stamp>/`, holding `manifest.json`, `dump/conventioner/` (each collection's `.bson.gz` and `.metadata.json.gz`) and `drills/<at>.json`, each drill's verdict, every directory 0700 and every file 0600.
+- On disk, only under `~/conventioner-backups` (mode 0700): each dump's folder, `<stamp>/`, holding `manifest.json`, `dump/conventioner/` (each collection's `.bson.gz` and `.metadata.json.gz`), `drills/<at>.json`, each drill's verdict, and `rehearsals/<at>/`, each rehearsal's logs and `report.json`, every directory 0700 and every file 0600.
   A dump that fails its check leaves nothing; a server killed mid-dump may leave a `.<stamp>.partial/`, which `list-backups` names as left unfinished.
   The toolkit never deletes a dump: `backup` and `list-backups` name those past the rule that keeps the 5 newest verified ones, for Daniel to delete by hand.
-- In Docker, nothing once a drill ends: its throwaway (`prod-mongo-drill-<hex>`, labelled `owner=agent-team`, `kind=drill`, `toolkit=prod-mongo` and an `expires` an hour on) is removed on every path, on SIGINT, SIGTERM and SIGHUP too, and one whose drill was killed outright ends itself within the hour; the next drill removes any container, network or image of the toolkit past its `expires` (`sops/docker.md`).
+- In Docker, nothing once a drill ends: its throwaway (`prod-mongo-drill-<hex>`, labelled `owner=agent-team`, `kind=drill`, `toolkit=prod-mongo` and an `expires` an hour on) is removed on every path, on SIGINT, SIGTERM and SIGHUP too, and one whose drill was killed outright ends itself within the hour; the next drill or rehearsal removes any container, network or image of the toolkit past its `expires` (`sops/docker.md`).
+  Nothing once a rehearsal ends either: its throwaway (`prod-mongo-rehearsal-<hex>`), its network, its migration containers and its image (`agent-team-rehearsal:<sha12>`) carry the same labels and are removed on the same paths; a rehearsal killed outright leaves them for the next run to remove once past their `expires`.
 
 ## The scripts by hand
 

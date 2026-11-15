@@ -2,12 +2,15 @@
 // this checkout and @WORKTREE@ to a session's worktree (what team-worker does), spoken to over
 // stdio by a minimal MCP client.
 //
-//   const server = startToolkitServer("prod-read", { home, opDir, env, path });
+//   const server = startToolkitServer("prod-read", { home, opDir, env, path, cwd });
+//                                  `cwd`, the server's working directory (a session's worktree),
+//                                  the test's own when left out
 //   await server.initialize();                         or initialize({ elicitation: true })
 //   const tools = await server.listTools();
 //   const result = await server.callTool("find", { database, collection, filter });
-//                                  or callTool(name, args, { progressToken }), which asks for
-//                                  progress notifications (in fromServer)
+//                                  or callTool(name, args, { progressToken, timeoutMs }), which
+//                                  asks for progress notifications (in fromServer) and waits
+//                                  `timeoutMs` for the answer, 30 seconds when left out
 //   await server.close();
 //   server.stdout, server.stderr   everything the server printed, for leak checks
 //   server.pid, server.exited      the server process, and a promise of { code, signal }
@@ -100,9 +103,10 @@ export function startToolkitServer(toolkit, options) {
   return startServer(serverConfig(toolkit), options);
 }
 
-export function startServer({ command, args: configArgs = [], env: configEnv = {} }, { home, opDir, env = {}, path = testPath(), args = [] }) {
+export function startServer({ command, args: configArgs = [], env: configEnv = {} }, { home, opDir, env = {}, path = testPath(), args = [], cwd }) {
   const spies = spyDir();
   const child = spawn(command, [...configArgs, ...args], {
+    cwd,
     env: {
       HOME: home,
       PATH: `${spies.dir}:${path}`,
@@ -212,8 +216,8 @@ class McpConnection {
   }
 
   // A tool's result, with its text joined as `text`; isError is the tool's own refusal.
-  async callTool(name, args, { progressToken } = {}) {
-    const result = await this.request("tools/call", { name, arguments: args, ...(progressToken === undefined ? {} : { _meta: { progressToken } }) });
+  async callTool(name, args, { progressToken, timeoutMs } = {}) {
+    const result = await this.request("tools/call", { name, arguments: args, ...(progressToken === undefined ? {} : { _meta: { progressToken } }) }, timeoutMs);
     const text = (result.content ?? []).map((part) => part.text ?? "").join("\n");
     return { ...result, text };
   }

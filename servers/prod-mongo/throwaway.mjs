@@ -1,5 +1,5 @@
 // The throwaway MongoDB: the only code that starts a container with production data in it, which
-// the restore drill (restore-drill.mjs) and the migration rehearsal restore a dump into.
+// the restore drill (drill.mjs) and the migration rehearsal (rehearse.mjs) restore a dump into.
 //
 //   throwawayImage           the pinned image, production's major version; the toolkit test holds
 //                            it equal to tests/toolkits/helpers/mongo.mjs's
@@ -9,9 +9,14 @@
 //   toolkitLabels({ kind, expires })   the --label arguments of every container, network and
 //                            image the toolkit makes: owner=agent-team, kind, toolkit=prod-mongo,
 //                            task (AGENT_TEAM_TASK, when set) and expires
+//   docker(args, { env, timeoutMs })
+//                            one short docker call, synchronous, with childEnv() alone unless `env`
+//                            is given: { ok, stdout, why }, `why` its last stderr line when not ok
 //   removeExpired(now)       removes, by id, every container, network and image labelled
 //                            toolkit=prod-mongo whose expires has passed (what a killed run left),
 //                            in that order; returns [{ type, name, expires, error? }]
+//   expiredLines(removed)    an answer's lines for what removeExpired returned: what it removed, and
+//                            each thing it could not
 //   throwawayName(kind)      a new container name, prod-mongo-<kind>-<12 hex>, which the caller
 //                            holds before the start, so a signal during it can still remove it
 //   await startThrowaway({ name, kind, join, MongoClient })
@@ -59,7 +64,7 @@ export function toolkitLabels({ kind, expires }) {
   return Object.entries(labels).flatMap(([key, value]) => ["--label", `${teamLabel(key)}=${value}`]);
 }
 
-function docker(args, { env = childEnv(), timeoutMs = 60_000 } = {}) {
+export function docker(args, { env = childEnv(), timeoutMs = 60_000 } = {}) {
   const result = spawnSync("docker", args, { env, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: timeoutMs });
   if (result.error) {
     const why = result.error.code === "ENOENT" ? "docker is not installed" : result.error.message;
@@ -95,6 +100,14 @@ export function removeExpired(now = Date.now()) {
     }
   }
   return removed;
+}
+
+export function expiredLines(removed = []) {
+  const lines = [];
+  const gone = removed.filter(({ error }) => !error);
+  if (gone.length) lines.push(`Removed what an earlier run left past its expiry: ${gone.map(({ type, name }) => `${type} ${name}`).join(", ")}.`);
+  for (const { type, name, error } of removed.filter(({ error }) => error)) lines.push(`Could not remove the expired ${type} ${name}: ${error}.`);
+  return lines;
 }
 
 export const throwawayName = (kind) => `${toolkit}-${kind}-${randomBytes(6).toString("hex")}`;
