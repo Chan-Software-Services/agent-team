@@ -160,7 +160,10 @@
 # that project (a launch naming no project counts in every one), the refusal naming it, "in
 # <project>" when the task's reviewer launches name more than one; the name T<n>-reviewer is
 # refused there too. So the reviews of a task's PRs in two repositories run beside each other, each
-# verdict taken from its own repository's latest reviewer. With no --from, a DONE pass naming a
+# verdict taken from its own repository's latest reviewer. When the task's reviewer launches name
+# more than one project and the App posts for one of them, a verdict that names no PR and comes
+# with no --from is refused, naming each project's latest reviewer session, since it could be
+# either's. With no --from, a DONE pass naming a
 # PR is its project's latest reviewer launch's, and one whose sender was launched in another
 # project than the PR's is refused.
 # --check checks a ledger (default: the team home's): every line is JSON with ts, task and

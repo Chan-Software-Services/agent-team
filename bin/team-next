@@ -227,7 +227,10 @@
 # wait ends (so a hold, an ask, a close or a review logged while it waited stops that end, before
 # any rerun, log or hand-off, and the end takes a new pass's facts): launch_refusal's texts for a
 # launch of no role (closed, Daniel's hold, an ask open), "T<n>'s latest review is not a pass on
-# an open PR, so no checks wait for a merge" when checks_wait in bin/lib/ledger.jq is null, "the
+# an open PR, so no checks wait for a merge" when checks_wait in bin/lib/ledger.jq is null (in a
+# task whose reviews were made in several projects it is, of each project's latest review that is
+# a pass on an open PR, the first that still waits, else the latest that passed, and the wait's
+# end reads that pass, its project's PR and its project's holder), "the
 # checks of <short> failed and went back as a round on <ts>" when its state is failed (until the
 # round's builder logs a done with no pr of the PR at another head since, a rerun that passed, which
 # waits again), and, once a wait ended, "the checks wait of T<n> moved to <url> at <short> while it
@@ -596,9 +599,10 @@ if [[ -n $ci ]]; then
     events=$(task_event_array "$task")
     json_vars --ledger refusal='[launch_refusal($task; ""; [])] | join("; ")' -- --arg task "$task" <<<"$events"
     [[ -z $refusal ]] || die "$refusal"
-    wait_url='' wait_head='' wait_state='' wait_since='' wait_from=''
+    wait_url='' wait_head='' wait_state='' wait_since='' wait_from='' wait_project='' wait_review=''
     json_vars --ledger wait_url='checks_wait | .url' wait_head='checks_wait | .head' wait_state='checks_wait | .state' \
-      wait_since='checks_wait | .since' \
+      wait_since='checks_wait | .since' wait_project='checks_wait_of | .project // empty' \
+      wait_review='. as $events | checks_wait_of | select(. != null) | $events[.review] | tojson' \
       wait_from='checks_wait as $w | select($w != null and (same_head($w.head; $w.reviewed) | not))
         | [.[] | select(.event == "caught-up" and same_head(.head; $w.head))] | last | .from' <<<"$events"
     [[ -n $wait_url ]] || die "$task's latest review is not a pass on an open PR, so no checks wait for a merge"
@@ -736,8 +740,9 @@ if [[ -n $ci ]]; then
     if same_commit "$end_head" "$wait_head"; then ci_head=$end_head; fi
     case $outcome in
       passed | none)
-        review=$(jq -c 'map(select(.event == "review")) | last' <<<"$events")
-        read_state
+        # The pass the wait stands on, and its project's PR and holder.
+        review=$wait_review
+        read_state "$wait_project"
         if [[ $pr_error == true ]]; then
           echo "${0##*/}: GitHub cannot be read for $pr_url ($pr_reason); run the same command again" >&2
           exit 75
@@ -761,8 +766,8 @@ if [[ -n $ci ]]; then
           infrastructure_end
           continue
         fi
-        review=$(jq -c 'map(select(.event == "review")) | last' <<<"$events")
-        read_state
+        review=$wait_review
+        read_state "$wait_project"
         report=$TEAM_HOME/tasks/$task/ci-${wait_head:0:8}.md
         ci_report "$report" "$wait_url" "$ci_head" false <<<"$ended"
         echo "report $report"

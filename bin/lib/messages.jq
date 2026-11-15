@@ -155,13 +155,22 @@ def message_project_reviewers($events; $project):
 # else a refusal naming that session, or that the project has no reviewer launch. The name
 # T<n>-reviewer is refused there too, since it names a role and not the session. The refusal says
 # "in <project>" only when the task's reviewer launches name more than one project.
+# When they do, and the App posts for one of those projects, a verdict whose project neither a
+# PR nor --from gives ($pr_project and $from both "") could be either repository's reviewer's, so
+# it is refused naming each project's latest reviewer session, never taken as the latest launch's.
 def message_app_sender($task; $events; $from; $apps; $pr_project):
   message_verdict_project($task; $events; $from; $pr_project) as $project
   | (if $project == "" then $apps[0] // "" elif any($apps[]; . == $project) then $project else "" end) as $app
   | ($events | message_launches | map(select(.role == "reviewer"))) as $all
   | (message_project_reviewers($events; $project) | last) as $l
-  | (if ([$all[] | .project | strings] | unique | length) > 1 then " in \($project)" else "" end) as $where
-  | if $app == "" or $all == [] or ($l != null and $from == $l.session) then null
+  | ([$all[] | .project | strings] | unique) as $projects
+  | (if ($projects | length) > 1 then " in \($project)" else "" end) as $where
+  | if $from == "" and $pr_project == "" and ($projects | length) > 1 and any($projects[]; IN($apps[])) then
+      message_refused("the reviewer App posts agent-review on \(first($projects[] | select(IN($apps[])))), and \($task)'s reviewers were launched in "
+        + ($projects | .[:-1] | join(", ")) + " and \($projects | last), so the verdict's project is not known: "
+        + "run it again with --from <session> once the message came from that session, "
+        + ([$projects[] as $p | ($all | map(select(.project == $p)) | last) | "\(message_launch_name($task)) in \($p)"] | join(" or ")))
+    elif $app == "" or $all == [] or ($l != null and $from == $l.session) then null
     elif $l == null then
       message_refused("the reviewer App posts agent-review on \($app), so its verdict is taken only from a reviewer session in \($project), and \($task) has launched none there")
     else "\($task)'s latest reviewer session\($where), \($l | message_launch_name($task))" as $latest

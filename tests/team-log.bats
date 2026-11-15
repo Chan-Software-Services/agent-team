@@ -2366,8 +2366,14 @@ assert_no_answer_logged() {
     --from-message "T7 DONE pass $own $counts"
   refuses_message "team-log: --from c0000002 is not T7's latest reviewer session in agent-team, T7-reviewer (c0000001): the reviewer App posts agent-review on agent-team, so its verdict is taken only from that session" \
     --from-message "T7 DONE pass $own $counts" --from c0000002
-  # conv's, which the App posts nothing for, takes no --from: a pass naming its PR is its latest
-  # reviewer's, and a findings verdict the task's latest reviewer launch's, here conv's too.
+  # A verdict that names no PR and no --from could be either repository's reviewer's: refused,
+  # naming each project's latest reviewer session, nothing logged.
+  local either="team-log: the reviewer App posts agent-review on agent-team, and T7's reviewers were launched in agent-team and conv, so the verdict's project is not known: run it again with --from <session> once the message came from that session, T7-reviewer (c0000001) in agent-team or T7-reviewer (c0000002) in conv"
+  refuses_message "$either" \
+    --from-message "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1}" --sent-back 1
+  refuses_message "$either" --from-message "T7 DONE pass $HEAD_B $counts"
+  # conv's, which the App posts nothing for, takes no --from when the pass names its PR: it is
+  # conv's latest reviewer's.
   logs_events "{\"task\":\"T7\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$HEAD_B\",$logged_counts}
 {\"task\":\"T7\",\"event\":\"done\",\"role\":\"reviewer\",\"session\":\"c0000002\"}" \
     --from-message "T7 DONE pass $other $counts"

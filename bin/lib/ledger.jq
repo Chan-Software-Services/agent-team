@@ -1289,10 +1289,22 @@ def review_app_pin_problems($app):
   | (select(any((. // {}).checks[]?; .context == "agent-review" and .app_id == $app) | not) | {kind: "pin"}),
     (select(. != null and .enforcement_level != "everyone") | {kind: "admins", level: (.enforcement_level // "no one")});
 
-# What waits on the checks of a pass, over the task's events, or null: null unless the task's
-# latest review is a pass on one of its PRs not merged, the PR whose head the pass names (by the
+# The project a PR (one of lifecycle.prs, the input) is of, as the task's reviews show it ($events),
+# or null: the project (review_project) of the latest review that names a head one of the PR's pr
+# events logged, by the shorter prefix.
+def pr_review_project($events):
+  (.url // "" | tostring | rtrimstr("/")) as $url
+  | [$events[] | select(.event == "pr" and ((.url // "" | tostring | rtrimstr("/")) == $url)) | .head] as $heads
+  | [range($events | length) | select($events[.] | .event == "review" and (.head as $h | any($heads[]; same_head(.; $h))))
+      | . as $i | $events | review_project($i) | strings] | last;
+
+# What waits on the checks of a pass in $project, over the task's events, or null: null unless the
+# latest review made in $project (project_reviews; the task's latest when $project is null or "")
+# is a pass on one of its PRs not merged, the PR whose head the pass names (by the
 # shorter prefix), else the latest PR whose first pr event came before the pass (a fix's head, which
-# no pr event logs). Else {url, reviewed, head, since, state, reruns}: url the PR's; reviewed the
+# no pr event logs), a PR the reviews show as another project's (pr_review_project) left out. Else
+# {project, review, url, reviewed, head, since, state, reruns}: project $project, null when it is
+# null or ""; review the index of the pass in the events; url the PR's; reviewed the
 # passed head; head the latest caught-up since the pass made from the passed head or from the
 # head followed so far (team-catch-up logs from as the reviewed head, so a second catch-up names
 # the passed head again; reviewed_head's rule, forward), else reviewed; state the outcome of the
@@ -1304,14 +1316,15 @@ def review_app_pin_problems($app):
 # them (a rerun starts the wait again) and that done; reruns the names of the checks with a
 # ci-rerun of head on the PR, whenever logged, each once, in the order first rerun. URLs compare
 # with a trailing slash aside.
-def checks_wait:
+def project_checks_wait($project):
   . as $events
   | def url_of: .url // "" | tostring | rtrimstr("/");
-    ([range(length) | select($events[.].event == "review")] | last) as $r
+    (project_reviews($project) | last) as $r
   | if $r == null or $events[$r].verdict != "pass" then null
     else $events[$r] as $pass
     | [$events[:$r][] | select(.event == "pr") | url_of] as $before
-    | [lifecycle.prs[] | select(url_of as $u | any($before[]; . == $u))] as $prs
+    | [lifecycle.prs[] | select(url_of as $u | any($before[]; . == $u))
+        | select(pr_review_project($events) as $p | ($project // "") == "" or $p == null or $p == $project)] as $prs
     | (first($prs[] | select(same_head(.head; $pass.head))) // ($prs | last)) as $pr
     | if $pr == null or $pr.merged then null
       else ($pr | url_of) as $url
@@ -1329,13 +1342,35 @@ def checks_wait:
             // length) as $moved
            | [range($c + 1; $moved) | select($events[.] | .event == "done" and .role == "builder")] | last
          else null end) as $answer
-      | {url: $pr.url, reviewed: $pass.head, head: $up.head,
+      | {project: (if ($project // "") == "" then null else $project end), review: $r,
+         url: $pr.url, reviewed: $pass.head, head: $up.head,
          since: ([$ends[], $answer | values] | max | if . == null then $events[$up.at].ts else $events[.].ts end),
          state: (if $answer != null then "waiting" else $ci.outcome // "waiting" end),
          reruns: (reduce ($events[] | select(.event == "ci-rerun" and url_of == $url and same_head(.head; $up.head)) | .check) as $c
            ([]; if any(.[]; . == $c) then . else . + [$c] end))}
       end
     end;
+
+# The projects the task's reviews were made in (review_project), each once, in the order first
+# reviewed; none while no review's project is known.
+def review_projects:
+  . as $events
+  | reduce (range(length) | select($events[.].event == "review") | . as $i | $events | review_project($i) | strings) as $p
+      ([]; if any(.[]; . == $p) then . else . + [$p] end);
+
+# The task's checks wait with the project and the review it stands on, or null: of each project
+# its reviews were made in (review_projects; of every review when none is known), that project's
+# wait (project_checks_wait); the first, in the order of their passes, that still waits (its state
+# not passed), else the latest that passed. So a pass in one repository keeps its wait while
+# another repository's review is logged after it. project is null when no review's project is
+# known, and review is the index of the pass in the task's events.
+def checks_wait_of:
+  [(review_projects | if . == [] then [null] else . end)[] as $p | project_checks_wait($p) | values]
+  | sort_by(.review)
+  | first(.[] | select(.state != "passed")) // last;
+
+# checks_wait_of without its project and review, as team-state prints it.
+def checks_wait: checks_wait_of | if . == null then null else del(.project, .review) end;
 
 # Why the task's reviews do not let the default word, given on no head, merge the PR's
 # head $head unasked, one string per reason, none when they do, judged on the latest review of
