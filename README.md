@@ -7,7 +7,7 @@ Each task gets one background session per role (planner, builder, reviewer, ops)
 The ledger, an append-only file of every task's events, is the record of what happened and the state every command reads.
 
 This repository holds the code: the `team-*` commands, the role prompts, the sessions' settings and hooks, the toolkits and the tests.
-`CLAUDE.md` describes it in full.
+`CLAUDE.md` holds the rules every change keeps, and `LAYOUT.md` says what each path is.
 
 ## A reference, not a product
 
