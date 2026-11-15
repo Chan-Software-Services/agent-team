@@ -499,7 +499,7 @@ $(going_on 'slots proj')"
 @test "the header documents the probe form" {
   run_bin -0 team-load-check --help
   assert_contains "$output" "team-load-check --probe [--role planner|builder|reviewer|assistant]"
-  assert_contains "$output" "The probe form proves, live, what each worker role is refused"
+  assert_contains "$output" "The probe form proves, live, what each worker role (or with --role assistant, the assistant) is"
   assert_contains "$output" "PASS builder sessions: rule refused it"
 }
 
