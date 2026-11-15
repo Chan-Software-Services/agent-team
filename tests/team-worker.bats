@@ -1124,55 +1124,63 @@ role_texts() {
   [[ -x $REPO_ROOT/bin/hooks/axi-banner && -x $REPO_ROOT/bin/hooks/denial-log ]]
 }
 
-# The prefix and the worktree a launch's settings <file> give its shell commands, as JSON.
+# The prefix, the worktree and the common git directory a launch's settings <file> give its shell
+# commands, as JSON.
 confinement() {
-  jq -c '[.env.CLAUDE_CODE_SHELL_PREFIX, .env.AGENT_TEAM_WORKTREE]' "$1"
+  jq -c '[.env.CLAUDE_CODE_SHELL_PREFIX, .env.AGENT_TEAM_WORKTREE, .env.AGENT_TEAM_GIT_DIR]' "$1"
 }
 
-@test "a project with confine on renders the shell prefix and the worktree for planner, builder and reviewer, never ops" {
+# What confinement prints for a confined launch in <worktree>: the checkout's prefix, the
+# worktree's real path and its common git directory as git names it.
+confined_in() {
+  jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$1")" \
+    --arg git "$(realpath "$(git -C "${1:?}" rev-parse --path-format=absolute --git-common-dir)")" \
+    '["\($code)/bin/lib/confine-shell", $wt, $git]'
+}
+
+@test "a project with confine on renders the shell prefix, the worktree and its common git directory for planner, builder and reviewer, never ops" {
   registry --first 'confine = "on"' proj other
   open_task T7
   ops_stub
   local role
   for role in planner builder reviewer; do
     run_bin -0 team-worker T7 "$role" "$wt1" -- go
-    assert_equal "$(confinement "$(generated settings "$role")")" \
-      "$(jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$wt1")" '["\($code)/bin/lib/confine-shell", $wt]')"
+    assert_equal "$(confinement "$(generated settings "$role")")" "$(confined_in "$wt1")"
   done
   [[ -x $REPO_ROOT/bin/lib/confine-shell ]]
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
-  assert_equal "$(confinement "$(generated settings ops)")" '[null,null]'
+  assert_equal "$(confinement "$(generated settings ops)")" '[null,null,null]'
 }
 
-@test "a project with confine off or no confine key renders neither the shell prefix nor the worktree" {
+@test "a project with confine off or no confine key renders no shell prefix, worktree or git directory" {
   open_task T7
   run_bin -0 team-worker T7 builder "$wt1" -- go
-  assert_equal "$(confinement "$(generated settings builder)")" '[null,null]'
+  assert_equal "$(confinement "$(generated settings builder)")" '[null,null,null]'
   registry --first 'confine = "off"' proj other
   run_bin -0 team-worker T7 reviewer "$wt1" -- go
-  assert_equal "$(confinement "$(generated settings reviewer)")" '[null,null]'
+  assert_equal "$(confinement "$(generated settings reviewer)")" '[null,null,null]'
   registry --first 'confine = "on"' other proj
   run_bin -0 team-worker T7 planner "$wt1" -- go
-  assert_equal "$(confinement "$(generated settings planner)")" '[null,null]'
+  assert_equal "$(confinement "$(generated settings planner)")" '[null,null,null]'
 }
 
 @test "T0, the load check, is always confined but for ops, whatever its project says or with none" {
   ops_stub
   local role confined
-  confined=$(jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$wt1")" '["\($code)/bin/lib/confine-shell", $wt]')
+  confined=$(confined_in "$wt1")
+  [[ $(jq -r '.[2]' <<<"$confined") == */.git ]]
   for role in planner builder reviewer; do
     run_bin -0 team-worker T0 "$role" "$wt1" -- go
     assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.$role.proj.json")" "$confined"
   done
   run_bin -0 team-worker T0 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
-  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.ops.json")" '[null,null]'
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.ops.json")" '[null,null,null]'
   # A worktree of no registered project is confined too.
   local loose
   loose=$(make_repo loose)
   git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
   run_bin -0 team-worker T0 builder "$HOME/slots/loose/1" -- go
-  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.builder.json")" \
-    "$(jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$HOME/slots/loose/1")" '["\($code)/bin/lib/confine-shell", $wt]')"
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.builder.json")" "$(confined_in "$HOME/slots/loose/1")"
 }
 
 @test "every hook of a worker role's settings is in exec form, which Claude Code runs without the shell prefix" {

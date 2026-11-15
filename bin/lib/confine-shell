@@ -9,7 +9,7 @@
 # the line one argument, which for a Bash call is everything Claude Code puts around the command.
 # This runs it as
 #
-#   python3 -I <this directory>/confine.py --session -- <shell> -c -- '<command line>'
+#   <python3> -I <this directory>/confine.py --session -- <shell> -c -- '<command line>'
 #
 # so the line is the shell's to read, never the wrapper's options or the shell's own, and the
 # kernel refuses a delete or rename outside the session's roots (confine.py's --help says which,
@@ -17,6 +17,8 @@
 # without the prefix, which is how the team's own hooks stay outside the domain.
 # The shell is the one Claude Code wrote the line for, CLAUDE_CODE_SHELL, else SHELL, when it is
 # an executable bash or zsh, else the bash on PATH.
+# The python3 is the first of /usr/bin, /usr/local/bin and /opt/homebrew/bin that has one, never
+# the one on PATH; with none the command does not run (exit 3).
 # Any other count of arguments exits 2, and the status is confine.py's. Its one option is a line
 # that is --help and nothing else, which prints this header, since no call's line is that alone.
 if [ $# -ne 1 ]; then
@@ -45,4 +47,10 @@ for candidate in "${CLAUDE_CODE_SHELL:-}" "${SHELL:-}"; do
     ;;
   esac
 done
-exec python3 -I "${0%/*}/confine.py" --session -- "$shell" -c -- "$1"
+# The interpreter comes from a fixed system directory, never from PATH, which the session's own
+# commands may add to.
+for python in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+  [ ! -x "$python" ] || exec "$python" -I "${0%/*}/confine.py" --session -- "$shell" -c -- "$1"
+done
+echo "confine-shell: no python3 in /usr/bin, /usr/local/bin or /opt/homebrew/bin, so the command does not run" >&2
+exit 3

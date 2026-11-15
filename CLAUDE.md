@@ -104,7 +104,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
-  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`.
+  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`, and `confine-seams.py`, which runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
   - `tests/task-life.bats`: a whole task's life across the scripts.
   - `tests/timings.tsv`: each bats file's seconds on Linux in one CI run, and on macOS as the last CI run with macOS jobs had them, which `tests/shards` weighs it by.

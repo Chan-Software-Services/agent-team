@@ -1,8 +1,8 @@
 # The roots every confined session has beside its own: bin/lib/confine.py --session lets a
 # worker's or gate agent's commands remove and rename a directory entry only under a root, and
 # each line here is one more, on every machine and for every task.
-# One path per line, absolute or starting with ~/ for the home directory; a line naming no
-# directory on a machine is skipped there.
+# One path per line, absolute or starting with ~/ for the home directory; a line naming nothing
+# on a machine is skipped there, and one naming a link or anything but a directory is refused.
 # This file is a guarded path (bin/lib/guarded), so each change comes back to Daniel for the
 # per-head word.
 # No path of the team home, of another worktree or of ~/.config/agent-team may be a root:

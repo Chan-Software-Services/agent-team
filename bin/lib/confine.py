@@ -27,19 +27,22 @@ never be left: a confined command that runs this wrapper again only narrows its 
     nothing there. With neither, it exits 3 and the command does not run:
     "confine: no worktree for this session (AGENT_TEAM_WORKTREE and CLAUDE_PROJECT_DIR name no
     directory)";
-  - that worktree's common git directory, as git names it within 5 seconds (GIT_DIR and its like
-    in the environment are not read), without which git could not remove its own index.lock in
-    a linked worktree; none when git gives none;
-  - $CLAUDE_JOB_DIR/tmp;
+  - that worktree's common git directory, AGENT_TEAM_GIT_DIR, which team-worker fixes at the
+    launch, without which git could not remove its own index.lock in a linked worktree; none
+    when it is unset, since nothing the session's commands may rewrite is asked for it. One
+    that is not an absolute path, is a link or no directory, or is, holds or is under a
+    directory no root may be in (below) is refused (exit 3);
+  - $CLAUDE_JOB_DIR/tmp, when it is there; one that is a link, no directory or another user's
+    is refused (exit 3);
   - the session tmp: /tmp/agent-team-<AGENT_TEAM_TASK> when that is T<digits>, else
     /tmp/agent-team-gate-<the first 8 characters of CLAUDE_CODE_SESSION_ID> when that holds only
     letters, digits and dashes, else none. It is made, mode 700, when missing, and the command
     gets it as TMPDIR; one that is a link, no directory or another user's is refused (exit 3);
   - each line of the file confine-roots beside this one, a path that may start with ~/. A line
-    naming no directory is skipped. A line that is not an absolute path, or that is, holds or
-    is under the team home (TEAM_HOME, else the first line of ~/.config/agent-team/home),
-    ~/.config/agent-team or ~/.claude, is refused (exit 3) naming it, and so is a file that
-    cannot be read.
+    naming nothing is skipped. A line that is not an absolute path, that names a link or
+    anything but a directory, or that is, holds or is under the team home (TEAM_HOME, else the
+    first line of ~/.config/agent-team/home), ~/.config/agent-team or ~/.claude, is refused
+    (exit 3) naming it, and so is a file that cannot be read.
 
 Where the kernel has no Landlock, or only ABI 1 (no REFER), and on macOS, the command runs
 unconfined, and stderr says so: "confine: this machine has no Landlock (ABI <n>), so this
@@ -51,17 +54,15 @@ domain) exits 3 with "confine: <what failed>: <the error>" and never runs the co
 Exit status: the command's own; 2 for a malformed command line; 3 when the domain or a root
 could not be set up; 127 when the command is not found and 126 when it cannot be run.
 
-Test seams, read from the environment: CONFINE_TEST_ABI=<n> is taken as the kernel's ABI, and
-CONFINE_TEST_FAIL=restrict makes entering the domain fail. Both are safe where workers run: the
-wrapper's environment is the session's, never a call's, and a confined call that runs the
-wrapper again with a seam is still inside its first domain.
+It has no test seam: nothing in its environment changes the ABI it reads or how it enters the
+domain. The tests run it through tests/helpers/confine-seams.py, which loads this file and
+replaces those two reads.
 """
 import ctypes
 import errno
 import os
 import re
 import stat
-import subprocess
 import sys
 
 # landlock_create_ruleset, landlock_add_rule and landlock_restrict_self, the same numbers on
@@ -102,10 +103,7 @@ def _error():
 
 
 def abi():
-    """The kernel's Landlock ABI version, 0 with none or off Linux; CONFINE_TEST_ABI's when set."""
-    seam = os.environ.get("CONFINE_TEST_ABI", "")
-    if seam.isascii() and seam.isdigit():
-        return int(seam)
+    """The kernel's Landlock ABI version, 0 with none or off Linux."""
     if not sys.platform.startswith("linux"):
         return 0
     version = _libc().syscall(SYS_CREATE, None, ctypes.c_size_t(0), ctypes.c_uint32(CREATE_VERSION))
@@ -132,6 +130,26 @@ def _team_home():
     return os.path.join(_home(), named) if named else None
 
 
+def _kept():
+    """The directories no root may be, hold or be under, resolved."""
+    return [os.path.realpath(directory) for directory in
+            (_team_home(), os.path.join(_home(), ".config/agent-team"), os.path.join(_home(), ".claude"))
+            if directory]
+
+
+def _own_directory(path):
+    """Whether path is there; Refused when it is a link, no directory or another user's."""
+    try:
+        found = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise Refused(f"cannot read {path}: {error.strerror}") from error
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.geteuid():
+        raise Refused(f"{path} is a link, no directory or another user's, so it is no root")
+    return True
+
+
 def _listed_roots():
     """The directories confine-roots lists, resolved; Refused on a line that may never be one."""
     path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "confine-roots")
@@ -140,9 +158,7 @@ def _listed_roots():
             lines = file.read().splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise Refused(f"cannot read {path}: {error}") from error
-    kept = [os.path.realpath(directory) for directory in
-            (_team_home(), os.path.join(_home(), ".config/agent-team"), os.path.join(_home(), ".claude"))
-            if directory]
+    kept = _kept()
     roots = []
     for line in lines:
         line = line.strip()
@@ -156,7 +172,7 @@ def _listed_roots():
             if _within(root, directory) or _within(directory, root):
                 raise Refused(f"{path} lists {line}, which is, holds or is under {directory}; "
                               "no path of the team home, ~/.config/agent-team or ~/.claude is a root")
-        if os.path.isdir(root):
+        if _own_directory(named.rstrip("/") or "/"):
             roots.append(root)
     return roots
 
@@ -169,19 +185,21 @@ def _worktree():
     raise Refused(NO_WORKTREE)
 
 
-def _git_common(worktree):
-    """The worktree's common git directory, or None when git names none in 5 seconds."""
-    environment = {name: value for name, value in os.environ.items()
-                   if name not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")}
-    try:
-        answer = subprocess.run(
-            ["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env=environment, timeout=5, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+def _git_common():
+    """The common git directory team-worker fixed at the launch, or None when none is named."""
+    named = os.environ.get("AGENT_TEAM_GIT_DIR", "")
+    if not named:
         return None
-    named = os.fsdecode(answer.stdout).rstrip("\n")
-    return named if answer.returncode == 0 and os.path.isabs(named) else None
+    if not os.path.isabs(named):
+        raise Refused(f"AGENT_TEAM_GIT_DIR names {named}, which is not an absolute path")
+    if not _own_directory(named.rstrip("/") or "/"):
+        raise Refused(f"AGENT_TEAM_GIT_DIR names {named}, which is no directory")
+    root = os.path.realpath(named)
+    for directory in _kept():
+        if _within(root, directory) or _within(directory, root):
+            raise Refused(f"AGENT_TEAM_GIT_DIR names {named}, which is, holds or is under {directory}; "
+                          "no path of the team home, ~/.config/agent-team or ~/.claude is a root")
+    return root
 
 
 def _session_tmp():
@@ -214,8 +232,10 @@ def session_roots():
     worktree = _worktree()
     tmp = _session_tmp()
     job = os.environ.get("CLAUDE_JOB_DIR", "")
-    named = [worktree, _git_common(worktree), os.path.join(job, "tmp") if job else None, tmp]
-    roots = [os.path.realpath(root) for root in named if root and os.path.isdir(root)]
+    job = os.path.join(job, "tmp") if job else None
+    if job and not _own_directory(job):
+        job = None
+    roots = [os.path.realpath(root) for root in (worktree, _git_common(), job, tmp) if root]
     return roots + _listed_roots(), tmp
 
 
@@ -257,8 +277,6 @@ def enter(roots):
     if libc.prctl(ctypes.c_int(PR_SET_NO_NEW_PRIVS), ctypes.c_ulong(1), ctypes.c_ulong(0),
                   ctypes.c_ulong(0), ctypes.c_ulong(0)) != 0:
         raise Refused(f"cannot set no_new_privs: {_error()}")
-    if os.environ.get("CONFINE_TEST_FAIL") == "restrict":
-        raise Refused("cannot enter the domain: CONFINE_TEST_FAIL=restrict")
     if libc.syscall(SYS_RESTRICT, ctypes.c_int(ruleset), ctypes.c_uint32(0)) != 0:
         raise Refused(f"cannot enter the domain: {_error()}")
     os.close(ruleset)

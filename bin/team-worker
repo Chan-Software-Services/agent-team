@@ -107,8 +107,10 @@
 # A planner, builder or reviewer of a project whose registry entry says confine = "on", and each
 # of T0's, runs every shell command through bin/lib/confine-shell, where the kernel refuses a
 # delete or rename outside the session's roots: its settings' env holds CLAUDE_CODE_SHELL_PREFIX,
-# this checkout's bin/lib/confine-shell, and AGENT_TEAM_WORKTREE, the worktree's real path. With
-# "off" or no key it holds neither, and ops, which has no shell, never does. The roles' hooks are
+# this checkout's bin/lib/confine-shell, AGENT_TEAM_WORKTREE, the worktree's real path, and
+# AGENT_TEAM_GIT_DIR, the worktree's common git directory as git names it at this launch, the
+# session's roots, so no later call asks the worktree's own files for them. With
+# "off" or no key it holds none of them, and ops, which has no shell, never does. The roles' hooks are
 # in exec form (a command with "args"), which Claude Code runs without the prefix.
 # The merged settings and MCP config are generated into tasks/<task>/ (gitignored), as
 # settings.<role>.<project>.json and mcp.<role>.<project>.json for a planner, builder or reviewer
@@ -633,8 +635,9 @@ substitute='walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TA
 
 # A planner, builder or reviewer of a project whose registry entry says confine = "on", and each
 # of T0, the load check, runs its shell commands through this checkout's bin/lib/confine-shell:
-# its settings' env names it as CLAUDE_CODE_SHELL_PREFIX, and the worktree's real path as
-# AGENT_TEAM_WORKTREE, the first root. Ops has no shell, and is never confined.
+# its settings' env names it as CLAUDE_CODE_SHELL_PREFIX, the worktree's real path as
+# AGENT_TEAM_WORKTREE, the first root, and its common git directory, read above at this launch,
+# as AGENT_TEAM_GIT_DIR. Ops has no shell, and is never confined.
 confine=''
 if [[ $role != ops ]]; then
   if [[ $task == T0 ]]; then
@@ -652,7 +655,7 @@ shell_prefix=''
 # built-in rules) once, where it first stands.
 settings=$taskdir/settings.$stem.json
 jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
-  --arg memory "$memory" --arg shell_prefix "$shell_prefix" '.[0] as $base | .[1] as $own
+  --arg memory "$memory" --arg shell_prefix "$shell_prefix" --arg git_dir "$common_dir" '.[0] as $base | .[1] as $own
   | ($base * $own)
   | .permissions.deny = (($base.permissions.deny // []) + ($own.permissions.deny // []))
   | .permissions.allow = (($base.permissions.allow // []) + ($own.permissions.allow // []))
@@ -669,7 +672,7 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
     else . end
   | .worktree.bgIsolation = "none"
   | if $memory != "" then .autoMemoryDirectory = $memory else . end
-  | if $shell_prefix != "" then .env += {CLAUDE_CODE_SHELL_PREFIX: $shell_prefix, AGENT_TEAM_WORKTREE: $worktree} else . end
+  | if $shell_prefix != "" then .env += {CLAUDE_CODE_SHELL_PREFIX: $shell_prefix, AGENT_TEAM_WORKTREE: $worktree, AGENT_TEAM_GIT_DIR: $git_dir} else . end
   | '"$substitute" \
   "$code/settings/worker.json" "$code/settings/$role.json" >"$settings"
 

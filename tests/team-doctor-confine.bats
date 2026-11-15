@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # team-doctor's confine line (bin/lib/doctor.d/093-confine.sh), on the machine
 # tests/helpers/doctor.bash builds: it runs the real bin/lib/confine.py, on this machine's kernel
-# for the pass, which is skipped, naming the ABI, where the kernel's Landlock is below 2, and
-# through the wrapper's seams (CONFINE_TEST_ABI, CONFINE_TEST_FAIL) and a stubbed macOS for the
-# warning and the failure.
+# for the pass, which is skipped, naming the ABI, where the kernel's Landlock is below 2, and,
+# since the wrapper has no seam, through tests/helpers/confine-seams.py in the wrapper's place
+# (CONFINE_TEST_ABI, CONFINE_TEST_FAIL) and a stubbed macOS for the warning and the failure.
 
 load helpers/common
 load helpers/doctor
@@ -24,6 +24,14 @@ needs_landlock() {
   ((n >= 2)) || skip "this kernel's Landlock ABI is $n, below 2"
 }
 
+# Puts tests/helpers/confine-seams.py where the doctor's checkout has the wrapper, loading the real
+# one, so CONFINE_TEST_ABI and CONFINE_TEST_FAIL decide what the doctor's run of it reads.
+seams() {
+  rm "$CODE_CHECKOUT/bin/lib/confine.py"
+  cp "$BATS_TEST_DIRNAME/helpers/confine-seams.py" "$CODE_CHECKOUT/bin/lib/confine.py"
+  export CONFINE_REAL=$REPO_ROOT/bin/lib/confine.py
+}
+
 FIX="fix: bin/lib/confine.py's own --help says what it needs"
 
 @test "the confine line passes with the kernel's ABI where a session's command runs confined, and leaves nothing in /tmp" {
@@ -32,14 +40,26 @@ FIX="fix: bin/lib/confine.py's own --help says what it needs"
   # A task or a session named in the doctor's environment names no session tmp for its run.
   local task="T$((7100000000 + $$))"
   AGENT_TEAM_TASK=$task CLAUDE_CODE_SESSION_ID=abcdef0123456789 run_bin -0 team-doctor
-  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands run confined (confine.py --session ran in a sandbox worktree)"
+  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (confine.py --session ran in a sandbox worktree); no project has confine on, so every worker runs on the text guard alone"
   [[ ! -e /tmp/agent-team-$task && ! -e /tmp/agent-team-gate-abcdef01 ]]
   run_bin -0 --separate-stderr team-doctor --json
   jq -e '.[] | select(.check == "confine") | .verdict == "PASS" and .fix == ""' <<<"$output"
 }
 
+@test "the confine line's pass names the projects whose workers run confined, those with confine on" {
+  needs_landlock
+  tools_at arch
+  local project
+  for project in $(TEAM_HOME=$TEAM_HOME "$CODE_CHECKOUT/bin/team-project" --list); do
+    sed -i "s/^\\[$project\\]\$/&\\nconfine = \"on\"/" "$TEAM_HOME/projects.toml"
+  done
+  run_bin -0 team-doctor
+  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (confine.py --session ran in a sandbox worktree); confine is on for $(TEAM_HOME=$TEAM_HOME "$CODE_CHECKOUT/bin/team-project" --list | paste -sd, | sed 's/,/, /g')"
+}
+
 @test "the confine line warns, with no fix, on macOS and on a kernel with no Landlock or ABI 1" {
   tools_at arch
+  seams
   CONFINE_TEST_ABI=0 run_bin -0 team-doctor
   assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (sops/platform-gotchas.md)"
   CONFINE_TEST_ABI=1 run_bin -0 team-doctor
@@ -57,8 +77,9 @@ FIX="fix: bin/lib/confine.py's own --help says what it needs"
 @test "the confine line fails with the wrapper's last line when it cannot enter the domain where Landlock is" {
   needs_landlock
   tools_at arch
+  seams
   CONFINE_TEST_FAIL=restrict run_bin -1 team-doctor
-  assert_equal "$(line_of confine)" "FAIL confine: confine: cannot enter the domain: CONFINE_TEST_FAIL=restrict; $FIX"
+  assert_equal "$(line_of confine)" "FAIL confine: confine: cannot enter the domain: Operation not permitted; $FIX"
 }
 
 @test "the confine line fails when the wrapper cannot say the ABI" {
@@ -71,7 +92,7 @@ FIX="fix: bin/lib/confine.py's own --help says what it needs"
 
 @test "team-doctor --help lists the confine line after the guard hooks line" {
   run_bin -0 team-doctor --help
-  assert_contains "$output" "  confine       Whether this machine's workers have the kernel layer under the text guard:"
+  assert_contains "$output" "  confine       Whether this machine's workers can have the kernel layer under the text guard:"
   local guard confine records
   guard=$(grep -n '^  guard hooks ' <<<"$output" | cut -d: -f1)
   confine=$(grep -n '^  confine ' <<<"$output" | cut -d: -f1)

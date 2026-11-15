@@ -14,7 +14,7 @@ load helpers/common
 
 setup() {
   sandbox
-  unset AGENT_TEAM_WORKTREE CLAUDE_JOB_DIR CONFINE_TEST_ABI CONFINE_TEST_FAIL
+  unset AGENT_TEAM_WORKTREE AGENT_TEAM_GIT_DIR CLAUDE_JOB_DIR CONFINE_TEST_ABI CONFINE_TEST_FAIL CONFINE_REAL
   CONFINE=$REPO_ROOT/bin/lib/confine.py
   ABI=$(python3 -I "$CONFINE" --abi)
   ((ABI >= 2)) || skip "this machine's Landlock ABI is $ABI, and the file rules need 2"
@@ -42,25 +42,37 @@ confined() {
   run --separate-stderr env -C "$dir" python3 -I "$CONFINE" "$@"
 }
 
+# The wrapper has no seam, so a test that needs another ABI or a domain that cannot be entered
+# runs it through tests/helpers/confine-seams.py, which reads CONFINE_TEST_ABI and
+# CONFINE_TEST_FAIL and loads the wrapper CONFINE named.
+seams() {
+  with CONFINE_REAL="$CONFINE"
+  CONFINE=$BATS_TEST_DIRNAME/helpers/confine-seams.py
+}
+
 # The canary tree outside the roots, made new, and the links in the worktree that reach it.
 canary() {
   rm -rf "${OUT:?}"
   mkdir -p "$OUT/x/deep" "$OUT/x/empty" "$WT/src/a/b" "$WT/build/d" "$WT/build/c" "$WT/T"
-  : >"$OUT/x/deep/file"
+  echo canary >"$OUT/x/deep/file"
+  echo mine >"$WT/mine"
   ln -sfn "$OUT" "$WT/src/a/b/l"
   ln -sfn "$OUT" "$WT/build/d/.l"
   ln -sfn "$OUT" "$WT/build/c/L"
 }
 
-# Every entry of the canary tree, which is whole while this prints what WHOLE holds.
+# Every entry of the canary tree and its file's content, which is whole while this prints what
+# WHOLE holds.
 canary_tree() {
   find "$OUT/x" 2>/dev/null | LC_ALL=C sort
+  cat "$OUT/x/deep/file" 2>/dev/null || true
 }
 
 WHOLE='OUT/x
 OUT/x/deep
 OUT/x/deep/file
-OUT/x/empty'
+OUT/x/empty
+canary'
 
 # Each delete spelling, run by bash -c from the worktree's root, with OUT for the directory
 # outside the roots: a new spelling is one line. The first block is the plain forms, then the
@@ -120,6 +132,8 @@ SPELLINGS=(
   'mv OUT/x ./stolen'
   'mv OUT/x OUT/y'
   'mv OUT/x/deep/file OUT/x/empty/file'
+  'mv -f mine OUT/x/deep/file'
+  'python3 -c "import os; os.replace(\"mine\", \"OUT/x/deep/file\")"'
   'rsync -a --delete T/ OUT/x/'
   'git -C OUT init -q . && git -C OUT clean -q -fdx'
   'setsid bash -c "rm -rf OUT/x" & wait $!'
@@ -160,14 +174,15 @@ canary_lost() { [[ $(canary_tree) != "${WHOLE//OUT/$OUT}" ]]; }
   each_spelling run_plain canary_lost
 }
 
-# A linked worktree of a new repository, MAIN, as the session's worktree, its job tmp, its session
-# tmp and the state directory bin/lib/confine-roots lists, with the session's variables exported.
+# A linked worktree of a new repository, MAIN, as the session's worktree, its common git directory
+# as team-worker names it at the launch, its job tmp, its session tmp and the state directory
+# bin/lib/confine-roots lists, with the session's variables exported.
 session() {
   rmdir "$WT"
   MAIN=$(make_repo main)
   git -C "${MAIN:?}" worktree add -q "$WT" -b task
   mkdir -p "$HOME/.local/state/agent-team"
-  with AGENT_TEAM_WORKTREE="$WT" CLAUDE_JOB_DIR="$JOB" AGENT_TEAM_TASK="$TASK"
+  with AGENT_TEAM_WORKTREE="$WT" AGENT_TEAM_GIT_DIR="$(realpath "$MAIN/.git")" CLAUDE_JOB_DIR="$JOB" AGENT_TEAM_TASK="$TASK"
 }
 
 @test "workload: a worker's ordinary deletes, renames and git calls in each root pass under --session" {
@@ -357,6 +372,7 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
 @test "no Landlock: the command runs unconfined with the one stderr line, once per session tmp and every time with none" {
   local abi
   canary
+  seams
   for abi in 0 1; do
     : >"$OUT/f"
     CONFINE_TEST_ABI=$abi confined "$WT" --root "$WT" -- bash -c "rm $OUT/f && echo ran"
@@ -381,16 +397,13 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   assert_equal "$stderr" "confine: this machine has no Landlock (ABI 1), $UNCONFINED"
   confined "$WT" --session -- echo ran
   assert_equal "$stderr" "confine: this machine has no Landlock (ABI 1), $UNCONFINED"
-  # The seam only narrows: an ABI the wrapper can use still confines.
-  : >"$OUT/f"
-  CONFINE_TEST_ABI=2 confined "$WT" --root "$WT" -- rm "$OUT/f"
-  [[ $status -ne 0 && -e $OUT/f ]]
 }
 
 @test "a domain that cannot be entered exits 3 naming the step, and the command does not run" {
+  seams
   CONFINE_TEST_FAIL=restrict confined "$WT" --root "$WT" -- touch "$WT/ran"
   assert_equal "$status" 3
-  assert_equal "$stderr" "confine: cannot enter the domain: CONFINE_TEST_FAIL=restrict"
+  assert_equal "$stderr" "confine: cannot enter the domain: Operation not permitted"
   confined "$WT" --root "$WT/missing" -- touch "$WT/ran"
   assert_equal "$status" 3
   assert_equal "$stderr" "confine: --root names no directory: $WT/missing"
@@ -421,13 +434,79 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   done
 }
 
-@test "a confined command that runs the wrapper again, a seam set, stays inside its first domain" {
+@test "a confined command that runs the wrapper again stays inside its first domain" {
   canary
-  confined "$WT" --root "$WT" -- env CONFINE_TEST_ABI=0 python3 -I "$CONFINE" --root "$OUT" -- rm -rf "${OUT:?}/x"
-  [[ $status -ne 0 ]]
-  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
   confined "$WT" --root "$WT" -- python3 -I "$CONFINE" --root "$OUT" -- rm -rf "${OUT:?}/x"
   [[ $status -ne 0 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+}
+
+@test "the wrapper reads no ABI and no failure from its environment" {
+  canary
+  with CONFINE_TEST_ABI=0 CONFINE_TEST_FAIL=restrict
+  confined "$WT" --root "$WT" -- rm -rf "${OUT:?}/x"
+  [[ $status -ne 0 && $status -ne 3 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  confined "$WT" --abi
+  assert_equal "$output" "$ABI"
+}
+
+@test "--session takes the common git directory from AGENT_TEAM_GIT_DIR alone, whatever the worktree's own files name" {
+  session
+  canary
+  # The worktree's files may name another git directory: the roots stay the launch's.
+  mkdir -p "$OUT/objects" "$OUT/refs"
+  echo 'ref: refs/heads/x' >"$OUT/HEAD"
+  confined "$WT" --session -- bash -c 'mv .git .git.aside && echo "gitdir: $1" >.git' _ "$OUT"
+  assert_equal "$status" 0
+  confined "$WT" --session -- rm -rf "${OUT:?}/x"
+  [[ $status -ne 0 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  mv -f "$WT/.git.aside" "$WT/.git"
+  # With none named there is no such root, and git is not asked.
+  : >"$MAIN/.git/probe"
+  unset AGENT_TEAM_GIT_DIR
+  confined "$WT" --session -- rm "$MAIN/.git/probe"
+  [[ $status -ne 0 && -e $MAIN/.git/probe ]]
+}
+
+@test "--session refuses a common git directory that is a link, no directory, relative, or in or above a directory no root may be" {
+  local named
+  session
+  mkdir -p "$HOME/.claude/repo.git" "$HOME/.config/agent-team" "$TEAM_HOME/.git"
+  ln -s "$OUT" "$BOX/linked.git"
+  : >"$BOX/file.git"
+  for named in "$BOX/linked.git" "$BOX/file.git" "$BOX/missing.git" "main/.git" "$TEAM_HOME/.git" "$HOME/.claude/repo.git" "$HOME" /; do
+    with AGENT_TEAM_GIT_DIR="$named"
+    confined "$WT" --session -- touch "$WT/ran"
+    assert_equal "$named: $status" "$named: 3"
+    assert_contains "$stderr" "confine: "
+    [[ ! -e $WT/ran && -z $output ]]
+  done
+}
+
+@test "--session refuses a job tmp or a listed root that is a link or no directory, without running the command" {
+  session
+  canary
+  rmdir "$JOB/tmp"
+  ln -s "$OUT" "$JOB/tmp"
+  confined "$WT" --session -- rm -rf "${OUT:?}/x"
+  assert_equal "$status" 3
+  assert_equal "$stderr" "confine: $JOB/tmp is a link, no directory or another user's, so it is no root"
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  rm "$JOB/tmp"
+  : >"$JOB/tmp"
+  confined "$WT" --session -- touch "$WT/ran"
+  assert_equal "$status" 3
+  rm "$JOB/tmp"
+  # A missing job tmp is no root and no refusal.
+  confined "$WT" --session -- touch "$WT/ran"
+  assert_equal "$status" 0
+  ln -s "$OUT" "$BOX/listed"
+  listed "$BOX/listed"
+  confined "$WT" --session -- rm -rf "${OUT:?}/x"
+  assert_equal "$status" 3
+  assert_equal "$stderr" "confine: $BOX/listed is a link, no directory or another user's, so it is no root"
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
 }
 
@@ -498,4 +577,28 @@ bash_call() {
   with CLAUDE_CODE_SHELL="$BOX/bin/fish" SHELL="$BOX/missing/bash"
   run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
   assert_equal "$output" bash
+}
+
+@test "confine-shell: the interpreter and the wrapper's roots come from no program on the session's PATH" {
+  session
+  canary
+  mkdir -p "$BOX/bin"
+  with PATH="$BOX/bin:$PATH"
+  bash_call "for tool in git python3; do printf '#!/bin/sh\\nrm -rf %s\\nexit 0\\n' ${OUT:?}/x >$BOX/bin/\$tool && chmod +x $BOX/bin/\$tool; done"
+  assert_equal "$status" 0
+  [[ -x $BOX/bin/git && -x $BOX/bin/python3 ]]
+  bash_call true
+  assert_equal "$status" 0
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+}
+
+@test "confine-shell: a profile the outer shell reads sets no seam, so the command still runs confined" {
+  session
+  canary
+  echo 'export CONFINE_TEST_ABI=0 CONFINE_TEST_FAIL=' >"$HOME/.bash_profile"
+  local line
+  printf -v line '%q %q' "$REPO_ROOT/bin/lib/confine-shell" "rm -rf ${OUT:?}/x"
+  run --separate-stderr env -C "$WT" bash -l -c "$line"
+  [[ $status -ne 0 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
 }
