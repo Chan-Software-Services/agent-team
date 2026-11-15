@@ -183,7 +183,7 @@ assert_nothing_written() {
 }
 
 @test "with GitHub unreachable it refuses: an assistant never starts offline" {
-  git -C "$TEAM_HOME" remote set-url origin https://127.0.0.1:9/agent-team.git
+  git -C "${TEAM_HOME:?}" remote set-url origin https://127.0.0.1:9/agent-team.git
   run_bin -1 --separate-stderr claude-assistant
   assert_contains "$stderr" "claude-assistant: GitHub unreachable; an assistant never starts offline"
   assert_nothing_written

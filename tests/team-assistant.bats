@@ -89,12 +89,12 @@ handoff_file() {
 
 # The commits on origin's dev since the team home's start, newest first, as subject and files.
 pushed() {
-  git -C "$origin" log --format='%s' --name-only dev -- | sed '/^$/d' | sed '/^chore: start the team home$/,$d'
+  git -C "${origin:?}" log --format='%s' --name-only dev -- | sed '/^$/d' | sed '/^chore: start the team home$/,$d'
 }
 
 # The team home's state: its tree, its index and its commits, for a refusal that writes nothing.
 records_state() {
-  { git -C "$TEAM_HOME" status --porcelain --untracked-files=all; git -C "$TEAM_HOME" rev-parse HEAD
+  { git -C "${TEAM_HOME:?}" status --porcelain --untracked-files=all; git -C "${TEAM_HOME:?}" rev-parse HEAD
     cat "$TEAM_HOME/ledger.jsonl"; } | sha256sum
 }
 
@@ -339,12 +339,12 @@ assistant/research/2026-11-14-doctor.md"
 }
 
 @test "a push that fails keeps the commit for the next checkpoint, saying so, and the hand-off stands" {
-  git -C "$TEAM_HOME" remote set-url origin "$BATS_TEST_TMPDIR/nowhere.git"
+  git -C "${TEAM_HOME:?}" remote set-url origin "$BATS_TEST_TMPDIR/nowhere.git"
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-assistant send note --file "$body"
   assert_equal "$output" "H1 assistant/handoffs/H1.md"
   assert_contains "$stderr" "team-assistant: H1 is not on origin yet ("
   assert_contains "$stderr" "); the next checkpoint pushes it"
-  assert_equal "$(git -C "$TEAM_HOME" log -1 --format=%s)" "chore: handoff H1 note"
+  assert_equal "$(git -C "${TEAM_HOME:?}" log -1 --format=%s)" "chore: handoff H1 note"
 }
 
 @test "a ledger that refuses the handoff event still leaves the hand-off sent or answered, committed, with its id printed and one line saying so" {
