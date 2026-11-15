@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Record that the coordinator has stowed: the stow skill's last step, which lets an
+# auto-compaction that bin/hooks/compact-hold is holding run at its next check, when that comes
+# within 10 minutes of the stow.
+#
+# Usage: team-stowed
+# It sets stowed_at to now in the record of the session CLAUDE_CODE_SESSION_ID names
+# (bin/lib/compact-hold.sh), logs "stowed" in compact-hold.log, and prints one line:
+#   stowed at <HH:MM> UTC; the held auto-compaction runs at its next check
+#   stowed at <HH:MM> UTC; no auto-compaction is held
+# Refused (exit 1) for a worker, and when CLAUDE_CODE_SESSION_ID is unset or is not letters,
+# digits and dashes: it records the coordinator's own stow, in the coordinator's session.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/compact-hold.sh
+source "$TEAM_LIB/compact-hold.sh"
+
+(($# == 0)) || usage_error "it takes no argument"
+why=$(worker_refusal "" "records no stow") && die "$why"
+session=${CLAUDE_CODE_SESSION_ID:-}
+if ! compact_hold_session "$session"; then
+  echo "team-stowed records the coordinator's own stow: run it in the coordinator's session, where CLAUDE_CODE_SESSION_ID names it" >&2
+  exit 1
+fi
+
+out=$(compact_hold_update "$session" '{record: (.stowed_at = $now), log: [{event: "stowed"}], held: (.held_at != null)}')
+at=$(compact_hold_clock "$(jq -r .record.stowed_at <<<"$out")")
+if [[ $(jq -r .held <<<"$out") == true ]]; then
+  echo "stowed at $at UTC; the held auto-compaction runs at its next check"
+else
+  echo "stowed at $at UTC; no auto-compaction is held"
+fi

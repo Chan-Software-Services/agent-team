@@ -120,9 +120,11 @@ Find out why and fix it, or check the tasks and workers by hand (team-state, cla
 @test "coordinator.settings.json wires the hook on Stop, and no worker settings file mentions it" {
   local settings=$REPO_ROOT/coordinator.settings.json commands command
   commands=$(jq -r '[.hooks.Stop[].hooks[] | select(.type == "command") | .command] | .[]' "$settings")
-  assert_equal "$(wc -l <<<"$commands")" 1
+  # compact-hold's reminder sits beside it (tests/compact-hold.bats).
+  assert_equal "$(wc -l <<<"$commands")" 2
   # claude-coordinator fills in @TEAM_CODE@ with its own checkout.
-  command=${commands//@TEAM_CODE@/$REPO_ROOT}
+  command=$(head -1 <<<"$commands")
+  command=${command//@TEAM_CODE@/$REPO_ROOT}
   assert_equal "$command" "\"$REPO_ROOT/bin/hooks/stop-sweep\""
   # Run the command as Claude Code does, through a shell: an active stop exits 0 at once, an
   # inactive one sweeps the sandbox ledger.

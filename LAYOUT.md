@@ -18,6 +18,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `code`: the paths every tracked path matches.
     - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
     - `command_text.py`: a Bash command's code text (heredoc bodies out unless a shell may read one, `-c` strings and what is piped into a shell in) and the walk of each simple command it runs, past wrappers, into tools' strings, for `command_rules.py`; `team-tokens` takes its heredoc rule.
+    - `compact-hold.sh`: the record of the coordinator's held auto-compaction, one file per session, written under its lock, and its log of each hold, tell, reminder, stow and release, for `bin/hooks/compact-hold` and `team-stowed`.
     - `data-check`: the one scan the CI's `data` job and the records' hook refuse with.
     - `delete_rules.py`: `command_rules.py`'s delete rows, refusing a recursive delete (`rm -r`, `find -delete`, `find -exec rm`) outside the worktree and the job's tmp, of either, its `.scratch/task` or what holds one, of a `.git`, an empty variable or no `find` start path, or of an unread path.
     - `doctor.d/`: `team-doctor`'s checks, one file each, which it sources in the order of their names (a new check is a new file, its number between its neighbours').
@@ -80,6 +81,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
 - `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder or reviewer loads (`--setting-sources user`), none of its worktree's `.claude/`.
 - `sops/`: standing procedures.
+  - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
   - `docker.md`: the team's Docker stacks: labels, owner classes, the wrapper contract, `team-stack`'s subcommands, instances, admission, the idle sweep, the reaper, `team-janitor`'s daily report, the heartbeat's steps, the close teardown and the agents' rules.
   - `drills.md`: the drills, live runs of the paths the team's portability and guards rest on: the record in `drills.jsonl`, who runs one, and each drill's runbook, its steps, who takes each, its duration, what passes and how it is recorded.
   - `frontend-patterns.md`: rules that hold beyond one project for a UI's dev-only component library, combobox, large list, dialog, realistic fixture and bundle growth, each with its why.
