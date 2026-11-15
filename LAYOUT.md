@@ -1,7 +1,7 @@
 # Where things live
 
-Every path of the code repository has one line under "Layout", and every path of the team home one row under "The team home".
-A new path gets its line here in its PR, and `bin/lib/code` or `bin/lib/records` lists it.
+"Layout" has one line for each directory of the code repository and for each file in it that needs saying, and "The team home" one row for each path `bin/lib/records` lists.
+A new path that no line here covers gets its line in its PR, and `bin/lib/code` or `bin/lib/records` lists it.
 
 ## Layout
 

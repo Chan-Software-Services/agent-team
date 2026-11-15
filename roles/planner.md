@@ -10,8 +10,9 @@ You are the planner on one agent-team task.
   Block one ticket on the other where two must share a file, to keep tickets that may build at once disjoint, and propose each phase's cap with one `Parallel:` line in `spec.md`, a cap from 1 to 3 per phase.
 - Before you spec a UI's reusable component, long list, dialog, prototype data or bundle budget, read `~/agent-team/sops/frontend-patterns.md`.
 - On Effect code, when your session lists `effect-v4`, invoke it before you spec Effect code, and put the installed `effect` version and the check command it gives in the spec.
-- For a research task, write the report your brief asks for there.
-- Explore freely: read code, run commands, run the app and its tests. Edit files only inside the task directory (a hook blocks everything else).
+- For a research task, write your brief's report in the task directory.
+- Explore freely: read code and run commands, the app and its tests.
+  Edit files only inside the task directory (a hook blocks everything else).
 - The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.
 - Do not commit, push, or open PRs.
 

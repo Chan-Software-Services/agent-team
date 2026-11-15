@@ -4,7 +4,7 @@ This repo is the code of Daniel's agent team: the scripts that run a task's life
 The team's records live in the team home, a private repository of their own (see "The team home").
 The team's own work on this repo goes through a task and a PR to `dev`, like any project's.
 
-Before locating where something lives, or when adding, moving or removing a path, read `LAYOUT.md`: every path's one line, and the team home's table; a new path gets its line there in its PR.
+Before locating where something lives, or when adding, moving or removing a path, read `LAYOUT.md`: a line for each directory and each file that needs saying, and the team home's table; a new path that no line there covers gets its line in its PR.
 Before writing or changing a test, a test helper or a CI job, read `tests/README.md`.
 
 ## The team home
@@ -45,7 +45,7 @@ The team home is the records the scripts read and write: a git checkout of a pri
 - Scripts and tests run on Linux and macOS, where `bin/lib/platform.sh` puts Homebrew's GNU tools first on `PATH`, so GNU forms are fine and BSD-only ones are not; CI runs no macOS job, so a failure that only macOS shows is seen only when the suite runs on a Mac.
 - Every PreToolUse hook entry, in `settings/*.json`, `coordinator.settings.json`, `assistant.settings.json`, `bin/lib/gate-claude-settings.json` and a toolkit's `hooks/hooks.json`, sets `"onFailure": "block"` and a whole-number `timeout` from 1 to 120 seconds beside its `command`, so a guard hook that fails or hangs blocks the call.
 - Repo invariants are tests too, in `tests/repo.bats` and `tests/coordinator-manual.bats`: every executable in `bin/` answers `--help` with its header, every `bin/team-*` script is named in `roles/coordinator.md`, which is held to the caps in `tests/coordinator-manual.bats`, no tracked Markdown or template outside the records (`bin/lib/records`, kept as written) has an em dash, and `LAYOUT.md`'s Layout stays a list, one thing per line of at most 300 characters, alphabetical within each list.
-  This file stays at most 12,000 bytes, and each worker role in `roles/` under its own cap: when a cap fails, move material behind a pointer, and never raise the cap without Daniel's word.
+  This file stays at most 12,000 bytes, and each role prompt in `roles/` but the coordinator's at most its own cap: when a cap fails, move material behind a pointer, and never raise the cap without Daniel's word.
 
 ## Script conventions
 

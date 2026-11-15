@@ -39,19 +39,10 @@ layout_breaks() {
   assert_equal "$(layout_breaks "$REPO_ROOT/LAYOUT.md")" ""
 }
 
-# The line that says <file> is over its cap of <cap> bytes, and nothing when it is not; the file's
-# size is wc -c's: over_cap <file> <cap>
-over_cap() {
-  local bytes
-  bytes=$(wc -c <"$1")
-  ((bytes <= $2)) ||
-    echo "${1##*/} is $bytes bytes, over its cap of $2: move material behind a pointer (LAYOUT.md, tests/README.md, a script's header), and never raise the cap without Daniel's word"
-}
-
 # Every session of this repository loads CLAUDE.md whole before it reads its task, so its size is
 # held: a lookup lives in LAYOUT.md, tests/README.md or a header, behind a pointer.
 @test "CLAUDE.md is at most 12,000 bytes, and points to LAYOUT.md and tests/README.md, each with its condition first" {
-  assert_equal "$(over_cap "$REPO_ROOT/CLAUDE.md" 12000)" ""
+  assert_equal "$(over_cap "$REPO_ROOT/CLAUDE.md" 12000 CLAUDE.md "LAYOUT.md, tests/README.md, a script's header")" ""
   grep -qE '^Before locating where something lives, or when adding, moving or removing a path, read `LAYOUT\.md`' "$REPO_ROOT/CLAUDE.md"
   grep -qxF 'Before writing or changing a test, a test helper or a CI job, read `tests/README.md`.' "$REPO_ROOT/CLAUDE.md"
   [[ -f $REPO_ROOT/LAYOUT.md && -f $REPO_ROOT/tests/README.md ]]
@@ -63,9 +54,9 @@ over_cap() {
 
 @test "a file over its cap is named with its bytes and the cap, and one at its cap passes" {
   printf '%0100d' 0 >"$BATS_TEST_TMPDIR/CLAUDE.md"
-  assert_equal "$(over_cap "$BATS_TEST_TMPDIR/CLAUDE.md" 100)" ""
-  assert_equal "$(over_cap "$BATS_TEST_TMPDIR/CLAUDE.md" 99)" \
-    "CLAUDE.md is 100 bytes, over its cap of 99: move material behind a pointer (LAYOUT.md, tests/README.md, a script's header), and never raise the cap without Daniel's word"
+  assert_equal "$(over_cap "$BATS_TEST_TMPDIR/CLAUDE.md" 100 CLAUDE.md "LAYOUT.md, a header")" ""
+  assert_equal "$(over_cap "$BATS_TEST_TMPDIR/CLAUDE.md" 99 roles/builder.md "the brief, a SOP, a skill")" \
+    "roles/builder.md is 100 bytes, over its cap of 99: move material behind a pointer (the brief, a SOP, a skill), and never raise the cap without Daniel's word"
 }
 
 @test "a table row, a line over 300 characters and a bullet out of order in the Layout section are named" {

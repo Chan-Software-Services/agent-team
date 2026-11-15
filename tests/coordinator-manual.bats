@@ -24,37 +24,23 @@ section() {
   awk -v h="## $2" '$0 == h { on = 1; next } /^## / { on = 0 } on && NF' "$REPO_ROOT/roles/$1.md"
 }
 
-# The line that says the role prompt <file> is over its cap of <cap> bytes, and nothing when it is
-# not; the file's size is wc -c's: role_over_cap <file> <cap>
-role_over_cap() {
-  local bytes
-  bytes=$(wc -c <"$1")
-  ((bytes <= $2)) ||
-    echo "roles/${1##*/} is $bytes bytes, over its cap of $2: move material behind a pointer (the brief, a SOP, a skill), and never raise the cap without Daniel's word"
-}
-
-# A session loads its role prompt whole before it reads its brief, so each worker role's size is
-# held, one line per role: its name and its cap in bytes.
+# A session loads its role prompt whole before it reads its brief, so the size of each role prompt
+# but the coordinator's, whose caps are below, is held, one line per role: its name and its cap in
+# bytes. The helper over_cap (tests/helpers/common.bash) words the failure, and tests/repo.bats
+# tests its message.
 ROLE_CAPS="assistant 6900
 builder 8000
 ops 4900
 planner 6300
 reviewer 7200"
 
-@test "each worker role prompt is at most its cap in bytes" {
+@test "each role prompt but the coordinator's is at most its cap in bytes" {
   local role cap over=()
   while read -r role cap; do
     [[ -f $REPO_ROOT/roles/$role.md ]]
-    over+=("$(role_over_cap "$REPO_ROOT/roles/$role.md" "$cap")")
+    over+=("$(over_cap "$REPO_ROOT/roles/$role.md" "$cap" "roles/$role.md" "the brief, a SOP, a skill")")
   done <<<"$ROLE_CAPS"
   assert_equal "$(printf '%s\n' "${over[@]}" | sed '/^$/d')" ""
-}
-
-@test "a role prompt over its cap is named with its bytes and the cap, and one at its cap passes" {
-  printf '%0100d' 0 >"$BATS_TEST_TMPDIR/builder.md"
-  assert_equal "$(role_over_cap "$BATS_TEST_TMPDIR/builder.md" 100)" ""
-  assert_equal "$(role_over_cap "$BATS_TEST_TMPDIR/builder.md" 99)" \
-    "roles/builder.md is 100 bytes, over its cap of 99: move material behind a pointer (the brief, a SOP, a skill), and never raise the cap without Daniel's word"
 }
 
 # The manual's caps, which only come down (sops/coordinator-manual.md says what holds them).
