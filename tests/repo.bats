@@ -251,7 +251,9 @@ probe_rules() {
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
       or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused") | not)
+      or (.expect | IN("rule", "hook", "refused", "kernel") | not)
+      or (.expect == "kernel" and (. as $a | .tool != "Bash" or (.input | contains("@CANARY@/\($a.id)\"") | not)))
+      or (.background != null and (.background != true or .tool != "Bash" or .expect != "kernel"))
       or ((.expect == "hook") != (.marker | type == "string"))
       or ((.expect == "rule") != (.family | type == "string"))
       or (.family != null and (.family | IN($families[]) | not)))
