@@ -51,8 +51,9 @@ if ((listed == 124 || listed == 137)); then
   : >"$errors"
   off "the live session list (claude agents --json) did not answer in $LIST_SECONDS s"
 fi
-((listed == 0)) && sessions=$(jq -ce 'select(type == "array")' 2>/dev/null <<<"$sessions") ||
+if ((listed)) || ! sessions=$(jq -ce 'select(type == "array")' 2>/dev/null <<<"$sessions"); then
   off "cannot read the live session list (claude agents --json)"
+fi
 twins=$(ledger_jq 'assistant_twin_lines($self)' -r --arg self "$own" <<<"$sessions") ||
   off "cannot read the session list's assistants"
 
