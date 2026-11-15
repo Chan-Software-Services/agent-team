@@ -35,7 +35,9 @@ role_over_cap() {
 
 # A session loads its role prompt whole before it reads its brief, so each worker role's size is
 # held, one line per role: its name and its cap in bytes.
-ROLE_CAPS="builder 8000
+ROLE_CAPS="assistant 6900
+builder 8000
+ops 4900
 planner 6300
 reviewer 7200"
 
