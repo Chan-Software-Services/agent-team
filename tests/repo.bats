@@ -2419,15 +2419,24 @@ ok 2 after it"
   limits_checkout "$copy"
   # A test that passes but leaves a process holding bats' output (fd 3) open, deaf to TERM, so
   # bats never ends after its last test until the kill 30 s after the TERM.
+  # A shell that traps TERM prints bash's job notice ("Terminated" on bash 5.2, with the command
+  # on 5.3) when the limit's TERM ends a command it waits on, and bats' per-test countdown (on
+  # under tests/run's BATS_TEST_TIMEOUT) is such a shell on the file's output, the likely source
+  # of the "Terminated" a loaded CI runner added at random. So the test leaves one too, always,
+  # on fd 11, where bash keeps bats' stderr while the test's output goes to its log, and the
+  # output so far is the file's lines but that notice.
   printf '%s\n' '@test "first" { true; }' \
-    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & }' >"$copy/tests/held.bats"
+    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & bash -c '"'"'trap : TERM; sleep 300; true'"'"' 2>&11 & }' \
+    >"$copy/tests/held.bats"
   echo '@test "quick" { true; }' >"$copy/tests/quick.bats"
-  local start=$SECONDS
+  local start=$SECONDS held
   TEAM_JOBS=2 TESTS_FILE_MINUTES=1 run -1 --separate-stderr "$copy/tests/run" bats
   ((SECONDS - start >= 60 && SECONDS - start < 120))
   assert_contains "$output" "ok tests/quick.bats ("
   [[ $(grep '^not ok tests/held.bats' <<<"$output") =~ ^"not ok tests/held.bats ("(6[0-9]|[7-9][0-9]|1[01][0-9])"s): stopped at its 1-minute limit"$ ]]
-  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output")" "--- tests/held.bats
+  held=$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output")
+  grep -qE '^Terminated( .*)?$' <<<"$held" || { echo "no job notice in the held file's output" >&2 && return 1; }
+  assert_equal "$(grep -vE '^Terminated( .*)?$' <<<"$held")" "--- tests/held.bats
 1..2
 ok 1 first
 ok 2 leaves a process behind
