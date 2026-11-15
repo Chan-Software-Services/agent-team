@@ -32,7 +32,7 @@ seams() {
   export CONFINE_REAL=$REPO_ROOT/bin/lib/confine.py
 }
 
-FIX="fix: bin/lib/confine.py's own --help says what it needs"
+FIX="fix: bin/lib/confine-shell's and bin/lib/confine.py's own --help say what each needs"
 
 @test "the confine line passes with the kernel's ABI where a session's command runs confined, and leaves nothing in /tmp" {
   needs_landlock
@@ -40,7 +40,7 @@ FIX="fix: bin/lib/confine.py's own --help says what it needs"
   # A task or a session named in the doctor's environment names no session tmp for its run.
   local task="T$((7100000000 + $$))"
   AGENT_TEAM_TASK=$task CLAUDE_CODE_SESSION_ID=abcdef0123456789 run_bin -0 team-doctor
-  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (confine.py --session ran in a sandbox worktree); no project has confine on, so every worker runs on the text guard alone"
+  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (confine-shell ran true in a sandbox worktree); no project has confine on, so every worker runs on the text guard alone"
   [[ ! -e /tmp/agent-team-$task && ! -e /tmp/agent-team-gate-abcdef01 ]]
   run_bin -0 --separate-stderr team-doctor --json
   jq -e '.[] | select(.check == "confine") | .verdict == "PASS" and .fix == ""' <<<"$output"
@@ -54,7 +54,7 @@ FIX="fix: bin/lib/confine.py's own --help says what it needs"
     sed -i "s/^\\[$project\\]\$/&\\nconfine = \"on\"/" "$TEAM_HOME/projects.toml"
   done
   run_bin -0 team-doctor
-  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (confine.py --session ran in a sandbox worktree); confine is on for $(TEAM_HOME=$TEAM_HOME "$CODE_CHECKOUT/bin/team-project" --list | paste -sd, | sed 's/,/, /g')"
+  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (confine-shell ran true in a sandbox worktree); confine is on for $(TEAM_HOME=$TEAM_HOME "$CODE_CHECKOUT/bin/team-project" --list | paste -sd, | sed 's/,/, /g')"
 }
 
 @test "the confine line warns, with no fix, on macOS and on a kernel with no Landlock or ABI 1" {
@@ -80,6 +80,17 @@ FIX="fix: bin/lib/confine.py's own --help says what it needs"
   seams
   CONFINE_TEST_FAIL=restrict run_bin -1 team-doctor
   assert_equal "$(line_of confine)" "FAIL confine: confine: cannot enter the domain: Operation not permitted; $FIX"
+}
+
+@test "the confine line fails with the prefix's own line when it finds no python3 where a session's commands look" {
+  needs_landlock
+  tools_at arch
+  # The doctor's copy of the prefix looks where no python3 is, as on a machine whose only one is
+  # elsewhere on PATH.
+  sed -i 's|^for python in .*; do$|for python in /no-such-directory/python3; do|' "$CODE_CHECKOUT/bin/lib/confine-shell"
+  grep -q '^for python in /no-such-directory/python3; do$' "$CODE_CHECKOUT/bin/lib/confine-shell"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of confine)" "FAIL confine: confine-shell: no python3 in /usr/bin, /usr/local/bin or /opt/homebrew/bin, so the command does not run; $FIX"
 }
 
 @test "the confine line fails when the wrapper cannot say the ABI" {

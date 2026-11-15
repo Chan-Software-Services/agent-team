@@ -15,6 +15,8 @@ import importlib.util
 import os
 import sys
 
+# The wrapper is loaded from the checkout, where no test may leave its bytecode.
+sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("confine", os.environ["CONFINE_REAL"])
 confine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(confine)
