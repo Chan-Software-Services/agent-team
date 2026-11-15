@@ -110,7 +110,9 @@ passes() {
       continue
     fi
     status=0
-    err=$(printf '%s\n' "$payload" | bash -c "$line" 2>&1 >/dev/null) || status=$?
+    # A here-string, written before the hook starts: a hook that ends without reading its input
+    # leaves no writer to fail on a closed pipe.
+    err=$(bash -c "$line" 2>&1 >/dev/null <<<"$payload") || status=$?
     ran=$((ran + 1))
     if ((status != 0)) || [[ -n $err ]]; then
       printf 'allowed.jsonl:%s: %s (%s) did not pass a call it must allow (role %s), %s: exit %s\n  %s\n  %s\n' \
