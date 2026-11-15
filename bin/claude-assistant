@@ -43,8 +43,11 @@
 #                 you in #assistant on Discord. Wait for their messages."
 #   --load-check  team-load-check's form, for its --probe and --context of the assistant: it
 #                 launches T0-assistant in <worktree> with the assistant's settings and role prompt
-#                 but the Discord plugin off (its server denied with the others) and no --channels,
-#                 and prints the session's id alone, as team-worker does. Its settings and MCP
+#                 but the Discord plugin off (its server denied with the others), no --channels
+#                 and no Stop or SessionStart hook (assistant-stop and assistant-digest read the
+#                 live assistant's list and hand-offs, which this session must never act on, so
+#                 --context measures its start without the digest), and prints the session's id
+#                 alone, as team-worker does. Its settings and MCP
 #                 config are ~/.local/state/agent-team/assistant-load-check.settings.json and
 #                 .mcp.json, so the live assistant's stay as they are. It is no assistant, so it
 #                 takes no launch lock and none of the refusals above but a malformed command line
@@ -71,8 +74,9 @@ code=$(dirname "$(dirname "$TEAM_LIB")")
 state=$HOME/.claude/channels/discord-assistant
 
 # The load check's assistant: the same settings and role prompt, the Discord plugin off and no
-# --channels, so it hears and posts nothing; named T0-assistant, so it is no assistant to the
-# singleton check, the fence or the heartbeat.
+# --channels, so it hears and posts nothing, and neither the Stop hook nor the start digest, so
+# it is never told to act on the live assistant's list or hand-offs; named T0-assistant, so it is
+# no assistant to the singleton check, the fence or the heartbeat.
 if [[ -n $load_check ]]; then
   [[ -d $load_check ]] || die "no worktree at $load_check for the load check's assistant"
   cd "$load_check"
@@ -81,7 +85,8 @@ if [[ -n $load_check ]]; then
   mkdir -p "$LAUNCH_STATE"
   template=$(mktemp "$LAUNCH_STATE/assistant-load-check.template.XXXXXX")
   trap 'rm -f -- "$template"' EXIT
-  jq '.enabledPlugins["discord@claude-plugins-official"] = false' "$code/assistant.settings.json" >"$template"
+  jq '.enabledPlugins["discord@claude-plugins-official"] = false | del(.hooks.Stop, .hooks.SessionStart)' \
+    "$code/assistant.settings.json" >"$template"
   launch_settings "$template" "" "" "$settings" "$mcp" "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
   out=$(claude --bg --name T0-assistant \
     --autocompact 200k \

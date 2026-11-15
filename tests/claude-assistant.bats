@@ -427,7 +427,12 @@ load_check_argv() {
   assert_equal "$(jq -c 'del(.deniedMcpServers)' "$settings")" \
     "$(jq -c --arg code "$REPO_ROOT" --arg home "$TEAM_HOME" --arg discord "$discord_state" \
       'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)
-       | .enabledPlugins["discord@claude-plugins-official"] = false' "$REPO_ROOT/assistant.settings.json")"
+       | .enabledPlugins["discord@claude-plugins-official"] = false
+       | del(.hooks.Stop, .hooks.SessionStart)' "$REPO_ROOT/assistant.settings.json")"
+  # Neither the Stop hook nor the start digest, which read the live assistant's list and hand-offs
+  # and would have this session act on them; the guards on its tool calls stay.
+  assert_equal "$(jq -c '.hooks | keys' "$settings")" '["PreToolUse"]'
+  jq -e '[.. | strings | select(test("assistant-stop|assistant-digest"))] == []' "$settings" >/dev/null
   assert_equal "$(jq -r '.deniedMcpServers[].serverName' "$settings" | sort)" \
     "$(printf '%s\n' 'claude.ai Claude Docs' codegraph plugin:discord:discord plugin:mongodb-atlas:mongodb-atlas vercel)"
   assert_equal "$(jq -c . "$state/assistant-load-check.mcp.json")" '{"mcpServers":{}}'
