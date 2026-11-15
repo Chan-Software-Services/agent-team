@@ -30,18 +30,17 @@
 # says on stderr when it is not on origin yet, the answer standing). Then team-inbox
 # takes the ask out of the team home's waiting.md; when that fails, a line on stderr says so, and
 # the answer stands.
-# --item <n> (n from 1 to 999), for one reply that answers several items ("3 yes, 5 no"): the ask
-# is the item this checkout's team-inbox --item <n> names, refused with its reason when it names
-# none. A PR's number is refused, naming the merge word's team-log line, an interview's, naming its
-# thread, an ask of tasks/current.md's, naming its team-current done, and an ask of the assistant's
-# list, naming the note to hand it, logging nothing. For an ask it does all the first form does, and
-# also refuses
-# a message whose numbered parts name no part n: each line, a leading bullet (- or *) dropped, is
-# split before each comma, semicolon, & or "and" that a number follows, and a part is an optional
-# #, a number, an optional . ) : or -, then spaces and its text, a part with none taking the text
-# of the next on its line that has some, so "3 and 5 yes" answers both (numbered_parts in
-# bin/lib/ledger.jq). It logs answered as the first form does, the whole message verbatim, with
-# item=<n>, which team-log refuses.
+# --item <n> (n from 1 to 999), for one reply that answers several items ("3 yes, 5 no"): the ask is
+# the item this checkout's team-inbox --item <n> names, refused with its reason when it names none.
+# A PR's number is refused, naming the merge word's team-log line, an interview's or a walk's,
+# naming its thread, an ask of tasks/current.md's, naming its team-current done, and an ask of the
+# assistant's list, naming the note to hand it, logging nothing. For an ask it does all the first
+# form does, and also refuses a message whose numbered parts name no part n: each line, a leading
+# bullet (- or *) dropped, is split before each comma, semicolon, & or "and" that a number follows,
+# and a part is an optional #, a number, an optional . ) : or -, then spaces and its text, a part
+# with none taking the text of the next on its line that has some, so "3 and 5 yes" answers both
+# (numbered_parts in bin/lib/ledger.jq). It logs answered as the first form does, the whole message
+# verbatim, with item=<n>, which team-log refuses.
 # It refuses on a machine that is fenced or that lost the lease (lease_refusal in bin/lib/team.sh),
 # before reading Discord, and in a worker session (worker_refusal), the assistant's included.
 # Prints the message's text verbatim, or with --item the text of each part naming n, one per line;
@@ -83,6 +82,11 @@ if [[ -n $item ]]; then
     ask) ;;
     pr) die "item $item is $task's PR $id, which Daniel's word merges: on a merge word, log team-log $task merge-approved url=$id discord_message=$message head=<the full sha you asked on>, then run team-merge $task" ;;
     interview) die "item $item is $task's interview, which Daniel answers in <#$id>; nothing is logged" ;;
+    walk)
+      where="its task's thread"
+      [[ -z $id ]] || where="<#$id>"
+      die "item $item is $task's walk, whose notes Daniel posts in $where; nothing is logged"
+      ;;
     note)
       [[ $list != assistant ]] ||
         die "item $item is the assistant's item $id of assistant/current.md, an ask with no asked, which no answer is logged for and only the assistant dones: hand it the answer with team-assistant send note"
