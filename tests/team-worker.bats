@@ -296,9 +296,9 @@ origin_files() {
 }
 
 # The line a launch of T7's <role> in $wt1 prints when its fetch of origin/main fails, as a regular
-# expression, git's reason any text of one line: fetch_failed <role>
+# expression, git's reason any text of one line unless one is given: fetch_failed <role> [<reason>]
 fetch_failed() {
-  echo "^team-worker: could not fetch origin/main in $wt1's repository \\([^[:cntrl:]]+\\), so T7-$1 gets proj's instructions as origin/main last stood here\$"
+  echo "^team-worker: could not fetch origin/main in $wt1's repository \\(${2:-[^[:cntrl:]]+}\\), so T7-$1 gets proj's instructions as origin/main last stood here\$"
 }
 
 # A launch's stderr <stderr> but the lines for the earlier sessions it leaves running: notes <stderr>
@@ -527,7 +527,8 @@ base_link() {
   git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/no-repository"
   run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
   assert_equal "$output" "4f2a9c1e"
-  [[ $stderr =~ $(fetch_failed builder) ]] || assert_equal "$stderr" "the fetch line alone"
+  # Git ends on a hint here ("and the repository exists."), and the reason is its last fatal: line.
+  [[ $stderr =~ $(fetch_failed builder 'fatal: [^[:cntrl:]]+') ]] || assert_equal "$stderr" "the fetch line alone, its reason git's fatal: line"
   grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
   grep -qxF "LAST-FETCHED-MARKER" "$(prompt_file)"
   run -1 grep -F "UNREACHED-MARKER" "$(prompt_file)"

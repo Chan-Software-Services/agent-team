@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154,SC2088 # output and stderr are set by bats' run; a ~ is part of a path as an agent types it
 # hooks/session-records-guard: the worker roles' PreToolUse hook on Read, Grep and Glob, which
-# lets a session reach, under ~/.claude/projects, only its own transcript and session directory.
+# lets a session reach, under ~/.claude/projects, only its own transcript and session directory,
+# and under Claude Code's temporary directory only its own session directory.
 # Each test runs the real hook with a PreToolUse JSON on stdin, as Claude Code does.
 
 load helpers/common
@@ -11,7 +12,10 @@ OTHER=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
 
 setup() {
   sandbox
-  unset CLAUDE_CONFIG_DIR
+  unset CLAUDE_CONFIG_DIR SESSION_RECORDS_FOLD_CASE
+  # Claude Code's temporary directory, pinned inside the sandbox: its per-user root is $temp.
+  export CLAUDE_CODE_TMPDIR=$HOME/tmp
+  temp=$CLAUDE_CODE_TMPDIR/claude-$(id -u)
   wt=$HOME/wt
   root=$HOME/.claude/projects
   project=$root/-home-wt
@@ -55,10 +59,18 @@ others() {
   assert_equal "$stderr" "Blocked by session-records-guard: $1 of $2: under ~/.claude/projects a session reads only its own records, its transcript and what lies under its own session directory, and this is another session's."
 }
 
-# wide <tool> <path>: the last call was refused as a search of every session's records.
+# wide <tool> <path> [<root>]: the last call was refused as a search of every session's records,
+# under ~/.claude/projects or the root named.
 wide() {
   assert_equal "$output" ""
-  assert_equal "$stderr" "Blocked by session-records-guard: $1 rooted at $2 would search every session's records under ~/.claude/projects; give it a narrower path."
+  assert_equal "$stderr" "Blocked by session-records-guard: $1 rooted at $2 would search every session's records under ${3:-~/.claude/projects}; give it a narrower path."
+}
+
+# others_temp <tool> <path>: the last call was refused as a reach into another session's
+# directory of Claude Code's temporary directory.
+others_temp() {
+  assert_equal "$output" ""
+  assert_equal "$stderr" "Blocked by session-records-guard: $1 of $2: under $temp a session reads only what lies under its own session directory, and this is another session's."
 }
 
 # unreadable: the last call was refused as input the hook cannot read.
@@ -219,13 +231,19 @@ unreadable() {
 @test "a session id that is empty, missing or no UUID owns nothing under the projects directory" {
   local session
   mkdir -p "$project/team-doctor"
-  for session in "" - team-doctor "*" "$OWN/.." "${OWN^^}" "$OWN "; do
+  for session in "" - team-doctor "*" "$OWN/.." "${OWN^^}" "$OWN " \
+    hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhhhh "h${OWN:1}"; do
     read_file -2 "$project/$OWN.jsonl"
     others Read "$project/$OWN.jsonl"
     read_file -2 "$project/$OWN/tool-results/toolu_1.txt"
     grep_in -2 "$project/$OWN"
     read_file -0 "$wt/src/main.sh"
     allowed
+  done
+  # A letter that is no hex digit makes no UUID, so such an id does not own even its own name.
+  for session in hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhhhh "h${OWN:1}"; do
+    read_file -2 "$project/$session.jsonl"
+    others Read "$project/$session.jsonl"
   done
   session=team-doctor
   read_file -2 "$project/team-doctor/x"
@@ -250,6 +268,100 @@ unreadable() {
   wide Grep "$config"
   # ~/.claude/projects is then no session's records.
   read_file -0 "$project/$OTHER.jsonl"
+  allowed
+}
+
+@test "on a volume that folds case, a path that names the projects directory or another session's records in another case is refused" {
+  # No Linux volume of the tests folds case, so the seam says this one does.
+  export SESSION_RECORDS_FOLD_CASE=1
+  local path
+  for path in "$HOME/.claude/Projects/-home-wt/$OTHER.jsonl" "$HOME/.CLAUDE/projects/-home-wt/$OTHER.jsonl" \
+    "${root^^}/-HOME-WT/${OTHER^^}/tool-results/toolu_1.txt" "$HOME/.claude/PROJECTS/-home-wt"; do
+    read_file -2 "$path"
+    others Read "$path"
+  done
+  grep_in -2 "$HOME/.Claude"
+  wide Grep "$HOME/.Claude"
+  glob_in -2 "$HOME/.claude/Projects"
+  wide Glob "$HOME/.claude/Projects"
+  call -2 Glob "$(jq -cn --arg p "$HOME/.CLAUDE/projects/**/*.jsonl" '{pattern: $p}')"
+  wide Glob "$HOME/.CLAUDE/projects/**/*.jsonl"
+  # The session's own records are its own in any case, and a path outside is outside.
+  read_file -0 "$HOME/.claude/Projects/-home-wt/$OWN.jsonl"
+  allowed
+  read_file -0 "${root^^}/-HOME-WT/${OWN^^}/tool-results/toolu_1.txt"
+  allowed
+  read_file -0 "$wt/SRC/main.sh"
+  allowed
+  # The temporary directory's root folds with it.
+  read_file -2 "${temp^^}/-home-wt/$OTHER/tasks/b1.output"
+  others_temp Read "${temp^^}/-home-wt/$OTHER/tasks/b1.output"
+}
+
+@test "a volume that does not fold case keeps a re-cased name a path of its own" {
+  [[ ! ${root^^} -ef $root ]] || skip "this volume folds case"
+  read_file -0 "$HOME/.claude/Projects/-home-wt/$OTHER.jsonl"
+  allowed
+  grep_in -0 "$HOME/.claude/Projects"
+  allowed
+}
+
+@test "under Claude Code's temporary directory a session reaches only its own session directory" {
+  mkdir -p "$temp/-home-wt/$OWN/tasks" "$temp/-home-wt/$OTHER/tasks" "$temp/-home-other/$OTHER/scratchpad"
+  local path tool
+  for path in "$temp/-home-wt/$OWN/tasks/b1.output" "$temp/-home-wt/$OWN/scratchpad/notes.md"; do
+    read_file -0 "$path"
+    allowed
+  done
+  grep_in -0 "$temp/-home-wt/$OWN"
+  allowed
+  glob_in -0 "$temp/-home-wt/$OWN/tasks"
+  allowed
+  for path in "$temp/-home-wt/$OTHER/tasks/b1.output" "$temp/-home-other/$OTHER/scratchpad/notes.md" \
+    "$temp/-home-wt/x" "$temp/-home-wt/$OWN/../$OTHER/tasks/b1.output"; do
+    read_file -2 "$path"
+    others_temp Read "$path"
+  done
+  ln -s "$temp/-home-wt/$OTHER/tasks" "$wt/their-tasks"
+  read_file -2 "$wt/their-tasks/b1.output"
+  others_temp Read "$wt/their-tasks/b1.output"
+  grep_in -2 "$temp/-home-wt/$OTHER"
+  others_temp Grep "$temp/-home-wt/$OTHER"
+  glob_in -2 "$temp/-home-wt"
+  others_temp Glob "$temp/-home-wt"
+  # The root and what lies above it: a search there would walk every session's directory.
+  for path in "$temp" "$CLAUDE_CODE_TMPDIR"; do
+    grep_in -2 "$path"
+    wide Grep "$path" "$temp"
+    glob_in -2 "$path"
+    wide Glob "$path" "$temp"
+    read_file -0 "$path"
+    allowed
+  done
+  call -2 Glob "$(jq -cn --arg p "$temp/**/*.output" '{pattern: $p}')"
+  wide Glob "$temp/**/*.output" "$temp"
+  # A sibling of the root in the same directory is no session's records.
+  for tool in read_file grep_in glob_in; do
+    "$tool" -0 "$CLAUDE_CODE_TMPDIR/build"
+    allowed
+  done
+  # A session with no UUID owns nothing there either.
+  session=team-doctor read_file -2 "$temp/-home-wt/$OWN/tasks/b1.output"
+}
+
+@test "the temporary directory is CLAUDE_CODE_TMPDIR's, else TMPDIR's, else /tmp's claude-<uid>" {
+  local uid
+  uid=$(id -u)
+  unset CLAUDE_CODE_TMPDIR
+  export TMPDIR=$HOME/os-tmp/
+  read_file -2 "$HOME/os-tmp/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  read_file -0 "$HOME/os-tmp/claude-$uid/-home-wt/$OWN/tasks/b1.output"
+  allowed
+  read_file -0 "$temp/-home-wt/$OTHER/tasks/b1.output"
+  allowed
+  unset TMPDIR
+  read_file -2 "/tmp/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  read_file -0 "/tmp/claude-$uid/-home-wt/$OWN/tasks/b1.output"
   allowed
 }
 
@@ -289,5 +401,5 @@ unreadable() {
 @test "--help prints the header" {
   run_bin -0 hooks/session-records-guard --help
   assert_contains "$output" "Usage: session-records-guard"
-  assert_contains "$output" "a session reaches only its own"
+  assert_contains "$output" "reaches only its own. Exit 2 blocks the call"
 }
