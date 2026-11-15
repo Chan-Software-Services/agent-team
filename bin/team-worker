@@ -138,6 +138,22 @@
 # projects.toml. The project is the one the task's open worktree names in the ledger, else (T0)
 # the registered project whose primary checkout is the worktree's main checkout; a worktree of no registered project gets no toolkit. T0, the load check, measures a
 # toolkit before any project lists it, so it takes any toolkit unlisted but a production one.
+# A skills-only toolkit needs no line in its project's toolkits list, on any launch, whether given
+# by hand, carried from an earlier launch or added as below, since
+# the list keeps MCP servers and production access per project, and a skills-only toolkit starts
+# neither of them, only adding skills and agents that run under the session's own tools, settings and
+# guards. Skills-only is read from the toolkit's own files at each launch (skills_only_toolkit
+# below), and holds exactly when its directory's entries are only .claude-plugin/, README.md,
+# agents/, skills/ and evals/, each optional and none a symbolic link (so no .mcp.json, .lsp.json,
+# hooks/, scripts/, commands/, bin/ or settings.json); .claude-plugin/ holds only plugin.json, an
+# object whose keys are only name, version, description and author; agents/ holds only *.md files
+# and skills/ only <name>/SKILL.md files, none a symbolic link, and no frontmatter of theirs has
+# hooks or mcpServers before a colon; evals/, which no session loads, may hold anything. A toolkit
+# that fails any of these is checked against the project's list like every other, so one that
+# gains a server, a hook or a script comes back under it on its own.
+# A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets
+# the delivery toolkits, spec-review alone, added after any it was given, each once, and logs them
+# in its toolkits with the rest; a launch of any other template or role adds none.
 # An ops launch runs on one message of Daniel's, the one --request links, and is refused (exit 1,
 # nothing started or logged, before the session list is read) unless that message is in
 # #coordinator or the task's latest thread (T0's, which has no thread, in #coordinator only), was
@@ -292,6 +308,16 @@ if [[ -n $brief && -e $record ]] &&
   echo "team-worker: warning: $record is no brief record team-brief writes, so the launch logs no template" >&2
 fi
 
+# The delivery toolkits: every builder that delivers (a builder-deliver, builder-round or
+# builder-fix brief) gets each, after the toolkits it was given, once.
+DELIVERY_TOOLKITS=(spec-review)
+if [[ $role == builder && $template =~ ^builder-(deliver|round|fix)$ ]]; then
+  for kit in "${DELIVERY_TOOLKITS[@]}"; do
+    [[ -d $code/toolkits/$kit ]] || die "the delivery toolkit '$kit' is not in $code/toolkits"
+    [[ " ${toolkits[*]} " == *" $kit "* ]] || toolkits+=("$kit")
+  done
+fi
+
 # T0 is the load check, not a task: it has no ledger entry and stays out of the ledger.
 worktree_event='' project='' ticket=''
 if [[ $task != T0 ]]; then
@@ -347,9 +373,60 @@ if [[ -z $launch_project ]] && { ((${#toolkits[@]})) || [[ $role != ops ]]; }; t
   launch_project=$(team_project --find path "$main_checkout" | head -n 1) || exit 1
 fi
 
-# A worker gets only the toolkits its worktree's project lists in the registry. T0, the load
-# check, measures a toolkit before any project lists it, so it may take unlisted any but a
-# production one, which toolkit_refusal holds to the ops role.
+# skills_only_toolkit <toolkit directory>: whether the toolkit is skills-only, as the header
+# defines it: nothing in it but a plain manifest, a README, agents, skills and evals, and no hook
+# or server declared in any of them. It runs in a subshell, so its glob options end with it.
+skills_only_toolkit() (
+  shopt -s nullglob dotglob
+  prose=()
+  # so_plain <path>: a regular file that is no symbolic link.
+  so_plain() { [[ -f $1 && ! -L $1 ]]; }
+  # so_dir <path>: a directory that is no symbolic link.
+  so_dir() { [[ -d $1 && ! -L $1 ]]; }
+  for entry in "$1"/*; do
+    case ${entry##*/} in
+      README.md) so_plain "$entry" || exit 1 ;;
+      # No session loads a toolkit's evals, so what they hold does not count.
+      evals) so_dir "$entry" || exit 1 ;;
+      .claude-plugin)
+        so_dir "$entry" || exit 1
+        for file in "$entry"/*; do
+          { [[ ${file##*/} == plugin.json ]] && so_plain "$file"; } || exit 1
+          jq -e 'type == "object" and keys - ["author", "description", "name", "version"] == []' "$file" >/dev/null 2>&1 || exit 1
+        done
+        ;;
+      agents)
+        so_dir "$entry" || exit 1
+        for file in "$entry"/*; do
+          { [[ $file == *.md ]] && so_plain "$file"; } || exit 1
+          prose+=("$file")
+        done
+        ;;
+      skills)
+        so_dir "$entry" || exit 1
+        for skill in "$entry"/*; do
+          so_dir "$skill" || exit 1
+          for file in "$skill"/*; do
+            { [[ ${file##*/} == SKILL.md ]] && so_plain "$file"; } || exit 1
+            prose+=("$file")
+          done
+        done
+        ;;
+      *) exit 1 ;;
+    esac
+  done
+  ((${#prose[@]})) || exit 0
+  # A frontmatter is the lines between a first line of --- and the next; hooks or mcpServers
+  # before a colon anywhere in one counts, quoted or nested, so a doubt goes to the allow list.
+  awk 'FNR == 1 { inside = ($0 ~ /^---[[:space:]]*$/); next }
+    inside && /^---[[:space:]]*$/ { inside = 0 }
+    inside && /(hooks|mcpServers)["'\'']?[[:space:]]*:/ { declared = 1; exit }
+    END { exit declared }' "${prose[@]}"
+)
+
+# A worker gets only the toolkits its worktree's project lists in the registry, but a skills-only
+# one, which needs no line there. T0, the load check, measures a toolkit before any project lists
+# it, so it may take unlisted any but a production one, which toolkit_refusal holds to the ops role.
 if ((${#toolkits[@]})); then
   kit_project=$launch_project
   [[ -n $kit_project ]] ||
@@ -357,6 +434,7 @@ if ((${#toolkits[@]})); then
   kit_list=$(team_project "$kit_project" toolkits) || exit 1
   for kit in "${toolkits[@]}"; do
     [[ $task != T0 ]] || toolkit_refusal "$kit" builder >/dev/null || continue
+    ! skills_only_toolkit "$code/toolkits/$kit" || continue
     jq -e --arg kit "$kit" 'index([$kit])' <<<"$kit_list" >/dev/null ||
       die "toolkit '$kit' is not one of $kit_project's toolkits in projects.toml ($(jq -r 'if . == [] then "it lists none" else join(", ") end' <<<"$kit_list")): a new toolkit for a project takes Daniel's yes, then its name in that project's toolkits line in projects.toml"
   done

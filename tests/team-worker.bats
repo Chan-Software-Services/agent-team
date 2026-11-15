@@ -1289,6 +1289,176 @@ UNLISTED="a new toolkit for a project takes Daniel's yes, then its name in that 
   assert_equal "$(stub_calls claude)" ""
   assert_equal "$(launches)" ""
 }
+# unlist <toolkit>...: take each toolkit out of every project's toolkits line in the test's
+# registry, so the project no longer lists it.
+unlist() {
+  local kit
+  for kit in "$@"; do
+    sed -i "s/\"$kit\", //" "$TEAM_HOME/projects.toml"
+  done
+}
+
+# template_brief <task> <template>: a brief of <task>, brief-work.md, with the record team-brief
+# writes beside it naming <template>, and the first prompt that names it in $brief_prompt.
+template_brief() {
+  mkdir -p "$TEAM_HOME/tasks/$1"
+  echo "the brief" >"$TEAM_HOME/tasks/$1/brief-work.md"
+  jq -cn --arg template "$2" '{template: $template, project: "proj", values: {}}' >"$TEAM_HOME/tasks/$1/brief-work.json"
+  brief_prompt="Read your brief at $TEAM_HOME/tasks/$1/brief-work.md"
+}
+
+# The plugin directories of the last session started, in order.
+plugin_dirs() {
+  bg_calls | tail -n 1 | jq -c '. as $call | [indices("--plugin-dir")[] | $call[. + 1]]'
+}
+
+# again <task>: the ledger emptied and <task> opened again, so the next launch is its first.
+again() {
+  : >"$TEAM_HOME/ledger.jsonl"
+  open_task "$1"
+}
+
+@test "a delivering builder's launch gets the spec-review toolkit its project does not list, after any given and never twice" {
+  unlist spec-review
+  local template kits
+  kits=$REPO_ROOT/toolkits
+  for template in builder-deliver builder-round builder-fix; do
+    again T7
+    template_brief T7 "$template"
+    run_bin -0 team-worker T7 builder "$wt1" -- "$brief_prompt"
+    assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$kits" '["\($k)/spec-review"]')"
+    assert_equal "$(launches | jq -c '{template, toolkits}')" "$(jq -cn --arg t "$template" '{template: $t, toolkits: ["spec-review"]}')"
+    assert_equal "$(jq -c . "$TEAM_HOME/tasks/T7/mcp.builder.proj.json")" '{"mcpServers":{}}'
+  done
+  # After a toolkit the launch was given, which its project lists.
+  again T7
+  run_bin -0 team-worker T7 builder "$wt1" --toolkit browser -- "$brief_prompt"
+  assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$kits" '["\($k)/browser", "\($k)/spec-review"]')"
+  assert_equal "$(launches | jq -c .toolkits)" '["browser","spec-review"]'
+  # Given by hand or carried from an earlier launch, it is not doubled.
+  again T7
+  run_bin -0 team-worker T7 builder "$wt1" --toolkit spec-review --toolkit browser -- "$brief_prompt"
+  assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$kits" '["\($k)/spec-review", "\($k)/browser"]')"
+  assert_equal "$(launches | jq -c .toolkits)" '["spec-review","browser"]'
+  run_bin -0 team-log --check
+  # A toolkit that is not skills-only still needs the project's line, on a delivery too.
+  unlist codegraph
+  again T7
+  refused_launch "toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, effect, kit-a, kit-b, kit-c): $UNLISTED" \
+    T7 builder "$wt1" --toolkit codegraph -- "$brief_prompt"
+}
+
+@test "a ticket builder, a launch with no brief record and a reviewer get no delivery toolkit; given spec-review unlisted they launch with it, and another unlisted toolkit is refused as before" {
+  unlist spec-review codegraph
+  local unlisted="toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, effect, kit-a, kit-b, kit-c): $UNLISTED"
+  # launch: "<role> <template, or none for a prompt naming no brief>"
+  local launch role template prompt
+  for launch in "builder builder-ticket" "builder builder-merge-base" "builder resume" "builder none" \
+    "reviewer reviewer" "reviewer builder-deliver" "planner builder-deliver"; do
+    read -r role template <<<"$launch"
+    prompt=go
+    if [[ $template != none ]]; then
+      template_brief T7 "$template"
+      prompt=$brief_prompt
+    fi
+    again T7
+    run_bin -0 team-worker T7 "$role" "$wt1" -- "$prompt"
+    assert_equal "$launch: $(plugin_dirs) $(launches | jq -c .toolkits)" "$launch: [] []"
+    # The exemption: a skills-only toolkit needs no line in the project's list, on any launch.
+    again T7
+    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit spec-review -- "$prompt"
+    assert_equal "$launch: $(plugin_dirs)" "$launch: $(jq -cn --arg k "$REPO_ROOT/toolkits" '["\($k)/spec-review"]')"
+    assert_equal "$launch: $(launches | jq -c .toolkits)" "$launch: [\"spec-review\"]"
+    # codegraph has hooks/, so it is checked against the list, alone or beside spec-review.
+    again T7
+    refused_launch "$unlisted" T7 "$role" "$wt1" --toolkit codegraph -- "$prompt"
+    refused_launch "$unlisted" T7 "$role" "$wt1" --toolkit spec-review --toolkit codegraph -- "$prompt"
+  done
+}
+
+# skills_only_kit <name>: a fixture toolkit of the fake checkout that is skills-only: a plain
+# manifest, a README, one agent, one skill, and evals holding what no session loads.
+skills_only_kit() {
+  local dir=$code/toolkits/$1
+  mkdir -p "$dir/.claude-plugin" "$dir/agents" "$dir/skills/look" "$dir/evals/case/hooks"
+  echo '{"name": "kit", "version": "0.1.0", "description": "A kit.", "author": {"name": "A"}}' >"$dir/.claude-plugin/plugin.json"
+  echo "# kit" >"$dir/README.md"
+  printf '%s\n' --- "name: reader" "description: Reads." "tools: [Read]" --- "You read. hooks: none of yours." >"$dir/agents/reader.md"
+  printf '%s\n' --- "name: look" "description: Looks." --- "# Look" "mcpServers: this line is prose." >"$dir/skills/look/SKILL.md"
+  echo '{"mcpServers": {"x": {"command": "x"}}}' >"$dir/evals/.mcp.json"
+  echo '{}' >"$dir/evals/case/hooks/hooks.json"
+  echo "echo scaffold" >"$dir/evals/case/scaffold.sh"
+}
+
+@test "a skills-only toolkit launches unlisted, whatever its evals hold, and one with a server, hook, script or any other file is refused unlisted" {
+  fake_checkout
+  skills_only_kit kit-s
+  open_task T7
+  run_fake T7 planner "$wt1" --toolkit kit-s -- go
+  assert_equal "$status" 0
+  assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$code/toolkits" '["\($k)/kit-s"]')"
+  assert_equal "$(launches | jq -c .toolkits)" '["kit-s"]'
+  # Nothing but a README is skills-only too, and so is the kit with no evals.
+  mkdir "$code/toolkits/kit-r"
+  echo "# kit" >"$code/toolkits/kit-r/README.md"
+  skills_only_kit kit-n
+  rm -r "${code:?}/toolkits/kit-n/evals"
+  local kit
+  for kit in kit-r kit-n; do
+    again T7
+    run_fake T7 planner "$wt1" --toolkit "$kit" -- go
+    assert_equal "$kit: $status $(launches | jq -c .toolkits)" "$kit: 0 [\"$kit\"]"
+  done
+
+  # Each variant is the skills-only kit with one change, which puts it back under the allow list.
+  local change dir calls logged n=0
+  local -a changes=(
+    'echo "{\"mcpServers\": {}}" >.mcp.json'
+    'echo "{}" >.lsp.json'
+    'mkdir hooks && echo "{}" >hooks/hooks.json'
+    'mkdir scripts'
+    'mkdir commands'
+    'mkdir bin'
+    'echo "{}" >settings.json'
+    'echo "notes" >NOTES.md'
+    'jq ".mcpServers = {}" .claude-plugin/plugin.json >m && mv m .claude-plugin/plugin.json'
+    'jq ".hooks = {}" .claude-plugin/plugin.json >m && mv m .claude-plugin/plugin.json'
+    'echo "[]" >.claude-plugin/plugin.json'
+    'echo "not json" >.claude-plugin/plugin.json'
+    'echo "{}" >.claude-plugin/marketplace.json'
+    'sed -i "2i hooks:" agents/reader.md'
+    'sed -i "2i mcpServers: {x: {command: x}}" agents/reader.md'
+    'sed -i "2i \"hooks\" : {}" skills/look/SKILL.md'
+    'sed -i "2i mcpServers:" skills/look/SKILL.md'
+    'echo "echo run" >agents/run.sh'
+    'mkdir agents/more'
+    'echo "echo run" >skills/look/run.sh'
+    'mkdir skills/look/scripts'
+    'echo "loose" >skills/loose.md'
+    'rm -r skills && ln -s ../kit-a skills'
+    'rm README.md && ln -s ../kit-a/.mcp.json README.md'
+  )
+  for change in "${changes[@]}"; do
+    n=$((n + 1))
+    kit=kit-v$n dir=$code/toolkits/kit-v$n
+    skills_only_kit "$kit"
+    (cd "${dir:?}" && eval "$change")
+    again T7
+    calls=$(bg_calls | wc -l) logged=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+    run_fake T7 planner "$wt1" --toolkit "$kit" -- go
+    assert_equal "$change: $status" "$change: 1"
+    assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, codegraph, effect, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
+    assert_equal "$change: $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$change: $calls $logged"
+  done
+}
+
+@test "the help states the delivery toolkits, the skills-only exemption, its reason and the property" {
+  run_bin -0 team-worker --help
+  assert_contains "$output" "A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets"
+  assert_contains "$output" "A skills-only toolkit needs no line in its project's toolkits list, on any launch"
+  assert_contains "$output" "the list keeps MCP servers and production access per project, and a skills-only toolkit starts"
+  assert_contains "$output" "skills_only_toolkit"
+}
 
 @test "the worker settings take away the tools and skills no worker uses, and the check notices a named one" {
   open_task T7
