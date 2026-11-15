@@ -56,10 +56,11 @@ describe("the spec-review toolkit", () => {
     }
     const loaded = [];
     for (const agent of readdirSync(join(toolkit, "agents"))) {
-      assert.match(agent, /\.md$/, `agents/${agent}: ${why}`);
+      assert.match(agent, /^[a-z0-9-]+\.md$/, `agents/${agent}: ${why}`);
       loaded.push(join("agents", agent));
     }
     for (const dir of readdirSync(join(toolkit, "skills"))) {
+      assert.match(dir, /^[a-z0-9-]+$/, `skills/${dir}: ${why}`);
       assert.deepEqual(readdirSync(join(toolkit, "skills", dir)), ["SKILL.md"], `skills/${dir}: ${why}`);
       loaded.push(join("skills", dir, "SKILL.md"));
     }
@@ -68,8 +69,8 @@ describe("the spec-review toolkit", () => {
       // The launch rule reads a frontmatter only as plain ASCII: a file opens with ---, and no line of it holds another byte.
       assert.ok(read(file).startsWith("---\n"), `${file} does not open with a frontmatter: ${why}`);
       assert.match(frontmatterOf(read(file)), /^[\x20-\x7E\n]+$/, `${file}'s frontmatter holds a byte that is no printable ASCII: ${why}`);
-      // A skill's body has Claude Code run a command with an exclamation mark next to a backtick, which the launch rule refuses.
-      if (file.endsWith("SKILL.md")) assert.doesNotMatch(read(file), /!`|`!/, `${file} holds an exclamation mark next to a backtick: ${why}`);
+      // Claude Code runs a command a skill's text writes with an exclamation mark, so the launch rule refuses one anywhere in a skill file.
+      if (file.endsWith("SKILL.md")) assert.ok(!read(file).includes("!"), `${file} holds an exclamation mark: ${why}`);
       // The launch rule's listed keys: a line that is not blank, a comment or indented opens with one.
       for (const line of frontmatterOf(read(file)).split("\n").filter((line) => !/^(\s|#|$)/.test(line))) {
         assert.match(line, /^(name|description|tools|model|omitClaudeMd|argument-hint):(\s|$)/, `${file}, "${line.slice(0, 40)}": ${why}`);

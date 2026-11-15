@@ -157,9 +157,12 @@
 # only printable ASCII, a carriage return at its end aside, and each of them that is not blank, a comment or
 # indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,
 # the first of them not indented, and none has hooks or mcpServers before a colon or opens with ?
-# (a YAML explicit key), so a file this cannot read with certainty is a doubt; no skill file
-# holds an exclamation mark next to a backtick, on either side, which is how a skill's body has
-# Claude Code run a command; evals/, which no session loads, may hold anything. A toolkit
+# (a YAML explicit key), so a file this cannot read with certainty is a doubt; evals/, which no
+# session loads, may hold anything. No skill file holds an exclamation mark anywhere, since Claude
+# Code runs a command a skill's text writes with one, and looks for it after filling the skill's
+# arguments in. The toolkit's name, each skill directory's and each agent file's before its .md
+# hold only lowercase letters, digits and dashes, since Claude Code's text of a skill opens with
+# the skill directory's path, where a name could write such a command. A toolkit
 # that fails any of these is checked against the project's list like every other, so one that
 # gains a server, a hook or a script comes back under it on its own.
 # A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets
@@ -391,6 +394,12 @@ fi
 # or server declared in any of them. It runs in a subshell, so its glob options end with it.
 skills_only_toolkit() (
   shopt -s nullglob dotglob
+  # The C locale, so a range of letters holds ASCII's lowercase ones alone.
+  LC_ALL=C
+  # so_name <name>: a name of lowercase letters, digits and dashes alone. Claude Code's text of a
+  # skill opens with the skill directory's path, so a name may hold nothing a command is written with.
+  so_name() { [[ $1 =~ ^[a-z0-9-]+$ ]]; }
+  so_name "${1##*/}" || exit 1
   prose=()
   # so_plain <path>: a regular file that is no symbolic link.
   so_plain() { [[ -f $1 && ! -L $1 ]]; }
@@ -411,14 +420,15 @@ skills_only_toolkit() (
       agents)
         so_dir "$entry" || exit 1
         for file in "$entry"/*; do
-          { [[ $file == *.md ]] && so_plain "$file"; } || exit 1
+          name=${file##*/}
+          { [[ $name == *.md ]] && so_name "${name%.md}" && so_plain "$file"; } || exit 1
           prose+=("$file")
         done
         ;;
       skills)
         so_dir "$entry" || exit 1
         for skill in "$entry"/*; do
-          so_dir "$skill" || exit 1
+          { so_name "${skill##*/}" && so_dir "$skill"; } || exit 1
           for file in "$skill"/*; do
             { [[ ${file##*/} == SKILL.md ]] && so_plain "$file"; } || exit 1
             prose+=("$file")
@@ -449,13 +459,13 @@ skills_only_toolkit() (
   # it, by its size against its size with the NULs removed.
   # A skill's body is read for one thing: Claude Code runs a command written in it when the skill
   # is used (an exclamation mark and a command in backticks, or a fence that ends in an
-  # exclamation mark), so a skill file holding an exclamation mark next to a backtick, on either
-  # side, anywhere in it is a doubt.
+  # exclamation mark), and looks for one after it has filled the skill's arguments in, which can
+  # bring the two together. So a skill file holding an exclamation mark anywhere is a doubt.
   for file in "${prose[@]}"; do
     [[ $(wc -c <"$file") -eq $(tr -d '\000' <"$file" | wc -c) ]] || exit 1
     if [[ ${file##*/} == SKILL.md ]]; then
       # grep exits 1 only when it read the file and found neither.
-      LC_ALL=C grep -q -F -e '!`' -e '`!' "$file" && exit 1
+      LC_ALL=C grep -q -F -e '!' "$file" && exit 1
       [[ $? -eq 1 ]] || exit 1
     fi
     LC_ALL=C awk -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '

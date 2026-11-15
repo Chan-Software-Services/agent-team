@@ -1408,7 +1408,7 @@ skills_only_kit() {
   printf '%s\n' $'--- \t' "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
     "tools: [Read]" "model: inherit" "omitClaudeMd: true" --- "You read." >"$code/toolkits/kit-n/agents/reader.md"
   # So do lines that end with a carriage return and a line feed.
-  printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" 'Look! Then run `id`, and say ! alone.' >"$code/toolkits/kit-n/skills/look/SKILL.md"
+  printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" 'Look, then run `id` with $ARGUMENTS and $1.' >"$code/toolkits/kit-n/skills/look/SKILL.md"
   local kit
   for kit in kit-r kit-n; do
     again T7
@@ -1504,6 +1504,26 @@ skills_only_kit() {
     # mark and a command in backticks, and a fence that ends in an exclamation mark.
     'printf "%s\n" "!\`id\`" >>skills/look/SKILL.md'
     'printf "%s\n" "\`\`\`!" "id" "\`\`\`" >>skills/look/SKILL.md'
+    # A command only Claude Code's text of the skill holds, once it has filled the arguments in:
+    # so an exclamation mark anywhere in a skill file, its frontmatter included, is a doubt.
+    'printf "%s\n" "!\$ARGUMENTS\`id\`" >>skills/look/SKILL.md'
+    'printf "%s\n" "\`\`\`\$ARGUMENTS!" "id" "\`\`\`" >>skills/look/SKILL.md'
+    'printf "%s\n" "!\$1" >>skills/look/SKILL.md'
+    'echo "Stop! Then look." >>skills/look/SKILL.md'
+    'sed -i "s/^description: Looks\.$/description: Looks!/" skills/look/SKILL.md'
+    # A command in a name, which Claude Code's text of a skill opens with: a skill directory or an
+    # agent file whose name is not lowercase letters, digits and dashes.
+    'printf "%s\n" "id" "\`\`\`" >>skills/look/SKILL.md && mv skills/look "skills/\`\`\`!"'
+    'mv skills/look "skills/a !\`id\`"'
+    'mv skills/look skills/Look'
+    'mv skills/look skills/look_up'
+    'mv skills/look skills/look.v2'
+    'mv skills/look "skills/look up"'
+    'mv agents/reader.md agents/Reader.md'
+    'mv agents/reader.md agents/reader_two.md'
+    'mv agents/reader.md agents/reader.v2.md'
+    'mv agents/reader.md "agents/read er.md"'
+    'mv agents/reader.md agents/.md'
   )
   for change in "${changes[@]}"; do
     n=$((n + 1))
@@ -1516,6 +1536,17 @@ skills_only_kit() {
     assert_equal "$change: $status" "$change: 1"
     assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, codegraph, effect, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
     assert_equal "$change: $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$change: $calls $logged"
+  done
+  # The toolkit's own name is in that text too: one that is not lowercase letters, digits and
+  # dashes is under the allow list, whatever it holds.
+  for kit in kit_u Kit-u kit.u 'kit u' 'kit!u'; do
+    skills_only_kit "$kit"
+    again T7
+    calls=$(bg_calls | wc -l)
+    run_fake T7 planner "$wt1" --toolkit "$kit" -- go
+    assert_equal "$kit: $status" "$kit: 1"
+    assert_contains "$output" "team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml"
+    assert_equal "$kit: $(bg_calls | wc -l)" "$kit: $calls"
   done
 }
 
@@ -1552,7 +1583,8 @@ skills_only_kit() {
   assert_contains "$output" "none has hooks or mcpServers before a colon or opens with ?"
   assert_contains "$output" "byte and opens with a frontmatter, a first line of --- and then only spaces and tabs, with"
   assert_contains "$output" "only printable ASCII, a carriage return at its end aside"
-  assert_contains "$output" "holds an exclamation mark next to a backtick, on either side"
+  assert_contains "$output" "session loads, may hold anything. No skill file holds an exclamation mark anywhere, since Claude"
+  assert_contains "$output" "hold only lowercase letters, digits and dashes, since Claude Code's text of a skill opens with"
   assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 
