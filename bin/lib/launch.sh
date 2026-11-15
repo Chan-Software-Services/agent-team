@@ -18,6 +18,9 @@
 #                   [@<KEY>@=<value>...]
 #                                writes the session's MCP config and settings, the servers its
 #                                list names but its own denied.
+#   launch_skills_off <settings> <plugin directory>
+#                                turns off, in the written settings, each of the user's personal
+#                                skills but one named as a skill of the plugin.
 #
 # The lock only serialises launches: `claude --bg` returns at once, so the session list, not the
 # lock, says whether a session is alive. Each function after launch_lock runs what it calls with
@@ -124,5 +127,39 @@ launch_settings() {
     | .deniedMcpServers = [$ARGS.positional | unique[]
         | select(. as $name | (IN($own[]) | not) and all($plugins[]; . as $p | $name | startswith($p) | not))
         | {serverName: .}]' "$template" --args "${servers[@]}" >"$settings.$$"
+  mv -f "$settings.$$" "$settings"
+}
+
+# launch_skills_off <settings> <plugin directory>: sets, in the settings launch_settings wrote,
+# skillOverrides.<name> to "off" for each personal skill of the user, so the session's skill
+# listing holds none of them and one the user adds later is off at the next launch. A personal
+# skill is a directory of ${CLAUDE_CONFIG_DIR:-~/.claude}/skills that holds a SKILL.md, and its
+# names are the directory's and, when its frontmatter has a name line, that one's too, so it is
+# off whichever of the two Claude Code lists it by. A name the settings already override keeps its
+# value, and a name <plugin directory>/skills holds gets no entry, since an override by a bare
+# name may reach the plugin's skill of that name. Written whole, then moved into place.
+launch_skills_off() {
+  local settings=$1 plugin=$2 dir line skill_name
+  local -a skill_names=() found=()
+  local -A skills_kept=()
+  for dir in "$plugin"/skills/*/; do
+    [[ ! -d $dir ]] || skills_kept[$(basename "$dir")]=1
+  done
+  for dir in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/skills/*/; do
+    [[ -f ${dir}SKILL.md ]] || continue
+    found=("$(basename "$dir")")
+    {
+      IFS= read -r line && [[ $line == --- ]] && while IFS= read -r line && [[ $line != --- ]]; do
+        [[ $line =~ ^name:[[:space:]]*[\"\']?([^\"\']*[^\"\'[:space:]]) ]] || continue
+        found+=("${BASH_REMATCH[1]}")
+        break
+      done
+    } <"${dir}SKILL.md" || true
+    for skill_name in "${found[@]}"; do
+      [[ -n ${skills_kept[$skill_name]:-} ]] || skill_names+=("$skill_name")
+    done
+  done
+  jq '.skillOverrides = (reduce $ARGS.positional[] as $name ({}; .[$name] = "off")) + (.skillOverrides // {})' \
+    "$settings" --args "${skill_names[@]}" >"$settings.$$"
   mv -f "$settings.$$" "$settings"
 }
