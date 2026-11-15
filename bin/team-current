@@ -171,10 +171,11 @@ where_problem() {
   fi
 }
 
-# The ledger's kinds, from the contract, one per line, read once: ledger_kinds
-ledger_kinds() {
+# Whether <kind> is one of the ledger's kinds, from the contract, read once; it writes to no pipe,
+# which a reader that stops at its first match would close under the writer: ledger_kind <kind>
+ledger_kind() {
   [[ -n ${kinds:-} ]] || kinds=$(jq -r '.kinds | keys[]' "$TEAM_LIB/ledger-contract.json")
-  printf '%s\n' "$kinds"
+  [[ $'\n'$kinds$'\n' == *$'\n'"$1"$'\n'* ]]
 }
 
 # Why <condition> is no close condition, or nothing when it is one: condition_problem <condition>
@@ -185,7 +186,7 @@ condition_problem() {
     $condition =~ ^pr\ https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[1-9][0-9]*/?\ merged$ ]]; then
     return 0
   elif [[ $condition =~ ^ledger\ T[1-9][0-9]*\ ([^[:space:]]+)$ ]]; then
-    grep -qxF -- "${BASH_REMATCH[1]}" <(ledger_kinds) ||
+    ledger_kind "${BASH_REMATCH[1]}" ||
       echo "the condition's kind '${BASH_REMATCH[1]}' is not a ledger kind (team-log --help lists them)"
   elif [[ $condition =~ ^file\ (.+)$ ]]; then
     path=${BASH_REMATCH[1]}
