@@ -894,7 +894,7 @@ ticket_facts() {
   cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/before"
 
   run_bin -1 --separate-stderr team-open --task T1 --resume home --ticket 02
-  assert_equal "$stderr" "team-open: $tbranch is on no origin, a ticket branch being never pushed, and the team home's origin has no wip/home/T1--02, so T1's ticket 02 worktree in home cannot be made here"
+  assert_equal "$stderr" "team-open: $tbranch is on no origin, a ticket branch being kept only by the checkpoint, and the team home's origin has no wip/home/T1--02, so T1's ticket 02 worktree in home cannot be made here"
   [[ ! -e $twt ]]
   assert_equal "$(git -C "${home:?}" worktree list --porcelain | grep -c '^worktree ')" 1
   run -1 git -C "${home:?}" show-ref -q --verify "refs/heads/$tbranch"

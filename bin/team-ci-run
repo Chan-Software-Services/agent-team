@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# Find CI's run of the head a builder pushed, or start one on its branch, then wait on that one run
+# to its end, and always end: a builder of a project with branch_ci runs it once its head is on
+# origin, with Bash run_in_background, and reports only once it exits 0.
+#
+# Usage: team-ci-run <project> <branch> <sha>
+#   project  a registered project whose projects.toml entry has branch_ci, the workflow file under
+#            .github/workflows/ whose run it waits on
+#   branch   the branch the caller pushed, a task's or a ticket's: never the project's base, never
+#            main
+#   sha      the head the caller pushed to it, its full 40 hex characters
+# It pushes nothing itself, and takes no --json: only builders run it, and they read its text.
+# Refused before any call to GitHub: a malformed command line (exit 2), an unregistered project, a
+# project with no branch_ci and a branch that is the project's base or main (exit 1).
+# It looks every 10 s (WAIT_SECONDS), counting time in looks, so a test steps it with a stub sleep,
+# for a grace of 2 minutes from its first look (GRACE_SECONDS; TEAM_CI_RUN_GRACE_SECONDS replaces
+# its seconds, the tests' seam). Before each look, while the team holds offline (offline_hold), it
+# ends at once with exit 75 and the hold's text.
+# Each look reads the workflow's runs of the head (gh api
+# repos/<repo>/actions/workflows/<branch_ci>/runs?head_sha=<sha>&per_page=100) and, while there is
+# none, origin's branch (gh api repos/<repo>/branches/<branch>, a 404 being no such branch) and the
+# branch's open PRs (gh pr list --repo <repo> --head <branch> --state open --json
+# number,headRefOid):
+#   a run of the head, of any event and on any    it waits on it, the newest by id, and starts none:
+#   branch                                        a run tests a commit, and a rerun keeps its run's
+#                                                 id, so a second call after an exit 75 or a gh run
+#                                                 rerun waits on the same run
+#   no run, and origin's branch not at <sha> or   it looks again, since GitHub may not show a push
+#   not there                                     of a moment ago yet; after the grace, exit 1,
+#                                                 naming origin's tip and <sha>: push that head,
+#                                                 then run it again
+#   no run, origin at <sha>, and an open PR of    it looks again, since the PR's own run is on its
+#   the branch, at whatever head GitHub shows     way, and GitHub may show the branch at a pushed
+#   it                                            head a moment before the PR's head follows; after
+#                                                 the grace it starts one, since GitHub starts none
+#                                                 for a PR that conflicts with its base
+#   no run, origin at <sha>, and no open PR of    it starts one at once
+#   the branch
+# It starts a run with gh workflow run <branch_ci> --repo <repo> --ref <branch>, once: a dispatch gh
+# fails is exit 1 with gh's reason, never tried again by the same call. The run is the one whose URL
+# gh prints (.../actions/runs/<id>), which it reads (gh api repos/<repo>/actions/runs/<id>): one
+# whose head is not <sha> is exit 1, naming the run and both short heads, since the branch moved
+# between the look and the dispatch, and it waits on nothing. When gh prints no URL, the run is the
+# newest workflow_dispatch run of the head that the next looks list, for a new grace from the
+# dispatch, else exit 1: it started a run, but GitHub lists none of <sha>.
+# A look whose gh call fails reads nothing, and gh failing at every look for the grace is exit 75
+# with gh's last reason line.
+# Then it prints "team-ci-run: waiting on <run url> (<event>, <found|started>) of <short sha>" and
+# becomes team-ci-wait --run <run url> <sha>, whose output and exit code are its own from there:
+# the jobs named, a failure classed as the branch's own or as infrastructure with the rerun to run,
+# and a deadline of 90 minutes. So it always ends.
+# Exit 0 the run of <sha> passed, 1 it did not, or there is no run to wait on (refused, origin not
+# at <sha>, a dispatch that failed or ran another head), 2 a malformed command line, 75 try again
+# later: run it again.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+# Seconds between looks, and how long it looks for a push, a PR's run or a started run, and gh may fail.
+WAIT_SECONDS=10
+GRACE_SECONDS=${TEAM_CI_RUN_GRACE_SECONDS:-120}
+
+[[ $GRACE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_RUN_GRACE_SECONDS must be a number of seconds"
+[[ $# -eq 3 && $1 != -* && $2 =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ && $3 =~ ^[0-9a-f]{40}$ ]] ||
+  usage_error "usage: team-ci-run <project> <branch> <sha>, <sha> the full 40 hex characters of the head you pushed"
+project=$1 branch=$2 sha=$3
+short=${sha:0:7}
+
+workflow=$(team_project "$project" branch_ci) || exit 1
+[[ -n $workflow ]] || die "$project runs no CI on a branch: projects.toml gives it no branch_ci"
+base=$(team_project "$project" base) || exit 1
+[[ $branch != "$base" ]] || die "$branch is $project's base branch: CI runs on a task's or a ticket's branch only"
+[[ $branch != main ]] || die "main is no task's branch: CI runs on a task's or a ticket's branch only"
+repo=$(canonical_repo "$(team_project "$project" repo)") || exit 1
+
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"' EXIT
+
+# end <exit code> <text>: print <text> under the script's name, and exit.
+end() {
+  printf 'team-ci-run: %s\n' "$2"
+  exit "$1"
+}
+
+# The span of <seconds>, in whole minutes when it is some, one of either in the singular.
+span() {
+  local n=$1 unit=second
+  if ((n > 0 && n % 60 == 0)); then n=$((n / 60)) unit=minute; fi
+  ((n == 1)) || unit+=s
+  echo "$n $unit"
+}
+
+# Read the workflow's runs of the head into $dir/runs; false with gh's reason in $dir/error.
+read_runs() {
+  github "$dir" runs api "repos/$repo/actions/workflows/$workflow/runs?head_sha=$sha&per_page=100"
+}
+
+# Set run_id and event to the newest by id of the listed runs of the head that the jq <filter>
+# selects; false when there is none.
+newest_run() {
+  local found
+  found=$(jq -er --arg sha "$sha" "[.workflow_runs[] | select(.head_sha == \$sha) | select($1)] | max_by(.id) // empty
+    | \"\(.id) \(.event)\"" "$dir/runs") || return 1
+  read -r run_id event <<<"$found"
+}
+
+# Set tip to the commit of origin's branch, empty when origin has no such branch; false with gh's
+# reason in $dir/error when it could not be read.
+read_branch() {
+  if github "$dir" branch api "repos/$repo/branches/$branch"; then
+    tip=$(jq -r '.commit.sha // ""' "$dir/branch")
+  elif grep -q 'HTTP 404' "$dir/branch.stderr"; then
+    tip=''
+  else
+    return 1
+  fi
+}
+
+# The looks: finding a run of the head or the moment to start one, then, once one is started, taking
+# it from its URL (started_id) or from the list. Each ends the loop with run_id and event set, or
+# the script; a look whose gh call fails sets nothing.
+look_n=0 failing_since='' started_at='' started_id='' run_id='' event='' how=found tip=''
+while :; do
+  if hold=$(offline_hold); then end 75 "$hold"; fi
+  read=true
+  if [[ -z $started_at ]]; then
+    if ! read_runs; then
+      read=false
+    elif newest_run true; then
+      break
+    elif ! read_branch || ! github "$dir" prs pr list --repo "$repo" --head "$branch" --state open --json number,headRefOid; then
+      read=false
+    elif [[ $tip != "$sha" ]]; then
+      if ((look_n * WAIT_SECONDS >= GRACE_SECONDS)); then
+        if [[ -n $tip ]]; then at="origin's $branch is at ${tip:0:7}"; else at="origin has no branch $branch"; fi
+        end 1 "$at, not $short: push that head, then run team-ci-run again"
+      fi
+    elif ((look_n * WAIT_SECONDS >= GRACE_SECONDS)) || ! jq -e 'length > 0' "$dir/prs" >/dev/null; then
+      # No run is on its way: a PR that conflicts with its base gets none, and a branch with no open
+      # PR has no trigger. An open PR at any head holds the start for the grace, since its head may
+      # lag the branch's. Start one, once.
+      if ! out=$(gh workflow run "$workflow" --repo "$repo" --ref "$branch" 2>&1); then
+        end 1 "could not start a run on $branch: $(grep -m1 . <<<"$out" || echo "gh workflow run failed"); run team-ci-run again, and report BLOCKED if it is refused again"
+      fi
+      started_at=$look_n how=started
+      [[ ! $out =~ /actions/runs/([1-9][0-9]*) ]] || started_id=${BASH_REMATCH[1]}
+      # The started run is read at this same look.
+      continue
+    fi
+  elif [[ -n $started_id ]]; then
+    if github "$dir" run api "repos/$repo/actions/runs/$started_id"; then
+      { read -r run_head && read -r event; } < <(jq -r '.head_sha, .event' "$dir/run")
+      [[ $run_head == "$sha" ]] ||
+        end 1 "the run https://github.com/$repo/actions/runs/$started_id is of ${run_head:0:7}, not $short: $branch moved; push your head and run team-ci-run again"
+      run_id=$started_id
+      break
+    fi
+    read=false
+  elif ! read_runs; then
+    read=false
+  elif newest_run '.event == "workflow_dispatch"'; then
+    break
+  elif (((look_n - started_at) * WAIT_SECONDS >= GRACE_SECONDS)); then
+    end 1 "started a run on $branch, but GitHub lists none of $short after $(span "$GRACE_SECONDS"); run team-ci-run again"
+  fi
+  if $read; then
+    failing_since=''
+  else
+    [[ -n $failing_since ]] || failing_since=$look_n
+    if (((look_n - failing_since) * WAIT_SECONDS >= GRACE_SECONDS)); then
+      end 75 "GitHub could not be read for $(span "$GRACE_SECONDS") running: $(cat "$dir/error")"
+    fi
+  fi
+  sleep "$WAIT_SECONDS"
+  look_n=$((look_n + 1))
+done
+
+run_url=https://github.com/$repo/actions/runs/$run_id
+echo "team-ci-run: waiting on $run_url ($event, $how) of $short"
+# The wait takes over from here, so its end is this command's: nothing is left to clean up but
+# the looks' files.
+rm -rf "$dir"
+trap - EXIT
+TEAM_HOME=$TEAM_HOME exec "$(dirname "$TEAM_LIB")/team-ci-wait" --run "$run_url" "$sha"

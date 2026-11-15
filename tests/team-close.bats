@@ -1356,7 +1356,8 @@ integrate() {
 
   run_bin -0 --separate-stderr team-close T1 --ticket 03
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$twt" '{task: "T1", ticket: "03", stopped: ["7c7c7c7c"],
-    removed: ["7c7c7c7c"], archive: "tasks/T1/scratch--03", returned: $wt, branch: "feat/T1-work--03", branch_deleted: true}')"
+    removed: ["7c7c7c7c"], archive: "tasks/T1/scratch--03", returned: $wt, branch: "feat/T1-work--03", branch_deleted: true,
+    origin_branch: "none"}')"
   # Stopped before the archive, removed after it, both before the slot was returned; the task's
   # own builder is never touched.
   assert_equal "$(cat "$BATS_TEST_TMPDIR/order")" "stop 7c7c7c7c archive:0 worktrees:3
@@ -1677,4 +1678,187 @@ refs/remotes/team-home/wip/home/T1--02"
 refs/heads/wip/home/T10
 refs/heads/wip/home/T10--03"
   assert_equal "$(git -C "${home:?}" for-each-ref --format='%(refname)' refs/remotes/team-home/)" "refs/remotes/team-home/wip/home/T10--03"
+}
+
+# A ticket branch on the project's origin, where its builder pushed it for CI's run: deleted there
+# once the task branch holds it, on a real bare origin (one with no pre-push hook of the team's).
+
+# The branches of home's origin, one name per line.
+origin_branches() {
+  git -C "$(git -C "${home:?}" remote get-url origin)" for-each-ref --format='%(refname:short)' refs/heads/
+}
+
+# Push the ticket branch of the ticket worktree $twt to origin, as its builder does for CI's run.
+push_ticket() {
+  git -C "${twt:?}" push -q origin "$tbranch"
+}
+
+@test "--ticket deletes origin's ticket branch once the task branch holds it, and says deleted" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  local head
+  head=$(git -C "${twt:?}" rev-parse HEAD)
+  assert_contains "$(origin_branches)" "feat/T1-work--03"
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch, .branch_deleted, .origin_branch]' <<<"$output")" '["feat/T1-work--03",true,"deleted"]'
+  assert_contains "$stderr" "team-close: deleted origin's feat/T1-work--03 at ${head:0:8}, which feat/T1-work holds"
+  assert_equal "$(origin_branches)" "main"
+  [[ ! -e $twt ]]
+}
+
+@test "--ticket keeps origin's ticket branch the task branch does not hold, with the command that deletes it" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  local head
+  head=$(git -C "${twt:?}" rev-parse HEAD)
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch_deleted, .origin_branch]' <<<"$output")" '[false,"kept"]'
+  assert_contains "$stderr" "team-close: kept origin's feat/T1-work--03 at ${head:0:8}: the task branch does not hold it; delete it by hand: git -C $home push origin --delete feat/T1-work--03"
+  assert_equal "$(git -C "${home:?}" ls-remote origin refs/heads/feat/T1-work--03 | cut -f1)" "$head"
+  [[ ! -e $twt ]]
+}
+
+@test "--ticket keeps origin's ticket branch whose tip is no commit here, fetching nothing to decide" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  # Another machine's builder pushed one more commit to origin's ticket branch.
+  local other=$BATS_TEST_TMPDIR/other tip
+  git clone -q --branch feat/T1-work--03 "$(git -C "${home:?}" remote get-url origin)" "$other"
+  commit_in "$other" elsewhere.txt
+  git -C "${other:?}" push -q origin HEAD
+  tip=$(git -C "${other:?}" rev-parse HEAD)
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch_deleted, .origin_branch]' <<<"$output")" '[true,"kept"]'
+  assert_contains "$stderr" "team-close: kept origin's feat/T1-work--03 at ${tip:0:8}: $home has no such commit, so the task branch is not known to hold it; delete it by hand: git -C $home push origin --delete feat/T1-work--03"
+  assert_equal "$(git -C "${home:?}" ls-remote origin refs/heads/feat/T1-work--03 | cut -f1)" "$tip"
+  run ! git -C "${home:?}" cat-file -e "$tip^{commit}"
+}
+
+@test "--ticket with the project's origin unreachable says so in one line, unread, and still returns the worktree" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  local origin
+  origin=$(git -C "${home:?}" remote get-url origin)
+  mv "$origin" "$origin.away"
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  mv "$origin.away" "$origin"
+  assert_equal "$(jq -c '[.returned, .branch_deleted, .origin_branch]' <<<"$output")" "$(jq -cn --arg wt "$twt" '[$wt, true, "unread"]')"
+  assert_equal "$(grep -c "origin's feat/T1-work--03" <<<"$stderr")" 1
+  assert_contains "$stderr" "team-close: cannot read origin's feat/T1-work--03 ("
+  assert_contains "$stderr" "delete it by hand if origin has it: git -C $home push origin --delete feat/T1-work--03"
+  [[ ! -e $twt ]]
+  assert_contains "$(origin_branches)" "feat/T1-work--03"
+  assert_equal "$(events worktree-returned | jq -r .ticket)" "03"
+}
+
+@test "--ticket whose delete origin refuses says so in one line with the command, unread, and fails nothing" {
+  open_home_task
+  open_ticket 03
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  local origin
+  origin=$(git -C "${home:?}" remote get-url origin)
+  printf '#!/bin/sh\necho "deletes are off" >&2\nexit 1\n' >"$origin/hooks/pre-receive"
+  chmod +x "$origin/hooks/pre-receive"
+
+  run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_equal "$(jq -c '[.branch_deleted, .origin_branch]' <<<"$output")" '[true,"unread"]'
+  assert_equal "$(grep -c "origin's feat/T1-work--03" <<<"$stderr")" 1
+  assert_contains "$stderr" "team-close: cannot delete origin's feat/T1-work--03 ("
+  assert_contains "$stderr" "delete it by hand: git -C $home push origin --delete feat/T1-work--03"
+  assert_contains "$(origin_branches)" "feat/T1-work--03"
+  [[ ! -e $twt ]]
+}
+
+@test "the close deletes each held ticket branch origin still lists, once, and keeps and names the rest" {
+  open_home_task
+  local origin head3 head4 head5 head6
+  origin=$(git -C "${home:?}" remote get-url origin)
+  # Ticket 03: pushed and integrated, its worktree still open at the close.
+  open_ticket 03
+  local twt3=$twt
+  commit_in "$twt" three.txt
+  push_ticket
+  integrate
+  head3=$(git -C "${twt:?}" rev-parse HEAD)
+  # Ticket 04: pushed, never integrated, its worktree returned earlier, its branch kept on origin.
+  open_ticket 04
+  commit_in "$twt" four.txt
+  push_ticket
+  head4=$(git -C "${twt:?}" rev-parse HEAD)
+  run_bin -0 team-close T1 --ticket 04
+  # Ticket 05: pushed and integrated, returned while origin refused the delete.
+  open_ticket 05
+  commit_in "$twt" five.txt
+  push_ticket
+  integrate
+  head5=$(git -C "${twt:?}" rev-parse HEAD)
+  printf '#!/bin/sh\nexit 1\n' >"$origin/hooks/pre-receive"
+  chmod +x "$origin/hooks/pre-receive"
+  run_bin -0 --separate-stderr team-close T1 --ticket 05
+  assert_equal "$(jq -r .origin_branch <<<"$output")" "unread"
+  rm "$origin/hooks/pre-receive"
+  # Ticket 06, integrated on another machine: origin's task branch holds it, this one's does not.
+  git -C "${home:?}" push -q origin "$head5:refs/heads/feat/T1-work"
+  local other=$BATS_TEST_TMPDIR/other
+  git clone -q --branch feat/T1-work "$origin" "$other"
+  commit_in "$other" six.txt
+  head6=$(git -C "${other:?}" rev-parse HEAD)
+  git -C "${other:?}" push -q origin HEAD HEAD:refs/heads/feat/T1-work--06
+  # Another task's ticket branch, and names that are no ticket branch of T1's, which stay.
+  git -C "${home:?}" push -q origin "$head3:refs/heads/feat/T10-work--03" "$head3:refs/heads/feat/T1-work--033" \
+    "$head3:refs/heads/feat/T1-work--x"
+
+  run_bin -0 --separate-stderr team-close T1
+  assert_equal "$(jq -c .returned <<<"$output")" "$(jq -cn --arg wt "$wt" --arg twt "$twt3" '[$wt, $twt]')"
+  assert_equal "$(grep "origin's" <<<"$stderr")" "team-close: deleted origin's feat/T1-work--03 at ${head3:0:8}, which feat/T1-work holds
+team-close: kept origin's feat/T1-work--04 at ${head4:0:8}: the task branch does not hold it; delete it by hand: git -C $home push origin --delete feat/T1-work--04
+team-close: deleted origin's feat/T1-work--05 at ${head5:0:8}, which feat/T1-work holds
+team-close: deleted origin's feat/T1-work--06 at ${head6:0:8}, which origin's feat/T1-work holds"
+  assert_equal "$(origin_branches)" "feat/T1-work
+feat/T1-work--033
+feat/T1-work--04
+feat/T1-work--x
+feat/T10-work--03
+main"
+  assert_equal "$(events closed | jq -c .returned)" "$(jq -cn --arg wt "$wt" --arg twt "$twt3" '[$wt, $twt]')"
+  run_bin -0 team-log --check
+}
+
+@test "the close with no ticket branch on origin says nothing of origin's" {
+  open_home_task
+  work_and_push "$wt" feature.txt
+  run_bin -0 --separate-stderr team-close T1
+  [[ $stderr != *"origin's"* ]]
+}
+
+@test "the close whose origin cannot be read says so in one line with the command, and still closes" {
+  open_home_task
+  commit_in "$wt" feature.txt
+  local origin
+  origin=$(git -C "${home:?}" remote get-url origin)
+  mv "$origin" "$origin.away"
+
+  run_bin -0 --separate-stderr team-close T1 --keep-worktree
+  mv "$origin.away" "$origin"
+  assert_equal "$(grep -c "origin's ticket branches" <<<"$stderr")" 1
+  assert_contains "$stderr" "team-close: cannot read origin's ticket branches of feat/T1-work ("
+  assert_contains "$stderr" "delete them by hand: git -C $home push origin --delete <each feat/T1-work--NN that git -C $home ls-remote origin 'refs/heads/feat/T1-work--*' lists>"
+  assert_equal "$(events closed | jq -c .kept)" "$(jq -cn --arg wt "$wt" '[$wt]')"
 }

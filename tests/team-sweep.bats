@@ -569,7 +569,24 @@ T9 stalled: T9-builder 9a8b7c6d has written nothing for 55m, waiting on \"tests/
   assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 1h55m, waiting on \"$wait\" (Bash, in the background, running 1h56m); next:"
 }
 
-@test "stalled: the gate, team-thread wait and team-ci-wait limits read the whole command, though only its first line is named" {
+@test "stalled: a team-ci-run wait on a branch's CI run passes past 50 minutes, and is named at 1 hour 55 minutes" {
+  opened T8
+  launch T8 builder 4f2a9c1e
+  sessions "$(session 4f2a9c1e T8-builder busy working)"
+  local wait='/home/x/agent-team/bin/team-ci-run proj feat/T8-x 5413b8ce777cea7ed3f1ebb0fdf6802072f1d7a3'
+  { call toolu_01 106 Bash "$wait" background; result toolu_01 106 background; } | transcript - 4f2a9c1e 105
+  run_bin -0 team-sweep
+  { call toolu_01 116 Bash "$wait" background; result toolu_01 116 background; } | transcript - 4f2a9c1e 115
+  run_bin -1 team-sweep
+  assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 1h55m, waiting on \"$wait\" (Bash, in the background, running 1h56m); next:"
+  # A name that only contains it is no wait on CI: the default limit holds it.
+  { call toolu_01 56 Bash "team-ci-runner proj feat/T8-x" background; result toolu_01 56 background; } |
+    transcript - 4f2a9c1e 55
+  run_bin -1 team-sweep
+  assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 55m, waiting on \"team-ci-runner proj feat/T8-x\""
+}
+
+@test "stalled: the gate, team-thread wait, team-ci-wait and team-ci-run limits read the whole command, though only its first line is named" {
   opened T8
   launch T8 builder 4f2a9c1e
   sessions "$(session 4f2a9c1e T8-builder busy working)"
@@ -580,6 +597,8 @@ T9 stalled: T9-builder 9a8b7c6d has written nothing for 55m, waiting on \"tests/
   call toolu_01 361 Bash $'set -e\nteam-thread wait T8 1563171945980370967' | transcript - 4f2a9c1e 360
   run_bin -0 team-sweep
   call toolu_01 96 Bash $'cd /w/1\nteam-ci-wait https://github.com/owner/proj/pull/217' | transcript - 4f2a9c1e 95
+  run_bin -0 team-sweep
+  call toolu_01 96 Bash $'cd /w/1\nteam-ci-run proj feat/T8-x 5413b8ce777cea7ed3f1ebb0fdf6802072f1d7a3' | transcript - 4f2a9c1e 95
   run_bin -0 team-sweep
   call toolu_01 191 Bash $'export A=1\nno-mistakes run' | transcript - 4f2a9c1e 190
   run_bin -1 team-sweep

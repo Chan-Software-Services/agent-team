@@ -1426,6 +1426,33 @@ allowed_in() {
   done
 }
 
+# A branch_ci project's builder ends its round with team-ci-run on the head it pushed, and reruns
+# or cancels the run an infrastructure failure's line names; no other role's brief has either.
+@test "a builder may run team-ci-run on its branch and rerun or cancel a CI run, never start a workflow by hand, and no other role may" {
+  open_task T7
+  local role settings command bin=$REPO_ROOT/bin sha=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  local -a ci=("$bin/team-ci-run proj feat/T7-one $sha" "$bin/team-ci-run proj feat/T7-one--03 $sha"
+    "gh run rerun 7001 --repo me/proj" "gh run rerun 7001 --job 9001 --repo me/proj" "gh run cancel 7001 --repo me/proj"
+    "gh-axi run rerun 7001 --repo me/proj" "gh-axi run cancel 7001 --repo me/proj")
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  settings=$TEAM_HOME/tasks/T7/settings.builder.proj.json
+  for command in "${ci[@]}"; do
+    allowed_in "$settings" "$command" || { echo "builder may not: $command" >&2; return 1; }
+  done
+  # Only the code checkout's team-ci-run, and only it starts a workflow's run.
+  for command in "team-ci-run proj feat/T7-one $sha" "/elsewhere/bin/team-ci-run proj feat/T7-one $sha" \
+    "gh workflow run ci.yml --repo me/proj --ref feat/T7-one" "gh-axi workflow run ci.yml --repo me/proj --ref feat/T7-one"; do
+    if allowed_in "$settings" "$command"; then echo "builder may: $command" >&2; return 1; fi
+  done
+  for role in planner reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    settings=$TEAM_HOME/tasks/T7/settings.$role.proj.json
+    for command in "${ci[@]}"; do
+      if allowed_in "$settings" "$command"; then echo "$role may: $command" >&2; return 1; fi
+    done
+  done
+}
+
 @test "a closed task is refused, opened or legacy" {
   thread T7
   opened T7 proj feat/T7-one "$wt1"

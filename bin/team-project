@@ -42,6 +42,10 @@
 #                    team-brief puts in each builder brief, its presence saying CI (or the
 #                    local_checks a reviewer and team-merge run) runs the whole suite (default
 #                    none: nothing but the builder runs the project's whole suite, once at its end)
+#   branch_ci        optional: the file name of the workflow under .github/workflows/ whose run a
+#                    builder waits on, such as "ci.yml", its presence saying the project's
+#                    builders run CI on their branch; it needs changed_tests and
+#                    delivery = "direct-pr" (default none)
 #   uptime           optional: the project's production checks, which the heartbeat's uptime
 #                    step runs (team-uptime), an array of tables ([[<name>.uptime]]), each with
 #                    exactly three strings (default none):
@@ -135,7 +139,9 @@ RESERVED = {
     "own": "the team's own project in bin/lib/guarded's @own lines",
 }
 # Optional keys, with the value a project without one has.
-PROJECT_OPTIONAL = {"local_checks": [], "changed_tests": "", "models": {}, "uptime": [], "visibility": "public"}
+PROJECT_OPTIONAL = {"local_checks": [], "changed_tests": "", "branch_ci": "", "models": {}, "uptime": [], "visibility": "public"}
+# A branch_ci: one workflow's file name, no directory.
+BRANCH_CI = re.compile(r"[A-Za-z0-9._-]+\.ya?ml")
 # Keys no project may hold any more, each with why and what to do, which --check names in place of
 # an unknown key.
 RETIRED = {"merge_with_plan": "retired by T276, since the approved plan is every project's merge word: remove the key"}
@@ -417,6 +423,18 @@ def check(registry):
             tests = project["changed_tests"]
             if not isinstance(tests, str) or not tests.strip() or "\n" in tests:
                 problems.append(f"{name}.changed_tests: must be one line of text, not empty")
+        if "branch_ci" in project:
+            workflow = project["branch_ci"]
+            if not isinstance(workflow, str) or not BRANCH_CI.fullmatch(workflow):
+                problems.append(
+                    f"{name}.branch_ci: must be a workflow's file name under .github/workflows/, such as \"ci.yml\""
+                )
+            if "changed_tests" not in project:
+                problems.append(f"{name}.branch_ci: needs changed_tests, the tests a builder still runs on the machine")
+            if project.get("delivery") != "direct-pr":
+                problems.append(
+                    f"{name}.branch_ci: needs delivery = \"direct-pr\", not {json.dumps(project.get('delivery'))}"
+                )
         uptime_checks += check_uptime(name, project.get("uptime", []), problems)
         check_models(name, project.get("models", {}), problems)
         if project.get("visibility", "public") not in VISIBILITIES:

@@ -1073,9 +1073,9 @@ counts="findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,n
 # pr_on_github <head> [<behind_by>] [<checks as JSON>]: the gh stub answers team-state's reads
 # of PR 9 (open, against main, at <head>), its checks (agent-review passed by default), its
 # required checks (none), the compare of main with <head> (0 behind by default), the real
-# team-ci-wait's look at it (the PR's state and head, and no workflow run of the head), so a
-# findings round's look ends on its first look, and, read only with the reviewer App on, the
-# head's agent-review check runs and commit statuses (none).
+# team-ci-wait's look at it (the PR's state and head, no workflow run of the head and none of the
+# repository in progress), so a findings round's look ends on its first look, and, read only with
+# the reviewer App on, the head's agent-review check runs and commit statuses (none).
 pr_on_github() {
   export GH_HEAD=$1 GH_BEHIND=${2:-0}
   export GH_CHECKS=${3:-'[{"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'}
@@ -1086,6 +1086,7 @@ case "$*" in
       changedFiles: 1}' ;;
   "pr view 9 --repo owner/proj --json state,headRefOid") jq -cn --arg h "$GH_HEAD" '{state: "OPEN", headRefOid: $h}' ;;
   "api repos/owner/proj/actions/runs?head_sha=$GH_HEAD&per_page=100") echo '{"total_count": 0, "workflow_runs": []}' ;;
+  "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") echo '{"total_count": 0, "workflow_runs": []}' ;;
   "pr checks 9 --repo owner/proj --required"*) echo '[]' ;;
   "pr checks 9 --repo owner/proj"*) echo "$GH_CHECKS" ;;
   "api repos/owner/proj/compare/main...$GH_HEAD --jq .behind_by") echo "$GH_BEHIND" ;;
@@ -1130,7 +1131,7 @@ live() {
 outside_calls() {
   stub_calls curl
   stub_calls gh | jq -c 'select((.[0] == "pr" and (.[1] == "view" or .[1] == "checks"))
-    or (.[0] == "api" and (.[1] | test("/compare/|/pulls/[0-9]+/files$|/actions/runs[?]head_sha=|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
+    or (.[0] == "api" and (.[1] | test("/compare/|/pulls/[0-9]+/files$|/actions/runs[?](head_sha=|status=in_progress&)|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
 }
 
 @test "a pass whose PR head moved past the reviewed head is refused naming both, nothing logged" {
