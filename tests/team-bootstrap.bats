@@ -47,24 +47,24 @@ summary: set up, and this machine holds the lease"
 @test "a team home that fetches every branch is narrowed to dev and lease by the machine stage, its other remote-tracking branches deleted" {
   tools_at arch
   local origin=$BATS_TEST_TMPDIR/origin/agent-team.git
-  git -C "$origin" branch wip/home/T1 dev
-  git -C "$TEAM_HOME" config --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-  git -C "$TEAM_HOME" fetch -q origin
+  git -C "${origin:?}" branch wip/home/T1 dev
+  git -C "${TEAM_HOME:?}" config --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  git -C "${TEAM_HOME:?}" fetch -q origin
   run_bin -0 team-bootstrap --stage machine --dry-run
   assert_equal "$(stage_lines machine | tail -n4)" "would run: git -C $TEAM_HOME remote set-branches origin dev lease
 would run: git -C $TEAM_HOME branch -r -d origin/wip/home/T1
 would run: git -C $TEAM_HOME fetch origin
 done: the team home shares history with origin's dev"
-  assert_equal "$(git -C "$TEAM_HOME" config --get-all remote.origin.fetch)" '+refs/heads/*:refs/remotes/origin/*'
+  assert_equal "$(git -C "${TEAM_HOME:?}" config --get-all remote.origin.fetch)" '+refs/heads/*:refs/remotes/origin/*'
   run_bin -0 team-bootstrap --stage machine
   # The fetch after the narrowing brings dev and lease alone.
   assert_equal "$(stage_lines machine | tail -n4)" "running: git -C $TEAM_HOME remote set-branches origin dev lease
 running: git -C $TEAM_HOME branch -r -d origin/wip/home/T1
 running: git -C $TEAM_HOME fetch origin
 done: the team home shares history with origin's dev"
-  assert_equal "$(git -C "$TEAM_HOME" config --get-all remote.origin.fetch)" "+refs/heads/dev:refs/remotes/origin/dev
+  assert_equal "$(git -C "${TEAM_HOME:?}" config --get-all remote.origin.fetch)" "+refs/heads/dev:refs/remotes/origin/dev
 +refs/heads/lease:refs/remotes/origin/lease"
-  assert_equal "$(git -C "$TEAM_HOME" for-each-ref --format='%(refname)' refs/remotes | grep -v '/HEAD$')" "refs/remotes/origin/dev
+  assert_equal "$(git -C "${TEAM_HOME:?}" for-each-ref --format='%(refname)' refs/remotes | grep -v '/HEAD$')" "refs/remotes/origin/dev
 refs/remotes/origin/lease"
   run_bin -0 team-bootstrap --stage machine
   assert_equal "$(stage_lines machine | tail -n3 | head -n1)" "done: the team home fetches only dev and lease"
@@ -104,7 +104,7 @@ install -m 755 <d>/bin/no-mistakes $HOME/.no-mistakes/bin/no-mistakes"
 running: add ~/.no-mistakes/bin to PATH in ~/.zshrc"
   assert_equal "$(cat "$HOME/.zshrc")" "export PATH=\"\$HOME/.local/bin:\$PATH\" # team-bootstrap
 export PATH=\"\$HOME/.no-mistakes/bin:\$PATH\" # team-bootstrap"
-  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/chanjdaniel/Conventioner.git $CONVENTIONER
+  assert_equal "$(cat "$STUB_CALLS/git-clone.log")" "clone -q https://github.com/Chan-Software-Services/Conventioner.git $CONVENTIONER
 clone -q https://github.com/owner/site.git $SITE"
   assert_equal "$(stage_lines config)" "running: claude plugin marketplace add anthropics/claude-plugins-official
 running: claude plugin install discord@claude-plugins-official --scope user
@@ -132,8 +132,8 @@ trust site"
   assert_equal "$(stage_lines check | tail -n1)" "summary: not set up yet: only Daniel's steps above are left; then team-bootstrap again"
   # The gate is Conventioner's alone, the task directories are ignored, the lease untouched.
   assert_equal "$(cat "$STUB_CALLS/no-mistakes-init.log")" "$CONVENTIONER"
-  git -C "$CONVENTIONER" check-ignore -q .scratch/task/
-  git -C "$SITE" check-ignore -q .scratch/task/
+  git -C "${CONVENTIONER:?}" check-ignore -q .scratch/task/
+  git -C "${SITE:?}" check-ignore -q .scratch/task/
   assert_equal "$(lease_json | jq -r '"\(.holder) \(.epoch)"')" "home-pc 1"
   assert_equal "$(stub_calls op)" ""
 
@@ -163,7 +163,7 @@ done: the team home shares history with origin's dev"
 would run: brew install --cask docker-desktop"
   assert_equal "$(stage_lines tools | sed -n '2,3p')" "would run: curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 would run: nvm install $(lock_pin node) && nvm alias default $(lock_pin node)"
-  assert_equal "$(stage_lines projects | head -n2)" "would run: git clone -q https://github.com/chanjdaniel/Conventioner.git ~/projects/Conventioner
+  assert_equal "$(stage_lines projects | head -n2)" "would run: git clone -q https://github.com/Chan-Software-Services/Conventioner.git ~/projects/Conventioner
 would then set up conventioner's task directory exclude and its no-mistakes gate"
   assert_contains "$output" "check: Daniel 1: 1password: "
 
@@ -197,7 +197,7 @@ preflight: done: jq, git and Python 3.11 are installed"
 
 @test "on a Mac without Homebrew's GNU tools the run starts again under them once the packages stage has them" {
   fresh macos
-  rm -rf "$HOMEBREW_PREFIX/opt/coreutils" "$HOMEBREW_PREFIX/opt/grep"
+  rm -rf "${HOMEBREW_PREFIX:?}/opt/coreutils" "${HOMEBREW_PREFIX:?}/opt/grep"
   run_bin -1 team-bootstrap --name laptop
   assert_equal "$(grep -c '^preflight: macOS$' <<<"$output")" 2
   assert_contains "$output" "packages: Homebrew's GNU tools are installed: starting again under them"

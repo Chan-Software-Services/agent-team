@@ -4,7 +4,8 @@
 #               of another), is the code checkout, has no remote origin or is on a detached
 #               HEAD, and while neither names one (its fix clones ~/agent-team-records first
 #               when it is missing, fetching only dev and lease as the team home fetch line
-#               asks, then names it in the setting).
+#               asks, from the URL of agent-team-records' move in bin/lib/repo-moves.json,
+#               then names it in the setting).
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # bin, the doctor's
 # shellcheck disable=SC2034 # home_ok, for the team home fetch check
@@ -16,7 +17,7 @@ home_ok=0
 if [[ $TEAM_HOME_FROM == none ]]; then
   # Without the clone, the setting would name a missing directory.
   [[ -d $HOME/agent-team-records ]] ||
-    name_fix="clone the team home, then name it: git clone --single-branch --branch dev https://github.com/chanjdaniel/agent-team-records.git ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && echo agent-team-records > ~/.config/agent-team/home"
+    name_fix="clone the team home, then name it: git clone --single-branch --branch dev $(team_home_url) ~/agent-team-records && git -C ~/agent-team-records remote set-branches --add origin lease && echo agent-team-records > ~/.config/agent-team/home"
   report "team home" FAIL "neither TEAM_HOME nor ~/.config/agent-team/home names one" "$name_fix"
 else
   home_shown=$(tilde "$TEAM_HOME")

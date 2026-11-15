@@ -43,7 +43,7 @@ Each stage after the first is one `~/agent-team/bin/team-bootstrap` run; read it
 
 ### Stage 1: git, gh and the two checkouts
 
-`SETUP.md`, stage 1: on macOS the Xcode Command Line Tools and Homebrew, then git, gh and Homebrew's Bash 5, the GitHub login (`gh auth login --web`, then `gh auth setup-git`), the clone of the public `https://github.com/chanjdaniel/agent-team.git` at `~/agent-team` (the code checkout), the clone of the private `https://github.com/chanjdaniel/agent-team-records.git` at `~/agent-team-records` (the team home, fetching only `dev` and `lease`), and `agent-team-records` written to `~/.config/agent-team/home`.
+`SETUP.md`, stage 1: on macOS the Xcode Command Line Tools and Homebrew, then git, gh and Homebrew's Bash 5, the GitHub login (`gh auth login --web`, then `gh auth setup-git`), the clone of the public `https://github.com/Chan-Software-Services/agent-team.git` at `~/agent-team` (the code checkout), the clone of the private `https://github.com/Chan-Software-Services/agent-team-records.git` at `~/agent-team-records` (the team home, fetching only `dev` and `lease`), and `agent-team-records` written to `~/.config/agent-team/home`.
 
 ### Stage 2: preflight and the machine's name
 
@@ -171,6 +171,7 @@ A machine that held the team before and whose checkouts and tools have fallen be
 | Restarting the session after the config changed | 6 | exit, `claude` in `~/agent-team` | a session cannot reload itself |
 | Claude Code login, if the doctor fails it | 7 | own terminal: `claude auth login --claudeai` (browser) | account login |
 | Docker access | 7 | macOS: open Docker Desktop, accept its license, and turn on Settings, General, "Start Docker Desktop when you sign in", so a restart never leaves the team without Docker; Arch: own terminal, `sudo systemctl enable --now docker.service`, then `sudo usermod -aG docker $USER` and a new login if the doctor then says permission denied | GUI or `sudo` |
+| The Docker veth sysctl (Arch), when the doctor's `docker veth` line warns: without it each new Docker veth gets an IPv6 link-local address, whose coming and going makes Chromium fail a page load with `net::ERR_NETWORK_CHANGED`, the end-to-end flake home-pc had until it was set on 2026-11-14 (79 of 80 runs passed beside a container started every 3 s before it, 80 of 80 after) | 7 | own terminal: `echo 'net.ipv6.conf.default.addr_gen_mode = 1' \| sudo tee /etc/sysctl.d/90-docker-no-ll6.conf`, then `sudo sysctl --system` | `sudo` |
 | 1Password app: install, sign in, CLI integration (and on Arch, unlock with system authentication) | 7 | macOS: `brew install --cask 1password`; Arch: the native AUR package; then the app's Settings > Developer > Integrate with 1Password CLI | account login, app settings |
 | `team-secrets restore` | 7 | own terminal: `~/agent-team/bin/team-secrets restore`; it fetches a secret that is missing, empty or off its mode (a file off its mode may be another machine's old copy, so it is replaced, the old one kept beside it as `<file>.bak-<date and time>`, mode 600), the reviewer App's key `~/.config/agent-team/review-app.pem` among them once the team home's `machine/secrets.json` lists its `review-app-key` entry; the doctor's `review app` line checks the key, beside `dev`'s pin of the App's `agent-review` check, once `bin/lib/review-app` names the App (`sops/merging.md`, "agent-team behind the reviewer App") | Touch ID or system authentication; values never reach an agent |
 | `#coordinator` letting in only Daniel, when the doctor's `discord access` line fails on a restored `access.json` | 7 | Daniel's own Claude Code session: the `/discord:access group add <#coordinator id> --no-mention --allow <their id>` the line names | the plugin edits `access.json` only on Daniel's own command |
@@ -187,7 +188,7 @@ A machine that held the team before and whose checkouts and tools have fallen be
 On a fresh machine, Daniel meets them in this order (recorded from `team-bootstrap` in a scratch `$HOME` with every installer stubbed, 2026-10-23):
 
 - macOS: Command Line Tools dialog, Homebrew, GitHub login, the name, (restart), Docker Desktop's license, the 1Password app, `team-secrets restore`, trust for the team home and each project root (one `--stage trust` in their terminal), Chrome, the dev guard, the records guard, `autoMode.environment`.
-- Arch: git and gh, GitHub login, the name, `team-bootstrap --stage packages` and then `--stage tools` in their terminal, (restart), the Docker daemon (and the `docker` group), the 1Password app, `team-secrets restore`, trust for the team home and each project root (one `--stage trust` in their terminal), Chrome, the dev guard, the records guard, `autoMode.environment`.
+- Arch: git and gh, GitHub login, the name, `team-bootstrap --stage packages` and then `--stage tools` in their terminal, (restart), the Docker daemon (and the `docker` group), the Docker veth sysctl, the 1Password app, `team-secrets restore`, trust for the team home and each project root (one `--stage trust` in their terminal), Chrome, the dev guard, the records guard, `autoMode.environment`.
 
 ## 4. macOS differences
 
@@ -198,6 +199,7 @@ On a fresh machine, Daniel meets them in this order (recorded from `team-bootstr
 | Userland | GNU | `bin/lib/platform.sh` puts Homebrew's GNU coreutils, findutils, sed, grep and `flock` first on `PATH` for every script, and refuses with the `brew install` line when one is missing |
 | Python | the OS's 3.11 or newer | Homebrew's `python@3.12`, which the lock pins (macOS's own `python3` is too old for `tomllib`); its `python3` is only in the formula's `libexec/bin`, which the library puts first on every script's `PATH`, and the doctor's `tool python` line names the `python3` it found |
 | Docker | the daemon, enabled with `sudo`, and the `docker` group | Docker Desktop (`brew install --cask docker-desktop`), opened once to accept its license, with Settings, General, "Start Docker Desktop when you sign in" turned on, so a restart never leaves the team without Docker |
+| Docker veth sysctl | `net.ipv6.conf.default.addr_gen_mode = 1` in `/etc/sysctl.d/90-docker-no-ll6.conf`, which the doctor's `docker veth` line checks | none: Docker Desktop's veths are inside its VM |
 | treehouse | `/usr/local/bin`, with `sudo` | `~/.local/bin` |
 | 1Password CLI | 1Password's zip into `/usr/local/bin` with the `onepassword-cli` group, with `sudo` | `brew install 1password-cli` |
 | 1Password unlock | system authentication (PolKit); the native AUR app, not Snap or Flatpak | Touch ID |

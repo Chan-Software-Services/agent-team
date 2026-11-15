@@ -3,6 +3,48 @@
 # string per problem found.
 
 import "lifecycle" as $lifecycle;
+import "repo-moves" as $moves;
+
+# The repositories that moved owner, bin/lib/repo-moves.json, imported as data: each {from, to,
+# on}, from an owner/name compared in any case, as GitHub compares them, to spelled as GitHub
+# spells it.
+def repo_moves: $moves::moves[0].moves;
+
+# A repo, owner/name, at the end of its chain of moves (a move's to may be another's from), else
+# the repo as given; anything but a string is left as it is. The chain is followed at most once
+# per move, so a cycle, which tests/repo.bats refuses, still ends.
+def canonical_repo:
+  if type != "string" then .
+  else
+    (repo_moves | map({key: (.from | ascii_downcase), value: .to}) | from_entries) as $to
+    | reduce range(repo_moves | length) as $_ (.; $to[ascii_downcase] // .)
+  end;
+
+# A GitHub URL, https://github.com/<owner>/<name> and anything after it, with its repo canonical
+# (canonical_repo) and the rest as written; any other string, or anything but a string, is left
+# as it is.
+def canonical_url:
+  if type == "string" and startswith("https://github.com/") then
+    (capture("\\Ahttps://github\\.com/(?<repo>[A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?<rest>(\\.git)?([/?#].*)?)\\z")
+      // null) as $m
+    | if $m == null then . else "https://github.com/\($m.repo | canonical_repo)\($m.rest)" end
+  else . end;
+
+# Free text with every https://github.com/<from> of a move, in any case, followed by a slash,
+# .git, the end or a character no repo name holds, rewritten to the end of its chain of moves;
+# anything but a string is left as it is.
+def canonical_text:
+  if type != "string" then .
+  else
+    reduce (repo_moves[] | {from: (.from | gsub("\\."; "\\.")), to: (.to | canonical_repo)}) as $m (.;
+      gsub("https://github\\.com/\($m.from)(?=\\.git(?![A-Za-z0-9_.-])|\\.(?![A-Za-z0-9_-])|[^A-Za-z0-9_.-]|\\z)";
+        "https://github.com/\($m.to)"; "i"))
+  end;
+
+# An event with its url, when it has one, canonical (canonical_url): every reader of the ledger
+# takes its events through this, so a PR logged under an old owner and under the new one is one
+# PR. The ledger itself keeps each line as written.
+def canonical_event: if type == "object" and (.url | type) == "string" then .url |= canonical_url else . end;
 
 # A jq type, or a field type of the contract, as a noun: "a list", "a number", "null".
 def noun:
@@ -346,12 +388,13 @@ def head_logged($url; $head): first(pr_heads($url)[] | select(same_head(.head; $
 # Whether this event, logged after the ask $ask (an asked event), settles it: the answered with its
 # id, or for history a merge-preapproved with it (a kind retired by T276), or a merge-approved
 # whose url (a trailing slash aside) the ask's text names, not followed by a digit, since the
-# coordinator logs a merge answer as merge-approved alone as often as not.
+# coordinator logs a merge answer as merge-approved alone as often as not; the url and the text
+# are compared with each moved repo under its new owner (canonical_url, canonical_text).
 def settles($ask):
   (.event == "answered" and .id == $ask.id)
   or (.event == "merge-preapproved" and .ask == $ask.id)
   or (.event == "merge-approved" and (.url | type) == "string" and (.url | test("^https?://"))
-    and ((.url | rtrimstr("/")) as $url | ($ask.text // "" | tostring) as $text
+    and ((.url | canonical_url | rtrimstr("/")) as $url | ($ask.text // "" | tostring | canonical_text) as $text
       | any($text | indices($url)[]; $text[. + ($url | length):] | test("^[0-9]") | not)));
 
 # The lifecycle: one fold of a task's events into its state, read by every def that asks where
@@ -1666,10 +1709,12 @@ def task_findings($sessions; $activity):
 
 # The following defs read the whole ledger.
 
-# Every ledger event of a task T<n>, read as raw lines (jq -nR), as one array in ledger order;
-# lines that are not JSON objects with such a task are skipped.
+# Every ledger event of a task T<n>, read as raw lines (jq -nR), as one array in ledger order, each
+# with its url canonical (canonical_event); lines that are not JSON objects with such a task are
+# skipped.
 def ledger_events:
-  [inputs | fromjson? | select(type == "object" and (.task | type) == "string" and (.task | test("^T[1-9][0-9]*$")))];
+  [inputs | fromjson? | select(type == "object" and (.task | type) == "string" and (.task | test("^T[1-9][0-9]*$")))
+    | canonical_event];
 
 # Ledger events as an object of each task's events, keyed by task id.
 def by_task: group_by(.task) | map({key: .[0].task, value: .}) | from_entries;
@@ -2153,10 +2198,11 @@ def inbox_items($own; $notes; $tickets):
 # waiting.json $previous (null when there is none or it cannot be read): an item whose key
 # $previous's items hold keeps its number, and each other item, in order, takes the lowest
 # positive number that no kept item holds, no earlier new item took and no item of the latest post
-# ($previous.posted's items) showed.
+# ($previous.posted's items) showed. A stored key is read with its URLs under their new owners
+# (canonical_text), as the items' keys are, so an item keyed by a PR's old URL keeps its number.
 def waiting_numbered($previous):
   ([$previous.items[]? | objects | select((.key | type) == "string" and (.n | type) == "number")]
-   | map({key, value: .n}) | from_entries) as $kept
+   | map({key: (.key | canonical_text), value: .n}) | from_entries) as $kept
   | [$previous.posted.items[]? | objects | .n | numbers] as $shown
   | reduce .[] as $item ({items: [], seen: {}};
       .items += [{n: (if .seen[$item.key] then null else $kept[$item.key] end)} + $item]
