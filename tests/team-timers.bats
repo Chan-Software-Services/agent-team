@@ -9,8 +9,9 @@ load helpers/docker
 load helpers/inbox
 load helpers/uptime
 
-# The live session list with only the coordinator in it, which the coordinator step looks for.
-COORDINATOR='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}]'
+# The live session list with only the coordinator and the assistant in it, which the coordinator
+# step looks for.
+COORDINATOR='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
 
 setup() {
   sandbox
@@ -1423,7 +1424,7 @@ LINES
  {"id": "77777777", "name": "T8-planner", "status": "idle"},
  {"id": "99999999", "name": "T6-planner", "status": "idle"},
  {"id": "88888888", "name": "T7-reviewer", "status": "idle"},
- {"id": "c0ffee00", "name": "coordinator", "status": "idle"}]
+ {"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]
 JSON
   finished_stub
 }
@@ -1662,7 +1663,7 @@ EOF
 @test "the first probe that answers renews at once, clears the flag and posts the window and the tasks with a live worker" {
   stub_sleep </dev/null
   discord_answers
-  stub_reply claude '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "81f08540", "name": "T8-reviewer"},
+  stub_reply claude '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "a5515700", "name": "assistant"}, {"id": "81f08540", "name": "T8-reviewer"},
     {"id": "a3586a81", "name": "T5-builder"}, {"id": "1baf2408", "name": "T5-planner"}, {"id": "22222222", "name": "my-T9-builder"}]'
   cut_origin
   run_bin -75 team-timers run
@@ -2308,7 +2309,7 @@ EOF
   # A live team session outside its slice is placed, and that is logged.
   fake_placement
   fake_process 100 99 - claude
-  stub_reply claude '[{"pid": 100, "id": "a1b2c3d4", "name": "T7-builder", "status": "idle"}, {"id": "c0ffee00", "name": "coordinator", "status": "idle"}]'
+  stub_reply claude '[{"pid": 100, "id": "a1b2c3d4", "name": "T7-builder", "status": "idle"}, {"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   run_bin -0 team-timers run
   assert_equal "$(steps "$output")" "lease checkpoint capacity"
   assert_equal "$(grep ' capacity: ' <<<"$output" | cut -d ' ' -f 2-)" "capacity: placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4.scope (1 process)"
@@ -2496,7 +2497,7 @@ EOF2
   discord_answers
   fake_placement
   fake_process 100 99 - claude
-  stub_reply claude '[{"pid": 100, "id": "a1b2c3d4", "name": "T7-builder", "status": "idle"}, {"id": "c0ffee00", "name": "coordinator", "status": "idle"}]'
+  stub_reply claude '[{"pid": 100, "id": "a1b2c3d4", "name": "T7-builder", "status": "idle"}, {"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   # Automatic mode at none for an hour, and a stored reading of the last hour each 5 minutes,
   # the other programs using 8 GiB of 32: the readings span rise_minutes, so it rises to full.
   local file=$HOME/.local/state/agent-team/capacity/readings.jsonl minutes
@@ -2530,4 +2531,103 @@ EOF2
   [[ $(grep ' level: ' <<<"$output") =~ ^[0-9T:Z-]+" level: failed: $TEAM_HOME/level.jsonl has lines that are not level records ".*"line 1; fix or remove them, then run it again"$ ]]
   # The sweep after it still ran.
   assert_equal "$(docker_calls | sed -n 's/^compose -p \(.*\) stop$/\1/p')" conventioner-2
+}
+
+current_lines() {
+  grep -E '^[^ ]+ current: ' <<<"$1" | cut -d' ' -f3- || true
+}
+
+@test "the current step reconciles both lists after the ledger step and before the queue step, logging each line as current: <line>" {
+  jq -cn '{ts: "2026-11-15T09:00:00Z", task: "T5", event: "merged", url: "https://github.com/owner/proj/pull/5"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  local closing="owe T5 the news of T5 | ledger 2026-11-15T08:00:00Z | until task T5 merged | added 2026-11-15T08:00:00Z"
+  local old="ask - which login for the docs host | 1563000000000000046"
+  mkdir -p "$TEAM_HOME/tasks" "$TEAM_HOME/assistant"
+  printf '%s\n' '# Current items' "- $closing" >"$TEAM_HOME/tasks/current.md"
+  printf '%s\n' '# Assistant items' "- $old" >"$TEAM_HOME/assistant/current.md"
+  git -C "${TEAM_HOME:?}" add -A
+  git -C "${TEAM_HOME:?}" commit -qm "test: the lists"
+  # ledger: a line no reader can parse, so the steps around it log.
+  echo 'not json' >>"$TEAM_HOME/ledger.jsonl"
+  opened_item node-pin.md T6 --merged
+  run_bin -1 team-timers run
+  assert_equal "$output" "$(cat "$log")"
+  assert_equal "$(steps "$output")" "lease checkpoint ledger current queue alert"
+  local all lines
+  all=$(current_lines "$output")
+  # Each commit's own line is logged too, one per list changed.
+  assert_equal "$(grep -c '^team home: committed [0-9a-f]* chore: current \(closed\|migrated\) .* and pushed dev$' <<<"$all")" 2
+  lines=$(grep -v '^team home: ' <<<"$all")
+  assert_equal "$(sed -n 1p <<<"$lines")" "closed $(printf '%s' "$closing" | sha256sum | cut -c1-6): task T5 merged"
+  [[ $(sed -n 2p <<<"$lines") =~ ^"migrated $(printf '%s' "$old" | sha256sum | cut -c1-6) as "[0-9a-f]{6}": review "[0-9-]{10}$ ]]
+  assert_equal "$(sed -n '2,$p' "$TEAM_HOME/tasks/current.md")" ""
+  grep -q "^- $old | review " "$TEAM_HOME/assistant/current.md"
+  # Each change is committed and pushed; the next run has nothing to log.
+  assert_equal "$(git -C "${TEAM_HOME:?}" status --porcelain -- tasks/current.md assistant/current.md)" ""
+  run_bin -1 team-timers run
+  assert_equal "$(current_lines "$output")" ""
+}
+
+@test "a current step that fails or outlasts TEAM_TIMERS_CURRENT_SECONDS is logged with its reason, failing its step alone and not the run" {
+  local hung=$BATS_TEST_TMPDIR/hung
+  CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  rm "$CODE_CHECKOUT/bin/team-current"
+  cat >"$CODE_CHECKOUT/bin/team-current" <<'SH'
+#!/usr/bin/env bash
+echo "given: $*"
+echo "team-current: tasks/current.md: not committed, so the change is undone" >&2
+exit 1
+SH
+  chmod +x "$CODE_CHECKOUT/bin/team-current"
+  run_bin -0 team-timers run
+  assert_equal "$(current_lines "$output")" "given: reconcile
+failed: tasks/current.md: not committed, so the change is undone"
+  assert_contains "$(problems)" "current: failed: tasks/current.md: not committed, so the change is undone"
+  assert_equal "$(jq -r '.steps.current.reason' "$HOME/.local/state/agent-team/health.json")" \
+    "tasks/current.md: not committed, so the change is undone"
+
+  cat >"$CODE_CHECKOUT/bin/team-current" <<SH
+#!/usr/bin/env bash
+trap '' TERM
+command -p sleep 300 &
+echo "\$!" >>'$hung'
+wait
+SH
+  local start=$SECONDS
+  TEAM_TIMERS_CURRENT_SECONDS=1 TEAM_TIMERS_KILL_SECONDS=1 run_bin -0 team-timers run
+  ((SECONDS - start < 20))
+  assert_equal "$(current_lines "$output")" "failed: timed out after 1 s"
+  assert_equal "$(still_running "$hung")" ""
+  jq -e '.steps.current.runs == 2' "$HOME/.local/state/agent-team/health.json"
+  grep -q '^CURRENT_TIMEOUT=${TEAM_TIMERS_CURRENT_SECONDS:-120}$' "$REPO_ROOT/bin/team-timers"
+}
+
+@test "the current step never runs off the lease, offline or on a fenced machine" {
+  CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  rm "$CODE_CHECKOUT/bin/team-current"
+  printf '%s\n' '#!/usr/bin/env bash' "echo ran >>'$BATS_TEST_TMPDIR/current.ran'" >"$CODE_CHECKOUT/bin/team-current"
+  chmod +x "$CODE_CHECKOUT/bin/team-current"
+  make_machine laptop
+  on_machine laptop run_bin -0 team-timers run
+  [[ ! -e $BATS_TEST_TMPDIR/current.ran ]]
+
+  stub_sleep </dev/null
+  discord_answers
+  cut_origin
+  run_bin -75 team-timers run
+  run_bin -75 team-timers run
+  [[ ! -e $BATS_TEST_TMPDIR/current.ran ]]
+  git -C "${TEAM_HOME:?}" remote set-url origin "${origin:?}"
+  run_bin -0 team-timers run
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/current.ran")" "ran"
+
+  steal_lease laptop home-pc
+  run_bin -0 team-timers run
+  assert_contains "$output" "fenced home-pc"
+  run_bin -0 team-timers run
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/current.ran")" "ran"
 }

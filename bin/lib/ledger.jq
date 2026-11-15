@@ -1848,6 +1848,17 @@ def activity_finding:
   | {task: null, kind: "activity", session: null, name: null, next: "fix what session-activity names",
      text: "activity: \(.error), so no busy worker is found stalled: fix what session-activity names"};
 
+# A session of the list's short id: its id, or an interactive one's first 8 characters of its
+# session id.
+def twin_short: .id // ((.sessionId // "")[:8]);
+
+# A session of the list as a twin finding names it: "<short id> (<kind>, <state or status>,
+# started <time>)", "started at an unknown time" when its startedAt is not a number.
+def twin_label:
+  "\(twin_short) (\(.kind), \(.state // .status // "no state"), \(
+    if (.startedAt | type) == "number" then "started \(.startedAt / 1000 | floor | todate)"
+    else "started at an unknown time" end))";
+
 # team-sweep's coordinator-twin findings, from the session list (this machine's, as claude agents
 # --json lists it) and the full session id of the session the sweep runs in ($self, "" when it is
 # not known): when more than one session is named coordinator, one finding for each of them but
@@ -1862,27 +1873,54 @@ def coordinator_twin_findings($self):
   | select(($coordinators | length) > 1)
   | any($coordinators[]; $self != "" and .sessionId == $self) as $known
   | $coordinators[] | select(($known | not) or .sessionId != $self)
-  | (.id // ((.sessionId // "")[:8])) as $short
+  | twin_short as $short
   | (if .kind == "interactive" then "ask Daniel to end it, an interactive session, pid \(.pid)"
      else "read claude logs \($short) for anything left to log, then stop it with claude stop \($short)" end
      | if $known then . else "if it is not you, " + . end) as $next
   | {task: null, kind: "coordinator-twin", session: $short, name: "coordinator", next: $next,
-     text: "coordinator-twin: coordinator \($short) (\(.kind), \(.state // .status // "no state"), \(
-       if (.startedAt | type) == "number" then "started \(.startedAt / 1000 | floor | todate)"
-       else "started at an unknown time" end)) is \(
+     text: "coordinator-twin: coordinator \(twin_label) is \(
        if $known then "a second session" else "one of \($coordinators | length) sessions" end
        ) named coordinator on this machine; next: \($next)"};
+
+# team-sweep's assistant-twin findings, from the session list as coordinator_twin_findings takes
+# it: when more than one session is named assistant, one finding for each but the one started
+# first (a startedAt that is not a number counting as last), session being its short id. The
+# sweep runs in the coordinator, never in an assistant, so no session is its own.
+def assistant_twin_findings:
+  [.[] | select(.name == "assistant")]
+  | select(length > 1)
+  | sort_by(if (.startedAt | type) == "number" then .startedAt else infinite end) as $assistants
+  | ($assistants[0] | twin_short) as $first
+  | $assistants[1:][]
+  | twin_short as $short
+  | (if .kind == "interactive" then "ask Daniel to end it, an interactive session, pid \(.pid)"
+     else "read claude logs \($short) for anything left to hand off, then stop it with claude stop \($short)" end) as $next
+  | {task: null, kind: "assistant-twin", session: $short, name: "assistant", next: $next,
+     text: "assistant-twin: assistant \(twin_label) is a second session named assistant on this machine, beside \($first), started first; next: \($next)"};
+
+# The assistant's Stop hook's twin lines (bin/hooks/assistant-stop), from the session list and the
+# full session id of the assistant it runs in ($self, "" when it is not known): when more than one
+# session is named assistant, one line for each but $self's, "a second session" when $self is
+# among them, else "one of <n> sessions" and "if it is not you".
+def assistant_twin_lines($self):
+  [.[] | select(.name == "assistant")] as $assistants
+  | select(($assistants | length) > 1)
+  | any($assistants[]; $self != "" and .sessionId == $self) as $known
+  | $assistants[] | select(($known | not) or .sessionId != $self)
+  | "assistant \(twin_label) is \(
+      if $known then "a second session" else "one of \($assistants | length) sessions" end
+      ) named assistant on this machine\(if $known then "" else ", if it is not you" end)";
 
 # team-sweep's findings, over every ledger event as one array, the session list, the stow plan
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
-# every task's withdrawals), else its findings unless it is parked, then its ci-due, then the stray sessions (named
-# like a team worker whose task is closed or not in the ledger, never the load check's T0, whose
-# session the coordinator waits on for up to 30 minutes), in task number order; then the
-# coordinator-twin, activity, level, retro-due and health findings. $own is the registered projects
-# that are the team's own, or null, as merge_due_finding takes it, $health the health view, as
-# health_findings takes it, and $self the sweep's own session id, as coordinator_twin_findings takes
-# it.
+# every task's withdrawals), else its findings unless it is parked, then its ci-due, then the stray
+# sessions (named like a team worker whose task is closed or not in the ledger, never the load
+# check's T0, whose session the coordinator waits on for up to 30 minutes), in task number order;
+# then the coordinator-twin, assistant-twin, activity, level, retro-due and health findings. $own is
+# the registered projects that are the team's own, or null, as merge_due_finding takes it, $health
+# the health view, as health_findings takes it, and $self the sweep's own session id, as
+# coordinator_twin_findings takes it.
 def sweep($sessions; $plan; $activity; $own; $health; $self):
   . as $events
   | by_task as $tasks
@@ -1898,6 +1936,7 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
             "read claude logs \(.session) for anything left to log, then stop it with claude stop \(.session)"))]
      | by_task_number)
     + [$sessions | coordinator_twin_findings($self)]
+    + [$sessions | assistant_twin_findings]
     + [$activity | activity_finding]
     + [$plan | level_findings]
     + [$events | retro_status | retro_due_finding]
@@ -1906,10 +1945,15 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
 # The findings team-sweep adds after sweep's, from the views it reads beside the ledger: team-queue
 # list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
 # team-current check --json's ($current), one current-stale finding naming each item whose task
-# closed; each view null when there is nothing to read, and {error} when its script failed, which
-# is one finding of kind queue or current naming the error and "fix what <script> names". Each
-# finding has task, session and name null.
-def sweep_views($queue; $current):
+# closed, then team-current due --json's for the coordinator's list ($due), one current-due finding
+# for each item whose review date has come, then team-assistant list --open --to coordinator
+# --json's list ($handoffs), one assistant-handoff finding for each sent more than 30 minutes
+# before $now (seconds); each view null when there is nothing to read, and {error} when its
+# script failed, which is one finding of kind queue, current or assistant-handoff naming the error
+# and "fix what <script> names" (one current finding when both team-current views failed). Each
+# finding has task and name null, and session null but a current-due's, its item id, and an
+# assistant-handoff's, its hand-off id, so each item and hand-off is a finding of its own.
+def sweep_views($queue; $current; $due; $handoffs; $now):
   def failed($kind; $script):
     "fix what \($script) names" as $next
     | {task: null, kind: $kind, session: null, name: null, next: $next, text: "\($kind): \(.error): \($next)"};
@@ -1923,6 +1967,24 @@ def sweep_views($queue; $current):
          | [{task: null, kind: "current-stale", session: null, name: null, next: $next,
              text: "current: \($n) item\(if $n == 1 then " names" else "s name" end) a closed task: \(
                [.closed[] | "\(.id) (\(.task), closed \(.closed_at[:10]))"] | join(", ")); next: \($next)"}]
+       end)
+  + ($due
+     | if . == null then []
+       elif .error != null then (if $current.error != null then [] else [failed("current"; "team-current")] end)
+       else [.items // [] | .[] | "done it, or renew it with a reason" as $next
+         | {task: null, kind: "current-due", session: .id, name: null, next: $next,
+            text: "current item \(.id) is due for review since \(.review): \($next)"}]
+       end)
+  + ($handoffs
+     | if . == null then []
+       elif type == "object" and .error != null then [failed("assistant-handoff"; "team-assistant")]
+       else [.[] | select(.answered == null and .to == "coordinator")
+         | ($now - (.sent | try fromdateiso8601 catch $now)) as $seconds
+         | select($seconds > 1800)
+         | ($seconds / 60 | floor) as $waited
+         | "read it with team-assistant show \(.id), act, and answer it" as $next
+         | {task: null, kind: "assistant-handoff", session: .id, name: null, next: $next,
+            text: "hand-off \(.id) (\(.kind)) from the assistant has waited \($waited) min: \($next)"}]
        end);
 
 # What team-capacity plan reads of the ledger, over every ledger event as one array, with the

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Stop hook for the assistant: no turn ends while something of its own is unattended. It keeps the
+# turn open once with what it found, in this order:
+#   - each item of its list whose review date has come (team-current due --list assistant);
+#   - each hand-off to it still open (team-assistant list --open --to assistant);
+#   - each other session named assistant on this machine (claude agents --json), a twin.
+# When a command of those fails, it keeps the turn open once with "supervision is off: <why>", as
+# stop-sweep does for the coordinator, so supervision is never silently off.
+# Reads the Stop event's JSON on stdin; with stop_hook_active true (the turn was already kept
+# open once) it exits 0 at once. Otherwise it prints {"decision": "block", "reason": ...} to
+# block, or nothing. The event's session_id, when it has one, is its own session
+# (CLAUDE_CODE_SESSION_ID, as stop-sweep sets it), so a twin names only the other assistant; with
+# none, every session named assistant is named, each "if it is not you".
+# Exit 0 either way. Wired only in assistant.settings.json.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
+
+event=$(cat)
+if jq -e '.stop_hook_active == true' >/dev/null 2>&1 <<<"$event"; then exit 0; fi
+own=$(jq -r '.session_id | strings' 2>/dev/null <<<"$event") || own=''
+[[ -n $own ]] || own=${CLAUDE_CODE_SESSION_ID:-}
+
+errors=$(mktemp)
+trap 'rm -f "$errors"' EXIT
+
+block() {
+  jq -cn --arg reason "$1" '{decision: "block", reason: $reason}'
+  exit 0
+}
+
+# Keep the turn open with what failed: off <what failed>
+off() {
+  block "supervision is off: $1$([[ -s $errors ]] && printf ': %s' "$(grep -m1 . "$errors")")
+Find out why and fix it, or tell Daniel in #assistant; meanwhile check your list (team-current list),
+your hand-offs (team-assistant list --open) and ListAgents by hand, then end the turn."
+}
+
+bin=$(dirname "$TEAM_LIB")
+due=$(TEAM_HOME=$TEAM_HOME "$bin/team-current" due --list assistant </dev/null 2>"$errors") ||
+  off "team-current due --list assistant failed"
+handoffs=$(TEAM_HOME=$TEAM_HOME "$bin/team-assistant" list --open --to assistant </dev/null 2>"$errors") ||
+  off "team-assistant list --open --to assistant failed"
+sessions=$(claude agents --json </dev/null 2>"$errors" | jq -ce 'select(type == "array")' 2>/dev/null) ||
+  off "cannot read the live session list (claude agents --json)"
+twins=$(ledger_jq 'assistant_twin_lines($self)' -r --arg self "$own" <<<"$sessions") ||
+  off "cannot read the session list's assistants"
+
+reason=''
+if [[ -n $due ]]; then
+  reason+="Due on your list (team-current due), each done once it is done, or renewed with team-current renew <id> --review --reason <why>:
+$due
+"
+fi
+if [[ -n $handoffs ]]; then
+  reason+="Hand-offs to you still open (team-assistant list --open --to assistant), each read with team-assistant show H<n>, run with Daniel in its thread and answered:
+$handoffs
+"
+fi
+if [[ -n $twins ]]; then
+  reason+="Another session named assistant, a twin that hears #assistant beside you: tell Daniel in #assistant where it runs, and stop nothing yourself:
+$twins
+"
+fi
+[[ -n $reason ]] || exit 0
+block "Before this turn ends, attend to what is left:
+${reason}Act on each, then end the turn."

@@ -20,6 +20,7 @@
 #      true} when it listed a session named coordinator, else {live: false, since, runs, run},
 #      since when none has been, for how many runs in a row and the id of the last run that
 #      counted it (null before any step read it),
+#    assistant: the same of a session named assistant, from the same read,
 #    findings: [{key, task, kind, session, text, since}], the sweep findings the last coordinator
 #      step that could run team-sweep --json saw, each keyed by its task, kind and session as the
 #      sweep watch keys them, with when a look first saw it since it last cleared (null before any
@@ -42,7 +43,7 @@ def health_limits($seams):
 # The heartbeat's steps in their order, for the view's problems; a step not named here comes after
 # them, by name.
 def health_steps:
-  ["run", "probe", "lease", "checkpoint", "ledger", "usage", "queue", "coordinator", "uptime", "inbox",
+  ["run", "probe", "lease", "checkpoint", "ledger", "usage", "current", "queue", "coordinator", "uptime", "inbox",
    "finished", "capacity", "level", "stacks", "pack", "janitor"];
 
 # The ledger read in one pass, over its raw lines (jq -nR): the lines that are not JSON objects,
@@ -66,21 +67,31 @@ def ledger_reason:
   + (if .count > 10 then ", and \(.count - 10) more" else "" end);
 
 # Fold one run's results into the record (the input, null or anything else for none):
-# health_fold($run; $results), where $run is {machine, id (unique to the run, so two runs that
-# start in one second are two), start, now, ended (null while the run goes on), last_checkpoint,
-# offline, login_refused} and $results the run's result entries, in order:
-# {step, reason (null when it went well), more}, {holding}, {lease_renewed}, {ledger},
-# {coordinator_live} and {findings: {at, list}}, the sweep's look at the time at. A step fails in
-# a run when any entry of it failed, with the first failure's reason; a step with no entry did not
-# run and keeps its entry; a failure counts once per run however often it is folded, and so does a
-# run with no coordinator. A run with no coordinator_live (its session list unreadable, or the step
-# not run) keeps the coordinator as the record has it, and one with no findings (the sweep could
-# not run, or the step did not) keeps the findings but no findings_at, the time of the run's look;
-# a look's finding the record already holds keeps its since when the record's run made a look and
-# ended (or, with no end, was last written) no more than $limits.stale_minutes before this run
-# started, so a finding is aged only while it is seen at every run: a failed look or a sleep
-# starts it again, and a long run does not; a new one is dated at the look, and one the look does
-# not hold is dropped, so a finding that comes back starts again.
+# health_fold($run; $results), where $run is {machine, id (unique to the run, so two runs that start
+# in one second are two), start, now, ended (null while the run goes on), last_checkpoint, offline,
+# login_refused} and $results the run's result entries, in order: {step, reason (null when it went
+# well), more}, {holding}, {lease_renewed}, {ledger}, {coordinator_live}, {assistant_live} and
+# {findings: {at, list}}, the sweep's look at the time at. A step fails in a run when any entry of
+# it failed, with the first failure's reason; a step with no entry did not run and keeps its entry;
+# a failure counts once per run however often it is folded, and so does a run with no coordinator or
+# no assistant. A run with no coordinator_live (its session list unreadable, or the step not run)
+# keeps the coordinator as the record has it, and one with no assistant_live the assistant likewise,
+# and one with no findings (the sweep could not run, or the step did not) keeps the findings but no
+# findings_at, the time of the run's look; a look's finding the record already holds keeps its since
+# when the record's run made a look and ended (or, with no end, was last written) no more than
+# $limits.stale_minutes before this run started, so a finding is aged only while it is seen at every
+# run: a failed look or a sleep starts it again, and a long run does not; a new one is dated at the
+# look, and one the look does not hold is dropped, so a finding that comes back starts again. A
+# session's entry of the record, from the run's <key> results (true or false, the last one counting;
+# none keeps the record's) and the record's entry: health_session($run; $results; $key; $old)
+def health_session($run; $results; $key; $old):
+  ([$results[] | select(has($key)) | .[$key]] | last) as $live
+  | if $live == null then $old
+    elif $live then {live: true}
+    elif ($old | type) == "object" and $old.live == false then
+      (if $old.run == $run.id then $old else $old + {runs: ($old.runs + 1), run: $run.id} end)
+    else {live: false, since: $run.now, runs: 1, run: $run.id} end;
+
 def health_fold($run; $results; $limits):
   (if type == "object" and .schema == "team-health/1" then . else {} end) as $prev
   | (reduce ($results[] | select(.step)) as $r ({};
@@ -109,13 +120,8 @@ def health_fold($run; $results; $limits):
       login_refused: $run.login_refused,
       steps: $steps,
       ledger: ([$results[] | select(has("ledger")) | .ledger] | last // $prev.ledger),
-      coordinator: (([$results[] | select(has("coordinator_live")) | .coordinator_live] | last) as $live
-        | $prev.coordinator as $old
-        | if $live == null then $old
-          elif $live then {live: true}
-          elif ($old | type) == "object" and $old.live == false then
-            (if $old.run == $run.id then $old else $old + {runs: ($old.runs + 1), run: $run.id} end)
-          else {live: false, since: $run.now, runs: 1, run: $run.id} end),
+      coordinator: health_session($run; $results; "coordinator_live"; $prev.coordinator),
+      assistant: health_session($run; $results; "assistant_live"; $prev.assistant),
       findings_at: ([$results[] | select(has("findings")) | .findings.at] | last),
       findings: (([$results[] | select(has("findings")) | .findings] | last) as $look
         | if $look == null then $prev.findings
@@ -235,6 +241,16 @@ def health_problems($lease; $now; $limits):
           text: "no coordinator session since \($c.since)",
           alert: "No coordinator session is live on \($rec.machine) since \($c.since | health_clock): workers' reports and your messages go unread until one runs. Start it with claude-coordinator."}]
     else [] end) as $coordinator
+  # No session named assistant, as the same step saw it, alerting on the second run in a row, its
+  # alert saying Daniel's messages in #assistant go unread; no sweep kind either. The heartbeat
+  # never starts one.
+  | (if ($rec.assistant | type) == "object" and $rec.assistant.live == false and ($before | not) then
+      $rec.assistant as $a
+      | [{key: "assistant", since: $a.since, alerting: ($a.runs >= $limits.runs), sweep: null,
+          line: "no assistant session since \($a.since | health_at)",
+          text: "no assistant session since \($a.since)",
+          alert: "No assistant session is live on \($rec.machine) since \($a.since | health_clock): Daniel's messages in #assistant go unread until one runs. Start it with claude-assistant."}]
+    else [] end) as $assistant
   # The sweep's findings seen at every look for the unattended minutes with no ledger event but a
   # denied logged since the first look saw them: the coordinator is live but leaves them. Alerting
   # by definition; no sweep kind, since it is about the coordinator itself. Not raised beside the
@@ -281,11 +297,11 @@ def health_problems($lease; $now; $limits):
              line: "\($name) failing since \(.since | health_at) (\(.runs | health_runs)): \(.reason // "no reason given" | health_cut(150))",
              text: "\($name) failing since \(.since) (\(.runs | health_runs)): \(.reason // "no reason given" | health_cut(150))",
              alert: "The heartbeat's \($name) step has failed \(.runs | health_runs) in a row on \($rec.machine), since \(.since | health_clock): \(.reason // "no reason given" | health_sentence)."})) as $others
-  | $heartbeat + $offline + $refused + $checkpoint + $coordinator + $unattended + $ledger + $others
+  | $heartbeat + $offline + $refused + $checkpoint + $coordinator + $assistant + $unattended + $ledger + $others
   | map(.sweep = (if .alerting then .sweep else null end));
 
-# The alerts the record (the input) calls for at $now: each alerting problem that has an alert
-# text (checkpoint, coordinator, unattended, ledger and step-<name>; heartbeat, offline and
+# The alerts the record (the input) calls for at $now: each alerting problem that has an alert text
+# (checkpoint, coordinator, assistant, unattended, ledger and step-<name>; heartbeat, offline and
 # login-refused post none here), as {key, since, text}, the text cut to health_alert_limit:
 # health_alerts($lease; $now; $limits)
 def health_alerts($lease; $now; $limits):
@@ -324,7 +340,8 @@ def health_view($raw; $lease; $fenced; $machine; $now; $limits):
         health_unknown($machine; "the health record is not a team-health/1 record (the heartbeat's next run writes it again)")
       else
         ($rec | health_problems($lease; $now; $limits)) as $problems
-        | (if $rec.coordinator.live == true then ", coordinator live" else "" end) as $coordinator
+        | ((if $rec.coordinator.live == true then ", coordinator live" else "" end)
+          + (if $rec.assistant.live == true then ", assistant live" else "" end)) as $coordinator
         | if $problems == [] then
             {schema: "team-health/1", machine: $machine, holding: true, ok: true,
              line: ("-# Health: ok - last checkpoint \($rec.last_checkpoint | if . then health_rel else "never" end), lease renewed \($rec.lease_renewed | if . then health_rel else "never" end)\($coordinator)"

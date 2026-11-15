@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Find what the coordinator must not leave unattended, from the ledger, the live session list, the
-# team's stow plan, the heartbeat's health view, the queue and the current items.
+# team's stow plan, the heartbeat's health view, the queue, the current items and the assistant's
+# hand-offs.
 #
 # Usage: team-sweep [--json | --wait]
 # Reads only ledger.jsonl, claude agents --json, team-capacity plan --json (from the stored
@@ -9,8 +10,9 @@
 # name), the registry and bin/lib/review-app while an open task awaits merge with its plan approved
 # (which projects are the team's own and whether the reviewer App is on, for merge-due, below),
 # team-queue list --json --plan <its plan> while tasks/queued/ exists (the queue, the registry and
-# team-capacity costs --json), team-current check --json while tasks/current.md exists, and,
-# through
+# team-capacity costs --json), team-current check --json and team-current due --json --list
+# coordinator while tasks/current.md exists, team-assistant list --open --to coordinator --json
+# while assistant/handoffs.jsonl exists, and, through
 # bin/lib/session-activity, the live sessions' transcripts: their modification times, and from a
 # session's quiet past the default limit only its times, tool names, tool call ids, commands and
 # background task marks (never GitHub, never a tool's output or a message's text, and never a new
@@ -119,7 +121,15 @@
 #                  coordinator" and its next starts "if it is not you, ". The list is this
 #                  machine's: a Remote Control twin is the coordinator's own ListAgents check
 #                  (bin/hooks/session-digest)
-#   activity       after the coordinator-twin findings, with task and session null: session-activity
+#   assistant-twin  after the coordinator-twin findings, with task null: when more than one session
+#                  is named assistant in the session list, one for each but the one started first
+#                  (a startedAt that is not a number counting as last), with session its short id:
+#                  "assistant-twin: assistant <id> (<kind>, <state or status>, started <time>) is a
+#                  second session named assistant on this machine, beside <first id>, started
+#                  first; next: read claude logs <id> for anything left to hand off, then stop it
+#                  with claude stop <id>" ("ask Daniel to end it, an interactive session, pid
+#                  <pid>" for an interactive one)
+#   activity       after the assistant-twin findings, with task and session null: session-activity
 #                  failed (a Python older than 3.11, say, or a session with a transcript whose
 #                  startedAt is not epoch milliseconds) or printed no JSON object, so no busy
 #                  worker can be found stalled: "activity: <its last line on stderr>, so no busy
@@ -154,12 +164,12 @@
 #                  (heartbeat-failures.log has every line), then run team-checkpoint --force"
 #   health         after it, with task and session null: the view's alerting problems whose sweep
 #                  kind is health (login-refused, ledger, a step failing 12 runs in a row), joined
-#                  by "; " in one finding: "health: <their plain texts>; next: fix what each
-#                  names; team-timers health lists them"; or, when the view cannot be read
-#                  (team-timers fails, times out or prints no team-health/1 view), "health: <its
-#                  last line on stderr>: fix what team-timers names". The offline problem and the
-#                  coordinator's own (coordinator, unattended) raise none, and a machine that does
-#                  not hold the lease has no problems
+#                  by "; " in one finding: "health: <their plain texts>; next: fix what each names;
+#                  team-timers health lists them"; or, when the view cannot be read (team-timers
+#                  fails, times out or prints no team-health/1 view), "health: <its last line on
+#                  stderr>: fix what team-timers names". The offline problem and the sessions' own
+#                  (coordinator, assistant, unattended) raise none, and a machine that does not hold
+#                  the lease has no problems
 #   queue-ready    after the health findings, with task and session null: team-queue list's, while
 #                  the level has room for one more task and an item is ready, the top one: "queue:
 #                  <the room's line>: open <file> (<project>, priority <p>, <size>): <summary>;
@@ -174,7 +184,19 @@
 #                  done, or add it again under an open task"
 #   current        in its place, with task and session null: team-current check fails (an exit
 #                  above 1) or prints no team-current-check/1 view: "current: <its last line on
-#                  stderr>: fix what team-current names"
+#                  stderr>: fix what team-current names"; once only, when due fails too
+#   current-due    after them, with task null: one for each item of the coordinator's list
+#                  (tasks/current.md) whose review date has come, as team-current due --json names
+#                  them, with session its item id: "current item <id> is due for review since
+#                  <date>: done it, or renew it with a reason"; a due that fails is the current
+#                  finding above, unless check failed too
+#   assistant-handoff  after them, with task null: one for each hand-off to the coordinator not
+#                  answered more than 30 minutes after it was sent, as team-assistant list --open
+#                  --to coordinator --json lists them, with session its id (H<n>): "hand-off H<n>
+#                  (<kind>) from the assistant has waited <m> min: read it with team-assistant
+#                  show H<n>, act, and answer it"; or, when team-assistant fails or prints no list,
+#                  one with session null: "assistant-handoff: <its last line on stderr>: fix what
+#                  team-assistant names"
 # With --json, the findings as a list of {task, kind, session, name, next, text}.
 # Exit 0 with no findings (and nothing printed but --json's []), 1 with findings, and 1 with the
 # reason on stderr and nothing on stdout when the session list cannot be read.
@@ -301,6 +323,19 @@ script_view() {
   rm -f "$out" "$err"
 }
 
+# The hand-offs open to the coordinator as one compact line: team-assistant list --open --to
+# coordinator --json's list, or {error} with the last line it said on stderr (~ for the home
+# directory) when it fails or prints no list: handoffs_view
+handoffs_view() {
+  local out err rc=0
+  out=$(mktemp) err=$(mktemp)
+  TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-assistant" list --open --to coordinator --json >"$out" 2>"$err" </dev/null || rc=$?
+  if ((rc)) || ! jq -ce 'select(type == "array")' "$out" 2>/dev/null; then
+    error_view "$err" "team-assistant list $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no list"; fi)"
+  fi
+  rm -f "$out" "$err"
+}
+
 # The registered projects that are the team's own and the reviewer App's id, own_projects' JSON in
 # bin/lib/team.sh, read only while an open task awaits merge with its plan approved
 # (default_may_hold), else no project and no App; null with a registry it cannot read, saying why
@@ -322,12 +357,15 @@ own_covered() {
 # stow plan and the live sessions' transcripts; fails with the reason on stderr when the session
 # list cannot be read.
 look() {
-  local sessions plan activity plan_file own health plan_pid health_pid queue current queue_pid='' current_pid='' found
+  local sessions plan activity plan_file own health plan_pid health_pid queue current due handoffs
+  local queue_pid='' current_pid='' due_pid='' handoffs_pid='' found
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
   plan_file=$(mktemp)
   printf '%s\n' "$sessions" >"$plan_file.sessions"
   echo null >"$plan_file.queue"
   echo null >"$plan_file.current"
+  echo null >"$plan_file.due"
+  echo null >"$plan_file.handoffs"
   level_plan "$plan_file.sessions" >"$plan_file" &
   plan_pid=$!
   health_view >"$plan_file.health" &
@@ -335,6 +373,12 @@ look() {
   if [[ -f $TEAM_HOME/tasks/current.md ]]; then
     script_view team-current-check/1 team-current check --json >"$plan_file.current" &
     current_pid=$!
+    script_view team-current-due/1 team-current due --json --list coordinator >"$plan_file.due" &
+    due_pid=$!
+  fi
+  if [[ -f $TEAM_HOME/assistant/handoffs.jsonl ]]; then
+    handoffs_view >"$plan_file.handoffs" &
+    handoffs_pid=$!
   fi
   activity=$(session_activity "$sessions")
   wait "$plan_pid" || true
@@ -354,13 +398,20 @@ look() {
     --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" "$ledger")
   [[ -z $queue_pid ]] || wait "$queue_pid" || true
   [[ -z $current_pid ]] || wait "$current_pid" || true
+  [[ -z $due_pid ]] || wait "$due_pid" || true
+  [[ -z $handoffs_pid ]] || wait "$handoffs_pid" || true
   queue=$(cat "$plan_file.queue")
   current=$(cat "$plan_file.current")
-  rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.queue" "$plan_file.current"
+  due=$(cat "$plan_file.due")
+  handoffs=$(cat "$plan_file.handoffs")
+  rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.queue" "$plan_file.current" \
+    "$plan_file.due" "$plan_file.handoffs"
   [[ -n $queue ]] || queue='{"error": "team-queue list printed nothing"}'
   [[ -n $current ]] || current='{"error": "team-current check printed nothing"}'
-  FINDINGS=$(ledger_jq '. + sweep_views($queue; $current)' -c --argjson queue "$queue" --argjson current "$current" \
-    <<<"$found")
+  [[ -n $due ]] || due='{"error": "team-current due printed nothing"}'
+  [[ -n $handoffs ]] || handoffs='{"error": "team-assistant list printed nothing"}'
+  FINDINGS=$(ledger_jq '. + sweep_views($queue; $current; $due; $handoffs; now)' -c --argjson queue "$queue" \
+    --argjson current "$current" --argjson due "$due" --argjson handoffs "$handoffs" <<<"$found")
 }
 
 # The sweep watch: see --wait in the header.
