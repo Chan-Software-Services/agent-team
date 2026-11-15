@@ -32,7 +32,9 @@
 # its settings: the flag is not preempted by a higher-priority settings scope, so a /autocompact
 # Daniel once ran in their own session (saved in user settings) cannot widen the coordinator's
 # window; CLAUDE_CODE_AUTO_COMPACT_WINDOW, which would override the flag, stays unset. Its
-# settings add idle compaction from 100k tokens, so a long idle does not rewrite a large cache.
+# settings add idle compaction from 100k tokens, so a long idle does not rewrite a large cache,
+# and bin/hooks/compact-hold, which holds each automatic compaction until the coordinator has
+# stowed (team-stowed), for at most 15 minutes after telling it, and below 300k tokens.
 #
 # Its starting context, which every reply carries and every compaction starts from, holds only
 # what it uses. Its settings deny, by bare name, the tools it never calls (Artifact and its two
