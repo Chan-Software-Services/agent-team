@@ -169,6 +169,14 @@ $tail"
   stop -0
   assert_equal "$(reason)" "supervision is off: cannot read the live session list (claude agents --json)
 $tail"
+  # A session list that hangs is stopped long before the hook's own timeout, which blocks nothing.
+  stub_script claude <<<'exec 3>&-; command -p sleep 30'
+  local start=$SECONDS
+  TEAM_ASSISTANT_STOP_LIST_SECONDS=1 stop -0
+  ((SECONDS - start < 15))
+  assert_equal "$(reason)" "supervision is off: the live session list (claude agents --json) did not answer in 1 s
+$tail"
+  grep -q '^LIST_SECONDS=${TEAM_ASSISTANT_STOP_LIST_SECONDS:-30}$' "$REPO_ROOT/bin/hooks/assistant-stop"
 }
 
 @test "assistant.settings.json wires the hook on Stop, with its timeout, and no other settings file mentions it" {
