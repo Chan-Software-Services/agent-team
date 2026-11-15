@@ -79,6 +79,7 @@ green_pr() {
   echo '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}]' >"$gh_dir/required.json"
   echo '{"name": "dev", "protected": true, "protection": {"enabled": true,
     "required_status_checks": {"contexts": ["lint", "agent-review"]}}}' >"$gh_dir/branch.json"
+  echo '[]' >"$gh_dir/rules.json"
   jq -n --arg head "$head" '[
     {sha: "1111111111111111111111111111111111111111", commit: {message: "feat: one\n\nBody."}},
     {sha: $head, commit: {message: "test: two"}}]' >"$gh_dir/commits.json"
@@ -106,8 +107,9 @@ checks() {
 
 # gh answers from the files under $GH_DIR (the second read of the PR from pr-again.json when a
 # test wrote one; the head's agent-review check runs from check-runs.json and its commit statuses
-# from status.json, which app_on writes). pr merge marks the PR merged (or runs merge.sh when
-# a test wrote one); anything unplanned fails.
+# from status.json, which app_on writes; the base's classic protection, any base's, from
+# branch.json, its rulesets' rules from rules.json and ruleset <id> from ruleset-<id>.json, which pinned writes). pr merge
+# marks the PR merged (or runs merge.sh when a test wrote one); anything unplanned fails.
 stub_gh() {
   stub_script gh <<'EOF'
 case "$*" in
@@ -115,7 +117,9 @@ case "$*" in
   "pr view 5 --repo owner/proj "*) cat "$GH_DIR/pr.json" ;;
   "pr checks 5 --repo owner/proj --required "*) cat "$GH_DIR/required.json" ;;
   "pr checks 5 --repo owner/proj "*) cat "$GH_DIR/checks.json" ;;
-  "api repos/owner/proj/branches/dev") cat "$GH_DIR/branch.json" ;;
+  "api repos/owner/proj/branches/"*) cat "$GH_DIR/branch.json" ;;
+  "api repos/owner/proj/rules/branches/"*" --paginate") cat "$GH_DIR/rules.json" ;;
+  "api repos/owner/proj/rulesets/"*) cat "$GH_DIR/ruleset-${2##*/}.json" ;;
   "api repos/owner/proj/pulls/5/commits --paginate") cat "$GH_DIR/commits.json" ;;
   "api repos/owner/proj/pulls/5/files --paginate") cat "$GH_DIR/files.json" ;;
   "api repos/owner/proj/commits/"*"/check-runs?check_name=agent-review&filter=latest&per_page=100") cat "$GH_DIR/check-runs.json" ;;
@@ -509,9 +513,30 @@ agent_review_status() {
 # dev's protection requires its contexts, agent-review pinned to App <app> (none: agent-review
 # left out of the checks with an app) and the others to GitHub Actions, enforced for <level>:
 # pinned <app or none> <level>
+# Or the ruleset form: ruleset 42 (dev) requires lint from GitHub Actions and agent-review from
+# App <app> (none: from any source), with each <actor> a bypass actor of it, a "<type> <id>" (an
+# id of - for none) always allowed to bypass, and classic protection left as it is:
+# pinned --ruleset <app or none> [<actor>...]
 pinned() {
+  if [[ $1 == --ruleset ]]; then
+    jq -n --arg app "$2" '[{type: "required_status_checks", ruleset_source_type: "Repository", ruleset_source: "owner/proj",
+        ruleset_id: 42, parameters: {strict_required_status_checks_policy: false, do_not_enforce_on_create: false,
+          required_status_checks: [{context: "lint", integration_id: 15368},
+            ({context: "agent-review"} + if $app == "none" then {} else {integration_id: ($app | tonumber)} end)]}}]' \
+      >"$gh_dir/rules.json"
+    printf '%s\n' "${@:3}" | jq -R 'select(. != "") | split(" ") | {actor_id: (if .[1] == "-" then null else .[1] | tonumber end),
+        actor_type: .[0], bypass_mode: "always"}' | jq -s '{id: 42, name: "dev", target: "branch", enforcement: "active",
+        bypass_actors: .}' >"$gh_dir/ruleset-42.json"
+    return
+  fi
   jq --arg app "$1" --arg level "$2" '.protection.required_status_checks += {enforcement_level: $level,
       checks: [.protection.required_status_checks.contexts[] | {context: ., app_id: (if . != "agent-review" then 15368
         elif $app == "none" then null else ($app | tonumber) end)}]}' "$gh_dir/branch.json" >"$gh_dir/branch.next"
   mv "$gh_dir/branch.next" "$gh_dir/branch.json"
+}
+
+# dev with no classic protection, as the branches API answers a branch only rulesets cover: unprotected
+unprotected() {
+  echo '{"name": "dev", "protected": true, "protection": {"enabled": false,
+    "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}}' >"$gh_dir/branch.json"
 }

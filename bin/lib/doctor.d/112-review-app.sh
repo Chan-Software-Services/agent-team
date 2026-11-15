@@ -2,14 +2,16 @@
 #               behind (review_app in bin/lib/team.sh): passes saying it is off with no
 #               bin/lib/review-app; else fails on the first of a malformed bin/lib/review-app, its
 #               key ~/.config/agent-team/review-app.pem missing, not a file or off mode 600 (no
-#               byte of it read), no registered project the team's own, or such a project's base,
-#               read from GitHub, whose protection does not require agent-review from the App's
-#               id or enforces its required checks for anyone but everyone.
+#               byte of it read), no registered project the team's own, or such a project's base
+#               whose rules, read from GitHub (base_rules in bin/lib/team.sh: its classic
+#               protection and its rulesets), do not require agent-review from the App's id, or
+#               that classic protection enforces its required checks for anyone but everyone, or
+#               a ruleset of them has a bypass actor.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
 
 review_app_check() {
-  local app app_id app_slug key=$HOME/.config/agent-team/review-app.pem shown own project repo base mode branch problem
+  local app app_id app_slug key=$HOME/.config/agent-team/review-app.pem shown own project repo base mode rules problem
   local restore="Daniel runs team-secrets restore in their own terminal"
   if ! app=$(review_app 2>"$err"); then
     report "review app" FAIL "$(first_error)" "give bin/lib/review-app its two lines through a PR to dev"
@@ -35,13 +37,13 @@ review_app_check() {
     return
   fi
 
-  # Each project that is the team's own: its base's protection, as team-merge reads it.
+  # Each project that is the team's own: its base's rules, as team-merge reads them.
   if ! own=$(own_projects 2>"$err"); then
     report "review app" FAIL "the registry cannot be read: $(first_error)" "the records line's fix, then run team-doctor again"
     return
   fi
   if jq -e '.projects == []' <<<"$own" >/dev/null; then
-    report "review app" FAIL "the reviewer App $app_slug ($app_id) is on, but no registered project is the team's own, so no base's protection is read" \
+    report "review app" FAIL "the reviewer App $app_slug ($app_id) is on, but no registered project is the team's own, so no base's rules are read" \
       "register agent-team in projects.toml (team-project --help)"
     return
   fi
@@ -52,18 +54,20 @@ review_app_check() {
       return
     fi
     repo=$(jq -r .repo <<<"$registry_reply") base=$(jq -r .base <<<"$registry_reply")
-    if ! branch=$(bounded 30 gh api "repos/$repo/branches/$base" 2>"$err" </dev/null); then
-      report "review app" FAIL "$base on $repo cannot be read from GitHub: $(first_error)" \
+    if ! rules=$(base_rules "$repo" "$base" 2>"$err"); then
+      report "review app" FAIL "$base's rules on $repo cannot be read from GitHub: $(first_error)" \
         "the github login line's fix, then run team-doctor again"
       return
     fi
     problem=$(ledger_jq 'first(review_app_pin_problems($app))
       | if .kind == "pin" then
-          "pin\t\($base)'"'"'s protection on \($repo) does not require agent-review from the reviewer App \($app), so GitHub does not hold its check"
-        else
+          "pin\t\($base)'"'"'s protection and rulesets on \($repo) do not require agent-review from the reviewer App \($app), so GitHub does not hold its check"
+        elif .kind == "admins" then
           "admins\t\($base)'"'"'s protection on \($repo) enforces its required checks for \(.level), not everyone, so an administrator could merge past them"
-        end' -r --argjson app "$app_id" --arg base "$base" --arg repo "$repo" <<<"$branch") ||
-      problem="pin	$base on $repo answered GitHub's branch read with no JSON"
+        else
+          "bypass\t\(.name) (\(.ruleset))\t\($base)'"'"'s \(bypass_text(" on \($repo)"))"
+        end' -r --argjson app "$app_id" --arg base "$base" --arg repo "$repo" <<<"$rules") ||
+      problem="pin	$base's rules on $repo could not be judged"
     case ${problem%%$'\t'*} in
       pin)
         report "review app" FAIL "${problem#*$'\t'}" \
@@ -74,11 +78,16 @@ review_app_check() {
         report "review app" FAIL "${problem#*$'\t'}" "Daniel turns on enforce_admins in $base's protection on $repo"
         return
         ;;
+      bypass)
+        problem=${problem#*$'\t'}
+        report "review app" FAIL "${problem#*$'\t'}" "Daniel removes the bypass actors of ruleset ${problem%%$'\t'*} on $repo"
+        return
+        ;;
     esac
-    where+=("$base's protection on $repo")
+    where+=("$base's protection and rulesets on $repo")
   done < <(jq -r '.projects[]' <<<"$own")
   local joined
   joined=$(printf '%s, ' "${where[@]}")
-  report "review app" PASS "the reviewer App $app_slug ($app_id) is on: its key $shown is in place with mode 600, and ${joined%, } requires agent-review from it, enforced for everyone"
+  report "review app" PASS "the reviewer App $app_slug ($app_id) is on: its key $shown is in place with mode 600, and ${joined%, } require agent-review from it, enforced for everyone"
 }
 review_app_check

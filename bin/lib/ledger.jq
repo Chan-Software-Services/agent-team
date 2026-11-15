@@ -1200,16 +1200,52 @@ def reviewed_head_by($head; match):
 def reviewed_head($head): reviewed_head_by($head; same_head(.[0]; .[1]));
 def exact_reviewed_head($head): reviewed_head_by($head; exact_head(.[0]; .[1]));
 
-# How a base branch's protection, as GitHub's branches API answers it (the branch's JSON as
-# input), fails to hold the reviewer App $app's check, each one object, none when it holds:
-# {kind: "pin"} when no required check agent-review is pinned to the App's id (a context in
-# contexts alone is a commit status's, met by any token), and {kind: "admins", level} when its
-# required checks are enforced for less than everyone, so an administrator could merge past them.
-# team-merge's default word and team-doctor's review app line both read the pin through it.
+# A base's rules, from GitHub's answers for it: the branch's JSON as input (branches/<base>, whose
+# protection is classic protection, on unless it says enabled false), $rules the pages of rules/branches/<base>
+# (each an array of the active rulesets' rules, each with its ruleset_id), and $rulesets each
+# rulesets/<id> read for a ruleset whose rules require a check or a queue. One object, base_rules
+# in bin/lib/team.sh's output: required, each {context, app_id} of both sources, once (app_id null
+# where any source meets it: a classic context with no check, a ruleset check with no
+# integration_id); strict, whether either requires a head up to date with the base; queue, the
+# merge queue rule's parameters, or null; classic, whether classic protection is on the base;
+# bypass, whether anyone may merge past the required checks, and bypass_by, each way:
+# {protection: <level>} when classic protection requires checks for <level>, not everyone, and
+# {ruleset, name, actors} for a ruleset read with bypass actors, each "<type>[ <id>] (<mode>)",
+# actors null when the answer lists none because this token may not see them.
+def base_rules($rules; $rulesets):
+  (.protection != null and .protection.enabled != false) as $classic
+  | (if $classic then .protection.required_status_checks // {} else {} end) as $protected
+  | ($rules | add // []) as $rules
+  | [$rules[] | select(.type == "required_status_checks") | .parameters // {}] as $checks
+  | (($protected.checks // []) | map({context, app_id: (.app_id // null)})) as $pinned
+  | ([$pinned[], ($protected.contexts // [] | .[] | select(IN($pinned[].context) | not) | {context: ., app_id: null}),
+      ($checks[].required_status_checks[]? | {context, app_id: (.integration_id // null)})] | unique) as $required
+  | ((if $classic and ($pinned + ($protected.contexts // []) | length > 0) and $protected.enforcement_level != "everyone"
+      then [{protection: ($protected.enforcement_level // "no one")}] else [] end)
+     + [$rulesets[] | select(.bypass_actors != []) | {ruleset: .id, name,
+         actors: (.bypass_actors | if . == null then null
+           else map("\(.actor_type)\(if .actor_id == null then "" else " \(.actor_id)" end) (\(.bypass_mode // "always"))") end)}]) as $by
+  | {required: $required,
+     strict: ($protected.strict == true or any($checks[]; .strict_required_status_checks_policy == true)),
+     queue: (first($rules[] | select(.type == "merge_queue") | .parameters // {}) // null),
+     classic: $classic, bypass: ($by != []), bypass_by: $by};
+
+# How a base's rules, base_rules' object as input, fail to hold the reviewer App $app's check, each
+# one object, none when it holds: {kind: "pin"} when no required check agent-review is pinned to
+# the App's id (a context alone is a commit status's, met by any token); {kind: "admins", level}
+# when classic protection enforces its required checks for less than everyone, so an administrator
+# could merge past them; and {kind: "bypass", ruleset, name, actors} for each ruleset with bypass
+# actors (bypass_text says it). team-merge's default word and team-doctor's review app line both
+# read the pin through it.
 def review_app_pin_problems($app):
-  .protection.required_status_checks
-  | (select(any((. // {}).checks[]?; .context == "agent-review" and .app_id == $app) | not) | {kind: "pin"}),
-    (select(. != null and .enforcement_level != "everyone") | {kind: "admins", level: (.enforcement_level // "no one")});
+  (select(any(.required[]?; .context == "agent-review" and .app_id == $app) | not) | {kind: "pin"}),
+  (.bypass_by[]? | if has("protection") then {kind: "admins", level: .protection} else {kind: "bypass"} + . end);
+# A ruleset's bypass, a bypass problem as input, as a sentence's end after "<base>'s", with $on
+# (" on <repo>", or "") after the ruleset's name.
+def bypass_text($on):
+  "ruleset \(.name) (\(.ruleset))\($on) " + if .actors == null
+    then "has bypass actors that cannot be read, so who may merge past its required checks is not known"
+    else "lets \(.actors | join(", ")) merge past its required checks" end;
 
 # What waits on the checks of a pass, over the task's events, or null: null unless the task's
 # latest review is a pass on one of its PRs not merged, the PR whose head the pass names (by the

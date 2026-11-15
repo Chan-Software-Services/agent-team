@@ -55,12 +55,18 @@ fixture_ledger() {
 
 # gh answers PR #5 of owner/proj: its view, all its checks and its server-required checks, each
 # from the JSON given (or from $view, $checks and $required), and gh api's compare of its base and
-# head from the fourth (or $compare), failing as an unreadable compare when that is empty or unset.
+# head from the fourth (or $compare), failing as an unreadable compare when that is empty or unset;
+# its base unprotected, with the rulesets' rules $rules (none when unset) and ruleset 9 by no one
+# bypassed.
 stub_github() {
   export GH_VIEW=${1:-$view} GH_CHECKS=${2:-$checks} GH_REQUIRED=${3:-$required} GH_COMPARE=${4:-${compare:-}}
+  export GH_RULES=${rules:-[]}
   stub_script gh <<'EOF'
 case "$1 $2 $*" in
   "pr view"*) echo "$GH_VIEW" ;;
+  "api repos/owner/proj/branches/"*) echo '{"name": "main", "protected": false}' ;;
+  "api repos/owner/proj/rules/branches/"*) echo "$GH_RULES" ;;
+  "api repos/owner/proj/rulesets/9 "*) echo '{"id": 9, "name": "main", "bypass_actors": []}' ;;
   "api repos/"*/compare/*)
     if [[ -n $GH_COMPARE ]]; then echo "$GH_COMPARE"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
   "pr checks"*--required*) echo "$GH_REQUIRED" ;;
@@ -516,6 +522,7 @@ reply_line() {
   required='[{"name": "shellcheck", "bucket": "pass", "state": "SUCCESS"},
     {"name": "build", "bucket": "pending", "state": "IN_PROGRESS"}]'
   compare=0
+  rules='[{"type": "merge_queue", "ruleset_id": 9, "parameters": {"merge_method": "MERGE", "grouping_strategy": "ALLGREEN"}}]'
   stub_github
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -c '.pr | del(.merge_authority)' <<<"$output")" "$(jq -cn --arg head "$head" '{
@@ -524,6 +531,7 @@ reply_line() {
     caught_up: false, checks: {passed: ["agent-review", "docs", "shellcheck"], failing: ["deploy", "lint"], pending: ["build"]},
     required: ["build", "shellcheck", "test"], required_missing: ["test"],
     agent_review: "success", merge_approved: true, behind_by: 0,
+    queue: {merge_method: "MERGE", grouping_strategy: "ALLGREEN"},
     review_app: null, review_check: null, review_check_run: null, review_check_by: null}')"
   # The words, as merge_authority derives them: a legacy merge-approved, naming no head, holds on
   # the ledger for the PR's latest pr event; no plan is approved.
@@ -533,7 +541,15 @@ reply_line() {
     ["pr", "view", "5", "--repo", "owner/proj", "--json", "number,state,baseRefName,headRefOid,headRefName,changedFiles"],
     ["pr", "checks", "5", "--repo", "owner/proj", "--json", "name,bucket,state"],
     ["pr", "checks", "5", "--repo", "owner/proj", "--required", "--json", "name,bucket,state"],
+    ["api", "repos/owner/proj/branches/main"],
+    ["api", "repos/owner/proj/rules/branches/main", "--paginate"],
+    ["api", "repos/owner/proj/rulesets/9"],
     ["api", "repos/owner/proj/compare/main...\($head)", "--jq", ".behind_by"]')"
+  # Rules that cannot be read leave queue null and the rest of the part as it is.
+  rules='not json'
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.queue, .behind_by, .error]' <<<"$output")" '[null,0,null]'
 }
 
 @test "the head moved when GitHub's head is not the ledger's, and approval is per PR, by its URL" {

@@ -854,12 +854,12 @@ OWN_LEGACY="the team's own project merges unattended only on a plan Daniel appro
 @test "with the reviewer App on, an agent-team PR is refused on the default word unless dev's protection pins agent-review to the App, enforced for everyone" {
   app_default
   pinned none everyone
-  refused "dev's protection does not require agent-review from the reviewer App 123456, so GitHub does not hold its check: the team's own project merges unattended only once it does" \
+  refused "dev's protection and rulesets do not require agent-review from the reviewer App 123456, so GitHub does not hold its check: the team's own project merges unattended only once it does" \
     "$(ask_per_head)"
   : >"$STUB_CALLS/gh.log"
   green_pr
   pinned 15368 everyone
-  refused "dev's protection does not require agent-review from the reviewer App 123456"
+  refused "dev's protection and rulesets do not require agent-review from the reviewer App 123456"
   : >"$STUB_CALLS/gh.log"
   green_pr
   pinned 123456 non_admins
@@ -870,6 +870,49 @@ OWN_LEGACY="the team's own project merges unattended only on a plan Daniel appro
   pinned 123456 everyone
   app_runs
   refused "the reviewer App's agent-review check is missing on the head ${head:0:7}"
+}
+
+@test "with the reviewer App on, agent-review pinned to the App in a ruleset of dev, with no classic protection, holds the default word's pin" {
+  app_default
+  unprotected
+  pinned --ruleset 123456
+  run_bin -0 --separate-stderr team-merge T14
+  assert_equal "$(merged_events | jq -c '[.approval, .check_run]')" '["default",4242]'
+  assert_equal "$(stub_calls gh | jq -c 'select(.[1] // "" | test("/rule"))')" \
+    '["api","repos/owner/proj/rules/branches/dev","--paginate"]'$'\n''["api","repos/owner/proj/rulesets/42"]'
+}
+
+@test "with the reviewer App on, classic protection requiring agent-review from any source and a ruleset pinning it to the App hold the default word's pin together" {
+  app_default
+  pinned none everyone
+  pinned --ruleset 123456
+  run_bin -0 --separate-stderr team-merge T14
+  assert_equal "$(merged_events | jq -c '[.approval, .check_run]')" '["default",4242]'
+}
+
+@test "with the reviewer App on, an agent-team PR is refused on the default word when a ruleset of dev leaves agent-review unpinned or lets an actor bypass it" {
+  app_default
+  unprotected
+  pinned --ruleset none
+  refused "dev's protection and rulesets do not require agent-review from the reviewer App 123456, so GitHub does not hold its check: the team's own project merges unattended only once it does"
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  unprotected
+  pinned --ruleset 123456 "RepositoryRole 5" "OrganizationAdmin -"
+  refused "dev's ruleset dev (42) lets RepositoryRole 5 (always), OrganizationAdmin (always) merge past its required checks"
+  # A ruleset whose bypass actors this token cannot see is read as bypassed.
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  unprotected
+  pinned --ruleset 123456
+  jq 'del(.bypass_actors)' "$gh_dir/ruleset-42.json" >"$gh_dir/ruleset.next" && mv "$gh_dir/ruleset.next" "$gh_dir/ruleset-42.json"
+  refused "dev's ruleset dev (42) has bypass actors that cannot be read, so who may merge past its required checks is not known"
+  # Classic protection beside the ruleset is held to everyone as before.
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  pinned 123456 non_admins
+  pinned --ruleset 123456
+  refused "dev's protection enforces its required checks for non_admins, not everyone, so an administrator could merge past them"
 }
 
 @test "with the reviewer App on, an agent-team PR on a plan the coordinator approved, or a legacy approval, is refused on the default word, naming Daniel's approval" {

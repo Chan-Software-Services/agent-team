@@ -12,9 +12,10 @@
 #   the task's latest review event has verdict pass and names the PR's head now (by the shorter
 #   prefix), or the head an earlier team-catch-up made it from (reviewed_head in bin/lib/ledger.jq,
 #   when no review names the head itself);
-#   every required check (the base branch's protection, its contexts and the checks it pins to an
-#   App, gh pr checks --required and the project's required_checks) is present on the head and
-#   passed (a skipped one passes), and no check on the head is failing or pending.
+#   every required check (the base's rules, its protection's and its rulesets' required checks,
+#   base_rules in bin/lib/team.sh, gh pr checks --required and the project's required_checks) is
+#   present on the head and passed (a skipped one passes), and no check on the head is failing or
+#   pending; rules that cannot be read end it as GitHub unreadable.
 # Then it fetches the PR's branch and the base into the project's primary checkout, as team-merge
 # does, and refuses a fetched tip that is not the head GitHub showed (the head moved: run it
 # again). A head an earlier team-catch-up made must add only clean merges of the base to the
@@ -100,7 +101,12 @@ poster=team-review-status
 bar=$(own_bar "$project") || exit 1
 if [[ $(jq -r '.app? // empty' <<<"$bar") ]]; then poster=team-review-check; fi
 jq -e 'has("error") | not' <<<"$facts" >/dev/null || die "GitHub cannot be read: $(jq -r .error <<<"$facts")"
-github "$scratch" branch api "repos/$repo/branches/$base" || die "GitHub cannot be read: $(<"$scratch/error")"
+# The base's rules, which pr_part read for an open PR; a PR not open is refused below as not open.
+if [[ -f $scratch/rules.error ]]; then
+  die "GitHub cannot be read: $(grep -m1 . "$scratch/rules.error" || echo "the base's rules failed")"
+elif [[ ! -f $scratch/rules ]]; then
+  echo '{"required": []}' >"$scratch/rules"
+fi
 head=$(jq -r .head <<<"$facts") branch=$(jq -r .headRefName "$scratch/view")
 # The head whose review stands for the PR's: the head, or the one an earlier catch-up made it from.
 reviewed=$(ledger_jq 'reviewed_head($head)' -r --arg head "$head" <<<"$events") || exit 1
@@ -117,11 +123,9 @@ while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done
       "the latest review of \($task) passed on \(.head[:7]), not on the head \($head[:7])\(
         if same_head($reviewed; $head) then "" else " or \($reviewed[:7]), which team-catch-up made it from" end): review the head first"
     else empty end' -r --arg task "$task" --arg head "$head" --arg reviewed "$reviewed" <<<"$events")
-# The protection's required checks are its contexts and the checks it pins to an App (agent-review
-# to the reviewer App's id, once Daniel pins it), read as team-merge reads them.
-while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(jq -r --slurpfile branch "$scratch/branch" '
-  ($branch[0].protection.required_status_checks // {}) as $protected
-  | ((.required + ($protected.contexts // []) + [($protected.checks // [])[] | .context]) | unique) as $required
+# The rules' required checks, its protection's and its rulesets', read as team-merge reads them.
+while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(jq -r --slurpfile rules "$scratch/rules" '
+  ((.required + [$rules[0].required[].context]) | unique) as $required
   | (.checks.passed + .checks.failing + .checks.pending) as $present
   | ($required[] | select(IN($present[]) | not) | "required check \(.) is missing on the head"),
     ([$required[] | select(IN($present[]))] - .checks.passed | .[] | "required check \(.) has not passed on the head"),

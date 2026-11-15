@@ -32,10 +32,11 @@
 #   (own_project: agent-team by name, by path or by repo) with the reviewer App off (no
 #   bin/lib/review-app) its one reason is that it merges unattended only behind the reviewer App's
 #   check, which is not set up, nothing more read; with the App on, the approval is Daniel's (the
-#   coordinator's or a legacy one is refused, naming that it needs Daniel's) and the base's
-#   protection, read with the base branch, requires agent-review from the App's id with its
-#   enforcement_level everyone, each refused naming what is missing, and the rest holds as for any
-#   project; then the default is not withdrawn for the PR: the latest merge-default-withdrawn or
+#   coordinator's or a legacy one is refused, naming that it needs Daniel's) and the base's rules
+#   (base_rules in bin/lib/team.sh: its classic protection and its rulesets) require agent-review
+#   from the App's id, with classic protection enforcing its required checks for everyone and no
+#   ruleset read with a bypass actor, each refused naming what is missing, and the rest holds as
+#   for any project; then the default is not withdrawn for the PR: the latest merge-default-withdrawn or
 #   merge-default-restored of the whole ledger whose scope covers it (task, logged under the PR's
 #   task; the PR's project; or all) is not a withdrawal, which is refused naming its scope, time and
 #   message, never read, and one that is a giving back holds only when Discord shows its message
@@ -67,9 +68,9 @@
 #   refusal on it lists the per-head word's reasons too when a merge-approved names the PR (or the
 #   task logged no plan approval either), each reason once, and ends with a line saying to ask
 #   Daniel for the per-head word on the head; and every check every merge gets: the PR is open, not
-#   a draft, does not conflict, and targets the project's base; every required check (the base
-#   branch's protection, its contexts and the checks it pins to an App, gh pr checks --required and
-#   the project's required_checks) is present on the head and passed (a skipped one passes); no
+#   a draft, does not conflict, and targets the project's base; every required check (the base's
+#   rules, its protection's and its rulesets' required checks, gh pr checks --required and the
+#   project's required_checks; rules that cannot be read are refused as GitHub unreadable) is present on the head and passed (a skipped one passes); no
 #   check on the head is failing or pending; agent-review is success on the head: on the team's own
 #   project with the reviewer App on, the App's latest agent-review check run whose head_sha is the
 #   head (review_check in pr_part, bin/lib/team.sh), a commit status or another App's check run of
@@ -190,13 +191,12 @@ add_reasons() {
   while IFS= read -r line; do if [[ -n $line ]]; then add_to+=("$line"); fi; done <<<"$out"
 }
 
-# GitHub's facts: the checks from pr_part, the rest from one more view, the base branch's
-# protection and the commit list.
-head='' branch=''
+# GitHub's facts: the checks and the base's rules (in $scratch/rules, for an open PR) from pr_part,
+# the rest from one more view and the commit list.
+head='' branch='' rules_read=''
 if jq -e 'has("error")' <<<"$facts" >/dev/null; then
   merge_reasons+=("GitHub cannot be read: $(jq -r .error <<<"$facts")")
 elif ! github "$scratch" pr pr view "$number" --repo "$repo" --json isDraft,mergeable,headRefName,headRefOid,changedFiles ||
-  ! github "$scratch" branch api "repos/$repo/branches/$base" ||
   ! github "$scratch" commits api "repos/$repo/pulls/$number/commits" --paginate; then
   merge_reasons+=("GitHub cannot be read: $(<"$scratch/error")")
 else
@@ -213,9 +213,18 @@ else
   [[ $(jq -r .headRefOid "$scratch/pr") == "$head" ]] || merge_reasons+=("the head moved while it was read (${head:0:7}, then $(jq -r '.headRefOid[:7]' "$scratch/pr")); run team-merge again")
   # agent-review is the reviewer App's check run on the team's own project with the App on
   # (review_check, from pr_part), else the check or status of that name gh pr checks shows.
-  while IFS= read -r line; do merge_reasons+=("$line"); done < <(jq -r --slurpfile branch "$scratch/branch" '
-    ($branch[0].protection.required_status_checks // {}) as $protected
-    | ((.required + ($protected.contexts // []) + [($protected.checks // [])[] | .context]) | unique) as $required
+  # A PR not open has no rules read, and is refused as not open; rules that cannot be read are a
+  # reason of their own, the other checks still made.
+  if [[ -f $scratch/rules ]]; then
+    rules_read=1
+  else
+    if [[ -f $scratch/rules.error ]]; then
+      merge_reasons+=("GitHub cannot be read: $(grep -m1 . "$scratch/rules.error" || echo "the base's rules failed")")
+    fi
+    echo '{"required": []}' >"$scratch/rules"
+  fi
+  while IFS= read -r line; do merge_reasons+=("$line"); done < <(jq -r --slurpfile rules "$scratch/rules" '
+    ((.required + [$rules[0].required[].context]) | unique) as $required
     | (.checks.passed + .checks.failing + .checks.pending) as $present
     | ($required[] | select(IN($present[]) | not) | "required check \(.) is missing on the head"),
       ([$required[] | select(IN($present[]))] - .checks.passed | .[] | "required check \(.) has not passed on the head"),
@@ -371,7 +380,7 @@ fi
 # back, Daniel's message read back for an approval of theirs, and on a head GitHub showed, the PR's
 # branch, a caught-up head against git, and the PR's files read in full, each within the approval's
 # scope when it has one and none on the short list, and on the team's own project the base's
-# protection pinning agent-review to the reviewer App, enforced for everyone.
+# rules pinning agent-review to the reviewer App, with no way past them.
 # files_read is set once GitHub's list of the PR's files is read in full, PR_CHANGED then holding
 # its paths.
 files_read=''
@@ -422,14 +431,15 @@ if ! jq -e .applies <<<"$head_word" >/dev/null || ((${#head_reasons[@]})); then
       by="the plan the coordinator approved at $(jq -r .facts.ts <<<"$default_word")"
     fi
     if [[ -n $head ]]; then
-      # GitHub holds the App's check only once the base's protection requires agent-review from the
-      # App's id, for administrators too; the protection was read with the base branch above.
-      if [[ -n $own_app ]]; then
+      # GitHub holds the App's check only once the base's rules require agent-review from the App's
+      # id, with no way past them; pr_part read the rules.
+      if [[ -n $own_app && -n $rules_read ]]; then
         pin=$(ledger_jq 'review_app_pin_problems($app)
           | if .kind == "pin" then
-              "\($base)'"'"'s protection does not require agent-review from the reviewer App \($app), so GitHub does not hold its check: the team'"'"'s own project merges unattended only once it does"
-            else "\($base)'"'"'s protection enforces its required checks for \(.level), not everyone, so an administrator could merge past them" end' \
-          -r --argjson app "$own_app" --arg base "$base" "$scratch/branch") || jq_failed $?
+              "\($base)'"'"'s protection and rulesets do not require agent-review from the reviewer App \($app), so GitHub does not hold its check: the team'"'"'s own project merges unattended only once it does"
+            elif .kind == "admins" then "\($base)'"'"'s protection enforces its required checks for \(.level), not everyone, so an administrator could merge past them"
+            else "\($base)'"'"'s \(bypass_text(""))" end' \
+          -r --argjson app "$own_app" --arg base "$base" "$scratch/rules") || jq_failed $?
         while IFS= read -r line; do if [[ -n $line ]]; then default_reasons+=("$line"); fi; done <<<"$pin"
       fi
       task_branch=$(jq -r '.facts.branch // empty' <<<"$default_word")

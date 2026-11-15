@@ -16,7 +16,7 @@
 # pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
@@ -1989,6 +1989,41 @@ github() {
   return 1
 }
 
+# A base's rules, read from GitHub: its classic protection (branches/<base>), the active rulesets'
+# rules (rules/branches/<base>, every page), and the bypass actors of each ruleset whose rules
+# require a check or a queue (rulesets/<id>), each read given 30 seconds. Prints one JSON object,
+# base_rules in bin/lib/ledger.jq says its keys (required, strict, queue, classic, bypass and
+# bypass_by); fails printing on stderr the call GitHub refused and its first error line, as
+# github does: base_rules <repo> <base>
+base_rules() (
+  local rules_repo=$1 rules_base=$2 rules_dir rules_id rules_rc rules_ids
+  rules_dir=$(mktemp -d) || exit 1
+  trap 'rm -rf "$rules_dir"' EXIT
+  read_rules() {
+    local rules_name=$1 rules_path=$2
+    rules_rc=0
+    bounded 30 gh api "$rules_path" "${@:3}" >"$rules_dir/$rules_name" 2>"$rules_dir/$rules_name.stderr" </dev/null || rules_rc=$?
+    if ((rules_rc == 0)) && jq -e . "$rules_dir/$rules_name" >/dev/null 2>&1; then return 0; fi
+    {
+      printf 'gh api %s: ' "$rules_path"
+      grep -m1 . "$rules_dir/$rules_name.stderr" || if ((rules_rc == 124)); then echo "no answer in 30 seconds"
+      elif ((rules_rc == 0)); then echo "not JSON"; else echo "exit $rules_rc"; fi
+    } >&2
+    return 1
+  }
+  read_rules branch "repos/$rules_repo/branches/$rules_base" || exit 1
+  read_rules rules "repos/$rules_repo/rules/branches/$rules_base" --paginate || exit 1
+  rules_ids=$(jq -rs 'add // [] | [.[] | select(.type == "required_status_checks" or .type == "merge_queue")
+    | .ruleset_id | numbers] | unique[]' "$rules_dir/rules") || exit 1
+  echo '[]' >"$rules_dir/rulesets"
+  for rules_id in $rules_ids; do
+    read_rules "ruleset-$rules_id" "repos/$rules_repo/rulesets/$rules_id" || exit 1
+    jq -c --slurpfile one "$rules_dir/ruleset-$rules_id" '. + $one' "$rules_dir/rulesets" >"$rules_dir/rulesets.next" || exit 1
+    mv "$rules_dir/rulesets.next" "$rules_dir/rulesets"
+  done
+  ledger_jq 'base_rules($rules; $rulesets[0])' -c --slurpfile rules "$rules_dir/rules" --slurpfile rulesets "$rules_dir/rulesets" "$rules_dir/branch"
+)
+
 # The merge of <base ref> into <head>, judged in <checkout> by git merge-tree, which writes its
 # objects but changes no ref, worktree or index; the caller has fetched both. A clean merge prints
 # its tree's id; a conflict prints the conflicted paths, one per line, and returns 1; any other
@@ -2052,9 +2087,11 @@ clean_base_merges() {
 # The pr part of a task's state: its latest pr event joined with GitHub, using <dir> for gh's
 # answers (GitHub's view of the PR, its branch and changed-file count among them, in <dir>/view),
 # with behind_by, the commits of its base its head lacks, from GitHub's compare of the two (null
-# for a PR not open or when the compare cannot be read), caught_up, whether the task's latest
-# caught-up event of the PR made the live head from the ledger head, and its merge_authority null
-# for task_state_json to fill in. For the team's own project with the reviewer App on (own_bar), the
+# for a PR not open or when the compare cannot be read), queue, the merge queue of its base's
+# rules (base_rules, kept in <dir>/rules for an open PR, or the reason they cannot be read in
+# <dir>/rules.error; null with no queue, for a PR not open or when they cannot be read),
+# caught_up, whether the task's latest caught-up event of the PR made the live head from the
+# ledger head, and its merge_authority null for task_state_json to fill in. For the team's own project with the reviewer App on (own_bar), the
 # App's agent-review on the head, read from GitHub's agent-review check runs of the head and its
 # combined commit status: review_app, the App's id; review_check, success or failure by the App's
 # latest check run whose app.id is the App's and whose head_sha is the head (the highest id, a run
@@ -2064,7 +2101,7 @@ clean_base_merges() {
 # commit status by <login>"). Else the four are null, nothing more read, and agent_review alone
 # says agent-review's state: pr_part '<events>' '<pr event>' <dir>
 pr_part() {
-  local events=$1 pr=$2 dir=$3 url project repo='' number required_checks='[]' facts behind_by=null base head bar=false
+  local events=$1 pr=$2 dir=$3 url project repo='' number required_checks='[]' facts behind_by=null queue=null base head bar=false
   local review='{"review_app": null, "review_check": null, "review_check_run": null, "review_check_by": null}'
   url=$(jq -r .url <<<"$pr") || return 1
   project=$(jq -r '.project // empty' <<<"$pr") || return 1
@@ -2119,6 +2156,12 @@ pr_part() {
     }; then
     if jq -e '.state == "OPEN"' "$dir/view" >/dev/null; then
       base=$(jq -r .baseRefName "$dir/view")
+      if base_rules "$repo" "$base" >"$dir/rules" 2>"$dir/rules.error"; then
+        queue=$(jq -c .queue "$dir/rules")
+        rm -f "$dir/rules.error"
+      else
+        rm -f "$dir/rules"
+      fi
       if github "$dir" compare api "repos/$repo/compare/$base...$head" --jq .behind_by &&
         jq -e 'type == "number"' "$dir/compare" >/dev/null; then
         behind_by=$(<"$dir/compare")
@@ -2140,12 +2183,12 @@ pr_part() {
           required: $required,
           required_missing: [$required[] | select(IN($present[]) | not)],
           agent_review: ([$checks[] | select(.name == "agent-review") | .state | ascii_downcase] | first // "missing"),
-          behind_by: $behind_by}
+          behind_by: $behind_by, queue: $queue}
       | {url, number, repo, project, state, base, branch, head, ledger_head, head_moved, caught_up, checks, required,
-         required_missing, agent_review, merge_approved, behind_by, merge_authority} + $review' \
+         required_missing, agent_review, merge_approved, behind_by, queue, merge_authority} + $review' \
       -c --slurpfile view "$dir/view" --slurpfile checks "$dir/checks" --argjson review "$review" \
       --slurpfile required "$dir/required" --argjson project_required "$required_checks" \
-      --argjson behind_by "$behind_by" <<<"$facts"
+      --argjson behind_by "$behind_by" --argjson queue "$queue" <<<"$facts"
   else
     jq -c --rawfile error "$dir/error" 'del(.caught_up_by) + {error: ($error | rtrimstr("\n"))}' <<<"$facts"
   fi

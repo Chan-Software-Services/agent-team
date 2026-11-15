@@ -1075,11 +1075,11 @@ live() {
 }
 
 # The calls that could reach Discord, merge or post: curl's, and gh's beyond team-state's and
-# team-ci-wait's reads.
+# team-ci-wait's reads (the base's rules among them, its branch, rules/branches and rulesets).
 outside_calls() {
   stub_calls curl
   stub_calls gh | jq -c 'select((.[0] == "pr" and (.[1] == "view" or .[1] == "checks"))
-    or (.[0] == "api" and (.[1] | test("/compare/|/pulls/[0-9]+/files$|/actions/runs[?]head_sha=|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
+    or (.[0] == "api" and (.[1] | test("/compare/|/branches/|/rulesets/[0-9]+$|/pulls/[0-9]+/files$|/actions/runs[?]head_sha=|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
 }
 
 @test "a pass whose PR head moved past the reviewed head is refused naming both, nothing logged" {
