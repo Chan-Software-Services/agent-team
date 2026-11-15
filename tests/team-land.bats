@@ -486,8 +486,8 @@ SH
   TEAM_LAND_DEADLINE_SECONDS=0 run_bin team-land "$url" "$head"
   assert_equal "$status" 75
   assert_equal "$(end_json)" "[\"waiting\",null,\"$url is not shown in the merge queue after 0 minutes: run team-land again to go on waiting\",[]]"
-  # The first look reads the queued PR; the deadline, a second on, comes on a look GitHub does
-  # not answer.
+  # The first look reads the queued PR; the deadline, 10 seconds on, which the stub sleep really
+  # waits so a slow first look stays ahead of it, comes on a look GitHub does not answer.
   rm "$GH_DIR"/pr.*
   pr_at 0 OPEN none
   answer 1 pr fail
@@ -495,9 +495,9 @@ SH
   real_sleep=$(PATH=/usr/bin:/bin command -v sleep)
   stub_script sleep <<EOF
 echo \$((\$(cat "$GH_DIR/look") + 1)) >"$GH_DIR/look"
-exec "$real_sleep" 1
+exec "$real_sleep" 10
 EOF
-  TEAM_LAND_DEADLINE_SECONDS=1 run_bin team-land "$url" "$head"
+  TEAM_LAND_DEADLINE_SECONDS=10 run_bin team-land "$url" "$head"
   assert_equal "$status" 75
   assert_equal "$(ended_at)" 1
   assert_equal "$(end_json)" "[\"waiting\",null,\"GitHub could not be read at the last look, so whether $url is in the merge queue is not known, after 0 minutes: run team-land again to go on waiting\",[]]"
