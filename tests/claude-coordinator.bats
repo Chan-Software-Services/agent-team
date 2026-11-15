@@ -205,6 +205,20 @@ assert_not_launched() {
   assert_equal "$(jq -r .env.CLAUDE_CODE_TODO_REMINDER_MODE "$settings")" off
 }
 
+@test "every skill its manual and its skills name is one of its own plugin's, since the launch hides every other" {
+  local skill named=0
+  # The names keeps_named's pattern finds: `/<skill>`, skills/<skill>/SKILL.md and the `<skill>` skill.
+  while IFS= read -r skill; do
+    named=$((named + 1))
+    [[ -d $REPO_ROOT/plugins/coordinator-skills/skills/$skill ]] ||
+      { echo "names the skill $skill, which is not in plugins/coordinator-skills/skills" >&2; return 1; }
+  done < <(grep -ohE '`/[a-z][a-z0-9-]*`|skills/[a-z][a-z0-9-]*/SKILL\.md|the `[a-z][a-z0-9-]*` skill' \
+    "$REPO_ROOT/roles/coordinator.md" "$REPO_ROOT"/plugins/coordinator-skills/skills/*/SKILL.md |
+    sed -E 's#^`/##; s#`$##; s#^skills/##; s#/SKILL\.md$##; s#^the `##; s#` skill$##' | sort -u)
+  # The pattern finds some: the manual names its skills this way.
+  ((named > 0))
+}
+
 # personal_skill <directory> [<name>]: a skill in the user's skills directory, its frontmatter
 # naming it <name> when given.
 personal_skill() {

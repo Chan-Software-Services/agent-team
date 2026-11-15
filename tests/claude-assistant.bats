@@ -295,6 +295,9 @@ assert_nothing_written() {
   for key in enabledPlugins syncClaudeAiPlugins crossSessionInbound isolatePeerMachines promptCacheTtl idleCompaction; do
     assert_equal "$(jq -c --arg k "$key" '.[$k]' "$settings")" "$(jq -c --arg k "$key" '.[$k]' "$coordinator")"
   done
+  # Its own skillOverrides keep the synced docs skill off, which steers a session to the Claude
+  # Docs connector the launch denies.
+  assert_equal "$(jq -r '.skillOverrides["anthropic-skills:docs"]' "$settings")" off
   assert_equal "$(jq -c '.env | del(.AGENT_TEAM_ROLE, .DISCORD_STATE_DIR, .DISCORD_ACCESS_MODE)' "$REPO_ROOT/assistant.settings.json")" \
     "$(jq -c '.env | del(.AGENT_TEAM_ROLE, .CLAUDE_CODE_TODO_REMINDER_MODE)' "$coordinator")"
   assert_equal "$(jq -c '[has("model"), has("effortLevel"), has("autoCompactWindow"), (.env | has("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))]' "$settings")" \
