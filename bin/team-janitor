@@ -3,10 +3,11 @@
 # on what Docker holds, and alerts #coordinator when something needs Daniel (sops/docker.md).
 #
 # Usage: team-janitor [--dry-run]
+#        team-janitor tmp [--dry-run]   (the sweep of temporary files, below)
 #
-# Runs team-stack reap --apply, then writes the day's report,
-# ~/.local/state/agent-team/janitor/<local date>.md, a second run of the day replacing it, with
-# these sections:
+# With no subcommand, the daily Docker run: it runs team-stack reap --apply, then writes the
+# day's report, ~/.local/state/agent-team/janitor/<local date>.md, a second run of the day
+# replacing it, with these sections:
 #   Alerts                  each alert, and whether it was posted
 #   Disk                    free and used space on the file system Docker keeps its data on (as
 #                           team-stack's admission reads it: docker info's DockerRootDir, and on
@@ -36,8 +37,54 @@
 #
 # Exit 0 done, 1 Docker does not answer, the reaper or a removal failed, or a part of the report
 # could not be read or written, 2 usage error.
+#
+# Usage: team-janitor tmp [--dry-run]
+#
+# The sweep of temporary files (bin/lib/tmp.sh), which reads nothing of Docker: it removes the
+# team's stale leftovers from /tmp and /var/tmp, each root resolved once (realpath) and a missing
+# one skipped, and nothing outside them. It reads only the entries directly under a root, and
+# removes one only when every rule holds, each checked again on the entry itself (lstat) just
+# before the removal:
+#   type      a real directory or a regular file; never a symbolic link, whatever it points at,
+#             a socket, a device or a pipe
+#   owner     the user running the sweep
+#   name      a line of bin/lib/tmp-leftovers, read from this checkout, matches the whole name:
+#             the names only the team's test runs make, each with its maker
+#   age       it was last modified at least 60 minutes ago
+#   not live  no process of this user names it: its full path, followed by a /, a space, a :, a
+#             line break or the end, is in no process's working directory, command line or
+#             environment (/proc on Linux; lsof and ps on macOS), this run's own process and its
+#             children aside. The processes are read once, and only when an entry passed the
+#             rules above; when they cannot be read, nothing is removed and the run exits 1
+#             saying why.
+# A directory is made writable first (chmod -R, which changes no link), so a read-only tree goes
+# too, and removed with rm -rf --one-file-system; a file with rm -f.
+# Each removal is one line on stdout, with the entry's size (du, in MB below 1024 MB, else in GiB)
+# and its age (in minutes below 120, else in whole hours):
+#   removed /tmp/nm-cli-home-123 (373 MB, untouched 5 h; no-mistakes)
+# and the same line, as "- HH:MM <line>" in local time, is appended to the day's file,
+# ~/.local/state/agent-team/janitor/tmp-<local date>.md, made with the title "# Temp files removed
+# on <machine>, <date>" at the day's first removal. A run that removes nothing prints nothing.
+# A removal that fails is said on stderr ("team-janitor: could not remove <path>: <rm's last
+# line>"), and the rest of the run goes on.
+# One run at a time, by a lock on ~/.local/state/agent-team/tmp.lock: a second run prints
+# "another team-janitor tmp is running; skipped" and exits 0. The sweep needs no lease.
+# --dry-run removes nothing, writes nothing, takes no lock, and prints "would remove" for
+# "removed".
+# Test seams: TEAM_SYSTEM_ROOT stands for / in both roots, TEAM_TMP_UID for the user's uid as the
+# owner rule reads it, and TEAM_TMP_AGE_MINUTES for the 60 minutes.
+#
+# Exit 0 done, nothing to remove included, 1 a removal failed, the processes or a root could not
+# be read, or the day's file could not be written, 2 usage error.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+# The sweep of temporary files, before anything of Docker's is read.
+if [[ ${1:-} == tmp ]]; then
+  # shellcheck source=bin/lib/tmp.sh
+  source "$TEAM_LIB/tmp.sh"
+  tmp_main "${@:2}"
+fi
 
 DRY=''
 for arg in "$@"; do

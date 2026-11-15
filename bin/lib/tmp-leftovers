@@ -1,0 +1,22 @@
+# The leftovers: the names of what the team's test runs leave in /tmp and /var/tmp, which
+# team-janitor tmp (bin/lib/tmp.sh) removes once stale. It reads this file from its own checkout,
+# so the names it may remove change only through a reviewed PR.
+# One line per name: the maker (a project's registry name, or bats), one space, then an extended
+# regular expression matched against the whole name of an entry, case-sensitively. A # line and a
+# blank line are comments.
+# A line may only be a name that the team's test runs alone make: its expression begins with a
+# literal of at least 6 characters, and it never matches mktemp's default (tmp.XXXXXXXXXX), which
+# any program makes, nor what systemd, Claude Code, Chrome, Node or pytest keep there.
+# tests/repo.bats holds each line to that.
+no-mistakes nm-cli-home-[0-9]+
+no-mistakes nm-cli-test-[0-9]+
+no-mistakes nm-timeout-bin-[0-9]+
+no-mistakes nm-update-test-[0-9]+
+no-mistakes nm-update-home-[0-9]+
+no-mistakes git-template-[0-9]+
+no-mistakes fakecli-helper-[0-9]+
+bats bats-run-[A-Za-z0-9]{6}
+agent-team team-checks\.[A-Za-z0-9]{6}
+agent-team compaction-drill\.[A-Za-z0-9]{6}
+conventioner real-mongo-test\.[A-Za-z0-9]{6,10}
+conventioner nmtest-[0-9]+-venv\.[A-Za-z0-9]{6,10}

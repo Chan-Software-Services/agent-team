@@ -54,6 +54,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
     - `ticket_graph.py`: draws a task's ticket list, as `team-tickets --json` prints it, as the self-contained HTML page of its dependency graph that `team-tickets --html` writes.
     - `time.jq`: `team-time`'s split of each task's time into phases, and its counts.
+    - `tmp-leftovers`: the names of what the team's test runs leave in `/tmp` and `/var/tmp`, one `<maker> <expression>` per line, the only names `team-janitor tmp` removes by, read from its own checkout.
+    - `tmp.sh`: `team-janitor tmp`'s sweep of the stale leftovers in `/tmp` and `/var/tmp`: its rules (type, owner, the list's name, age, not named by a live process), the removal, and each removal's line and day file.
     - `tools.jq`: turns `tools.lock` into each tool's pin and install command for a machine.
     - `tools.lock`: the tools `team-doctor` checks, pinned or with a minimum, and their source per OS (for treehouse and no-mistakes, a GitHub release with each archive's checksum, or a fork's commit; for MongoDB's Database Tools, the publisher's archive with its checksum).
     - `uptime.jq`: `team-uptime`'s rules, the counting of each production check, when one is down, its outages judged as notices through `notice.jq`, each post's text, and the status line.

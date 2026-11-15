@@ -3134,3 +3134,28 @@ briefs_without_gotchas() {
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
 }
+
+# The names team-janitor tmp may remove (bin/lib/tmp-leftovers): each line a maker, a project of
+# the registry fixture or bats, and an expression that begins with at least 6 literal characters,
+# so none is a name another program makes: mktemp's default, systemd's, Claude Code's or pytest's.
+@test "every line of bin/lib/tmp-leftovers is a maker and an expression that begins with 6 literal characters and matches no other program's name" {
+  local file=$REPO_ROOT/bin/lib/tmp-leftovers names line maker expression name count=0
+  names=$(sed -n 's/^\[\([a-z0-9-]*\)\]$/\1/p' "$REPO_ROOT/tests/fixtures/projects.toml")
+  while IFS= read -r line; do
+    [[ -n $line && $line != '#'* ]] || continue
+    count=$((count + 1))
+    [[ $line =~ ^([a-z0-9-]+)\ ([^[:space:]]+)$ ]] || { echo "bin/lib/tmp-leftovers: '$line' is not <maker> <expression>" >&2; return 1; }
+    maker=${BASH_REMATCH[1]} expression=${BASH_REMATCH[2]}
+    [[ $maker == bats ]] || grep -Fxq -- "$maker" <<<"$names" ||
+      { echo "bin/lib/tmp-leftovers: the maker of '$line' is neither bats nor a project of the registry fixture" >&2; return 1; }
+    [[ $expression =~ ^[A-Za-z0-9_-]{6} ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' does not begin with 6 literal characters" >&2; return 1; }
+    for name in tmp.AbCdEfGhIj systemd-private-x claude-1000 pytest-of-user; do
+      if [[ $name =~ ^($expression)$ ]]; then
+        echo "bin/lib/tmp-leftovers: '$expression' matches $name, which is not the team's" >&2
+        return 1
+      fi
+    done
+  done <"$file"
+  ((count >= 12))
+}
