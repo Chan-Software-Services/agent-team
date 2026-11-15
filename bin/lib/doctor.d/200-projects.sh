@@ -36,7 +36,8 @@
 #   branches    Warns on each local branch with commits on no origin branch (no upstream and
 #               never pushed, or ahead of what was pushed; a checkpoint's wip/<project>/T<n>
 #               on the team home's origin is no branch), with their count; an open ticket
-#               worktree's branch, never pushed, is left out.
+#               worktree's branch is left out, pushed or not (its builder pushes it only for
+#               CI's run, on a project with branch_ci, and no stow or resume reads it on origin).
 #   changes     Warns while the primary checkout has changes to tracked files or untracked files.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
@@ -49,7 +50,7 @@ pool_name() {
 }
 
 # The slots line of <project>, whose registered slots <slot>... are all in the treehouse pool
-# <pool> of the checkout <path>: each slot of the pool (treehouse_slots) and each other numbered
+# <pool> of the checkout <path>: each slot of the pool (pool_slots) and each other numbered
 # folder beside them, by number. A slot that is a worktree of the checkout, or missing (treehouse
 # makes it), is the team's; one that is a worktree of another clone, which treehouse leases only
 # to that clone, warns, with how many are the team's; so does an empty folder, which treehouse
@@ -57,7 +58,7 @@ pool_name() {
 check_slot_owners() {
   local project=$1 path=$2 pool=$3 slot n dir mine common clone ours=0 all=0 found=() others='' rest='' reason fix
   mine=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir)
-  mapfile -t found < <(treehouse_slots "${@:4}")
+  mapfile -t found < <(pool_slots treehouse "$path" "${@:4}")
   for slot in "${@:4}"; do
     for dir in "${slot%/*/*}"/*/; do
       dir=${dir%/}
@@ -263,8 +264,9 @@ check_project() {
   # wip/<project>/T<n> is none, since the next checkpoint replaces it and team-close deletes it:
   # team-open --resume fetches it into refs/remotes/team-home/, and origin/wip/* is left out for a
   # project whose origin is the team home's (or a snapshot from before they moved there). An
-  # open ticket worktree's branch (team-open --ticket's) is none either: it is never pushed, and
-  # its checkpoint keeps it as wip/<project>/T<n>--NN.
+  # open ticket worktree's branch (team-open --ticket's) is none either: the team neither pushes
+  # it at a stow nor reads it on origin at a stow or a resume (its builder pushes it only for CI's
+  # run, on a project with branch_ci), and its checkpoint keeps it as wip/<project>/T<n>--NN.
   ledger=$TEAM_HOME/ledger.jsonl
   [[ -f $ledger ]] || ledger=/dev/null
   ticket_branches=$(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks

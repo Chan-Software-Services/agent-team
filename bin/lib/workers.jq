@@ -142,8 +142,8 @@ def worker_classes: [
 # (bash, monitor or tool): model, compaction, the three waits; then a command's: wait:message
 # (team-thread wait, an interview's wait on Daniel), checks
 # (team-checks, or a name naming a linter, formatter or type checker, go vet), gate (no-mistakes,
-# git push no-mistakes), ci (team-ci-wait, gh or gh-axi pr checks, run watch or run view), tests
-# (tests/run, bats, playwright, pytest, vitest, jest, go test, cargo test, npm test or npm run
+# git push no-mistakes), ci (team-ci-wait, team-ci-run, gh or gh-axi pr checks, run watch or run view),
+# tests (tests/run, bats, playwright, pytest, vitest, jest, go test, cargo test, npm test or npm run
 # test and the like, a program with test in its name), stacks (team-stack, docker), browser
 # (chrome-devtools-axi, team-ui), git (any other git, gh or gh-axi); a tool's: browser (Chrome
 # DevTools' MCP tools), subagents (Agent), files (Read, Edit, Write, Grep, Glob, NotebookEdit);
@@ -163,7 +163,7 @@ def key_class:
     elif $name == "team-thread wait" then "wait:message"
     elif $words[0] == "team-checks" or ($name | test("lint|format|fmt|type-?check|tsc|eslint|prettier|shellcheck|ruff|mypy|^go vet")) then "checks"
     elif $words[0] == "no-mistakes" or $name == "git push no-mistakes" then "gate"
-    elif $words[0] == "team-ci-wait"
+    elif IN($words[0]; "team-ci-wait", "team-ci-run")
       or IN($name; "gh pr checks", "gh run watch", "gh run view", "gh-axi pr checks", "gh-axi run watch", "gh-axi run view") then "ci"
     elif any($words[]; IN(.; "bats", "playwright", "pytest", "vitest", "jest"))
       or ($name | test("^((go|cargo|npm|pnpm|yarn|bun) test|(npm|pnpm|yarn|bun) run test)"))

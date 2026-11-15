@@ -8,6 +8,7 @@ drills.jsonl
 waiting.md
 waiting.json
 manual-steps.md
+assistant/**
 projects.toml
 tasks/**
 projects/**

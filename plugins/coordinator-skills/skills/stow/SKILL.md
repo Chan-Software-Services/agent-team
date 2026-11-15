@@ -19,7 +19,7 @@ For each decision, answer, wait and lesson in it, write it to its one home:
 | A question to Daniel outside a task, a reply owed to Daniel, a promise with a trigger, a watch you armed | One `team-current add` each, as your manual says, pointing at the detail; task state never goes there |
 | Approved work not yet opened | An item in `tasks/queued/`, its front matter as `team-queue`'s `--help` says |
 | A worker's progress the ledger does not hold (its tickets done, PRs and reviews are there, which `team-state` reads), a plan change, a task's notes | `tasks/T<n>/`: the plan, the brief's "Progress so far", or a note file |
-| A step only Daniel can take | `manual-steps.md` |
+| A step only Daniel can take | A `walkthrough` hand-off to the assistant (`team-assistant send walkthrough`), which keeps `manual-steps.md` |
 | A fact about a project | A ticket for that project's task, so it lands in its docs or knowledge graph through a PR |
 | A lesson about how the team works | A ticket in `tasks/` for an `agent-team` task that changes the manual, a role, a template or a script through its PR |
 | Daniel's own preference | A one-line proposal to Daniel for `~/.claude/CLAUDE.md`, which only Daniel changes |

@@ -552,7 +552,7 @@ T1 stowed"
   : >"$STUB_CALLS/claude.log"
 
   run_bin -1 --separate-stderr team-stow T1 T2
-  local reason="feat/T1-work1--02 (home, ticket 02) is not kept: wip/home/T1--02 on the team home's origin does not hold the head and uncommitted changes of $t2 on feat/T1-work1--02, and a ticket branch is never pushed"
+  local reason="feat/T1-work1--02 (home, ticket 02) is not kept: wip/home/T1--02 on the team home's origin does not hold the head and uncommitted changes of $t2 on feat/T1-work1--02, and a ticket branch is kept only by the checkpoint"
   assert_contains "$stderr" "team-stow: T1 is not stowed: $reason; make the checkpoint keep it (its line above says why it did not), then run team-stow again"
   assert_contains "$output" "checkpoint: T1 home--02: skipped: "
   assert_equal "$(git -C "${team_origin:?}" rev-parse wip/home/T1--02)" "$h2"

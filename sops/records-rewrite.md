@@ -52,7 +52,7 @@ The force push and the Support request are Daniel's alone.
 13. **Daniel, at the laptop, before it next takes the team.** The re-clone of step 10 there, its records guard included.
     Its `team-resume` refuses the old clone as diverged, which guards it, but a hand `git pull` would merge the old history back: never pull into an old clone, replace it.
 14. **Daniel alone.** Ask GitHub Support to purge the old objects, as T31 ticket 20 planned and T24 did for Conventioner (`tasks/T24/keep/support-request.txt` is the precedent's wording): the repository `Chan-Software-Services/agent-team-records` (private), the number of affected pull requests (the rewrite's `verify: pull refs whose history holds a dropped path:` line; 15 of 18 at the 2026-10-28 cutover), the first changed commits (`first changed commits:`), and a request to dereference the PR refs and run garbage collection.
-    The coordinator records the request's number, then Support's answer, in `manual-steps.md`.
+    The assistant records the request's number, then Support's answer, in `manual-steps.md`, the coordinator handing each to it with `team-assistant send note`.
     Once Support answers, an old sha such as `c7856695` answers 404 on GitHub.
 15. **Daniel, a week later with nothing found missing.** Remove `~/agent-team-records.pre-rewrite` on each machine and `~/records-rewrite`.
 

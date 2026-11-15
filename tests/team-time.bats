@@ -992,7 +992,7 @@ time_rows() {
   echo home-pc >"$HOME/.config/agent-team/machine"
   # One row for b1010002 whose keys take 15 minutes down to 1, one key per class; and one for
   # b1010003 whose keys take 4 seconds to 52, less than any of those (its ci: gh run watch 24,
-  # gh-axi pr checks 40, team-ci-wait 48 and in the background 52).
+  # gh-axi pr checks 40, team-ci-wait 48 and in the background 52, team-ci-run in the background 56).
   jq -cn '[["model"], ["compaction"], ["wait message"], ["wait other"], ["background bash team-checks no-mistakes"],
       ["monitor npx eslint"], ["bash git push no-mistakes"], ["background bash gh pr checks"],
       ["bash npm run test:e2e"], ["bash docker compose"], ["tool mcp__chrome-devtools__take_screenshot"],
@@ -1003,9 +1003,10 @@ time_rows() {
        waits: []},
     (["monitor npx eslint", "bash gofmt", "bash ./scripts/run-tests.sh", "bash chrome-devtools-axi screenshot",
       "bash team-stack up", "bash gh run watch", "bash no-mistakes axi run", "tool Read", "wait error",
-      "bash gh-axi pr checks", "bash gh-axi pr view", "bash team-ci-wait", "background bash team-ci-wait"] as $keys
+      "bash gh-axi pr checks", "bash gh-axi pr view", "bash team-ci-wait", "background bash team-ci-wait",
+      "background bash team-ci-run"] as $keys
     | {day: "2026-10-28", machine: "home-pc", session: "b1010003-0000-4000-8000-000000000001",
-       first: "2026-10-28T12:00:00.000Z", last: "2026-10-28T12:06:04.000Z",
+       first: "2026-10-28T12:00:00.000Z", last: "2026-10-28T12:07:00.000Z",
        keys: ([range($keys | length) as $i | {($keys[$i]): {seconds: (($i + 1) * 4), calls: 1, longest: (($i + 1) * 4)}}] | add),
        waits: []})' >"$TEAM_HOME/usage/home-pc/time/2026-10-28.jsonl"
   local json
@@ -1018,7 +1019,7 @@ time_rows() {
       $'bash gh pr create\tgit' $'bash curl\tother'
   )"
   assert_equal "$(jq -c '.workers.lifetimes[] | select(.session == "b1010003") | .transcript.classes' <<<"$json")" \
-    '{"wait:error":0.6,"checks":0.2,"gate":0.5,"ci":2.7,"tests":0.2,"stacks":0.3,"browser":0.3,"files":0.5,"git":0.7}'
+    '{"wait:error":0.6,"checks":0.2,"gate":0.5,"ci":3.7,"tests":0.2,"stacks":0.3,"browser":0.3,"files":0.5,"git":0.7}'
   # Its 120 minutes of transcript are past its 46 of lifetime: none unseen.
   assert_equal "$(jq -c '.workers.lifetimes[] | select(.session == "b1010002") | .transcript | [.minutes, .unseen]' <<<"$json")" '[120,0]'
 }

@@ -515,9 +515,9 @@ toolkits/x/scripts/run:1: a needs b"
 # session is denied the 1Password CLI and other processes' environments. The rules match the CLI
 # as a command and the environment path as a file read, never text naming them (a commit message,
 # a ledger line, a brief), which the matrices below check on each role's deny list.
-@test "the worker and coordinator settings deny the 1Password CLI and /proc environment reads" {
+@test "the worker, coordinator and assistant settings deny the 1Password CLI and /proc environment reads" {
   local file rule
-  for file in settings/worker.json coordinator.settings.json; do
+  for file in settings/worker.json coordinator.settings.json assistant.settings.json; do
     for rule in 'Bash(op *)' 'Bash(*&& op *)' 'Bash(*/proc/*/environ)' 'Read(//proc/**)'; do
       jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$REPO_ROOT/$file" >/dev/null ||
         { echo "$file does not deny $rule" >&2; return 1; }
@@ -531,13 +531,13 @@ toolkits/x/scripts/run:1: a needs b"
 }
 
 # The reviewer App's key signs the agent-review check the team's own project merges behind, so no
-# session reads it: the worker and coordinator settings deny it to the Read and Edit tools and to a
+# session reads it: the worker, coordinator and assistant settings deny it to the Read and Edit tools and to a
 # Bash command naming its path by any of the usual spellings, a speed bump against a steered
 # session (sops/merging.md), while the scripts that read it, and text naming the committed
 # bin/lib/review-app or the key's bare file name, stay allowed.
-@test "the worker and coordinator settings deny reading the reviewer App's key" {
+@test "the worker, coordinator and assistant settings deny reading the reviewer App's key" {
   local file rule command
-  for file in settings/worker.json coordinator.settings.json; do
+  for file in settings/worker.json coordinator.settings.json assistant.settings.json; do
     for rule in 'Read(~/.config/agent-team/review-app*)' 'Edit(~/.config/agent-team/review-app*)'; do
       jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$REPO_ROOT/$file" >/dev/null ||
         { echo "$file does not deny $rule" >&2; return 1; }
@@ -807,8 +807,8 @@ role_matrix() {
   done
 }
 
-# The settings every session starts with: the coordinator's and the workers' shared ones.
-SETTINGS=(coordinator.settings.json settings/worker.json)
+# The settings every session starts with: the coordinator's, the assistant's and the workers' shared ones.
+SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json)
 
 # chrome-devtools-axi starts `npx chrome-devtools-mcp@latest` unless told which server to run, and
 # a new server broke the old client (T43's audit): every session runs the server servers/ pins,
@@ -931,7 +931,7 @@ SETTINGS=(coordinator.settings.json settings/worker.json)
 
 # The tools the sessions run send usage data off the machine unless told not to (T43's audit):
 # lavish-axi's analytics, codegraph's telemetry and Chrome DevTools MCP's Google usage statistics.
-@test "the worker and coordinator settings turn off the tools' telemetry" {
+@test "the worker, coordinator and assistant settings turn off the tools' telemetry" {
   local file
   for file in "${SETTINGS[@]}"; do
     assert_equal "$(jq -c '.env | {LAVISH_AXI_TELEMETRY, CODEGRAPH_TELEMETRY, CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS}' "$REPO_ROOT/$file")" \
@@ -942,7 +942,7 @@ SETTINGS=(coordinator.settings.json settings/worker.json)
 # Claude Code requests the one-hour prompt cache for the main conversation only by default, on a
 # subscription within plan usage, and five minutes on usage credits; the team's sessions wait 5 to
 # 60 minutes on CI and messages, so every session pins one hour, and no role file sets it (T247).
-@test "the worker and coordinator settings pin the one-hour prompt cache" {
+@test "the worker, coordinator and assistant settings pin the one-hour prompt cache" {
   local file
   for file in "${SETTINGS[@]}"; do
     assert_equal "$(jq -c '.promptCacheTtl' "$REPO_ROOT/$file")" '"1h"'
@@ -971,16 +971,19 @@ pretooluse_problems() {
 # 600 seconds on one that hangs by default (T248, R1): every PreToolUse entry fails closed, soon.
 @test "every PreToolUse hook blocks on its failure and has a timeout, in every settings and toolkit hooks file" {
   local files=() file bad=$BATS_TEST_TMPDIR/bad.json
-  for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
+  for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/assistant.settings.json \
+    "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
     "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
     files+=("${file#"$REPO_ROOT/"}")
   done
   assert_equal "$(cd "$REPO_ROOT" && pretooluse_problems "${files[@]}")" ""
-  # Each of the four guards, at its timeout, and the gate's command-guard, which names the code
+  # Each of the guards, at its timeout, and the gate's command-guard, which names the code
   # checkout by $HOME, since no-mistakes fills in no @TEAM_CODE@.
   assert_equal "$(cd "$REPO_ROOT" && jq -r '.hooks.PreToolUse // [] | .[].hooks[] | "\(.command | sub("^\"?@TEAM_CODE@/bin/hooks/"; "") | gsub("\""; "")) \(.timeout)"' "${files[@]}" | LC_ALL=C sort -u)" \
     "\$HOME/agent-team/bin/hooks/command-guard 10
+assistant-discord-guard 30
 command-guard 10
+lease-fence --assistant 60
 lease-fence --coordinator 60
 lease-fence 60
 ops-log 30
@@ -995,6 +998,18 @@ scratch-only-edits 30"
   assert_equal "$(pretooluse_problems "$bad")" "$bad: a-guard: onFailure is unset, not \"block\"
 $bad: b-guard x: timeout is 1.5, not a whole number of seconds from 1 to 120
 $bad: c-guard: timeout is 121, not a whole number of seconds from 1 to 120"
+}
+
+# The assistant's guards (T328): on each of the Discord plugin's five tools, its own lease fence
+# and the Discord guard that keeps it in #assistant; on Bash, its own lease fence and the worker
+# guard. Each named hook is an executable of bin/hooks/.
+@test "the assistant's settings run lease-fence --assistant and assistant-discord-guard on every Discord tool, and lease-fence --assistant and command-guard on Bash" {
+  assert_equal "$(jq -c '.hooks.PreToolUse | map({matcher: (.matcher | split("|") | sort),
+      hooks: [.hooks[] | .command | sub("^\"@TEAM_CODE@/bin/hooks/"; "") | sub("\""; "")]})' "$REPO_ROOT/assistant.settings.json")" \
+    "$(jq -cn '[{matcher: ["reply", "react", "edit_message", "fetch_messages", "download_attachment"]
+        | map("mcp__plugin_discord_discord__" + .) | sort, hooks: ["lease-fence --assistant", "assistant-discord-guard"]},
+      {matcher: ["Bash"], hooks: ["lease-fence --assistant", "command-guard"]}]')"
+  [[ -x $REPO_ROOT/bin/hooks/assistant-discord-guard && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard ]]
 }
 
 # Whether one of the Bash deny rules in <settings file> matches <command> in one of its
@@ -1203,6 +1218,8 @@ assert_denies() {
       'git grep -n GIT_CONFIG_COUNT' 'env | grep GIT_CONFIG_' 'echo "$GIT_CONFIG_GLOBAL"' \
       'git commit -m "docs: Daniel runs git config core.hooksPath bin/hooks/git, never git -c core.hooksPath="' \
       "team-log T45 blocked 'a read of git config core.hooksPath x was refused'"; do
+      # The assistant commits and pushes nothing (tests/claude-assistant.bats).
+      [[ $file != assistant.settings.json || ! $command =~ ^git\ (commit|push) ]] || continue
       if denied "$file" "$command"; then echo "$file denies: $command" >&2; return 1; fi
     done
   done
@@ -1499,6 +1516,10 @@ coordinator_deny_gaps() {
     "docker ps" "git branch -d feat/T1-x" "git reset --soft HEAD~1" "team-merge https://github.com/me/shop/pull/5"; do
     if denied_in "$coordinator" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
+  # The assistant runs in bypass mode too, with every rule of the coordinator's, and its launcher's
+  # header names the same families.
+  assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
+  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[]' "$coordinator")" ""
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \
@@ -1558,6 +1579,8 @@ COMMANDS
   local file command
   for file in "${SETTINGS[@]}"; do
     while IFS= read -r command; do
+      # The assistant commits and pushes nothing (tests/claude-assistant.bats).
+      [[ $file != assistant.settings.json || ! $command =~ ^git\ (-C\ [^\ ]+\ )?(commit|push) ]] || continue
       if denied "$file" "$command"; then echo "$file denies: $command" >&2; return 1; fi
     done <<'COMMANDS'
 git commit -m "fix: x"
@@ -1747,28 +1770,47 @@ Bash(@TEAM_CODE@/bin/team-ci-wait *)'
   if denied settings/reviewer.json "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
 }
 
-@test "the builder's allow rules are the local checks, as the briefs give them, the CI wait a worker may run by hand, and marking a PR ready" {
-  assert_equal "$(jq -r '.permissions.allow[]' "$REPO_ROOT/settings/builder.json")" 'Bash(@TEAM_CODE@/bin/team-checks *)
-Bash(@TEAM_CODE@/bin/team-ci-wait *)
+@test "the builder's allow rules are the CI wait a worker may run by hand, the CI run of its branch with its reruns and cancels, and marking a PR ready" {
+  assert_equal "$(jq -r '.permissions.allow[]' "$REPO_ROOT/settings/builder.json")" 'Bash(@TEAM_CODE@/bin/team-ci-wait *)
+Bash(@TEAM_CODE@/bin/team-ci-run *)
+Bash(gh run rerun *)
+Bash(gh-axi run rerun *)
+Bash(gh run cancel *)
+Bash(gh-axi run cancel *)
 Bash(gh pr ready *)
 Bash(gh-axi pr ready *)'
   local brief
-  for brief in delivery/direct-pr builder-merge-base; do
-    grep -qF '`{{team_bin}}/team-checks {{project}} <full sha>`' "$REPO_ROOT/templates/briefs/$brief.md"
+  # A builder's brief runs the tests its change reaches; the reviewer's run the local checks.
+  for brief in builder-ticket delivery/direct-pr delivery/no-mistakes builder-merge-base builder-round; do
+    if grep -F -e team-checks -e '{{local_checks}}' "$REPO_ROOT/templates/briefs/$brief.md"; then return 1; fi
+    grep -qF '{{tests}}' "$REPO_ROOT/templates/briefs/$brief.md" || [[ $brief == builder-round ]]
   done
   for brief in reviewer rereview verify before-pr/rereview before-pr/verify; do
     grep -qF '`{{team_bin}}/team-checks {{project}} {{head}}`' "$REPO_ROOT/templates/briefs/$brief.md"
   done
-  # No brief starts a wait on CI, which the coordinator's checks wait takes after a pass; the rule
-  # stays for a worker's wait by hand.
+  # No template names team-ci-wait, whose rule stays for a worker's wait by hand: a builder's wait
+  # on CI comes only through the ci fact's team-ci-run, and the coordinator's checks wait takes the
+  # PR's checks after a pass.
   if git -C "${REPO_ROOT:?}" grep -n team-ci-wait -- templates; then return 1; fi
-  allows builder "$REPO_ROOT/bin/team-checks agent-team a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
   allows builder "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"
   allows builder "$REPO_ROOT/bin/team-ci-wait --no-agent-review https://github.com/me/shop/pull/5"
   if allows builder "team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
   if allows builder "/elsewhere/bin/team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
   if denied settings/builder.json "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
+  # team-ci-run as the brief's ci fact gives it, by the code checkout's full path and no other.
+  local sha=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  grep -qF '/team-ci-run $project $branch <the full sha you pushed>\`' "$REPO_ROOT/bin/team-brief"
+  allows builder "$REPO_ROOT/bin/team-ci-run shop feat/T5-cart--03 $sha"
+  if denied settings/builder.json "$REPO_ROOT/bin/team-ci-run shop feat/T5-cart--03 $sha"; then return 1; fi
+  if allows builder "team-ci-run shop feat/T5-cart--03 $sha"; then return 1; fi
+  if allows builder "/elsewhere/bin/team-ci-run shop feat/T5-cart--03 $sha"; then return 1; fi
   local command
+  # The rerun and the cancel an infrastructure failure's line names, as team-ci-wait prints them.
+  for command in "gh run rerun 7001 --repo me/shop" "gh run rerun 7001 --job 9001 --repo me/shop" \
+    "gh run cancel 7001 --repo me/shop" "gh-axi run rerun 7001 --repo me/shop" "gh-axi run cancel 7001 --repo me/shop"; do
+    allows builder "$command" || { echo "the builder may not run: $command" >&2; return 1; }
+    if denied settings/builder.json "$command"; then echo "settings/builder.json denies: $command" >&2; return 1; fi
+  done
   for command in "gh pr ready https://github.com/me/shop/pull/5" "gh pr ready 5 --repo me/shop" \
     "gh pr ready -R me/shop 5" "gh-axi pr ready 5"; do
     allows builder "$command" || { echo "the builder may not run: $command" >&2; return 1; }
@@ -1779,7 +1821,8 @@ Bash(gh-axi pr ready *)'
     "gh pr ready -R me/shop --undo 5" "gh-axi pr ready 5 --undo"; do
     denied settings/builder.json "$command" || { echo "settings/builder.json allows: $command" >&2; return 1; }
   done
-  # The rules are for marking a PR ready and nothing else: no other gh write rides on them.
+  # The rules are for marking a PR ready and a run's rerun and cancel, and nothing else: no other
+  # gh write rides on them, and only team-ci-run starts a workflow's run.
   while IFS= read -r command; do
     if allows builder "$command"; then echo "the builder may run: $command" >&2; return 1; fi
   done <<'COMMANDS'
@@ -1791,6 +1834,10 @@ gh pr review 5 --approve
 gh pr close 5
 gh-axi pr edit 5 --body-file x.md
 gh api repos/me/shop/pulls/5 -X PATCH -f draft=false
+gh workflow run ci.yml --repo me/shop --ref feat/T5-cart
+gh-axi workflow run ci.yml --repo me/shop --ref feat/T5-cart
+gh run delete 7001 --repo me/shop
+gh api repos/me/shop/actions/runs/7001/rerun -X POST
 COMMANDS
 }
 
@@ -2398,16 +2445,25 @@ ok 2 after it"
   unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
   limits_checkout "$copy"
   # A test that passes but leaves a process holding bats' output (fd 3) open, deaf to TERM, so
-  # bats never ends after its last test until the kill 30 s after the TERM.
+  # bats never ends after its last test until the limit's TERM ends bats itself.
+  # A shell that traps TERM prints bash's job notice ("Terminated" on bash 5.2, with the command
+  # on 5.3) when the limit's TERM ends a command it waits on, and bats' per-test countdown (on
+  # under tests/run's BATS_TEST_TIMEOUT) is such a shell on the file's output, the likely source
+  # of the "Terminated" a loaded CI runner added at random.
+  # So the test leaves such a shell too: deaf to TERM itself, while the TERM ends its sleep.
+  # Its stderr is fd 11, where bash keeps bats' stderr while the test's output goes to its log.
+  # Its notice reaches tests/run's output on most runs, whenever it is written before tests/run
+  # reads the file, so the test compares the output with those notices left out.
   printf '%s\n' '@test "first" { true; }' \
-    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & }' >"$copy/tests/held.bats"
+    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & bash -c '"'"'trap "" TERM; env --default-signal=TERM sleep 300; true'"'"' 2>&11 & }' \
+    >"$copy/tests/held.bats"
   echo '@test "quick" { true; }' >"$copy/tests/quick.bats"
   local start=$SECONDS
   TEAM_JOBS=2 TESTS_FILE_MINUTES=1 run -1 --separate-stderr "$copy/tests/run" bats
   ((SECONDS - start >= 60 && SECONDS - start < 120))
   assert_contains "$output" "ok tests/quick.bats ("
   [[ $(grep '^not ok tests/held.bats' <<<"$output") =~ ^"not ok tests/held.bats ("(6[0-9]|[7-9][0-9]|1[01][0-9])"s): stopped at its 1-minute limit"$ ]]
-  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output")" "--- tests/held.bats
+  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output" | grep -vE '^Terminated( .*)?$')" "--- tests/held.bats
 1..2
 ok 1 first
 ok 2 leaves a process behind
