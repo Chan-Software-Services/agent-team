@@ -23,7 +23,8 @@
 #                                 that is not one JSON object.
 #   compact_hold_update <session> <program> [jq arguments...]
 #                                 under the lock, runs the jq <program> on the record as
-#                                 compact_hold_read prints it, with $now the time in epoch seconds;
+#                                 compact_hold_read prints it, with $now the time in epoch seconds
+#                                 (TEAM_COMPACT_HOLD_NOW when set, the tests' clock);
 #                                 the program prints one object, whose record is the new record,
 #                                 written when it differs from the one read, and whose log is a
 #                                 list of {event} or {event, why}, each appended to the log with
@@ -61,7 +62,7 @@ compact_hold_update() {
   (
     flock -w 5 9 || { echo "another writer held $hold_file.lock for 5 s" >&2; exit 1; }
     hold_before=$(compact_hold_read "$hold_session") || exit 1
-    hold_out=$(jq -c --argjson now "$(date +%s)" "$@" "$hold_program" <<<"$hold_before") || exit 1
+    hold_out=$(jq -c --argjson now "${TEAM_COMPACT_HOLD_NOW:-$(date +%s)}" "$@" "$hold_program" <<<"$hold_before") || exit 1
     hold_after=$(jq -ce '.record | objects' <<<"$hold_out") || exit 1
     if [[ $hold_after != "$hold_before" ]]; then
       hold_new=$(mktemp "$hold_file.XXXXXX")
