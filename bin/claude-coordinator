@@ -34,6 +34,18 @@
 # window; CLAUDE_CODE_AUTO_COMPACT_WINDOW, which would override the flag, stays unset. Its
 # settings add idle compaction from 100k tokens, so a long idle does not rewrite a large cache.
 #
+# Its starting context, which every reply carries and every compaction starts from, holds only
+# what it uses. Its settings deny, by bare name, the tools it never calls (Artifact and its two
+# readers, Workflow, ScheduleWakeup, ReportFindings and the task list's TaskCreate, TaskGet,
+# TaskList and TaskUpdate), and a denied tool's definition is left out of the session. With no
+# TaskUpdate Claude Code sends no "task tools haven't been used recently" reminder, which
+# CLAUDE_CODE_TODO_REMINDER_MODE=off in its settings' env turns off by itself too. Its skill
+# listing is kept to its own plugin's skills: its settings turn off the skills synced from
+# claude.ai (syncClaudeAiSkills) and the ones bundled with Claude Code (disableBundledSkills) and
+# keep the Discord plugin's two for Daniel to type, and the launch turns off every personal skill
+# in ${CLAUDE_CONFIG_DIR:-~/.claude}/skills but one with the name of a skill of its own
+# (launch_skills_off in bin/lib/launch.sh), so one Daniel adds later is off at the next launch.
+#
 # Only on the lease holder: it refuses (exit 1) unless `team-lease check` confirms against origin
 # that this machine holds the lease, naming the holder, or saying a coordinator never starts
 # offline when GitHub is unreachable.
@@ -81,6 +93,7 @@ mcp=$LAUNCH_STATE/coordinator.mcp.json
 settings=$LAUNCH_STATE/coordinator.settings.json
 launch_settings "$code/coordinator.settings.json" "$code/toolkits/coordinator/.mcp.json" \
   "$code/toolkits/coordinator/connectors.json" "$settings" "$mcp"
+launch_skills_off "$settings" "$code/plugins/coordinator-skills"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
 # inherit the lock's file, so a running coordinator never holds the next launch's lock.
