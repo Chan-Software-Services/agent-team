@@ -169,7 +169,8 @@ class Context:
     the git top level of cwd; the job tmp, $CLAUDE_JOB_DIR/tmp when it is a directory, else
     ~/.claude/jobs/<the session id's first 8 characters>/tmp when that is one; the roots, those of
     the two that exist, resolved; the kept paths, each root and the worktree's .scratch/task; and
-    the role, AGENT_TEAM_ROLE, empty in a gate agent."""
+    the role, AGENT_TEAM_ROLE, empty in a gate agent. The assistant's session is read the same
+    way, so its worktree is its directory, the team home."""
 
     def __init__(self, call, environ=None):
         self.call = call

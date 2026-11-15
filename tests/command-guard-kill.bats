@@ -3,8 +3,9 @@
 # kill-*, a kill of PIDs read from input, of a PID the guard cannot read before it runs, and of a
 # process group, every process or PID 0 or 1 are refused wherever a command runs (behind a
 # wrapper, in a string a shell or eval runs, in a heredoc or here-string a shell reads, piped into
-# a shell), each naming its allowed way with a worker's suffix or a gate agent's; the session's own
-# jobs, signal 0, kill -l and the reads, commits and data that only name a kill pass; and a literal
+# a shell), each naming its allowed way with a worker's suffix or a gate agent's, which the
+# assistant gets too; the session's own jobs, signal 0, kill -l and the reads, commits and data
+# that only name a kill pass; and a literal
 # PID passes only when its process is gone, or is the user's, is not the hook's own session or an
 # ancestor of it, and works inside the worktree or the job's tmp, each proven on real processes.
 
@@ -167,10 +168,19 @@ refuses_wrapped() {
     "echo 'killall node' > notes.md" "rg -n 'kill \$(pgrep' ."
 }
 
-@test "a refusal with an allowed way tells a worker to report it and go on by it, and a gate agent not to reach it another way" {
+@test "a refusal with an allowed way tells a worker to report it and go on by it, and a gate agent or the assistant not to reach it another way" {
   AGENT_TEAM_ROLE=builder guard -2 "pkill -f vite"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
   guard -2 "pkill -f vite"
+  assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
+  # Only the four worker roles' prompts say to go on by the allowed way, so every worker role is
+  # told to, and a session of any other role, as the assistant is, is told what a gate agent is.
+  local role
+  for role in planner reviewer ops; do
+    AGENT_TEAM_ROLE=$role guard -2 "pkill -f vite"
+    assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
+  done
+  AGENT_TEAM_ROLE=assistant guard -2 "pkill -f vite"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
   # A row with no allowed way keeps its suffix, with a role or without.
   local today="Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."

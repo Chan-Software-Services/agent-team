@@ -732,7 +732,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # Each row's kind and its Run column.
   rows=$(grep -E '^\| `' "$manual" | awk -F ' \\| ' '{ sub(/^\| /, "", $1); print $1 " :: " $2 }')
   assert_equal "$rows" '`QUESTION <text>` :: `team-log --from-message`, or none when `team-ask --from` puts it to Daniel
-`BLOCKED <what> <why>`, `NEED toolkit <name>` :: `team-log --from-message` (denied if it ends "; took its allowed way")
+`BLOCKED <what> <why>`, `NEED toolkit <name>` :: `team-log --from-message`
 `PAUSED <why>` :: `team-log --from-message`
 `PAUSED stowed` :: `team-next`, or during a handoff `team-log --from-message`
 `PR <url>` :: `team-next`
@@ -746,7 +746,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF "On \`T<n> DONE <path>\`, run \`team-next T<n> -- '<the message>'\`" "$plugin/skills/retro/SKILL.md"
 }
 
-@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 119 lines and 29340 bytes" {
+@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 119 lines and 29406 bytes" {
   local files=("$manual" "$plugin"/skills/*/SKILL.md) found
   # A worker's report is logged only by team-next or team-log --from-message; a paused of a cause
   # no worker reports (the usage limit, the machine's load, the machine off) is the coordinator's own.
@@ -793,10 +793,10 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # message table its two rows and manual-steps.md went to it, three lines tightened to fit, and
   # 119 lines and 29340 bytes once the outside-text rule named the assistant's messages and the
   # four words that never come through it, and its hand-off row acted on Daniel's own message,
-  # and its BLOCKED row tightened to name the one that took a command-guard refusal's allowed way,
-  # logged denied).
+  # and 29406 once its BLOCKED row said the one that took a command-guard refusal's allowed way
+  # is logged denied, parks nothing and waits for the status report, with no ping of its own).
   (($(wc -l <"$manual") <= 119))
-  (($(wc -c <"$manual") <= 29340))
+  (($(wc -c <"$manual") <= 29406))
 }
 
 @test "a worker goes on by a command-guard refusal's allowed way and reports it, which the coordinator logs denied and lists in its status report" {
@@ -807,7 +807,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   done
   # The manual's BLOCKED row logs it denied, and the status report lists it.
   grep -E '^\| `BLOCKED <what> <why>`' "$manual" |
-    grep -qF '| `team-log --from-message` (denied if it ends "; took its allowed way") |'
+    grep -qF '; one ending "; took its allowed way" is logged denied, parks nothing and waits for your status report, no ping. |'
   grep -qF "the snapshot's denials line" "$plugin/skills/status-report/SKILL.md"
   # The form the role sentence gives is one team-log --from-message reads.
   grep -qF '"BLOCKED <what> <why>; took its allowed way"' "$REPO_ROOT/bin/lib/messages.jq"
