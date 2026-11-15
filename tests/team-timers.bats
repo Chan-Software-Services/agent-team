@@ -2568,6 +2568,31 @@ current_lines() {
   assert_equal "$(current_lines "$output")" ""
 }
 
+@test "the current step logs what a reconcile that went well says on stderr, an item it kept unchecked, as a problem line" {
+  CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  rm "$CODE_CHECKOUT/bin/team-current"
+  cat >"$CODE_CHECKOUT/bin/team-current" <<'SH'
+#!/usr/bin/env bash
+echo "closed 3f9a1c: task T5 merged"
+echo "team-current: kept 4b2d7e: cannot check pr https://github.com/o/r/pull/9 merged: gh: Not Found" >&2
+echo >&2
+echo "team-current: waiting.md is not updated: team-inbox failed" >&2
+SH
+  chmod +x "$CODE_CHECKOUT/bin/team-current"
+  run_bin -0 team-timers run
+  assert_equal "$(current_lines "$output")" "closed 3f9a1c: task T5 merged
+kept 4b2d7e: cannot check pr https://github.com/o/r/pull/9 merged: gh: Not Found
+waiting.md is not updated: team-inbox failed"
+  assert_equal "$(current_lines "$(cat "$log")")" "$(current_lines "$output")"
+  # The lines from stderr are problems, kept in the failures log; the step itself went well.
+  assert_contains "$(problems)" "current: kept 4b2d7e: cannot check pr https://github.com/o/r/pull/9 merged: gh: Not Found"
+  assert_contains "$(problems)" "current: waiting.md is not updated: team-inbox failed"
+  [[ $(problems) != *"closed 3f9a1c"* ]]
+  jq -e '.steps.current == null or .steps.current.reason == null' "$HOME/.local/state/agent-team/health.json"
+}
+
 @test "a current step that fails or outlasts TEAM_TIMERS_CURRENT_SECONDS is logged with its reason, failing its step alone and not the run" {
   local hung=$BATS_TEST_TMPDIR/hung
   CODE_CHECKOUT=$BATS_TEST_TMPDIR/code

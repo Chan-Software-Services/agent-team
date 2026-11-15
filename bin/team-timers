@@ -134,8 +134,11 @@
 #                     each item of both lists (tasks/current.md and assistant/current.md) whose
 #                     close condition holds and moves each old-form line over, one commit each
 #                     (bin/team-current's header says how). Each line it prints is logged ("current:
-#                     closed 3f9a1c: task T5 merged", and each commit's own line), and it logs
-#                     nothing when nothing changed. It is stopped after 120 s, killed 10 s later
+#                     closed 3f9a1c: task T5 merged", and each commit's own line), each line a
+#                     reconcile that went well says on stderr is a problem line ("current: kept
+#                     4b2d7e: cannot check pr <url> merged: <why>", so an item no run can check is
+#                     in the failures log each run), and it logs nothing when nothing changed and
+#                     nothing was kept unchecked. It is stopped after 120 s, killed 10 s later
 #                     ("current: failed: timed out after 120 s"), and a reconcile that fails (a
 #                     commit the team home's hooks refuse) fails its own step alone, never the run,
 #                     so it is the step-current alert after 12 runs in a row. Not run off the lease,
@@ -1530,16 +1533,24 @@ step_on() {
 }
 
 # Run the step <step>'s sibling command, stopped (with all it started) after <seconds>:
-# run_step [--fails-no-run] <step> <seconds> <command> [<argument>...]; one log line per line it
-# prints, and a failure logged with its first error, which fails the run (step_failed) unless
-# --fails-no-run is given, when it fails the step alone.
+# run_step [--fails-no-run] [--warns] <step> <seconds> <command> [<argument>...]; one log line per
+# line it prints, and a failure logged with its first error, which fails the run (step_failed)
+# unless --fails-no-run is given, when it fails the step alone. With --warns, each line a command
+# that exits 0 says on stderr is a problem line too, its "team-<name>: " dropped, the step still
+# having gone well.
 run_step() {
-  local rc=0 out line why fails_run=1
+  local rc=0 out line why fails_run=1 warns=''
   [[ $1 != --fails-no-run ]] || { fails_run='' && shift; }
+  [[ $1 != --warns ]] || { warns=1 && shift; }
   out=$(TEAM_HOME=$TEAM_HOME timeout --kill-after="$KILL_SECONDS" "$2" "$bin/$3" "${@:4}" 2>"$err" {run_fd}>&-) || rc=$?
   while IFS= read -r line; do
     [[ -z $line ]] || log "$1" "$line"
   done <<<"$out"
+  if ((rc == 0)) && [[ -n $warns ]]; then
+    while IFS= read -r line; do
+      [[ -z $line ]] || problem "$1" "${line#team-*: }"
+    done <"$err"
+  fi
   case $rc in
     0) step_ok "$1" && return 0 ;;
     124 | 137) why="timed out after $2 s" ;;
@@ -1650,10 +1661,12 @@ ledger_step() {
 }
 
 # The current step, on the holder after the ledger step and before the queue step: team-current
-# reconcile (CURRENT_TIMEOUT, killed KILL_SECONDS later) of both lists, each line it prints logged;
-# one that fails or is stopped fails this step alone, never the run, as the queue step's tidy does.
+# reconcile (CURRENT_TIMEOUT, killed KILL_SECONDS later) of both lists, each line it prints logged,
+# and each line a reconcile that went well says on stderr (an item kept since its condition cannot
+# be checked, a waiting.md not updated) logged as a problem line; one that fails or is stopped
+# fails this step alone, never the run, as the queue step's tidy does.
 current_step() {
-  run_step --fails-no-run current "$CURRENT_TIMEOUT" team-current reconcile
+  run_step --fails-no-run --warns current "$CURRENT_TIMEOUT" team-current reconcile
 }
 
 # The queue step, on the holder after the current step and before the coordinator step, so the sweep
