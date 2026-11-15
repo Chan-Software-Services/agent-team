@@ -24,6 +24,37 @@ section() {
   awk -v h="## $2" '$0 == h { on = 1; next } /^## / { on = 0 } on && NF' "$REPO_ROOT/roles/$1.md"
 }
 
+# The line that says the role prompt <file> is over its cap of <cap> bytes, and nothing when it is
+# not; the file's size is wc -c's: role_over_cap <file> <cap>
+role_over_cap() {
+  local bytes
+  bytes=$(wc -c <"$1")
+  ((bytes <= $2)) ||
+    echo "roles/${1##*/} is $bytes bytes, over its cap of $2: move material behind a pointer (the brief, a SOP, a skill), and never raise the cap without Daniel's word"
+}
+
+# A session loads its role prompt whole before it reads its brief, so each worker role's size is
+# held, one line per role: its name and its cap in bytes.
+ROLE_CAPS="builder 8000
+planner 6300
+reviewer 7200"
+
+@test "each worker role prompt is at most its cap in bytes" {
+  local role cap over=()
+  while read -r role cap; do
+    [[ -f $REPO_ROOT/roles/$role.md ]]
+    over+=("$(role_over_cap "$REPO_ROOT/roles/$role.md" "$cap")")
+  done <<<"$ROLE_CAPS"
+  assert_equal "$(printf '%s\n' "${over[@]}" | sed '/^$/d')" ""
+}
+
+@test "a role prompt over its cap is named with its bytes and the cap, and one at its cap passes" {
+  printf '%0100d' 0 >"$BATS_TEST_TMPDIR/builder.md"
+  assert_equal "$(role_over_cap "$BATS_TEST_TMPDIR/builder.md" 100)" ""
+  assert_equal "$(role_over_cap "$BATS_TEST_TMPDIR/builder.md" 99)" \
+    "roles/builder.md is 100 bytes, over its cap of 99: move material behind a pointer (the brief, a SOP, a skill), and never raise the cap without Daniel's word"
+}
+
 @test "the manual is at most 120 lines" {
   local n
   n=$(wc -l <"$manual")
@@ -124,7 +155,7 @@ section() {
   grep -qF 'commit what is unfinished as `wip: <what is unfinished>` on the task branch and push it' <<<"$body"
   grep -qF 'Never rewrite a `wip:` commit' <<<"$body"
   # A run the level's STOW stopped is run again on resume, never fixed.
-  grep -qF 'A test or gate run that ends killed or aborted while a `T<n> STOW` waits is the resource level'"'"'s doing, never a failure to fix: note it in `handoff.md` and run it again on resume.' <<<"$body"
+  grep -qF 'A test or gate run killed or aborted while a `T<n> STOW` waits is never a failure to fix: note it in `handoff.md` and run it again on resume.' <<<"$body"
   # A planner and a reviewer have nothing to commit: their stow is the handoff note alone.
   for role in planner reviewer; do
     if section "$role" 'On STOW and on resume' | grep -Eiw 'commit|push|wip'; then
@@ -562,7 +593,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'the plain `before` notes'"'"', on code the PR did not change, which never go back, as its `before`' "$manual"
   grep -qF '`verify` when all it sent back were plain notes or the round only edited the PR body, else with `rereview`' "$manual"
   grep -qF 'queue each plain `before` note as a follow-up' "$manual"
-  grep -qF '`change` when it is on a line the PR adds or changes, `before` when it is on code the PR did not change' <<<"$reviewer"
+  grep -qF '`change` is on a line the PR adds or changes, `before` on code it did not change' <<<"$reviewer"
   grep -qF 'a plain `note` goes back when its scope is `change`, and is queued as a follow-up, never sent back, when it is `before`' <<<"$reviewer"
   # Every round, a notes-only one too, reports at the push, or once the CI run of its head that
   # its brief has it wait on is green, and stops: no builder waits on the PR's checks or pushes a
@@ -571,11 +602,13 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
     "$REPO_ROOT/templates/briefs/builder-round.md"
   # The PR body names no local checks, so the round has no line of them to bring up to date.
   if grep -F 'local checks' "$REPO_ROOT/templates/briefs/builder-round.md"; then return 1; fi
-  section builder 'What you do' | grep -qF 'On every delivery, send `PR <full url>` as soon as the push and the PR body are in and, where your brief has you run `team-ci-run`, it has exited 0 (on a gated one, once the gate'"'"'s run, its ci step skipped, has opened or updated the PR and you have read the title and body it drafted against the project'"'"'s rules and fixed them on the PR), and on a merge-base round `DONE merged ...` once its push is in and that run, where your brief has it, has exited 0, and stop there: past the CI run of your head your brief may have you wait on, you never wait on the PR'"'"'s GitHub checks, since a red check comes back to you from the coordinator as a fix round.'
-  section builder 'What you do' | grep -qF 'with the tests your brief names for your project, whatever the `implement` skill says: never the whole suite, which CI runs on every head pushed, unless your brief says nothing else runs it, and where your brief has you run CI on your branch with `team-ci-run`, report only once it exits 0.'
+  section builder 'What you do' | grep -qxF -- '- On every delivery, send `PR <full url>` once the push and the PR body are in, and on a merge-base round `DONE merged ...` once its push is in.'
+  section builder 'What you do' | grep -qxF '  Then stop: past your brief'"'"'s `team-ci-run`, never wait on the PR'"'"'s GitHub checks.'
+  section builder 'What you do' | grep -qxF -- '- End every ticket and every round with the tests your brief names, whatever the `implement` skill says: never the whole suite, unless your brief says nothing else runs it.'
+  section builder 'What you do' | grep -qxF '  Where your brief has you run `team-ci-run`, report only once it exits 0.'
   if section builder 'What you do' | grep -F -e 'tests/run' -e '--changed'; then return 1; fi
   section builder 'What you do' | grep -qF -- '- Fix the review findings and failed checks the coordinator sends you on the same branch'
-  section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read, since the coordinator'"'"'s script waits on the checks of a pass.'
+  section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read.'
   if section builder 'What you do' | grep -F -e team-ci-wait -e 'When every finding it sends is a plain `note`'; then return 1; fi
   if section reviewer 'What you do' | grep -F team-ci-wait; then return 1; fi
   jq -er '.kinds.review.about | contains("or a plain note on a line the PR adds or changes, never one before lists")' \
@@ -869,7 +902,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 }
 
 @test "reviewers and planners add the memories the hook keeps them from writing to their task directory, and the coordinator files them at close" {
-  local role line='- The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format (name, description, type, and the fact with its why and how to apply), and name the file in your DONE.'
+  local role line='- The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.'
   for role in reviewer planner; do
     grep -qxF -- "$line" <<<"$(section "$role" 'What you do')"
     grep -qF 'memory=.scratch/task/memory.md' <<<"$(section "$role" 'Talking to the coordinator')"
