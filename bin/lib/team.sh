@@ -1991,7 +1991,10 @@ github() {
 
 # A base's rules, read from GitHub: its classic protection (branches/<base>), the active rulesets'
 # rules (rules/branches/<base>, every page), and the bypass actors of each ruleset whose rules
-# require a check or a queue (rulesets/<id>), each read given 30 seconds. Prints one JSON object,
+# require a check or a queue (rulesets/<id>), each read given 30 seconds. A branch GitHub calls
+# unprotected (protected false, which a ruleset's rule on it turns true as classic protection
+# does) has no rules to read, and none are asked for, since GitHub refuses that read on a private
+# repository whose plan has no rulesets. Prints one JSON object,
 # base_rules in bin/lib/ledger.jq says its keys (required, strict, queue, classic, bypass and
 # bypass_by); fails printing on stderr the call GitHub refused and its first error line, as
 # github does: base_rules <repo> <base>
@@ -2012,7 +2015,11 @@ base_rules() (
     return 1
   }
   read_rules branch "repos/$rules_repo/branches/$rules_base" || exit 1
-  read_rules rules "repos/$rules_repo/rules/branches/$rules_base" --paginate || exit 1
+  if jq -e '.protected == false' "$rules_dir/branch" >/dev/null; then
+    echo '[]' >"$rules_dir/rules"
+  else
+    read_rules rules "repos/$rules_repo/rules/branches/$rules_base" --paginate || exit 1
+  fi
   rules_ids=$(jq -rs 'add // [] | [.[] | select(.type == "required_status_checks" or .type == "merge_queue")
     | .ruleset_id | numbers] | unique[]' "$rules_dir/rules") || exit 1
   echo '[]' >"$rules_dir/rulesets"

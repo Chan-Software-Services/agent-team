@@ -56,7 +56,7 @@ fixture_ledger() {
 # gh answers PR #5 of owner/proj: its view, all its checks and its server-required checks, each
 # from the JSON given (or from $view, $checks and $required), and gh api's compare of its base and
 # head from the fourth (or $compare), failing as an unreadable compare when that is empty or unset;
-# its base unprotected, with the rulesets' rules $rules (none when unset) and ruleset 9 by no one
+# its base under no classic protection, with the rulesets' rules $rules (none when unset) and ruleset 9 by no one
 # bypassed.
 stub_github() {
   export GH_VIEW=${1:-$view} GH_CHECKS=${2:-$checks} GH_REQUIRED=${3:-$required} GH_COMPARE=${4:-${compare:-}}
@@ -64,7 +64,7 @@ stub_github() {
   stub_script gh <<'EOF'
 case "$1 $2 $*" in
   "pr view"*) echo "$GH_VIEW" ;;
-  "api repos/owner/proj/branches/"*) echo '{"name": "main", "protected": false}' ;;
+  "api repos/owner/proj/branches/"*) echo '{"name": "main", "protected": true}' ;;
   "api repos/owner/proj/rules/branches/"*) echo "$GH_RULES" ;;
   "api repos/owner/proj/rulesets/9 "*) echo '{"id": 9, "name": "main", "bypass_actors": []}' ;;
   "api repos/"*/compare/*)

@@ -983,3 +983,12 @@ app_case() {
   rm "$gh_dir/ruleset-42.json"
   refused "GitHub cannot be read: gh api repos/owner/proj/rulesets/42: cat: "
 }
+
+@test "a base GitHub calls unprotected has no rules read, so a private repository whose rulesets GitHub refuses to read still merges" {
+  echo '{"name": "dev", "protected": false, "protection": {"enabled": false,
+    "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}}' >"$gh_dir/branch.json"
+  rm "$gh_dir/rules.json"
+  run_bin -0 team-merge T14
+  assert_equal "$(merged_events | jq -r .event)" merged
+  assert_equal "$(stub_calls gh | jq -c 'select(.[1] // "" | test("/rules/|/rulesets/"))')" ""
+}
