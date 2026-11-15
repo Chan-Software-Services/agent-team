@@ -3,9 +3,11 @@
 # head whose review the ledger holds, with a one-repository, checks-only token minted from the
 # App's key and revoked after, the JWT and the token given to curl on stdin alone. The App is on
 # only in a copy of bin/ that holds a bin/lib/review-app, and its key is made at run time, never
-# committed, since gitleaks reads every commit.
+# committed, since gitleaks reads every commit. Its --merge-group form, on the merge queue's trial
+# commit, runs on a real origin and primary checkout (helpers/queue).
 
 load helpers/common
+load helpers/queue
 
 HEAD_SHA=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
 URL=https://github.com/owner/agent-team/pull/5
@@ -127,6 +129,23 @@ unbase64url() {
 
 curl_calls() {
   cat "$STUB_CALLS/curl.calls" 2>/dev/null || true
+}
+
+# PR 5 on a real origin (helpers/queue), its head logged, reviewed and passed, and carrying the
+# App's own agent-review success, as a PR that may join the merge queue does.
+queued_pr() {
+  queue_repo agent-team
+  ledger_line "{\"task\":\"T9\",\"event\":\"pr\",\"url\":\"$URL\",\"project\":\"agent-team\",\"head\":\"$QUEUE_HEAD\"}"
+  ledger_line "{\"task\":\"T9\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$QUEUE_HEAD\",\"ts\":\"2026-11-14T09:00:00Z\"}"
+  head_check 123456 success
+}
+
+# --merge-group on <sha> is refused, exit 1, with <text> in what it says, and no call as the App.
+group_refused() {
+  run_bin -1 team-review-check --merge-group "$URL" "$1"
+  assert_contains "$output" "$2"
+  assert_contains "$output" "nothing posted"
+  assert_equal "$(curl_calls)" ""
 }
 
 @test "posts agent-review as the App's check run on the reviewed head, with a token for one repository, then revokes it" {
@@ -394,4 +413,171 @@ DELETE installation/token"
   # curl is never told to follow one.
   assert_equal "$(stub_calls curl | jq -c '[.[] | select(test("^(-L|--location(-trusted)?)$"))]')" "[]"
   assert_equal "$(stub_calls curl | wc -l)" 1
+}
+
+@test "--merge-group posts success on the queue's trial commit that is the reviewed head merged cleanly onto the entry's base" {
+  queued_pr
+  local trial
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  # The primary checkout holds neither the base nor the trial commit until the script fetches them.
+  run ! git -C "${QUEUE_PRIMARY:?}" cat-file -e "$trial"
+  run_bin --separate-stderr -0 team-review-check --merge-group "$URL" "$trial"
+  assert_equal "$output" 4242
+  assert_equal "$stderr" ""
+  assert_equal "$(curl_calls)" "GET repos/Owner/agent-team/installation
+POST app/installations/777/access_tokens
+POST repos/Owner/agent-team/check-runs
+DELETE installation/token"
+  assert_equal "$(jq -c 'del(.completed_at)' "$STUB_CALLS/curl.body.3")" "$(jq -cn --arg trial "$trial" --arg head "${QUEUE_HEAD:0:7}" '
+    "the merge queue'"'"'s clean merge of the reviewed head \($head)" as $summary
+    | {name: "agent-review", head_sha: $trial, status: "completed", conclusion: "success",
+       output: {title: $summary, summary: $summary}}')"
+  # GitHub is read for the PR's queue entry and the head's agent-review check runs, nothing else.
+  assert_equal "$(stub_calls gh | jq -c 'if .[1] == "graphql" then [.[0, 1], .[4:][]] else . end')" "$(jq -cn --arg head "$QUEUE_HEAD" '
+    ["api", "graphql", "-f", "owner=Owner", "-f", "name=agent-team", "-F", "number=5"],
+    ["api", "repos/Owner/agent-team/commits/\($head)/check-runs?check_name=agent-review&filter=latest&per_page=100"]')"
+  assert_contains "$(stub_calls gh | jq -r 'select(.[1] == "graphql") | .[3]')" "mergeQueueEntry { state headCommit { oid } baseCommit { oid } }"
+  # No ref of the primary checkout moved, and its worktree is as it was.
+  assert_equal "$(git -C "${QUEUE_PRIMARY:?}" for-each-ref --format='%(refname)' | grep -c queue || true)" 0
+  assert_equal "$(git -C "${QUEUE_PRIMARY:?}" status --porcelain)" ""
+}
+
+@test "--merge-group posts on a trial commit built on the trial commit ahead of it, which holds the entry's base" {
+  queued_pr
+  local ahead other trial
+  # Another PR's head, merged ahead of this one in the queue.
+  other=$(git -C "${QUEUE_PRIMARY:?}" commit-tree "$(git -C "${QUEUE_PRIMARY:?}" rev-parse "dev^{tree}")" -p dev -m "feat: another PR")
+  git -C "${QUEUE_PRIMARY:?}" push -q origin "$other:refs/heads/feat/other"
+  ahead=$(trial_commit "$QUEUE_BASE" "$other")
+  trial=$(trial_commit "$ahead" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  run_bin -0 team-review-check --merge-group "$URL" "$trial"
+  assert_equal "$output" 4242
+  assert_equal "$(jq -r .head_sha "$STUB_CALLS/curl.body.3")" "$trial"
+}
+
+@test "--merge-group refuses a trial commit with any problem, naming the first, and posts nothing" {
+  queued_pr
+  local clean trial later other
+  clean=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  # The PR in no queue, and an entry with another trial commit, or none yet.
+  group_refused "$clean" "Owner/agent-team#5 is not in the merge queue"
+  queue_entry "$QUEUE_HEAD"
+  group_refused "$clean" "${clean:0:7} is not the trial commit of Owner/agent-team#5's queue entry, which is ${QUEUE_HEAD:0:7}"
+  jq '.data.repository.pullRequest.mergeQueueEntry.headCommit = null' "$GH_DIR/entry.json" >"$GH_DIR/entry.next"
+  mv "$GH_DIR/entry.next" "$GH_DIR/entry.json"
+  group_refused "$clean" "the queue entry of Owner/agent-team#5 has no trial commit yet"
+  # An entry GitHub cannot merge.
+  queue_entry "$clean" UNMERGEABLE
+  group_refused "$clean" "the queue entry of Owner/agent-team#5 is UNMERGEABLE"
+  # One parent, and three.
+  trial=$(trial_commit "$QUEUE_BASE" '' "$clean")
+  queue_entry "$trial"
+  group_refused "$trial" "${trial:0:7} is a commit of its own, not a merge of the PR's head"
+  local clone=$BATS_TEST_TMPDIR/queue-clone
+  trial=$(git -C "${clone:?}" commit-tree "$(git -C "${clone:?}" rev-parse "$clean^{tree}")" \
+    -p "$QUEUE_BASE" -p "$QUEUE_HEAD" -p "$QUEUE_BASE~1" -m "Merge three")
+  git -C "${clone:?}" push -q origin "$trial:refs/heads/gh-readonly-queue/dev/three"
+  queue_entry "$trial"
+  group_refused "$trial" "${trial:0:7} merges 3 parents at once, not the PR's head alone"
+  # A second parent that is not the PR's head: a commit pushed after the review.
+  other=$(git -C "${QUEUE_PRIMARY:?}" commit-tree "$(git -C "${QUEUE_PRIMARY:?}" rev-parse "$QUEUE_HEAD^{tree}")" -p "$QUEUE_HEAD" -m "feat: unreviewed")
+  git -C "${QUEUE_PRIMARY:?}" push -q origin "$other:refs/heads/feat/unreviewed"
+  trial=$(trial_commit "$QUEUE_BASE" "$other")
+  queue_entry "$trial"
+  group_refused "$trial" "${trial:0:7} merges ${other:0:7}, which is not the PR's head ${QUEUE_HEAD:0:7}"
+  # The parents the other way round: the head first.
+  trial=$(trial_commit "$QUEUE_HEAD" "$QUEUE_BASE")
+  queue_entry "$trial"
+  group_refused "$trial" "${trial:0:7} merges ${QUEUE_BASE:0:7}, which is not the PR's head ${QUEUE_HEAD:0:7}"
+  # A first parent that lacks the entry's base: the base moved on, the trial commit did not.
+  later=$(push_to_dev "$QUEUE_ORIGIN" src/later.py)
+  queue_entry "$clean" AWAITING_CHECKS "$later"
+  group_refused "$clean" "${clean:0:7} merges the head onto ${QUEUE_BASE:0:7}, which does not hold the queue entry's base ${later:0:7}"
+  # A tree that is not the merge of its parents: the head's alone, which drops the base's change.
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  group_refused "$trial" "${trial:0:7} changes more than the merge of its parents"
+  # Parents that conflict: the base adds the file the head adds.
+  later=$(push_to_dev "$QUEUE_ORIGIN" src/tool.py)
+  trial=$(trial_commit "$later" "$QUEUE_HEAD" "$QUEUE_HEAD")
+  queue_entry "$trial" AWAITING_CHECKS "$later"
+  group_refused "$trial" "${trial:0:7} is no clean merge: ${QUEUE_HEAD:0:7} conflicts with ${later:0:7}"
+  # A project that does not merge with a merge commit, on the clean trial commit.
+  queue_entry "$clean"
+  sed -i 's/^merge_method = "merge"/merge_method = "squash"/' "$TEAM_HOME/projects.toml"
+  group_refused "$clean" "agent-team merges with squash, and a trial commit is proved only for merge"
+  # And with the method back, the same trial commit posts.
+  sed -i 's/^merge_method = "squash"/merge_method = "merge"/' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-review-check --merge-group "$URL" "$clean"
+  assert_equal "$output" 4242
+}
+
+@test "--merge-group refuses a clean trial commit of a head that is not reviewed and passed, or lacks the App's own agent-review success" {
+  queue_repo agent-team
+  local trial
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  head_check 123456 success
+  # The head is logged, but no review of it is.
+  ledger_line "{\"task\":\"T9\",\"event\":\"pr\",\"url\":\"$URL\",\"project\":\"agent-team\",\"head\":\"$QUEUE_HEAD\"}"
+  group_refused "$trial" "T9 logged no review of ${QUEUE_HEAD:0:7}"
+  # No check run is read for a head the ledger does not pass.
+  assert_equal "$(stub_calls gh | jq -c 'select(.[1] != "graphql")')" ""
+  ledger_line "{\"task\":\"T9\",\"event\":\"review\",\"verdict\":\"findings\",\"head\":\"$QUEUE_HEAD\",\"ts\":\"2026-11-14T09:00:00Z\"}"
+  group_refused "$trial" "T9's latest review of ${QUEUE_HEAD:0:7}, at 2026-11-14T09:00:00Z, is findings"
+  ledger_line "{\"task\":\"T9\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$QUEUE_HEAD\",\"ts\":\"2026-11-14T10:00:00Z\"}"
+  # Reviewed and passed, but the head's agent-review is missing, a failure, or another App's.
+  echo '{"check_runs": []}' >"$GH_DIR/runs.json"
+  group_refused "$trial" "head $QUEUE_HEAD carries no agent-review success of the reviewer App 123456"
+  head_check 123456 failure
+  group_refused "$trial" "head $QUEUE_HEAD carries no agent-review success of the reviewer App 123456"
+  head_check 15368 success
+  group_refused "$trial" "head $QUEUE_HEAD carries no agent-review success of the reviewer App 123456"
+  # A success of the App's on another commit is not the head's.
+  jq --arg other "$QUEUE_BASE" '.check_runs[0] |= (.app.id = 123456 | .head_sha = $other)' "$GH_DIR/runs.json" >"$GH_DIR/runs.next"
+  mv "$GH_DIR/runs.next" "$GH_DIR/runs.json"
+  group_refused "$trial" "head $QUEUE_HEAD carries no agent-review success of the reviewer App 123456"
+  head_check 123456 success
+  run_bin -0 team-review-check --merge-group "$URL" "$trial"
+}
+
+@test "--merge-group posts nothing when the queue entry or the trial commit cannot be read" {
+  queued_pr
+  local trial
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  queue_entry "$trial"
+  echo "HTTP 502: Bad Gateway" >"$GH_DIR/entry.error"
+  group_refused "$trial" "the merge queue entry of Owner/agent-team#5 cannot be read: gh api graphql: HTTP 502: Bad Gateway"
+  rm "$GH_DIR/entry.error"
+  echo '{"data": {"repository": {"pullRequest": null}}}' >"$GH_DIR/entry.json"
+  group_refused "$trial" "the merge queue entry of Owner/agent-team#5 cannot be read: gh api graphql: no such pull request"
+  # A trial commit origin does not hold.
+  local gone=1111111111111111111111111111111111111111
+  queue_entry "$gone"
+  group_refused "$gone" "the trial commit 1111111 and the head ${QUEUE_HEAD:0:7} cannot be fetched into $QUEUE_PRIMARY: "
+  # The head's check runs unread.
+  queue_entry "$trial"
+  echo "not json" >"$GH_DIR/runs.json"
+  group_refused "$trial" "carries no agent-review success"
+}
+
+@test "--merge-group takes a PR URL and a full sha, nothing more or less" {
+  local -a cases=(
+    "--merge-group"
+    "--merge-group $URL"
+    "--merge-group $URL $HEAD_SHA success"
+    "--merge-group $URL $HEAD_SHA success x"
+    "--merge-group $URL ${HEAD_SHA:0:7}"
+    "--merge-group https://github.com/owner/agent-team/pull/5/files $HEAD_SHA"
+    "$URL --merge-group $HEAD_SHA"
+  )
+  local args
+  for args in "${cases[@]}"; do
+    # shellcheck disable=SC2086 # each case is its words
+    run_bin -2 team-review-check $args
+  done
+  assert_equal "$(curl_calls)" ""
+  assert_equal "$(stub_calls gh)" ""
 }

@@ -4,11 +4,21 @@
 # through, as no glob over a raw gh api command can.
 #
 # Usage: team-review-status <pr url> <reviewed sha> <success|failure> <description>
+#        team-review-status --merge-group <pr url> <trial sha>
 #   pr url        https://github.com/<owner>/<name>/pull/<n>, in a registered project's repo
 #   reviewed sha  the full 40-hex sha of the head the review read, which must still be the PR's head
 #   description   one line of at most 140 characters, GitHub's limit
+#   trial sha     the full 40-hex sha of the merge queue's trial commit for the PR
 # The status goes on exactly the reviewed sha, with context agent-review, so it never approves a
 # commit pushed after the review.
+# --merge-group sets success on the queue's trial commit, its description naming the head, only
+# once that commit is proved to be the PR's reviewed head merged cleanly onto what is ahead of it
+# in the queue. It is refused, exit 1 with nothing set, for a PR no task's pr event names
+# (pr_task in bin/lib/team.sh), a trial commit queue_commit_problems in bin/lib/team.sh names a
+# problem with (not the head commit of the PR's queue entry, read from GitHub at the call, an
+# entry that is UNMERGEABLE, a commit that is not exactly the PR's head merged cleanly onto a
+# commit holding the entry's base, a project whose merge_method is not merge) or cannot read, and
+# a PR's head whose latest review in the task's ledger is not a pass (review_refusal there).
 # Refused, exit 1 before anything is read: a planner, builder or ops session (AGENT_TEAM_ROLE), so
 # only a reviewer, the coordinator (team-catch-up runs it while the App is off) and a terminal
 # set a status.
@@ -23,8 +33,16 @@ if [[ -n ${AGENT_TEAM_ROLE:-} && $AGENT_TEAM_ROLE != @(reviewer|coordinator) ]];
   die "a $AGENT_TEAM_ROLE session sets no agent-review status: that is a reviewer's or the coordinator's; send the coordinator your message"
 fi
 
-[[ $# -eq 4 ]] || usage_error "usage: team-review-status <pr url> <reviewed sha> <success|failure> <description>"
-url=$1 reviewed=$2 state=$3 description=$4
+usage="usage: team-review-status <pr url> <reviewed sha> <success|failure> <description> | --merge-group <pr url> <trial sha>"
+group=''
+if [[ ${1:-} == --merge-group ]]; then
+  [[ $# -eq 3 ]] || usage_error "$usage"
+  # The description is a stand-in until the proof names the head.
+  group=1 url=$2 reviewed=$3 state=success description="the merge queue's trial commit"
+else
+  [[ $# -eq 4 ]] || usage_error "$usage"
+  url=$1 reviewed=$2 state=$3 description=$4
+fi
 [[ $reviewed =~ ^[0-9a-f]{40}$ ]] || usage_error "the reviewed sha is a full 40-hex commit sha, got '$reviewed'"
 [[ $state == success || $state == failure ]] || usage_error "the state is success or failure, got '$state'"
 [[ -n $description && ! $description =~ [[:cntrl:]] ]] ||
@@ -36,10 +54,21 @@ bar=$(own_bar "$project") || exit 1
 [[ -z $(jq -r '.app? // empty' <<<"$bar") ]] ||
   die "the reviewer App posts agent-review on $project: send your verdict to the coordinator, whose team-next posts it"
 
-head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq .headRefOid) ||
-  die "gh cannot read the head of $url"
-[[ $head == "$reviewed" ]] ||
-  die "$url moved past the reviewed $reviewed: its head is now $head; nothing set"
+if [[ -n $group ]]; then
+  task=$(pr_task "$url")
+  [[ -n $task ]] || die "no task's pr event names $url, so no review of it is logged; nothing set"
+  rc=0
+  head=$(queue_commit_problems "$project" "$repo" "$number" "$reviewed") || rc=$?
+  ((rc == 0)) || die "$head; nothing set"
+  refusal=$(review_refusal "$task" "$head" success) || die "the ledger's reviews of $task cannot be read"
+  [[ -z $refusal ]] || die "$refusal; nothing set"
+  description="the merge queue's clean merge of the reviewed head ${head:0:7}"
+else
+  head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq .headRefOid) ||
+    die "gh cannot read the head of $url"
+  [[ $head == "$reviewed" ]] ||
+    die "$url moved past the reviewed $reviewed: its head is now $head; nothing set"
+fi
 gh api --method POST "repos/$repo/statuses/$reviewed" \
   -f state="$state" -f context=agent-review -f description="$description" >/dev/null ||
   die "GitHub refused the status on $repo@$reviewed"
