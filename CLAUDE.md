@@ -99,6 +99,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill`: run by hand by the coordinator, since it starts a real Claude session; it compacts a coordinator-shaped session in a sandbox team home built from `tests/fixtures/compaction-drill/`, checks it still knows each task's wait and every current item, and records its run.
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
+  - `tests/fixtures/guard-corpus/allowed.jsonl`: the calls every guard hook must allow, one JSON object a line with the roles that make it, in the shapes of real ones with fixture values only.
+  - `tests/guard-corpus.bats`: runs each role's PreToolUse hooks, as its settings files write them, on that corpus's calls, with the lease held and, for a call marked `local`, on a fenced machine and while the team holds offline.
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
