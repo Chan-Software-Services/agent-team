@@ -2326,7 +2326,7 @@ There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$
   # The roles say the same, in one sentence each, with nothing of the old wait left.
   grep -qxF -- "- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read, since the coordinator's script waits on the checks of a pass." "$REPO_ROOT/roles/reviewer.md"
   grep -qF "run no test suite: CI is the coordinator's wait, and the merge needs it green." "$REPO_ROOT/roles/reviewer.md"
-  grep -qF "and stop there: you never wait on the PR's GitHub checks, since a red check comes back to you from the coordinator as a fix round." "$REPO_ROOT/roles/builder.md"
+  grep -qF "and stop there: past the CI run of your head your brief may have you wait on, you never wait on the PR's GitHub checks, since a red check comes back to you from the coordinator as a fix round." "$REPO_ROOT/roles/builder.md"
   refute_grep -F -e team-ci-wait -e 'roll-up:' -e 'infrastructure:' -e 'verify` reviewer waits' "$REPO_ROOT/roles/reviewer.md" "$REPO_ROOT/roles/builder.md"
 }
 
@@ -2757,7 +2757,7 @@ If the coordinator answers that the task branch moved, merge it again, run the c
     '{"template":"builder-ticket","project":"home","values":{"ticket":"03"}}'
   # The role says the ticket worktree's push and merge rules right after its own push rule.
   assert_equal "$(grep -A1 -F -- '- Commit and push the task branch before reporting DONE or PR' "$REPO_ROOT/roles/builder.md" | sed -n 2p)" \
-    '  In a ticket worktree, which your brief names with its ticket branch, never push the ticket branch, and merge only the task branch into it, never the other way, as your brief says; at `T<n> STOW` or `HOLD`, commit and reply as below without pushing, since the checkpoint keeps the branch.'
+    '  In a ticket worktree, which your brief names with its ticket branch, push the ticket branch only where your brief has you run CI on it, never for anything else, and merge only the task branch into it, never the other way, as your brief says; at `T<n> STOW` or `HOLD`, commit and reply as below without pushing, since the checkpoint keeps the branch.'
   # --set ticket= may say the same ticket.
   run_bin -0 team-brief T14 builder-ticket --ticket 03 --set ticket=03 --name build-03 --force
   assert_equal "$(<"$TEAM_HOME/tasks/T14/brief-build-03.md")" "$brief"

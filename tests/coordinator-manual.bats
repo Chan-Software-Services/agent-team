@@ -537,13 +537,16 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'queue each plain `before` note as a follow-up' "$manual"
   grep -qF '`change` when it is on a line the PR adds or changes, `before` when it is on code the PR did not change' <<<"$reviewer"
   grep -qF 'a plain `note` goes back when its scope is `change`, and is queued as a follow-up, never sent back, when it is `before`' <<<"$reviewer"
-  # Every round, a notes-only one too, reports at the push and stops: no builder waits on CI or
-  # pushes a fix under a review, and a red check comes back as a fix round from the checks wait.
+  # Every round, a notes-only one too, reports at the push, or once the CI run of its head that
+  # its brief has it wait on is green, and stops: no builder waits on the PR's checks or pushes a
+  # fix under a review, and a red check comes back as a fix round from the checks wait.
   grep -qF '   The delivery ends at the `PR` it sends (on a gated project, once the gate'"'"'s run, its ci step skipped, or the base'"'"'s merge after it has pushed), with no wait after it on the PR'"'"'s GitHub checks and nothing more pushed' \
     "$REPO_ROOT/templates/briefs/builder-round.md"
   # The PR body names no local checks, so the round has no line of them to bring up to date.
   if grep -F 'local checks' "$REPO_ROOT/templates/briefs/builder-round.md"; then return 1; fi
-  section builder 'What you do' | grep -qF 'On every delivery, send `PR <full url>` as soon as the push and the PR body are in (on a gated one, once the gate'"'"'s run, its ci step skipped, has opened or updated the PR and you have read the title and body it drafted against the project'"'"'s rules and fixed them on the PR), and on a merge-base round `DONE merged ...` once its push is in, and stop there: you never wait on the PR'"'"'s GitHub checks, since a red check comes back to you from the coordinator as a fix round.'
+  section builder 'What you do' | grep -qF 'On every delivery, send `PR <full url>` as soon as the push and the PR body are in and, where your brief has you run `team-ci-run`, it has exited 0 (on a gated one, once the gate'"'"'s run, its ci step skipped, has opened or updated the PR and you have read the title and body it drafted against the project'"'"'s rules and fixed them on the PR), and on a merge-base round `DONE merged ...` once its push is in and that run, where your brief has it, has exited 0, and stop there: past the CI run of your head your brief may have you wait on, you never wait on the PR'"'"'s GitHub checks, since a red check comes back to you from the coordinator as a fix round.'
+  section builder 'What you do' | grep -qF 'with the tests your brief names for your project, whatever the `implement` skill says: never the whole suite, which CI runs on every head pushed, unless your brief says nothing else runs it, and where your brief has you run CI on your branch with `team-ci-run`, report only once it exits 0.'
+  if section builder 'What you do' | grep -F -e 'tests/run' -e '--changed'; then return 1; fi
   section builder 'What you do' | grep -qF -- '- Fix the review findings and failed checks the coordinator sends you on the same branch'
   section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read, since the coordinator'"'"'s script waits on the checks of a pass.'
   if section builder 'What you do' | grep -F -e team-ci-wait -e 'When every finding it sends is a plain `note`'; then return 1; fi
