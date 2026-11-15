@@ -201,10 +201,11 @@ allowed_for() {
   assert_equal "$status" 0
   assert_equal "$output" "$(for role in "${ROLES[@]}"; do settings_of "$role"; done | sort -u |
     while IFS= read -r file; do jq -e '.hooks.PreToolUse != null' "$file" >/dev/null && echo "${file#"$REPO_ROOT"/}"; done)"
+  # Both sides are the plan's fields as written, parted by the unit separator.
   entries=$(for file in $output; do
-    jq -r --arg file "$file" '.hooks.PreToolUse[] | .matcher as $m | .hooks[] | [$file, $m, .command] | @tsv' "$REPO_ROOT/$file"
+    jq -r --arg file "$file" '.hooks.PreToolUse[] | (.matcher // "") as $m | .hooks[] | [$file, $m, .command] | join("\u001f")' "$REPO_ROOT/$file"
   done | sort -u)
-  ran=$(for role in "${ROLES[@]}"; do plan "$role" | cut -d $'\x1f' -f 2-4 | tr '\037' '\t'; done | grep -v '^-' | sort -u)
+  ran=$(for role in "${ROLES[@]}"; do plan "$role" | cut -d $'\x1f' -f 2-4; done | grep -v '^-' | sort -u)
   assert_equal "$ran" "$entries"
 }
 
