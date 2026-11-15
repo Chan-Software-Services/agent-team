@@ -19,9 +19,9 @@ A command behind command -v or -V is only looked up, and is in no class.
 The classes:
   push: git with push as its first word past git's own options, those that take a value (-C, -c,
     --git-dir, --work-tree, --namespace, --super-prefix, --config-env, --attr-source)
-    with it; and so read from any later word of a command the walk knows as no wrapper (strace
-    -f git push, ssh host git push, op run -- git push), but for echo's and printf's words, which
-    they only print.
+    with it; and so read from any later word of a command, which may run it (strace -f git
+    push, ssh host git push, op run -- git push, $(echo git push)), so an unquoted mention is a
+    push too (echo then git push >> notes.md), and a quoted one, one word, is none.
   gh: gh or gh-axi.
   team_write: team-merge, team-catch-up, team-open or team-close.
   assistant_write: team-assistant or team-current.
@@ -29,9 +29,10 @@ The classes:
   answer: team-answer.
   wait: team-thread with wait as its first word.
   ci_wait: team-ci-wait or team-ci-run.
-Where eval is given a substitution, whose output it runs (eval "$(cat <<EOF ... EOF)", eval
-"$(echo git push)"), each line of that word is read as a command too, a heredoc's body lines
-among them, and a push among the words echo and printf print there is one.
+Where eval is given a substitution, whose output it runs (eval "$(cat <<EOF ... EOF)"), each line
+of that word is read as a command too, a heredoc's body lines among them, once: an eval in such a
+line is not read again, since the walk yields an eval nested in a substitution as a command of
+its own.
 It exits 0 with what it found. Any error of its own exits 1 with one line on stderr,
 "fence_rules.py: <ErrorType>: <message>", so the hook refuses: a guard that cannot decide refuses.
 Not seen: what command_text.commands does not walk (its header lists it: a name built by a
@@ -70,8 +71,6 @@ NAMED = {
     "team-ci-wait": "ci_wait",
     "team-ci-run": "ci_wait",
 }
-# The commands that only print their words, so a git push among them is text.
-PRINTS = frozenset(("echo", "printf"))
 CLASSES = ("push", "gh", "team_write", "assistant_write", "post", "answer", "wait", "ci_wait")
 
 
@@ -114,24 +113,24 @@ def _pushes_behind(words):
     )
 
 
-def _found(command, evaluated=False):
-    """The set of the classes of the commands the text runs; evaluated says the text is one whose
-    output eval runs, so what its echo and printf print is a command too."""
-    found = set()
+def _found(command, line=False):
+    """The set of the classes of the commands the text runs; line says the text is a line of a
+    substitution whose output eval runs, an eval in which is not read again."""
+    found, read = set(), set()
     for walked in call_commands(command):
         if not walked.words or _looks_up(walked):
             continue
         found.update(class_of(words) for words in heads(walked))
-        name = command_name(walked.words[0])
-        if (evaluated or name not in PRINTS) and _pushes_behind(walked.words):
+        if _pushes_behind(walked.words):
             found.add("push")
-        if name == "eval":
-            # Each line of a substitution eval runs the output of, read as a command: shorter than
-            # the text it is a word of, so the reading ends.
+        if command_name(walked.words[0]) == "eval" and not line:
+            # Each line of a substitution eval runs the output of, read as a command, once: the
+            # walk yields an eval nested in it as a command of its own, so no line is read deeper.
             for word in walked.words[1:]:
-                if "$(" in word or "`" in word:
-                    for line in word.splitlines():
-                        found |= _found(line, True)
+                if ("$(" in word or "`" in word) and word not in read:
+                    read.add(word)
+                    for text in word.splitlines():
+                        found |= _found(text, True)
     return found
 
 

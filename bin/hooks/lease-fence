@@ -37,12 +37,13 @@
 # directory or quotes, and for git push past git's own options (git -C <dir> push). So a call that
 # only names one of them passes: in a heredoc's body no shell reads, a quoted argument, a commit
 # message or a search pattern, or that only looks one up (command -v gh). A git push is read
-# behind any command too (strace git push, ssh host git push), but for echo's and printf's words,
-# and in each line of a substitution whose output eval runs. Not seen, as that file's header
-# lists: a name built by a substitution or held in a variable, and a held command in one quoted
-# word that something else runs (c='git push'; $c, git rebase -x 'git push', python3 -c, ssh host
-# 'git push'), each of which passes; gh behind a command the walk knows as no wrapper; and a
-# function, alias or script that runs one.
+# among any command's later words too (strace git push, ssh host git push, $(echo git push)), so
+# an unquoted mention is refused (echo then git push >> notes.md) and a quoted one passes; and a
+# held command is read in each line of a substitution whose output eval runs. Not seen, as that
+# file's header lists: a name built by a substitution or held in a variable, and a held command in
+# one quoted word that something else runs (c='git push'; $c, git rebase -x 'git push', python3
+# -c, ssh host 'git push'), each of which passes; gh behind a command the walk knows as no
+# wrapper; and a function, alias or script that runs one.
 # A command holding none of gh, push and team-, with its quotes and backslashes removed too, and
 # no $'...' or brace expansion that may spell one, passes without the reader.
 # Reads, in ~/.local/state/agent-team/: fenced (team-lease's), offline (team-timers run's,

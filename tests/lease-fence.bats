@@ -532,7 +532,6 @@ text_only_calls() {
     "git commit -m 'fix the fence; git push later (gh pr create)'"
     "grep -rn '^gh \\|(git push)\\|; team-inbox' bin"
     $'tee -a notes.md <<\'EOF\' >/dev/null\n$(gh api user)\n`git push`\nEOF'
-    "echo then run git push >> notes.md"
     # A lookup of the tool, which runs none.
     "command -v gh" "command -V gh-axi >/dev/null && echo found"
   )
@@ -575,7 +574,10 @@ text_only_calls() {
     $'cat > handoff.md <<\'EOF\'\ngh pr create\nEOF\ngit push' "g''h pr view 6" 'git "push"'
     # A push behind a command the walk knows as no wrapper, and one eval runs from a substitution.
     "strace -f -o out git push" "ssh-agent git push" "op run -- git -C wt push" "ssh host git push"
-    $'eval "$(cat <<EOF\ngit push origin HEAD\nEOF\n)"' 'eval "$(echo git push)"')
+    $'eval "$(cat <<EOF\ngit push origin HEAD\nEOF\n)"' 'eval "$(echo git push)"'
+    # A push among echo's or printf's unquoted words, which something else may run.
+    'sh -c "$(echo git push origin)"' '$(echo git push origin HEAD)' 'bash <(echo git push origin)'
+    'x=`echo git push origin`; $x' "echo then run git push >> notes.md")
   for command in "${runs[@]}"; do
     bash_call -0 "$command"
   done
