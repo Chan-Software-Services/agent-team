@@ -125,6 +125,7 @@ Daniel 8: restart: exit this Claude Code session and run claude again in $CODE_C
 secret
 discord access
 interview channel
+assistant channel
 gate-agent
 trust team home
 trust conventioner
