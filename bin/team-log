@@ -9,9 +9,10 @@
 # Appends {ts (now, UTC), task, event, key: value...}, each value typed as the contract types its field.
 # The event is checked against the task's state too, by the lifecycle table (bin/lib/lifecycle.json,
 # through ledger_append in bin/lib/team.sh): one the table refuses (a closed task's held, a review
-# of a task with no opened) is logged with one "team-log: lifecycle: <problem> (logged anyway; ...)"
-# line per problem on stderr while the table's lifecycle_from is not set or later than the event,
-# and refused, logging nothing, from it on.
+# of a task with no opened) is refused, logging nothing, from the table's lifecycle_from on,
+# 2026-11-15T11:58:29Z, so every event logged now; with a lifecycle_from not set or later than the
+# event, it is logged with one "team-log: lifecycle: <problem> (logged anyway; ...)" line per
+# problem on stderr.
 # A list field (array, or numbers (a list of whole numbers), as sent_back and before are) takes
 # a JSON list, or a comma list as a worker's message writes it (commits=a0017cce,9e0e3990,
 # sent_back=5,6, guarded=ci,secrets), each item trimmed, an empty item refused, and
@@ -169,7 +170,9 @@
 # lifecycle_from on" or "<file>: <total> lines meet the lifecycle table". A line that is no JSON
 # object with a task and an event is --check's to name, and this one passes it. It exits 1, all on
 # stderr, when <m> is above 0 (lifecycle_from set and an event at or after it breaks the table),
-# else 0, all on stdout, so it names what the table would refuse before anything is refused.
+# else 0, all on stdout. The table refuses from 2026-11-15T11:58:29Z, so a line it names from
+# then on is one a writer that acts before it logs appended, and each earlier line it names was
+# logged while the table only warned.
 # --fix-sent-back is the one-time conversion of those strings (default: the team home's ledger), run under the ledger's lock:
 # on every line, legacy too, it stores the whole numbers that sent_back and before hold as
 # strings as numbers, leaves every other line byte for byte, and prints how many lines it changed;
