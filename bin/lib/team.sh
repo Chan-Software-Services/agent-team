@@ -16,8 +16,8 @@
 # pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
-# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
+# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
@@ -863,12 +863,16 @@ offline_since() {
 
 # Print the hold while the team holds offline (offline_since): "GitHub is unreachable (since
 # 13:05); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and
-# wait.", or fail when it does not hold. The lease-fence hook and team-thread wait give it:
-# offline_hold
+# wait.", or with assistant its own tail, "...: keep talking with Daniel, and touch no GitHub (no
+# gh, gh-axi or git push) until your Bash calls stop being held."; fail when it does not hold.
+# The lease-fence hook, team-thread wait, team-ci-wait and the assistant's digest give it:
+# offline_hold [assistant]
 offline_hold() {
-  local since
+  local since what="commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
   since=$(offline_since) || return 1
-  echo "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
+  [[ ${1:-} != assistant ]] ||
+    what="keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
+  echo "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: $what"
 }
 
 # Print why this machine must not <does> ("posts nothing to Discord; ..."), or fail when it may:
@@ -894,8 +898,8 @@ lease_refusal() {
 }
 
 # Print why this session may not <does>, which is the coordinator's, or fail when it may: a worker session (its
-# settings' AGENT_TEAM_ROLE names a role other than the coordinator; Daniel's own shell and the
-# heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
+# settings' AGENT_TEAM_ROLE names a role other than the coordinator, "an assistant session" for the
+# assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
 # when the caller passes --interview, for the interview thread's post and wait. Worker settings
 # deny most of the same commands by their bare name, and command-guard refuses team-ask,
 # team-answer, team-inbox, team-thread T<n> and team-run-approved by any path where a command
@@ -908,7 +912,9 @@ worker_refusal() {
     [[ -z $1 || $1 != "$own" ]] || return 1
     echo "a planner session of ${own:-no task} $2 for $1: a planner talks with Daniel only in its own task's interview thread"
   else
-    echo "a $role session $2: that is the coordinator's; send it your message"
+    local article=a
+    [[ $role != assistant ]] || article=an
+    echo "$article $role session $2: that is the coordinator's; send it your message"
   fi
 }
 
@@ -1708,6 +1714,13 @@ OPS_REQUEST_MAX_AGE=3600
 # shellcheck disable=SC2034 # read by the scripts that source this library
 INTERVIEW_CHANNEL=${TEAM_INTERVIEW_CHANNEL-1565336720998928556}
 
+# The Discord channel #assistant, the one the assistant session (claude-assistant) hears, with
+# the threads it opens under it: kept out of the coordinator's access.json groups, so the
+# coordinator never hears it. TEAM_ASSISTANT_CHANNEL overrides it, an empty one included, which
+# the scripts that need it refuse as none set, naming the variable.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+ASSISTANT_CHANNEL=${TEAM_ASSISTANT_CHANNEL-1570965039278596199}
+
 # Print the type of the image whose bytes are on stdin, by its first 16, png, jpeg, gif, webp, bmp,
 # tiff, ico or heif, or nothing: the images the data rules refuse (data-check) and the archive leaves
 # out (archive_left_out), whatever a file's name, which image_type below narrows to those a worker
@@ -1819,16 +1832,72 @@ daniel_message() {
     '{place: $place, channel: $channel, who: $who, message: .}' <<<"$reply"
 }
 
+# The assistant's thread cache: the ids of the threads under #assistant found so far, one
+# known-good id per line, which the assistant's Discord guard passes without asking Discord and
+# its digest lists. It is trusted only because the assistant cannot write it: its settings deny
+# the Edit tool and any Bash call naming the file (assistant.settings.json), so only the scripts
+# and hooks below add to it.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
+
+# Succeed when <channel>, Discord's channel object as JSON, is a thread (type 10, 11 or 12)
+# whose parent_id is #assistant (ASSISTANT_CHANNEL), the one rule of a thread of the
+# assistant's: assistant_thread_of <channel JSON>
+assistant_thread_of() {
+  [[ -n $ASSISTANT_CHANNEL ]] &&
+    jq -e --arg parent "$ASSISTANT_CHANNEL" 'type == "object" and ([.type] | inside([10, 11, 12]))
+      and ((.parent_id // "") | tostring) == $parent' >/dev/null 2>&1 <<<"$1"
+}
+
+# Add thread <id> to the thread cache (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
+assistant_thread_keep() {
+  grep -qxF -- "$1" "$ASSISTANT_THREADS" 2>/dev/null && return 0
+  mkdir -p "${ASSISTANT_THREADS%/*}" && echo "$1" >>"$ASSISTANT_THREADS"
+}
+
+# The daniel_message place of the Discord channel <id> when it is #assistant (ASSISTANT_CHANNEL),
+# "#assistant <id>", or a thread under it (assistant_thread_of), "the #assistant thread <id>",
+# read from Discord (discord_api GET channels/<id>) every time, so Daniel's word is held to the
+# assistant's channel by Discord's answer alone, never by a file; a thread found so is added to
+# the thread cache (assistant_thread_keep). Fails with the one reason on stderr: no channel is
+# set (TEAM_ASSISTANT_CHANNEL empty), the channel cannot be read, or it is neither.
+# team-assistant and team-answer --channel hold Daniel's word to it: assistant_place <id>
+assistant_place() {
+  local channel=$1 reply error
+  [[ -n $ASSISTANT_CHANNEL ]] || {
+    echo "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so Daniel's word cannot be held to #assistant" >&2
+    return 1
+  }
+  if [[ $channel == "$ASSISTANT_CHANNEL" ]]; then
+    echo "#assistant $channel"
+    return 0
+  fi
+  error=$(mktemp)
+  if ! reply=$(discord_api "channels/$channel" 2>"$error"); then
+    echo "channel $channel cannot be read from Discord, so it is not known to be under #assistant ($ASSISTANT_CHANNEL): $(grep -m1 . "$error" || echo "no reason given")" >&2
+    rm -f "$error"
+    return 1
+  fi
+  rm -f "$error"
+  assistant_thread_of "$reply" || {
+    echo "channel $channel is neither #assistant ($ASSISTANT_CHANNEL) nor a thread under it, so Daniel's word there is not for the assistant" >&2
+    return 1
+  }
+  assistant_thread_keep "$channel"
+  echo "the #assistant thread $channel"
+}
+
 # Read Discord message <message> as Daniel's answer to <task>'s ask <id>, held to what an answer
 # is held to: sent after the latest asked of <id> in <events> (the task's events, one JSON
 # array), that is after its question's message (the asked's discord_message, which team-ask
 # logs), else no earlier than the asked's ts, as Discord ids order by time; Daniel's
-# (daniel_message), in the task's thread, else #coordinator; and never edited, so its text is
-# the text Daniel sent. With <does>, a machine that is fenced or lost the lease (lease_refusal
-# <does>) is refused after the time check and before Discord is read. Prints daniel_message's
-# {place, channel, who, message}, the text being .message.content; fails with the one reason on
-# stderr. team-answer and team-run-approved hold an answer to it:
-# answer_message <task> <id> <message> <events> [<does>]
+# (daniel_message), in the task's thread, else #coordinator, or first in <place> when given (a
+# daniel_message place, which only team-answer --channel passes, for #assistant or a thread under
+# it, assistant_place); and never edited, so its text is the text Daniel sent. With <does>, a
+# machine that is fenced or lost the lease (lease_refusal <does>) is refused after the time check
+# and before Discord is read. Prints daniel_message's {place, channel, who, message}, the text
+# being .message.content; fails with the one reason on stderr. team-answer and team-run-approved
+# hold an answer to it: answer_message <task> <id> <message> <events> [<does> [<place>]]
 answer_message() {
   local task=$1 id=$2 message=$3 events=$4 sent asked question asked_ts why thread places=() word edited
   [[ $message =~ ^[1-9][0-9]{0,18}$ ]] || {
@@ -1855,6 +1924,7 @@ answer_message() {
     echo "$why" >&2
     return 1
   fi
+  if [[ -n ${6:-} ]]; then places+=("$6"); fi
   thread=$(jq -r 'map(select(.event == "thread") | .discord_thread | strings) | last // empty' <<<"$events") || return 1
   if [[ -n $thread ]]; then places+=("the task's thread $thread"); fi
   places+=("#coordinator $COORDINATOR_CHANNEL")

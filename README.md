@@ -2,6 +2,7 @@
 
 A team of Claude Code sessions that plans, builds, reviews and ships software changes.
 A coordinator session talks to its owner on Discord and turns each request into a task.
+An assistant session beside it, in a Discord channel of its own, walks the owner through manual steps and runs quick research spikes, handing anything that needs a task to the coordinator.
 Each task gets one background session per role (planner, builder, reviewer, ops), each in its own git worktree, briefed by the coordinator and reporting back to it.
 The ledger, an append-only file of every task's events, is the record of what happened and the state every command reads.
 
@@ -29,9 +30,10 @@ The scripts depend on the team home holding:
 | `projects.toml` | The project registry: each project the team works on, its repository, checkout, base branch and delivery; `team-project`'s help documents every key |
 | `tasks/` | Each task's plan, briefs and archived scratch |
 | `projects/` | Each project's planning |
-| `memory/` | The Claude Code auto memory each project shares across machines, and the coordinator's |
+| `memory/` | The Claude Code auto memory each project shares across machines, and the coordinator's and the assistant's |
 | `machine/` | What a machine needs beyond the code: the shared Claude user config (`machine/claude/`) and the list of secret files to restore from 1Password (`machine/secrets.json`) |
-| `manual-steps.md` | The steps only the owner can take |
+| `manual-steps.md` | The steps only the owner can take, which the assistant keeps |
+| `assistant/` | The assistant's hand-offs with the coordinator, its research reports and its stow note |
 
 `CLAUDE.md`, "The team home", says how the scripts find it.
 
