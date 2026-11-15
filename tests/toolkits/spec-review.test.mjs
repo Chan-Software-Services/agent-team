@@ -390,7 +390,7 @@ describe("the spec-review evals", () => {
     return { scaffold, judged: graders.find((block) => /type: llm/.test(block)) };
   };
 
-  test("name-a-false-header plants a header line the code does not bear out, and judges that the reader names it alone", () => {
+  test("name-a-false-header plants a header line the code does not bear out, and judges that the reader names it and neither the README's line nor the PR body", () => {
     const { scaffold, judged } = claimsCase("name-a-false-header");
     assert.ok(scaffold.includes("notecat archive [--all]"), "the header's usage lacks --all");
     assert.ok(scaffold.includes("# With --all, archives every note, pinned ones included."), "the false line is not planted");

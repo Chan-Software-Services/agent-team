@@ -1,6 +1,6 @@
 schema_version: "1.1"
 name: name-a-false-header
-description: A delivering builder runs the claims check on its branch, whose script header documents a flag the code does not have, and the reader names that line and no true one.
+description: A delivering builder runs the claims check on its branch, whose script header documents a flag the code does not have, and the reader names that line and neither the README's line nor a sentence of the PR body.
 tags: [spec-review]
 context:
   scaffold_script: scaffold.sh
