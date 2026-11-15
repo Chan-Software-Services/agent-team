@@ -1407,7 +1407,8 @@ skills_only_kit() {
   # Every listed key, a comment, a blank line and a value that goes on over indented lines hold.
   printf '%s\n' --- "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
     "tools: [Read]" "model: inherit" "omitClaudeMd: true" --- "You read." >"$code/toolkits/kit-n/agents/reader.md"
-  printf '%s\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" >"$code/toolkits/kit-n/skills/look/SKILL.md"
+  # So do lines that end with a carriage return and a line feed.
+  printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" >"$code/toolkits/kit-n/skills/look/SKILL.md"
   local kit
   for kit in kit-r kit-n; do
     again T7
@@ -1470,6 +1471,12 @@ skills_only_kit() {
     'sed -i "2i <<: {x: 1}" agents/reader.md'
     'printf "%s\n" --- "  name: reader" "  description: Reads." --- "You read." >agents/reader.md'
     'printf "%s\n" --- "name: reader" "You read." >agents/reader.md'
+    # A second key on a listed key's line, after a line break that is no line feed: a lone
+    # carriage return, U+0085, U+2028 and U+2029.
+    'printf "%b\n" --- "name: reader\r\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: reader\xC2\x85\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: look\xE2\x80\xA8\"h\\\\x6foks\": {}" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" --- "name: look\xE2\x80\xA9\"h\\\\x6foks\": {}" --- "# Look" >skills/look/SKILL.md'
   )
   for change in "${changes[@]}"; do
     n=$((n + 1))
@@ -1515,7 +1522,8 @@ skills_only_kit() {
   assert_contains "$output" "Skills-only is read from the toolkit's own files at each launch"
   assert_contains "$output" "none a symbolic link"
   assert_contains "$output" "indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,"
-  assert_contains "$output" "none has hooks or mcpServers before a colon, or opens with ?"
+  assert_contains "$output" "none has hooks or mcpServers before a colon, opens with ?"
+  assert_contains "$output" "holds a carriage return before its end, U+0085, U+2028 or U+2029"
   assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 
