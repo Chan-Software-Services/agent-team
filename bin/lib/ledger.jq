@@ -1697,15 +1697,20 @@ def waiting_on:
 
 # Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
 # task's events after that launch: a pr follows it, and after the latest one come only launches of
-# a reviewer and what another session logged of itself (a reviewer's blocked, resumed or done). A
-# review, an ask, an answer or a later builder's launch is the task asking for work again.
+# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
+# the builder's with its end: a blocked that does not name the builder's session, and a resumed
+# with no brief after such a blocked (a resumed carries no session). A review, an ask, an answer,
+# a resumed naming a brief or a later builder's launch is the task asking for work again.
 def delivered($launch):
   $launch.role == "builder" and ($launch.ticket | type) != "string"
   and ((map(.event == "pr") | rindex(true)) as $pr
     | $pr != null
-      and all(.[$pr + 1:][];
-        if .event == "launch" then .role == "reviewer"
-        else (.session | type) == "string" and .session != $launch.session end));
+      and (.[$pr + 1:] as $after
+        | all(range($after | length); . as $k | $after[$k]
+            | if .event == "launch" then .role == "reviewer"
+              elif .event == "blocked" then .session != $launch.session
+              elif .event == "resumed" then .brief == null and any($after[:$k][]; .event == "blocked")
+              else (.session | type) == "string" and .session != $launch.session end)));
 
 # The no-worker, waiting-input, silent, stalled, ticket-gone and ticket-worktree-left findings of
 # an open task that is not parked, the stalled one from session-activity's object as team-sweep

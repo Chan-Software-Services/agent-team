@@ -315,10 +315,24 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   sessions "$(session 5fcd3daf T12-builder idle blocked)" "$(session 7e7e7e7e T12-reviewer busy working)"
   run_bin -0 team-sweep
   assert_equal "$output" ""
-  # Nor for what the reviewer's own session logs meanwhile.
-  event T12 blocked '{reason: "a denied read", session: "7e7e7e7e"}'
-  event T12 resumed '{session: "7e7e7e7e"}'
+  # Nor once a park that is not the builder's has come and gone meanwhile, logged as the scripts
+  # write it: a blocked and the resumed that ends it carry no session.
+  event T12 blocked '{reason: "a denied read"}'
+  event T12 resumed '{all: true}'
   run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # A resumed that names a brief sent out is work asked again, as is one after the builder's own
+  # blocked.
+  event T12 resumed '{brief: "brief-merge-base"}'
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  event T12 blocked '{reason: "a refused push", session: "5fcd3daf"}'
+  event T12 resumed '{all: true}'
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
   # With no reviewer at work the next step is the coordinator's, as for any idle worker.
   sed -i '$d' "$TEAM_HOME/ledger.jsonl"
   sed -i '$d' "$TEAM_HOME/ledger.jsonl"
