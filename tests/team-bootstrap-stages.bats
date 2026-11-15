@@ -133,6 +133,8 @@ site is set up in ~/projects/site"
   tools_at arch
   register intone Chan-Software-Services/intone_app direct-pr git
   local intone=$HOME/projects/intone_app old=https://github.com/chanjdaniel/Conventioner.git
+  # Its git pool's exclude is in place, as an earlier run left it, so only the origin is set up.
+  echo /.claude/worktrees/ >>"$intone/.git/info/exclude"
   git -C "$intone" remote set-url origin git@github.com:chanjdaniel/intone_app.git
   run_bin -0 team-bootstrap --stage projects
   assert_equal "$(stage_lines projects)" "running: git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
@@ -154,6 +156,8 @@ intone is set up in ~/projects/intone_app"
   tools_at arch
   register intone chanjdaniel/intone_app direct-pr git
   local intone=$HOME/projects/intone_app url
+  # Its git pool's exclude is in place, as an earlier run left it, so only the origin is set up.
+  echo /.claude/worktrees/ >>"$intone/.git/info/exclude"
   for url in https://github.com/Chan-Software-Services/intone_app.git git@github.com:chan-software-services/intone_app.git; do
     git -C "$intone" remote set-url origin "$url"
     run_bin -0 team-bootstrap --stage projects
