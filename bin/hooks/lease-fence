@@ -30,13 +30,25 @@
 #     talking with Daniel, ..."), the text its session-start digest gives.
 #     Its Discord posts, and its team-post, team-ask and team-inbox, are blocked as every role's,
 #     saying the assistant on the holder answers #assistant.
+# What a Bash command runs is read by bin/lib/fence_rules.py, through command_text.py's walk of
+# each simple command of the call, as bin/hooks/command-guard reads one: past the wrappers (env,
+# command, timeout, xargs and the rest), into a string a shell's -c or eval runs, what is piped
+# into a shell, a substitution, a group and a function's body, by the command's name without its
+# directory or quotes, and for git push past git's own options (git -C <dir> push). So a call that
+# only names one of them passes: in a heredoc's body no shell reads, a quoted argument, a commit
+# message or a search pattern. Not seen, as that file's header lists: a name built by a
+# substitution or held in a variable, a string another interpreter runs (python3 -c), ssh's remote
+# command, and a function, alias or script that runs one.
+# A command holding none of gh, push and team-, with its quotes and backslashes removed too, and
+# no $'...' or brace expansion that may spell one, passes without the reader.
 # Reads, in ~/.local/state/agent-team/: fenced (team-lease's), offline (team-timers run's,
 # through offline_hold in bin/lib/team.sh), and what lease_refusal reads there.
 # When it cannot decide it refuses, saying so, as a guard does: input that is not a JSON object
 # with a tool_name string; a call the lease decides (each above but a worker's git push, gh,
 # team-ci-wait and team-ci-run and the assistant's gh, which read only the fence and the offline
 # hold) on a machine that names no team home, whose lease it cannot read; a wrong argument on its
-# command line, which so blocks every call; and any command of its own that fails, which ends as
+# command line, which so blocks every call; a Bash command the reader fails on, naming its error;
+# and any command of its own that fails, which ends as
 # an exit 2 naming the hook and the exit code (team_guard in bin/lib/team.sh). What passes on
 # purpose:
 # the lease part with origin unreachable, or with no machine name or no origin (the fence alone
@@ -108,7 +120,7 @@ case $tool in
     # The classes of command the call runs, one per line (bin/lib/fence_rules.py); an error of the
     # reader's own is its last line.
     classes=$(python3 -I "$TEAM_LIB/fence_rules.py" <<<"$input" 2>&1) ||
-      block "lease-fence could not read the command (bin/lib/fence_rules.py: ${classes##*$'\n'}); $CANNOT"
+      block "lease-fence could not read the command (${classes##*$'\n'}); $CANNOT"
     # Whether the call runs a command of the class: runs <class>
     runs() { [[ $'\n'$classes$'\n' == *$'\n'"$1"$'\n'* ]]; }
     if runs post; then

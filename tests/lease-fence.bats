@@ -552,6 +552,7 @@ text_only_calls() {
   done
   rm "$state/offline"
   steal_lease laptop home-pc
+  : >"$STUB_CALLS/git-net.log"
   for command in "${calls[@]}"; do
     bash_call -0 "$command"
     coordinator_call -0 "$command"
@@ -594,12 +595,12 @@ text_only_calls() {
 @test "a command it cannot read is refused, naming the reader's error; one naming no fenced command never reaches the reader" {
   # A brace range of more words than the walk expands.
   bash_call -2 "gh pr view {1..5000}"
-  assert_contains "$stderr" "Blocked: lease-fence could not read the command (bin/lib/fence_rules.py: ValueError: "
+  assert_contains "$stderr" "Blocked: lease-fence could not read the command (fence_rules.py: ValueError: "
   assert_contains "$stderr" "); a guard that cannot decide refuses, so report it as BLOCKED and do not reach it another way."
   # With a python3 that fails, a call naming none of the reader's words still passes at once.
   printf '#!/usr/bin/env bash\necho "python3: broken" >&2\nexit 1\n' >"$BATS_TEST_TMPDIR/stubs/python3"
   chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
   bash_call -0 "ls -la && git status"
   bash_call -2 "git stash push -m wip"
-  assert_equal "$stderr" "Blocked: lease-fence could not read the command (bin/lib/fence_rules.py: python3: broken); a guard that cannot decide refuses, so report it as BLOCKED and do not reach it another way."
+  assert_equal "$stderr" "Blocked: lease-fence could not read the command (python3: broken); a guard that cannot decide refuses, so report it as BLOCKED and do not reach it another way."
 }

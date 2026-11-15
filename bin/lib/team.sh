@@ -17,7 +17,7 @@
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
-# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
+# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
@@ -90,14 +90,6 @@ DATA_PROVIDER='^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me
 # pack, so none stays loose); team-doctor's team home pack line warns at twice as many.
 # shellcheck disable=SC2034 # read by team-timers and team-doctor
 PACK_LOOSE=200
-
-# Where a command starts in a Bash command's text, the opening of an extended regular expression a
-# hook follows with a command's name: at the start, after a separator, a parenthesis (a subshell's
-# or a case pattern's), a brace (a group's or a function's body), a backtick or a line break, past
-# the reserved words a command may follow there ({, !, if, then, else, elif, do, while, until,
-# time and coproc), any variable assignments and a directory. bin/hooks/lease-fence reads it.
-# shellcheck disable=SC2034 # read by the hook
-COMMAND_START=$'(^|[;&|(){`\n])[[:space:]]*((\\{|!|if|then|else|elif|do|while|until|time|coproc)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?'
 
 # Refuse with a reason on stderr.
 die() {
