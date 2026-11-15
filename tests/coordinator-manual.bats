@@ -24,11 +24,93 @@ section() {
   awk -v h="## $2" '$0 == h { on = 1; next } /^## / { on = 0 } on && NF' "$REPO_ROOT/roles/$1.md"
 }
 
-@test "the manual is at most 120 lines" {
-  local n
-  n=$(wc -l <"$manual")
-  echo "roles/coordinator.md has $n lines" >&2
-  ((n > 0 && n <= 120))
+# The manual's caps, which only come down (sops/coordinator-manual.md says what holds them).
+# manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
+manual_lines=119
+# manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
+manual_bytes=29333
+# manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
+# down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
+manual_slack=100
+
+# Hold a manual ($1, a path) to the caps: one line on stderr for each bound it breaks, saying the
+# bound and both numbers.
+manual_size_check() {
+  local lines bytes broken=0
+  lines=$(wc -l <"$1")
+  bytes=$(wc -c <"$1")
+  if ((lines > manual_lines)); then
+    echo "the manual has $lines lines, and manual_lines is $manual_lines: remove a line, never raise the cap" >&2
+    broken=1
+  elif ((lines < manual_lines)); then
+    echo "the manual has $lines lines, and manual_lines is $manual_lines: lower manual_lines to $lines" >&2
+    broken=1
+  fi
+  if ((bytes > manual_bytes)); then
+    echo "the manual has $bytes bytes, over manual_bytes $manual_bytes" >&2
+    broken=1
+  elif ((bytes < manual_bytes - manual_slack)); then
+    echo "the manual has $bytes bytes, more than $manual_slack under manual_bytes $manual_bytes: lower manual_bytes to $bytes" >&2
+    broken=1
+  fi
+  return "$broken"
+}
+
+# Name each line of a manual ($1, a path) that holds a task number, a T and digits as a word; a
+# placeholder such as T<n> is none.
+manual_task_numbers() {
+  local found
+  found=$(grep -nwE 'T[0-9]+' "$1") || return 0
+  sed -E 's/^([0-9]+):/the manual names a task on line \1, which goes stale there: /' <<<"$found" >&2
+  return 1
+}
+
+@test "the manual's lines equal manual_lines, and its bytes are at most manual_bytes and at most manual_slack under it" {
+  manual_size_check "$manual"
+}
+
+@test "the size check fails, saying the bound and both numbers, on a manual a line longer, a line shorter, 1 byte over and 101 bytes under" {
+  local copy=$BATS_TEST_TMPDIR/manual.md line
+  # A line longer: the cap is never raised.
+  { cat "$manual" && echo; } >"$copy"
+  run -1 manual_size_check "$copy"
+  assert_contains "$output" "the manual has $((manual_lines + 1)) lines, and manual_lines is $manual_lines: remove a line, never raise the cap"
+  # A line shorter: the cap comes down with it.
+  sed '$d' "$manual" >"$copy"
+  run -1 manual_size_check "$copy"
+  assert_contains "$output" "the manual has $((manual_lines - 1)) lines, and manual_lines is $manual_lines: lower manual_lines to $((manual_lines - 1))"
+  # The bytes cases keep the lines and are sized from manual_bytes, whatever slack the head has
+  # used: bytes cut from, or added to, the end of the first line long enough to give them.
+  line=$(LC_ALL=C awk -v need=$((manual_slack + 2)) 'length($0) > need { print NR; exit }' "$manual")
+  resized() {
+    LC_ALL=C awk -v at="$line" -v by=$(($1 - $(wc -c <"$manual"))) '
+      NR == at && by < 0 { $0 = substr($0, 1, length($0) + by) }
+      NR == at && by > 0 { $0 = $0 sprintf("%" by "s", "") }
+      { print }' "$manual" >"$copy"
+    assert_equal "$(wc -c <"$copy") $(wc -l <"$copy")" "$1 $manual_lines"
+  }
+  resized $((manual_bytes + 1))
+  run -1 manual_size_check "$copy"
+  assert_equal "$output" "the manual has $((manual_bytes + 1)) bytes, over manual_bytes $manual_bytes"
+  resized $((manual_bytes - manual_slack - 1))
+  run -1 manual_size_check "$copy"
+  assert_equal "$output" "the manual has $((manual_bytes - manual_slack - 1)) bytes, more than $manual_slack under manual_bytes $manual_bytes: lower manual_bytes to $((manual_bytes - manual_slack - 1))"
+  # Each bound itself passes.
+  resized "$manual_bytes"
+  manual_size_check "$copy"
+  resized $((manual_bytes - manual_slack))
+  manual_size_check "$copy"
+}
+
+@test "the manual names no task number, and one added is named with its line" {
+  local copy=$BATS_TEST_TMPDIR/manual.md
+  manual_task_numbers "$manual"
+  { cat "$manual" && echo 'Until T301 lands, run `team-next T<n>` by hand.'; } >"$copy"
+  run -1 manual_task_numbers "$copy"
+  assert_equal "$output" "the manual names a task on line $((manual_lines + 1)), which goes stale there: Until T301 lands, run \`team-next T<n>\` by hand."
+  # A placeholder is no task number.
+  { cat "$manual" && echo 'Run `team-next T<n>`, then `team-state T<m>`.'; } >"$copy"
+  manual_task_numbers "$copy"
 }
 
 @test "hard rule 2 logs a denial the worker went past as denied, with the contract's fields, and one that stops the work as blocked" {
@@ -566,7 +648,6 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'Under a Disclosure section in a public repository, push nothing yet: send `{{task}} DONE review-ready <the full sha of HEAD>`' \
     "$REPO_ROOT/templates/briefs/delivery/direct-pr.md"
   section builder 'What you do' | grep -qF 'in a public repository push nothing until a review has passed the branch'"'"'s wording'
-  (($(wc -l <"$manual") <= 120))
 }
 
 # T172 ticket 07: team-brief derives the deliver, round and verify briefs' facts.
@@ -746,7 +827,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF "On \`T<n> DONE <path>\`, run \`team-next T<n> -- '<the message>'\`" "$plugin/skills/retro/SKILL.md"
 }
 
-@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual is at most 119 lines and 29340 bytes" {
+@test "no step of the manual or the skills logs a worker's report by hand, edits tasks/current.md by hand or writes a since file, and the manual stays within its caps" {
   local files=("$manual" "$plugin"/skills/*/SKILL.md) found
   # A worker's report is logged only by team-next or team-log --from-message; a paused of a cause
   # no worker reports (the usage limit, the machine's load, the machine off) is the coordinator's own.
@@ -766,35 +847,9 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'with the task'"'"'s progress (its tickets done, the brief each live worker is on, the latest review, how far the PR is behind its base)' "$manual"
   grep -qF 'from the snapshot'"'"'s progress' "$plugin/skills/status-report/SKILL.md"
   grep -qF 'the tickets done and the reviews are the ledger'"'"'s, which `team-state T<n>` reads' "$plugin/skills/recover-worker/SKILL.md"
-  # Shorter than before team-next, in lines (120) and in the bytes the starting context carries
-  # (24220, 24280 once the ops bullet named vercel-read, 24460 once the ops lines named the
-  # message of Daniel's each ops launch needs, 24590 once the ops line named the logging of its
-  # answer as its length, with the pointer to its relay, 24640 once the load check's line named
-  # team-drill status, 24690 once it named the probe form, and 117 lines and 25190 bytes once
-  # waiting.md, team-inbox --post and the reply by number replaced the Waiting on you message, and
-  # 25280 once the heartbeat's line named team-uptime, 25680 once the message table and the
-  # park line named each park's cause, 25860 once they named resumed id= and all=true and
-  # what ends Daniel's hold and an ask's wait, 25930 once step 2 named team-worker's refusals of
-  # a hold, an open ask unless --past-ask, and a feature task's build before its plan, 26280
-  # once the plan ask and the build step named the ticket graph and its PNG, 26290 once the
-  # block on another task named on=T<m> and the BLOCKED row the launch of its role that clears it,
-  # 26410 once the review step named the gate parks a builder approves itself, in the review
-  # rules and in DONE gate's approved=, 26540 once the plan step named how Daniel's and the
-  # coordinator's plan approvals are logged, which is a merge word, and the withdrawal, and 26770
-  # once the merge rule and step 6 named the default word in place of the plan-time and standing
-  # words, with what it never holds on and the command that withdraws it for a task, a project or
-  # all, 26830 once the review step named team-review-check, the reviewer App's check the
-  # coordinator posts, 26940 once it said team-next posts it on a verdict taken only with --from
-  # the reviewer's session id, 27240 once step 6 named the checks wait, team-next T<n> --ci,
-  # what it prints at its end and its re-arm after a catch-up and on exit 75, and the sanctioned
-  # actions team-catch-up and its reruns, and 118 lines and 27730 bytes once the plan step named
-  # the Parallel: caps and parallel= and the build step the one line on a parallel phase,
-  # team-next --fill and its integration, and 28988 once Discord named the assistant, the
-  # message table its two rows and manual-steps.md went to it, three lines tightened to fit, and
-  # 119 lines and 29340 bytes once the outside-text rule named the assistant's messages and the
-  # four words that never come through it, and its hand-off row acted on Daniel's own message).
-  (($(wc -l <"$manual") <= 119))
-  (($(wc -c <"$manual") <= 29340))
+  # What these steps took out of the manual stays out: its lines equal manual_lines and its bytes
+  # stay within manual_slack under manual_bytes, as sops/coordinator-manual.md says.
+  manual_size_check "$manual"
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {

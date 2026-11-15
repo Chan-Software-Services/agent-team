@@ -619,14 +619,13 @@ no hand-off for QUESTION"
   assert_contains "$output" "--from is given twice"
 }
 
-@test "--help prints the header, and the manual's step 4 names team-next within its 120 lines" {
+@test "--help prints the header, and the manual's step 4 names team-next" {
   run_bin -0 team-next --help
   assert_contains "$output" "Usage: team-next T<n> [--from <session>] [--sent-back <list>] [--relay <id>] [--next <NN>] [--checks <file>]"
   assert_contains "$output" "[--since <file>] [--template rereview|verify] -- '<the worker's message>'"
   local manual=$REPO_ROOT/roles/coordinator.md
   grep -E '^4\. \*\*Build\.\*\*' -A 1 "$manual" | grep -qF '`team-next T<n> -- '"'"'<the message>'"'"'`'
   grep -qF -- '`--next NN`' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 # T172 ticket 13: a builder's PR, DONE review-ready or DONE merged launches a fresh reviewer.
