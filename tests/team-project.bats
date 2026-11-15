@@ -439,7 +439,7 @@ home_setting() {
   done
   run_bin -0 team-project agent-team changed_tests
   assert_equal "$output" \
-    '`tests/run shellcheck`, and each test file you wrote or changed, alone: `tests/vendor/bats-core/bin/bats tests/<name>.bats` (add `-f '"'<part of its name>'"'` for one test) or `node --test tests/toolkits/<name>.test.mjs`'
+    '`tests/run shellcheck --changed`, and each test file you wrote or changed, alone: `tests/vendor/bats-core/bin/bats tests/<name>.bats` (add `-f '"'<part of its name>'"'` for one test) or `node --test tests/toolkits/<name>.test.mjs`'
 
   # agent-team's builders run CI on their branch; no other project's do.
   run_bin -0 team-project agent-team branch_ci
