@@ -3,9 +3,13 @@
 // read-only tools, omitClaudeMd and model), the task files each is told never to read and what each
 // returns, its spec-review and claims-check skills' names, limits and order of steps, its README's
 // sections in the effect toolkit's order, its coordinator section and attribution line, and each
-// eval case's tools and graders.
+// eval case's tools and graders. The eval's sandbox gives its session no git, so the two
+// claims-check cases start at the skill's step 3, and one test here runs the git commands the
+// skill's steps 1, 2 and 5 name, as written, on a repository a case's scaffold makes.
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { repoRoot } from "./helpers/mcp.mjs";
@@ -256,6 +260,53 @@ describe("the claims-check skill", () => {
   });
 });
 
+// The evals cannot run the skill's git commands, so this does: each command is taken from the
+// skill's text, its placeholders filled in, and run on the name-a-false-header scaffold's repository.
+describe("the claims-check skill's git commands", () => {
+  const commands = [...claimsSkill.matchAll(/`(git -C <code root> [^`]+)`/g)].map(([, command]) => command);
+  const named = (part) => {
+    const found = commands.filter((command) => command.includes(part));
+    assert.equal(found.length, 1, `the skill names ${found.length} commands with ${part}`);
+    return found[0];
+  };
+
+  test("check a scaffolded branch's inputs and write the diff its eval case reads", (t) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "claims-check-")));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+    execFileSync("bash", [join(toolkit, "evals", "name-a-false-header", "scaffold.sh")], { cwd: root, env });
+    const diff = join(root, ".scratch", "task", "skill.diff");
+    // Runs one of the skill's commands from another directory, so only its -C finds the checkout.
+    const run = (part, base = "main") => {
+      const words = named(part).replaceAll("<code root>", root).replaceAll("<base>", base).replaceAll("<diff>", diff).split(" ");
+      return execFileSync(words[0], words.slice(1), { cwd: tmpdir(), env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    };
+
+    // Step 1: a checkout, a base that resolves, and a clean tree, the gitignored task directory aside.
+    assert.equal(run("rev-parse --show-toplevel"), root);
+    assert.throws(() => run("symbolic-ref"), "a repository with no origin has a default base");
+    assert.match(run("rev-parse --verify"), /^[0-9a-f]{40}$/);
+    assert.throws(() => run("rev-parse --verify", "no-such-base"), "an unknown base resolves");
+    assert.ok(existsSync(join(root, ".scratch", "task", "pr-body.md")));
+    assert.equal(run("status --porcelain"), "");
+    writeFileSync(join(root, "untracked.md"), "A new file.\n");
+    assert.equal(run("status --porcelain"), "?? untracked.md");
+    rmSync(join(root, "untracked.md"));
+
+    // Step 2: the diff is the one the scaffold wrote for the eval's reader, the planted line in it.
+    run("diff --no-color");
+    const written = readFileSync(diff, "utf8");
+    assert.equal(written, readFileSync(join(root, ".scratch", "task", "claims-check.diff"), "utf8"));
+    assert.ok(written.includes("\n+# With --all, archives every note, pinned ones included.\n"));
+    assert.equal(run("status --porcelain"), "", "the diff file dirties the tree");
+
+    // Step 5: the merge base is main's commit and the head the branch's.
+    assert.equal(run("merge-base"), run("rev-parse --verify"));
+    assert.equal(run("rev-parse HEAD"), run("rev-parse --verify", "feat/archive"));
+    assert.notEqual(run("rev-parse HEAD"), run("merge-base"));
+  });
+});
+
 // Each case is one case.yaml, its fixture written by its scaffold script, its graders listed in it.
 const evals = join(toolkit, "evals");
 const caseOf = (name) => read("evals", name, "case.yaml");
@@ -263,21 +314,11 @@ const caseOf = (name) => read("evals", name, "case.yaml");
 const gradersOf = (text) => text.split(/^graders:\n/m)[1].split(/^(?=  - name: )/m).filter((block) => block.trim());
 
 describe("the spec-review evals", () => {
-  // The spec-review cases have no Write tool; the claims-check cases run git and write the skill's two files.
-  const readOnly = "[Read, Glob, Grep, Skill, Agent]";
-  const writing = "[Read, Glob, Grep, Skill, Agent, Bash, Write]";
-  const cases = {
-    "name-a-false-header": writing,
-    "pass-prose-that-holds": writing,
-    "planner-notes-stay-out": readOnly,
-    "replay-an-ignored-tree": readOnly,
-    "review-a-code-diff": readOnly,
-    "review-a-spec": readOnly,
-  };
+  const cases = ["name-a-false-header", "pass-prose-that-holds", "planner-notes-stay-out", "replay-an-ignored-tree", "review-a-code-diff", "review-a-spec"];
 
   test("are six cases, each a case.yaml and its scaffold script", () => {
-    assert.deepEqual(readdirSync(evals).filter((name) => name !== "results").sort(), Object.keys(cases));
-    for (const [name, tools] of Object.entries(cases)) {
+    assert.deepEqual(readdirSync(evals).filter((name) => name !== "results").sort(), cases);
+    for (const name of cases) {
       assert.deepEqual(readdirSync(join(evals, name)).sort(), ["case.yaml", "scaffold.sh"]);
       const text = caseOf(name);
       assert.match(text, /^schema_version: "1\.1"$/m);
@@ -285,14 +326,16 @@ describe("the spec-review evals", () => {
       assert.match(text, /^tags: \[spec-review\]$/m);
       assert.match(text, /^ {2}scaffold_script: scaffold\.sh$/m);
       assert.match(text, /^ {2}model: claude-opus-5-5$/m);
-      assert.equal(text.match(/^ {2}allowed_tools: (.*)$/m)?.[1], tools, name);
+      // No case needs a tool the eval's operator must grant, so one command runs them all.
+      assert.match(text, /^ {2}allowed_tools: \[Read, Glob, Grep, Skill, Agent\]$/m);
       assert.match(text, /^ {2}prompt: \|$/m);
     }
   });
 
   // What the two claims-check cases share: a git repository on main with a branch, .scratch/
-  // ignored, commits under a fixture address, a PR body in the task directory, and the graders
-  // that the skill fired and its one reader was dispatched.
+  // ignored, commits under a fixture address, a PR body in the task directory, the branch's diff
+  // written by the scaffold (the eval's sandbox gives its session no git), and the graders that
+  // the skill fired and its one reader was dispatched.
   const claimsCase = (name) => {
     const text = caseOf(name);
     assert.match(text, /^ {2}max_turns: 30$/m);
@@ -316,6 +359,8 @@ describe("the spec-review evals", () => {
     for (const commit of commits) assert.ok(commit.startsWith("git -c user.name=eval -c user.email=eval@example.com commit "), commit);
     assert.ok(scaffold.includes("cat >.scratch/task/pr-body.md <<'EOF'\n"), "the scaffold writes no PR body");
     assert.ok(scaffold.includes("archive_notes() {"), "the branch adds no archive_notes");
+    assert.match(scaffold, /^git diff --no-color --no-ext-diff main\.\.\.HEAD --output=\.scratch\/task\/claims-check\.diff$/m);
+    assert.match(text, /^ {4}.*`\.scratch\/task\/claims-check\.diff`/m, "the prompt does not name the diff the scaffold wrote");
     return { scaffold, judged: graders.find((block) => /type: llm/.test(block)) };
   };
 

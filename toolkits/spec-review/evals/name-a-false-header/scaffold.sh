@@ -5,7 +5,8 @@
 # `notecat archive [--all]` and "With --all, archives every note, pinned ones included.", where the
 # code takes no --all, knows no pinned note and skips none. The branch's other prose holds: the
 # comment on archive_notes, the README's line on archive, the usage text bin/notecat prints, and
-# the PR body in .scratch/task/pr-body.md.
+# the PR body in .scratch/task/pr-body.md. The branch's diff against main is written to
+# .scratch/task/claims-check.diff, as the skill's step 2 would, since the run's sandbox has no git.
 set -euo pipefail
 
 mkdir -p bin lib .scratch/task
@@ -108,3 +109,6 @@ Adds `notecat archive`, which moves every note into `archive/` under the notes d
 - `bin/notecat` runs it for `archive`, and its usage line names the new subcommand.
 - The README has a line for it.
 EOF
+
+# The run's sandbox gives its session no git, so the skill's step 2 is done here.
+git diff --no-color --no-ext-diff main...HEAD --output=.scratch/task/claims-check.diff
