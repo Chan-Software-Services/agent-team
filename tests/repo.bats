@@ -515,9 +515,9 @@ toolkits/x/scripts/run:1: a needs b"
 # session is denied the 1Password CLI and other processes' environments. The rules match the CLI
 # as a command and the environment path as a file read, never text naming them (a commit message,
 # a ledger line, a brief), which the matrices below check on each role's deny list.
-@test "the worker and coordinator settings deny the 1Password CLI and /proc environment reads" {
+@test "the worker, coordinator and assistant settings deny the 1Password CLI and /proc environment reads" {
   local file rule
-  for file in settings/worker.json coordinator.settings.json; do
+  for file in settings/worker.json coordinator.settings.json assistant.settings.json; do
     for rule in 'Bash(op *)' 'Bash(*&& op *)' 'Bash(*/proc/*/environ)' 'Read(//proc/**)'; do
       jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$REPO_ROOT/$file" >/dev/null ||
         { echo "$file does not deny $rule" >&2; return 1; }
@@ -531,13 +531,13 @@ toolkits/x/scripts/run:1: a needs b"
 }
 
 # The reviewer App's key signs the agent-review check the team's own project merges behind, so no
-# session reads it: the worker and coordinator settings deny it to the Read and Edit tools and to a
+# session reads it: the worker, coordinator and assistant settings deny it to the Read and Edit tools and to a
 # Bash command naming its path by any of the usual spellings, a speed bump against a steered
 # session (sops/merging.md), while the scripts that read it, and text naming the committed
 # bin/lib/review-app or the key's bare file name, stay allowed.
-@test "the worker and coordinator settings deny reading the reviewer App's key" {
+@test "the worker, coordinator and assistant settings deny reading the reviewer App's key" {
   local file rule command
-  for file in settings/worker.json coordinator.settings.json; do
+  for file in settings/worker.json coordinator.settings.json assistant.settings.json; do
     for rule in 'Read(~/.config/agent-team/review-app*)' 'Edit(~/.config/agent-team/review-app*)'; do
       jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$REPO_ROOT/$file" >/dev/null ||
         { echo "$file does not deny $rule" >&2; return 1; }
@@ -807,8 +807,8 @@ role_matrix() {
   done
 }
 
-# The settings every session starts with: the coordinator's and the workers' shared ones.
-SETTINGS=(coordinator.settings.json settings/worker.json)
+# The settings every session starts with: the coordinator's, the assistant's and the workers' shared ones.
+SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json)
 
 # chrome-devtools-axi starts `npx chrome-devtools-mcp@latest` unless told which server to run, and
 # a new server broke the old client (T43's audit): every session runs the server servers/ pins,
@@ -931,7 +931,7 @@ SETTINGS=(coordinator.settings.json settings/worker.json)
 
 # The tools the sessions run send usage data off the machine unless told not to (T43's audit):
 # lavish-axi's analytics, codegraph's telemetry and Chrome DevTools MCP's Google usage statistics.
-@test "the worker and coordinator settings turn off the tools' telemetry" {
+@test "the worker, coordinator and assistant settings turn off the tools' telemetry" {
   local file
   for file in "${SETTINGS[@]}"; do
     assert_equal "$(jq -c '.env | {LAVISH_AXI_TELEMETRY, CODEGRAPH_TELEMETRY, CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS}' "$REPO_ROOT/$file")" \
@@ -942,7 +942,7 @@ SETTINGS=(coordinator.settings.json settings/worker.json)
 # Claude Code requests the one-hour prompt cache for the main conversation only by default, on a
 # subscription within plan usage, and five minutes on usage credits; the team's sessions wait 5 to
 # 60 minutes on CI and messages, so every session pins one hour, and no role file sets it (T247).
-@test "the worker and coordinator settings pin the one-hour prompt cache" {
+@test "the worker, coordinator and assistant settings pin the one-hour prompt cache" {
   local file
   for file in "${SETTINGS[@]}"; do
     assert_equal "$(jq -c '.promptCacheTtl' "$REPO_ROOT/$file")" '"1h"'
@@ -971,13 +971,16 @@ pretooluse_problems() {
 # 600 seconds on one that hangs by default (T248, R1): every PreToolUse entry fails closed, soon.
 @test "every PreToolUse hook blocks on its failure and has a timeout, in every settings and toolkit hooks file" {
   local files=() file bad=$BATS_TEST_TMPDIR/bad.json
-  for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
+  for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/assistant.settings.json \
+    "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
     files+=("${file#"$REPO_ROOT/"}")
   done
   assert_equal "$(cd "$REPO_ROOT" && pretooluse_problems "${files[@]}")" ""
-  # Each of the four guards, at its timeout.
+  # Each of the guards, at its timeout.
   assert_equal "$(cd "$REPO_ROOT" && jq -r '.hooks.PreToolUse // [] | .[].hooks[] | "\(.command | sub("^\"?@TEAM_CODE@/bin/hooks/"; "") | sub("\""; "")) \(.timeout)"' "${files[@]}" | LC_ALL=C sort -u)" \
-    "command-guard 10
+    "assistant-discord-guard 30
+command-guard 10
+lease-fence --assistant 60
 lease-fence --coordinator 60
 lease-fence 60
 ops-log 30
@@ -992,6 +995,18 @@ scratch-only-edits 30"
   assert_equal "$(pretooluse_problems "$bad")" "$bad: a-guard: onFailure is unset, not \"block\"
 $bad: b-guard x: timeout is 1.5, not a whole number of seconds from 1 to 120
 $bad: c-guard: timeout is 121, not a whole number of seconds from 1 to 120"
+}
+
+# The assistant's guards (T328): on each of the Discord plugin's five tools, its own lease fence
+# and the Discord guard that keeps it in #assistant; on Bash, its own lease fence and the worker
+# guard. Each named hook is an executable of bin/hooks/.
+@test "the assistant's settings run lease-fence --assistant and assistant-discord-guard on every Discord tool, and lease-fence --assistant and command-guard on Bash" {
+  assert_equal "$(jq -c '.hooks.PreToolUse | map({matcher: (.matcher | split("|") | sort),
+      hooks: [.hooks[] | .command | sub("^\"@TEAM_CODE@/bin/hooks/"; "") | sub("\""; "")]})' "$REPO_ROOT/assistant.settings.json")" \
+    "$(jq -cn '[{matcher: ["reply", "react", "edit_message", "fetch_messages", "download_attachment"]
+        | map("mcp__plugin_discord_discord__" + .) | sort, hooks: ["lease-fence --assistant", "assistant-discord-guard"]},
+      {matcher: ["Bash"], hooks: ["lease-fence --assistant", "command-guard"]}]')"
+  [[ -x $REPO_ROOT/bin/hooks/assistant-discord-guard && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard ]]
 }
 
 # Whether one of the Bash deny rules in <settings file> matches <command> in one of its
@@ -1200,6 +1215,8 @@ assert_denies() {
       'git grep -n GIT_CONFIG_COUNT' 'env | grep GIT_CONFIG_' 'echo "$GIT_CONFIG_GLOBAL"' \
       'git commit -m "docs: Daniel runs git config core.hooksPath bin/hooks/git, never git -c core.hooksPath="' \
       "team-log T45 blocked 'a read of git config core.hooksPath x was refused'"; do
+      # The assistant commits and pushes nothing (tests/claude-assistant.bats).
+      [[ $file != assistant.settings.json || ! $command =~ ^git\ (commit|push) ]] || continue
       if denied "$file" "$command"; then echo "$file denies: $command" >&2; return 1; fi
     done
   done
@@ -1496,6 +1513,10 @@ coordinator_deny_gaps() {
     "docker ps" "git branch -d feat/T1-x" "git reset --soft HEAD~1" "team-merge https://github.com/me/shop/pull/5"; do
     if denied_in "$coordinator" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
+  # The assistant runs in bypass mode too, with every rule of the coordinator's, and its launcher's
+  # header names the same families.
+  assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
+  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[]' "$coordinator")" ""
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \
@@ -1555,6 +1576,8 @@ COMMANDS
   local file command
   for file in "${SETTINGS[@]}"; do
     while IFS= read -r command; do
+      # The assistant commits and pushes nothing (tests/claude-assistant.bats).
+      [[ $file != assistant.settings.json || ! $command =~ ^git\ (-C\ [^\ ]+\ )?(commit|push) ]] || continue
       if denied "$file" "$command"; then echo "$file denies: $command" >&2; return 1; fi
     done <<'COMMANDS'
 git commit -m "fix: x"
