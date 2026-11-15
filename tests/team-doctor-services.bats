@@ -2,7 +2,7 @@
 # shellcheck disable=SC2153 # LOCK and the other globals are helpers/doctor.bash's
 # team-doctor: one PASS, WARN or FAIL line per thing this machine needs, on the machine
 # tests/helpers/doctor.bash builds: every tool a version stub, the OS a stubbed uname.
-# This file: the docker, chrome, power, 1password, secret, discord access, interview channel,
+# This file: the docker, docker veth, chrome, power, 1password, secret, discord access, interview channel,
 # gate-agent and records lines.
 
 load helpers/common
@@ -34,6 +34,52 @@ daemon_refuses() {
   tools_at macos
   run_bin -1 team-doctor
   assert_equal "$(line_of docker)" "FAIL docker: \`docker info\` cannot reach the daemon: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?; fix: Daniel opens Docker Desktop once and accepts its license"
+}
+
+@test "the docker veth line passes while a new veth gets no IPv6 link-local address, warns with Daniel's sysctl otherwise, and is Linux's alone" {
+  only_checks 045-docker-veth.sh
+  tools_at arch
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: net.ipv6.conf.default.addr_gen_mode is 1, so a new Docker veth gets no IPv6 link-local address"
+  local fix="Daniel runs echo 'net.ipv6.conf.default.addr_gen_mode = 1' | sudo tee /etc/sysctl.d/90-docker-no-ll6.conf, then sudo sysctl --system"
+  local because="so each new Docker veth gets an IPv6 link-local address, and Chromium beside a container that starts or stops can fail with net::ERR_NETWORK_CHANGED"
+  # The kernel's default, EUI-64 addresses, and stable privacy ones are link-local addresses too.
+  local mode
+  for mode in 0 2 3; do
+    veth_addr_gen_mode "$mode"
+    run_bin -0 team-doctor
+    assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode is $mode, $because; fix: $fix"
+  done
+  # An empty value, or none under an IPv6 tree, is no setting.
+  veth_addr_gen_mode ''
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode cannot be read, $because; fix: $fix"
+  rm "$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/addr_gen_mode"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode cannot be read, $because; fix: $fix"
+  # A kernel with IPv6 off gives a veth no address at all.
+  veth_addr_gen_mode none
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: IPv6 is off (no /proc/sys/net/ipv6), so a Docker veth gets no IPv6 link-local address"
+  # Nor does a kernel whose new interfaces have IPv6 turned off by sysctl, whatever their mode.
+  veth_addr_gen_mode 0
+  echo 1 >"$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/disable_ipv6"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "PASS docker veth: net.ipv6.conf.default.disable_ipv6 is 1, so a new Docker veth gets no IPv6 address at all"
+  # Turned back on, the mode is read again.
+  echo 0 >"$TEAM_CGROUP_ROOT/proc/sys/net/ipv6/conf/default/disable_ipv6"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" "WARN docker veth: net.ipv6.conf.default.addr_gen_mode is 0, $because; fix: $fix"
+  # Docker Desktop's veths are inside its VM, so macOS has no such line, whatever the file says.
+  on_macos
+  tools_at macos
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'docker veth')" ""
+  # Nor has an OS the tools are not checked for.
+  stub_reply uname Linux
+  printf '%s\n' 'PRETTY_NAME="Ubuntu 24.04.3 LTS"' 'ID=ubuntu' >"$TEAM_OS_RELEASE"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'docker veth')" ""
 }
 
 @test "the chrome line warns without Google Chrome or Chromium that runs, with this OS's install" {
