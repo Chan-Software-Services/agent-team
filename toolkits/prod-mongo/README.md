@@ -41,7 +41,7 @@ Each launch raises one 1Password prompt, even for a session that only drills or 
 - An ops launch takes it alone, beside `prod-read`, or beside `prod-read` and `prod-write`, never beside `vercel-read` (`bin/team-worker`).
   The ops settings (`settings/ops.json`) allow its tools with no prompt.
   The ops-log hook (`bin/hooks/ops-log`) logs each call's requested, ran or failed line in the task's ops log, and blocks a call whose requested line it cannot write, as it does a write.
-- Every session's settings (`settings/worker.json`, which every role's layer on, and `coordinator.settings.json`) deny its file tools the backups folder itself (`Read(~/conventioner-backups/**)` and `Edit(~/conventioner-backups/**)`), and, as a speed bump, its shell a command that names a path in it (`*/conventioner-backups/*`, `*/conventioner-backups` and `*/conventioner-backups *`); the refusal probe proves each worker role's Read in it is refused, and the ops load check the ops role's.
+- Every session's settings (`settings/worker.json`, which every role's layer on, `coordinator.settings.json` and `assistant.settings.json`) deny its file tools the backups folder itself (`Read(~/conventioner-backups/**)` and `Edit(~/conventioner-backups/**)`), and, as a speed bump, its shell a command that names a path in it (`*/conventioner-backups/*`, `*/conventioner-backups` and `*/conventioner-backups *`); the refusal probe proves each worker role's Read in it is refused, and the ops load check the ops role's.
   Whether a Grep from above the folder lists the files in it is not proven by the rules: the ops load check runs one, and a WARN line counts the folder's files it listed, a finding rather than a failure.
 
 ## What it leaves behind
