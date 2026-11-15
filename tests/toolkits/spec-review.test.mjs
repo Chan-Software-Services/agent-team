@@ -283,6 +283,14 @@ describe("the claims-check skill", () => {
     for (const part of ["not run: <why>", ".scratch/task/claims-check.diff", "Code root: <code root>", "Diff: <diff>", "PR body: <pr body>"]) {
       assert.ok(claimsSkill.includes(part), `the skill does not name ${part}`);
     }
+    // The reader line step 2 writes with no reader dispatched is one of step 5's forms, and step 7 has its reply.
+    const notDispatched = "`not dispatched: the branch changes nothing against <base>`";
+    const step5 = claimsSkill.split("## 5. Write claims-check.md")[1].split("\n## 6. ")[0];
+    assert.ok(claimsSkill.split("## 2. Write the diff")[1].split("\n## 3. ")[0].includes(notDispatched), "step 2 does not write the not dispatched line");
+    assert.ok(step5.includes(notDispatched), "step 5's reader lines leave out step 2's");
+    assert.ok(claimsSkill.split("## 7. Say what it found")[1].includes("also when step 2 dispatched no reader"), "step 7 has no reply for a check that dispatched no reader");
+    // The task directory is the PR body file's when one is named, as a brief's {{task_dir}} gives it.
+    assert.ok(claimsSkill.split("## 1. ")[0].includes("the directory that holds the `--pr-body` file when one is named, else `.scratch/task/` under the session's working directory"), "the skill does not say which directory is the task directory");
   });
 });
 

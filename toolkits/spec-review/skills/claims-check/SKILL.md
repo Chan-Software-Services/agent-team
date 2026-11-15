@@ -13,7 +13,7 @@ argument-hint: "[<code root>] [<base>] [--pr-body <file>]"
 - `--pr-body`: a file holding the PR body you will send, or on a gated project the intent the gate drafts the body from.
 
 Turn every path into an absolute one before step 1.
-`.scratch/task/` below is under the session's working directory, as an absolute path; create it when it is missing.
+`.scratch/task/` below stands for the task directory, as an absolute path: the directory that holds the `--pr-body` file when one is named, else `.scratch/task/` under the session's working directory, which you create when it is missing.
 
 ## 1. Check the inputs
 
@@ -78,7 +78,7 @@ pr body: <path, or none>
 
 ```
 
-- The `reader:` line is `ran on <model>`, `ran on <model> on retry` or `not run: <why>`; `<model>` is the session's model, since the agent's `model` is `inherit`.
+- The `reader:` line is `ran on <model>`, `ran on <model> on retry`, `not run: <why>` or step 2's `not dispatched: the branch changes nothing against <base>`; `<model>` is the session's model, since the agent's `model` is `inherit`.
 - The merge base is `git -C <code root> merge-base <base> HEAD`, and the head `git -C <code root> rev-parse HEAD`.
 - `## Findings` holds the reader's "Findings" verbatim, each item numbered 1, 2, ... in its order in place of its dash, or `none`.
 - `## Checked` holds the reader's "Checked" verbatim.
@@ -107,5 +107,5 @@ Rules for the answers:
 Reply to your caller in one line, and go on with your delivery:
 
 - `claims-check: <k> findings, <a> fixed, <b> cut, <c> kept (.scratch/task/claims-check.md)`
-- `claims-check: none (.scratch/task/claims-check.md)`
+- `claims-check: none (.scratch/task/claims-check.md)`, also when step 2 dispatched no reader
 - `claims-check: not run: <why> (.scratch/task/claims-check.md)`
