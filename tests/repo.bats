@@ -2422,11 +2422,11 @@ ok 2 after it"
   # A shell that traps TERM prints bash's job notice ("Terminated" on bash 5.2, with the command
   # on 5.3) when the limit's TERM ends a command it waits on, and bats' per-test countdown (on
   # under tests/run's BATS_TEST_TIMEOUT) is such a shell on the file's output, the likely source
-  # of the "Terminated" a loaded CI runner added at random. So the test leaves one too, deaf to
-  # the TERM its sleep is ended by, on fd 11, where bash keeps bats' stderr while the test's
-  # output goes to its log: its notice reaches the output tests/run prints whenever it is written
-  # before tests/run reads the file, on most runs, and the output so far is the file's lines but
-  # that notice.
+  # of the "Terminated" a loaded CI runner added at random.
+  # So the test leaves such a shell too: deaf to TERM itself, while the TERM ends its sleep.
+  # Its stderr is fd 11, where bash keeps bats' stderr while the test's output goes to its log.
+  # Its notice reaches tests/run's output on most runs, whenever it is written before tests/run
+  # reads the file, so the test compares the output with those notices left out.
   printf '%s\n' '@test "first" { true; }' \
     '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & bash -c '"'"'trap "" TERM; env --default-signal=TERM sleep 300; true'"'"' 2>&11 & }' \
     >"$copy/tests/held.bats"
