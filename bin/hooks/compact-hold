@@ -4,14 +4,19 @@
 # It reads the event's JSON on stdin and decides by its hook_event_name, on the session's record
 # (bin/lib/compact-hold.sh), which it finds by the event's session_id.
 #
-# PreCompact, trigger auto (the auto-compact window and an idle compaction), the first that fits:
+# An event that carries an agent_id is a subagent's, not the coordinator's own: nothing, exit 0,
+# so a subagent's tool call takes no tell and its compaction opens no hold.
+# PreCompact, trigger auto (the auto-compact window and an idle compaction), the first that fits,
+# a hold stowed since its start 10 minutes ago or more counting as none standing, since what the
+# coordinator took on after that stow is not on disk:
 #   1. no hold standing and a stow less than 10 minutes old: the compaction runs, with the stowed
 #      instructions
 #   2. no hold standing otherwise: it holds the compaction, logs "held" and exits 2, saying
 #      "compact-hold: this auto-compaction waits for the coordinator's stow (team-stowed lets it
-#      run)" on stderr, which blocks it
-#   3. a hold standing and a stow at or after its start: it releases the hold, logs "released"
-#      "stowed", and the compaction runs with the stowed instructions
+#      run)" on stderr, which blocks it; in place of a hold stowed too long ago, it is a new
+#      hold, told anew
+#   3. a hold standing and a stow at or after its start, less than 10 minutes old: it releases
+#      the hold, logs "released" "stowed", and the compaction runs with the stowed instructions
 #   4. a hold standing and the latest main-conversation reply of the event's transcript_path read
 #      300,000 tokens or more: released, "ceiling", with the unstowed instructions
 #   5. a hold standing, told, and the tell 15 minutes old or more: released, "timeout", with the
@@ -49,11 +54,12 @@
 # Wired only in coordinator.settings.json.
 set -euo pipefail
 
-event='' name='' session=''
+event='' name='' session='' agent=''
 if (($# == 0)); then
   event=$(cat)
-  { IFS= read -r name && IFS= read -r session; } < <(jq -r '(.hook_event_name | strings) // "",
-    (.session_id | strings) // ""' 2>/dev/null <<<"$event") || true
+  { IFS= read -r name && IFS= read -r session && IFS= read -r agent; } < <(jq -r '(.hook_event_name | strings) // "",
+    (.session_id | strings) // "", (.agent_id | strings) // ""' 2>/dev/null <<<"$event") || true
+  [[ -z $agent ]] || exit 0
   [[ $session =~ ^[A-Za-z0-9-]+$ ]] || session=''
   if [[ $name != PreCompact ]]; then
     [[ -n $session && -e $HOME/.local/state/agent-team/compact-hold/$session.json ]] || exit 0
@@ -123,10 +129,11 @@ case $name in
     out=$(compact_hold_update "$session" '
       def release($why): {record: (.held_at = null | .told_at = null | .released_at = $now),
         log: [{event: "released", why: $why}], run: $why, stowed_at};
-      if .held_at == null then
-        if .stowed_at != null and $now - .stowed_at < 600 then {record: ., run: "stowed", stowed_at}
+      def fresh: .stowed_at != null and $now - .stowed_at < 600;
+      if .held_at == null or (.stowed_at != null and .stowed_at >= .held_at and (fresh | not)) then
+        if fresh then {record: ., run: "stowed", stowed_at}
         else {record: (.held_at = $now | .told_at = null | .blocks = 1), log: [{event: "held"}]} end
-      elif .stowed_at != null and .stowed_at >= .held_at then release("stowed")
+      elif fresh and .stowed_at >= .held_at then release("stowed")
       elif $context >= 300000 then release("ceiling")
       elif .told_at != null and $now - .told_at >= 900 then release("timeout")
       else {record: (.blocks += 1)} end' --argjson context "$context")

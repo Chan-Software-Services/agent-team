@@ -32,6 +32,7 @@ Then run `team-stowed`, which records the stow, so an auto-compaction `compact-h
 
 A note after a tool call that begins `compact-hold: an auto-compaction of this conversation is held until you stow` means Claude Code tried to compact this conversation and the `compact-hold` hook refused it until you have stowed.
 Stow before any other work: walk the conversation as above and end with `team-stowed`, and the compaction runs the next time Claude Code tries it, its summary told the time of your stow.
+A stow 10 minutes old or more when that comes no longer lets it run: it is held again, and you are told again.
 Unstowed 15 minutes after that tell, it runs anyway, from the time the tell names, and its summary is all that is left of what you had not written down.
 While the hold stands unstowed, each new prompt carries the same note as a reminder, and the first end of a turn is refused with it, each naming the time the first tell set.
 

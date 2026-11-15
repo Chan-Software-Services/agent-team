@@ -30,7 +30,11 @@
 #                                 list of {event} or {event, why}, each appended to the log with
 #                                 the time and the session; the whole object is printed as one
 #                                 line. Fails, writing nothing and saying why on stderr, when the
-#                                 lock is not had in 5 seconds or the read or the program fails.
+#                                 lock is not had in 5 seconds or the read or the program fails;
+#                                 fails too, printing nothing, when the log cannot be opened
+#                                 or the record's write fails, the record then as it was and
+#                                 the log with no new line, or when the append itself fails,
+#                                 after the write.
 #   compact_hold_context <file>   prints the tokens the latest main-conversation reply of the
 #                                 transcript <file> read (input, cache writes and cache reads, as
 #                                 team.sh's session_context sums them), 0 when it has none or
@@ -58,19 +62,27 @@ compact_hold_read() {
 compact_hold_update() {
   local hold_session=$1 hold_program=$2 hold_file=$COMPACT_HOLD_DIR/$1.json
   shift 2
-  mkdir -p "$COMPACT_HOLD_DIR"
+  mkdir -p "$COMPACT_HOLD_DIR" || return 1
   (
     flock -w 5 9 || { echo "another writer held $hold_file.lock for 5 s" >&2; exit 1; }
     hold_before=$(compact_hold_read "$hold_session") || exit 1
     hold_out=$(jq -c --argjson now "${TEAM_COMPACT_HOLD_NOW:-$(date +%s)}" "$@" "$hold_program" <<<"$hold_before") || exit 1
     hold_after=$(jq -ce '.record | objects' <<<"$hold_out") || exit 1
+    # Each step ends the update itself: a caller's command substitution clears errexit.
+    hold_lines=$(jq -c --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg session "$hold_session" \
+      '.log // [] | .[] | {at: $at, session: $session} + .' <<<"$hold_out") || exit 1
     if [[ $hold_after != "$hold_before" ]]; then
-      hold_new=$(mktemp "$hold_file.XXXXXX")
-      echo "$hold_after" >"$hold_new"
-      mv -f "$hold_new" "$hold_file"
+      # A log that cannot be opened leaves the record as it was.
+      [[ -z $hold_lines ]] || : >>"$COMPACT_HOLD_LOG" || exit 1
+      hold_new=$(mktemp "$hold_file.XXXXXX") || exit 1
+      if ! { echo "$hold_after" >"$hold_new" && mv -f "$hold_new" "$hold_file"; }; then
+        rm -f "$hold_new"
+        exit 1
+      fi
     fi
-    jq -c --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg session "$hold_session" \
-      '.log // [] | .[] | {at: $at, session: $session} + .' <<<"$hold_out" >>"$COMPACT_HOLD_LOG"
+    if [[ -n $hold_lines ]]; then
+      echo "$hold_lines" >>"$COMPACT_HOLD_LOG" || exit 1
+    fi
     echo "$hold_out"
   ) 9>"$hold_file.lock"
 }

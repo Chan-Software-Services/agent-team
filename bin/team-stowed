@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Record that the coordinator has stowed: the stow skill's last step, which lets an
-# auto-compaction that bin/hooks/compact-hold is holding run at its next check.
+# auto-compaction that bin/hooks/compact-hold is holding run at its next check, when that comes
+# within 10 minutes of the stow.
 #
 # Usage: team-stowed
 # It sets stowed_at to now in the record of the session CLAUDE_CODE_SESSION_ID names

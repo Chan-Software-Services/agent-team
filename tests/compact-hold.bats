@@ -15,6 +15,11 @@ setup() {
   transcript=$BATS_TEST_TMPDIR/transcript.jsonl
 }
 
+teardown() {
+  # The test of a read-only record directory leaves it writable, for bats to remove.
+  [[ ! -d $state/compact-hold ]] || chmod 755 "$state/compact-hold"
+}
+
 # event <status> <hook event name> [<jq object of more fields>]: run the hook on that event.
 event() {
   run_bin "$1" --separate-stderr hooks/compact-hold \
@@ -85,6 +90,20 @@ reply() {
     {type: "assistant", message: {usage: {input_tokens: $third, cache_creation_input_tokens: $third, cache_read_input_tokens: $third}}},
     {type: "user", message: {content: "next"}},
     {type: "assistant", isSidechain: true, message: {usage: {input_tokens: 900000}}}' >"$transcript"
+}
+
+# broken: three auto-compactions, the last at the ceiling, each exit 1 with no instructions,
+# and a tool call after them tells nothing.
+broken() {
+  auto -1
+  assert_equal "$output" ""
+  auto -1
+  reply 300000
+  auto -1
+  assert_equal "$output" ""
+  [[ $stderr != *"$held_text"* ]]
+  tool
+  assert_equal "$output" ""
 }
 
 @test "an auto-compaction is held, the coordinator is told once, and it runs after team-stowed with the stowed instructions" {
@@ -390,6 +409,76 @@ STUB
   auto -1
   assert_equal "$stderr" ""
   assert_equal "$output" ""
+}
+
+@test "a record that cannot be written holds nothing: the compaction runs" {
+  # The record's directory takes no new file, its lock being there already, so mktemp fails.
+  [[ $EUID != 0 ]] || skip "root writes a read-only directory"
+  mkdir -p "$state/compact-hold"
+  : >"$record.lock"
+  chmod 555 "$state/compact-hold"
+  broken
+  [[ ! -e $record && ! -s $log ]]
+}
+
+@test "a record whose move into place fails holds nothing: the compaction runs" {
+  [[ $(uname) == Linux ]] || skip "macOS puts GNU mv before the stub"
+  ln "$(shared mv-fails <<'STUB'
+#!/usr/bin/env bash
+# mv, which fails.
+exit 1
+STUB
+  )" "$BATS_TEST_TMPDIR/stubs/mv"
+  broken
+  [[ ! -e $record && ! -s $log ]]
+  assert_equal "$(find "$state/compact-hold" -type f ! -name '*.lock')" ""
+  CLAUDE_CODE_SESSION_ID=$session run_bin -1 team-stowed
+  assert_equal "$output" ""
+}
+
+@test "a log that cannot be appended to holds nothing: the compaction runs" {
+  mkdir -p "$log"
+  broken
+  [[ ! -e $record ]]
+}
+
+@test "a stow 10 minutes old or more does not release a standing hold: the compaction is held again and told again" {
+  auto -2
+  prompt
+  stowed_now
+  age '.held_at = $now - 7300' '.told_at = $now - 7250' '.stowed_at = $now - 7200'
+  auto -2
+  assert_equal "$stderr" "$held_text"
+  assert_equal "$(jq -c --argjson at "$aged_at" '[.held_at >= $at, .told_at, .blocks]' "$record")" '[true,null,1]'
+  assert_equal "$(logged)" $'held\nreminded\nstowed\nheld'
+  tool
+  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" "$(told_text "$(jq .told_at "$record")")"
+  # One second short of 10 minutes, the stow still releases it.
+  auto -2
+  stowed_now
+  age '.held_at = $now - 650' '.stowed_at = $now - 599'
+  at_aged auto -0
+  assert_equal "$output" "$(stowed_text)"
+  age '.stowed_at = $now - 700'
+  auto -2
+  stowed_now
+  age '.held_at = $now - 650' '.stowed_at = $now - 600'
+  auto -2
+  assert_equal "$(jq .blocks "$record")" 1
+}
+
+@test "a subagent's event is not the coordinator's: its tool call takes no tell and its compaction is not held" {
+  auto -2
+  event -0 PostToolUse '{"agent_id": "a1", "agent_type": "Explore", "tool_name": "Bash"}'
+  assert_equal "$output$stderr" ""
+  assert_equal "$(jq .told_at "$record")" null
+  before=$(<"$record")
+  event -0 PreCompact '{"agent_id": "a1", "trigger": "auto"}'
+  assert_equal "$output$stderr" ""
+  assert_equal "$(<"$record")" "$before"
+  tool
+  assert_equal "$(jq -r .hookSpecificOutput.additionalContext <<<"$output")" "$(told_text "$(jq .told_at "$record")")"
+  assert_equal "$(logged)" $'held\ntold'
 }
 
 @test "any other event prints nothing, and an argument is a usage error" {
