@@ -145,15 +145,17 @@
 # A skills-only toolkit needs no line in its project's toolkits list, on any launch, whether given
 # by hand, carried from an earlier launch or added as below, since
 # the list keeps MCP servers and production access per project, and a skills-only toolkit starts
-# neither of them, only adding skills and agents; of their frontmatters only the two keys below are
-# read, no other. Skills-only is read from the toolkit's own files at each launch (skills_only_toolkit
+# neither of them, only adding skills and agents, whose frontmatters hold only the keys below.
+# Skills-only is read from the toolkit's own files at each launch (skills_only_toolkit
 # below), and holds exactly when its directory's entries are only .claude-plugin/, README.md,
 # agents/, skills/ and evals/, each optional and none a symbolic link (so no .mcp.json, .lsp.json,
 # hooks/, scripts/, commands/, bin/ or settings.json); .claude-plugin/ holds only plugin.json, an
 # object whose keys are only name, version, description and author; agents/ holds only *.md files
-# and skills/ only <name>/SKILL.md files, none a symbolic link, and no frontmatter of theirs, a
-# byte order mark before it or not, has hooks or mcpServers before a colon, or a line opening with
-# ? (a YAML explicit key); evals/, which no session loads, may hold anything. A toolkit
+# and skills/ only <name>/SKILL.md files, none a symbolic link; each frontmatter of theirs, a byte
+# order mark before it or not, ends, and each of its lines that is not blank, a comment or
+# indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,
+# the first of them not indented, and none has hooks or mcpServers before a colon, or opens with ?
+# (a YAML explicit key); evals/, which no session loads, may hold anything. A toolkit
 # that fails any of these is checked against the project's list like every other, so one that
 # gains a server, a hook or a script comes back under it on its own.
 # A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets
@@ -424,13 +426,26 @@ skills_only_toolkit() (
   done
   ((${#prose[@]})) || exit 0
   # A frontmatter is the lines between a first line of ---, a byte order mark before it or not,
-  # and the next; hooks or mcpServers before a colon anywhere in one counts, quoted or nested, and
-  # so does any YAML explicit key (a line opening with ?), so a doubt goes to the allow list.
-  awk -v bom=$'\xEF\xBB\xBF' 'FNR == 1 { if (index($0, bom) == 1) $0 = substr($0, length(bom) + 1); inside = ($0 ~ /^---[[:space:]]*$/); next }
-    inside && /^---[[:space:]]*$/ { inside = 0 }
-    inside && /(hooks|mcpServers)["'\'']?[[:space:]]*:/ { declared = 1; exit }
-    inside && /^[[:space:]]*\?/ { declared = 1; exit }
-    END { exit declared }' "${prose[@]}"
+  # and the next. Each of its lines that is not blank, a comment or indented must open with one of
+  # the keys below and a colon, so no other spelling of a key (quoted, escaped, an alias, a merge
+  # or an explicit key) is read as none; the first such line is not indented, so an indented one
+  # is a listed key's value. hooks or mcpServers before a colon anywhere in one counts too, quoted
+  # or nested, and so do an indented explicit key (a line opening with ?) and a frontmatter that
+  # never ends, so a doubt goes to the allow list.
+  awk -v bom=$'\xEF\xBB\xBF' -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '
+    FNR == 1 {
+      if (inside) { doubt = 1; exit }
+      if (index($0, bom) == 1) $0 = substr($0, length(bom) + 1)
+      inside = ($0 ~ /^---[[:space:]]*$/); keyed = 0; next
+    }
+    !inside { next }
+    /^---[[:space:]]*$/ { inside = 0; next }
+    /(hooks|mcpServers)["'\'']?[[:space:]]*:/ { doubt = 1; exit }
+    /^[[:space:]]*$/ || /^#/ { next }
+    /^[[:space:]]/ { if (!keyed || $0 ~ /^[[:space:]]*\?/) { doubt = 1; exit } next }
+    $0 !~ "^(" keys "):([[:space:]]|$)" { doubt = 1; exit }
+    { keyed = 1 }
+    END { exit (doubt || inside) }' "${prose[@]}"
 )
 
 # A worker gets only the toolkits its worktree's project lists in the registry, but a skills-only

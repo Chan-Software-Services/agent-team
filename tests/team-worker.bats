@@ -1404,6 +1404,10 @@ skills_only_kit() {
   echo "# kit" >"$code/toolkits/kit-r/README.md"
   skills_only_kit kit-n
   rm -r "${code:?}/toolkits/kit-n/evals"
+  # Every listed key, a comment, a blank line and a value that goes on over indented lines hold.
+  printf '%s\n' --- "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
+    "tools: [Read]" "model: inherit" "omitClaudeMd: true" --- "You read." >"$code/toolkits/kit-n/agents/reader.md"
+  printf '%s\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" >"$code/toolkits/kit-n/skills/look/SKILL.md"
   local kit
   for kit in kit-r kit-n; do
     again T7
@@ -1455,6 +1459,17 @@ skills_only_kit() {
     'printf "%s\n" --- "name: look" "? mcpServers" ": {}" --- "# Look" >skills/look/SKILL.md'
     'sed -i "2i hooks:" agents/reader.md && sed -i "1s/^/\xEF\xBB\xBF/" agents/reader.md'
     'sed -i "2i mcpServers:" skills/look/SKILL.md && sed -i "1s/^/\xEF\xBB\xBF/" skills/look/SKILL.md'
+    # A key no text match reads as hooks: one spelled with an escape, and an alias as the key.
+    'printf "%s\n" --- "name: reader" "\"h\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%s\n" --- "name: reader" "description: &a hooks" "*a : {}" --- "You read." >agents/reader.md'
+    # So a frontmatter line that is not indented, blank or a comment opens with a listed key:
+    # any other key, a merge key, a frontmatter indented as a whole and one that never ends are refused.
+    'sed -i "2i allowed-tools: Bash" skills/look/SKILL.md'
+    'sed -i "2i permissionMode: bypassPermissions" agents/reader.md'
+    'sed -i "2i name : reader" agents/reader.md'
+    'sed -i "2i <<: {x: 1}" agents/reader.md'
+    'printf "%s\n" --- "  name: reader" "  description: Reads." --- "You read." >agents/reader.md'
+    'printf "%s\n" --- "name: reader" "You read." >agents/reader.md'
   )
   for change in "${changes[@]}"; do
     n=$((n + 1))
@@ -1499,7 +1514,8 @@ skills_only_kit() {
   assert_contains "$output" "the list keeps MCP servers and production access per project, and a skills-only toolkit starts"
   assert_contains "$output" "Skills-only is read from the toolkit's own files at each launch"
   assert_contains "$output" "none a symbolic link"
-  assert_contains "$output" "has hooks or mcpServers before a colon, or a line opening with"
+  assert_contains "$output" "indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,"
+  assert_contains "$output" "none has hooks or mcpServers before a colon, or opens with ?"
   assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 

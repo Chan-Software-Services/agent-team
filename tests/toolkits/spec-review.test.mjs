@@ -65,6 +65,10 @@ describe("the spec-review toolkit", () => {
     }
     for (const file of loaded) {
       assert.doesNotMatch(frontmatterOf(read(file)), /^(hooks|mcpServers):/m, `${file}: ${why}`);
+      // The launch rule's listed keys: a line that is not blank, a comment or indented opens with one.
+      for (const line of frontmatterOf(read(file)).split("\n").filter((line) => !/^(\s|#|$)/.test(line))) {
+        assert.match(line, /^(name|description|tools|model|omitClaudeMd|argument-hint):(\s|$)/, `${file}, "${line.slice(0, 40)}": ${why}`);
+      }
     }
   });
 
