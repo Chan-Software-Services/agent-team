@@ -159,6 +159,7 @@ ticket-done team-log ticket commits
 question team-log,team-ask role
 asked team-log,team-ask id text
 answered team-log,team-answer id answer
+handoff team-assistant id kind from state
 ran team-run-approved id exit
 plan-approved team-log by
 plan-approval-withdrawn team-log discord_message

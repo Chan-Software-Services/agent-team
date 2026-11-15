@@ -190,7 +190,7 @@ sandbox() {
   # (worker_refusal), nor the parallelism team-checks gives the suite (TEAM_JOBS), nor a bound on
   # Docker's answers (TEAM_DOCKER_SECONDS), nor the heartbeat job's mark (TEAM_HEARTBEAT_JOB), nor
   # the id of the Claude session running the suite (CLAUDE_CODE_SESSION_ID, team-sweep's own).
-  unset TEAM_COORDINATOR_CHANNEL TEAM_INTERVIEW_CHANNEL CLAUDE_PROJECT_DIR NVM_DIR TEAM_HEAVY_HELD TEAM_HEAVY_WAIT_MINUTES
+  unset TEAM_COORDINATOR_CHANNEL TEAM_INTERVIEW_CHANNEL TEAM_ASSISTANT_CHANNEL CLAUDE_PROJECT_DIR NVM_DIR TEAM_HEAVY_HELD TEAM_HEAVY_WAIT_MINUTES
   unset AGENT_TEAM_ROLE AGENT_TEAM_TASK TEAM_JOBS TEAM_DOCKER_SECONDS TEAM_HEARTBEAT_JOB CLAUDE_CODE_SESSION_ID
   # The state and cache directories and Claude Code's config directory are HOME's, as the
   # sandbox's HOME is.
@@ -239,8 +239,8 @@ run_bin() {
 # fast-forwards its code checkout never touches this one: <checkout> when given (a clone with an
 # origin), else a clone on dev of a bare origin standing in for GitHub, CODE_ORIGIN
 # ($BATS_TEST_TMPDIR/code-origin.git), with one commit. Either way it gets a copy of the code the
-# scripts read from their checkout (bin/, roles/, settings/, templates/, plugins/, toolkits/ and
-# coordinator.settings.json), which git ignores there: code_checkout [<checkout>]
+# scripts read from their checkout (bin/, roles/, settings/, templates/, plugins/, toolkits/,
+# coordinator.settings.json and assistant.settings.json), which git ignores there: code_checkout [<checkout>]
 code_checkout() {
   export CODE_CHECKOUT CODE_ORIGIN
   if [[ -n ${1:-} ]]; then
@@ -259,10 +259,10 @@ code_checkout() {
   local path exclude
   exclude=$(git -C "${CODE_CHECKOUT:?}" rev-parse --path-format=absolute --git-path info/exclude)
   copy_bin "$CODE_CHECKOUT/bin"
-  for path in roles settings templates plugins toolkits coordinator.settings.json; do
+  for path in roles settings templates plugins toolkits coordinator.settings.json assistant.settings.json; do
     cp -R "$REPO_ROOT/$path" "$CODE_CHECKOUT/$path"
   done
-  printf '/%s\n' bin roles settings templates plugins toolkits coordinator.settings.json >>"$exclude"
+  printf '/%s\n' bin roles settings templates plugins toolkits coordinator.settings.json assistant.settings.json >>"$exclude"
 }
 
 # with_lifecycle_from <time|null>: run_bin runs from a code checkout of the test's own whose

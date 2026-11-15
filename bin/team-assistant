@@ -1,0 +1,411 @@
+#!/usr/bin/env bash
+# The hand-offs between the assistant (claude-assistant) and the coordinator, each a file in the
+# team home's assistant/handoffs/ and a line of assistant/handoffs.jsonl, and the assistant's
+# topic threads under #assistant.
+#
+# Usage: team-assistant send <kind> --file <body> [--task T<n>] [--daniel <message id> --channel <channel id>] [--report <path>]
+#        team-assistant show H<n>
+#        team-assistant answer H<n> --file <text> [--task T<n>]
+#        team-assistant list [--open] [--to assistant|coordinator] [--json]
+#        team-assistant thread <title> [--from <message id>]
+# Run by the assistant (AGENT_TEAM_ROLE=assistant) and the coordinator (coordinator, or none set:
+# Daniel's own shell); any other role is refused, "a <role> session cannot hand off: that is the
+# assistant's and the coordinator's" ("an" before a role starting with a vowel, as "an ops
+# session"). send, answer and thread are refused on a machine that is
+# fenced or lost the lease (lease_refusal in bin/lib/team.sh), before Discord is read.
+#
+# send hands <body> (a text file, read verbatim) from this session to the other. The
+# assistant's kinds: task (open or queue a task), decision (a decision of Daniel's to act on or
+# pass on), research (a spike's report), note (information, no action asked); the coordinator's:
+# walkthrough (guide Daniel through steps: a manual step, a login, a secret restore), spike (a
+# research question of Daniel's), note. task and decision need Daniel's own message, --daniel
+# <message id> --channel <channel id>, which any kind may name: read from Discord now, in
+# #assistant (ASSISTANT_CHANNEL) or a thread whose parent is it (assistant_place), by an
+# allowFrom author (daniel_message), never edited. A task body has the lines "Project: <name>",
+# one team-project --list knows, "When: now" or "When: queue" (Daniel's word; queue when they
+# said neither) and "Model: opus" or "Model: fable" (fable only on Daniel's word). research needs
+# --report, a file under the team home's assistant/research/, named relative to the team home or
+# in full; any kind may name one. --task names an open task, on which the ledger logs handoff
+# (state sent). A body or answer that is no text, an image or holds an address at a public
+# provider, which the records refuse, is refused.
+# Under the ledger's lock it writes assistant/handoffs/H<n>.md, n one more than the highest in
+# assistant/handoffs.jsonl: front matter (id, kind, from, to, sent, and task, daniel_message,
+# daniel_channel and report when given), a blank line, then the body; and appends {ts, id,
+# event: "sent", kind, from, to} with those fields given to handoffs.jsonl. It commits the
+# hand-off, the log, the report and (with --task) the ledger alone as "chore: handoff H<n> <kind>" and pushes
+# (commit_records); a commit or push that fails is one line on stderr, "H<n> is not on origin yet
+# (<why>); the next checkpoint pushes it", and the hand-off stands. The ledger's handoff is
+# logged after the hand-off's files, and a ledger that refuses it (the task closed meanwhile) is
+# one line on stderr, "H<n> is sent, but the ledger took no handoff event on T<n> (<why>); the
+# hand-off stands: send its line as ever", the ledger left out of the commit. It prints
+# "H<n> assistant/handoffs/H<n>.md"; the sender then sends the other session
+# "ASSISTANT H<n> <kind>" (the assistant) or "COORDINATOR H<n> <kind>" (the coordinator).
+#
+# show prints the hand-off's list line (below), a blank line and its file; for one naming Daniel's
+# message, a blank line, "Daniel's message <id> in <place>, verbatim:" and its text, read from
+# Discord again, exiting 1 with the reason when it no longer reads as Daniel's unedited message.
+#
+# answer, the hand-off's recipient's alone and once (a follow-up is a new hand-off), appends to
+# its file a blank line, "## Answer", a blank line, "<UTC time>, by the <role>:" and <text>, and
+# to handoffs.jsonl {ts, id, event: "answered", by} with task (--task's, else the hand-off's) when
+# there is one; logs handoff (state answered) on the hand-off's task while it is open and on
+# --task's, an open task, a refusal said as send says it; commits and pushes as "chore: handoff
+# H<n> answered", as send does; and
+# prints "H<n> assistant/handoffs/H<n>.md". The answerer then sends "ASSISTANT ANSWER H<n>" or
+# "COORDINATOR ANSWER H<n>".
+#
+# list prints one line per hand-off in number order, "H<n> <kind> <from>-><to> <sent> <open|answered>",
+# --open only those not answered, --to only those to that session; --json prints them as one list
+# of {id, kind, from, to, sent, answered (its time, or null), task (the answer's, else the
+# send's, or null)}. It reads handoffs.jsonl alone and never writes.
+#
+# thread, the assistant's alone, opens a public thread under #assistant (POST
+# channels/<ASSISTANT_CHANNEL>/threads, type 11), or from Daniel's message <message id> there
+# (POST channels/<ASSISTANT_CHANNEL>/messages/<id>/threads), named <title> cut at 100
+# characters, archived after 7 days without a message (auto_archive_duration 10080); adds its id
+# to the thread cache, ~/.local/state/agent-team/assistant-threads, and prints it.
+# Exit codes: 0 done, 1 refused, 2 a malformed command line.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+USAGE="usage: team-assistant send <kind> --file <body> [--task T<n>] [--daniel <message id> --channel <channel id>] [--report <path>] | show H<n> | answer H<n> --file <text> [--task T<n>] | list [--open] [--to assistant|coordinator] [--json] | thread <title> [--from <message id>]"
+rel_dir=assistant/handoffs
+log_rel=assistant/handoffs.jsonl
+log=$TEAM_HOME/$log_rel
+ID_RE='^[1-9][0-9]{0,19}$'
+
+case ${AGENT_TEAM_ROLE:-} in
+  '' | coordinator) me=coordinator other=assistant ;;
+  assistant) me=assistant other=coordinator ;;
+  *)
+    article=a
+    [[ ! ${AGENT_TEAM_ROLE:0:1} =~ [aeiou] ]] || article=an
+    die "$article $AGENT_TEAM_ROLE session cannot hand off: that is the assistant's and the coordinator's"
+    ;;
+esac
+
+# Every hand-off in the log, as one JSON list in number order of {id, kind, from, to, sent,
+# answered, by, task, daniel_message, daniel_channel, report}: handoffs_json
+handoffs_json() {
+  if [[ ! -e $log ]]; then
+    echo '[]'
+    return 0
+  fi
+  jq -cnR '[inputs | fromjson? | select(type == "object" and (.id | type) == "string")] as $lines
+    | [$lines[] | select(.event == "sent")]
+    | map(. as $s | ([$lines[] | select(.event == "answered" and .id == $s.id)] | first) as $a
+      | {id, kind, from, to, sent: .ts, answered: ($a.ts // null), by: ($a.by // null),
+         task: ($a.task // .task // null), sent_task: (.task // null), daniel_message: (.daniel_message // null),
+         daniel_channel: (.daniel_channel // null), report: (.report // null)})
+    | sort_by(.id | ltrimstr("H") | tonumber)' "$log"
+}
+
+# The hand-off <id> from the log, as handoffs_json gives it, refusing one it lacks: handoff <id>
+handoff() {
+  handoffs_json | jq -ce --arg id "$1" '.[] | select(.id == $id)' ||
+    die "no hand-off $1 in $log_rel"
+}
+
+# Each hand-off's list line, from a handoffs_json list on stdin: list_lines
+list_lines() {
+  jq -r '.[] | "\(.id) \(.kind) \(.from)->\(.to) \(.sent) \(if .answered then "answered" else "open" end)"'
+}
+
+# Refuse a body or answer file that is not text the records take: body_check <file>
+body_check() {
+  local owner refused kind
+  [[ -f $1 && -r $1 ]] || die "cannot read the body $1"
+  kind=$(image_magic <"$1")
+  [[ -z $kind ]] ||
+    die "the body $1 is an image ($kind), which the records never take: attach it from ~/.local/state/agent-team/assistant-files/ instead"
+  grep -q '[^[:space:]]' "$1" || die "the body $1 has no text"
+  owner=$(git -C "$TEAM_HOME" config user.email 2>/dev/null) || owner=''
+  refused=$(refused_emails records "${owner,,}" <"$1" | paste -sd ',' | sed 's/,/, /g')
+  [[ -z $refused ]] || die "the body $1 holds $refused, which the records never take; give it without the address"
+}
+
+# Refuse on a fenced machine or one that lost the lease, as lease_refusal says it: lease_check <does>
+lease_check() {
+  local why
+  if why=$(lease_refusal "$1"); then die "$why"; fi
+}
+
+# Daniel's message <message> in <channel>, read from Discord as daniel_message gives it, held to
+# #assistant and its threads and refused when edited: daniel_word <message> <channel>
+daniel_word() {
+  local place word edited
+  place=$(assistant_place "$2" 2>"$scratch/error") || die "$(<"$scratch/error")"
+  word=$(daniel_message "$1" "Daniel's word" "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
+  edited=$(jq -r '.message.edited_timestamp // empty' <<<"$word")
+  [[ -z $edited ]] ||
+    die "Discord message $1 was edited at $edited, so its text may not be what Daniel first sent: ask them to say it again as a new message"
+  printf '%s\n' "$word"
+}
+
+# Commit the hand-off's records and push them, saying on stderr when they are not on origin:
+# commit_handoff <id> <message> <path>...
+commit_handoff() {
+  local id=$1 message=$2 reason
+  NET_ERR=$scratch/net
+  if ! commit_records "$message" "${@:3}" >/dev/null 2>"$scratch/commit"; then
+    reason=$(grep -m 1 . "$scratch/commit" | sed 's/^team-assistant: //' || true)
+    echo "${0##*/}: $id is not on origin yet (${reason:-commit_records failed with no reason}); the next checkpoint pushes it" >&2
+  fi
+}
+
+# Log <event> on its task, after the hand-off's own files are written: a ledger that refuses it
+# (the task closed meanwhile, the contract) leaves the hand-off <done> all the same, saying so in
+# one stderr line, so its id is still printed and no retry makes a second one of the same body.
+# Sets LOGGED to 1 when the event is in, else 0. Called as a plain command, never in a condition,
+# where bash would ignore set -e in the subshell too: log_handoff <id> <done> <task> <event>
+log_handoff() {
+  local reason rc
+  set +e
+  (
+    set -e
+    ledger_append "$4"
+  ) 2>"$scratch/ledger"
+  rc=$?
+  set -e
+  LOGGED=1
+  ((rc != 0)) || return 0
+  LOGGED=0
+  reason=$(grep -m 1 . "$scratch/ledger" | sed 's/^team-assistant: //' || true)
+  echo "${0##*/}: $1 is $2, but the ledger took no handoff event on $3 (${reason:-ledger_append failed with no reason}); the hand-off stands: send its line as ever" >&2
+}
+
+# The next hand-off's number: one more than the highest in the log.
+next_number() {
+  local highest=0
+  [[ ! -e $log ]] ||
+    highest=$(jq -nR '[inputs | fromjson? | .id? | strings | select(test("^H[1-9][0-9]*$")) | ltrimstr("H") | tonumber] | max // 0' "$log")
+  echo $((highest + 1))
+}
+
+
+# Append <file>'s text to stdout, ending it with a newline when it has none: text_of <file>
+text_of() {
+  cat -- "$1"
+  [[ -z $(tail -c 1 -- "$1") ]] || echo
+}
+
+# The fields of an option list into the variables named by the option ("--file x" sets file=x),
+# refusing any option not among <allowed>: options "<allowed>..." -- <arguments>
+options() {
+  local -a allowed=()
+  while [[ $1 != -- ]]; do allowed+=("$1"); shift; done
+  shift
+  while (($#)); do
+    (($# > 1)) && [[ $1 == --* && " ${allowed[*]} " == *" ${1#--} "* ]] || usage_error "$USAGE"
+    printf -v "${1#--}" '%s' "$2"
+    shift 2
+  done
+}
+
+(($#)) || usage_error "$USAGE"
+command=$1
+shift
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+lock=$TEAM_HOME/ledger.jsonl.lock
+
+case $command in
+  send)
+    (($#)) || usage_error "$USAGE"
+    kind=$1
+    shift
+    file='' task='' daniel='' channel='' report=''
+    options file task daniel channel report -- "$@"
+    [[ -n $file && $kind =~ ^[a-z]+$ && (-z $task || $task =~ ^T[1-9][0-9]*$) &&
+      (-z $daniel || $daniel =~ $ID_RE) && (-z $channel || $channel =~ $ID_RE) ]] || usage_error "$USAGE"
+    [[ (-z $daniel && -z $channel) || (-n $daniel && -n $channel) ]] ||
+      usage_error "--daniel and --channel go together, Daniel's message and the channel it is in; $USAGE"
+    if [[ $me == assistant ]]; then
+      kinds=(task decision research note) words="task, decision, research or note"
+    else
+      kinds=(walkthrough spike note) words="walkthrough, spike or note"
+    fi
+    [[ " ${kinds[*]} " == *" $kind "* ]] || die "the $me sends $words, not $kind"
+    [[ ! $kind =~ ^(task|decision)$ || -n $daniel ]] ||
+      die "a $kind hand-off needs Daniel's own message: --daniel <message id> --channel <channel id>"
+    [[ $kind != research || -n $report ]] ||
+      die "a research hand-off needs its report: --report <a file under assistant/research/>"
+    body_check "$file"
+    if [[ $kind == task ]]; then
+      project=$(sed -n 's/^Project: \([^[:space:]]\{1,\}\)[[:space:]]*$/\1/p' "$file" | head -n 1)
+      [[ -n $project ]] || die "a task hand-off's body needs a line Project: <name>"
+      grep -Eq '^When: (now|queue)[[:space:]]*$' "$file" ||
+        die "a task hand-off's body needs a line When: now or When: queue (queue when Daniel said neither)"
+      grep -Eq '^Model: (opus|fable)[[:space:]]*$' "$file" ||
+        die "a task hand-off's body needs a line Model: opus or Model: fable (fable only on Daniel's word)"
+      projects=$(team_project --list) || die "cannot read the project registry"
+      grep -qxF -- "$project" <<<"$projects" ||
+        die "project '$project' is not registered (team-project --list: $(paste -sd ',' <<<"$projects" | sed 's/,/, /g'))"
+    fi
+    if [[ -n $report ]]; then
+      path=$report
+      [[ $path == /* ]] || path=$TEAM_HOME/$path
+      report_path=$(realpath -m -- "$path")
+      research=$(realpath -m -- "$TEAM_HOME/assistant/research")
+      [[ $report_path == "$research"/* && -f $report_path ]] ||
+        die "the report '$report' is not a file under the team home's assistant/research/"
+      report=assistant/research/${report_path#"$research"/}
+    fi
+    [[ -z $task ]] || open_task_events "$task" >/dev/null
+    lease_check "hands nothing off: the assistant and the coordinator on the holder do"
+    if [[ -n $daniel ]]; then daniel_word "$daniel" "$channel" >/dev/null; fi
+
+    sent=$(date -u +%FT%TZ)
+    {
+      flock -x 9
+      id=H$(next_number)
+      file_rel=$rel_dir/$id.md
+      out=$TEAM_HOME/$file_rel
+      [[ ! -e $out ]] || die "$file_rel is there already, though $log_rel names no $id: move it aside first"
+      mkdir -p "$TEAM_HOME/$rel_dir"
+      {
+        printf -- '---\nid: %s\nkind: %s\nfrom: %s\nto: %s\nsent: %s\n' "$id" "$kind" "$me" "$other" "$sent"
+        if [[ -n $task ]]; then printf 'task: %s\n' "$task"; fi
+        if [[ -n $daniel ]]; then printf 'daniel_message: %s\ndaniel_channel: %s\n' "$daniel" "$channel"; fi
+        if [[ -n $report ]]; then printf 'report: %s\n' "$report"; fi
+        printf -- '---\n\n'
+        text_of "$file"
+      } >"$out"
+      jq -nc --arg ts "$sent" --arg id "$id" --arg kind "$kind" --arg from "$me" --arg to "$other" --arg task "$task" \
+        --arg daniel "$daniel" --arg channel "$channel" --arg report "$report" \
+        '{ts: $ts, id: $id, event: "sent", kind: $kind, from: $from, to: $to}
+          + (if $task == "" then {} else {task: $task} end)
+          + (if $daniel == "" then {} else {daniel_message: $daniel, daniel_channel: $channel} end)
+          + (if $report == "" then {} else {report: $report} end)' >>"$log"
+    } 9>>"$lock"
+    paths=("$file_rel" "$log_rel")
+    if [[ -n $report ]]; then paths+=("$report"); fi
+    if [[ -n $task ]]; then
+      log_handoff "$id" sent "$task" "$(jq -nc --arg ts "$sent" --arg task "$task" --arg id "$id" --arg kind "$kind" \
+        --arg from "$me" '{ts: $ts, task: $task, event: "handoff", id: $id, kind: $kind, from: $from, state: "sent"}')"
+      ((LOGGED == 0)) || paths+=(ledger.jsonl)
+    fi
+    commit_handoff "$id" "chore: handoff $id $kind" "${paths[@]}"
+    echo "$id $file_rel"
+    ;;
+
+  show)
+    (($# == 1)) && [[ $1 =~ ^H[1-9][0-9]*$ ]] || usage_error "$USAGE"
+    id=$1
+    record=$(handoff "$id")
+    [[ -f $TEAM_HOME/$rel_dir/$id.md ]] || die "$rel_dir/$id.md is missing, though $log_rel names $id"
+    jq -s . <<<"$record" | list_lines
+    echo
+    text_of "$TEAM_HOME/$rel_dir/$id.md"
+    daniel=$(jq -r '.daniel_message // empty' <<<"$record")
+    if [[ -n $daniel ]]; then
+      word=$(daniel_word "$daniel" "$(jq -r '.daniel_channel // empty' <<<"$record")")
+      echo
+      printf "Daniel's message %s in %s, verbatim:\n" "$daniel" "$(jq -r .place <<<"$word")"
+      jq -r '.message.content' <<<"$word"
+    fi
+    ;;
+
+  answer)
+    (($# >= 1)) && [[ $1 =~ ^H[1-9][0-9]*$ ]] || usage_error "$USAGE"
+    id=$1
+    shift
+    file='' task=''
+    options file task -- "$@"
+    [[ -n $file && (-z $task || $task =~ ^T[1-9][0-9]*$) ]] || usage_error "$USAGE"
+    record=$(handoff "$id")
+    from='' to='' kind='' answered='' by='' sent_task=''
+    json_vars from=.from to=.to kind=.kind answered='.answered // ""' by='.by // ""' sent_task='.sent_task // ""' <<<"$record"
+    [[ $to == "$me" ]] || die "$id is the $from's to the $to: only the $to answers it"
+    [[ -z $answered ]] || die "$id was answered at $answered by the $by; a follow-up is a new hand-off (team-assistant send)"
+    body_check "$file"
+    [[ -z $task ]] || open_task_events "$task" >/dev/null
+    lease_check "hands nothing off: the assistant and the coordinator on the holder do"
+
+    ts=$(date -u +%FT%TZ)
+    file_rel=$rel_dir/$id.md
+    out=$TEAM_HOME/$file_rel
+    {
+      flock -x 9
+      answered=$(handoff "$id" | jq -r '.answered // empty')
+      [[ -z $answered ]] || die "$id was answered at $answered meanwhile; a follow-up is a new hand-off (team-assistant send)"
+      [[ -f $out ]] || die "$file_rel is missing, though $log_rel names $id"
+      last=$(tail -c 1 -- "$out")
+      {
+        [[ -z $last ]] || echo
+        printf '\n## Answer\n\n%s, by the %s:\n' "$ts" "$me"
+        text_of "$file"
+      } >>"$out"
+      jq -nc --arg ts "$ts" --arg id "$id" --arg by "$me" --arg task "${task:-$sent_task}" \
+        '{ts: $ts, id: $id, event: "answered", by: $by} + (if $task == "" then {} else {task: $task} end)' >>"$log"
+    } 9>>"$lock"
+    paths=("$file_rel" "$log_rel")
+    # The hand-off's own task while it is open, and --task's.
+    logged_on=()
+    if [[ -n $sent_task && $(task_status "$(task_event_array "$sent_task")") == open ]]; then logged_on+=("$sent_task"); fi
+    if [[ -n $task && " ${logged_on[*]} " != *" $task "* ]]; then logged_on+=("$task"); fi
+    logged=0
+    for on in "${logged_on[@]}"; do
+      log_handoff "$id" answered "$on" "$(jq -nc --arg ts "$ts" --arg task "$on" --arg id "$id" --arg kind "$kind" \
+        --arg from "$from" '{ts: $ts, task: $task, event: "handoff", id: $id, kind: $kind, from: $from, state: "answered"}')"
+      ((LOGGED == 0)) || logged=1
+    done
+    ((logged == 0)) || paths+=(ledger.jsonl)
+    commit_handoff "$id" "chore: handoff $id answered" "${paths[@]}"
+    echo "$id $file_rel"
+    ;;
+
+  list)
+    open='' to='' json=''
+    while (($#)); do
+      case $1 in
+        --open) open=1 ;;
+        --json) json=1 ;;
+        --to)
+          (($# > 1)) && [[ $2 =~ ^(assistant|coordinator)$ ]] || usage_error "$USAGE"
+          to=$2
+          shift
+          ;;
+        *) usage_error "$USAGE" ;;
+      esac
+      shift
+    done
+    chosen=$(handoffs_json | jq -c --arg open "$open" --arg to "$to" \
+      'map(select(($open == "" or .answered == null) and ($to == "" or .to == $to)))')
+    if [[ -n $json ]]; then
+      jq -c 'map({id, kind, from, to, sent, answered, task})' <<<"$chosen"
+    else
+      list_lines <<<"$chosen"
+    fi
+    ;;
+
+  thread)
+    (($# == 1 || $# == 3)) || usage_error "$USAGE"
+    title=$1 from=''
+    if (($# == 3)); then
+      [[ $2 == --from && $3 =~ $ID_RE ]] || usage_error "$USAGE"
+      from=$3
+    fi
+    [[ $title =~ [^[:space:]] && $title != *$'\n'* ]] || usage_error "$USAGE"
+    [[ ${AGENT_TEAM_ROLE:-} == assistant ]] ||
+      die "thread is the assistant's alone: it opens the assistant's topic threads under #assistant"
+    lease_check "opens no thread: the assistant on the holder does"
+    [[ -n $ASSISTANT_CHANNEL ]] ||
+      die "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so no thread can open under #assistant"
+    if [[ -n $from ]]; then
+      path=channels/$ASSISTANT_CHANNEL/messages/$from/threads
+      body=$(jq -cn --arg name "$title" '{name: $name[0:100], auto_archive_duration: 10080}')
+    else
+      path=channels/$ASSISTANT_CHANNEL/threads
+      body=$(jq -cn --arg name "$title" '{name: $name[0:100], type: 11, auto_archive_duration: 10080}')
+    fi
+    reply=$(discord_api "$path" -X POST -H "Content-Type: application/json" -d "$body" 2>"$scratch/error") ||
+      die "Discord opened no thread under #assistant: $(grep -m 1 . "$scratch/error" || echo "no reason given")"
+    thread=$(jq -r 'select(type == "object") | .id // empty | tostring' <<<"$reply" 2>/dev/null) || thread=''
+    [[ $thread =~ $ID_RE ]] || die "Discord opened no thread under #assistant: its answer names no thread id"
+    assistant_thread_keep "$thread"
+    echo "$thread"
+    ;;
+
+  *) usage_error "$USAGE" ;;
+esac
