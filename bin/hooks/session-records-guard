@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# PreToolUse hook on every worker role's Read, Grep and Glob (settings/worker.json): among the
+# session records under ~/.claude/projects, a session reaches only its own. Exit 2 blocks the
+# call and shows stderr to the agent; exit 0 passes it.
+#
+# Usage: session-records-guard   (the hook's input on stdin)
+#
+# The guarded root is the projects directory of Claude Code's config directory
+# (CLAUDE_CONFIG_DIR, else ~/.claude), which holds each session's transcript,
+# <project>/<session id>.jsonl, and its session directory, <project>/<session id>/, with its
+# saved tool results and its subagents' transcripts. The session's own id is the input's
+# session_id when it has a UUID's shape; with any other value no path under the root is its own.
+#
+# The paths it judges, each made absolute against the input's cwd, a leading ~ or ~/ read as the
+# home directory, then resolved with its symlinks and its .. (a missing path allowed):
+#   Read  its file_path
+#   Grep  its path, or the cwd with none
+#   Glob  its path, or the cwd with none; and, when its pattern starts with / or ~, the pattern's
+#         literal start too: the text before its first * ? [ or {, cut back to its last /
+# Any other tool passes unread.
+#
+# A path that is not the root, under it or above it passes. A path under the root passes only as
+# the session's own transcript or own session directory, or something under that directory; any
+# other, a project directory itself included, is refused as another session's. The root or a
+# directory above it is refused for Grep and Glob, whose search would walk every session's
+# records, and passes for Read, which fails on a directory by itself.
+#
+# It reads nothing of the team home, so it decides on a machine that names none. When it cannot
+# decide it refuses, saying so: input that is not a JSON object with a tool_name string, a Read
+# with no file_path string, a path or pattern that is no string, an argument on its command line,
+# and any command of its own that fails, which ends as an exit 2 naming the hook and the exit
+# code (team_guard in bin/lib/team.sh).
+set -euo pipefail
+# A guard decides or refuses (bin/lib/team.sh), and reads nothing of the team home, so it decides
+# on a machine that names none.
+# shellcheck disable=SC2034 # read by bin/lib/team.sh
+team_guard=session-records-guard team_home_report=1
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
+
+(($# == 0)) || usage_error "usage: session-records-guard   (the hook's input on stdin)"
+
+block() {
+  echo "Blocked by session-records-guard: $1" >&2
+  exit 2
+}
+cannot_read() {
+  block "its input is not a hook call it can read, and a guard that cannot decide refuses."
+}
+
+# One reading of the input: the tool, the session id and the cwd, each empty unless a string, then
+# the three tool_input fields, each as s<text> for a string, n for none and x for any other type.
+input=$(cat)
+mapfile -d '' -t fields < <(jq --raw-output0 '
+  def field($name): (if type == "object" then .[$name] else null end)
+    | if type == "string" then "s" + . elif . == null then "n" else "x" end;
+  if type == "object" and (.tool_name | type) == "string" then
+    .tool_name, (.session_id | strings) // "", (.cwd | strings) // "",
+    (.tool_input | field("file_path"), field("path"), field("pattern"))
+  else empty end' <<<"$input" 2>/dev/null) || true
+((${#fields[@]} == 6)) || cannot_read
+tool=${fields[0]} session=${fields[1]} cwd=${fields[2]:-$PWD}
+file_path=${fields[3]} path=${fields[4]} pattern=${fields[5]}
+
+case $tool in
+  Read | Grep | Glob) ;;
+  *) exit 0 ;;
+esac
+# A UUID's shape, 8-4-4-4-12 lowercase hex, each digit written out so no locale widens a range.
+[[ ${session//[0123456789abcdef]/h} == hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhhhh ]] || session=''
+
+root=$(realpath -m -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects")
+cwd=$(realpath -m -- "$cwd")
+
+# judge <path> [<shown>]: pass, or refuse the call for the path, naming it as the call gave it
+# (<shown>, a Glob's pattern, when the path is only its literal start).
+judge() {
+  local real=$1 given=${2:-$1} rest own
+  case $real in
+    \~) real=$HOME ;;
+    \~/*) real=$HOME/${real#\~/} ;;
+  esac
+  [[ $real == /* ]] || real=$cwd/$real
+  real=$(realpath -m -- "$real")
+  if [[ $real == "$root" || $real == / || $root == "$real"/* ]]; then
+    [[ $tool == Read ]] ||
+      block "$tool rooted at $given would search every session's records under ~/.claude/projects; give it a narrower path."
+    return 0
+  fi
+  [[ $real == "$root"/* ]] || return 0
+  # Below the root: <project>/<own>, where <own> is the session's transcript or its directory.
+  rest=${real#"$root"/}
+  if [[ -n $session && $rest == */* ]]; then
+    own=${rest#*/} own=${own%%/*}
+    [[ $own != "$session" && $own != "$session.jsonl" ]] || return 0
+  fi
+  block "$tool of $given: under ~/.claude/projects a session reads only its own records, its transcript and what lies under its own session directory, and this is another session's."
+}
+
+case $tool in
+  Read)
+    [[ $file_path == s?* ]] || cannot_read
+    judge "${file_path#s}"
+    ;;
+  Grep | Glob)
+    [[ $path != x && $pattern != x ]] || cannot_read
+    path=${path#[sn]} pattern=${pattern#[sn]}
+    judge "${path:-$cwd}"
+    if [[ $tool == Glob && ($pattern == /* || $pattern == \~*) ]]; then
+      # The pattern's literal start: all of it when it has no wildcard, else up to its last /
+      # before the first one.
+      literal=${pattern%%[*?\[{]*}
+      [[ $literal == "$pattern" ]] || literal=${literal%/*}
+      judge "${literal:-/}" "$pattern"
+    fi
+    ;;
+esac
+exit 0

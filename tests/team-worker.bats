@@ -801,7 +801,7 @@ TOML
     "**Trusted repo**: a worker's working directory is a linked git worktree of one of those repositories, on its task's branch, with origin at that repository on GitHub: github.com/owner/proj"
 }
 
-@test "every role's settings run the fence and command guard hooks on Bash; the planner's and reviewer's add the edit hook" {
+@test "every role's settings run the fence and command guard hooks on Bash and the session records guard on Read, Grep and Glob; the planner's and reviewer's add the edit hook" {
   open_task T7
   local role settings
   for role in planner builder reviewer; do
@@ -810,16 +810,22 @@ TOML
     assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$settings")" \
       "$REPO_ROOT/bin/hooks/lease-fence
 $REPO_ROOT/bin/hooks/command-guard"
+    assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Read|Grep|Glob") | .hooks[].command' "$settings")" \
+      "$REPO_ROOT/bin/hooks/session-records-guard"
     if [[ $role == builder ]]; then
-      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 1
+      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 2
     else
       assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit|NotebookEdit|Bash") | .hooks[].command' "$settings")" \
         "$REPO_ROOT/bin/hooks/scratch-only-edits"
-      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 2
+      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 3
     fi
     assert_equal "$(jq -r '.permissions.deny | index("Bash(gh pr merge*)") != null' "$settings")" true
+    # No role reads the file checkpoints or Claude Code's cache, on Linux or macOS.
+    assert_equal "$(jq -c '.permissions.deny | map(select(test("file-history|claude-cli-nodejs")))' "$settings")" \
+      '["Read(~/.claude/file-history/**)","Read(~/.cache/claude-cli-nodejs/**)","Read(~/Library/Caches/claude-cli-nodejs/**)"]'
   done
-  [[ -x $REPO_ROOT/bin/hooks/scratch-only-edits && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard ]]
+  [[ -x $REPO_ROOT/bin/hooks/scratch-only-edits && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard &&
+    -x $REPO_ROOT/bin/hooks/session-records-guard ]]
 }
 
 @test "every role's generated settings keep onFailure block and the timeout on each PreToolUse hook" {
@@ -834,7 +840,8 @@ $REPO_ROOT/bin/hooks/command-guard"
     fi
     settings=$(generated settings "$role")
     expected="lease-fence block 60
-command-guard block 10"
+command-guard block 10
+session-records-guard block 10"
     case $role in
       planner | reviewer) expected+=$'\nscratch-only-edits block 30' ;;
       ops) expected+=$'\nscratch-only-edits block 30\nops-log block 30' ;;
@@ -1899,9 +1906,11 @@ assert_prod_write_gated() {
   # do the built-in easel plugin and its chart tool.
   assert_equal "$(jq -c .enabledPlugins "$s")" \
     '{"discord@claude-plugins-official":false,"mongodb-atlas@claude-plugins-official":false,"cc-plugin-plugin-authoring@builtin":false,"cc-plugin-easel@builtin":false}'
-  # The shared hooks come first (lease-fence on Bash, a tool ops lacks), then the role's own.
-  assert_equal "$(jq -r '.hooks.PreToolUse[] | "\(.matcher) \(.hooks[0].command)"' "$s" | sed -n 1,2p)" \
+  # The shared hooks come first (lease-fence on Bash, a tool ops lacks, and the session records
+  # guard on its reads), then the role's own.
+  assert_equal "$(jq -r '.hooks.PreToolUse[] | "\(.matcher) \(.hooks[0].command)"' "$s" | sed -n 1,3p)" \
     "Bash $REPO_ROOT/bin/hooks/lease-fence
+Read|Grep|Glob $REPO_ROOT/bin/hooks/session-records-guard
 Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
   # The ops log goes to the team home's task directory, which is not this checkout's in a test.
   local event

@@ -450,6 +450,9 @@
       "Bash(*.claude/channels/*access.json*)",
       "Bash(cd *.claude/channels*)",
       "Bash(pushd *.claude/channels*)",
+      "Read(~/.claude/file-history/**)",
+      "Read(~/.cache/claude-cli-nodejs/**)",
+      "Read(~/Library/Caches/claude-cli-nodejs/**)",
       "Read(~/.config/agent-team/review-app*)",
       "Edit(~/.config/agent-team/review-app*)",
       "Bash(*agent-team/review-app*)",
@@ -522,6 +525,12 @@
         "hooks": [
           { "type": "command", "command": "@TEAM_CODE@/bin/hooks/lease-fence", "onFailure": "block", "timeout": 60 },
           { "type": "command", "command": "@TEAM_CODE@/bin/hooks/command-guard", "onFailure": "block", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/session-records-guard", "onFailure": "block", "timeout": 10 }
         ]
       }
     ],

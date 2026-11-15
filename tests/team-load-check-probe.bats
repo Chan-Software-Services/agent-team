@@ -158,9 +158,17 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   assert_contains "$output" "PASS builder ops-launch: hook refused it"
   assert_contains "$output" "PASS builder sessions: rule refused it"
   assert_contains "$output" "PASS builder upload: hook refused it"
+  # Each role is refused the session records: the file checkpoints and the MCP logs by a deny
+  # rule, and another session's transcript by the session records guard's own block.
+  local role
+  for role in planner builder reviewer; do
+    assert_contains "$output" "PASS $role file-history: rule refused it"
+    assert_contains "$output" "PASS $role mcp-logs: rule refused it"
+    assert_contains "$output" "PASS $role transcripts: hook refused it"
+    assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: Read of $HOME/.claude/projects/load-check-probe-absent/load-check-probe-absent.jsonl: under ~/.claude/projects a session reads only its own records"
+  done
   # Only the planner and the reviewer write outside .scratch/ by their hook.
   [[ $output != *"builder write-outside"* && $output != *"builder redirect-outside"* ]]
-  local role
   for role in planner builder reviewer; do
     assert_contains "$output" "load check: $role's effective autoMode holds the"
     assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch-$role")" "$(printf '%s\n' "$wt" true)"
