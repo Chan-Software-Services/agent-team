@@ -2253,7 +2253,7 @@ $nothing
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   open_task T31 agent-team feature ci/T31-branch-ci agent-team/.claude/worktrees/1 "CI on the branch"
   run_bin -0 team-brief T31 builder-ticket --set ticket=02 --name build-02
-  assert_equal "$(grep -A2 -F '3. Before your DONE: ' "$output")" '3. Before your DONE: Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch'"'"'s head: `tests/run shellcheck`, and each test file you wrote or changed, alone: `tests/vendor/bats-core/bin/bats tests/<name>.bats` (add `-f '"'"'<part of its name>'"'"'` for one test) or `node --test tests/toolkits/<name>.test.mjs`
+  assert_equal "$(grep -A2 -F '3. Before your DONE: ' "$output")" '3. Before your DONE: Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch'"'"'s head: `tests/run shellcheck --changed`, and each test file you wrote or changed, alone: `tests/vendor/bats-core/bin/bats tests/<name>.bats` (add `-f '"'"'<part of its name>'"'"'` for one test) or `node --test tests/toolkits/<name>.test.mjs`
 '"$(ci_lines agent-team ci/T31-branch-ci)"
 }
 
