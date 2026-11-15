@@ -1241,6 +1241,27 @@ def scope_reasons($scope):
   | select(any($scope[]; . as $entry | if endswith("/") then $p | startswith($entry) else $p == $entry end) | not)
   | "\(name) is outside the approved plan's scope: \($scope | join(", "))";
 
+# The project the review at index $i of the task's events was made in, or null: the project of the
+# launch of the session of the reviewer's done logged after it with no other review between, as
+# team-log --from-message logs a verdict (its review, then its reviewer's done). Null for a review
+# logged by hand, with no such done, or whose reviewer's launch names no project.
+def review_project($i):
+  . as $events
+  | (first(range($i + 1; length) | select($events[.] | .event == "review" or (.event == "done" and .role == "reviewer")))
+     // null) as $d
+  | if $d == null or $events[$d].event != "done" then null
+    else $events[$d].session as $session
+      | ([$events[:$d][] | select(.event == "launch" and .session == $session)] | last | .project?) // null end;
+
+# The indexes of the task's reviews made in $project, in ledger order: every review when $project
+# is "" or null, else each whose review_project is $project or null, so a review whose project is
+# not known counts for every project, and a task with one project reads every review, as it did
+# before reviews ran beside each other in two repositories.
+def project_reviews($project):
+  . as $events
+  | [range(length) | select($events[.].event == "review")
+      | select(($project // "") == "" or (. as $i | $events | review_project($i) | . == null or . == $project))];
+
 # The head whose review stands for $head: $head itself when a review of it is logged, or, when a
 # caught-up event of the task names $head (by the shorter prefix) as the merge team-catch-up made,
 # the head it was made from, followed back the same way, the latest such event first, until a head

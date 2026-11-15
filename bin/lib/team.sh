@@ -2462,25 +2462,35 @@ ticket_graph_dir() {
 # A task's state, as team-state --json prints it but compact, from its events (one JSON array in
 # ledger order), the live session list, its live workers' transcripts and, when it has a pr event,
 # GitHub. GitHub failures are carried in the pr part; a broken registry or an unreadable session
-# list fails with the reason on stderr: task_state_json '<events>'
+# list fails with the reason on stderr. With a project, the pr part is of the latest pr event in
+# that project (by the event's project, else by its URL's repo, each repo under its new owner),
+# null when it has none, in place of the task's latest pr event:
+# task_state_json '<events>' [<project>]
 task_state_json() (
-  local events=$1 state pr dir session_id context contexts=() out authority
+  local events=$1 pr_project=${2:-} pr_repo='' state pr dir session_id context contexts=() out authority
   local task tickets graph_dir html png fresh page_digest
   live_sessions
   while IFS= read -r session_id; do
     context=$(session_context "$session_id")
     [[ -z $context ]] || contexts+=("$session_id" "$context")
   done < <(ledger_jq 'live_session_ids($sessions)[]' -r --argjson sessions "$LIVE_SESSIONS" <<<"$events")
+  if [[ -n $pr_project ]]; then
+    pr_repo=$(team_project "$pr_project" repo) || exit 1
+  fi
   # In one jq run, a line each: the state, with each live session's context; the task; and its
-  # latest pr event (null when none).
+  # latest pr event, in the project when one is given (null when none).
   out=$(ledger_jq '. as $events
     | ($ARGS.positional | [range(0; length; 2) as $i | {key: .[$i], value: (.[$i + 1] | tonumber)}] | from_entries) as $contexts
     | ($sessions | map(if type == "object" then
         .context = ($contexts[.sessionId // "" | tostring] // null) else . end)) as $sessions
     | task_state($sessions; $home)
     | tojson, ($events[0].task | tostring),
-      ($events | map(select(.event == "pr")) | last | tojson)' \
-    -r --argjson sessions "$LIVE_SESSIONS" --args "${contexts[@]}" <<<"$events") || exit 1
+      ($events | map(select(.event == "pr" and ($project == ""
+          or (if .project != null then .project == $project
+              else (.url | strings | canonical_url | ascii_downcase
+                | startswith("https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/")) end)))) | last | tojson)' \
+    -r --argjson sessions "$LIVE_SESSIONS" --arg project "$pr_project" --arg repo "$pr_repo" \
+    --args "${contexts[@]}" <<<"$events") || exit 1
   { IFS= read -r state && IFS= read -r task && IFS= read -r pr; } <<<"$out"
   # The ticket total: the ticket files team-tickets reads, null when it refuses them. The graph:
   # the page team-tickets --graph wrote in the task directory of the first ticket, fresh while it
