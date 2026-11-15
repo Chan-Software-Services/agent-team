@@ -9,11 +9,11 @@
 # (CLAUDE_CONFIG_DIR, else ~/.claude), which holds each session's transcript,
 # <project>/<session id>.jsonl, and its session directory, <project>/<session id>/, with its
 # saved tool results and its subagents' transcripts. The second is Claude Code's temporary
-# directory, claude-<uid> in CLAUDE_CODE_TMPDIR, else in TMPDIR, else in /tmp, which holds each
-# session's directory, <project>/<session id>/, with the output of its background Bash calls;
-# that place is read from Claude Code 2.1.325 and confirmed on Linux only. The session's own id
-# is the input's session_id when it has a UUID's shape; with any other value no path under a
-# root is its own.
+# directory, claude-<uid> in CLAUDE_CODE_TMPDIR, else in the OS temp dir as Node's os.tmpdir()
+# finds it (TMPDIR, else TMP, else TEMP, else /tmp), which holds each session's directory,
+# <project>/<session id>/, with the output of its background Bash calls; that place is read from
+# Claude Code 2.1.325 and confirmed on Linux only. The session's own id is the input's
+# session_id when it has a UUID's shape; with any other value no path under a root is its own.
 #
 # The paths it judges, each made absolute against the input's cwd, a leading ~ or ~/ read as the
 # home directory, then resolved with its symlinks and its .. (a missing path allowed):
@@ -84,7 +84,7 @@ hex='[0123456789abcdef]'
 # the temporary directory by its path.
 cwd=$(realpath -m -- "$cwd")
 roots=("$(realpath -m -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects")"
-  "$(realpath -m -- "${CLAUDE_CODE_TMPDIR:-${TMPDIR:-/tmp}}/claude-$(id -u)")")
+  "$(realpath -m -- "${CLAUDE_CODE_TMPDIR:-${TMPDIR:-${TMP:-${TEMP:-/tmp}}}}/claude-$(id -u)")")
 # shellcheck disable=SC2088 # the name a refusal shows, never a path
 names=("~/.claude/projects" "${roots[1]}")
 owns=("its own records, its transcript and what lies under its own session directory"

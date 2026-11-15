@@ -12,7 +12,7 @@ OTHER=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
 
 setup() {
   sandbox
-  unset CLAUDE_CONFIG_DIR SESSION_RECORDS_FOLD_CASE
+  unset CLAUDE_CONFIG_DIR SESSION_RECORDS_FOLD_CASE TMP TEMP
   # Claude Code's temporary directory, pinned inside the sandbox: its per-user root is $temp.
   export CLAUDE_CODE_TMPDIR=$HOME/tmp
   temp=$CLAUDE_CODE_TMPDIR/claude-$(id -u)
@@ -67,10 +67,14 @@ wide() {
 }
 
 # others_temp <tool> <path>: the last call was refused as a reach into another session's
-# directory of Claude Code's temporary directory.
+# directory of Claude Code's temporary directory; others_in <root> <tool> <path>, of the
+# temporary directory at <root>.
 others_temp() {
+  others_in "$temp" "$@"
+}
+others_in() {
   assert_equal "$output" ""
-  assert_equal "$stderr" "Blocked by session-records-guard: $1 of $2: under $temp a session reads only what lies under its own session directory, and this is another session's."
+  assert_equal "$stderr" "Blocked by session-records-guard: $2 of $3: under $1 a session reads only what lies under its own session directory, and this is another session's."
 }
 
 # unreadable: the last call was refused as input the hook cannot read.
@@ -349,7 +353,7 @@ unreadable() {
   session=team-doctor read_file -2 "$temp/-home-wt/$OWN/tasks/b1.output"
 }
 
-@test "the temporary directory is CLAUDE_CODE_TMPDIR's, else TMPDIR's, else /tmp's claude-<uid>" {
+@test "the temporary directory is CLAUDE_CODE_TMPDIR's, else TMPDIR's, TMP's, TEMP's, else /tmp's claude-<uid>" {
   local uid
   uid=$(id -u)
   unset CLAUDE_CODE_TMPDIR
@@ -359,7 +363,19 @@ unreadable() {
   allowed
   read_file -0 "$temp/-home-wt/$OTHER/tasks/b1.output"
   allowed
+  # With no TMPDIR the OS temp dir is TMP's, then TEMP's, as Node's os.tmpdir() reads them.
   unset TMPDIR
+  export TEMP=$HOME/temp-var
+  read_file -2 "$HOME/temp-var/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  others_in "$HOME/temp-var/claude-$uid" Read "$HOME/temp-var/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  read_file -0 "$HOME/temp-var/claude-$uid/-home-wt/$OWN/tasks/b1.output"
+  allowed
+  export TMP=$HOME/tmp-var
+  read_file -2 "$HOME/tmp-var/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  others_in "$HOME/tmp-var/claude-$uid" Read "$HOME/tmp-var/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  read_file -0 "$HOME/temp-var/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
+  allowed
+  unset TMP TEMP
   read_file -2 "/tmp/claude-$uid/-home-wt/$OTHER/tasks/b1.output"
   read_file -0 "/tmp/claude-$uid/-home-wt/$OWN/tasks/b1.output"
   allowed
