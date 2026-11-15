@@ -1644,6 +1644,19 @@ $second"
   assert_equal "$stderr" "team-capacity: another admission still holds ~/.local/state/agent-team/capacity.lock after 2 minutes"
 }
 
+@test "admit, with or without --dry-run, exits 75 naming capacity.lock when it stays held 2 minutes, printing no id and keeping no admission" {
+  # The wait for capacity.lock running out, as flock -w 120 ends after 2 minutes.
+  fails_on_call flock 120
+  run_bin -75 --separate-stderr team-capacity admit --kind session:builder
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-capacity: another admission still holds ~/.local/state/agent-team/capacity.lock after 2 minutes"
+  [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
+  run_bin -75 --separate-stderr team-capacity admit --kind session:builder --dry-run
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-capacity: another admission still holds ~/.local/state/agent-team/capacity.lock after 2 minutes"
+  [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
+}
+
 @test "a session admission pairs with the launch that names its id, so a relaunch's newer admission is its session's and the older one bare (E-admission-double)" {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   mkdir -p "$HOME/.config/agent-team"

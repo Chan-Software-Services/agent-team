@@ -211,7 +211,8 @@
 # admit    Admits one item of work of <kind>, session:<role> (team-worker), stack:<project>
 #          (team-stack up, which names the stack with --name), heavy:<kind> (team-heavy run) or
 #          gate, for the task --task names, when it fits the level's memory budget beside what is
-#          reserved: under an exclusive flock on ~/.local/state/agent-team/capacity.lock, it takes
+#          reserved: under an exclusive flock on ~/.local/state/agent-team/capacity.lock (a lock
+#          still held after 2 minutes is exit 75, naming it, with no id and no admission), it takes
 #          a reading first when the newest is over 10 minutes old, as status does, then reads what
 #          is reserved as status --json says it (for a heavy run, without the running heavy run,
 #          which is the asker itself, holding the lock), leaving out each session --freed names
@@ -235,7 +236,8 @@
 #          same way, under the same lock and reading, but keeps no admission, makes no id and
 #          writes nothing to admitted.json: with room it exits 0 printing one line, "room for
 #          session:builder at full (90%): a builder needs 0.5 GiB, 6.2 GiB of 20.0 GiB reserved";
-#          with none it exits 75 with admit's reason, and with no budget it exits 1, as admit does
+#          with none, or with the lock still held, it exits 75 with admit's reason, and with no
+#          budget it exits 1, as admit does
 #          (team-open asks it whether a new task fits).
 # release  Ends the admission <admission id> (admit's first line) at once: under the exclusive
 #          flock on capacity.lock (a lock still held after 2 minutes is exit 75, naming it), it
@@ -1121,6 +1123,14 @@ costs() {
   fi
 }
 
+# Take capacity.lock, open on descriptor <fd>, for admit and release alike: a lock another admission
+# still holds after 2 minutes is "try again", exit 75 naming it, never a failure.
+take_admit_lock() {
+  flock -w 120 -x "$1" && return 0
+  echo "${0##*/}: another admission still holds $(tilde "$ADMIT_LOCK") after 2 minutes" >&2
+  exit 75
+}
+
 # Admit one item of <kind>, as the header's admit says. One jq program reads the level, the lock
 # and the admissions and whether the newest reading is under 10 minutes old, a reading taken first
 # when it is not, as fresh_reading does; another makes the estimate, the status and the admission.
@@ -1134,7 +1144,7 @@ admit() {
     LIVE_SESSIONS=$(session_list) || LIVE_SESSIONS=''
   fi
   exec {fd}>>"$ADMIT_LOCK"
-  flock -w 120 -x "$fd" || die "another admission still holds $(tilde "$ADMIT_LOCK") after 2 minutes"
+  take_admit_lock "$fd"
   holding_admit_lock=1
   if ! read_level_and_admitted 600; then
     fresh_reading {fd}>&-
@@ -1200,10 +1210,7 @@ release() {
   local fd entry
   mkdir -p "$STATE"
   exec {fd}>>"$ADMIT_LOCK"
-  if ! flock -w 120 -x "$fd"; then
-    echo "${0##*/}: another admission still holds $(tilde "$ADMIT_LOCK") after 2 minutes" >&2
-    exit 75
-  fi
+  take_admit_lock "$fd"
   entry=$(jq -c --arg id "$release_id" 'select(type == "array") | first(.[] | objects | select(.id == $id)) // empty' \
     "$ADMITTED" 2>/dev/null) || entry=''
   if [[ -z $entry ]]; then
