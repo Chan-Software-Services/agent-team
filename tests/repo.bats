@@ -1809,14 +1809,23 @@ team-review-status https://github.com/me/shop/pull/5 a1b2c3d4e5f60718293a4b5c6d7
 COMMANDS
 }
 
-@test "GitHub's CI and zizmor's online run run on every pull request to dev and main and by hand, and no workflow runs on a push or for a fork's target" {
-  local workflow
-  # The top-level keys under on:, and the branches its pull_request names.
+@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
+  local workflow ci=$REPO_ROOT/.github/workflows/ci.yml
+  # The top-level keys under on:, the branches its pull_request names, and merge_group's types.
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$ci")" \
+    $'pull_request\nmerge_group\nworkflow_dispatch'
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    types: //p' "$ci")" "[checks_requested]"
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/zizmor-online.yml")" \
+    $'pull_request\nworkflow_dispatch'
   for workflow in ci.yml zizmor-online.yml; do
-    assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/$workflow")" \
-      $'pull_request\nworkflow_dispatch'
     assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    branches: //p' "$REPO_ROOT/.github/workflows/$workflow")" "[dev, main]"
   done
+  # The data job reads a trial commit's range from the merge group, beside the pull request's.
+  run -0 sed -n '/^  data:$/,/^  [a-z]/p' "$ci"
+  assert_contains "$output" '${{ github.event.merge_group.base_sha }}'
+  assert_contains "$output" '${{ github.event.merge_group.head_sha }}'
+  assert_contains "$output" '${{ github.event.pull_request.base.sha }}'
+  assert_contains "$output" '${{ github.event.pull_request.head.sha }}'
   for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
     if grep -nE '^\s*(push|pull_request_target|schedule):' "$workflow"; then
       echo "$workflow runs on a push, a schedule or with a fork's target's secrets" >&2

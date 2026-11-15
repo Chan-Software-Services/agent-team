@@ -1,9 +1,10 @@
-# The code's checks on GitHub: on every pull request to dev (and to main, a release's promotion)
-# and by hand. They are the gate of a PR to dev: its protection and projects.toml's required_checks
-# for agent-team require each job by its id (shellcheck, test, toolkits, data, zizmor), so renaming
-# a job changes a required check, and team-merge merges only with every one passed on the PR's
-# head; test passes only when every shard of test-shards did, so a shard job is never a required
-# check itself.
+# The code's checks on GitHub: on every pull request to dev (and to main, a release's promotion),
+# on each trial commit the merge queue builds (merge_group), and by hand. They are the gate of a PR
+# to dev: its protection and projects.toml's required_checks for agent-team require each job by its
+# id (shellcheck, test, toolkits, data, zizmor), so renaming a job changes a required check, and
+# team-merge merges only with every one passed on the PR's head, as the queue lands a trial commit
+# only with every one passed on it; test passes only when every shard of test-shards did, so a
+# shard job is never a required check itself.
 # Every job runs on Linux: CI runs no macOS job, so no PR waits on GitHub's macOS runners. The
 # toolkits job runs the toolkits' servers over stdio against a throwaway MongoDB in Docker. The data
 # job refuses what the PR adds that the public repository never takes: a secret (gitleaks, over its
@@ -15,6 +16,8 @@ name: CI
 on:
   pull_request:
     branches: [dev, main]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -105,6 +108,7 @@ jobs:
 
   # What the PR adds: no secret in its commits, no real email address, no image and no
   # node_modules/ path in its files.
+  # On a merge queue's trial commit, what it adds to the commit the queue built it on.
   # By hand, what the ref adds since origin/dev.
   data:
     runs-on: ubuntu-24.04
@@ -128,9 +132,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
-          echo "PR_BASE=${BASE_SHA:-origin/dev}" >>"$GITHUB_ENV"
-          echo "PR_HEAD=${HEAD_SHA:-HEAD}" >>"$GITHUB_ENV"
+          echo "PR_BASE=${BASE_SHA:-${QUEUE_BASE_SHA:-origin/dev}}" >>"$GITHUB_ENV"
+          echo "PR_HEAD=${HEAD_SHA:-${QUEUE_HEAD_SHA:-HEAD}}" >>"$GITHUB_ENV"
       - name: No secret in the commits
         run: gitleaks git --no-banner --redact=100 --verbose --log-opts="$PR_BASE..$PR_HEAD" .
       - name: No real email address, image or package tree in what the PR adds
