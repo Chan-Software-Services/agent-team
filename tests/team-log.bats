@@ -159,6 +159,7 @@ ticket-done team-log ticket commits
 question team-log,team-ask role
 asked team-log,team-ask id text
 answered team-log,team-answer id answer
+handoff team-assistant id kind from state
 ran team-run-approved id exit
 plan-approved team-log by
 plan-approval-withdrawn team-log discord_message
@@ -192,6 +193,7 @@ injection team-log role source text
 rehome-failed team-resume project branch machine reason
 rehomed team-open project branch worktree machine
 walk team-ui state
+walk-note team-thread,team-ui
 image-posted team-post thread discord_thread discord_message file
 image-retracted team-post thread discord_thread discord_message
 TABLE
@@ -201,7 +203,7 @@ TABLE
   assert_equal "$(jq -c '.kinds.launch.optional' "$CONTRACT")" '{"project":"string","branch":"string","machine":"string","model":"string","request":"string","discord_message":"id","brief":"string","template":"string","admission":"string","past_ask":"array","ticket":"string"}'
   assert_equal "$(jq -c '.kinds.review.required.verdict' "$CONTRACT")" '["pass","findings"]'
   assert_equal "$(jq -c '.kinds.answered.optional' "$CONTRACT")" '{"discord_message":"id","item":"number"}'
-  assert_equal "$(jq -c '.kinds.asked.optional' "$CONTRACT")" '{"discord_message":"id","script":"string","sha256":"string"}'
+  assert_equal "$(jq -c '.kinds.asked.optional' "$CONTRACT")" '{"discord_message":"id","script":"string","sha256":"string","tickets":"array"}'
   assert_equal "$(jq -c '.kinds.ran.required' "$CONTRACT")" '{"id":"string","exit":"number"}'
   assert_equal "$(jq -c '.kinds.done.optional' "$CONTRACT")" '{"report":"string","report_chars":"number","relay":"id"}'
   assert_equal "$(jq -c '.kinds.question | [.optional, .one_of]' "$CONTRACT")" '[{"text":"string","chars":"number","discord_message":"id"},[["text","chars"]]]'
@@ -265,11 +267,12 @@ TABLE
   grep -Eq '^  merged +team-merge +pr \(number\), merge, head, by; optional .*approval \(head\|default\|plan\|standing\), phases_left \(list of whole numbers\), check_run \(number\); pushed at once  \(approval: .*\)$' <<<"$output"
   grep -Eq '^  gate-run +team-log +run, head, outcome \(pushed\|red\|aborted\|stopped-green\); optional cause \(review\|notes\|gate-finding\|load\|tooling\|base-merge\|other\), minutes \(object\), approved \(list\)  \(.*approved the ids of the parks the builder approved itself.*\)$' <<<"$output"
   grep -Eq '^  closed +team-close +archive \(list\), returned \(list\), kept \(list\); pushed at once  \(.*legacy.*\)$' <<<"$output"
-  grep -Eq '^  walk +team-ui +state \(on\|off\)  \(a manual QC walk of the task.*team-ui --walk.*\)$' <<<"$output"
+  grep -Eq '^  walk-note +team-thread, team-ui +-; optional discord_message \(id\)  \(a message of Daniel.s on the walk that is on.*never its words.*\)$' <<<"$output"
+  grep -Eq '^  walk +team-ui +state \(on\|off\); optional thread \(interview\), reseeded \(id\), reseeded_port \(number\)  \(a manual QC walk of the task.*team-ui --walk.*\)$' <<<"$output"
   grep -Eq '^  merge-approved +team-log +url, discord_message \(id\); optional head; pushed at once  \(.*team-log requires head of every new line.*\)$' <<<"$output"
   grep -Eq '^  launch +team-worker +role, session, worktree, toolkits \(list\); optional project, branch, machine, model, request, discord_message \(id\), brief, template, admission, past_ask \(list\), ticket  \(request is the link to Daniel.s Discord message, on an ops launch, and discord_message its id, a message no other ops launch ran on \(team-worker refuses one that did\), which only an ops launch carries; model is the --model the session launched on, .*; admission is the id of the capacity admission the launch was made on \(team-capacity admit.s first line\), absent on T0, ops and a launch from before 2026-11-11; past_ask is the ids of the open asks the launch went past \(team-worker --past-ask\), which then park nothing, absent when it names none; ticket is the two-digit number of the ticket whose ticket worktree a builder launched in .*\)$' <<<"$output"
   grep -Eq '^  answered +team-log, team-answer +id, answer; optional discord_message \(id\), item \(number\); pushed at once  \(Daniel.s answer to the asked of its id; .*never logged twice for one ask; item: .*team-answer --item alone\)$' <<<"$output"
-  grep -Eq '^  asked +team-log, team-ask +id, text; optional discord_message \(id\), script, sha256  \(a decision put to Daniel, which parks the task by itself until it is answered .*script and sha256: .*together.*team-run-approved.*\)$' <<<"$output"
+  grep -Eq '^  asked +team-log, team-ask +id, text; optional discord_message \(id\), script, sha256, tickets \(list\)  \(a decision put to Daniel, which parks the task by itself until it is answered .*script and sha256: .*together.*team-run-approved.*tickets: .*team-ask --tickets.*\)$' <<<"$output"
   grep -Eq '^  ran +team-run-approved +id, exit \(number\); pushed at once  \(.*\)$' <<<"$output"
   grep -Eq '^  waiting +team-log +on, reason; optional cause \(ask\|daniel\|outside\), ask, since  \(.*cause: why, .*daniel when on is Daniel.*\)$' <<<"$output"
   grep -Eq '^  resumed +team-log, team-answer +-; optional id, all \(boolean\), discord_message \(id\), brief +\(ends standing parks, by bin/lib/lifecycle.json.s causes: id, .*all true, .*brief alone, .*ends none; .*\)$' <<<"$output"
@@ -325,6 +328,16 @@ Nothing waits on you."
   run_bin -0 team-log T14 resumed all=true
   assert_equal "$(logged_after 2 | wc -l)" "2"
   assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -c 'del(.ts)')" '{"task":"T14","event":"resumed","all":true}'
+}
+
+@test "a ledger lock that cannot be opened refuses the event, naming the lock, with nothing appended" {
+  opened_task T14
+  mkdir "$TEAM_HOME/ledger.jsonl.lock"
+  local before
+  before=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+  run_bin -1 --separate-stderr team-log T14 resumed all=true
+  assert_contains "$stderr" "team-log: could not append the event to the ledger under its lock, $TEAM_HOME/ledger.jsonl.lock"
+  assert_equal "$(wc -l <"$TEAM_HOME/ledger.jsonl")" "$before"
 }
 
 @test "values that parse as JSON are stored as JSON, others as strings" {
@@ -1922,6 +1935,37 @@ assert_no_answer_logged() {
     --from-message 'T7 NEED a browser'
 }
 
+@test "--from-message logs a BLOCKED that took its allowed way as the sender's denied, which parks nothing" {
+  open_t7
+  launched T7 builder b0000001
+  # roles/builder.md: `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a kill by name or pattern (pkill), which reaches every task'"'"'s processes and the team'"'"'s own sessions","session":"b0000001"}' \
+    --from-message "T7 BLOCKED command-guard a kill by name or pattern (pkill), which reaches every task's processes and the team's own sessions; took its allowed way"
+  # Blanks around the marker are no part of the why, and a why may hold a semicolon of its own.
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/x; outside","session":"b0000001"}' \
+    --from-message 'T7 BLOCKED command-guard  a recursive delete of /tmp/x; outside  ;  took its allowed way  '
+  stub_reply claude '[]'
+  run_bin -0 team-state T7 --json
+  assert_equal "$(jq -c '.parks' <<<"$output")" '[]'
+  # A plain BLOCKED still parks, the marker anywhere but at the end included.
+  logs_events '{"task":"T7","event":"blocked","reason":"command-guard a kill; took its allowed way, then failed","cause":"worker","role":"builder","session":"b0000001"}' \
+    --from-message 'T7 BLOCKED command-guard a kill; took its allowed way, then failed'
+  run_bin -0 team-state T7 --json
+  assert_equal "$(jq -r '[.parks[] | .kind] | join(" ")' <<<"$output")" blocked
+  # It needs a what and a why before the marker.
+  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way', got 'BLOCKED command-guard; took its allowed way'" \
+    --from-message 'T7 BLOCKED command-guard; took its allowed way'
+  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way', got 'BLOCKED ; took its allowed way'" \
+    --from-message 'T7 BLOCKED ; took its allowed way'
+  # A reviewer launched since: the sender cannot be told, so the denial is refused, never logged without its role.
+  launched T7 reviewer r0000001
+  refuses_message "team-log: the message's sender is not known: T7-builder (b0000001) and T7-reviewer (r0000001) have no report since their launch; name it with --from <session>" \
+    --from-message 'T7 BLOCKED command-guard a kill of PID 9; took its allowed way'
+  logs_events '{"task":"T7","event":"denied","role":"reviewer","what":"command-guard","why":"a kill of PID 9","session":"r0000001"}' \
+    --from-message 'T7 BLOCKED command-guard a kill of PID 9; took its allowed way' --from T7-reviewer
+  run_bin -0 team-log --check
+}
+
 @test "--from-message logs a PAUSED with its why as the reason and its first word's cause, with the sender's role and session" {
   open_t7
   launched T7 builder b0000001
@@ -2044,6 +2088,16 @@ assert_no_answer_logged() {
   # A malformed sha is refused, naming it.
   refuses_message "team-log: DONE 05 takes one or more shas of 7 to 40 hex digits after the ticket, then a line, got 'a1b2c3'" \
     --from-message 'T7 DONE 05 a1b2c3 too short'
+}
+
+@test "a value that starts with -- is logged as text, never read as an option of jq" {
+  open_t7
+  launched T7 builder b0000001 brief-build-02
+  # T288's DONE 02, whose note began with an option's name.
+  logs_events '{"task":"T7","event":"ticket-done","ticket":"02","commits":["a1b2c3d4"],"note":"--json gives each done ticket"}
+{"task":"T7","event":"done","role":"builder","session":"b0000001"}' \
+    --from-message "T7 DONE 02 a1b2c3d4 --json gives each done ticket"
+  logs_events '{"task":"T7","event":"failed","reason":"--"}' failed reason=--
 }
 
 @test "--from-message logs a DONE review-ready as the builder's done with its report" {
@@ -2354,7 +2408,7 @@ ticket_launched() {
   refuses_message "team-log: the message is for T8, not T7" --from-message 'T8 DONE 01 a1b2c3d x'
   refuses_message "team-log: a worker's message starts with its task, T7, then its kind; got 'DONE 01 a1b2c3d x'" \
     --from-message 'DONE 01 a1b2c3d x'
-  local forms="QUESTION <text>, BLOCKED <what> <why>, NEED toolkit <name>, PAUSED <why>, PR <full url> [merged <base> conflicts: <files or none>], DONE <NN> <sha>... <line>, DONE review-ready <sha>, DONE merged <base> <sha> conflicts: <files or none>, DONE pass <PR url or head> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE findings <path> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE gate <key=value>..., DONE <report>, FAILED <why>, INJECTION <where> <what it asked>"
+  local forms="QUESTION <text>, BLOCKED <what> <why>, BLOCKED <what> <why>; took its allowed way, NEED toolkit <name>, PAUSED <why>, PR <full url> [merged <base> conflicts: <files or none>], DONE <NN> <sha>... <line>, DONE review-ready <sha>, DONE merged <base> <sha> conflicts: <files or none>, DONE pass <PR url or head> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE findings <path> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE gate <key=value>..., DONE <report>, FAILED <why>, INJECTION <where> <what it asked>"
   refuses_message "team-log: cannot read 'T7 HELLO there': expected one of $forms" --from-message 'T7 HELLO there'
   refuses_message "team-log: cannot read 'T7 QUESTION': expected one of $forms" --from-message 'T7 QUESTION'
   # Malformed parts of a review, each named.

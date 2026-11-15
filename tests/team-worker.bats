@@ -207,6 +207,7 @@ run_fake() {
   for role in planner builder reviewer ops; do
     run_bin -2 team-worker T7 "$role" "$wt1" --toolkit frontend -- go
     assert_contains "$output" "toolkit 'frontend' is Daniel's own"
+    assert_contains "$output" "D1 of T216's report"
   done
   run_bin -2 team-worker T0 planner "$wt1" --toolkit browser --toolkit frontend -- go
   assert_contains "$output" "toolkit 'frontend' is Daniel's own"
@@ -1391,16 +1392,30 @@ allowed_in() {
   for command in "$bin/team-post T7 --thread interview --file $HOME/w/.scratch/task/q1.md" \
     "$bin/team-post T7 --thread interview --file $HOME/w/.scratch/task/q1.md --attach $HOME/w/.scratch/task/shots/1.png --attach $HOME/w/.scratch/task/shots/2.png" \
     "$bin/team-post T7 --thread interview --retract 1564000000000000001" \
-    "$bin/team-thread wait T7" "$bin/team-thread wait T7 --after 1564000000000000001"; do
+    "$bin/team-thread wait T7" "$bin/team-thread wait T7 --after 1564000000000000001" \
+    "$bin/team-ui T7 --capture" "$bin/team-ui T7 --capture --note-file $HOME/w/.scratch/task/note-1.md"; do
     allowed_in "$settings" "$command" || { echo "planner may not: $command" >&2; return 1; }
   done
   for command in "$bin/team-post T17 --thread interview --file q.md" "$bin/team-post T7 --file q.md" \
     "$bin/team-post T17 --thread interview --retract 1" "$bin/team-post T7 --retract 1" \
     "$bin/team-post T7 --thread task --retract 1" "$bin/team-post T17 --thread interview --file q.md --attach a.png" \
     "$bin/team-post T7 --file q.md --attach a.png" "$bin/team-post --coordinator --file q.md --attach a.png" \
-    "$bin/team-thread wait T17" "$bin/team-thread wait T7; $bin/team-post --coordinator --file q.md"; do
+    "$bin/team-thread wait T17" "$bin/team-thread wait T7; $bin/team-post --coordinator --file q.md" \
+    "$bin/team-ui T17 --capture" "$bin/team-ui T17 --capture --note-file n" "$bin/team-ui T7 --walk start" \
+    "$bin/team-ui T7 --walk stop" "$bin/team-ui T7 --attach a.png" "$bin/team-ui T7 --attach a.png --capture" \
+    "$HOME/agent-team/bin/team-ui T7 --capture"; do
     if allowed_in "$settings" "$command"; then echo "planner may: $command" >&2; return 1; fi
   done
+}
+
+# Daniel's decision: a walk's planner captures through team-ui, and its walk gives it no MCP server.
+@test "a planner launched while its interview walk is on gets no frontend server, and is still refused the toolkit" {
+  open_task T7
+  jq -cn '{ts: "2026-10-25T10:02:00Z", task: "T7", event: "walk", state: "on", thread: "interview"}' >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -2 team-worker T7 planner "$wt1" --toolkit frontend -- go
+  assert_contains "$output" "toolkit 'frontend' is Daniel's own"
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(jq -c '.mcpServers | has("frontend")' "$TEAM_HOME/tasks/T7/mcp.planner.proj.json")" false
 }
 
 # T177's builder was refused gh pr ready on its own draft PR, which no rule allowed.
@@ -1421,6 +1436,33 @@ allowed_in() {
     run_bin -0 team-worker T7 "$role" "$wt1" -- go
     settings=$TEAM_HOME/tasks/T7/settings.$role.proj.json
     for command in "gh pr ready https://github.com/me/shop/pull/5" "gh-axi pr ready 5"; do
+      if allowed_in "$settings" "$command"; then echo "$role may: $command" >&2; return 1; fi
+    done
+  done
+}
+
+# A branch_ci project's builder ends its round with team-ci-run on the head it pushed, and reruns
+# or cancels the run an infrastructure failure's line names; no other role's brief has either.
+@test "a builder may run team-ci-run on its branch and rerun or cancel a CI run, never start a workflow by hand, and no other role may" {
+  open_task T7
+  local role settings command bin=$REPO_ROOT/bin sha=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  local -a ci=("$bin/team-ci-run proj feat/T7-one $sha" "$bin/team-ci-run proj feat/T7-one--03 $sha"
+    "gh run rerun 7001 --repo me/proj" "gh run rerun 7001 --job 9001 --repo me/proj" "gh run cancel 7001 --repo me/proj"
+    "gh-axi run rerun 7001 --repo me/proj" "gh-axi run cancel 7001 --repo me/proj")
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  settings=$TEAM_HOME/tasks/T7/settings.builder.proj.json
+  for command in "${ci[@]}"; do
+    allowed_in "$settings" "$command" || { echo "builder may not: $command" >&2; return 1; }
+  done
+  # Only the code checkout's team-ci-run, and only it starts a workflow's run.
+  for command in "team-ci-run proj feat/T7-one $sha" "/elsewhere/bin/team-ci-run proj feat/T7-one $sha" \
+    "gh workflow run ci.yml --repo me/proj --ref feat/T7-one" "gh-axi workflow run ci.yml --repo me/proj --ref feat/T7-one"; do
+    if allowed_in "$settings" "$command"; then echo "builder may: $command" >&2; return 1; fi
+  done
+  for role in planner reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    settings=$TEAM_HOME/tasks/T7/settings.$role.proj.json
+    for command in "${ci[@]}"; do
       if allowed_in "$settings" "$command"; then echo "$role may: $command" >&2; return 1; fi
     done
   done
@@ -1457,6 +1499,8 @@ allowed_in() {
   refused_launch "T7 has an unanswered ask, scope, since 2026-11-11T09:30:00Z; launch past it with --past-ask scope" \
     T7 reviewer "$wt1" -- go
   refused_launch "--past-ask nope names no unanswered ask of T7" T7 reviewer "$wt1" --past-ask scope --past-ask nope -- go
+  # An id that starts with a dash reaches jq as an id, not an option.
+  refused_launch "--past-ask --x names no unanswered ask of T7" T7 reviewer "$wt1" --past-ask scope --past-ask --x -- go
   run_bin -0 team-worker T7 reviewer "$wt1" --past-ask scope --past-ask scope -- go
   assert_equal "$(launches | jq -c .past_ask)" '["scope"]'
   run_bin -0 team-log --check
@@ -1465,6 +1509,23 @@ allowed_in() {
     discord_message: "1563000000000000045"}'
   run_bin -0 team-worker T7 builder "$wt1" -- go
   assert_equal "$(launches | jq -c 'has("past_ask")')" $'true\nfalse'
+}
+
+@test "an ask that names tickets refuses only a builder of one of them, read from its brief, and the task's other launches go" {
+  open_task T7
+  ledger_line '{ts: "2026-11-11T09:30:00Z", task: "T7", event: "asked", id: "prune", text: "Prune phase 2?", tickets: ["03"]}'
+  mkdir -p "$TEAM_HOME/tasks/T7"
+  echo "Build ticket 03." >"$TEAM_HOME/tasks/T7/brief-build-03.md"
+  echo "Build ticket 02." >"$TEAM_HOME/tasks/T7/brief-build-02.md"
+  refused_launch "T7 has an unanswered ask, prune, since 2026-11-11T09:30:00Z; launch past it with --past-ask prune" \
+    T7 builder "$wt1" -- "Read your brief at $TEAM_HOME/tasks/T7/brief-build-03.md"
+  run_bin -0 team-worker T7 builder "$wt1" -- "Read your brief at $TEAM_HOME/tasks/T7/brief-build-02.md"
+  run_bin -0 team-worker T7 reviewer "$wt1" -- go
+  run_bin -0 team-worker T7 builder "$wt1" --past-ask prune -- "Read your brief at $TEAM_HOME/tasks/T7/brief-build-03.md"
+  assert_equal "$(launches | jq -c '[.brief, .past_ask]')" '["brief-build-02",null]
+[null,null]
+["brief-build-03",["prune"]]'
+  run_bin -0 team-log --check
 }
 
 @test "a feature task's builder or reviewer waits for its plan; its planner, and a research or small task's builder, go" {

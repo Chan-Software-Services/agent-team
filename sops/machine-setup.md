@@ -72,7 +72,7 @@ Each stage after the first is one `~/agent-team/bin/team-bootstrap` run; read it
 ### Stage 4: tools
 
 `~/agent-team/bin/team-bootstrap --stage tools`: everything else `bin/lib/tools.lock` pins for this OS: Claude Code, nvm with Node and the global npm tools (opencode, the gate's agent on an opencode gate, among them), Bun, the treehouse release archive (checked against its SHA-256), no-mistakes built from Daniel's fork at its pinned commit (with stage 3's Go and make), `mongodump` and `mongorestore` from MongoDB's Database Tools archive (checked against its SHA-256, into `~/.local/bin`), and on Arch the 1Password CLI.
-Then, while the doctor's `gate-agent` line asks for it (on any gate but a Claude one), it installs the gate's opencode wrapper, `~/.no-mistakes/bin/opencode-gate`, from `bin/lib/opencode-gate`: it gives every opencode the gate starts the gate-only config, on Arch and macOS alike.
+Then, while the doctor's `gate-agent` line asks for it (on any gate but a Claude one), it installs the gate's opencode wrapper, `~/.no-mistakes/bin/opencode-gate`, from `bin/lib/opencode-gate`: it gives every opencode the gate starts the gate-only config and the code's `command-guard` plugin, on Arch and macOS alike.
 Last, `servers/install` puts the pinned MCP servers in `~/agent-team/servers/node_modules/` while the doctor's `servers` line fails: the toolkits' servers, and the `chrome-devtools-mcp` every session's `chrome-devtools-axi` runs.
 
 - On Arch, treehouse and `op` install with `sudo`: the same stop and the same request as stage 3, with `--stage tools`.
@@ -82,7 +82,9 @@ Last, `servers/install` puts the pinned MCP servers in `~/agent-team/servers/nod
 - A Claude Code newer than its pin is a WARN and is left alone.
 - `~/.no-mistakes/config.yaml` comes back with `team-secrets restore`, one of stage 7's steps, and the doctor's `gate-agent` line fails until it runs the gate one of the two ways the team sets it up, and on a Claude gate only warns while nothing but its `--settings` is missing.
   On opencode: `agent: opencode`, and `agent_path_override` naming the wrapper for `opencode` by this machine's full path (no-mistakes does not expand `~`), where a copy saved on another machine names that machine's.
+  The wrapper loads `~/agent-team/bin/lib/opencode-guard.js` as an opencode plugin through `OPENCODE_CONFIG_CONTENT`, which opencode adds to `opencode-gate.json`'s plugins without changing that file, and the plugin runs `command-guard` before every bash call of the gate's agents, so they are refused what a Claude gate's agents are (below), with the session's git worktree as their own and no job tmp; the wrapper starts no opencode when that file is missing (the code checkout is not `~/agent-team`) or when it is passed `--pure`, which loads no plugin.
   On Claude Code: `agent: claude`, and `agent_args_override`'s `claude` list carrying `--setting-sources` with sources that leave out `user` (`project,local`, say), `--strict-mcp-config` and `--settings` naming the code checkout's `bin/lib/gate-claude-settings.json` by its absolute path, so the gate's claude loads none of Daniel's user settings (their hooks, the Discord plugin, Remote Control) and none of their MCP servers, and its own commits carry no agent line; it needs no wrapper.
+  That file also runs `command-guard` on every Bash call of the gate's agents, as `"$HOME/agent-team/bin/hooks/command-guard"`, so they are refused what it refuses a worker, a kill by name or pattern and a recursive delete outside the gate's worktree among them, with that worktree as their own and no job tmp; the line warns, the gate still running, while a `--settings` file runs no `command-guard` on Bash that is this checkout's, as when the code checkout is not `~/agent-team`.
   In a one-line flow list, quote `"project,local"`, since YAML splits a flow list on every comma outside quotes; unquoted, the line warns.
   With `agent: auto` the gate would run on whichever agent no-mistakes finds first, Claude on a machine without opencode.
   On an opencode gate, this stage sets the `agent_path_override` key, which holds no credential, keeping the rest of the file byte for byte and its mode, and printing none of it; a missing file it leaves to the restore, and the agent and its flags to Daniel, as one of stage 7's steps.
@@ -91,7 +93,7 @@ Last, `servers/install` puts the pinned MCP servers in `~/agent-team/servers/nod
 
 ### Stage 5: projects
 
-`~/agent-team/bin/team-bootstrap --stage projects`: each project in `projects.toml` cloned from `https://github.com/<repo>.git` to its registry path (treehouse names its pool from that exact origin, so the registry's slots hold here), its task directory added to `.git/info/exclude` (and the folder of a git pool's slots inside the checkout, `.claude/worktrees/` for the fork), and `no-mistakes init` for a no-mistakes project.
+`~/agent-team/bin/team-bootstrap --stage projects`: each project in `projects.toml` cloned from `https://github.com/<repo>.git` to its registry path (treehouse names its pool from that exact origin, so the registry's slots hold here), its task directory added to `.git/info/exclude` (and, for a git pool, `.claude/worktrees/`, where `team-open` makes its worktrees on demand, with the folder of any registered slot inside the checkout, each unless git already ignores it), and `no-mistakes init` for a no-mistakes project.
 
 - It needs the GitHub login from stage 1; a missing one stops it, and stage 1's step 4 is the fix.
 - A folder already in a project's way is Daniel's: show the doctor's line and ask whether to move it.
@@ -125,7 +127,7 @@ Done when `check` lists no `Daniel <n>:` line.
    For each treehouse project it leases one slot through the project's lease command, checks the slot is clean after the pre-warm exactly as `team-open` would, and returns it, so a pre-warm that dirties a slot (as the laptop's did on 2026-10-24) fails here, before any handoff, with the project and the changed paths named.
    A cold slot's pre-warm can take minutes; run it in the background and wait for it to end.
    A `WARN lease <project>: no free slot` is fine on a busy machine: every slot is leased, and the line names the holders.
-   The planner runs in `~/agent-team/.claude/worktrees/load-check`, a worktree of the code checkout made fresh for the run and removed at its end, so the code checkout's trust covers it and it needs no trust step of its own.
+   The planner runs in the next free numbered worktree of the code checkout, `~/agent-team/.claude/worktrees/<n>`, made fresh for the run by the code that makes `team-open`'s on-demand worktrees, locked as `team-load-check <its pid>` and removed at its end (and at the next run's start, once that pid runs no load check, if a run was killed), so the code checkout's trust covers it and it needs no trust step of its own.
 3. Give Daniel one summary, here in the conversation: the bootstrap's `summary:` line in plain words, any WARN left, and what comes next.
    On a standby: "This machine is ready as a standby; to move the team here, tell me to resume here: I start `team-resume --wait`, and once it says this machine is ready, you say 'hand off' to the coordinator on <holder>."
 

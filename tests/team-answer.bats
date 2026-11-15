@@ -17,20 +17,25 @@ LEDGER
     >"$HOME/.claude/channels/discord/access.json"
   discord=$BATS_TEST_TMPDIR/discord
   mkdir -p "$discord"
-  export DISCORD_DIR=$discord
+  export DISCORD_DIR=$discord TEAM_ASSISTANT_CHANNEL=1570965039278596199
   stub_discord
   inbox_discord
   message 2222 1564000000000000001 757 $'Five a minute.\n\n  Keep "ten an hour" for the API, `not` the site.  '
 }
 
-# The fake Discord API: GET channels/<c>/messages/<m> answers $DISCORD_DIR/<c>-<m>.json, a
-# missing one fails as curl -f does on a 404. The headers curl read from stdin are kept.
+# The fake Discord API: GET channels/<c> answers $DISCORD_DIR/channel-<c>.json when there is one,
+# GET channels/<c>/messages/<m> answers $DISCORD_DIR/<c>-<m>.json, a missing one failing as curl
+# -f does on a 404. The headers curl read from stdin are kept.
 # team-inbox's calls go to the fake Discord of helpers/inbox.
 stub_discord() {
   stub_script curl <<'EOF'
+url=${*: -1}
+if [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.json ]]; then
+  cat "$DISCORD_DIR/channel-${BASH_REMATCH[1]}.json"
+  exit 0
+fi
 [[ ! -f $STUB_FIXTURES/inbox.sh ]] || source "$STUB_FIXTURES/inbox.sh"
 cat >>"$DISCORD_DIR/stdin"
-url=${*: -1}
 if [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)/messages/([0-9]+)$ &&
   -f $DISCORD_DIR/${BASH_REMATCH[1]}-${BASH_REMATCH[2]}.json ]]; then
   cat "$DISCORD_DIR/${BASH_REMATCH[1]}-${BASH_REMATCH[2]}.json"
@@ -269,10 +274,67 @@ answered 1564000000000000002"
 resumed"
 }
 
+ASSISTANT=1570965039278596199
+ASSISTANT_THREAD=1571000000000000001
+
+# Thread <id> under channel <parent>: channel <id> <parent>
+channel() {
+  jq -n --arg id "$1" --arg p "$2" '{id: $id, type: 11, parent_id: $p}' >"$discord/channel-$1.json"
+}
+
+@test "--channel reads an answer from a thread under #assistant first, and logs it as any answer" {
+  rm "$discord"/*.json
+  channel "$ASSISTANT_THREAD" "$ASSISTANT"
+  message "$ASSISTANT_THREAD" 1564000000000000001 757 "Five a minute."
+  run_bin -0 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel "$ASSISTANT_THREAD"
+  assert_equal "$output" "Five a minute."
+  assert_equal "$stderr" ""
+  assert_equal "$(looked_in)" "$ASSISTANT_THREAD"
+  assert_equal "$(stub_calls curl | jq -r '.[-1]' | head -n 1)" "https://discord.com/api/v10/channels/$ASSISTANT_THREAD"
+  assert_equal "$(logged | jq -c 'select(.event == "answered")')" \
+    '{"task":"T7","event":"answered","id":"sign-in","answer":"Five a minute.","discord_message":"1564000000000000001"}'
+  # #assistant itself is read with no channel lookup.
+  message "$ASSISTANT" 1564000000000000002 757 "Ten a minute."
+  run_bin -0 team-answer T7 sign-in 1564000000000000002 --channel "$ASSISTANT"
+  assert_equal "$output" "Ten a minute."
+  assert_equal "$(looked_in | tail -n 1)" "$ASSISTANT"
+}
+
+@test "--channel refuses a channel outside #assistant, a plan approval, a script's yes and --item, reading no message" {
+  channel 1571000000000000002 1562000000000000999
+  run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel 1571000000000000002
+  assert_equal "$stderr" "team-answer: channel 1571000000000000002 is neither #assistant ($ASSISTANT) nor a thread under it, so Daniel's word there is not for the assistant"
+  # The task's own thread is not under #assistant either.
+  run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel 2222
+  assert_equal "$stderr" "team-answer: channel 2222 is neither #assistant ($ASSISTANT) nor a thread under it, so Daniel's word there is not for the assistant"
+  TEAM_ASSISTANT_CHANNEL='' run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel "$ASSISTANT"
+  assert_equal "$stderr" "team-answer: no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so Daniel's word cannot be held to #assistant"
+  cat >>"$TEAM_HOME/ledger.jsonl" <<'LEDGER'
+{"ts":"2026-10-01T10:00:04Z","task":"T7","event":"asked","id":"plan","text":"Approve the plan?"}
+{"ts":"2026-10-01T10:00:05Z","task":"T7","event":"asked","id":"migrate","text":"Run it?","script":"/w/7/.scratch/task/migrate.sh","sha256":"abc"}
+LEDGER
+  run_bin -1 --separate-stderr team-answer T7 plan 1564000000000000001 --channel "$ASSISTANT"
+  assert_equal "$stderr" "team-answer: T7's plan is a plan approval: a plan approval and a script's yes count only in the task's thread or #coordinator, never #assistant"
+  run_bin -1 --separate-stderr team-answer T7 migrate 1564000000000000001 --channel "$ASSISTANT"
+  assert_equal "$stderr" "team-answer: T7's migrate asks for a script's yes: a plan approval and a script's yes count only in the task's thread or #coordinator, never #assistant"
+  run_bin -1 --separate-stderr team-answer --item 3 1564000000000000001 --channel "$ASSISTANT"
+  assert_equal "$stderr" "team-answer: an answer by number is read from #coordinator alone; for an ask answered in #assistant, give its task and id: team-answer T<n> <id> <message id> --channel <channel id>"
+  # A fenced machine reads no channel.
+  mkdir -p "$HOME/.local/state/agent-team"
+  echo '{"since": "2026-10-22T14:00:00Z", "holder": "laptop", "epoch": 2}' >"$HOME/.local/state/agent-team/fenced"
+  run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel "$ASSISTANT_THREAD"
+  assert_contains "$stderr" "a fenced machine logs no answer"
+  assert_equal "$(stub_calls curl | jq -r '.[-1]' | grep -c "channels/$ASSISTANT_THREAD")" 0
+  assert_equal "$(reads)" ""
+  assert_equal "$(tail -n +5 "$TEAM_HOME/ledger.jsonl" | jq -r 'select(.event == "answered")')" ""
+}
+
 @test "a malformed command line is a usage error, and nothing is read or logged" {
   local args
   for args in "" "T7" "T7 sign-in" "7 sign-in 1564000000000000001" "T7 'sign in' 1564000000000000001" \
-    "T7 sign-in 1564/../x" "T7 sign-in 0" "T7 sign-in 1564000000000000001 more" "T7 -x 1564000000000000001"; do
+    "T7 sign-in 1564/../x" "T7 sign-in 0" "T7 sign-in 1564000000000000001 more" "T7 -x 1564000000000000001" \
+    "T7 sign-in 1564000000000000001 --channel" "T7 sign-in 1564000000000000001 --channel x" \
+    "T7 sign-in 1564000000000000001 --thread 1570965039278596199"; do
     eval "run_bin -2 team-answer $args"
     assert_contains "$output" "usage: team-answer T<n> <id> <discord message id>"
   done
@@ -441,6 +503,27 @@ TABLE
   assert_equal "$(logged_since)" ""
 }
 
+@test "a walk's number is refused, naming the thread its notes go to, with nothing read or logged" {
+  cat >>"$TEAM_HOME/ledger.jsonl" <<'LEDGER'
+{"ts":"2026-10-01T10:00:00Z","task":"T11","event":"opened","project":"agent-team","path":"feature","type":"feat","title":"Eleven","branch":"feat/T11-v","base":"dev","base_sha":"0123456","worktree":"/w/11"}
+{"ts":"2026-10-01T10:00:01Z","task":"T11","event":"thread","discord_thread":"1111"}
+{"ts":"2026-10-01T10:00:02Z","task":"T11","event":"walk","state":"on"}
+{"ts":"2026-10-01T10:00:00Z","task":"T12","event":"opened","project":"agent-team","path":"feature","type":"feat","title":"Twelve","branch":"feat/T12-u","base":"dev","base_sha":"0123456","worktree":"/w/12"}
+{"ts":"2026-10-01T10:00:02Z","task":"T12","event":"walk","state":"on"}
+LEDGER
+  TEAM_HOME=$TEAM_HOME "$REPO_ROOT/bin/team-inbox" >/dev/null
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/ledger"
+  rm -f "$STUB_CALLS/curl.log"
+  # T7's ask is item 1, and the walks follow it.
+  message "$COORDINATOR" 1564000000000000010 757 "2 yes, 3 yes"
+  run_bin -1 --separate-stderr team-answer --item 2 1564000000000000010
+  assert_equal "$stderr" "team-answer: item 2 is T11's walk, whose notes Daniel posts in <#1111>; nothing is logged"
+  run_bin -1 --separate-stderr team-answer --item 3 1564000000000000010
+  assert_equal "$stderr" "team-answer: item 3 is T12's walk, whose notes Daniel posts in its task's thread; nothing is logged"
+  assert_equal "$(reads)" ""
+  assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" "$(cat "$BATS_TEST_TMPDIR/ledger")"
+}
+
 @test "a number team-inbox --item refuses is refused with its reason, with nothing read or logged" {
   message "$COORDINATOR" 1564000000000000010 757 "3 yes"
   run_bin -1 --separate-stderr team-answer --item 3 1564000000000000010
@@ -493,7 +576,7 @@ TABLE
     "--item x 1564000000000000010" "--item 3 0" "--item 3 1564000000000000010 more" "--item 03 1564000000000000010"; do
     # shellcheck disable=SC2086 # each word an argument
     run_bin -2 team-answer $args
-    assert_contains "$output" "usage: team-answer T<n> <id> <discord message id>, or team-answer --item <n> <discord message id>"
+    assert_contains "$output" "usage: team-answer T<n> <id> <discord message id> [--channel <channel id>], or team-answer --item <n> <discord message id>"
   done
   assert_equal "$(reads)" ""
   assert_equal "$(logged_since)" ""

@@ -689,6 +689,18 @@ team_reading() {
     "$STATE_DIR/readings.jsonl")" '[["T7",0],["T9",400]]'
 }
 
+@test "sample: a git pool's unregistered numbered worktree is the team's, and a folder of another name is not" {
+  sample_machine
+  # agent-team's pool registers worktrees 1 to 5; 7 is made on demand, 07 and load-check are not
+  # numbered worktrees.
+  mkdir -p "$HOME/agent-team/.claude/worktrees/"{7,07,load-check}
+  proc 600 1 700 1 "$HOME/agent-team/.claude/worktrees/7/src"
+  proc 601 1 50 1 "$HOME/agent-team/.claude/worktrees/07"
+  proc 602 1 30 1 "$HOME/agent-team/.claude/worktrees/load-check"
+  run_bin -0 team-capacity sample
+  assert_equal "$(jq -c --argjson mib "$MIB" '(.memory.team - 628935884 - 315621376) / $mib' "$STATE_DIR/readings.jsonl")" 700
+}
+
 @test "sample: a ticket builder T<n>-builder-NN is a session of its task with the role builder" {
   sample_machine
   as_macos
@@ -930,7 +942,7 @@ old_cost() {
   at=$(jq -r '.at | fromdateiso8601 | strflocaltime("%H:%M")' "$STATE_DIR/readings.jsonl")
   assert_equal "$output" "$(printf '%s\n' "home-pc at $at: other programs use 6.0 GiB of 32.0 GiB; the team 2.0 GiB" \
     "  T7: 1.1 GiB; builder a1b2c3d4 0.5 GiB, stack conventioner-2 0.6 GiB" "  T9: 0.0 GiB" \
-    "  gate: running a pipeline, 0.6 GiB")"
+    "  gate: running a pipeline, 0.6 GiB" "quota: no reading")"
   run_bin -0 team-capacity status --json
   assert_equal "$(jq -c '[.schema, .machine, .stale, .settings.full_share, .settings.from.full_share, (.reading.tasks | length)]' <<<"$output")" \
     '["team-capacity/1","home-pc",false,0.9,"default",2]'
@@ -950,7 +962,7 @@ old_cost() {
   printf 'MemTotal:       33554432 kB\n' >"$TEAM_MEMINFO"
   run_bin -0 --separate-stderr team-capacity status
   assert_equal "$stderr" "team-capacity: took no reading of the machine's load: no MemTotal and MemAvailable in $TEAM_MEMINFO"
-  assert_equal "$output" "this machine: no reading of the machine's load yet"
+  assert_equal "$output" "$(printf '%s\n' "this machine: no reading of the machine's load yet" "quota: no reading")"
   run_bin -0 team-capacity status --stored --json
   assert_equal "$(jq -c '[.stale, .reading]' <<<"$output")" '[true,null]'
 }
@@ -1547,6 +1559,42 @@ $second"
   assert_equal "$(jq length "$STATE_DIR/admitted.json")" 2
 }
 
+@test "admit --dry-run judges as admit does but keeps nothing: room prints one line, no room is 75 with admit's text, no budget is 1" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  busy_reading
+  level full
+  run_bin -0 --separate-stderr team-capacity admit --kind session:builder --dry-run
+  assert_equal "$output" "room for session:builder at full (90%): a builder needs 0.5 GiB, 6.2 GiB of 20.0 GiB reserved"
+  assert_equal "$stderr" ""
+  [[ ! -e $STATE_DIR/admitted.json ]]
+  # Beside a kept admission it leaves admitted.json as it was, and counts that admission.
+  run_bin -0 team-capacity admit --kind stack:other --task T9 --name other-9 --seed-bytes $((4 * GIB))
+  local before
+  before=$(cat "$STATE_DIR/admitted.json")
+  run_bin -0 --separate-stderr team-capacity admit --kind session:reviewer --task T9 --dry-run
+  assert_equal "$output" "room for session:reviewer at full (90%): a reviewer needs 0.5 GiB, 10.2 GiB of 20.0 GiB reserved"
+  assert_equal "$(cat "$STATE_DIR/admitted.json")" "$before"
+  # No room: the refusal a real admit gives, on stderr, nothing on stdout, nothing kept.
+  run_bin -75 --separate-stderr team-capacity admit --kind stack:other --task T9 --seed-bytes $((64 * GIB))
+  local refusal=$stderr
+  run_bin -75 --separate-stderr team-capacity admit --kind stack:other --task T9 --seed-bytes $((64 * GIB)) --dry-run
+  assert_equal "$output" ""
+  assert_equal "$stderr" "$refusal"
+  assert_contains "$stderr" "no room for stack:other at full (90%): 10.2 GiB of 20.0 GiB reserved"
+  level none
+  run_bin -75 --separate-stderr team-capacity admit --kind session:builder --dry-run
+  assert_equal "$stderr" "no room for session:builder: the team is at level none: nothing starts; room comes when Daniel raises the level"
+  assert_equal "$(cat "$STATE_DIR/admitted.json")" "$before"
+  # Above none with no reading to size the budget by, it fails as admit does.
+  level full
+  rm "$STATE_DIR/readings.jsonl"
+  printf 'MemTotal:       33554432 kB\n' >"$TEAM_MEMINFO"
+  run_bin -1 --separate-stderr team-capacity admit --kind session:builder --dry-run
+  assert_equal "$output" ""
+  assert_contains "$stderr" "team-capacity: no reading of the machine's load, so no budget to admit session:builder by"
+  assert_equal "$(cat "$STATE_DIR/admitted.json")" "$before"
+}
+
 @test "release ends an admission at once, and says nothing to release for an id it no longer holds" {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   busy_reading
@@ -2050,6 +2098,68 @@ Refused for room, waiting to launch, oldest refusal first:
   assert_equal "$(plan_steps)" '["stop","T1","builder","aaaa0010",1]
 ["stow","T2",1]
 ["stow","T1",1]'
+}
+
+# The walk of <task> turned on <hours> ago, as team-ui logs it, with a message of Daniel's on it
+# <note hours> ago when given: plan_walk <task> <hours> [<note hours>]
+plan_walk() {
+  jq -cn --arg t "$1" --arg ts "$(date -u -d "$2 hours ago" +%FT%TZ)" '{ts: $ts, task: $t, event: "walk", state: "on"}' >>"$TEAM_HOME/ledger.jsonl"
+  [[ -z ${3:-} ]] || jq -cn --arg t "$1" --arg ts "$(date -u -d "$3 hours ago" +%FT%TZ)" '{ts: $ts, task: $t, event: "walk-note"}' >>"$TEAM_HOME/ledger.jsonl"
+}
+
+@test "plan: a task's walk keeps its stack out of step 2 and stows it after every other task" {
+  plan_machine
+  plan_walk T3 1
+  plan_level 60 minor
+  # T3's stack stays up, and T2, the newest of the others, brings the rest under the budget, where
+  # with no walk T3, the newest of all, stows first.
+  assert_equal "$(plan_steps)" "[\"stop\",\"T1\",\"reviewer\",\"aaaa0012\",1]
+[\"stop\",\"T4\",\"planner\",\"aaaa0041\",0.5]
+[\"stow\",\"T2\",5]"
+}
+
+@test "plan: at none every task stows, a walk's included and last" {
+  plan_machine
+  plan_walk T2 1
+  plan_level 30 none
+  assert_equal "$(plan_steps)" "[\"stop\",\"T1\",\"reviewer\",\"aaaa0012\",1]
+[\"stop\",\"T4\",\"planner\",\"aaaa0041\",0.5]
+[\"stop\",\"T3\",\"conventioner-3\",\"$HOME/wt/T3\",3]
+[\"stow\",\"T3\",4]
+[\"stow\",\"T1\",1]
+[\"stow\",\"T2\",5]"
+}
+
+@test "plan: at none a task whose walk is on with only its stack left still stows, which stops that stack" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  plan_task T5 09:00
+  plan_walk T5 1
+  echo '[]' >"$STUB_FIXTURES/agents.json"
+  team_reading 8
+  with_stacks T5:conventioner-5:2
+  age_by 300
+  team_reading 8
+  with_stacks T5:conventioner-5:2
+  plan_level 30 none
+  assert_equal "$(plan_steps)" '["stow","T5",3]'
+}
+
+@test "plan: a walk with no message from Daniel for over 4 hours counts for nothing, and one message brings it back" {
+  plan_machine
+  plan_walk T3 6 5
+  plan_level 60 minor
+  assert_equal "$(plan_steps | tail -n 2)" "[\"stop\",\"T3\",\"conventioner-3\",\"$HOME/wt/T3\",3]
+[\"stow\",\"T3\",4]"
+  jq -cn --arg ts "$(date -u -d '1 hour ago' +%FT%TZ)" '{ts: $ts, task: "T3", event: "walk-note"}' >>"$TEAM_HOME/ledger.jsonl"
+  assert_equal "$(plan_steps | tail -n 1)" '["stow","T2",5]'
+}
+
+@test "plan: two walks stow newest first among themselves, after every other task" {
+  plan_machine
+  plan_walk T3 1
+  plan_walk T2 1
+  plan_level 30 none
+  assert_equal "$(plan_steps | sed -n 's/^\["stow","\(T[0-9]*\)".*/\1/p' | paste -sd ' ')" "T1 T3 T2"
 }
 
 @test "plan: a ticket builder T<n>-builder-NN is a live worker of its task, which stows at none" {

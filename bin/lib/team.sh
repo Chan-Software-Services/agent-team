@@ -12,12 +12,12 @@
 # the script's help_more, if it defined one before sourcing), and provides die, usage_error, team_project, ledger_jq, json_vars, email_kind, refused_emails, ledger_append, ledger_push,
 # task_events, task_event_array, known_task_events, open_task_events, task_status, task_worktrees, plan_task_dir, plan_files, script_place_refusal, local_path,
 # archive_left_out, rsync_rule, archive_task_dir, machine_name, os_release, team_os, claude_cache_dir, tool_dirs,
-# team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, toolkit_refusal, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
-# pool_status, pool_entry, pool_slot, treehouse_slots, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
+# team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, capture_refusal, toolkit_refusal, task_own_dirs, path_under, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
+# pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
-# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, OPS_REQUEST_MAX_AGE, and
+# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
@@ -51,8 +51,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/platform.sh"
 # checkout. TEAM_HOME_FROM says which (variable, setting, or none, where TEAM_HOME is empty).
 # TEAM_HOME_PROBLEM is the refusal when neither names a directory, given after --help has had its
 # chance; a script that sets team_home_report before sourcing (team-doctor, and the git hooks,
-# the records hook, data-check, tests/run, team-heavy, team-capacity jobs and servers/install,
-# which need none) is not refused, and reports it itself, and one that sets team_home_unnamed
+# the records hook, data-check, tests/run, team-heavy, team-capacity jobs, team-quota line and
+# servers/install, which need none) is not refused, and reports it itself, and one that sets team_home_unnamed
 # (team-bootstrap, which names it) is not refused while nothing names one.
 TEAM_HOME_PROBLEM='' TEAM_HOME_FIX='name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home'
 TEAM_HOME_FROM=variable
@@ -151,8 +151,9 @@ json_vars() {
   done
 }
 
-# The kind of one address: none (no address), service, fixture, owner (<owner>, git's user.email,
-# lowercase, when given), provider or other: email_kind <address> [<owner>]
+# The one rule on email addresses, which data-check's two policies, ledger_append and a worker's
+# team-post hold to: the kind of one address: none (no address), service, fixture, owner (<owner>,
+# git's user.email, lowercase, when given), provider or other: email_kind <address> [<owner>]
 email_kind() {
   local addr=${1,,} owner=${2:-}
   local name=${addr%@*} domain=${addr##*@}
@@ -224,14 +225,17 @@ LEDGER_TASKS=() LEDGER_KINDS=() LEDGER_PUSH_DUE='' LEDGER_INBOX_DUE=''
 # Under the lock, the event of a writer in bin/lib/lifecycle.json's refusing_writers is checked
 # against the task's state, its events read from the ledger and folded in one jq run
 # (transition_problems in bin/lib/ledger.jq), so no other writer appends between the read and the
-# append. An event the table takes is appended with nothing said. One it refuses is, while the
-# table's lifecycle_from is null or after the event's ts, appended with one line on stderr per
-# problem, "<script>: lifecycle: <problem> (logged anyway; bin/lib/lifecycle.json refuses it from
-# its lifecycle_from, not set yet)", or "..., <lifecycle_from>)"; from lifecycle_from on, refused,
-# "refusing a ledger event: lifecycle: <problems joined by ; >", with nothing appended. Any other
+# append. An event the table takes is appended with nothing said. One it refuses is, from the
+# table's lifecycle_from on, refused, "refusing a ledger event: lifecycle: <problems joined by ; >",
+# with nothing appended; the table's is 2026-11-15T11:58:29Z, so it refuses every event logged now.
+# With a lifecycle_from that is null or after the event's ts, as a test sets one, it is appended
+# with one line on stderr per problem, "<script>: lifecycle: <problem> (logged anyway;
+# bin/lib/lifecycle.json refuses it from its lifecycle_from, not set yet)", or
+# "..., <lifecycle_from>)". Any other
 # writer acted before it logs, so its event is appended unchecked, saying nothing, and team-log
 # --check-lifecycle names it. With <seconds>, the lock is waited on at most that long, and a lock
-# still held then is a refusal, before any lifecycle check. An event of a kind the contract marks
+# still held then is a refusal, before any lifecycle check, and so is a lock or ledger that cannot
+# be written, nothing appended, whatever the caller's set -e. An event of a kind the contract marks
 # push (Daniel's word, or an outside fact) makes a push due, which the script's ledger_push makes,
 # and one of a kind it marks inbox sets LEDGER_INBOX_DUE: ledger_append <event> [<seconds>]
 ledger_append() {
@@ -283,7 +287,8 @@ ledger_append() {
       esac
     fi
     printf '%s\n' "$line" >>"$ledger"
-  } 9>>"$TEAM_HOME/ledger.jsonl.lock"
+  } 9>>"$TEAM_HOME/ledger.jsonl.lock" ||
+    die "could not append the event to the ledger under its lock, $TEAM_HOME/ledger.jsonl.lock"
   [[ " ${LEDGER_TASKS[*]} " == *" $task "* ]] || LEDGER_TASKS+=("$task")
   [[ " ${LEDGER_KINDS[*]} " == *" $event "* ]] || LEDGER_KINDS+=("$event")
   [[ $push != true ]] || LEDGER_PUSH_DUE=1
@@ -475,7 +480,7 @@ local_path() {
 # The paths of the task directory <dir> that have no place in the team home's history, so its
 # archive leaves them out, each as "<why>\t<path>" (relative to <dir>), NUL-terminated, in this
 # order, sorted within each:
-#   UI capture         a top-level ui/ (a frontend capture stays on the machine that took it)
+#   UI capture         a top-level ui/ (a frontend capture's files stay on the machine that took them)
 #   stack logs         a top-level stack-logs/, where team-stack down saves each service's log
 #                      tail: for the builder at the time, never the records
 #   Lighthouse reports a ui-check run's lighthouse/, ui-check/<run>/lighthouse (its failing
@@ -863,12 +868,16 @@ offline_since() {
 
 # Print the hold while the team holds offline (offline_since): "GitHub is unreachable (since
 # 13:05); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and
-# wait.", or fail when it does not hold. The lease-fence hook and team-thread wait give it:
-# offline_hold
+# wait.", or with assistant its own tail, "...: keep talking with Daniel, and touch no GitHub (no
+# gh, gh-axi or git push) until your Bash calls stop being held."; fail when it does not hold.
+# The lease-fence hook, team-thread wait, team-ci-wait and the assistant's digest give it:
+# offline_hold [assistant]
 offline_hold() {
-  local since
+  local since what="commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
   since=$(offline_since) || return 1
-  echo "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
+  [[ ${1:-} != assistant ]] ||
+    what="keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held."
+  echo "GitHub is unreachable (since $(date -d "$since" +%H:%M)); the team is holding: $what"
 }
 
 # Print why this machine must not <does> ("posts nothing to Discord; ..."), or fail when it may:
@@ -894,8 +903,8 @@ lease_refusal() {
 }
 
 # Print why this session may not <does>, which is the coordinator's, or fail when it may: a worker session (its
-# settings' AGENT_TEAM_ROLE names a role other than the coordinator; Daniel's own shell and the
-# heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
+# settings' AGENT_TEAM_ROLE names a role other than the coordinator, "an assistant session" for the
+# assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
 # when the caller passes --interview, for the interview thread's post and wait. Worker settings
 # deny most of the same commands by their bare name, and command-guard refuses team-ask,
 # team-answer, team-inbox, team-thread T<n> and team-run-approved by any path where a command
@@ -908,20 +917,64 @@ worker_refusal() {
     [[ -z $1 || $1 != "$own" ]] || return 1
     echo "a planner session of ${own:-no task} $2 for $1: a planner talks with Daniel only in its own task's interview thread"
   else
-    echo "a $role session $2: that is the coordinator's; send it your message"
+    local article=a
+    [[ $role != assistant ]] || article=an
+    echo "$article $role session $2: that is the coordinator's; send it your message"
   fi
+}
+
+# Print why this session may not read the Agent Chrome for <task>, or fail when it may: only a
+# worker session is held, and the one worker that may is a planner of <task> (its settings'
+# AGENT_TEAM_TASK) while that task's walk is on in its interview thread, by Daniel's decision
+# (D1 of T216's report, 2026-11-04): that planner captures the page Daniel drives, read-only. A ledger
+# that cannot be read refuses. team-ui --capture and the frontend toolkit's ui-capture both ask
+# it: capture_refusal <task>
+capture_refusal() {
+  local task=$1 role=${AGENT_TEAM_ROLE:-} own=${AGENT_TEAM_TASK:-}
+  [[ -n $role && $role != coordinator ]] || return 1
+  if [[ $role != planner ]]; then
+    worker_refusal "$task" "takes no capture of the Agent Chrome"
+  elif [[ $task != "$own" ]]; then
+    echo "a planner session of ${own:-no task} takes no capture of the Agent Chrome for $task: a planner captures only during its own task's interview walk"
+  elif [[ $(task_event_array "$task" | ledger_jq 'qc_walk.thread // empty' -r) != interview ]]; then
+    echo "$task has no interview walk on: a planner captures only during its own task's interview walk, which Daniel starts through the coordinator"
+  else
+    return 1
+  fi
+}
+
+# Set TASK_OWN_DIRS to the real path of each open worktree's task directory of <task>
+# (<worktree>/<task_dir>), what a worker's files must lie under; it holds none for a task with no
+# open worktree: task_own_dirs <task>
+task_own_dirs() {
+  local worktree project dir
+  TASK_OWN_DIRS=()
+  while IFS=$'\t' read -r worktree project; do
+    dir=$(team_project "$project" task_dir) || die "cannot read $project's task directory from the registry"
+    TASK_OWN_DIRS+=("$(realpath -m -- "$worktree/$dir")")
+  done < <(task_worktrees "$1" | jq -r '[.worktree, .project] | @tsv')
+}
+
+# Whether the real path <path> lies under one of <dirs>: path_under <path> <dirs>...
+path_under() {
+  local path=$1 dir
+  for dir in "${@:2}"; do
+    [[ $path != "$dir"/* ]] || return 0
+  done
+  return 1
 }
 
 # Print why a worker session of <role> may not load toolkit <name>, or fail when it may: the
 # coordinator toolkit is claude-coordinator's alone and the frontend toolkit Daniel's own sessions'
-# (it attaches to their one Agent Chrome window), so no worker loads either; a production toolkit
-# (prod-*, and vercel-read) is the ops role's alone. The one list of them, which team-worker and
+# (it attaches to their one Agent Chrome window, and a walk's planner reads it only through
+# capture_refusal's gate), so no worker loads either; a production toolkit (prod-*, and
+# vercel-read) is the ops role's alone. The one list of them, which team-worker and
 # team-load-check read; an empty <role> judges only the toolkits no worker loads:
 # toolkit_refusal <name> <role or "">
 toolkit_refusal() {
   case $1 in
     coordinator) echo "toolkit 'coordinator' is the coordinator's own (claude-coordinator loads it)" ;;
-    frontend) echo "toolkit 'frontend' is Daniel's own (claude --plugin-dir in their session): it attaches to their one Agent Chrome window, never a worker's" ;;
+    frontend) echo "toolkit 'frontend' is Daniel's own (claude --plugin-dir in their session): it attaches to their one Agent Chrome window, never a worker's; by Daniel's decision (D1 of T216's report, 2026-11-04), a walk's planner only reads that window, by team-ui --capture" ;;
     prod-* | vercel-read) [[ -n $2 && $2 != ops ]] || return 1; echo "toolkit '$1' is for the ops role only" ;;
     *) return 1 ;;
   esac
@@ -1117,20 +1170,118 @@ pool_slot() {
   return 1
 }
 
-# A treehouse pool's slots: its registered slots <slot>..., then each other <dir>/<n>/<folder> that
-# exists (<n> a number) beside a registered <dir>/<m>/<folder>, by number. treehouse numbers a new
-# slot past a folder it finds in the way, an empty one too, so the registry may not list every
-# slot it makes: treehouse_slots <slot>...
-treehouse_slots() {
-  local slot found extra=()
-  for slot in "$@"; do
-    echo "$slot"
-    for found in "${slot%/*/*}"/*/"${slot##*/}"; do
-      [[ -d $found && $(basename "${found%/*}") =~ ^[0-9]+$ ]] || continue
-      pool_slot "$found" "$@" "${extra[@]}" >/dev/null || extra+=("$found")
+# A pool's slots: its registered slots <slot>..., then each other numbered worktree of the pool
+# that exists, by number. For git (<provider>), each <primary>/.claude/worktrees/<n> (<n> a positive
+# whole number with no leading zero), which team-open makes on demand. For treehouse, each other
+# <dir>/<n>/<folder> (<n> a number) beside a registered <dir>/<m>/<folder>: treehouse numbers a
+# new slot past a folder it finds in the way, an empty one too, so the registry may not list
+# every slot it makes: pool_slots <provider> <primary> <slot>...
+pool_slots() {
+  local provider=$1 primary=$2 slot found extra=()
+  shift 2
+  (($# == 0)) || printf '%s\n' "$@"
+  if [[ $provider == git ]]; then
+    for found in "$primary"/.claude/worktrees/*; do
+      [[ -d $found && ${found##*/} =~ ^[1-9][0-9]*$ ]] || continue
+      pool_slot "$found" "$@" >/dev/null || extra+=("$found")
     done
+  else
+    for slot in "$@"; do
+      for found in "${slot%/*/*}"/*/"${slot##*/}"; do
+        [[ -d $found && $(basename "${found%/*}") =~ ^[0-9]+$ ]] || continue
+        pool_slot "$found" "$@" "${extra[@]}" >/dev/null || extra+=("$found")
+      done
+    done
+  fi
+  ((${#extra[@]} == 0)) || printf '%s\n' "${extra[@]}" | awk -F/ -v git="$([[ $provider == git ]] && echo 1)" \
+    '{ print (git ? $NF : $(NF - 1)) "\t" $0 }' | sort -n -k1,1 | cut -f2-
+}
+
+# Whether <path>, however spelled, is a worktree path the pool trusts, existing or not: one of its
+# registered slots <slot>...; for git (<provider>), any <primary>/.claude/worktrees/<n>; for
+# treehouse, any <dir>/<n>/<folder> beside a registered <dir>/<m>/<folder> (<n>, <m> numbers, as
+# pool_slots reads them). Prints the path as the registry or the rule spells it; fails, printing
+# nothing, when the pool trusts no such path: pool_trusted <provider> <primary> <path> <slot>...
+pool_trusted() {
+  local provider=$1 primary=$2 path=${3%/} slot n candidate
+  shift 3
+  pool_slot "$path" "$@" && return 0
+  n=${path##*/}
+  if [[ $provider == git ]]; then
+    candidate=$primary/.claude/worktrees/$n
+    if [[ $n =~ ^[1-9][0-9]*$ ]] && same_path "$candidate" "$path"; then echo "$candidate" && return 0; fi
+    return 1
+  fi
+  n=$(basename "$(dirname "$path")")
+  [[ $n =~ ^[0-9]+$ ]] || return 1
+  for slot in "$@"; do
+    candidate=${slot%/*/*}/$n/${slot##*/}
+    if same_path "$candidate" "$path"; then echo "$candidate" && return 0; fi
   done
-  ((${#extra[@]} == 0)) || printf '%s\n' "${extra[@]}" | awk -F/ '{ print $(NF - 1) "\t" $0 }' | sort -n -k1,1 | cut -f2-
+  return 1
+}
+
+# Add a worktree of the git pool of the primary checkout <primary> and print its path: the
+# preferred path <preferred> (empty for none) while it is free, else the first free registered
+# slot <slot>..., else the lowest free <primary>/.claude/worktrees/<n> from 1, made on demand, so
+# a git pool is never full. Free means no registered worktree of <primary> is the path (same_path)
+# and the path is missing or an empty directory; one that holds anything else is skipped, one line
+# on stderr saying so, and a numbered path already tried as the preferred path or a slot is not
+# tried again. After -- come the options of `git worktree add` and last its commit-ish:
+# `git -C <primary> worktree add -q <option>... <path> <commit>`. The pick and the add are made
+# under the pool's lock (team-open-pool.lock in <primary>'s git common directory), after reading
+# the registered worktrees again, so two runs at once never take one path: the second waits up to
+# TEAM_OPEN_POOL_WAIT_SECONDS (default 600), then exits 75 naming the lock, the only exit 75; the
+# lock goes once the add is done, its descriptor closed for git's own processes. Exits 1 when the
+# add fails: pool_add_worktree <primary> <preferred> <slot>... -- <option>... <commit>
+pool_add_worktree() {
+  local primary=$1 preferred=$2 wait=${TEAM_OPEN_POOL_WAIT_SECONDS:-600} lock fd line wt n=0 candidate free tried
+  local pool_listed=() pool_options=() pool_worktrees=() pool_candidates=() pool_tried=()
+  shift 2
+  while (($#)) && [[ $1 != -- ]]; do pool_listed+=("$1") && shift; done
+  [[ ${1:-} == -- && $# -ge 2 ]] || die "pool_add_worktree needs -- and the commit to add the worktree at"
+  shift
+  pool_options=("${@:1:$#-1}")
+  [[ $wait =~ ^[0-9]+$ ]] || die "TEAM_OPEN_POOL_WAIT_SECONDS must be a whole number of seconds, not '$wait'"
+  lock=$(git -C "$primary" rev-parse --path-format=absolute --git-common-dir)/team-open-pool.lock ||
+    die "cannot find the git directory of $primary"
+  exec {fd}<>"$lock"
+  if ! flock -w "$wait" -x "$fd"; then
+    echo "${0##*/}: another run held the pool lock $lock of $primary for $wait seconds; run this again" >&2
+    exit 75
+  fi
+  while IFS= read -r line; do
+    [[ $line != "worktree "* ]] || pool_worktrees+=("${line#worktree }")
+  done < <(git -C "$primary" worktree list --porcelain)
+  [[ -z $preferred ]] || pool_candidates+=("$preferred")
+  for candidate in ${pool_listed[@]+"${pool_listed[@]}"}; do
+    same_path "$candidate" "$preferred" || pool_candidates+=("$candidate")
+  done
+  # Each candidate in turn, then each numbered path not tried as a candidate, until one is free.
+  while :; do
+    if ((${#pool_candidates[@]})); then
+      candidate=${pool_candidates[0]} pool_candidates=("${pool_candidates[@]:1}")
+      pool_tried+=("$candidate")
+    else
+      n=$((n + 1)) candidate=$primary/.claude/worktrees/$n tried=''
+      for wt in ${pool_tried[@]+"${pool_tried[@]}"}; do
+        if same_path "$wt" "$candidate"; then tried=1 && break; fi
+      done
+      [[ -z $tried ]] || continue
+    fi
+    free=1
+    for wt in ${pool_worktrees[@]+"${pool_worktrees[@]}"}; do
+      if same_path "$wt" "$candidate"; then free='' && break; fi
+    done
+    [[ -n $free ]] || continue
+    [[ ! -e $candidate ]] && break
+    [[ -d $candidate && -z $(find "$candidate" -mindepth 1 -maxdepth 1 -print -quit) ]] && break
+    echo "${0##*/}: $candidate is skipped: it holds files but is no worktree of $primary" >&2
+  done
+  git -C "$primary" worktree add -q ${pool_options[@]+"${pool_options[@]}"} "$candidate" "${@: -1}" {fd}>&- ||
+    die "cannot add $candidate as a worktree of $primary"
+  exec {fd}>&-
+  echo "$candidate"
 }
 
 # The slot of the pool <pool> (pool_status' lines) that is the path <path>; fails, printing
@@ -1610,6 +1761,13 @@ OPS_REQUEST_MAX_AGE=3600
 # shellcheck disable=SC2034 # read by the scripts that source this library
 INTERVIEW_CHANNEL=${TEAM_INTERVIEW_CHANNEL-1565336720998928556}
 
+# The Discord channel #assistant, the one the assistant session (claude-assistant) hears, with
+# the threads it opens under it: kept out of the coordinator's access.json groups, so the
+# coordinator never hears it. TEAM_ASSISTANT_CHANNEL overrides it, an empty one included, which
+# the scripts that need it refuse as none set, naming the variable.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+ASSISTANT_CHANNEL=${TEAM_ASSISTANT_CHANNEL-1570965039278596199}
+
 # Print the type of the image whose bytes are on stdin, by its first 16, png, jpeg, gif, webp, bmp,
 # tiff, ico or heif, or nothing: the images the data rules refuse (data-check) and the archive leaves
 # out (archive_left_out), whatever a file's name, which image_type below narrows to those a worker
@@ -1721,16 +1879,72 @@ daniel_message() {
     '{place: $place, channel: $channel, who: $who, message: .}' <<<"$reply"
 }
 
+# The assistant's thread cache: the ids of the threads under #assistant found so far, one
+# known-good id per line, which the assistant's Discord guard passes without asking Discord and
+# its digest lists. It is trusted only because the assistant cannot write it: its settings deny
+# the Edit tool and any Bash call naming the file (assistant.settings.json), so only the scripts
+# and hooks below add to it.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
+
+# Succeed when <channel>, Discord's channel object as JSON, is a thread (type 10, 11 or 12)
+# whose parent_id is #assistant (ASSISTANT_CHANNEL), the one rule of a thread of the
+# assistant's: assistant_thread_of <channel JSON>
+assistant_thread_of() {
+  [[ -n $ASSISTANT_CHANNEL ]] &&
+    jq -e --arg parent "$ASSISTANT_CHANNEL" 'type == "object" and ([.type] | inside([10, 11, 12]))
+      and ((.parent_id // "") | tostring) == $parent' >/dev/null 2>&1 <<<"$1"
+}
+
+# Add thread <id> to the thread cache (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
+assistant_thread_keep() {
+  grep -qxF -- "$1" "$ASSISTANT_THREADS" 2>/dev/null && return 0
+  mkdir -p "${ASSISTANT_THREADS%/*}" && echo "$1" >>"$ASSISTANT_THREADS"
+}
+
+# The daniel_message place of the Discord channel <id> when it is #assistant (ASSISTANT_CHANNEL),
+# "#assistant <id>", or a thread under it (assistant_thread_of), "the #assistant thread <id>",
+# read from Discord (discord_api GET channels/<id>) every time, so Daniel's word is held to the
+# assistant's channel by Discord's answer alone, never by a file; a thread found so is added to
+# the thread cache (assistant_thread_keep). Fails with the one reason on stderr: no channel is
+# set (TEAM_ASSISTANT_CHANNEL empty), the channel cannot be read, or it is neither.
+# team-assistant and team-answer --channel hold Daniel's word to it: assistant_place <id>
+assistant_place() {
+  local channel=$1 reply error
+  [[ -n $ASSISTANT_CHANNEL ]] || {
+    echo "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so Daniel's word cannot be held to #assistant" >&2
+    return 1
+  }
+  if [[ $channel == "$ASSISTANT_CHANNEL" ]]; then
+    echo "#assistant $channel"
+    return 0
+  fi
+  error=$(mktemp)
+  if ! reply=$(discord_api "channels/$channel" 2>"$error"); then
+    echo "channel $channel cannot be read from Discord, so it is not known to be under #assistant ($ASSISTANT_CHANNEL): $(grep -m1 . "$error" || echo "no reason given")" >&2
+    rm -f "$error"
+    return 1
+  fi
+  rm -f "$error"
+  assistant_thread_of "$reply" || {
+    echo "channel $channel is neither #assistant ($ASSISTANT_CHANNEL) nor a thread under it, so Daniel's word there is not for the assistant" >&2
+    return 1
+  }
+  assistant_thread_keep "$channel"
+  echo "the #assistant thread $channel"
+}
+
 # Read Discord message <message> as Daniel's answer to <task>'s ask <id>, held to what an answer
 # is held to: sent after the latest asked of <id> in <events> (the task's events, one JSON
 # array), that is after its question's message (the asked's discord_message, which team-ask
 # logs), else no earlier than the asked's ts, as Discord ids order by time; Daniel's
-# (daniel_message), in the task's thread, else #coordinator; and never edited, so its text is
-# the text Daniel sent. With <does>, a machine that is fenced or lost the lease (lease_refusal
-# <does>) is refused after the time check and before Discord is read. Prints daniel_message's
-# {place, channel, who, message}, the text being .message.content; fails with the one reason on
-# stderr. team-answer and team-run-approved hold an answer to it:
-# answer_message <task> <id> <message> <events> [<does>]
+# (daniel_message), in the task's thread, else #coordinator, or first in <place> when given (a
+# daniel_message place, which only team-answer --channel passes, for #assistant or a thread under
+# it, assistant_place); and never edited, so its text is the text Daniel sent. With <does>, a
+# machine that is fenced or lost the lease (lease_refusal <does>) is refused after the time check
+# and before Discord is read. Prints daniel_message's {place, channel, who, message}, the text
+# being .message.content; fails with the one reason on stderr. team-answer and team-run-approved
+# hold an answer to it: answer_message <task> <id> <message> <events> [<does> [<place>]]
 answer_message() {
   local task=$1 id=$2 message=$3 events=$4 sent asked question asked_ts why thread places=() word edited
   [[ $message =~ ^[1-9][0-9]{0,18}$ ]] || {
@@ -1757,6 +1971,7 @@ answer_message() {
     echo "$why" >&2
     return 1
   fi
+  if [[ -n ${6:-} ]]; then places+=("$6"); fi
   thread=$(jq -r 'map(select(.event == "thread") | .discord_thread | strings) | last // empty' <<<"$events") || return 1
   if [[ -n $thread ]]; then places+=("the task's thread $thread"); fi
   places+=("#coordinator $COORDINATOR_CHANNEL")

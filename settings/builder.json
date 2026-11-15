@@ -1,8 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(@TEAM_CODE@/bin/team-checks *)",
       "Bash(@TEAM_CODE@/bin/team-ci-wait *)",
+      "Bash(@TEAM_CODE@/bin/team-ci-run *)",
+      "Bash(gh run rerun *)",
+      "Bash(gh-axi run rerun *)",
+      "Bash(gh run cancel *)",
+      "Bash(gh-axi run cancel *)",
       "Bash(gh pr ready *)",
       "Bash(gh-axi pr ready *)"
     ],

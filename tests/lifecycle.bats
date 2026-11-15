@@ -464,7 +464,10 @@ not JSON
 {"ts":"2026-11-01T00:05:00Z","task":"T2","event":"answered","id":"a1","by":"Daniel"}
 LEDGER
   assert_equal "$status" 0
-  assert_equal "$output" '{"total":8,"from":null,"bad":[{"line":5,"task":"T3","event":"asked","ts":"2026-11-01T00:02:00Z","problems":["T3 is not opened (no opened event), and it takes only thread and opened before its opened, not asked"]},{"line":8,"task":"T2","event":"answered","ts":"2026-11-01T00:05:00Z","problems":["T2 is closed, and a closed task takes no answered"]}]}'
+  # from is the table's own lifecycle_from, whatever the checkout sets it to.
+  local from
+  from=$(jq -c '.lifecycle_from' "$REPO_ROOT/bin/lib/lifecycle.json")
+  assert_equal "$output" '{"total":8,"from":'"$from"',"bad":[{"line":5,"task":"T3","event":"asked","ts":"2026-11-01T00:02:00Z","problems":["T3 is not opened (no opened event), and it takes only thread and opened before its opened, not asked"]},{"line":8,"task":"T2","event":"answered","ts":"2026-11-01T00:05:00Z","problems":["T2 is closed, and a closed task takes no answered"]}]}'
 }
 
 @test "each typed park is ended by exactly the events its cause's row names, and by nothing else" {
@@ -756,6 +759,53 @@ refusal() {
   on asked '{id: "q1", text: "which import?"}'
   on paused '{reason: "no room for session:reviewer", cause: "room", role: "reviewer"}'
   assert_equal "$(fold_read refused_launches.hold)" "unanswered ask q1: which import?"
+}
+
+@test "an ask that names tickets holds a stow or a room refusal only while all its work is those tickets' builders" {
+  local prune='{id: "prune", text: "Prune phase 2?", tickets: ["03"]}'
+  ticket_launch() {
+    on launch "{role: \"builder\", session: \"b$1\", worktree: \"/w/1--$1\", ticket: \"$1\", toolkits: []}"
+  }
+  stowed_with() {
+    events=()
+    opened feature
+    on plan-approved '{by: "Daniel"}'
+    on worktree-added '{project: "proj", ticket: "03", branch: "feat/T1-tooling--03", worktree: "/w/1--03"}'
+    "$@"
+    on asked "$prune"
+    on stowing '{machine: "m", cause: "level", roles: ["builder"]}'
+    on stowed '{machine: "m", cause: "level", roles: ["builder"], worktrees: []}'
+  }
+  stowed_with ticket_launch 03
+  assert_equal "$(fold_read stow_hold)" "unanswered ask prune: Prune phase 2?"
+  # A builder of a ticket the ask does not name is not held, so the stow's resume goes.
+  stowed_with eval 'ticket_launch 03; ticket_launch 05'
+  assert_equal "$(fold_read stow_hold)" "null"
+  # A builder in the task's worktree is the ticket of its build brief, its resume's too.
+  stowed_with on launch '{role: "builder", session: "b1", worktree: "/w/1", toolkits: [], brief: "brief-resume-build-03"}'
+  assert_equal "$(fold_read stow_hold)" "unanswered ask prune: Prune phase 2?"
+  stowed_with on launch '{role: "builder", session: "b1", worktree: "/w/1", toolkits: [], brief: "brief-deliver"}'
+  assert_equal "$(fold_read stow_hold)" "null"
+  # A ticket's builder that ended before the stow is not its work.
+  stowed_with eval 'ticket_launch 05; on ticket-done "{ticket: \"05\", commits: []}"; ticket_launch 03'
+  assert_equal "$(fold_read stow_hold)" "unanswered ask prune: Prune phase 2?"
+  # An ask logged after the stow holds it by the same rule, its wait no other way.
+  events=()
+  opened feature
+  on plan-approved '{by: "Daniel"}'
+  on launch '{role: "builder", session: "b1", worktree: "/w/1", toolkits: [], brief: "brief-build-05"}'
+  on stowed '{machine: "m", cause: "level", roles: ["builder"], worktrees: []}'
+  on asked "$prune"
+  assert_equal "$(fold_read stow_hold)" "null"
+  # A room refusal holds by the refused launch's ticket.
+  events=()
+  opened feature
+  on plan-approved '{by: "Daniel"}'
+  on asked "$prune"
+  on paused '{reason: "no room for session:builder", cause: "room", role: "builder", brief: "brief-build-03"}'
+  assert_equal "$(fold_read refused_launches.hold)" "unanswered ask prune: Prune phase 2?"
+  on paused '{reason: "no room for session:builder", cause: "room", role: "builder", brief: "brief-build-05"}'
+  assert_equal "$(fold_read refused_launches.hold)" "null"
 }
 
 @test "a stowing stands until its stowed or stow-failed, and a stow-failed reads as stowed with the stowing's roles until a launch" {

@@ -3,7 +3,7 @@
     "The ledger contract: every event kind in ledger.jsonl, the script that writes it (or the list of scripts that do), and its fields.",
     "Each field's type is string, number, array (a list), numbers (a list of whole numbers, 0 or more), object, boolean, id (a Discord id: a string of digits, which --check also takes as a whole number, the form team-log wrote before) or digits (any other whole number kept as a string of digits, as a GitHub run or job id is), or a list of the strings it may be.",
     "Every line has ts (UTC, like 2026-10-22T01:00:00Z), task (T<n>) and event; note (a string) is allowed on every kind, and other fields are allowed.",
-    "A kind marked inbox changes what waits on Daniel or how it ranks (an ask, an answer, a merge word or its withdrawal, a plan's approval, a PR, its review or merge, a close, a worker's done, a ticket done, an interview thread, a park or its end), so team-log runs team-inbox (refresh_inbox in bin/lib/team.sh) once after it logs one, as the other writers of one do at their end; a launch also moves the counts (past an ask, onto a ready ticket, ending a park on another task) but is not marked, so the heartbeat's inbox step brings them up to date.",
+    "A kind marked inbox changes what waits on Daniel or how it ranks (an ask, an answer, a merge word or its withdrawal, a plan's approval, a PR, its review or merge, a close, a worker's done, a ticket done, an interview thread, a walk's start or stop, a park or its end), so team-log runs team-inbox (refresh_inbox in bin/lib/team.sh) once after it logs one, as the other writers of one do at their end; a launch also moves the counts (past an ask, onto a ready ticket, ending a park on another task) but is not marked, so the heartbeat's inbox step brings them up to date.",
     "A kind's field_writers names the one script that may append a line holding each field it lists, among the kind's writers; the others append the kind without it.",
     "A kind with push true records Daniel's word or an outside fact, so the script that appends it commits the ledger and pushes it to the team home's origin at once (ledger_push), not at the next checkpoint.",
     "A kind's field_when names, for each field it lists, the values another field must hold for a line to carry it, as {\"discord_message\": {\"role\": [\"ops\"]}}: a line holding the field with any other value there is refused.",
@@ -106,9 +106,9 @@
     "asked": {
       "inbox": true,
       "writer": ["team-log", "team-ask"],
-      "about": "a decision put to Daniel, which parks the task by itself until it is answered (the fold adds its wait, cause ask); discord_message: the question's first message in the task's thread, which team-inbox links; script and sha256: a script Daniel is asked to OK and its sha256sum, which the question names, logged together by team-ask --script, their one writer, which team-run-approved runs only once Daniel's latest answer to the ask, read back from Discord, has a line that starts with yes, or, when that answered names an item, a part with that number, every such part starting with yes, and only while the file hashes the same",
+      "about": "a decision put to Daniel, which parks the task by itself until it is answered (the fold adds its wait, cause ask); discord_message: the question's first message in the task's thread, which team-inbox links; script and sha256: a script Daniel is asked to OK and its sha256sum, which the question names, logged together by team-ask --script, their one writer, which team-run-approved runs only once Daniel's latest answer to the ask, read back from Discord, has a line that starts with yes, or, when that answered names an item, a part with that number, every such part starting with yes, and only while the file hashes the same; tickets: the two-digit tickets the ask holds (team-ask --tickets), so that until it is answered it refuses only the launches of those tickets' builders, and parks the task only while none of its work is unfinished, where an ask with none holds the whole task",
       "required": {"id": "string", "text": "string"},
-      "optional": {"discord_message": "id", "script": "string", "sha256": "string"},
+      "optional": {"discord_message": "id", "script": "string", "sha256": "string", "tickets": "array"},
       "field_writers": {"script": "team-ask", "sha256": "team-ask"}
     },
     "answered": {
@@ -119,6 +119,11 @@
       "required": {"id": "string", "answer": "string"},
       "optional": {"discord_message": "id", "item": "number"},
       "field_writers": {"item": "team-answer"}
+    },
+    "handoff": {
+      "writer": "team-assistant",
+      "about": "a hand-off between the assistant and the coordinator that names the task (team-assistant send --task, and answer of such a hand-off while the task is open or with --task): id its H<n>, kind its kind, from its sender, state sent when it is sent and answered when its recipient answers it; the hand-off itself is the team home's assistant/handoffs/H<n>.md and its line in assistant/handoffs.jsonl",
+      "required": {"id": "string", "kind": ["task", "decision", "research", "note", "walkthrough", "spike"], "from": ["assistant", "coordinator"], "state": ["sent", "answered"]}
     },
     "ran": {
       "writer": "team-run-approved",
@@ -321,8 +326,16 @@
     },
     "walk": {
       "writer": "team-ui",
-      "about": "a manual QC walk of the task turned on or off (team-ui --walk start or stop), only when that changes it: the walk is on while the task's latest walk is on and the task is not closed, since its ts, and while it is on each message of Daniel's in the task's thread is a walk note the coordinator captures the page with",
-      "required": {"state": ["on", "off"]}
+      "inbox": true,
+      "about": "a manual QC walk of the task turned on or off (team-ui --walk start or stop), only when that changes it: the walk is on while the task's latest walk is on and the task is not closed, since its ts, and while it is on each message of Daniel's in the task's thread is a walk note the coordinator captures the page with; thread interview on an on event puts the walk in the task's interview thread, where its planner captures instead; reseeded on an on event is Daniel's Discord message saying the primary stack was just reseeded, which team-ui read back before logging it, and reseeded_port the one port that message names, whose captures that walk clears for team-post",
+      "required": {"state": ["on", "off"]},
+      "optional": {"thread": ["interview"], "reseeded": "id", "reseeded_port": "number"}
+    },
+    "walk-note": {
+      "writer": ["team-thread", "team-ui"],
+      "about": "a message of Daniel's on the walk that is on, its id when known and never its words: team-thread wait logs the latest it read in an interview walk's thread, team-ui --capture --note-file a note in a walk of the task's own thread; a walk counts for its stack and its place in the stow order for 4 hours after the latest of these and its start (walk_holds in bin/lib/ledger.jq), so a message reaching neither path does not reset that clock",
+      "required": {},
+      "optional": {"discord_message": "id"}
     },
     "image-posted": {
       "writer": "team-post",

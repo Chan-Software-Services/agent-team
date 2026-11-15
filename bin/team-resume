@@ -84,13 +84,17 @@
 #                   the resume skill deletes the day's reports.
 #  11. coordinator  claude-coordinator, with a first prompt naming the report and the resume skill;
 #                   then "Pin the coordinator in `claude agents` (Ctrl+T)."
+#  12. assistant    claude-assistant, with a first prompt naming its stow note and its digest; then
+#                   "Pin the assistant in `claude agents` (Ctrl+T)." One that does not start is
+#                   said on stderr, "assistant: <its first error>; start it with claude-assistant
+#                   once that is fixed", the coordinator left running, and the resume exits 1.
 # Only Daniel steals: --steal needs this terminal, and the coordinator's deny rules and the
 # workers' command-guard stop the team's sessions typing it. In ~/.local/state/agent-team/:
 # resume.lock, one resume at a time.
 # TEAM_DOCTOR names the doctor to run instead of this checkout's team-doctor, and
 # TEAM_RESUME_POLL_SECONDS the seconds between --wait's reads (the tests' seams).
-# Exit 0 done, 1 refused or a step failed (a worktree that could not be re-homed included, after
-# the coordinator starts), 2 usage error, 75 GitHub unreachable or another resume running.
+# Exit 0 done, 1 refused or a step failed (a worktree that could not be re-homed or an assistant
+# that did not start included, after the coordinator starts), 2 usage error, 75 GitHub unreachable or another resume running.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
@@ -129,7 +133,7 @@ fi
 
 # The first line of a sibling's stderr, without its "<script>: " prefix.
 first_error() {
-  grep -m1 . "$err" | sed -E 's/^(team-[a-z-]+|claude-coordinator): //' || true
+  grep -m1 . "$err" | sed -E 's/^(team-[a-z-]+|claude-coordinator|claude-assistant): //' || true
 }
 
 # Each line of stdin as "<step>: <line>": prefixed <step>
@@ -356,10 +360,24 @@ main() {
   [[ -z $out ]] || prefixed coordinator <<<"$out"
   echo "coordinator: started, with the resume skill and the report"
   echo "Pin the coordinator in \`claude agents\` (Ctrl+T)."
+
+  # 12. The assistant, beside the coordinator; the coordinator runs whether it starts or not.
+  local assistant=1
+  rc=0
+  out=$(team claude-assistant --prompt "You are the assistant, resuming on $machine. Read assistant/handoff.md first, then follow your digest." 2>"$err") || rc=$?
+  if ((rc == 0)); then
+    [[ -z $out ]] || prefixed assistant <<<"$out"
+    echo "assistant: started, with its stow note and its digest"
+    echo "Pin the assistant in \`claude agents\` (Ctrl+T)."
+  else
+    assistant=''
+    echo "team-resume: assistant: $(first_error); start it with claude-assistant once that is fixed" >&2
+  fi
   if ((failed)); then
     echo "team-resume: $failed worktree(s) could not be re-homed; the report names each, and the coordinator says so on Discord" >&2
     exit 1
   fi
+  [[ -n $assistant ]] || exit 1
 }
 
 main "$@"
