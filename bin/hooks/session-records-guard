@@ -16,7 +16,8 @@
 #   Read  its file_path
 #   Grep  its path, or the cwd with none
 #   Glob  its path, or the cwd with none; and, when its pattern starts with / or ~, the pattern's
-#         literal start too: the text before its first * ? [ or {, cut back to its last /
+#         literal start too: the text before its first * ? [ or {, cut back to its last /, or
+#         the whole pattern when it has none of them
 # Any other tool passes unread.
 #
 # A path that is not the root, under it or above it passes. A path under the root passes only as
@@ -27,9 +28,9 @@
 #
 # It reads nothing of the team home, so it decides on a machine that names none. When it cannot
 # decide it refuses, saying so: input that is not a JSON object with a tool_name string, a Read
-# with no file_path string, a path or pattern that is no string, an argument on its command line,
-# and any command of its own that fails, which ends as an exit 2 naming the hook and the exit
-# code (team_guard in bin/lib/team.sh).
+# whose file_path is no string or an empty one, a path or pattern that is no string, an argument
+# on its command line, and any command of its own that fails, which ends as an exit 2 naming the
+# hook and the exit code (team_guard in bin/lib/team.sh).
 set -euo pipefail
 # A guard decides or refuses (bin/lib/team.sh), and reads nothing of the team home, so it decides
 # on a machine that names none.
