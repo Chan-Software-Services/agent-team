@@ -290,11 +290,16 @@ assert_nothing_written() {
 @test "its settings keep the coordinator's keys and compaction, and it takes no model or effort of its own" {
   run_bin -0 claude-assistant
   local settings=$state/assistant.settings.json coordinator=$REPO_ROOT/coordinator.settings.json key
-  for key in enabledPlugins syncClaudeAiPlugins crossSessionInbound isolatePeerMachines promptCacheTtl idleCompaction skillOverrides; do
+  # But for what the coordinator alone trims from its starting context: its skill listing
+  # (skillOverrides, the synced and the bundled skills) and the task reminder's switch.
+  for key in enabledPlugins syncClaudeAiPlugins crossSessionInbound isolatePeerMachines promptCacheTtl idleCompaction; do
     assert_equal "$(jq -c --arg k "$key" '.[$k]' "$settings")" "$(jq -c --arg k "$key" '.[$k]' "$coordinator")"
   done
+  # Its own skillOverrides keep the synced docs skill off, which steers a session to the Claude
+  # Docs connector the launch denies.
+  assert_equal "$(jq -r '.skillOverrides["anthropic-skills:docs"]' "$settings")" off
   assert_equal "$(jq -c '.env | del(.AGENT_TEAM_ROLE, .DISCORD_STATE_DIR, .DISCORD_ACCESS_MODE)' "$REPO_ROOT/assistant.settings.json")" \
-    "$(jq -c '.env | del(.AGENT_TEAM_ROLE)' "$coordinator")"
+    "$(jq -c '.env | del(.AGENT_TEAM_ROLE, .CLAUDE_CODE_TODO_REMINDER_MODE)' "$coordinator")"
   assert_equal "$(jq -c '[has("model"), has("effortLevel"), has("autoCompactWindow"), (.env | has("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))]' "$settings")" \
     '[false,false,false,false]'
   local argv
@@ -309,7 +314,9 @@ assert_nothing_written() {
     jq -e --arg r "Bash(*/${rule#Bash(}" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
       { echo "no path spelling of $rule" >&2; return 1; }
   done < <(jq -r '.permissions.deny[] | select(test("^Bash\\((team-|claude-coordinator )"))' "$settings")
-  assert_equal "$(jq -r --slurpfile a "$settings" '.permissions.deny - $a[0].permissions.deny | .[]' "$REPO_ROOT/coordinator.settings.json")" ""
+  # But for the tools the coordinator denies only to keep their definitions out of its context.
+  assert_equal "$(jq -r --slurpfile a "$settings" '.permissions.deny - $a[0].permissions.deny | .[]' "$REPO_ROOT/coordinator.settings.json" | paste -sd ' ')" \
+    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow"
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
