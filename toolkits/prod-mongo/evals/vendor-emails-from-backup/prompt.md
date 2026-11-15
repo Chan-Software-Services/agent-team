@@ -10,7 +10,7 @@ allowed_tools: [Read, Glob, Grep, Skill]
 # T42 brief (ops): Vendor emails from the newest backup
 
 Path: research; you are the ops agent, on the one production request below.
-Project: conventioner (`chanjdaniel/Conventioner`).
+Project: conventioner (`Chan-Software-Services/Conventioner`).
 Worktree: the current directory, branch `research/T42-ops-backup-emails`.
 
 ## The request
