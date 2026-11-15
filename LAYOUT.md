@@ -61,7 +61,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
 - `CLAUDE.md`: the rules every session of this repository starts with, which `tests/repo.bats` holds to a byte cap.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
-- `LAYOUT.md`: this file, where each path's one line and the team home's table live, which `CLAUDE.md` points to.
+- `LAYOUT.md`: this file, where the layout's lines and the team home's table live, which `CLAUDE.md` points to.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".

@@ -1,7 +1,7 @@
 # The tests
 
 The reference for writing or changing a test, a test helper or a CI job.
-`CLAUDE.md`, "Tests and shellcheck", has the rules every change keeps, in short; this file gives the reasons behind the sandbox, path variable, `wait`, jq include, macOS and hook entry rules, and says how the suite runs, what CI runs and what the sandbox gives a test.
+`CLAUDE.md`, "Tests and shellcheck" and "Script conventions", has the rules every change keeps, in short; this file gives the reasons behind the sandbox, path variable, `wait`, jq include, macOS and hook entry rules, and says how the suite runs, what CI runs and what the sandbox gives a test.
 The one-file and one-test commands, the fixture-address rule and the repo invariants with the byte caps are in `CLAUDE.md` alone.
 Exact commands are in each script's header (`tests/run --help`).
 

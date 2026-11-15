@@ -26,8 +26,9 @@ section() {
 
 # A session loads its role prompt whole before it reads its brief, so the size of each role prompt
 # but the coordinator's, whose caps are below, is held, one line per role: its name and its cap in
-# bytes. The helper over_cap (tests/helpers/common.bash) words the failure, and tests/repo.bats
-# tests its message.
+# bytes. The list is held to the roles/ directory, so a new role prompt fails until it has a cap.
+# The helper over_cap (tests/helpers/common.bash) words the failure, and tests/repo.bats tests its
+# message.
 ROLE_CAPS="assistant 6900
 builder 8000
 ops 4900
@@ -36,8 +37,8 @@ reviewer 7200"
 
 @test "each role prompt but the coordinator's is at most its cap in bytes" {
   local role cap over=()
+  assert_equal "$(cut -d' ' -f1 <<<"$ROLE_CAPS")" "$(roles | grep -vx coordinator)"
   while read -r role cap; do
-    [[ -f $REPO_ROOT/roles/$role.md ]]
     over+=("$(over_cap "$REPO_ROOT/roles/$role.md" "$cap" "roles/$role.md" "the brief, a SOP, a skill")")
   done <<<"$ROLE_CAPS"
   assert_equal "$(printf '%s\n' "${over[@]}" | sed '/^$/d')" ""
