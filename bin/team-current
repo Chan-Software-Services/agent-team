@@ -489,8 +489,8 @@ records_hold() {
 }
 
 # Close each until item of the list whose condition holds and move its old-form lines over,
-# committing and printing each change; sets changed_inbox when an ask or owe line changed, and
-# failed when a commit failed: reconcile_list <name>
+# committing and printing each change; sets changed_inbox when an ask or owe line changed:
+# reconcile_list <name>
 reconcile_list() {
   local i condition url state why rc old
   local -a checks=() closing_lines=()
@@ -536,20 +536,14 @@ reconcile_list() {
     id=$(item_id "$closing")
     # shellcheck disable=SC2034 # read by commit_records
     records_edit=edit_close
-    commit_change "chore: current closed $id: $condition" || {
-      failed=1
-      continue
-    }
+    commit_change "chore: current closed $id: $condition"
     [[ -n $gone ]] || echo "closed $id: $condition"
     [[ ! $closing =~ ^-\ (ask|owe)\  ]] || changed_inbox=1
   done
   ((${#moved[@]})) || return 0
   # shellcheck disable=SC2034 # read by commit_records
   records_edit=edit_migrate
-  commit_change "chore: current migrated ${#moved[@]} item$( ((${#moved[@]} == 1)) || echo s)" || {
-    failed=1
-    return 0
-  }
+  commit_change "chore: current migrated ${#moved[@]} item$( ((${#moved[@]} == 1)) || echo s)"
   for i in "${!lines[@]}"; do
     for old in "${!moved[@]}"; do
       if [[ ${lines[i]} == "${moved[$old]}" ]]; then
@@ -734,7 +728,7 @@ case $command in
   reconcile)
     (($# == 0)) || usage_error "$usage"
     make_scratch
-    changed_inbox='' failed=''
+    changed_inbox=''
     if [[ -n $named_list ]]; then
       reconcile_list "$named_list"
     else
@@ -742,7 +736,6 @@ case $command in
       reconcile_list assistant
     fi
     [[ -z $changed_inbox ]] || refresh_inbox
-    [[ -z $failed ]] || exit 1
     ;;
   check)
     json=''
