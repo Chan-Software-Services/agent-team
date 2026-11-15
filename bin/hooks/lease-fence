@@ -15,9 +15,9 @@
 #     wait (an interview's read of Discord): blocked as a post is, with what such a machine does
 #     instead.
 #   Bash (workers): a command that runs git push is blocked while this machine is fenced; while
-#     the team holds offline, one that runs git push, gh, gh-axi, team-ci-wait or team-thread wait
-#     is blocked with the hold (offline_hold: "GitHub is unreachable (since 13:05); the team is
-#     holding: ..."), so no worker retries or waits on.
+#     the team holds offline, one that runs git push, gh, gh-axi, team-ci-wait, team-ci-run or
+#     team-thread wait is blocked with the hold (offline_hold: "GitHub is unreachable (since
+#     13:05); the team is holding: ..."), so no worker retries or waits on.
 #   Bash (the coordinator, --coordinator): a command that runs git push, team-merge,
 #     team-catch-up, team-open or team-close is blocked as a Discord post is, so a coordinator
 #     left running on a machine that lost the lease merges, opens, closes and pushes nothing while
@@ -33,11 +33,12 @@
 # Reads, in ~/.local/state/agent-team/: fenced (team-lease's), offline (team-timers run's,
 # through offline_hold in bin/lib/team.sh), and what lease_refusal reads there.
 # When it cannot decide it refuses, saying so, as a guard does: input that is not a JSON object
-# with a tool_name string; a call the lease decides (each above but a worker's git push, gh and
-# team-ci-wait and the assistant's gh, which read only the fence and the offline hold) on a
-# machine that names no team home, whose lease it cannot read; a wrong argument on its command
-# line, which so blocks every call; and any command of its own that fails, which ends as an exit
-# 2 naming the hook and the exit code (team_guard in bin/lib/team.sh). What passes on purpose:
+# with a tool_name string; a call the lease decides (each above but a worker's git push, gh,
+# team-ci-wait and team-ci-run and the assistant's gh, which read only the fence and the offline
+# hold) on a machine that names no team home, whose lease it cannot read; a wrong argument on its
+# command line, which so blocks every call; and any command of its own that fails, which ends as
+# an exit 2 naming the hook and the exit code (team_guard in bin/lib/team.sh). What passes on
+# purpose:
 # the lease part with origin unreachable, or with no machine name or no origin (the fence alone
 # decides then), since the heartbeat owns offline and fences a machine once it finds the lease
 # lost, and refusing there would stop the coordinator's posts whenever GitHub is down.
@@ -110,8 +111,9 @@ case $tool in
     answer=$COMMAND_START'team-answer([[:space:]]|$)'
     # team-thread wait, the interview's blocking read of Discord, where a command starts, as gh.
     wait=$COMMAND_START'team-thread[[:space:]]+wait([[:space:]]|$)'
-    # team-ci-wait, a worker's wait on a PR's GitHub checks, where a command starts, as gh.
-    ci_wait=$COMMAND_START'team-ci-wait([[:space:]]|$)'
+    # team-ci-wait, a worker's wait on a PR's GitHub checks, and team-ci-run, a builder's on the
+    # CI run of the head it pushed, where a command starts, as gh.
+    ci_wait=$COMMAND_START'team-ci-(wait|run)([[:space:]]|$)'
     if [[ $command =~ $post ]]; then
       lease_block "$POSTS"
     fi

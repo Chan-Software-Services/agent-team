@@ -1767,28 +1767,47 @@ Bash(@TEAM_CODE@/bin/team-ci-wait *)'
   if denied settings/reviewer.json "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
 }
 
-@test "the builder's allow rules are the local checks, as the briefs give them, the CI wait a worker may run by hand, and marking a PR ready" {
-  assert_equal "$(jq -r '.permissions.allow[]' "$REPO_ROOT/settings/builder.json")" 'Bash(@TEAM_CODE@/bin/team-checks *)
-Bash(@TEAM_CODE@/bin/team-ci-wait *)
+@test "the builder's allow rules are the CI wait a worker may run by hand, the CI run of its branch with its reruns and cancels, and marking a PR ready" {
+  assert_equal "$(jq -r '.permissions.allow[]' "$REPO_ROOT/settings/builder.json")" 'Bash(@TEAM_CODE@/bin/team-ci-wait *)
+Bash(@TEAM_CODE@/bin/team-ci-run *)
+Bash(gh run rerun *)
+Bash(gh-axi run rerun *)
+Bash(gh run cancel *)
+Bash(gh-axi run cancel *)
 Bash(gh pr ready *)
 Bash(gh-axi pr ready *)'
   local brief
-  for brief in delivery/direct-pr builder-merge-base; do
-    grep -qF '`{{team_bin}}/team-checks {{project}} <full sha>`' "$REPO_ROOT/templates/briefs/$brief.md"
+  # A builder's brief runs the tests its change reaches; the reviewer's run the local checks.
+  for brief in builder-ticket delivery/direct-pr delivery/no-mistakes builder-merge-base builder-round; do
+    if grep -F -e team-checks -e '{{local_checks}}' "$REPO_ROOT/templates/briefs/$brief.md"; then return 1; fi
+    grep -qF '{{tests}}' "$REPO_ROOT/templates/briefs/$brief.md" || [[ $brief == builder-round ]]
   done
   for brief in reviewer rereview verify before-pr/rereview before-pr/verify; do
     grep -qF '`{{team_bin}}/team-checks {{project}} {{head}}`' "$REPO_ROOT/templates/briefs/$brief.md"
   done
-  # No brief starts a wait on CI, which the coordinator's checks wait takes after a pass; the rule
-  # stays for a worker's wait by hand.
+  # No template names team-ci-wait, whose rule stays for a worker's wait by hand: a builder's wait
+  # on CI comes only through the ci fact's team-ci-run, and the coordinator's checks wait takes the
+  # PR's checks after a pass.
   if git -C "${REPO_ROOT:?}" grep -n team-ci-wait -- templates; then return 1; fi
-  allows builder "$REPO_ROOT/bin/team-checks agent-team a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
   allows builder "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"
   allows builder "$REPO_ROOT/bin/team-ci-wait --no-agent-review https://github.com/me/shop/pull/5"
   if allows builder "team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
   if allows builder "/elsewhere/bin/team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
   if denied settings/builder.json "$REPO_ROOT/bin/team-ci-wait https://github.com/me/shop/pull/5"; then return 1; fi
+  # team-ci-run as the brief's ci fact gives it, by the code checkout's full path and no other.
+  local sha=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+  grep -qF '/team-ci-run $project $branch <the full sha you pushed>\`' "$REPO_ROOT/bin/team-brief"
+  allows builder "$REPO_ROOT/bin/team-ci-run shop feat/T5-cart--03 $sha"
+  if denied settings/builder.json "$REPO_ROOT/bin/team-ci-run shop feat/T5-cart--03 $sha"; then return 1; fi
+  if allows builder "team-ci-run shop feat/T5-cart--03 $sha"; then return 1; fi
+  if allows builder "/elsewhere/bin/team-ci-run shop feat/T5-cart--03 $sha"; then return 1; fi
   local command
+  # The rerun and the cancel an infrastructure failure's line names, as team-ci-wait prints them.
+  for command in "gh run rerun 7001 --repo me/shop" "gh run rerun 7001 --job 9001 --repo me/shop" \
+    "gh run cancel 7001 --repo me/shop" "gh-axi run rerun 7001 --repo me/shop" "gh-axi run cancel 7001 --repo me/shop"; do
+    allows builder "$command" || { echo "the builder may not run: $command" >&2; return 1; }
+    if denied settings/builder.json "$command"; then echo "settings/builder.json denies: $command" >&2; return 1; fi
+  done
   for command in "gh pr ready https://github.com/me/shop/pull/5" "gh pr ready 5 --repo me/shop" \
     "gh pr ready -R me/shop 5" "gh-axi pr ready 5"; do
     allows builder "$command" || { echo "the builder may not run: $command" >&2; return 1; }
@@ -1799,7 +1818,8 @@ Bash(gh-axi pr ready *)'
     "gh pr ready -R me/shop --undo 5" "gh-axi pr ready 5 --undo"; do
     denied settings/builder.json "$command" || { echo "settings/builder.json allows: $command" >&2; return 1; }
   done
-  # The rules are for marking a PR ready and nothing else: no other gh write rides on them.
+  # The rules are for marking a PR ready and a run's rerun and cancel, and nothing else: no other
+  # gh write rides on them, and only team-ci-run starts a workflow's run.
   while IFS= read -r command; do
     if allows builder "$command"; then echo "the builder may run: $command" >&2; return 1; fi
   done <<'COMMANDS'
@@ -1811,6 +1831,10 @@ gh pr review 5 --approve
 gh pr close 5
 gh-axi pr edit 5 --body-file x.md
 gh api repos/me/shop/pulls/5 -X PATCH -f draft=false
+gh workflow run ci.yml --repo me/shop --ref feat/T5-cart
+gh-axi workflow run ci.yml --repo me/shop --ref feat/T5-cart
+gh run delete 7001 --repo me/shop
+gh api repos/me/shop/actions/runs/7001/rerun -X POST
 COMMANDS
 }
 
@@ -2418,16 +2442,25 @@ ok 2 after it"
   unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
   limits_checkout "$copy"
   # A test that passes but leaves a process holding bats' output (fd 3) open, deaf to TERM, so
-  # bats never ends after its last test until the kill 30 s after the TERM.
+  # bats never ends after its last test until the limit's TERM ends bats itself.
+  # A shell that traps TERM prints bash's job notice ("Terminated" on bash 5.2, with the command
+  # on 5.3) when the limit's TERM ends a command it waits on, and bats' per-test countdown (on
+  # under tests/run's BATS_TEST_TIMEOUT) is such a shell on the file's output, the likely source
+  # of the "Terminated" a loaded CI runner added at random.
+  # So the test leaves such a shell too: deaf to TERM itself, while the TERM ends its sleep.
+  # Its stderr is fd 11, where bash keeps bats' stderr while the test's output goes to its log.
+  # Its notice reaches tests/run's output on most runs, whenever it is written before tests/run
+  # reads the file, so the test compares the output with those notices left out.
   printf '%s\n' '@test "first" { true; }' \
-    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & }' >"$copy/tests/held.bats"
+    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & bash -c '"'"'trap "" TERM; env --default-signal=TERM sleep 300; true'"'"' 2>&11 & }' \
+    >"$copy/tests/held.bats"
   echo '@test "quick" { true; }' >"$copy/tests/quick.bats"
   local start=$SECONDS
   TEAM_JOBS=2 TESTS_FILE_MINUTES=1 run -1 --separate-stderr "$copy/tests/run" bats
   ((SECONDS - start >= 60 && SECONDS - start < 120))
   assert_contains "$output" "ok tests/quick.bats ("
   [[ $(grep '^not ok tests/held.bats' <<<"$output") =~ ^"not ok tests/held.bats ("(6[0-9]|[7-9][0-9]|1[01][0-9])"s): stopped at its 1-minute limit"$ ]]
-  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output")" "--- tests/held.bats
+  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output" | grep -vE '^Terminated( .*)?$')" "--- tests/held.bats
 1..2
 ok 1 first
 ok 2 leaves a process behind

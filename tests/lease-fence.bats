@@ -269,6 +269,31 @@ age_probe() {
   assert_equal "$(probes)" 0
 }
 
+@test "while the team holds offline, a worker's team-ci-run is blocked with the hold, as team-ci-wait is; otherwise it passes" {
+  local command head=5413b8ce777cea7ed3f1ebb0fdf6802072f1d7a3
+  local runs=("team-ci-run shop feat/x $head" "/home/x/agent-team/bin/team-ci-run shop feat/x $head"
+    "cd wt && team-ci-run shop feat/x $head" "TEAM_HOME=x team-ci-run shop feat/x $head"
+    $'git commit -m wip\nteam-ci-run shop feat/x '"$head" "(team-ci-run shop feat/x $head)")
+  local others=("echo team-ci-run" "grep -rn 'team-ci-run' bin" "team-ci-runner shop feat/x $head" "cat bin/team-ci-run")
+  for command in "${runs[@]}" "${others[@]}"; do
+    bash_call -0 "$command"
+    coordinator_call -0 "$command"
+  done
+  # A fenced machine's hold is on its pushes only.
+  fence
+  for command in "${runs[@]}"; do bash_call -0 "$command"; done
+  rm "$state/fenced"
+
+  echo '{"since": "2026-10-22T13:05:00Z", "posted": true}' >"$state/offline"
+  for command in "${runs[@]}"; do
+    bash_call -2 "$command"
+    assert_equal "$stderr" "Blocked: GitHub is unreachable (since $(date -d 2026-10-22T13:05:00Z +%H:%M)); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
+    coordinator_call -0 "$command"
+  done
+  for command in "${others[@]}"; do bash_call -0 "$command"; done
+  assert_equal "$(probes)" 0
+}
+
 @test "the coordinator's push, team-merge, team-catch-up, team-open and team-close are blocked when fenced or when origin names another holder" {
   local command writes=("git push origin dev" "git -C ~/agent-team push" "team-merge T7" "team-catch-up T7"
     "/home/x/agent-team/bin/team-catch-up T7 --pr https://github.com/o/p/pull/6"
