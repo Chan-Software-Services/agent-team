@@ -2442,16 +2442,25 @@ ok 2 after it"
   unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
   limits_checkout "$copy"
   # A test that passes but leaves a process holding bats' output (fd 3) open, deaf to TERM, so
-  # bats never ends after its last test until the kill 30 s after the TERM.
+  # bats never ends after its last test until the limit's TERM ends bats itself.
+  # A shell that traps TERM prints bash's job notice ("Terminated" on bash 5.2, with the command
+  # on 5.3) when the limit's TERM ends a command it waits on, and bats' per-test countdown (on
+  # under tests/run's BATS_TEST_TIMEOUT) is such a shell on the file's output, the likely source
+  # of the "Terminated" a loaded CI runner added at random.
+  # So the test leaves such a shell too: deaf to TERM itself, while the TERM ends its sleep.
+  # Its stderr is fd 11, where bash keeps bats' stderr while the test's output goes to its log.
+  # Its notice reaches tests/run's output on most runs, whenever it is written before tests/run
+  # reads the file, so the test compares the output with those notices left out.
   printf '%s\n' '@test "first" { true; }' \
-    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & }' >"$copy/tests/held.bats"
+    '@test "leaves a process behind" { bash -c '"'"'trap "" TERM; sleep 300'"'"' & bash -c '"'"'trap "" TERM; env --default-signal=TERM sleep 300; true'"'"' 2>&11 & }' \
+    >"$copy/tests/held.bats"
   echo '@test "quick" { true; }' >"$copy/tests/quick.bats"
   local start=$SECONDS
   TEAM_JOBS=2 TESTS_FILE_MINUTES=1 run -1 --separate-stderr "$copy/tests/run" bats
   ((SECONDS - start >= 60 && SECONDS - start < 120))
   assert_contains "$output" "ok tests/quick.bats ("
   [[ $(grep '^not ok tests/held.bats' <<<"$output") =~ ^"not ok tests/held.bats ("(6[0-9]|[7-9][0-9]|1[01][0-9])"s): stopped at its 1-minute limit"$ ]]
-  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output")" "--- tests/held.bats
+  assert_equal "$(sed -n '/^--- tests\/held.bats$/,/^bats: /p' <<<"$output" | grep -vE '^Terminated( .*)?$')" "--- tests/held.bats
 1..2
 ok 1 first
 ok 2 leaves a process behind
