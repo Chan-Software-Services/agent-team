@@ -1698,18 +1698,21 @@ def waiting_on:
 # Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
 # task's events after that launch: a pr follows it, and after the latest one come only launches of
 # a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
-# the builder's with its end: a blocked that does not name the builder's session, and a resumed
-# with no brief after such a blocked (a resumed carries no session). A review, an ask, an answer,
-# a resumed naming a brief or a later builder's launch is the task asking for work again.
+# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
+# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
+# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
+# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
+# work again.
 def delivered($launch):
+  def effect: lifecycle_table.kinds[.event // ""].effect // null;
   $launch.role == "builder" and ($launch.ticket | type) != "string"
   and ((map(.event == "pr") | rindex(true)) as $pr
     | $pr != null
       and (.[$pr + 1:] as $after
         | all(range($after | length); . as $k | $after[$k]
             | if .event == "launch" then .role == "reviewer"
-              elif .event == "blocked" then .session != $launch.session
-              elif .event == "resumed" then .brief == null and any($after[:$k][]; .event == "blocked")
+              elif effect == "park" then .session != $launch.session
+              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
               else (.session | type) == "string" and .session != $launch.session end)));
 
 # The no-worker, waiting-input, silent, stalled, ticket-gone and ticket-worktree-left findings of

@@ -321,6 +321,19 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   event T12 resumed '{all: true}'
   run_bin -0 team-sweep
   assert_equal "$output" ""
+  # The same for every kind that opens a park: the reviewer's pause, with its session or none.
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  event T12 paused '{reason: "GitHub unreachable", cause: "offline", role: "reviewer", session: "7e7e7e7e"}'
+  event T12 resumed '{all: true}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  event T12 paused '{reason: "the usage limit", cause: "limit"}'
+  event T12 resumed '{all: true}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
   # A resumed that names a brief sent out is work asked again, as is one after the builder's own
   # blocked.
   event T12 resumed '{brief: "brief-merge-base"}'
