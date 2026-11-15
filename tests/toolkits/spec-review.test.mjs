@@ -1,8 +1,9 @@
-// The spec-review toolkit as team-worker --toolkit spec-review loads it: its plugin layout and the
-// skills-only property of its files, its three read-only reader agents' frontmatter (their
+// The spec-review toolkit as team-worker --toolkit spec-review loads it: its plugin layout, its
+// manifest's version and description and the skills-only property of its files, its three read-only reader agents' frontmatter (their
 // read-only tools, omitClaudeMd and model), the task files each is told never to read and what each
 // returns, its spec-review and claims-check skills' names, limits and order of steps, its README's
-// sections in the effect toolkit's order, its coordinator section and attribution line, and each
+// sections in the effect toolkit's order, its coordinator section, the files and eval cases it
+// names and its attribution line, and each
 // eval case's tools and graders. The eval's sandbox gives its session no git, so the two
 // claims-check cases start at the skill's step 3, and one test here runs the git commands the
 // skill's steps 1, 2 and 5 name, as written, on a repository a case's scaffold makes.
@@ -28,6 +29,12 @@ describe("the spec-review toolkit", () => {
     const manifest = JSON.parse(read(".claude-plugin", "plugin.json"));
     assert.equal(manifest.name, "spec-review");
     assert.equal(manifest.author?.name, "Daniel Chan");
+    assert.equal(manifest.version, "0.2.0");
+    // The manifest says both skills and whom each serves, and still that nothing else loads.
+    for (const part of ["For a planner", "the spec-review skill", "For every delivering builder", "team-worker", "the claims-check skill"]) {
+      assert.ok(manifest.description.includes(part), `the manifest's description lacks "${part}"`);
+    }
+    assert.ok(manifest.description.endsWith("No MCP server, hook or script."), "the manifest's description's last sentence");
     assert.deepEqual(readdirSync(toolkit).sort(), [".claude-plugin", "README.md", "agents", "evals", "skills"]);
     assert.ok(!existsSync(join(toolkit, ".mcp.json")), "the toolkit declares an MCP server");
     assert.ok(!existsSync(join(toolkit, "hooks")), "the toolkit has hooks");
@@ -64,11 +71,30 @@ describe("the spec-review toolkit", () => {
   test("its README says when the coordinator gives it", () => {
     assert.match(readme, /^## When the coordinator gives it$/m);
     assert.match(readme, /--toolkit spec-review/);
+    // A delivering builder gets it from team-worker with nothing given, on a project that lists no toolkit.
+    const when = readme.split("## When the coordinator gives it\n")[1].split("\n## ")[0];
+    for (const template of ["builder-deliver", "builder-round", "builder-fix"]) {
+      assert.ok(when.includes(`\`${template}\``), `"When the coordinator gives it" does not name ${template}`);
+    }
+    assert.match(when, /`team-worker` adds the toolkit/);
+    assert.match(when, /a skills-only toolkit needs no line in a project's allow list/);
+    assert.match(when, /`bin\/team-worker`'s header/);
   });
 
   test("its README has the effect toolkit's sections, in order", () => {
     const headings = [...readme.matchAll(/^## (.*)$/gm)].map(([, heading]) => heading);
     assert.deepEqual(headings, ["When the coordinator gives it", "What loads", "What it costs", "Credits", "Tests"]);
+  });
+
+  test("its README says what both skills and the three agents load, and names every eval case", () => {
+    const loads = readme.split("## What loads\n")[1].split("\n## ")[0];
+    for (const file of ["skills/spec-review/SKILL.md", "skills/claims-check/SKILL.md", "agents/spec-paraphrase.md", "agents/spec-readiness.md", "agents/claims-reader.md"]) {
+      assert.ok(loads.includes(`\`${file}\``), `"What loads" does not name ${file}`);
+    }
+    const tests = readme.split("## Tests\n")[1];
+    for (const name of readdirSync(join(toolkit, "evals")).filter((entry) => entry !== "results")) {
+      assert.ok(tests.includes(`\`${name}\``), `"Tests" does not name the eval case ${name}`);
+    }
   });
 
   test("its README credits elephant-goldfish-model and its licence, and names no copyright holder", () => {
