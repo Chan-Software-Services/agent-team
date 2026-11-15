@@ -79,7 +79,7 @@ section() {
   grep -qF '`planner-walk`' "$REPO_ROOT/roles/planner.md"
   grep -qF 'planner-walk' "$REPO_ROOT/bin/team-brief"
   grep -qF 'planner-walk' "$REPO_ROOT/bin/team-thread"
-  grep -qF 'planner-walk' "$REPO_ROOT/CLAUDE.md"
+  grep -qF 'planner-walk' "$REPO_ROOT/LAYOUT.md"
   # The README's rule on where a capture stays names what leaves.
   grep -qF "A walk's planner posts \`page.png\` and \`element.png\` of a capture" "$readme"
 }
@@ -237,8 +237,8 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   done
 }
 
-@test "the root CLAUDE.md's team home table has a row for each records path, and its Layout lists the assistant's launcher, settings and library" {
-  local doc=$REPO_ROOT/CLAUDE.md path missing=()
+@test "LAYOUT.md's team home table has a row for each records path, and its Layout lists the assistant's launcher, settings and library" {
+  local doc=$REPO_ROOT/LAYOUT.md path missing=()
   while IFS= read -r path; do
     path=${path%'**'}
     grep -qF "| \`$path\` |" "$doc" || missing+=("$path")
@@ -343,9 +343,10 @@ $WORKER_INSTRUCTIONS"
   grep -E "grep -Eiq '[^']*\b$name\b[^']*'" "$REPO_ROOT/bin/team-load-check"
 }
 
-@test "the root CLAUDE.md gives layout, tests and conventions, and addresses nobody as the coordinator" {
+@test "the root CLAUDE.md gives the tests' rules and the conventions, points to the layout, and addresses nobody as the coordinator" {
   local doc=$REPO_ROOT/CLAUDE.md
   [[ -f $doc ]]
+  grep -q 'LAYOUT.md' "$doc"
   grep -q 'tests/run' "$doc"
   grep -q 'bin/lib/team.sh' "$doc"
   grep -q 'TEAM_HOME' "$doc"
@@ -357,8 +358,8 @@ $WORKER_INSTRUCTIONS"
   fi
 }
 
-@test "the manual, CLAUDE.md and the skills put one sentence on each line and call Daniel they" {
-  local files=("$manual" "$REPO_ROOT/CLAUDE.md" "$plugin"/skills/*/SKILL.md) file
+@test "the manual, CLAUDE.md, LAYOUT.md, the tests' README and the skills put one sentence on each line and call Daniel they" {
+  local files=("$manual" "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/LAYOUT.md" "$REPO_ROOT/tests/README.md" "$plugin"/skills/*/SKILL.md) file
   for file in "${files[@]}"; do [[ -f $file ]] || { echo "missing $file" >&2; return 1; }; done
   # A sentence ends in ". " after a word and before a capital, outside code spans; a skill's
   # description is one YAML value, so it may hold two.
@@ -863,7 +864,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 
 @test "no doc, prompt, skill or script but team-inbox names the Waiting on you message" {
   local found
-  found=$(cd "$REPO_ROOT" && grep -rlF 'Waiting on you message' bin roles plugins sops CLAUDE.md | grep -vxF bin/team-inbox || true)
+  found=$(cd "$REPO_ROOT" && grep -rlF 'Waiting on you message' bin roles plugins sops CLAUDE.md LAYOUT.md | grep -vxF bin/team-inbox || true)
   assert_equal "$found" ""
 }
 
