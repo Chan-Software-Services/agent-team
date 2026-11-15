@@ -283,6 +283,16 @@
         "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/stop-sweep\"" }]
       }
     ],
+    "PreCompact": [
+      {
+        "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/compact-hold\"", "timeout": 30 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/compact-hold\"", "timeout": 10 }]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "mcp__plugin_discord_discord__reply|mcp__plugin_discord_discord__react|mcp__plugin_discord_discord__edit_message",

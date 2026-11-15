@@ -1,6 +1,6 @@
 ---
 name: stow
-description: Move every decision and lesson still held only in this conversation to its home on disk. Use before a compaction, a restart, or a handoff to another session or machine.
+description: Move every decision and lesson still held only in this conversation to its home on disk. Use before a compaction, a restart, or a handoff to another session or machine, or when compact-hold says an auto-compaction is held.
 ---
 
 # Stow
@@ -26,6 +26,13 @@ For each decision, answer, wait and lesson in it, write it to its one home:
 
 Write notes that point at the source of truth (the ledger, a PR URL, a file), never temp paths, versions or ids that rot.
 Writing them is the whole step: the heartbeat's checkpoint commits every record within five minutes, so never commit one by hand; `team-checkpoint --force` when one must be durable now.
+Then run `team-stowed`, which records the stow, so an auto-compaction `compact-hold` is holding runs.
+
+## When an auto-compaction is held
+
+A note after a tool call that begins `compact-hold: an auto-compaction of this conversation is held until you stow` means Claude Code tried to compact this conversation and the `compact-hold` hook refused it until you have stowed.
+Stow before any other work: walk the conversation as above and end with `team-stowed`, and the compaction runs the next time Claude Code tries it, its summary told the time of your stow.
+Unstowed 15 minutes after that tell, it runs anyway, from the time the tell names, and its summary is all that is left of what you had not written down.
 
 ## Before a restart
 
