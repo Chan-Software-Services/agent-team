@@ -100,10 +100,10 @@ agent_path_override:
   local work=$BATS_TEST_TMPDIR/site-work
   git clone -q "$BATS_TEST_TMPDIR/origin/site.git" "$work"
   echo /.scratch/ >"$work/.gitignore"
-  git -C "$work" add .gitignore
-  git -C "$work" commit -q -m "chore: ignore the task directory"
-  git -C "$work" push -q origin HEAD
-  rm -rf "$CONVENTIONER" "$SITE"
+  git -C "${work:?}" add .gitignore
+  git -C "${work:?}" commit -q -m "chore: ignore the task directory"
+  git -C "${work:?}" push -q origin HEAD
+  rm -rf "${CONVENTIONER:?}" "${SITE:?}"
   : >"$STUB_FIXTURES/gates"
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines projects)" "running: git clone -q https://github.com/Chan-Software-Services/Conventioner.git ~/projects/Conventioner
@@ -112,17 +112,17 @@ running: cd ~/projects/Conventioner && no-mistakes init
 conventioner is set up in ~/projects/Conventioner
 running: git clone -q https://github.com/owner/site.git ~/projects/site
 site is set up in ~/projects/site"
-  assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" https://github.com/Chan-Software-Services/Conventioner.git
-  assert_equal "$(git -C "$SITE" remote get-url origin)" https://github.com/owner/site.git
+  assert_equal "$(git -C "${CONVENTIONER:?}" remote get-url origin)" https://github.com/Chan-Software-Services/Conventioner.git
+  assert_equal "$(git -C "${SITE:?}" remote get-url origin)" https://github.com/owner/site.git
   assert_equal "$(cat "$SITE/.git/info/exclude" | grep -c scratch)" 0
-  assert_equal "$(git -C "$CONVENTIONER" status --porcelain)$(git -C "$SITE" status --porcelain)" ""
+  assert_equal "$(git -C "${CONVENTIONER:?}" status --porcelain)$(git -C "${SITE:?}" status --porcelain)" ""
   # The new clones keep their auto memory in the team home, which the config stage sets up.
   assert_equal "$(stage_lines config)" "running: team-config apply"
   assert_equal "$(jq -r .autoMemoryDirectory "$SITE/.claude/settings.local.json")" "$TEAM_HOME/memory/site"
   [[ $output != *"WARN memory"* ]]
 
   # An origin set elsewhere is put back to the exact URL treehouse names its pool from.
-  git -C "$SITE" remote set-url origin git@github.com:owner/site.git
+  git -C "${SITE:?}" remote set-url origin git@github.com:owner/site.git
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines projects)" "running: git -C ~/projects/site remote set-url origin https://github.com/owner/site.git
 site is set up in ~/projects/site"
@@ -132,19 +132,19 @@ site is set up in ~/projects/site"
   tools_at arch
   register intone Chan-Software-Services/intone_app direct-pr git
   local intone=$HOME/projects/intone_app old=https://github.com/chanjdaniel/Conventioner.git
-  git -C "$intone" remote set-url origin git@github.com:chanjdaniel/intone_app.git
+  git -C "${intone:?}" remote set-url origin git@github.com:chanjdaniel/intone_app.git
   run_bin -0 team-bootstrap --stage projects
   assert_equal "$(stage_lines projects)" "running: git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
 intone is set up in ~/projects/intone_app"
-  assert_equal "$(git -C "$intone" remote get-url origin)" https://github.com/Chan-Software-Services/intone_app.git
+  assert_equal "$(git -C "${intone:?}" remote get-url origin)" https://github.com/Chan-Software-Services/intone_app.git
 
   # Conventioner's pool is named from its origin, so its origin is left for the pool move.
-  git -C "$CONVENTIONER" remote set-url origin "$old"
+  git -C "${CONVENTIONER:?}" remote set-url origin "$old"
   run_bin -1 team-bootstrap --stage projects
   assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner (origin $old, a repository that moved to Chan-Software-Services/Conventioner)"
-  assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" "$old"
+  assert_equal "$(git -C "${CONVENTIONER:?}" remote get-url origin)" "$old"
   # Another origin of a treehouse project, on no moved repository, is set as before.
-  git -C "$CONVENTIONER" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
+  git -C "${CONVENTIONER:?}" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
   run_bin -0 team-bootstrap --stage projects
   assert_equal "$(stage_lines projects | head -n1)" "running: git -C ~/projects/Conventioner remote set-url origin https://github.com/Chan-Software-Services/Conventioner.git"
 }
@@ -154,20 +154,20 @@ intone is set up in ~/projects/intone_app"
   register intone chanjdaniel/intone_app direct-pr git
   local intone=$HOME/projects/intone_app url
   for url in https://github.com/Chan-Software-Services/intone_app.git git@github.com:chan-software-services/intone_app.git; do
-    git -C "$intone" remote set-url origin "$url"
+    git -C "${intone:?}" remote set-url origin "$url"
     run_bin -0 team-bootstrap --stage projects
     assert_equal "$(stage_lines projects)" "left the origin $url as it is: it is on Chan-Software-Services/intone_app, where the registry's chanjdaniel/intone_app moved; set intone's repo = \"Chan-Software-Services/intone_app\" in projects.toml, as team-project --check names it
 intone is set up in ~/projects/intone_app"
-    assert_equal "$(git -C "$intone" remote get-url origin)" "$url"
+    assert_equal "$(git -C "${intone:?}" remote get-url origin)" "$url"
   done
   # An origin still on the old owner, in another form than the registry's URL, is no origin on the
   # new one: a treehouse project's stops the run as Daniel's pool move, as before.
   sed -i 's#^repo = "Chan-Software-Services/Conventioner"$#repo = "chanjdaniel/Conventioner"#' "$TEAM_HOME/projects.toml"
   for url in git@github.com:chanjdaniel/Conventioner.git https://github.com/chanjdaniel/Conventioner; do
-    git -C "$CONVENTIONER" remote set-url origin "$url"
+    git -C "${CONVENTIONER:?}" remote set-url origin "$url"
     run_bin -1 team-bootstrap --stage projects
     assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner (origin $url, a repository that moved to Chan-Software-Services/Conventioner)"
-    assert_equal "$(git -C "$CONVENTIONER" remote get-url origin)" "$url"
+    assert_equal "$(git -C "${CONVENTIONER:?}" remote get-url origin)" "$url"
   done
 }
 
@@ -175,18 +175,18 @@ intone is set up in ~/projects/intone_app"
   tools_at arch
   register fork owner/fork direct-pr git projects/fork/.claude/worktrees/1 projects/fork/.claude/worktrees/2
   local fork=$HOME/projects/fork
-  rm -rf "$fork"
+  rm -rf "${fork:?}"
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines projects)" "running: git clone -q https://github.com/owner/fork.git ~/projects/fork
 running: echo /.scratch/task/ >>~/projects/fork/.git/info/exclude
 running: echo /.claude/worktrees/ >>~/projects/fork/.git/info/exclude
 fork is set up in ~/projects/fork"
-  git -C "$fork" worktree add -q "$fork/.claude/worktrees/1"
-  assert_equal "$(git -C "$fork" status --porcelain)" ""
+  git -C "${fork:?}" worktree add -q "$fork/.claude/worktrees/1"
+  assert_equal "$(git -C "${fork:?}" status --porcelain)" ""
   # A pool outside the checkout (site's) adds nothing.
   assert_equal "$(grep -c worktrees "$SITE/.git/info/exclude" || true)" 0
   # A dry run says so before the clone.
-  rm -rf "$fork"
+  rm -rf "${fork:?}"
   run_bin -1 team-bootstrap --dry-run
   assert_contains "$output" "projects: would then set up fork's task directory exclude, its pool slots' exclude"
 }
@@ -195,7 +195,7 @@ fork is set up in ~/projects/fork"
   tools_at arch
   # Discord on, mongodb-atlas missing.
   echo '[{"id": "discord@claude-plugins-official", "scope": "user", "enabled": true}]' >"$STUB_FIXTURES/plugins.json"
-  rm -rf "$HOME/.claude/skills/tdd"
+  rm -rf "${HOME:?}/.claude/skills/tdd"
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines config)" "running: claude plugin install mongodb-atlas@claude-plugins-official --scope user
 running: team-config apply
@@ -205,7 +205,7 @@ running: claude plugin disable discord@claude-plugins-official --scope user"
 
   # settings.json changed here: apply would replace it, so nothing is applied and it is listed.
   echo '{"model": "sonnet"}' >"$HOME/.claude/settings.json"
-  rm -rf "$HOME/.claude/skills/tdd"
+  rm -rf "${HOME:?}/.claude/skills/tdd"
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines config)" "left as it is: settings.json differs here, and whether to apply or capture is Daniel's call
 nothing to add: what differs is Daniel's call (the check stage lists it)"
@@ -220,14 +220,14 @@ nothing to add: what differs is Daniel's call (the check stage lists it)"
   "$REPO_ROOT/bin/team-lease" release >/dev/null
   on_machine laptop "$REPO_ROOT/bin/team-lease" take >/dev/null
   local lease
-  lease=$(git -C "$BATS_TEST_TMPDIR/origin/agent-team.git" rev-parse lease)
+  lease=$(git -C "${BATS_TEST_TMPDIR:?}/origin/agent-team.git" rev-parse lease)
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines heartbeat)" "running: team-timers disable"
   [[ ! -e $HOME/.config/systemd/user/agent-team-heartbeat.timer ]]
   assert_equal "$(tail -n1 <<<"$output")" "check: summary: ready as a standby; team-load-check proves a worker here, and to move the team here run team-resume --wait here, then say \"hand off\" to the coordinator on laptop once it says this machine is ready"
   run_bin -0 team-bootstrap
   assert_equal "$(stage_lines heartbeat)" "done: disabled until this machine takes the lease (team-resume enables it)"
-  assert_equal "$(git -C "$BATS_TEST_TMPDIR/origin/agent-team.git" rev-parse lease)" "$lease"
+  assert_equal "$(git -C "${BATS_TEST_TMPDIR:?}/origin/agent-team.git" rev-parse lease)" "$lease"
 }
 
 # The team home history line's reason and fix for the sandbox's team home, as the doctor says them.
@@ -242,12 +242,12 @@ history_fix() {
   tools_at arch
   local home=$TEAM_HOME before logins
   rewrite_origin_dev
-  before=$(git -C "$home" rev-parse refs/remotes/origin/dev)
+  before=$(git -C "${home:?}" rev-parse refs/remotes/origin/dev)
   # A dry run fetches nothing, so the line reads origin's dev as last fetched.
   run_bin -0 team-bootstrap --stage machine --dry-run
   assert_equal "$(stage_lines machine | tail -n2)" "would run: git -C $home fetch origin
 done: the team home shares history with origin's dev"
-  assert_equal "$(git -C "$home" rev-parse refs/remotes/origin/dev)" "$before"
+  assert_equal "$(git -C "${home:?}" rev-parse refs/remotes/origin/dev)" "$before"
   # A run fetches the rewritten dev and stops there, so no later stage (config's apply above all)
   # reads the old records.
   logins=$(grep -c '"auth","status","--json"' "$STUB_CALLS/claude.log")
@@ -256,7 +256,7 @@ done: the team home shares history with origin's dev"
 Daniel: $(history_fix) ($(history_reason)); then team-bootstrap again"
   assert_equal "$(tail -n1 <<<"$output")" "machine: Daniel: $(history_fix) ($(history_reason)); then team-bootstrap again"
   [[ $output != *"packages: "* && $output != *"config: "* ]]
-  assert_equal "$(git -C "$home" rev-parse refs/remotes/origin/dev)" "$(git -C "$BATS_TEST_TMPDIR/origin/agent-team.git" rev-parse dev)"
+  assert_equal "$(git -C "${home:?}" rev-parse refs/remotes/origin/dev)" "$(git -C "${BATS_TEST_TMPDIR:?}/origin/agent-team.git" rev-parse dev)"
   # The whole doctor ran once, before the stages; the history line's doctor asked no login.
   assert_equal "$(grep -c '"auth","status","--json"' "$STUB_CALLS/claude.log")" "$((logins + 1))"
   assert_equal "$(install_calls)" ""
@@ -265,16 +265,16 @@ Daniel: $(history_fix) ($(history_reason)); then team-bootstrap again"
 @test "machine: a fetch of the team home that fails is said on one line, and its history read as last fetched" {
   tools_at arch
   local home=$TEAM_HOME gone=$BATS_TEST_TMPDIR/gone.git
-  git -C "$home" remote set-url origin "$gone"
+  git -C "${home:?}" remote set-url origin "$gone"
   run_bin -0 team-bootstrap --stage machine
   assert_equal "$(stage_lines machine | tail -n3)" "running: git -C $home fetch origin
 could not fetch the team home (fatal: '$gone' does not appear to be a git repository), so its history is read as it was last fetched
 done: the team home shares history with origin's dev"
   # A rewrite fetched before the fetch failed still stops the stage.
-  git -C "$home" remote set-url origin "$BATS_TEST_TMPDIR/origin/agent-team.git"
+  git -C "${home:?}" remote set-url origin "$BATS_TEST_TMPDIR/origin/agent-team.git"
   rewrite_origin_dev
-  git -C "$home" fetch -q origin
-  git -C "$home" remote set-url origin "$gone"
+  git -C "${home:?}" fetch -q origin
+  git -C "${home:?}" remote set-url origin "$gone"
   run_bin -1 team-bootstrap --stage machine
   assert_equal "$(stage_lines machine | tail -n3)" "running: git -C $home fetch origin
 could not fetch the team home (fatal: '$gone' does not appear to be a git repository), so its history is read as it was last fetched
