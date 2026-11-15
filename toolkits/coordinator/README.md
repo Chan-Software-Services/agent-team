@@ -17,7 +17,7 @@ From 2026-10-27, by Daniel's decision in T52, the coordinator stops loading Dani
 Before, it loaded about 450 tools from `vercel` and `resend` alone, with `playwright`, `codegraph`, the claude.ai Claude Docs connector and the `mongodb-atlas` plugin's server, and its manual names none of them.
 It keeps the Discord plugin's server, which is how Daniel reaches it.
 It kept the Claude Docs connector too, with which it kept documents for Daniel (2026-10-20 to 10-23), until Daniel turned it off on 2026-10-27 (T72): the coordinator keeps what it writes in local files or the team home.
-For the same reason `coordinator.settings.json` turns off the synced claude.ai `docs` skill (`anthropic-skills:docs` in `skillOverrides`), which tells a session to make every document in Claude Docs.
+`coordinator.settings.json` turns off every skill synced from claude.ai (`syncClaudeAiSkills`), among them `docs`, which tells a session to make every document in Claude Docs.
 
 ## How the others stay out
 
@@ -37,4 +37,4 @@ A claude.ai connector is kept the same way, by Daniel's yes and its exact name a
 
 ## Tests
 
-`tests/claude-coordinator.bats` checks that the launch passes this toolkit's servers with `--mcp-config` and no `--strict-mcp-config`, that the settings deny every server and connector `claude mcp list` names but this toolkit's, its kept connectors (by exact name) and the Discord plugin's, that the Discord plugin and its channel stay on, and that the synced `docs` skill is off.
+`tests/claude-coordinator.bats` checks that the launch passes this toolkit's servers with `--mcp-config` and no `--strict-mcp-config`, that the settings deny every server and connector `claude mcp list` names but this toolkit's, its kept connectors (by exact name) and the Discord plugin's, that the Discord plugin and its channel stay on, and that the skills synced from claude.ai are off.

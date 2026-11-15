@@ -163,28 +163,105 @@ assert_not_launched() {
     skill=$(basename "$skill")
     assert_equal "$(jq -r --arg s "$skill" '.skillOverrides[$s] // "on"' "$settings")" on
   done
-  # Discord, the synced claude.ai skills and artifacts; but not the synced docs skill, which steers
-  # a session to the Claude Docs connector the launch denies (Daniel's choice of 2026-10-27), nor
-  # Claude Code's built-in easel plugin, whose chart tool is an MCP tool Daniel never added to the
-  # coordinator's toolkit.
-  assert_equal "$(jq -c '[.enabledPlugins["discord@claude-plugins-official"], .disableClaudeAiConnectors, .syncClaudeAiSkills,
+  # Discord stays; the claude.ai connectors are left to the launch's deny list; Claude Code's
+  # built-in easel plugin, whose chart tool is an MCP tool Daniel never added to the coordinator's
+  # toolkit, is off.
+  assert_equal "$(jq -c '[.enabledPlugins["discord@claude-plugins-official"], .disableClaudeAiConnectors,
     .syncClaudeAiPlugins, .enabledPlugins["cc-plugin-plugin-authoring@builtin"], .enabledPlugins["cc-plugin-easel@builtin"]]' "$settings")" \
-    '[true,null,null,false,false,false]'
-  assert_equal "$(jq -r '.skillOverrides["anthropic-skills:docs"]' "$settings")" off
-  for tool in Artifact ArtifactComments ArtifactData SendUserFile PushNotification CronCreate CronList CronDelete \
-    ScheduleWakeup Monitor SendMessage ListAgents Agent WebFetch WebSearch; do
+    '[true,null,false,false,false]'
+  for tool in SendUserFile PushNotification CronCreate CronList CronDelete Monitor SendMessage ListAgents Agent \
+    ReadNotifications TaskStop WebFetch WebSearch; do
     if jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null; then
       echo "denies $tool, which the coordinator may use with Daniel" >&2 && return 1
     fi
-  done
-  for skill in artifact-design artifact-capabilities artifact-diagramming dataviz writing-for-agents grilling; do
-    assert_equal "$(jq -r --arg s "$skill" '.skillOverrides[$s] // "on"' "$settings")" on
   done
   # A background session nobody watches cannot answer a question or leave plan mode.
   for tool in AskUserQuestion EnterPlanMode ExitPlanMode SendFeedback; do
     jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null ||
       { echo "no deny rule for $tool" >&2; return 1; }
   done
+}
+
+@test "its settings deny the tools it never calls, whose definitions every reply would carry" {
+  run_bin -0 claude-coordinator
+  local settings=$HOME/.local/state/agent-team/coordinator.settings.json tool
+  # A deny rule on a bare tool name takes the tool's definition out of the session's context.
+  for tool in Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup Workflow; do
+    jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null ||
+      { echo "no deny rule for $tool" >&2; return 1; }
+  done
+  # None of them is named in its manual or its skills, or keeps_named would say so.
+  keeps_named "$settings" "$REPO_ROOT/roles/coordinator.md" "$REPO_ROOT"/plugins/coordinator-skills/skills/*/SKILL.md
+}
+
+@test "it gets no task reminder: the task list's tools are denied, and the reminder is off by its own switch" {
+  run_bin -0 claude-coordinator
+  local settings=$HOME/.local/state/agent-team/coordinator.settings.json tool
+  # Claude Code sends the reminder only to a session that has TaskUpdate, and never in the mode off.
+  for tool in TaskCreate TaskGet TaskList TaskUpdate; do
+    jq -e --arg t "$tool" '.permissions.deny | index($t) != null' "$settings" >/dev/null ||
+      { echo "no deny rule for $tool" >&2; return 1; }
+  done
+  assert_equal "$(jq -r .env.CLAUDE_CODE_TODO_REMINDER_MODE "$settings")" off
+}
+
+@test "every skill its manual and its skills name is one of its own plugin's, since the launch hides every other" {
+  local skill named=0
+  # The names keeps_named's pattern finds: `/<skill>`, skills/<skill>/SKILL.md and the `<skill>` skill.
+  while IFS= read -r skill; do
+    named=$((named + 1))
+    [[ -d $REPO_ROOT/plugins/coordinator-skills/skills/$skill ]] ||
+      { echo "names the skill $skill, which is not in plugins/coordinator-skills/skills" >&2; return 1; }
+  done < <(grep -ohE '`/[a-z][a-z0-9-]*`|skills/[a-z][a-z0-9-]*/SKILL\.md|the `[a-z][a-z0-9-]*` skill' \
+    "$REPO_ROOT/roles/coordinator.md" "$REPO_ROOT"/plugins/coordinator-skills/skills/*/SKILL.md |
+    sed -E 's#^`/##; s#`$##; s#^skills/##; s#/SKILL\.md$##; s#^the `##; s#` skill$##' | sort -u)
+  # The pattern finds some: the manual names its skills this way.
+  ((named > 0))
+}
+
+# personal_skill <directory> [<name>]: a skill in the user's skills directory, its frontmatter
+# naming it <name> when given.
+personal_skill() {
+  local name=''
+  [[ -z ${2:-} ]] || name="name: $2"$'\n'
+  mkdir -p "$HOME/.claude/skills/$1"
+  printf -- '---\n%sdescription: A skill of the user.\n---\n\nname: not-frontmatter\n' "$name" \
+    >"$HOME/.claude/skills/$1/SKILL.md"
+}
+
+@test "its skill listing is kept to its own skills: the synced and bundled ones off, Discord's for Daniel to type, each personal one off" {
+  personal_skill code-review
+  personal_skill grilling
+  personal_skill renamed shown-as
+  # One Daniel adds later is off at the next launch, with no change to the settings.
+  personal_skill added-later
+  # A personal skill with the name of one of its own: an override by the bare name might reach its own.
+  personal_skill handoff
+  personal_skill retro
+  # Not a skill: a directory with no SKILL.md, and a file.
+  mkdir -p "$HOME/.claude/skills/synced"
+  touch "$HOME/.claude/skills/notes.md"
+  run_bin -0 claude-coordinator
+  local settings=$HOME/.local/state/agent-team/coordinator.settings.json
+  assert_equal "$(jq -c '[.syncClaudeAiSkills, .disableBundledSkills]' "$settings")" '[false,true]'
+  # The Discord plugin's two skills are Daniel's to type, never the model's to call.
+  assert_equal "$(jq -c '.skillOverrides | to_entries | sort_by(.key) | map("\(.key)=\(.value)")' "$settings")" \
+    '["added-later=off","code-review=off","discord:access=user-invocable-only","discord:configure=user-invocable-only","grilling=off","renamed=off","shown-as=off"]'
+}
+
+@test "with CLAUDE_CONFIG_DIR set, the personal skills turned off are that directory's" {
+  personal_skill code-review
+  mkdir -p "$BATS_TEST_TMPDIR/config/skills/wizard"
+  printf -- '---\ndescription: A skill.\n---\n' >"$BATS_TEST_TMPDIR/config/skills/wizard/SKILL.md"
+  CLAUDE_CONFIG_DIR=$BATS_TEST_TMPDIR/config run_bin -0 claude-coordinator
+  assert_equal "$(jq -c '.skillOverrides | [.wizard, .["code-review"]]' "$HOME/.local/state/agent-team/coordinator.settings.json")" \
+    '["off",null]'
+}
+
+@test "with no personal skills directory it turns off none" {
+  run_bin -0 claude-coordinator
+  assert_equal "$(jq -c '.skillOverrides | keys' "$HOME/.local/state/agent-team/coordinator.settings.json")" \
+    '["discord:access","discord:configure"]'
 }
 
 # The names in the settings' deniedMcpServers, one per line, sorted.
