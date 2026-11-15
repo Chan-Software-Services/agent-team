@@ -972,13 +972,16 @@ pretooluse_problems() {
 @test "every PreToolUse hook blocks on its failure and has a timeout, in every settings and toolkit hooks file" {
   local files=() file bad=$BATS_TEST_TMPDIR/bad.json
   for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/assistant.settings.json \
+    "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
     "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
     files+=("${file#"$REPO_ROOT/"}")
   done
   assert_equal "$(cd "$REPO_ROOT" && pretooluse_problems "${files[@]}")" ""
-  # Each of the guards, at its timeout.
-  assert_equal "$(cd "$REPO_ROOT" && jq -r '.hooks.PreToolUse // [] | .[].hooks[] | "\(.command | sub("^\"?@TEAM_CODE@/bin/hooks/"; "") | sub("\""; "")) \(.timeout)"' "${files[@]}" | LC_ALL=C sort -u)" \
-    "assistant-discord-guard 30
+  # Each of the guards, at its timeout, and the gate's command-guard, which names the code
+  # checkout by $HOME, since no-mistakes fills in no @TEAM_CODE@.
+  assert_equal "$(cd "$REPO_ROOT" && jq -r '.hooks.PreToolUse // [] | .[].hooks[] | "\(.command | sub("^\"?@TEAM_CODE@/bin/hooks/"; "") | gsub("\""; "")) \(.timeout)"' "${files[@]}" | LC_ALL=C sort -u)" \
+    "\$HOME/agent-team/bin/hooks/command-guard 10
+assistant-discord-guard 30
 command-guard 10
 lease-fence --assistant 60
 lease-fence --coordinator 60
