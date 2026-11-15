@@ -1,0 +1,35 @@
+schema_version: "1.1"
+name: pass-prose-that-holds
+description: A delivering builder runs the claims check on a branch whose every added sentence the code bears out, and the reader's findings are none.
+tags: [spec-review]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-opus-5-5
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Agent, Bash, Write]
+  prompt: |
+    You are the delivering builder of notecat, the shell tool in this directory: your branch `feat/archive` is committed, and you are about to open its PR to `main`.
+    The PR body you will send is `.scratch/task/pr-body.md`.
+    Before you send it, run the claims check on your branch against `main` with that PR body, and answer each finding.
+    This run has no Edit tool, so fix or cut a sentence by writing its file whole.
+    Then reply with the whole `.scratch/task/claims-check.md` as you left it, answers included.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?claims-check"'
+  - name: reader-dispatched
+    type: tool_used
+    tool: Agent
+    input_match: '"subagent_type"\s*:\s*"spec-review:claims-reader"'
+    arm: with-only
+  - name: no-finding
+    type: llm
+    criteria: |
+      The reply is a claims check of a branch of a small shell tool, notecat: a report whose "Findings" section lists each sentence the branch added that its code does not bear out, or says `none`.
+      The code bears out every sentence this branch adds, so there is nothing to find.
+      PASS if the report's findings are `none`.
+      The report's other sections and its wording do not change the verdict.
+      FAIL on any finding, or if the check is reported as not run.

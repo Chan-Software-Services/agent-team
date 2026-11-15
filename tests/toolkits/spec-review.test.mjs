@@ -1,7 +1,9 @@
-// The spec-review toolkit as team-worker --toolkit spec-review loads it: its plugin layout, its two
-// read-only reader agents' frontmatter (their read-only tools, omitClaudeMd and model), its
-// spec-review skill's name, limits and order of steps, its README's sections in the effect
-// toolkit's order, its coordinator section and attribution line, and each eval case's graders.
+// The spec-review toolkit as team-worker --toolkit spec-review loads it: its plugin layout and the
+// skills-only property of its files, its three read-only reader agents' frontmatter (their
+// read-only tools, omitClaudeMd and model), the task files each is told never to read and what each
+// returns, its spec-review and claims-check skills' names, limits and order of steps, its README's
+// sections in the effect toolkit's order, its coordinator section and attribution line, and each
+// eval case's tools and graders.
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,12 +15,12 @@ const read = (...parts) => readFileSync(join(toolkit, ...parts), "utf8");
 const frontmatterOf = (text) => text.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "";
 const fieldOf = (frontmatter, name) => frontmatter.match(new RegExp(`^${name}: (.*)$`, "m"))?.[1];
 
-const skillFile = join(toolkit, "skills", "spec-review", "SKILL.md");
-const skill = readFileSync(skillFile, "utf8");
+const skill = read("skills", "spec-review", "SKILL.md");
+const claimsSkill = read("skills", "claims-check", "SKILL.md");
 const readme = read("README.md");
 
 describe("the spec-review toolkit", () => {
-  test("is a plugin named spec-review with two agents and one skill, and no MCP server, hook or script", () => {
+  test("is a plugin named spec-review with three agents and two skills, and no MCP server, hook or script", () => {
     const manifest = JSON.parse(read(".claude-plugin", "plugin.json"));
     assert.equal(manifest.name, "spec-review");
     assert.equal(manifest.author?.name, "Daniel Chan");
@@ -26,9 +28,33 @@ describe("the spec-review toolkit", () => {
     assert.ok(!existsSync(join(toolkit, ".mcp.json")), "the toolkit declares an MCP server");
     assert.ok(!existsSync(join(toolkit, "hooks")), "the toolkit has hooks");
     assert.ok(!existsSync(join(toolkit, "scripts")), "the toolkit has scripts");
-    assert.deepEqual(readdirSync(join(toolkit, "agents")).sort(), ["spec-paraphrase.md", "spec-readiness.md"]);
-    assert.deepEqual(readdirSync(join(toolkit, "skills")), ["spec-review"]);
-    assert.deepEqual(readdirSync(join(toolkit, "skills", "spec-review")), ["SKILL.md"]);
+    assert.deepEqual(readdirSync(join(toolkit, "agents")).sort(), ["claims-reader.md", "spec-paraphrase.md", "spec-readiness.md"]);
+    assert.deepEqual(readdirSync(join(toolkit, "skills")).sort(), ["claims-check", "spec-review"]);
+  });
+
+  // The spec's launch rule lets a skills-only toolkit past a project's toolkits allow list, and
+  // skills-only is this property of the toolkit's own files.
+  test("is skills-only, the property the delivery exemption from a project's allow list rests on", () => {
+    const why = "the delivery exemption from a project's toolkits allow list rests on the toolkit being skills-only";
+    const allowed = [".claude-plugin", "README.md", "agents", "skills", "evals"];
+    for (const entry of readdirSync(toolkit)) assert.ok(allowed.includes(entry), `${entry}: ${why}`);
+    assert.deepEqual(readdirSync(join(toolkit, ".claude-plugin")), ["plugin.json"], why);
+    const manifest = JSON.parse(read(".claude-plugin", "plugin.json"));
+    for (const key of Object.keys(manifest)) {
+      assert.ok(["name", "version", "description", "author"].includes(key), `plugin.json's ${key}: ${why}`);
+    }
+    const loaded = [];
+    for (const agent of readdirSync(join(toolkit, "agents"))) {
+      assert.match(agent, /\.md$/, `agents/${agent}: ${why}`);
+      loaded.push(join("agents", agent));
+    }
+    for (const dir of readdirSync(join(toolkit, "skills"))) {
+      assert.deepEqual(readdirSync(join(toolkit, "skills", dir)), ["SKILL.md"], `skills/${dir}: ${why}`);
+      loaded.push(join("skills", dir, "SKILL.md"));
+    }
+    for (const file of loaded) {
+      assert.doesNotMatch(frontmatterOf(read(file)), /^(hooks|mcpServers):/m, `${file}: ${why}`);
+    }
   });
 
   test("its README says when the coordinator gives it", () => {
@@ -50,7 +76,14 @@ describe("the spec-review toolkit", () => {
 });
 
 describe("the reader agents", () => {
-  for (const name of ["spec-paraphrase", "spec-readiness"]) {
+  const specFiles = ["plan.md", "brief", "interview.md", "memory.md", "handoff.md", "build-notes/", "spec-review.md"];
+  // The claims reader's inputs are the diff and the PR body, so the spec and tickets are not its to read.
+  const forbidden = {
+    "claims-reader": [...specFiles, "spec.md", "tickets/", "review.md", "claims-check.md"],
+    "spec-paraphrase": specFiles,
+    "spec-readiness": specFiles,
+  };
+  for (const name of Object.keys(forbidden)) {
     const text = read("agents", `${name}.md`);
     const frontmatter = frontmatterOf(text);
     test(`${name} is read-only, omits CLAUDE.md and names a model`, () => {
@@ -62,7 +95,7 @@ describe("the reader agents", () => {
     });
 
     test(`${name} is told never to read the task directory beyond its inputs`, () => {
-      for (const file of ["plan.md", "brief", "interview.md", "memory.md", "handoff.md", "build-notes/", "spec-review.md"]) {
+      for (const file of forbidden[name]) {
         assert.ok(text.includes(`\`${file}`), `${name} does not forbid ${file}`);
       }
     });
@@ -86,9 +119,41 @@ describe("the reader agents", () => {
     assert.ok(text.includes("Left to the builder"));
     assert.ok(text.indexOf("## Findings") < text.indexOf("## Read"));
   });
+
+  test("claims-reader takes the code root, the diff and the PR body, and returns its findings and what it checked", () => {
+    const text = read("agents", "claims-reader.md");
+    for (const line of ["`Code root: <path>`", "`Diff: <path>`", "`PR body: <path>`"]) {
+      assert.ok(text.includes(line), `claims-reader does not name its prompt line ${line}`);
+    }
+    assert.ok(text.includes('- <path>:<line>: "<the sentence>" - the code:'), "claims-reader lacks the finding line's shape");
+    assert.ok(text.includes("- <path>: <n> sentences"), "claims-reader lacks the checked line's shape");
+    assert.match(text, /the single word `none`/);
+    assert.ok(text.indexOf("## Findings") >= 0 && text.indexOf("## Findings") < text.indexOf("## Checked"));
+    // The search rules spec-readiness states, which keep a search out of a task directory under the code root.
+    assert.ok(text.includes("`!<task dir, relative to the code root>/**`"), "claims-reader lacks the Grep rule");
+    assert.match(text, /give Glob a `path` below the code root/);
+  });
 });
 
 const skillFrontmatter = frontmatterOf(skill);
+
+// Each skill of a name, as <plugin>/<directory>, in every toolkit and the coordinator's plugin: a
+// skill of the same name in another plugin a session loads would bring it to a session without the
+// toolkit.
+const skillsNamed = (name) => {
+  const named = [];
+  for (const root of [join(repoRoot, "toolkits"), join(repoRoot, "plugins")]) {
+    for (const plugin of readdirSync(root)) {
+      const skills = join(root, plugin, "skills");
+      if (!existsSync(skills)) continue;
+      for (const dir of readdirSync(skills)) {
+        const text = readFileSync(join(skills, dir, "SKILL.md"), "utf8");
+        if (dir === name || new RegExp(`^name: ${name}$`, "m").test(text)) named.push(`${plugin}/${dir}`);
+      }
+    }
+  }
+  return named;
+};
 
 describe("the spec-review skill", () => {
   test("is named spec-review, its description under 250 characters and its whole file under 8 kB", () => {
@@ -107,21 +172,8 @@ describe("the spec-review skill", () => {
     assert.ok(skill.includes("/spec-review [<task dir>] [<code root>] [--model sonnet|opus]"));
   });
 
-  // A skill of the same name in another plugin a session loads would bring the skill to a session
-  // without the toolkit.
   test("is the only skill named spec-review in any toolkit or the coordinator's plugin", () => {
-    const named = [];
-    for (const root of [join(repoRoot, "toolkits"), join(repoRoot, "plugins")]) {
-      for (const plugin of readdirSync(root)) {
-        const skills = join(root, plugin, "skills");
-        if (!existsSync(skills)) continue;
-        for (const dir of readdirSync(skills)) {
-          const text = readFileSync(join(skills, dir, "SKILL.md"), "utf8");
-          if (dir === "spec-review" || /^name: spec-review$/m.test(text)) named.push(`${plugin}/${dir}`);
-        }
-      }
-    }
-    assert.deepEqual(named, ["spec-review/spec-review"]);
+    assert.deepEqual(skillsNamed("spec-review"), ["spec-review/spec-review"]);
   });
 
   test("holds its eight steps in the spec's order", () => {
@@ -150,6 +202,60 @@ describe("the spec-review skill", () => {
   });
 });
 
+describe("the claims-check skill", () => {
+  const frontmatter = frontmatterOf(claimsSkill);
+
+  test("is named claims-check, its description under 250 characters and its whole file under 8 kB", () => {
+    assert.equal(fieldOf(frontmatter, "name"), "claims-check");
+    assert.equal(fieldOf(frontmatter, "argument-hint"), '"[<code root>] [<base>] [--pr-body <file>]"');
+    const description = fieldOf(frontmatter, "description");
+    assert.ok(description, "the skill has no description");
+    assert.ok(description.length < 250, `its description is ${description.length} characters`);
+    assert.match(description, /\bPR\b/);
+    assert.match(description, /fresh read-only reader/);
+    assert.match(description, /`?HEAD`?/);
+    assert.ok(description.endsWith("Not for a spec or for reviewing someone else's diff."), description);
+    const size = Buffer.byteLength(claimsSkill);
+    assert.ok(size < 8192, `the skill is ${size} bytes`);
+  });
+
+  test("takes a code root, a base and a PR body file", () => {
+    assert.ok(claimsSkill.includes("`/claims-check [<code root>] [<base>] [--pr-body <file>]`"));
+    assert.ok(claimsSkill.includes("refs/remotes/origin/HEAD"), "the skill does not say the base's default");
+  });
+
+  test("is the only skill named claims-check in any toolkit or the coordinator's plugin", () => {
+    assert.deepEqual(skillsNamed("claims-check"), ["spec-review/claims-check"]);
+  });
+
+  test("holds its seven steps in the spec's order", () => {
+    const steps = [
+      "## 1. Check the inputs",
+      "status --porcelain",
+      "## 2. Write the diff",
+      "diff --no-color --no-ext-diff <base>...HEAD",
+      "## 3. Dispatch the reader",
+      "`spec-review:claims-reader`",
+      "## 4. Retry a failed reader once",
+      "## 5. Write claims-check.md",
+      "# Claims check",
+      "reader: ran on <model>",
+      "## Answers",
+      "## 6. Answer every finding",
+      "<n>. kept: <path>:<line>",
+      "## 7. Say what it found",
+      "claims-check: <k> findings, <a> fixed, <b> cut, <c> kept (.scratch/task/claims-check.md)",
+    ];
+    const at = steps.map((step) => claimsSkill.indexOf(step));
+    steps.forEach((step, i) => assert.ok(at[i] >= 0, `the skill does not name ${step}`));
+    assert.deepEqual([...at].sort((a, b) => a - b), at, "the skill's steps are out of order");
+    assert.equal([...claimsSkill.matchAll(/^## \d+\. /gm)].length, 7);
+    for (const part of ["not run: <why>", ".scratch/task/claims-check.diff", "Code root: <code root>", "Diff: <diff>", "PR body: <pr body>"]) {
+      assert.ok(claimsSkill.includes(part), `the skill does not name ${part}`);
+    }
+  });
+});
+
 // Each case is one case.yaml, its fixture written by its scaffold script, its graders listed in it.
 const evals = join(toolkit, "evals");
 const caseOf = (name) => read("evals", name, "case.yaml");
@@ -157,20 +263,82 @@ const caseOf = (name) => read("evals", name, "case.yaml");
 const gradersOf = (text) => text.split(/^graders:\n/m)[1].split(/^(?=  - name: )/m).filter((block) => block.trim());
 
 describe("the spec-review evals", () => {
-  const cases = ["planner-notes-stay-out", "replay-an-ignored-tree", "review-a-code-diff", "review-a-spec"];
+  // The spec-review cases have no Write tool; the claims-check cases run git and write the skill's two files.
+  const readOnly = "[Read, Glob, Grep, Skill, Agent]";
+  const writing = "[Read, Glob, Grep, Skill, Agent, Bash, Write]";
+  const cases = {
+    "name-a-false-header": writing,
+    "pass-prose-that-holds": writing,
+    "planner-notes-stay-out": readOnly,
+    "replay-an-ignored-tree": readOnly,
+    "review-a-code-diff": readOnly,
+    "review-a-spec": readOnly,
+  };
 
-  test("are four cases, each a case.yaml and its scaffold script", () => {
-    assert.deepEqual(readdirSync(evals).filter((name) => name !== "results").sort(), cases);
-    for (const name of cases) {
+  test("are six cases, each a case.yaml and its scaffold script", () => {
+    assert.deepEqual(readdirSync(evals).filter((name) => name !== "results").sort(), Object.keys(cases));
+    for (const [name, tools] of Object.entries(cases)) {
       assert.deepEqual(readdirSync(join(evals, name)).sort(), ["case.yaml", "scaffold.sh"]);
       const text = caseOf(name);
       assert.match(text, /^schema_version: "1\.1"$/m);
       assert.match(text, new RegExp(`^name: ${name}$`, "m"));
+      assert.match(text, /^tags: \[spec-review\]$/m);
       assert.match(text, /^ {2}scaffold_script: scaffold\.sh$/m);
       assert.match(text, /^ {2}model: claude-opus-5-5$/m);
-      assert.match(text, /^ {2}allowed_tools: \[Read, Glob, Grep, Skill, Agent\]$/m);
+      assert.equal(text.match(/^ {2}allowed_tools: (.*)$/m)?.[1], tools, name);
       assert.match(text, /^ {2}prompt: \|$/m);
     }
+  });
+
+  // What the two claims-check cases share: a git repository on main with a branch, .scratch/
+  // ignored, commits under a fixture address, a PR body in the task directory, and the graders
+  // that the skill fired and its one reader was dispatched.
+  const claimsCase = (name) => {
+    const text = caseOf(name);
+    assert.match(text, /^ {2}max_turns: 30$/m);
+    assert.match(text, /^ {2}timeout_seconds: 900$/m);
+    const graders = gradersOf(text);
+    assert.equal(graders.length, 3);
+    const fired = graders.find((block) => /tool: Skill/.test(block));
+    assert.match(fired, /name: skill-fired/);
+    assert.match(fired, /type: tool_used/);
+    assert.ok(fired.includes(String.raw`input_match: '"skill"\s*:\s*"(?:[\w-]+:)?claims-check"'`), "skill-fired's pattern");
+    const dispatched = graders.find((block) => /tool: Agent/.test(block));
+    assert.match(dispatched, /name: reader-dispatched/);
+    assert.ok(dispatched.includes(String.raw`input_match: '"subagent_type"\s*:\s*"spec-review:claims-reader"'`), "reader-dispatched's pattern");
+    assert.match(dispatched, /arm: with-only/);
+    const scaffold = read("evals", name, "scaffold.sh");
+    assert.match(scaffold, /^\.scratch\/$/m);
+    assert.match(scaffold, /^git init -q -b main$/m);
+    assert.match(scaffold, /^git checkout -q -b feat\/archive$/m);
+    const commits = scaffold.match(/^git .* commit .*$/gm);
+    assert.equal(commits.length, 2);
+    for (const commit of commits) assert.ok(commit.startsWith("git -c user.name=eval -c user.email=eval@example.com commit "), commit);
+    assert.ok(scaffold.includes("cat >.scratch/task/pr-body.md <<'EOF'\n"), "the scaffold writes no PR body");
+    assert.ok(scaffold.includes("archive_notes() {"), "the branch adds no archive_notes");
+    return { scaffold, judged: graders.find((block) => /type: llm/.test(block)) };
+  };
+
+  test("name-a-false-header plants a header line the code does not bear out, and judges that the reader names it alone", () => {
+    const { scaffold, judged } = claimsCase("name-a-false-header");
+    assert.ok(scaffold.includes("notecat archive [--all]"), "the header's usage lacks --all");
+    assert.ok(scaffold.includes("# With --all, archives every note, pinned ones included."), "the false line is not planted");
+    // Only comments name --all: the scaffold's own header and bin/notecat's, never notecat's code.
+    for (const line of scaffold.split("\n").filter((line) => /--all|pinned/.test(line))) {
+      assert.match(line, /^#/, `notecat's code names --all or a pinned note: ${line}`);
+    }
+    assert.match(judged, /--all/);
+    assert.match(judged, /bin\/notecat/);
+    assert.match(judged, /cut or narrow/);
+    assert.match(judged, /README/);
+    assert.match(judged, /PR body/);
+  });
+
+  test("pass-prose-that-holds plants nothing false, and judges that the findings are none", () => {
+    const { scaffold, judged } = claimsCase("pass-prose-that-holds");
+    assert.doesNotMatch(scaffold, /--all|pinned/);
+    assert.match(judged, /PASS if .*`none`/);
+    assert.match(judged, /FAIL .*any finding/);
   });
 
   test("review-a-spec fires the skill, dispatches both readers and grades the two planted faults", () => {
@@ -230,13 +398,17 @@ describe("the spec-review evals", () => {
     assert.match(scaffold, /^git init -q$/m);
   });
 
-  test("review-a-code-diff never fires the skill", () => {
+  test("review-a-code-diff never fires either skill", () => {
     const graders = gradersOf(caseOf("review-a-code-diff"));
-    assert.equal(graders.length, 1);
-    assert.match(graders[0], /type: tool_used/);
-    assert.match(graders[0], /tool: Skill/);
-    assert.match(graders[0], /spec-review/);
-    assert.match(graders[0], /min: 0/);
-    assert.match(graders[0], /max: 0/);
+    assert.equal(graders.length, 2);
+    for (const [i, [name, skillName]] of [["skill-not-fired", "spec-review"], ["claims-check-not-fired", "claims-check"]].entries()) {
+      assert.match(graders[i], new RegExp(`name: ${name}$`, "m"));
+      assert.match(graders[i], /type: tool_used/);
+      assert.match(graders[i], /tool: Skill/);
+      assert.ok(graders[i].includes(String.raw`input_match: '"skill"\s*:\s*"(?:[\w-]+:)?${skillName}"'`), `${name}'s pattern`);
+      assert.match(graders[i], /min: 0/);
+      assert.match(graders[i], /max: 0/);
+      assert.match(graders[i], /arm: both/);
+    }
   });
 });
