@@ -117,13 +117,12 @@
 #                      (agent-team-T<n>-<id>.scope's working set and CPUUsageNSec) on Linux, else
 #                      its process tree's memory (each process's as above: its proportional
 #                      set size on Linux where readable, else resident) and CPU seconds, but the
-#                      team-heavy that
-#                      holds the heavy-run lock (its holder line's pid) and what it runs, whose
-#                      cost is heavy:<kind>'s. A unit's working set is its cgroup's (systemctl
-#                      --user show's ControlGroup) memory.current less the reclaimable page cache,
-#                      memory.stat's file less shmem, never below 0 (bin/lib/working-set.awk), so
-#                      cached reads never count as use; a unit whose cgroup cannot be read counts
-#                      as off Linux.
+#                      team-heavy that holds the heavy-run lock (its holder line's pid) and what
+#                      it runs, whose cost is heavy:<kind>'s. A unit's working set is its cgroup's
+#                      (systemctl --user show's ControlGroup) memory.current less the reclaimable
+#                      page cache, memory.stat's file less shmem, never below 0
+#                      (bin/lib/working-set.awk), so cached reads never count as use; a unit whose
+#                      cgroup cannot be read counts as off Linux.
 #            stacks    each running team or gate stack: {name, class, task, project (the
 #                      registered project of the held worktree it runs for, null for a gate's),
 #                      worktree and kind (its labels', dev, e2e or gate), memory, cpu (cores),

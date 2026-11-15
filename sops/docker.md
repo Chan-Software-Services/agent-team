@@ -86,7 +86,7 @@ Every stack starts fresh for its task:
 It then runs `docker compose -p <project> down -v --remove-orphans`, removes any anonymous volume the stack's containers mounted that is still there, and fails naming each object of the stack left.
 With no stack, `stop` and `down` say so and exit 0; `env` and `seed` refuse.
 
-Exit codes: 0 done, 1 refused or failed (with the reason), 2 a malformed command line, 75 try again later (no room for the stack, see "Admission").
+Exit codes: 0 done, 1 refused or failed (with the reason), 2 a malformed command line, 75 try again later (no room for the stack, or `team-capacity`'s lock still held, see "Admission").
 
 ## The stack record
 
@@ -160,6 +160,7 @@ A browser-driving agent gets its own the same way: `~/agent-team/bin/team-stack 
   A release that fails is one line on stderr, "team-stack: warning: could not release admission <id>: <reason>; it ends 10 minutes after it was made", and the stop or down goes on.
   The sweep's stop releases nothing, since it stops only a stack idle for `idle_minutes`, long past its admission's 10 minutes.
 - With no room, `up` says once on stderr that it waits and why, re-checks every 30 seconds (letting go of the lock between checks) up to `wait_minutes` from that first refusal, and then exits 75 naming the failing check with its numbers, for example `team-stack: no room for conventioner-1: stack:conventioner at minor (30%): 8.9 GiB of 9.2 GiB reserved, a stack of conventioner needs 2.8 GiB; room comes when the team's work shrinks or the level rises`, or `team-stack: no room for conventioner-1: stack:conventioner: the team is at level none: nothing starts; room comes when Daniel raises the level`.
+  An admission check that meets `team-capacity`'s `capacity.lock` still held after 2 minutes is waited on the same way, and that exit 75 then reads `team-stack: no room for conventioner-1: team-capacity: another admission still holds ~/.local/state/agent-team/capacity.lock after 2 minutes`.
   An agent that gets 75 reports `PAUSED` with that line rather than fighting for room.
 - Gate runs never call `team-stack`, so they are never held back; a running gate stack is reserved in the budget all the same, and their own turn-taking is Conventioner's end-to-end lock.
 - Each wait that ends, admitted or not, a refusal with `wait_minutes` 0 included, adds one line to `~/.local/state/agent-team/stacks/waits.jsonl`: `{start, end, project, task, admitted, reasons}`, the reasons being the last refusal's; the janitor reads it.

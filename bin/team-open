@@ -59,9 +59,9 @@
 # Prints the task's facts as JSON; the project's other open tasks go to stderr, each with the files
 # its branch changes against the base (git diff --name-only origin/<base>...<branch>, origin's
 # branch when pushed, else the local one), or "no branch yet". Exit 75 when a new task has no room
-# or the room check could not tell yet (below), when the pool's lock stays held (a git pool's only exit 75 is its lock), or when the
-# lease command fails (a treehouse pool, whose own max_trees caps it), listing the slots and who
-# holds them (a lease holder, else the task its branch names).
+# or the room check could not tell yet (below), when the pool's lock stays held (a git pool's only
+# exit 75 is its lock), or when the lease command fails (a treehouse pool, whose own max_trees caps
+# it), listing the slots and who holds them (a lease holder, else the task its branch names).
 # The level bounds the open tasks, the pool listing no bound but a treehouse pool's own max_trees:
 # a new task (the form with a path, type, slug and title, with or without --task) first runs its
 # own checkout's team-capacity admit --kind session:builder --dry-run, after the arguments and the
