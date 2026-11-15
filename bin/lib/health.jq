@@ -66,6 +66,16 @@ def ledger_reason:
   + (.bad_lines[:10] | map(tostring) | join(", "))
   + (if .count > 10 then ", and \(.count - 10) more" else "" end);
 
+# A session's entry of the record, from the run's <key> results (true or false, the last one
+# counting; none keeps the record's) and the record's entry: health_session($run; $results; $key; $old)
+def health_session($run; $results; $key; $old):
+  ([$results[] | select(has($key)) | .[$key]] | last) as $live
+  | if $live == null then $old
+    elif $live then {live: true}
+    elif ($old | type) == "object" and $old.live == false then
+      (if $old.run == $run.id then $old else $old + {runs: ($old.runs + 1), run: $run.id} end)
+    else {live: false, since: $run.now, runs: 1, run: $run.id} end;
+
 # Fold one run's results into the record (the input, null or anything else for none):
 # health_fold($run; $results), where $run is {machine, id (unique to the run, so two runs that start
 # in one second are two), start, now, ended (null while the run goes on), last_checkpoint, offline,
@@ -81,17 +91,7 @@ def ledger_reason:
 # when the record's run made a look and ended (or, with no end, was last written) no more than
 # $limits.stale_minutes before this run started, so a finding is aged only while it is seen at every
 # run: a failed look or a sleep starts it again, and a long run does not; a new one is dated at the
-# look, and one the look does not hold is dropped, so a finding that comes back starts again. A
-# session's entry of the record, from the run's <key> results (true or false, the last one counting;
-# none keeps the record's) and the record's entry: health_session($run; $results; $key; $old)
-def health_session($run; $results; $key; $old):
-  ([$results[] | select(has($key)) | .[$key]] | last) as $live
-  | if $live == null then $old
-    elif $live then {live: true}
-    elif ($old | type) == "object" and $old.live == false then
-      (if $old.run == $run.id then $old else $old + {runs: ($old.runs + 1), run: $run.id} end)
-    else {live: false, since: $run.now, runs: 1, run: $run.id} end;
-
+# look, and one the look does not hold is dropped, so a finding that comes back starts again.
 def health_fold($run; $results; $limits):
   (if type == "object" and .schema == "team-health/1" then . else {} end) as $prev
   | (reduce ($results[] | select(.step)) as $r ({};
@@ -249,7 +249,7 @@ def health_problems($lease; $now; $limits):
       | [{key: "assistant", since: $a.since, alerting: ($a.runs >= $limits.runs), sweep: null,
           line: "no assistant session since \($a.since | health_at)",
           text: "no assistant session since \($a.since)",
-          alert: "No assistant session is live on \($rec.machine) since \($a.since | health_clock): Daniel's messages in #assistant go unread until one runs. Start it with claude-assistant."}]
+          alert: "No assistant session is live on \($rec.machine) since \($a.since | health_clock): your messages in #assistant go unread until one runs. Start it with claude-assistant."}]
     else [] end) as $assistant
   # The sweep's findings seen at every look for the unattended minutes with no ledger event but a
   # denied logged since the first look saw them: the coordinator is live but leaves them. Alerting
@@ -341,12 +341,12 @@ def health_view($raw; $lease; $fenced; $machine; $now; $limits):
       else
         ($rec | health_problems($lease; $now; $limits)) as $problems
         | ((if $rec.coordinator.live == true then ", coordinator live" else "" end)
-          + (if $rec.assistant.live == true then ", assistant live" else "" end)) as $coordinator
+          + (if $rec.assistant.live == true then ", assistant live" else "" end)) as $sessions
         | if $problems == [] then
             {schema: "team-health/1", machine: $machine, holding: true, ok: true,
-             line: ("-# Health: ok - last checkpoint \($rec.last_checkpoint | if . then health_rel else "never" end), lease renewed \($rec.lease_renewed | if . then health_rel else "never" end)\($coordinator)"
+             line: ("-# Health: ok - last checkpoint \($rec.last_checkpoint | if . then health_rel else "never" end), lease renewed \($rec.lease_renewed | if . then health_rel else "never" end)\($sessions)"
                | health_cut(500)),
-             text: ("Health: ok - last checkpoint \($rec.last_checkpoint | if . then health_plain_rel($now) else "never" end), lease renewed \($rec.lease_renewed | if . then health_plain_rel($now) else "never" end)\($coordinator)"
+             text: ("Health: ok - last checkpoint \($rec.last_checkpoint | if . then health_plain_rel($now) else "never" end), lease renewed \($rec.lease_renewed | if . then health_plain_rel($now) else "never" end)\($sessions)"
                | health_cut(500)),
              problems: []}
           else

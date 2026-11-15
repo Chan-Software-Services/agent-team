@@ -1094,7 +1094,7 @@ no_assistant() {
   jq -e --arg since "$since" '.since == $since and .alerting and .sweep == null' <<<"$(problem_of assistant)"
   local id
   id=$(jq -r .id <<<"$(alerts_shown)")
-  jq -e --arg text "No assistant session is live on home-pc since $(clock "$since"): Daniel's messages in #assistant go unread until one runs. Start it with claude-assistant." \
+  jq -e --arg text "No assistant session is live on home-pc since $(clock "$since"): your messages in #assistant go unread until one runs. Start it with claude-assistant." \
     '. == {id: .id, content: $text, allowed_mentions: {parse: []}}' <<<"$(alerts_shown)"
   assert_equal "$(alert_lines)" "alert: assistant: posted to #coordinator (message $id)"
   assert_equal "$(open_alerts)" "assistant $id"
