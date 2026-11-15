@@ -196,7 +196,7 @@ session() {
   # The same session still removes nothing outside its roots.
   confined "$WT" --session -- rm "$OUT/kept"
   [[ $status -ne 0 && -e $OUT/kept ]]
-  confined "$WT" --session -- rm -rf "$MAIN/README.md"
+  confined "$WT" --session -- rm -rf "${MAIN:?}/README.md"
   [[ $status -ne 0 && -e $MAIN/README.md ]]
 }
 
@@ -421,10 +421,10 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
 
 @test "a confined command that runs the wrapper again, a seam set, stays inside its first domain" {
   canary
-  confined "$WT" --root "$WT" -- env CONFINE_TEST_ABI=0 python3 -I "$CONFINE" --root "$OUT" -- rm -rf "$OUT/x"
+  confined "$WT" --root "$WT" -- env CONFINE_TEST_ABI=0 python3 -I "$CONFINE" --root "$OUT" -- rm -rf "${OUT:?}/x"
   [[ $status -ne 0 ]]
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
-  confined "$WT" --root "$WT" -- python3 -I "$CONFINE" --root "$OUT" -- rm -rf "$OUT/x"
+  confined "$WT" --root "$WT" -- python3 -I "$CONFINE" --root "$OUT" -- rm -rf "${OUT:?}/x"
   [[ $status -ne 0 ]]
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
 }
