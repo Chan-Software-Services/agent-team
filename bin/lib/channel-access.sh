@@ -18,6 +18,14 @@
 #                                unnamed     Discord named no server for the channel or no bot id
 #                              with channel_path the read that failed and channel_why its first
 #                              error line, for refused and unanswered. It always returns 0.
+#   channel_report <line> <channel id> <label> <not-text fix> <missing tail> <pass text>
+#                  <permission name>...
+#                              the doctor line <line> for that channel, called <label> in its texts
+#                              (as "#assistant"): FAIL with no bot token, on a refused read, on a
+#                              channel that is no text channel (its fix <not-text fix>) and on each
+#                              named permission the bot lacks (its text ending <missing tail>),
+#                              WARN when Discord does not answer or names no server or bot, else
+#                              PASS with <pass text>. It calls the doctor's report.
 # Only permissions and ids are read; no secret is printed.
 # shellcheck shell=bash
 
@@ -96,4 +104,35 @@ channel_access() {
   done
   channel_access_result=ok
   ((${#channel_missing[@]} == 0)) || channel_access_result=missing
+}
+
+channel_report() {
+  local line=$1 id=$2 label=$3 make=$4 tail=$5 pass=$6 names
+  shift 6
+  names=$(printf '%s, ' "$@" | sed 's/, $//')
+  if ! discord_token >/dev/null; then
+    report "$line" FAIL "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, so the bot's access to $label cannot be checked" \
+      "the secret discord-bot-env line's fix"
+    return 0
+  fi
+  channel_access "$id" "$@"
+  case $channel_access_result in
+    refused)
+      report "$line" FAIL "Discord refused the bot's read of $channel_path ($channel_why), so the bot cannot reach $label $id" \
+        "Daniel gives the bot's role $names in $label's permissions" ;;
+    unanswered)
+      report "$line" WARN "Discord did not answer ($channel_why), so the bot's access to $label is unchecked" \
+        "check the network, then run team-doctor again" ;;
+    not-text)
+      report "$line" FAIL "$id is not a text channel (type $channel_type), so no thread opens under it" "$make" ;;
+    unnamed)
+      report "$line" WARN "Discord named no server for the channel or no id for the bot, so the bot's access to $label is unchecked" \
+        "run team-doctor again" ;;
+    missing)
+      names=$(printf '%s, ' "${channel_missing[@]}" | sed 's/, $//')
+      report "$line" FAIL "the bot lacks $names in $label $id$tail" \
+        "Daniel gives the bot's role $names in $label's permissions" ;;
+    *)
+      report "$line" PASS "$pass" ;;
+  esac
 }

@@ -607,15 +607,16 @@ protected_by() {
     <(for file in "$REPO_ROOT/bin/team-doctor" "$lib"/doctor.d/*.sh; do
       [[ $file == "$interview" || $file == "$assistant" ]] || grep -hv '^[[:space:]]*#' "$file"; done |
       sed 's|~/\.claude/channels/discord/access\.json||g; s|\$HOME/\.claude/channels/discord/access\.json||g; s|mcp__plugin_discord_discord__[a-z_]*||g')
-  # The two channel lines alone use the bot token, only through the library's Discord calls: each
-  # asks whether there is one, and their shared reader reads Discord with it.
+  # The two channel lines alone use the bot token, only through their shared reader's Discord
+  # calls, which asks whether there is one and reads Discord with it; neither calls Discord itself.
   run -1 grep -nE 'credentials|\.claude\.json|hosts\.yml|[Kk]eychain|security find|DISCORD_BOT_TOKEN=|\.env"' \
     "$interview" "$assistant" "$reader"
   local file
   for file in "$interview" "$assistant"; do
-    assert_equal "$(grep -v '^[[:space:]]*#' "$file" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_token"
+    assert_equal "$(grep -v '^[[:space:]]*#' "$file" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" ""
+    grep -q '^  channel_report ' "$file"
   done
-  assert_equal "$(grep -v '^[[:space:]]*#' "$reader" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_api"
+  assert_equal "$(grep -v '^[[:space:]]*#' "$reader" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_api discord_token"
 }
 
 @test "each file of bin/lib/doctor.d/ is a check, run in the order of its name, with its lines of --help" {

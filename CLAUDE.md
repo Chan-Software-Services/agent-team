@@ -15,7 +15,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `records-git/`: git's hooks for the team home.
   - `bin/lib/`: the shared library.
     - `capacity.jq`: `team-capacity`'s settings of `capacity.json`, the worktrees held, a reading of the machine's load and the team's use per task, the cost samples and estimates, the reservations and the admission rule, the stow and resume plans, and their texts.
-    - `channel-access.sh`: the bot's permissions in one Discord channel, worked out as Discord does from its roles and the channel's overwrites, which the doctor's interview and assistant channel lines read.
+    - `channel-access.sh`: the bot's permissions in one Discord channel, worked out as Discord does from its roles and the channel's overwrites, and the doctor line reported from them, for the doctor's interview and assistant channel lines.
     - `chrome.sh`: the one lookup of a machine's Chrome, its executable and its app, which `team-doctor`'s `chrome` line and `team-tickets --graph` both take.
     - `code`: the paths every tracked path matches.
     - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
