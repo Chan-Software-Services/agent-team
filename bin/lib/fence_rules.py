@@ -15,10 +15,13 @@ heredoc's body no shell reads, a quoted argument, a commit message or a search p
 A command's name is its first word's basename, its quotes removed, so a path or a quoted name is
 the name; and, as command_text.heads reads them, a word past a wrapper's options that the walk
 took as an option's value may be the name too.
+A command behind command -v or -V is only looked up, and is in no class.
 The classes:
   push: git with push as its first word past git's own options, those that take a value (-C, -c,
     --git-dir, --work-tree, --namespace, --super-prefix, --config-env, --attr-source)
-    with it.
+    with it; and so read from any later word of a command the walk knows as no wrapper (strace
+    -f git push, ssh host git push, op run -- git push), but for echo's and printf's words, which
+    they only print.
   gh: gh or gh-axi.
   team_write: team-merge, team-catch-up, team-open or team-close.
   assistant_write: team-assistant or team-current.
@@ -26,12 +29,18 @@ The classes:
   answer: team-answer.
   wait: team-thread with wait as its first word.
   ci_wait: team-ci-wait or team-ci-run.
+Where eval is given a substitution, whose output it runs (eval "$(cat <<EOF ... EOF)", eval
+"$(echo git push)"), each line of that word is read as a command too, a heredoc's body lines
+among them, and a push among the words echo and printf print there is one.
 It exits 0 with what it found. Any error of its own exits 1 with one line on stderr,
 "fence_rules.py: <ErrorType>: <message>", so the hook refuses: a guard that cannot decide refuses.
 Not seen: what command_text.commands does not walk (its header lists it: a name built by a
 substitution or held in a variable, ssh's remote command, a string another interpreter runs, as
 python3 -c or node -e does, a script written by an earlier call), a function, alias or script of
-one's own that runs one, and a git alias for push.
+one's own that runs one, and a git alias for push. So a held command in one quoted word that
+something else runs passes: c='git push origin'; $c, eval "$c", git rebase -x 'git push origin',
+python3 -c 'os.system("git push origin")', ssh host 'git push'; and gh behind a command the walk
+knows as no wrapper (strace gh pr view 6).
 """
 
 import json
@@ -61,6 +70,8 @@ NAMED = {
     "team-ci-wait": "ci_wait",
     "team-ci-run": "ci_wait",
 }
+# The commands that only print their words, so a git push among them is text.
+PRINTS = frozenset(("echo", "printf"))
 CLASSES = ("push", "gh", "team_write", "assistant_write", "post", "answer", "wait", "ci_wait")
 
 
@@ -84,9 +95,49 @@ def class_of(words):
     return NAMED.get(name)
 
 
+def _looks_up(walked):
+    """Whether the command only looks its name up: it stands behind command -v or -V, which
+    prints where the name is found and runs nothing."""
+    last = walked.wrappers[-1] if walked.wrappers else ()
+    return bool(last) and command_name(last[0]) == "command" and any(
+        word.startswith("-") and not word.startswith("--") and set(word) & set("vV") for word in last[1:]
+    )
+
+
+def _pushes_behind(words):
+    """Whether a word after the command's name is git, by any path, with push as its first word
+    past git's own options: a push the command may run from its arguments."""
+    return any(
+        command_name(word) == "git" and _git_command(list(words[k + 1 :])) == "push"
+        for k, word in enumerate(words)
+        if k
+    )
+
+
+def _found(command, evaluated=False):
+    """The set of the classes of the commands the text runs; evaluated says the text is one whose
+    output eval runs, so what its echo and printf print is a command too."""
+    found = set()
+    for walked in call_commands(command):
+        if not walked.words or _looks_up(walked):
+            continue
+        found.update(class_of(words) for words in heads(walked))
+        name = command_name(walked.words[0])
+        if (evaluated or name not in PRINTS) and _pushes_behind(walked.words):
+            found.add("push")
+        if name == "eval":
+            # Each line of a substitution eval runs the output of, read as a command: shorter than
+            # the text it is a word of, so the reading ends.
+            for word in walked.words[1:]:
+                if "$(" in word or "`" in word:
+                    for line in word.splitlines():
+                        found |= _found(line, True)
+    return found
+
+
 def classes(command):
     """The classes of the commands the text runs, in CLASSES' order."""
-    found = {class_of(words) for walked in call_commands(command) for words in heads(walked)}
+    found = _found(command)
     return [name for name in CLASSES if name in found]
 
 

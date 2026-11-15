@@ -520,7 +520,7 @@ assistant_call() {
   assistant_call -0 "git push"
 }
 
-# Calls that only write or search text naming a fenced command, and run none.
+# Calls that only write or search text naming a fenced command, or look one up, and run none.
 text_only_calls() {
   calls=(
     $'cat > handoff.md <<\'EOF\'\nNext:\ngh pr create --fill\ngit push origin HEAD\nteam-ci-run shop feat/x abc\nteam-thread wait T7\nteam-post --coordinator --file q.md\nteam-merge T7\nteam-current\nEOF'
@@ -532,10 +532,13 @@ text_only_calls() {
     "git commit -m 'fix the fence; git push later (gh pr create)'"
     "grep -rn '^gh \\|(git push)\\|; team-inbox' bin"
     $'tee -a notes.md <<\'EOF\' >/dev/null\n$(gh api user)\n`git push`\nEOF'
+    "echo then run git push >> notes.md"
+    # A lookup of the tool, which runs none.
+    "command -v gh" "command -V gh-axi >/dev/null && echo found"
   )
 }
 
-@test "a file write or a search whose text names gh, git push or a team command passes, fenced and held offline, for every role" {
+@test "a file write, a search or a lookup that names gh, git push or a team command passes, fenced and held offline, for every role" {
   local command calls
   text_only_calls
   fence
@@ -562,14 +565,17 @@ text_only_calls() {
   assert_equal "$(probes)" 0
 }
 
-@test "gh and git push behind a wrapper, in a string a shell runs, in a substitution or piped into a shell are blocked as when run directly" {
+@test "gh and git push behind a wrapper, in a string a shell runs, in a substitution or piped into a shell, and a push behind any command, are blocked as when run directly" {
   local command hold runs=("env gh pr view 6" "env -u GH_TOKEN git push" "bash -c 'gh pr view 6'" 'sh -c "cd wt && git push"'
     "echo 6 | xargs gh pr view" "(cd wt; git push)" "eval 'gh pr view 6'" "git log -1 | gh pr comment 6 -F -"
     "command gh pr view 6" "/usr/bin/gh pr view 6" "/usr/bin/git push" "git -C wt push origin HEAD" "git -c http.version=HTTP/1.1 push"
     "git --git-dir wt/.git push" "timeout 30 gh pr checks 6" "nohup git push &" 'echo "$(gh api user)"' 'user=`gh api user`'
     "echo 'gh pr view 6' | bash" $'sh <<\'EOF\'\ngit push\nEOF' $'cat > note.md <<EOF\n$(gh api user)\nEOF'
     "find . -name x -exec gh pr view {} ;" "f() { gh pr view 6; }; f" "coproc gh pr view 6" "time git push"
-    $'cat > handoff.md <<\'EOF\'\ngh pr create\nEOF\ngit push' "g''h pr view 6" 'git "push"')
+    $'cat > handoff.md <<\'EOF\'\ngh pr create\nEOF\ngit push' "g''h pr view 6" 'git "push"'
+    # A push behind a command the walk knows as no wrapper, and one eval runs from a substitution.
+    "strace -f -o out git push" "ssh-agent git push" "op run -- git -C wt push" "ssh host git push"
+    $'eval "$(cat <<EOF\ngit push origin HEAD\nEOF\n)"' 'eval "$(echo git push)"')
   for command in "${runs[@]}"; do
     bash_call -0 "$command"
   done
