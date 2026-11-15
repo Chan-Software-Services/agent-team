@@ -1408,7 +1408,7 @@ skills_only_kit() {
   printf '%s\n' $'--- \t' "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
     "tools: [Read]" "model: inherit" "omitClaudeMd: true" --- "You read." >"$code/toolkits/kit-n/agents/reader.md"
   # So do lines that end with a carriage return and a line feed.
-  printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" >"$code/toolkits/kit-n/skills/look/SKILL.md"
+  printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" 'Look! Then run `id`, and say ! alone.' >"$code/toolkits/kit-n/skills/look/SKILL.md"
   local kit
   for kit in kit-r kit-n; do
     again T7
@@ -1497,6 +1497,13 @@ skills_only_kit() {
     'printf "%b\n" --- "name: look" "description: a\tb" --- "# Look" >skills/look/SKILL.md'
     'printf "%b\n" --- "name: look" "description:" "\tLooks." --- "# Look" >skills/look/SKILL.md'
     'printf "%b\n" --- "name: reader" "description: a\fb" --- "You read." >agents/reader.md'
+    # A NUL byte, which an awk that holds a line as a C string would end the line at.
+    'printf "%b\n" --- "name: reader" "\0\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: reader\0\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    # A command Claude Code would run from a skill's body when the skill is used: an exclamation
+    # mark and a command in backticks, and a fence that ends in an exclamation mark.
+    'printf "%s\n" "!\`id\`" >>skills/look/SKILL.md'
+    'printf "%s\n" "\`\`\`!" "id" "\`\`\`" >>skills/look/SKILL.md'
   )
   for change in "${changes[@]}"; do
     n=$((n + 1))
@@ -1543,8 +1550,9 @@ skills_only_kit() {
   assert_contains "$output" "none a symbolic link"
   assert_contains "$output" "indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,"
   assert_contains "$output" "none has hooks or mcpServers before a colon or opens with ?"
-  assert_contains "$output" "frontmatter, a first line of --- and then only spaces and tabs, a byte order mark before it or"
-  assert_contains "$output" "ASCII, a carriage return at its end aside"
+  assert_contains "$output" "byte and opens with a frontmatter, a first line of --- and then only spaces and tabs, with"
+  assert_contains "$output" "only printable ASCII, a carriage return at its end aside"
+  assert_contains "$output" "holds an exclamation mark next to a backtick, on either side"
   assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 

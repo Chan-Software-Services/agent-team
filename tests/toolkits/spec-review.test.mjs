@@ -68,6 +68,8 @@ describe("the spec-review toolkit", () => {
       // The launch rule reads a frontmatter only as plain ASCII: a file opens with ---, and no line of it holds another byte.
       assert.ok(read(file).startsWith("---\n"), `${file} does not open with a frontmatter: ${why}`);
       assert.match(frontmatterOf(read(file)), /^[\x20-\x7E\n]+$/, `${file}'s frontmatter holds a byte that is no printable ASCII: ${why}`);
+      // A skill's body has Claude Code run a command with an exclamation mark next to a backtick, which the launch rule refuses.
+      if (file.endsWith("SKILL.md")) assert.doesNotMatch(read(file), /!`|`!/, `${file} holds an exclamation mark next to a backtick: ${why}`);
       // The launch rule's listed keys: a line that is not blank, a comment or indented opens with one.
       for (const line of frontmatterOf(read(file)).split("\n").filter((line) => !/^(\s|#|$)/.test(line))) {
         assert.match(line, /^(name|description|tools|model|omitClaudeMd|argument-hint):(\s|$)/, `${file}, "${line.slice(0, 40)}": ${why}`);

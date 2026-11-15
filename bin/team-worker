@@ -151,13 +151,15 @@
 # agents/, skills/ and evals/, each optional and none a symbolic link (so no .mcp.json, .lsp.json,
 # hooks/, scripts/, commands/, bin/ or settings.json); .claude-plugin/ holds only plugin.json, an
 # object whose keys are only name, version, description and author; agents/ holds only *.md files
-# and skills/ only <name>/SKILL.md files, none a symbolic link; each of those files opens with a
-# frontmatter, a first line of --- and then only spaces and tabs, a byte order mark before it or
-# not, which ends at a line of --- and then only spaces; every line between holds only printable
-# ASCII, a carriage return at its end aside, and each of them that is not blank, a comment or
+# and skills/ only <name>/SKILL.md files, none a symbolic link; each of those files holds no NUL
+# byte and opens with a frontmatter, a first line of --- and then only spaces and tabs, with
+# nothing before it, which ends at a line of --- and then only spaces; every line between holds
+# only printable ASCII, a carriage return at its end aside, and each of them that is not blank, a comment or
 # indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,
 # the first of them not indented, and none has hooks or mcpServers before a colon or opens with ?
-# (a YAML explicit key), so a file this cannot read with certainty is a doubt; evals/, which no session loads, may hold anything. A toolkit
+# (a YAML explicit key), so a file this cannot read with certainty is a doubt; no skill file
+# holds an exclamation mark next to a backtick, on either side, which is how a skill's body has
+# Claude Code run a command; evals/, which no session loads, may hold anything. A toolkit
 # that fails any of these is checked against the project's list like every other, so one that
 # gains a server, a hook or a script comes back under it on its own.
 # A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets
@@ -430,7 +432,8 @@ skills_only_toolkit() (
   # Each file must open with a frontmatter this reads with certainty, and anything else is a doubt
   # that goes to the allow list, since Claude Code finds a frontmatter with a looser pattern
   # (^---\s*\n([\s\S]*?)---\s*\n?, whose \s holds spaces outside ASCII) than any line rule. So:
-  # - the first line, a byte order mark before it or not, is --- and then only spaces and tabs;
+  # - the first line is --- and then only spaces and tabs, with nothing before it, a byte order
+  #   mark included;
   # - a later line of --- and then only spaces ends it, and it must end;
   # - every line between holds only printable ASCII (no tab, no other control or line break
   #   character, no byte outside ASCII), a carriage return at a line's end aside;
@@ -441,12 +444,23 @@ skills_only_toolkit() (
   # - none has hooks or mcpServers before a colon, quoted or nested, or is an indented explicit
   #   key (a line opening with ?).
   # Claude Code ends a frontmatter at the first --- anywhere, so it reads no more than these lines.
-  # awk runs in the C locale, so it reads bytes and its ranges are ASCII's.
+  # awk runs in the C locale, so it reads bytes and its ranges are ASCII's. An awk that holds a
+  # line as a C string ends it at a NUL byte, so a file holding one is a doubt before awk reads
+  # it, by its size against its size with the NULs removed.
+  # A skill's body is read for one thing: Claude Code runs a command written in it when the skill
+  # is used (an exclamation mark and a command in backticks, or a fence that ends in an
+  # exclamation mark), so a skill file holding an exclamation mark next to a backtick, on either
+  # side, anywhere in it is a doubt.
   for file in "${prose[@]}"; do
-    LC_ALL=C awk -v bom=$'\xEF\xBB\xBF' -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '
+    [[ $(wc -c <"$file") -eq $(tr -d '\000' <"$file" | wc -c) ]] || exit 1
+    if [[ ${file##*/} == SKILL.md ]]; then
+      # grep exits 1 only when it read the file and found neither.
+      LC_ALL=C grep -q -F -e '!`' -e '`!' "$file" && exit 1
+      [[ $? -eq 1 ]] || exit 1
+    fi
+    LC_ALL=C awk -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '
       { sub(/\r$/, "") }
       NR == 1 {
-        if (index($0, bom) == 1) $0 = substr($0, length(bom) + 1)
         if ($0 !~ /^---[ \t]*$/) { doubt = 1; exit }
         inside = 1; next
       }
