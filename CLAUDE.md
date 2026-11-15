@@ -193,6 +193,7 @@ It holds:
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.
   The sandbox's `TEAM_CGROUP_ROOT` holds the cgroup tree and `/proc` that `team-capacity place` and `check` read, empty until a test writes them, so no test moves the machine's processes; `team-capacity sample` reads the machine through its seams, which the sandbox sets to an idle one (`TEAM_MEMINFO` 24 GiB available of 32, `TEAM_READING_PROCS` no process, `TEAM_READING_CPUS` 12) and a test may rewrite or unset.
   The sandbox's `TEAM_SYSTEM_ROOT` puts the library's system tool directories (treehouse's `/usr/local/bin` on Arch) inside it, so a PATH a test trims never gets the machine's own tools back on it.
+  It also stands for `/` in the session tmp `team-close` and `team-load-check` remove, `/tmp/agent-team-T<n>`, so no test removes a live task's.
   The sandbox refuses a TMPDIR under `/home` or `/Users` (a job's own tmp under HOME, say), whose paths the ledger reads as a machine's HOME: run the tests with one outside them, as the default is.
   A script run from this checkout has the reviewer App on, since `bin/lib/review-app` names it, while a copy of `bin/` (`copy_bin`) has it off: a test that needs either says so, with `review_app_on` or `review_app_off`.
   `tests/helpers/common.bash` documents the helpers.
@@ -207,6 +208,7 @@ It holds:
   The check reads only what the test file's own shell expands, so a single-quoted `bash -c` body or a quoted heredoc's stub, which expands its variables when it runs, is guarded by hand.
   No test file or helper runs a bare `wait`, which `tests/repo.bats` holds: bats runs a test's time limit countdown as a background job of the test's own shell, so a bare `wait` waits out the whole limit, and a test waits on the processes it started, by their pids.
 - Every PreToolUse hook entry, in `settings/*.json`, `coordinator.settings.json`, `assistant.settings.json`, `bin/lib/gate-claude-settings.json` and a toolkit's `hooks/hooks.json`, sets `"onFailure": "block"` and a whole-number `timeout` from 1 to 120 seconds beside its `command`, which `tests/repo.bats` holds, so a guard hook that fails or hangs blocks the call; `team-doctor`'s `guard hooks` line runs `scratch-only-edits`, `command-guard` and `lease-fence` in each of its modes on a harmless Bash call, and `assistant-discord-guard` on a read of `#assistant`, since a guard that always fails then blocks every call it sees.
+  Every hook entry of `settings/*.json` is in exec form, a `command` with no blank or quote and an `args` array, which `tests/team-worker.bats` holds: Claude Code runs a shell-form hook through a confined session's `CLAUDE_CODE_SHELL_PREFIX`, and the team's hooks must run outside the domain.
 
 ## Script conventions
 
