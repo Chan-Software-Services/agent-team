@@ -2444,7 +2444,7 @@ There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$
   done
   # The roles say the same, in one sentence each, with nothing of the old wait left.
   grep -qxF -- "- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read, since the coordinator's script waits on the checks of a pass." "$REPO_ROOT/roles/reviewer.md"
-  grep -qF "run no test suite: CI is the coordinator's wait, and the merge needs it green." "$REPO_ROOT/roles/reviewer.md"
+  grep -qF "a whole suite runs only in CI, which is the coordinator's wait, and the merge needs it green;" "$REPO_ROOT/roles/reviewer.md"
   grep -qF "and stop there: past the CI run of your head your brief may have you wait on, you never wait on the PR's GitHub checks, since a red check comes back to you from the coordinator as a fix round." "$REPO_ROOT/roles/builder.md"
   refute_grep -F -e team-ci-wait -e 'roll-up:' -e 'infrastructure:' -e 'verify` reviewer waits' "$REPO_ROOT/roles/reviewer.md" "$REPO_ROOT/roles/builder.md"
 }
