@@ -9,10 +9,10 @@
 # and no merge-approved whose url its text names, as team-sweep reads it), with the task, the
 # ask's id, its first line and a link to the question (its discord_message, which team-ask logs,
 # in the task's thread; else the thread); each PR ready to merge (the task's phase awaiting-merge,
-# the PR not merged and no merge-approved logged at its head), "<task> <title>: ready to merge
-# <its full URL>"; each interview under way (an interview-thread with no planner's done or
-# plan-approved after it) with no walk on in that thread, "<task> <title>: interview under way <its
-# thread>"; each walk under way (team-ui --walk, on), "<task> <title>: walk under way <the thread it
+# the PR not merged, no merge-approved logged at its head and Daniel's per-head word not standing
+# for it, below), "<task> <title>: ready to merge <its full URL>"; each interview under way (an
+# interview-thread with no planner's done or plan-approved after it) with no walk on in that
+# thread, "<task> <title>: interview under way <its thread>"; each walk under way (team-ui --walk, on), "<task> <title>: walk under way <the thread it
 # runs in>", or no thread with none; and the asks of the team home's two lists, the coordinator's
 # tasks/current.md, then the assistant's assistant/current.md (team-current's ask lines, questions
 # to Daniel with no asked, in the form with an end and added or the old one; current_item in
@@ -48,6 +48,12 @@
 # showed (waiting.json's posted, null until a post records one). A waiting.json that is missing
 # numbers the list afresh; one that cannot be read, or is of another schema than team-waiting/1,
 # does too, with a line on stderr saying why.
+# A PR whose per-head word stands is left out: the latest merge-approved naming its URL (a trailing
+# slash aside) names a head the ledger logged for it, and no review logged after that event has a
+# verdict other than pass (word_stands in bin/lib/ledger.jq), so the word holds through a merge of
+# the base whose re-review passed, and a review that found something lists the PR again; that the
+# new head adds only merges of the base is team-merge's to check, and a merge it refuses comes back
+# as the coordinator's ask, listed with the asks.
 # A PR ready to merge is left out while it waits on no word of Daniel's: its default word, the
 # approved plan, holds on the ledger (merge_authority in bin/lib/ledger.jq, as team-sweep's
 # merge-due reads it: the plan approved and not withdrawn, the PR's project not the team's own by
