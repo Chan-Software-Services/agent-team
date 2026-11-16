@@ -4,8 +4,9 @@
 # TEAM_SYSTEM_ROOT ($TMP_ROOT and $VAR_ROOT), never the machine's /tmp, with the /tmp root's file
 # system the reading TEAM_TMP_DF names (10% of 16 GiB unless a test writes another). The
 # heartbeat suite's setup: home-pc holds the lease on a bare origin, the stub claude lists the
-# coordinator and the assistant, the service managers are fakes, and Discord is the inbox helper's fake, which keeps
-# each alert's body. There is no stack.json: the step has no setting.
+# coordinator and the assistant, a usage read of the model windows was just taken
+# (usage_read_now), so the quota step starts no Claude Code and logs nothing, the service managers
+# are fakes, and Discord is the inbox helper's fake, which keeps each alert's body. There is no stack.json: the step has no setting.
 
 load helpers/common
 load helpers/inbox
@@ -15,6 +16,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   stub_reply claude '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   origin=$(hold_lease home-pc)
+  usage_read_now
   fake_service_managers
   stub_command uname
   stub_reply uname Linux
