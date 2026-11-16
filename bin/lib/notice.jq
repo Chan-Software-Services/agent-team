@@ -2,8 +2,8 @@
 # of a standing problem, none -> open -> posted -> (reminded)* -> ended -> closed. Its callers judge
 # their notices through it and do the I/O (Discord, the record's file, its lock): bin/team-timers
 # for the health alerts, the offline hold's posts, the login refusal's and the quota's crossings,
-# and bin/team-uptime for the production outages (through bin/lib/uptime.jq), both through
-# bin/lib/notices.sh. These are pure functions of the record, a source's standing problems, the
+# bin/team-uptime for the production outages (through bin/lib/uptime.jq), and bin/team-janitor tmp
+# for a memory /tmp past half full (through bin/lib/tmp.sh), all through bin/lib/notices.sh. These are pure functions of the record, a source's standing problems, the
 # lease record's taken_at and now; nothing here knows a source's texts or thresholds.
 # No includes. Included as: jq -L bin/lib 'include "notice"; ...'
 #
@@ -11,7 +11,7 @@
 #   {schema, written (when it was last written),
 #    upgraded: the sources whose old record has been moved in, each never folded again,
 #    notices: {<id>: {
-#      source (health, offline, login-refused, uptime or quota), key (the source's own key: a
+#      source (health, offline, login-refused, uptime, quota or tmp), key (the source's own key: a
 #        health problem's key, "<project>/<name>", "<window>/<threshold>/<resets_at>", or the
 #        source's name for a single notice),
 #      state: open (not yet told), posted (told) or ended (its end action is due),
@@ -42,7 +42,8 @@ def notice_sources:
    offline: {retry_open: false, end: "post", unposted_end: true, retry_end: false},
    "login-refused": {retry_open: true, end: null, unposted_end: false, retry_end: false},
    uptime: {retry_open: true, end: "post", unposted_end: false, retry_end: true},
-   quota: {retry_open: true, end: null, unposted_end: false, retry_end: false}};
+   quota: {retry_open: true, end: null, unposted_end: false, retry_end: false},
+   tmp: {retry_open: true, end: null, unposted_end: false, retry_end: false}};
 
 # The id of the notice of <source>'s problem <key>: notice_id($source; $key)
 def notice_id($source; $key): if $key == $source then $source else "\($source)/\($key)" end;

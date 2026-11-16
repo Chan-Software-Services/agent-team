@@ -2,9 +2,12 @@
 # team-janitor tmp: the sweep of the team's stale leftovers, run for real against the two roots
 # under the sandbox's TEAM_SYSTEM_ROOT ($TMP_ROOT and $VAR_ROOT), never the machine's /tmp. Each
 # test asserts on what is left on disk and on what the run printed; an entry is aged with touch
-# -d, and a live one is held by a real background sleep, stopped by its pid.
+# -d, and a live one is held by a real background sleep, stopped by its pid. The /tmp root's file
+# system is the reading TEAM_TMP_DF names, 10% of 16 GiB unless a test writes another, and Discord
+# is the inbox helper's fake, which keeps each alert's body.
 
 load helpers/common
+load helpers/inbox
 
 setup() {
   sandbox
@@ -18,6 +21,45 @@ setup() {
   echo kept >"$OUTSIDE/file"
   DAY_FILE=$HOME/.local/state/agent-team/janitor/tmp-$(date +%F).md
   LIST=$REPO_ROOT/bin/lib/tmp-leftovers
+  STATE=$HOME/.local/state/agent-team
+  export TEAM_TMP_DF=$BATS_TEST_TMPDIR/df
+  reading 10
+  inbox_discord alerts
+}
+
+# reading <percent> [<type>] [<options>]: the /tmp root's file system, as TEAM_TMP_DF gives it in
+# place of findmnt and df: 16 GiB, <percent> of it used (rounded up to a whole byte), a tmpfs
+# mounted with usrquota unless given.
+reading() {
+  local size=17179869184
+  printf '%s %s %s %s\n' "${2:-tmpfs}" "$size" "$(((size * $1 + 99) / 100))" "${3:-rw,nosuid,nodev,size=16777216k,usrquota}" \
+    >"$TEAM_TMP_DF"
+}
+
+# The texts of the alerts the fake Discord was sent, one per line, in order.
+alerts_posted() {
+  local id
+  [[ -f $STUB_FIXTURES/inbox/alerts ]] || return 0
+  while read -r id; do jq -r .content "$STUB_FIXTURES/inbox/$id.json"; done <"$STUB_FIXTURES/inbox/alerts"
+}
+
+# The tmp notice the record holds, or null.
+tmp_notice() {
+  jq -c '.notices.tmp' "$STATE/notices.json"
+}
+
+# Set the tmp notice's post <minutes> ago in the record.
+posted_ago() {
+  jq --arg at "$(date -u -d "$1 minutes ago" +%FT%TZ)" '.notices.tmp.posted = $at' "$STATE/notices.json" >"$STATE/notices.json.new"
+  mv "$STATE/notices.json.new" "$STATE/notices.json"
+}
+
+# Two entries of this user's under the /tmp root, for the largest: big, a 3 MB file, and small, a
+# directory holding a 1 MB file.
+two_entries() {
+  head -c 3145728 /dev/zero >"$TMP_ROOT/big"
+  mkdir "$TMP_ROOT/small"
+  head -c 1048576 /dev/zero >"$TMP_ROOT/small/data"
 }
 
 # Stop what a test left running, each by its pid, and let bats remove what a test made read-only.
@@ -343,7 +385,7 @@ removed $VAR_ROOT/git-template-3 (0 MB, untouched 2 h; no-mistakes)"
 @test "team-janitor tmp refuses an argument it does not know, and a TEAM_TMP_AGE_MINUTES that is no number" {
   stale_dir "$TMP_ROOT/nm-cli-home-1"
   run_bin -2 team-janitor tmp --apply
-  assert_equal "$output" "team-janitor: usage: team-janitor tmp [--dry-run]"
+  assert_equal "$output" "team-janitor: usage: team-janitor tmp [--dry-run] | team-janitor tmp status [--json]"
   run_bin -2 team-janitor tmp --dry-run extra
   TEAM_TMP_AGE_MINUTES=soon run_bin -1 team-janitor tmp
   assert_equal "$output" "team-janitor: TEAM_TMP_AGE_MINUTES is 'soon', not a whole number of minutes"
@@ -533,4 +575,218 @@ agent-team-gate-ijkl9012"
   assert_contains "$output" "agent-team-T<n>"
   assert_contains "$output" "agent-team-gate-"
   assert_contains "$output" "24 hours"
+}
+
+@test "notice.jq's table has the tmp source: its open post retried, no end action" {
+  run -0 jq -cn -L "$REPO_ROOT/bin/lib" 'include "notice"; notice_sources.tmp'
+  assert_equal "$output" '{"retry_open":true,"end":null,"unposted_end":false,"retry_end":false}'
+}
+
+@test "team-janitor tmp status --json prints the team-tmp/1 reading and status its text, writing nothing" {
+  local entry
+  # Six entries of this user's: the five largest are listed, largest first.
+  for entry in 1 2 3 4 5 6; do head -c $((entry * 1048576)) /dev/zero >"$TMP_ROOT/entry-$entry"; done
+  reading 52
+
+  run_bin -0 --separate-stderr team-janitor tmp status --json
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c 'del(.largest)' <<<"$output")" "$(jq -cn --arg root "$(realpath "$TMP_ROOT")" \
+    '{schema: "team-tmp/1", root: $root, type: "tmpfs", judged: true, size: 17179869184, used: 8933531976,
+      percent: 52, quota: true, warning: false, removed_today: 0, report: null}')"
+  assert_equal "$(jq -c '[.largest[].name]' <<<"$output")" '["entry-6","entry-5","entry-4","entry-3","entry-2"]'
+  assert_equal "$(jq -c '[.largest[].bytes]' <<<"$output")" \
+    "$(for entry in 6 5 4 3 2; do du -sk "$TMP_ROOT/entry-$entry" | awk '{print $1 * 1024}'; done | jq -sc .)"
+  [[ ! -e $STATE/notices.json && ! -e $STATE/janitor && ! -e $STATE/tmp.lock ]]
+
+  run_bin -0 --separate-stderr team-janitor tmp status
+  assert_equal "$stderr" ""
+  assert_equal "$output" "/tmp is 52% full (8.3 GiB of 16.0 GiB), past 50%
+largest: entry-6 6 MB
+largest: entry-5 5 MB
+largest: entry-4 4 MB
+largest: entry-3 3 MB
+largest: entry-2 2 MB
+removed today: 0"
+  [[ ! -e $STATE/notices.json && ! -e $STATE/janitor && ! -e $STATE/tmp.lock ]]
+  assert_equal "$(stub_calls curl)" ""
+}
+
+@test "team-janitor tmp status counts the day's removals and names its file, and a quiet /tmp has no past clause" {
+  stale_dir "$TMP_ROOT/nm-cli-home-1"
+  stale_file "$TMP_ROOT/git-template-2"
+  run_bin -0 team-janitor tmp
+  reading 12
+
+  run_bin -0 team-janitor tmp status --json
+  assert_equal "$(jq -c '[.percent, .warning, .largest, .removed_today, .report]' <<<"$output")" \
+    "$(jq -cn --arg report "$DAY_FILE" '[12, false, [], 2, $report]')"
+  run_bin -0 team-janitor tmp status
+  assert_equal "$output" "/tmp is 12% full (1.9 GiB of 16.0 GiB)
+removed today: 2 (~/.local/state/agent-team/janitor/tmp-$(date +%F).md)"
+}
+
+@test "team-janitor tmp under 50% posts nothing and prints nothing" {
+  two_entries
+  reading 49
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  assert_equal "$(alerts_posted)" ""
+  assert_equal "$(tmp_notice)" null
+}
+
+@test "team-janitor tmp at 50% posts the warning once, records it and prints the post; the next run posts nothing" {
+  two_entries
+  reading 50
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "posted to #coordinator (message 1569000000000000001): /tmp is 50% full"
+  assert_equal "$(alerts_posted)" "/tmp on home-pc is 50% full (8.0 GiB of 16.0 GiB), past 50%; systemd holds each user to 80% of it. Largest of yours: big 3 MB, small 1 MB. \`team-janitor tmp status\` lists them; today's removals: none."
+  assert_equal "$(jq -c '{source, key, state, message}' <<<"$(tmp_notice)")" \
+    '{"source":"tmp","key":"tmp","state":"posted","message":"1569000000000000001"}'
+  # The post mentions no one.
+  assert_equal "$(jq -c .allowed_mentions "$STUB_FIXTURES/inbox/1569000000000000001.json")" '{"parse":[]}'
+
+  run_bin -0 team-janitor tmp status --json
+  assert_equal "$(jq .warning <<<"$output")" true
+
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  assert_equal "$(alerts_posted | wc -l)" 1
+}
+
+@test "team-janitor tmp's warning names the day's removals in its post" {
+  stale_dir "$TMP_ROOT/nm-cli-home-1"
+  reading 70
+  run_bin -0 team-janitor tmp
+  assert_equal "$(sed -n 2p <<<"$output")" "posted to #coordinator (message 1569000000000000001): /tmp is 70% full"
+  [[ $(alerts_posted) == *"Largest of yours: none. \`team-janitor tmp status\` lists them; today's removals: ~/.local/state/agent-team/janitor/tmp-$(date +%F).md." ]]
+}
+
+@test "team-janitor tmp keeps the warning at 46%, closes it with no post at 44%, and posts anew at a later crossing" {
+  reading 50
+  run_bin -0 team-janitor tmp
+  reading 46
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$(jq -r .state <<<"$(tmp_notice)")" posted
+  reading 44
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  assert_equal "$(tmp_notice)" null
+  assert_equal "$(alerts_posted | wc -l)" 1
+  # At 46% with no notice standing nothing opens.
+  reading 46
+  run_bin -0 team-janitor tmp
+  assert_equal "$(tmp_notice)" null
+  reading 55
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" "posted to #coordinator (message 1569000000000000002): /tmp is 55% full"
+  assert_equal "$(alerts_posted | wc -l)" 2
+}
+
+@test "team-janitor tmp reminds once 240 minutes have passed since the post, with that run's reading" {
+  reading 50
+  run_bin -0 team-janitor tmp
+  reading 61
+  posted_ago 239
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" ""
+  posted_ago 241
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "posted to #coordinator (message 1569000000000000002): /tmp is still 61% full"
+  assert_equal "$(alerts_posted | sed -n 2p)" "/tmp on home-pc is still 61% full (9.8 GiB of 16.0 GiB), past 50%; systemd holds each user to 80% of it. Largest of yours: none. \`team-janitor tmp status\` lists them; today's removals: none."
+  [[ $(jq -r .reminded <<<"$(tmp_notice)") == 20* ]]
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$(alerts_posted | wc -l)" 2
+}
+
+@test "team-janitor tmp's warning says the 80% clause only when the mount holds usrquota" {
+  reading 50 tmpfs rw,nosuid,nodev,size=16777216k
+  run_bin -0 team-janitor tmp
+  assert_equal "$(alerts_posted)" "/tmp on home-pc is 50% full (8.0 GiB of 16.0 GiB), past 50%. Largest of yours: none. \`team-janitor tmp status\` lists them; today's removals: none."
+  run_bin -0 team-janitor tmp status --json
+  assert_equal "$(jq .quota <<<"$output")" false
+}
+
+@test "a warning Discord refuses is said on stderr, fails the run, and is posted by the next run" {
+  echo "1 500" >"$STUB_FIXTURES/inbox/fail-post"
+  reading 50
+  run_bin -1 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-janitor: the post to #coordinator failed (curl: (22) The requested URL returned error: 500); it is tried again next run"
+  assert_equal "$(jq -c '{state, posted}' <<<"$(tmp_notice)")" '{"state":"open","posted":null}'
+
+  rm "$STUB_FIXTURES/inbox/fail-post"
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "posted to #coordinator (message 1569000000000000001): /tmp is 50% full"
+  assert_equal "$(jq -r .state <<<"$(tmp_notice)")" posted
+}
+
+@test "a /tmp that is not a memory file system, or is on macOS, is never judged" {
+  reading 90 ext4 rw,relatime
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  assert_equal "$(tmp_notice)" null
+  run_bin -0 team-janitor tmp status
+  assert_equal "$(sed -n 1p <<<"$output")" "/tmp is on ext4, not a memory file system, so it is not judged"
+  run_bin -0 team-janitor tmp status --json
+  assert_equal "$(jq -c '[.type, .judged, .percent, .warning]' <<<"$output")" '["ext4",false,90,false]'
+
+  reading 90
+  as_macos
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$(tmp_notice)" null
+  run_bin -0 team-janitor tmp status --json
+  assert_equal "$(jq -c '[.type, .judged]' <<<"$output")" '["tmpfs",false]'
+  assert_equal "$(alerts_posted)" ""
+}
+
+@test "team-janitor tmp --dry-run posts no warning and writes no notice" {
+  reading 60
+  run_bin -0 team-janitor tmp --dry-run
+  assert_equal "$output" ""
+  assert_equal "$(alerts_posted)" ""
+  [[ ! -e $STATE/notices.json ]]
+}
+
+@test "team-janitor tmp reads the largest entries only for status and when a post is due" {
+  two_entries
+  fails_on_call du
+  run_bin -0 team-janitor tmp
+  reading 50
+  # The post is due, so du is read (and fails, so the post names none).
+  run_bin -0 team-janitor tmp
+  [[ -s $STUB_CALLS/du.failed ]]
+  rm "$STUB_CALLS/du.failed"
+  # A run whose warning stands already reads none.
+  run_bin -0 team-janitor tmp
+  [[ ! -e $STUB_CALLS/du.failed ]]
+  reading 10
+  run_bin -0 team-janitor tmp
+  [[ ! -e $STUB_CALLS/du.failed ]]
+  run_bin -0 team-janitor tmp status
+  [[ -e $STUB_CALLS/du.failed ]]
+}
+
+@test "team-janitor tmp status refuses an argument it does not know" {
+  run_bin -2 --separate-stderr team-janitor tmp status --dry-run
+  assert_equal "$stderr" "team-janitor: usage: team-janitor tmp [--dry-run] | team-janitor tmp status [--json]"
+}
+
+@test "team-janitor --help documents status, the warning and its texts" {
+  run_bin -0 team-janitor --help
+  assert_contains "$output" "team-janitor tmp status [--json]"
+  assert_contains "$output" "team-tmp/1"
+  assert_contains "$output" "/tmp on <machine> is 52% full (8.3 GiB of 16.0 GiB), past 50%"
+  assert_contains "$output" "/tmp on <machine> is still"
+  assert_contains "$output" "posted to #coordinator (message <id>): /tmp is 52% full"
+  assert_contains "$output" "TEAM_TMP_DF"
 }
