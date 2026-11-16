@@ -289,7 +289,17 @@
 #                     Discord refuses (tried again next run) each fail the step, never the run, so
 #                     12 runs in a row are the step-github alert. Like every step on the holder, it
 #                     makes no read on a run that is offline, fenced or off the lease.
-#              inbox  On the holder, after the github step: team-inbox, which writes the team
+#              tmp    On the holder, after the github step, every run, with no setting: team-janitor
+#                     tmp, which removes the team's stale leftovers from /tmp and /var/tmp and posts
+#                     in #coordinator once a memory /tmp passes half full, reminding every 4 hours
+#                     while it stands (bin/team-janitor's header says how). Each line it prints is
+#                     logged ("tmp: removed /tmp/nm-cli-home-123 (373 MB, untouched 5 h;
+#                     no-mistakes)"), and a quiet run logs nothing. A team-janitor tmp that fails (a
+#                     removal, a post Discord refused, a notice record it cannot write, processes it
+#                     cannot read) fails the step with its first line on stderr ("tmp: failed: could
+#                     not remove <path>: <why>"), so 12 runs in a row are the step-tmp alert. It is
+#                     stopped after 120 s, killed 10 s later ("tmp: failed: timed out after 120 s").
+#              inbox  On the holder, after the tmp step: team-inbox, which writes the team
 #                     home's waiting.md, so what waits on Daniel is there within five minutes
 #                     whatever changed it. It logs only the one edit that retires the message
 #                     team-inbox kept in #coordinator before waiting.md ("retired <link>"), a
@@ -334,21 +344,22 @@
 #                     (~/.local/state/agent-team/janitor/<date>.md; a dry run's is none):
 #                     team-janitor, the daily Docker reap, report and alerts. A run of it that
 #                     failed still wrote the day's report, so it runs again the next day.
-#            The checkpoint, current, queue, uptime, capacity, level, stacks and janitor steps log
-#            one line per line their command prints (a good capacity step prints only the sessions
-#            it placed, and a level step only a change); a step that is off logs nothing. A
-#            checkpoint, ledger, uptime, quota, capacity, level, stacks, pack or janitor step that
-#            fails (a level step's post that Discord refused, kept for its next run, too), or whose
-#            stack.json (capacity.json for the capacity and level steps) is malformed, is logged as
-#            "<step>: failed: <reason>", the steps after it still run (the capacity step's place
-#            after its sample too), and the run exits 1 at its end. A hung GitHub, production or
-#            Docker never holds the run's lock for good: the checkpoint is stopped after 300 s, the
-#            current step (whose pr conditions ask GitHub) after 120 s, the queue step (whose
-#            commit pushes) after 60 s, the uptime step after 180 s, the quota
-#            step after 60 s, the github step's read after 20 s, each reading and the place after 60 s, the level step, the sweep and
-#            the pack after 300 s and the janitor after 1200 s, each logged as "<step>: failed:
-#            timed out after <n> s" (the quota step's as "quota: failed: team-quota status timed out
-#            after 60 s"; a janitor stopped so wrote no report, so the next run starts it again),
+#            The checkpoint, current, queue, uptime, tmp, capacity, level, stacks and janitor steps
+#            log one line per line their command prints (a good capacity step prints only the
+#            sessions it placed, and a level step only a change); a step that is off logs nothing. A
+#            checkpoint, ledger, uptime, quota, tmp, capacity, level, stacks, pack or janitor step
+#            that fails (a level step's post that Discord refused, kept for its next run, too), or
+#            whose stack.json (capacity.json for the capacity and level steps) is malformed, is
+#            logged as "<step>: failed: <reason>", the steps after it still run (the capacity step's
+#            place after its sample too), and the run exits 1 at its end. A hung GitHub, production
+#            or Docker never holds the run's lock for good: the checkpoint is stopped after 300 s,
+#            the current step (whose pr conditions ask GitHub) after 120 s, the queue step (whose
+#            commit pushes) after 60 s, the uptime step after 180 s, the quota step after 60 s, the
+#            github step's read after 20 s, the tmp step after 120 s, each reading and the place
+#            after 60 s, the level step, the sweep and the pack after 300 s and the janitor after
+#            1200 s, each logged as "<step>: failed: timed out after <n> s" (the quota step's as
+#            "quota: failed: team-quota status timed out after 60 s"; a janitor stopped so wrote no
+#            report, so the next run starts it again),
 #            and a whole run, on Linux and macOS alike, after 70 minutes, with everything it
 #            started, logged as "run: failed: timed out after 4200 s" (exit 1), so the next run
 #            takes the lock; the systemd service's TimeoutStartSec=4500 stands behind that. The
@@ -404,19 +415,19 @@
 # TEAM_TIMERS_CHECKPOINT_SECONDS, TEAM_TIMERS_QUEUE_SECONDS, TEAM_TIMERS_CURRENT_SECONDS,
 # TEAM_TIMERS_FINISHED_SECONDS, TEAM_TIMERS_FINISHED_CALL_SECONDS,
 # TEAM_TIMERS_COORDINATOR_SWEEP_SECONDS, TEAM_TIMERS_UPTIME_SECONDS, TEAM_TIMERS_QUOTA_SECONDS,
-# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS, TEAM_TIMERS_LEVEL_SECONDS, TEAM_TIMERS_SWEEP_SECONDS,
-# TEAM_TIMERS_JANITOR_SECONDS, TEAM_TIMERS_RUN_SECONDS, TEAM_TIMERS_LOCK_SECONDS and
-# TEAM_TIMERS_KILL_SECONDS replace the checkpoint step's 300 s, the queue step's 60 s, the current
-# step's 120 s, the finished step's 90 s after which no stop starts, its 30 s for each call (the
-# back step's and the coordinator step's session lists' too), the coordinator step's 60 s for its
-# sweep, the uptime step's 180 s, the quota step's 60 s, the github step's 20 s, the capacity step's 60 s for each of its
-# commands, the level step's 300 s, the sweep's 300 s, the janitor's 1200 s, the run's 4200 s,
-# enable's 60 s wait for the run's lock and the 10 s after a time limit at which a command still
-# running is killed, TEAM_TIMERS_FAILURES_DAYS the failures log's 30 days, and
-# TEAM_TIMERS_HEALTH_RUNS, TEAM_TIMERS_HEALTH_STALE_MINUTES, TEAM_TIMERS_HEALTH_STEP_RUNS and
-# TEAM_TIMERS_HEALTH_UNATTENDED_MINUTES the health view's and the alerts' 2 runs, 15 minutes, 12
-# runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write of the notice record waits for
-# its lock (the tests' seams).
+# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS, TEAM_TIMERS_LEVEL_SECONDS,
+# TEAM_TIMERS_SWEEP_SECONDS, TEAM_TIMERS_JANITOR_SECONDS, TEAM_TIMERS_RUN_SECONDS,
+# TEAM_TIMERS_LOCK_SECONDS and TEAM_TIMERS_KILL_SECONDS replace the checkpoint step's 300 s, the
+# queue step's 60 s, the current step's 120 s, the finished step's 90 s after which no stop starts,
+# its 30 s for each call (the back step's and the coordinator step's session lists' too), the
+# coordinator step's 60 s for its sweep, the uptime step's 180 s, the quota step's 60 s, the
+# github step's 20 s, the tmp step's 120 s, the capacity step's 60 s for each of its commands, the level step's 300 s, the
+# sweep's 300 s, the janitor's 1200 s, the run's 4200 s, enable's 60 s wait for the run's lock and
+# the 10 s after a time limit at which a command still running is killed, TEAM_TIMERS_FAILURES_DAYS
+# the failures log's 30 days, and TEAM_TIMERS_HEALTH_RUNS, TEAM_TIMERS_HEALTH_STALE_MINUTES,
+# TEAM_TIMERS_HEALTH_STEP_RUNS and TEAM_TIMERS_HEALTH_UNATTENDED_MINUTES the health view's and the
+# alerts' 2 runs, 15 minutes, 12 runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write
+# of the notice record waits for its lock (the tests' seams).
 # Exit 0 done, 1 refused or a step failed, 2 usage error, 75 GitHub unreachable.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -444,20 +455,19 @@ INBOX_TIMEOUT=120
 # (CURRENT_TIMEOUT), the queue step 60 (QUEUE_TIMEOUT), the coordinator step's session list 30
 # (FINISHED_CALL_TIMEOUT) and sweep 60 (COORDINATOR_SWEEP_TIMEOUT), the uptime step 180
 # (UPTIME_TIMEOUT), the quota step 60 (QUOTA_TIMEOUT), the github step 20 (GITHUB_TIMEOUT), the
-# inbox step 120 (INBOX_TIMEOUT above), the
-# finished step 120 (its session list and each stop 30 s, FINISHED_CALL_TIMEOUT, and no stop started
-# once FINISHED_TIMEOUT has passed, so at most 90 s and one last stop's 30), the capacity step's
-# sample and place 60 each, the level step 300, the sweep 300, the pack 300 and the janitor 1200.
-# That is 3290 s in all, 3450 s with the kills (10 s each for the other steps' fifteen commands and
-# the finished step's last stop), about 58 minutes. The lease step leaves a lease unrenewed only
-# under 14 minutes old, so a run that hits every limit ends with it about 72 minutes old, past the
-# lease's hour (team-lease's TTL_MINUTES), and the next run starts at the next mark, up to INTERVAL
-# minutes and SLACK_SECONDS later, and renews behind its read of origin. A lease past its ttl is
-# stale, which changes only what team-lease take says on another machine (stale, not fresh): the
-# holder still holds it, and the renewal makes it fresh again. RUN_TIMEOUT, 70 minutes, stops a run
-# that outlasts all of that (a hang before the steps, or in a command no step's limit reaches), so
-# one hang never ends the renewals and checkpoints for good; the systemd service's START_TIMEOUT, 75
-# minutes, is the backstop behind it.
+# tmp step 120 (TMP_TIMEOUT), the inbox step 120 (INBOX_TIMEOUT above), the finished step 120 (its
+# session list and each stop 30 s, FINISHED_CALL_TIMEOUT, and no stop started once FINISHED_TIMEOUT
+# has passed, so at most 90 s and one last stop's 30), the capacity step's sample and place 60 each,
+# the level step 300, the sweep 300, the pack 300 and the janitor 1200. That is 3410 s in all, 3580 s with the kills (10 s each
+# for the other steps' sixteen commands and the finished step's last stop), about 60 minutes. The
+# lease step leaves a lease unrenewed only under 14 minutes old, so a run that hits every limit ends
+# with it about 74 minutes old, past the lease's hour (team-lease's TTL_MINUTES), and the next run
+# starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS later, and renews behind its
+# read of origin. A lease past its ttl is stale, which changes only what team-lease take says on
+# another machine (stale, not fresh): the holder still holds it, and the renewal makes it fresh
+# again. RUN_TIMEOUT, 70 minutes, stops a run that outlasts all of that (a hang before the steps, or
+# in a command no step's limit reaches), so one hang never ends the renewals and checkpoints for
+# good; the systemd service's START_TIMEOUT, 75 minutes, is the backstop behind it.
 CHECKPOINT_TIMEOUT=${TEAM_TIMERS_CHECKPOINT_SECONDS:-300}
 # Seconds past which the checkpoint begins no worktree, two fifths of its limit (120 of 300): one
 # begun by then makes at most two origin calls of 60 s, so its records commit begins in the limit.
@@ -470,6 +480,7 @@ COORDINATOR_SWEEP_TIMEOUT=${TEAM_TIMERS_COORDINATOR_SWEEP_SECONDS:-60}
 UPTIME_TIMEOUT=${TEAM_TIMERS_UPTIME_SECONDS:-180}
 QUOTA_TIMEOUT=${TEAM_TIMERS_QUOTA_SECONDS:-60}
 GITHUB_TIMEOUT=${TEAM_TIMERS_GITHUB_SECONDS:-20}
+TMP_TIMEOUT=${TEAM_TIMERS_TMP_SECONDS:-120}
 CAPACITY_TIMEOUT=${TEAM_TIMERS_CAPACITY_SECONDS:-60}
 LEVEL_TIMEOUT=${TEAM_TIMERS_LEVEL_SECONDS:-300}
 SWEEP_TIMEOUT=${TEAM_TIMERS_SWEEP_SECONDS:-300}
@@ -1515,7 +1526,7 @@ github_step() {
   fi
 }
 
-# The inbox step, on the holder after the github step: team-inbox, logged only when it retired the
+# The inbox step, on the holder after the tmp step: team-inbox, logged only when it retired the
 # message it kept in #coordinator before waiting.md, numbered the list afresh (which no later run
 # would show), or failed, and never failing the run, since the next run writes the list again.
 inbox_step() {
@@ -1942,6 +1953,7 @@ run_heartbeat() {
     run_step uptime "$UPTIME_TIMEOUT" team-uptime run
     quota_step
     github_step
+    run_step tmp "$TMP_TIMEOUT" team-janitor tmp
     inbox_step
     finished_step
     capacity_step

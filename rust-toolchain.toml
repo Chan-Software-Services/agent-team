@@ -1,0 +1,7 @@
+# The Rust toolchain every checkout of this repository builds with: rustup reads it in any directory
+# below here, installs it with `rustup toolchain install` run here, and its rust-analyzer proxy runs
+# this toolchain's rust-analyzer. team-doctor's tool rust-toolchain line checks it is installed.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]

@@ -21,7 +21,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
 - Answer a finding with a test plan, a bug the reviewer suspects, by writing the test it plans and running it before you change the code.
   If it fails, the bug is real: fix it until the test passes.
   If it passes, the suspicion was wrong, and the passing test is your evidence.
-  Keep the test either way, and say which it was, naming the finding and the test, in a note in `.scratch/task/build-notes/`.
+  Keep the test either way, as an assertion in the test that already drives that path when one does and as a new test only when none does, and say which it was, naming the finding and the test, in a note in `.scratch/task/build-notes/`.
 - Commit messages are Conventional Commits with no agent name or `Co-Authored-By` trailer (Daniel's rule; worker settings also turn Claude Code's commit attribution off). Use `docs:`, `build:`, `ci:` or `test:` for changes that do not change the product, so release-please bumps nothing for them.
 - Commit and push the task branch before reporting DONE or PR, except as the Disclosure line below says. Never merge, never push to a base branch, never force-push.
   In a ticket worktree, which your brief names with its ticket branch, push the ticket branch only where your brief has you run CI on it, never for anything else, and merge only the task branch into it, never the other way, as your brief says; at `T<n> STOW` or `HOLD`, commit and reply as below without pushing, since the checkpoint keeps the branch.

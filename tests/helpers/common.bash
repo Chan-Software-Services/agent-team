@@ -39,6 +39,24 @@ untraced() {
   return "$1"
 }
 
+# own_pids: the pids, one per line, of the processes still running that this test started: this
+# user's whose environment holds this test's BATS_TEST_TMPDIR, which bats exports and every
+# process a test starts inherits, but one started with an emptied environment or another
+# BATS_TEST_TMPDIR (a bats run of its own, whose processes a test binds by their command line's
+# path). The test's own shell is left out, but bats' countdown, a subshell and this pipeline are
+# among them, so a caller narrows them by what it looks for (its arguments, read with ps -o args=
+# -p) before it kills one. A test kills a process it cannot name by the pid it started only from
+# here, or from a search bound as tests/bound-kills holds.
+own_pids() {
+  local me environment=e
+  me=$(id -u)
+  [[ $BATS_TEST_TMPDIR == /*/* ]] || { echo "own_pids: $BATS_TEST_TMPDIR is no test's directory" >&2 && return 1; }
+  # ps shows the environment after the arguments: procps with e, macOS's with -E.
+  [[ $(command -p uname) != Darwin ]] || environment=-E
+  command -p ps -U "$me" -ww -o pid=,args= "$environment" |
+    OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" SELF=$$ awk '$1 != ENVIRON["SELF"] && index($0 " ", " " ENVIRON["OWN"] " ") { print $1 }'
+}
+
 # macOS assesses every new executable file on its first run, a quarter of a second each, so a
 # test that wrote its stubs or copied bin/ afresh spent most of its time waiting on that. The
 # executables tests share are therefore made once per bats run, read-only, under
