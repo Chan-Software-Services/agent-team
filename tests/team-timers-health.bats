@@ -7,6 +7,7 @@
 
 load helpers/common
 load helpers/inbox
+load helpers/github-api
 
 setup() {
   sandbox
@@ -22,6 +23,8 @@ setup() {
   notices=$state/notices.json
   inbox_discord alerts
   inbox_guild_kept
+  # GitHub answers the github step's gh api rate_limit with an idle hour, and nothing else.
+  github_heartbeat_stub
 }
 
 # The live session list with a coordinator and an assistant in it, as claude agents --json gives it.

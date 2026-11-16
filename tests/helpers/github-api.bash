@@ -36,6 +36,9 @@
 #   github_requests    prints the requests, one "<endpoint> <status>" per line.
 #   github_clock <epoch seconds>
 #                      sets the clock TEAM_GITHUB_CLOCK names, which github_stub_setup exports.
+#   github_heartbeat_stub
+#                      github_stub_setup, and a stub gh that answers gh api rate_limit alone,
+#                      for a test of team-timers run (below).
 # shellcheck shell=bash
 
 github_stub_setup() {
@@ -176,4 +179,19 @@ github_rate_limit() {
   done
   jq -c '{resources: ., rate: .core}' <<<"$out"
   exit 0
+}
+
+# github_heartbeat_stub: the stub GitHub of a test of team-timers run that plans nothing else of
+# it: gh api rate_limit answers the planned budgets (an idle hour unless github_budget plans one),
+# and every other gh call fails as the sandbox's stub does with no fixture, so the heartbeat's
+# github step reads a budget and posts nothing.
+github_heartbeat_stub() {
+  github_stub_setup
+  stub_script gh <<'STUB'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
+[[ $GITHUB_ENDPOINT != rate_limit ]] || github_rate_limit
+echo "stub gh: no fixture for this call: $*" >&2
+exit 127
+STUB
 }
