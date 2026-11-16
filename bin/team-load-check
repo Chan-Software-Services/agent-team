@@ -187,14 +187,13 @@
 # fails each of its role's attempts (FAIL <role> <id>: cannot read its session's transcript). Only
 # ids and outcomes leave the transcripts. Every session is stopped and removed, and the worktree
 # with them, on every path, and so are the canary directory, by the path mktemp gave, and
-# /tmp/agent-team-T0, the session tmp confine.py made for the T0 sessions, when it is a directory
-# of this user's (never through a link; TEAM_SYSTEM_ROOT stands for / in it, the tests' seam), and
-# ~/.config/agent-team/confine/T0, the session directories team-worker wrote for them, the same
-# way, a link or anything else there left and named, as
-# every form that launched a session in that worktree removes them. bin/lib/probe.json also sorts
-# every deny rule of the worker roles' and the assistant's settings into one family and lists
-# their PreToolUse hooks, each with an attempt for each role that holds it or the reason it has
-# none, which tests/repo.bats holds.
+# /tmp/agent-team-T0, the session tmp confine.py made for the T0 sessions, when it is a directory of
+# this user's (never through a link; TEAM_SYSTEM_ROOT stands for / in it, the tests' seam), and
+# ~/.config/agent-team/confine/T0, the session directories team-worker wrote for them, the same way,
+# a link or anything else there left and named, as every form that launched a session in that
+# worktree removes them. bin/lib/probe.json also sorts every deny rule of the worker roles' and the
+# assistant's settings into one family and lists their PreToolUse hooks, each with an attempt for
+# each role that holds it or the reason it has none, which tests/repo.bats holds.
 #
 # The ops form reads production, so Daniel must be at the PC to approve its 1Password prompts (one
 # per toolkit, each server reading its own secret: one for prod-mongo alone, three beside prod-read
@@ -1021,8 +1020,8 @@ EOF
 # longer stands, holds its id, "ran in the foreground" when a background attempt's call was not
 # made with run_in_background, and "no refusal by the kernel in its result" when a foreground
 # attempt's result holds neither PermissionError nor "Permission denied", and "the session's shell
-# is not the confined one" when a kernel attempt with a marker ran without it in its result. Fails when the
-# transcript is not JSON lines. Only ids and outcomes leave the transcript.
+# is not the confined one" when a kernel attempt with a marker ran without it in its result. Fails
+# when the transcript is not JSON lines. Only ids and outcomes leave the transcript.
 probe_verdicts() {
   jq -rs --arg role "$1" --argjson attempts "$2" --argjson gone "$4" "$tool_outcome_jq"'
     def input_of($tool): .input | objects | if $tool == "Bash" then .command else .file_path end;
