@@ -2,7 +2,7 @@
 // this checkout and @WORKTREE@ to a session's worktree (what team-worker does), spoken to over
 // stdio by a minimal MCP client.
 //
-//   const server = startToolkitServer("prod-read", { home, opDir, env, path });
+//   const server = startToolkitServer("prod-read", { home, opDir, env, path, role });
 //   await server.initialize();                         or initialize({ elicitation: true })
 //   const tools = await server.listTools();
 //   const result = await server.callTool("find", { database, collection, filter });
@@ -95,18 +95,20 @@ function spyDir() {
 }
 
 // Start the server with a small, explicit environment: HOME, PATH (the spies, then testPath()
-// unless `path` replaces it), OP_STUB_DIR, plus `env`.
+// unless `path` replaces it), OP_STUB_DIR, AGENT_TEAM_ROLE (`role`, an ops launch's unless the
+// test names another, or null for none), plus `env`.
 export function startToolkitServer(toolkit, options) {
   return startServer(serverConfig(toolkit), options);
 }
 
-export function startServer({ command, args: configArgs = [], env: configEnv = {} }, { home, opDir, env = {}, path = testPath(), args = [] }) {
+export function startServer({ command, args: configArgs = [], env: configEnv = {} }, { home, opDir, env = {}, path = testPath(), args = [], role = "ops" }) {
   const spies = spyDir();
   const child = spawn(command, [...configArgs, ...args], {
     env: {
       HOME: home,
       PATH: `${spies.dir}:${path}`,
       OP_STUB_DIR: opDir,
+      ...(role === null ? {} : { AGENT_TEAM_ROLE: role }),
       ...configEnv,
       ...env,
     },
