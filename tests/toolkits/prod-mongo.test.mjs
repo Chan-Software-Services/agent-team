@@ -1656,8 +1656,9 @@ for label, host, port in tries:
         print(f"could not reach {label}: {type(error).__name__}", flush=True)
 `;
     // The probe itself reaches production's container from the default bridge, so its failures
-    // below are the internal network's doing.
-    const control = execFileSync(realDocker, ["run", "--rm", "--pull", "never", pythonImage, "python", "-c", probe([targets[4]])], { encoding: "utf8" });
+    // below are the internal network's doing. The test's own container may pull the image, which
+    // the rehearsal's build may have pulled into its build cache alone (as on CI).
+    const control = execFileSync(realDocker, ["run", "--rm", "--pull", "missing", pythonImage, "python", "-c", probe([targets[4]])], { encoding: "utf8" });
     assert.equal(control, `reached ${targets[4][0]}\n`);
     repo.git(repo.work, "checkout", "--quiet", "-b", "reaches-out");
     repo.write("back-end/migrations/reaches_out.py", `${probe(targets)}import os
