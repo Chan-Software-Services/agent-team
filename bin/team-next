@@ -75,18 +75,19 @@
 # T<n> --json reads them (its refusal is its own). A phase's cap is the latest plan-approved's
 # parallel (team-log), its entry for that phase, the last entry for a later phase, and 1 when the
 # latest plan-approved has none, so a later approval without it builds one ticket at a time again.
-# Before the first launch of a phase after a merged part (no ticket of the phase running or done,
-# and the latest merged of a ready ticket's project naming the phase first in its phases_left), it
-# fetches origin's base into that project's task worktree and fast-forwards the task branch to it
-# when the branch is its ancestor, "brought phase <p>'s task branch to origin/<base>: <branch>
-# <old8>..<new8> in <worktree>", so the phase's ticket worktrees, and at cap 1 the task worktree,
-# hold what merged into the base since; a branch that holds the base already is left as it is, and
-# a phase already started is never touched. Every ready ticket's project is checked before any
-# branch moves. It never merges, forces or pushes, and refuses the fill, moving no branch and
-# launching nothing, naming the step that clears it: the task worktree off the task branch, or
-# with changes to tracked files or files git does not ignore, or a branch with commits the base
-# does not hold ("have a builder merge origin/<base> into <branch> ..."), exit 1; a base it cannot
-# fetch, exit 75.
+# Before a project's first launch of a phase after a merged part (no ticket of the phase in that
+# project running or done, and the project's latest merged naming the phase among its phases_left
+# with no ticket of the project in a phase before it there), it fetches origin's base into that
+# project's task worktree (with no credential prompt, at most 60 seconds) and fast-forwards the task
+# branch to it when the branch is its ancestor, "brought phase <p>'s task branch to origin/<base>:
+# <branch> <old8>..<new8> in <worktree>", so the phase's ticket worktrees, and at cap 1 the task
+# worktree, hold what merged into the base since; a branch that holds the base already is left as it
+# is, and a project's phase already started is never touched. Every ready ticket's project is
+# checked before any branch moves. It never merges, forces or pushes, and refuses the fill, moving
+# no branch and launching nothing, naming the step that clears it: the task worktree off the task
+# branch, or with changes to tracked files or files git does not ignore, or a branch with commits
+# the base does not hold ("have a builder merge origin/<base> into <branch> ..."), exit 1; a base it
+# cannot fetch, exit 75.
 # Running are the phase's tickets team-tickets calls running, whatever their sessions' state. With
 # cap 1, the lowest-numbered ready ticket is launched in the task's worktree, as a DONE <NN>'s
 # hand-off launches it (T<n>-builder), when none runs. With a cap above 1, each ready ticket is
@@ -1283,18 +1284,21 @@ changed_files() {
   } | paste -sd, | sed 's/,/, /g'
 }
 
-# base_due <project> <phase>: before the first launch of <phase>, when the project's latest merged
-# names it first among its phases_left (the phase right after a merged part), fetches origin's base
-# into the task worktree in <project> and, when the task branch is its ancestor and not at it, adds
-# "<worktree> <branch> <base> <head> <base's tip>", tab-separated, to moves, for move_to_base; a
-# branch that holds the base already adds nothing. Refused, having moved no branch, when the
-# worktree is off its branch or has uncommitted changes, or the branch has commits the base does
-# not hold (exit 1), or the base cannot be fetched (exit 75).
+# base_due <project> <phase>: before the project's first launch of <phase>, when the project's
+# latest merged names it among its phases_left and no phase before it there has a ticket of the
+# project ($tickets; the project's next phase after a merged part), fetches origin's base, through
+# origin_git, into the task worktree in <project> and, when the task branch is its ancestor and not
+# at it, adds "<worktree> <branch> <base> <head> <base's tip>", tab-separated, to moves, for
+# move_to_base; a branch that holds the base already adds nothing. Refused, having moved no branch,
+# when the worktree is off its branch or has uncommitted changes, or the branch has commits the base
+# does not hold (exit 1), or the base cannot be fetched (exit 75).
 base_due() {
-  local project=$1 p=$2 line wt branch base on dirty err head onto why stop
+  local project=$1 p=$2 line wt branch base on dirty head onto why stop mine rc=0 NET_ERR
+  mine=$(jq -c --arg proj "$project" '[.[] | select(.project == $proj) | .phase // 1] | unique' <<<"$tickets")
   ledger_jq '[.[] | select(.event == "merged" and (.project // $proj) == $proj)] | last
-      | . != null and (.phases_left | type) == "array" and .phases_left != [] and (.phases_left | min) == $p' \
-    -e --arg proj "$project" --argjson p "$p" <<<"$events" >/dev/null || return 0
+      | . != null and (.phases_left | type) == "array" and any(.phases_left[]; . == $p)
+        and all(.phases_left[] | select(. < $p); IN($mine[]) | not)' \
+    -e --arg proj "$project" --argjson p "$p" --argjson mine "$mine" <<<"$events" >/dev/null || return 0
   line=$(ledger_jq '[open_worktrees(.[]; $home) | select(.project == $proj and .ticket == null)] | last
       | select(. != null) | .worktree, .branch' -r --arg proj "$project" <<<"$events")
   { IFS= read -r wt; IFS= read -r branch; } <<<"$line"
@@ -1308,10 +1312,14 @@ base_due() {
   dirty=$(changed_files "$wt" untracked)
   [[ -z $dirty ]] ||
     die "$why the task worktree $wt has uncommitted changes ($dirty), so $branch is not brought to origin/$base and $stop: commit or remove them, then run team-next $task --fill again"
-  if ! err=$(git -C "$wt" fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" 2>&1); then
-    echo "${0##*/}: $why origin's $base cannot be fetched into $wt ($(grep -m1 . <<<"$err" || echo "git fetch failed")), so $branch is not brought to it and $stop: run team-next $task --fill again once it can be" >&2
+  NET_ERR=$(mktemp)
+  origin_git -C "$wt" fetch -q --no-write-fetch-head origin "+refs/heads/$base:refs/remotes/origin/$base" || rc=$?
+  if ((rc != 0)); then
+    echo "${0##*/}: $why origin's $base cannot be fetched into $wt ($(origin_reason "$rc")), so $branch is not brought to it and $stop: run team-next $task --fill again once it can be" >&2
+    rm -f -- "$NET_ERR"
     exit 75
   fi
+  rm -f -- "$NET_ERR"
   head=$(git -C "$wt" rev-parse HEAD)
   onto=$(git -C "$wt" rev-parse "refs/remotes/origin/$base")
   ! git -C "$wt" merge-base --is-ancestor "$onto" HEAD || return 0
@@ -1348,7 +1356,7 @@ fill() {
     | (map(select(.ticket == $n)) | first) as $nx
     | ([sort_by(.ticket)[] | select(.state != "done" and ph == $p) | waits] | join("; ")) as $open
     | {phase: $p, building: $b, open: $open,
-       started: any(.[]; ph == $p and (.state | IN("running", "done"))),
+       started: [.[] | select(ph == $p and (.state | IN("running", "done"))) | .project] | unique | join("\n"),
        problem: (if $n == "" then null
          elif $nx == null then "--next \($n) is none of \($task)'"'"'s tickets: they are \(map(.ticket) | sort | join(", "))"
          elif ($nx.state | IN("ready", "waiting") | not) then "--next \($n) is not ready: \($nx | waits)"
@@ -1363,10 +1371,11 @@ fill() {
   while IFS=$'\t' read -r n c project; do
     [[ -z $n ]] || { todo+=("$n") bare+=("$c") todo_projects+=("$project"); }
   done <<<"$candidates_tsv"
-  # A phase's first launch after a merged part starts on a task branch that holds origin's base:
-  # every project's checked first, so a refusal moves no branch.
-  if [[ $started == false ]] && ((${#todo[@]})); then
-    mapfile -t starts < <(printf '%s\n' "${todo_projects[@]}" | awk '!seen[$0]++')
+  # A project's first launch of a phase after a merged part starts on a task branch that holds
+  # origin's base: every such project is checked first, so a refusal moves no branch.
+  if ((${#todo[@]})); then
+    mapfile -t starts < <(printf '%s\n' "${todo_projects[@]}" | awk 'NR == FNR { if ($0 != "") s[$0] = 1; next } !($0 in s) && !seen[$0]++' \
+      <(printf '%s\n' "$started") -)
     moves=()
     for project in "${starts[@]}"; do base_due "$project" "$phase"; done
     move_to_base "$phase"
