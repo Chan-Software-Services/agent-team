@@ -209,7 +209,7 @@ reading() {
   run_bin -0 team-quota status
   assert_equal "$output" "no quota reading yet: no session has shown a status line since team-quota was set up"
   run_bin -0 team-quota status --json
-  assert_equal "$(jq -c . <<<"$output")" '{"schema":"team-quota/1","reading":null,"age_minutes":null,"fresh":false,"windows":[]}'
+  assert_equal "$(jq -c . <<<"$output")" '{"schema":"team-quota/1","reading":null,"age_minutes":null,"fresh":false,"windows":[],"model_note":null}'
 }
 
 @test "status gives the newest reading across machines' day files and the state file" {
@@ -301,6 +301,30 @@ reading() {
   run_bin -0 team-quota status --json
   assert_equal "$(jq -c '{machine: .reading.machine, age_minutes, fresh, windows: (.windows | map({name, used, resets_at, crossed}))}' <<<"$output")" \
     '{"machine":"home-pc","age_minutes":0,"fresh":true,"windows":[{"name":"five_hour","used":23.4,"resets_at":"2036-11-10T14:00:00Z","crossed":[]},{"name":"seven_day","used":61.9,"resets_at":"2036-11-14T18:00:00Z","crossed":[]},{"name":"seven_day_sonnet","used":12,"resets_at":"2036-11-14T18:00:00Z","crossed":[]},{"name":"model:Fable","used":91.2,"resets_at":"2036-11-17T09:00:00Z","crossed":[90]}]}'
+}
+
+@test "status says plainly that a reading holds no model window, since Claude Code's status line gives none" {
+  # The status line input as Claude Code 2.1.325 gives it: its rate_limits holds the week alone.
+  line week-only
+  assert_equal "$output" "Opus 5.5 · ctx 42% · week 77% · resets Fri 18:00"
+  local note="model windows: none in this reading, since Claude Code's status line gives no model's own week (/usage shows it)"
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c '{windows: (.windows | map({name, used})), model_note}' <<<"$output")" \
+    "{\"windows\":[{\"name\":\"seven_day\",\"used\":77}],\"model_note\":\"$note\"}"
+  run_bin -0 team-quota status
+  assert_equal "${#lines[@]}" 3
+  assert_equal "${lines[1]}" "seven_day 77% (resets Fri 18:00), past 70%"
+  assert_equal "${lines[2]}" "$note"
+}
+
+@test "status shows each model window a reading holds beside the week, with no note" {
+  line full
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c '.model_note' <<<"$output")" null
+  run_bin -0 team-quota status
+  assert_equal "${#lines[@]}" 5
+  assert_equal "${lines[2]}" "seven_day 61% (resets Fri 18:00)"
+  assert_equal "${lines[4]}" "model:Fable 91% (resets Mon 09:00), past 90%"
 }
 
 @test "the workers' and the coordinator's settings run team-quota line as their status line" {
