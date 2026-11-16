@@ -872,7 +872,7 @@ reading_waits_on_memory() {
   "$REPO_ROOT/bin/team-capacity" sample >"$BATS_TEST_TMPDIR/sample.out" 2>&1 3>&- &
   reading=$!
   echo "$reading" >>"$BATS_TEST_TMPDIR/sleepers"
-  until reader=$(pgrep -P "$reading" -x 'g?awk') && ! pgrep -P "$reading" -x timeout >/dev/null; do
+  until reader=$(reading_child 'g?awk') && ! reading_child timeout >/dev/null; do
     if ((++tries == 100)); then
       echo "the reading never waited on its memory with its stack listing ended" >&2
       return 1
@@ -880,6 +880,17 @@ reading_waits_on_memory() {
     sleep 0.1
   done
   echo "$reader" >>"$BATS_TEST_TMPDIR/sleepers"
+}
+
+# The pid of the reading's child that runs <name>, an extended regular expression matched against
+# its command's whole base name, read from the processes this test started (own_pids), and fail
+# with none: reading_child <name>
+reading_child() {
+  local pids
+  pids=$(own_pids | paste -sd, -)
+  [[ -n $pids ]] || return 1
+  ps -o pid=,ppid=,comm= -p "$pids" |
+    awk -v parent="$reading" -v name="^($1)$" '$2 == parent { n = split($3, part, "/"); if (part[n] ~ name) { print $1; found = 1 } } END { exit !found }'
 }
 
 # The directories left directly under the sandbox's TMPDIR, one per line.
