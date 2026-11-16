@@ -60,10 +60,10 @@
 //      stderr go to rehearsals/<at>/<n>-<script>.<dry-run|run>.log (mode 0600) and nowhere else. A
 //      run that exits non-zero (124 when its `timeout 600` ended it) or whose docker run is killed
 //      10 minutes and 30 seconds on stops the rehearsal there;
-//   6. writes rehearsals/<at>/report.json (mode 0600: each step's exit code, seconds, log and every
-//      collection's comparison with its full id lists, what stopped the rehearsal and the steps not
-//      run) and removes the throwaway, the network and the image, on every path: at the end, at a
-//      stop, on an error, and on SIGINT, SIGTERM and SIGHUP.
+//   6. at the end or a stop, writes rehearsals/<at>/report.json (mode 0600: each step's exit code,
+//      seconds, log and every collection's comparison with its full id lists, what stopped the
+//      rehearsal and the steps not run); and removes the throwaway, the network and the image on
+//      every path: at the end, at a stop, on an error, and on SIGINT, SIGTERM and SIGHUP.
 // The JSON forms: { refused }; { failed, stamp, folder, sha, logs?, removed, cleanup }; and
 // { stamp, folder, sha, at, logs, report, seconds, steps, stopped?, notRun, removed, cleanup }, each
 // step { n, script, mode: "dry-run" or "run", exit, signal, timedOut, seconds, log, lines,
