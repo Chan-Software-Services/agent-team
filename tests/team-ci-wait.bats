@@ -801,17 +801,19 @@ limit_line() {
   pr OPEN "$head" 1
   run_bin --separate-stderr team-ci-wait --look "$url"
   assert_equal "$status" 0
-  assert_equal "$(ended_at)" 2
+  # The limit its own read met is slept out at once, with no look interval before it.
+  assert_equal "$(ended_at)" 1
   assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed"
   assert_equal "$stderr" "$(limit_line $((t0 + 60)) secondary)"
-  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 31"
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "61"
   fresh_run
   rm "$GH_DIR/view.1"
   github_budget core 5000 1000 $((t0 + 600))
   answer 0 view limited:primary
   run_bin --separate-stderr team-ci-wait --look "$url"
   assert_equal "$status" 75
-  assert_equal "$(ended_at)" 1
+  assert_equal "$(ended_at)" 0
+  # No sleep at all: each moves the look on.
   assert_equal "$output" "team-ci-wait: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 600))" +%H:%M), when it resets; this is no outage: look again after it"
   assert_equal "$stderr" ""
   fresh_run
@@ -1067,6 +1069,46 @@ EOF
 owner/proj#218
 owner/proj#219
 owner/proj#220"
+}
+
+@test "a wait started seconds after a rerun reads its PR's and its run's answers again, never the last wait's cached failure" {
+  # The reader's own 20 s of freshness: the rerun starts, and the next wait begins, inside it.
+  unset TEAM_GITHUB_FRESH_SECONDS
+  checks 0 "$(check test FAILURE 7001)"
+  head_runs 0 7001:CI:completed:failure
+  run_bin team-ci-wait --json "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -r .outcome <<<"$output")" failed
+  # gh run rerun 7001: the check is pending again and its run in progress, 5 s later.
+  rm "$GH_DIR"/checks.* "$GH_DIR"/runs.*
+  checks 0 "$(check test IN_PROGRESS 7001)"
+  head_runs 0 7001:CI:in_progress
+  echo 0 >"$GH_DIR/look"
+  github_clock $(($(github_now) + 5))
+  : >"$GITHUB_STUB/requests"
+  run_bin team-ci-wait --look --json "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -r .outcome <<<"$output")" pending
+  assert_contains "$(github_requests)" "commits/$head/check-runs?filter=latest&per_page=100 200"
+  assert_contains "$(github_requests)" "actions/runs?head_sha=$head&per_page=100 200"
+  # The repository's runs in progress, read by every wait on it, are still shared.
+  assert_equal "$(github_requests | grep -c 'actions/runs?status=in_progress')" 0
+
+  # --run: the run waited on completed, then rerun under the same id.
+  the_run 0 completed failure
+  run_jobs 0 "$(run_job lint completed failure)"
+  job 0 71 "GitHub Actions 1" "Run the lint=failure"
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --json --run "$run_url"
+  assert_equal "$(jq -r .outcome <<<"$output")" failed
+  rm "$GH_DIR"/run-7001.* "$GH_DIR"/jobs-7001.*
+  the_run 0 in_progress
+  run_jobs 0 "$(run_job lint in_progress)"
+  echo 0 >"$GH_DIR/look"
+  github_clock $(($(github_now) + 5))
+  run_bin team-ci-wait --look --json --run "$run_url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -r .outcome <<<"$output")" pending
 }
 
 # The classes of a failed check: the PR's own, infrastructure, or a roll-up left out beside its
@@ -1823,6 +1865,25 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   the branch's: test was not reported, and the project requires it"
   assert_equal "$(jq -c '.failures' <<<"$output")" \
     '[{"name":"test","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]'
+}
+
+@test "--run on a green run of another workflow than the project's branch_ci passes on its own jobs, the required checks being branch_ci's" {
+  sed -i 's/^required_checks = .*/required_checks = ["lint", "test", "agent-review"]/' "$TEAM_HOME/projects.toml"
+  sed -i 's/^docs = \[\]/docs = []\nbranch_ci = "ci.yml"\nchanged_tests = "the changed tests"/' "$TEAM_HOME/projects.toml"
+  answer 0 run-7001 "$(jq -cn --arg head "$head" '{id: 7001, status: "completed", conclusion: "success", head_sha: $head,
+    path: ".github/workflows/zizmor-online.yml", html_url: "https://github.com/owner/proj/actions/runs/7001",
+    event: "pull_request", updated_at: "2026-10-30T18:52:11Z", name: "zizmor online", display_title: "OUTPUT-MARKER"}')"
+  run_jobs 0 "$(run_job zizmor completed success)"
+  both --run "$run_url" "$head"
+  assert_equal "$text_status" 0
+  assert_equal "$text_output" "team-ci-wait: waiting on CI run 7001 of owner/proj at a1b2c3d
+team-ci-wait: every check passed on a1b2c3d: zizmor passed"
+  # A run of branch_ci's workflow is still held to them.
+  answer 0 run-7001 "$(jq -c '.path = ".github/workflows/ci.yml"' "$GH_DIR/run-7001.0")"
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the branch's: lint was not reported, and the project requires it"
 }
 
 @test "--run on a run that concluded badly with no failed job is the branch's, naming the run" {
