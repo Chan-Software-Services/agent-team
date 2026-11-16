@@ -3,6 +3,7 @@
 1. Bring the branch up to date with the base: `git fetch origin`; if `git merge-base --is-ancestor origin/{{base}} HEAD` fails, merge `origin/{{base}}` with a merge commit (`git merge origin/{{base}}`, never a rebase), resolve any conflict, re-run what the conflicts touched, and push (under a Disclosure section, not before step 3's review passes).
    A conflict whose resolution is a judgment call on behaviour goes to `coordinator` as `{{task}} QUESTION <the conflict> | options: ...`.
 2. Find what your branch made false: for each file, command, flag, setting and path it adds, renames or removes (`git diff --stat origin/{{base}}...HEAD`), `git grep` its name in the repository's Markdown, `CLAUDE.md`, `AGENTS.md` and script headers, and fix every line that no longer holds, in the same PR.
+   Then write the PR body you will send to `{{task_dir}}/pr-body.md`, run `/claims-check . origin/{{base}} --pr-body {{task_dir}}/pr-body.md`, and fix or cut each sentence it names, in the same PR.
 3. Under a Disclosure section in a public repository, push nothing yet: send `{{task}} DONE review-ready <the full sha of HEAD>` to `coordinator`, then wait, since the reviewer reads your local head and the team reviews its wording before anything goes public.
    Fix each finding the coordinator sends you on the branch, pushing nothing; once they are fixed, or the coordinator says the review passed, go on with the push, the tests and the PR.
 4. On the head you push: {{tests}}
