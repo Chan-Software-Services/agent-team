@@ -43,6 +43,24 @@ untraced() {
   return "$1"
 }
 
+# own_pids: the pids, one per line, of the processes still running that this test started: this
+# user's whose environment holds this test's BATS_TEST_TMPDIR, which bats exports and every
+# process a test starts inherits, but one started with an emptied environment or another
+# BATS_TEST_TMPDIR (a bats run of its own, whose processes a test binds by their command line's
+# path). The test's own shell is left out, but bats' countdown, a subshell and this pipeline are
+# among them, so a caller narrows them by what it looks for (its arguments, read with ps -o args=
+# -p) before it kills one. A test kills a process it cannot name by the pid it started only from
+# here, or from a search bound as tests/bound-kills holds.
+own_pids() {
+  local me environment=e
+  me=$(id -u)
+  [[ $BATS_TEST_TMPDIR == /*/* ]] || { echo "own_pids: $BATS_TEST_TMPDIR is no test's directory" >&2 && return 1; }
+  # ps shows the environment after the arguments: procps with e, macOS's with -E.
+  [[ $(command -p uname) != Darwin ]] || environment=-E
+  command -p ps -U "$me" -ww -o pid=,args= "$environment" |
+    OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" SELF=$$ awk '$1 != ENVIRON["SELF"] && index($0 " ", " " ENVIRON["OWN"] " ") { print $1 }'
+}
+
 # macOS assesses every new executable file on its first run, a quarter of a second each, so a
 # test that wrote its stubs or copied bin/ afresh spent most of its time waiting on that. The
 # executables tests share are therefore made once per bats run, read-only, under
@@ -1007,6 +1025,29 @@ keeps_named() {
   done < <(grep -ohE '`/[a-z][a-z0-9-]*`|skills/[a-z][a-z0-9-]*/SKILL\.md|the `[a-z][a-z0-9-]*` skill' "$@" |
     sed -E 's#^`/##; s#`$##; s#^skills/##; s#/SKILL\.md$##; s#^the `##; s#` skill$##' | sort -u)
   return "$found"
+}
+
+# hold_merge_lock <task>: a process that holds the task's merge lock as team-merge does, the file
+# open and locked, until the test kills it; prints its pid once the lock is held.
+hold_merge_lock() {
+  local lock=$HOME/.local/state/agent-team/merge/$1.lock pid
+  mkdir -p "${lock%/*}"
+  rm -f "$lock.held"
+  # shellcheck disable=SC2016
+  bash -c 'exec 9>>"$1" && flock -n 9 && : >"$1.held" && exec sleep 600' _ "$lock" >/dev/null 2>&1 3>&- &
+  pid=$!
+  while [[ ! -e $lock.held ]]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.05
+  done
+  echo "$pid"
+}
+
+# release_merge_lock <pid>: ends hold_merge_lock's process <pid>, and returns once it is gone, so
+# the lock is free.
+release_merge_lock() {
+  kill "$1"
+  while kill -0 "$1" 2>/dev/null; do sleep 0.05; done
 }
 
 assert_equal() {

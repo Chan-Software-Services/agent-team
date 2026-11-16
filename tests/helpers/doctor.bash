@@ -26,6 +26,12 @@ declare -gA FORMAT=(
   # The real build also names its commit in parentheses after the version, which the pattern
   # skips; a stub at any version leaves it out.
   [no-mistakes]='no-mistakes version v%s 2026-10-31T01:47:41Z'
+  # rustup's line in the form of its source, its commit and date placeholders, then its notes on
+  # stderr; the cargo tools' lines as the pinned releases print them on home-pc.
+  [rustup]=$'rustup %s (0000000000 2026-11-04)\ninfo: This is the version for the rustup toolchain manager, not the rustc compiler.'
+  [cargo-nextest]=$'cargo-nextest %s (26ebeda79 2026-11-13)\nrelease: %s\ncommit-hash: 26ebeda79b9ae1d008cf64ddb01984bcaa6e1239'
+  [sccache]='sccache %s'
+  [cargo-deny]='cargo-deny %s'
   [mongodump]=$'mongodump version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [mongorestore]=$'mongorestore version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [op]='%s'
@@ -169,6 +175,19 @@ EOF
   stub_script gh <<'EOF'
 case $* in
   'auth status --hostname github.com') echo "  - Token: gho_fakefakefakefake" ;;
+  'api repos/'*)
+    # A base's rules (base_rules), from $STUB_FIXTURES/github/<owner>/<name>/: branch.json,
+    # rules.json and ruleset-<id>.json, or as an unprotected base with no ruleset (queue_on in
+    # tests/team-doctor-projects.bats writes them); branch.err fails the branch read with its text.
+    dir=$STUB_FIXTURES/github/$(cut -d/ -f2,3 <<<"$2")
+    case ${2#repos/*/*/} in
+      branches/*)
+        if [[ -f $dir/branch.err ]]; then cat "$dir/branch.err" >&2; exit 1; fi
+        cat "$dir/branch.json" 2>/dev/null || printf '{"name": "%s", "protected": false}\n' "${2##*/}" ;;
+      rules/branches/*) cat "$dir/rules.json" 2>/dev/null || echo '[]' ;;
+      rulesets/*) cat "$dir/ruleset-${2##*/}.json" ;;
+      *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
+    esac ;;
   *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
 esac
 EOF

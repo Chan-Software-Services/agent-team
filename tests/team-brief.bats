@@ -247,6 +247,7 @@ Task directory: `.scratch/task/` in the worktree (excluded from git), for your s
 1. Bring the branch up to date with the base: `git fetch origin`; if `git merge-base --is-ancestor origin/dev HEAD` fails, merge `origin/dev` with a merge commit (`git merge origin/dev`, never a rebase), resolve any conflict and re-run what the conflicts touched.
    A conflict whose resolution is a judgment call on behaviour goes to `coordinator` as `T12 QUESTION <the conflict> | options: ...`.
 2. Find what your branch made false: for each file, command, flag, setting and path it adds, renames or removes (`git diff --stat origin/dev...HEAD`), `git grep` its name in the repository's Markdown, `CLAUDE.md`, `AGENTS.md` and script headers, and fix every line that no longer holds, in the same PR.
+   Then write the intent you will give the gate in step 4 to `.scratch/task/intent.md`, run `/claims-check . origin/dev --pr-body .scratch/task/intent.md`, since the gate drafts the PR's body from it, and fix or cut each sentence it names, in the same PR.
 3. Before you push: Nothing but you runs conv's whole suite, so run it once at your end, as the project's docs say, beside the tests your change reaches as you go.
    Then push the branch (under a Disclosure section, not before the review passes: the reviewer reads your local head) and send `T12 DONE review-ready <the full sha of HEAD>` to `coordinator`, then wait: the team reviews that head before the gate runs, so the gate runs once.
    Fix each finding the coordinator sends you on the branch and push; once they are fixed, or the coordinator says the review passed, go on.
@@ -887,6 +888,32 @@ EOF
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
   run_bin -0 team-brief T14 builder-deliver --set "goal=the goal"
   refute_grep -e 'gh pr view' -e 'the gate drafted' -e 'gate' "$output"
+}
+
+@test "each delivery's step 2 ends with the claims check, a direct-PR one's on its PR body and a gated one's on its intent, in a round's and a small fix's brief too" {
+  open_t12
+  open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
+  local pr=https://github.com/Chan-Software-Services/agent-team/pull/9 name task sentence grep_line check next
+  local direct="   Then write the PR body you will send to \`.work/task/pr-body.md\`, run \`/claims-check . origin/main --pr-body .work/task/pr-body.md\`, and fix or cut each sentence it names, in the same PR."
+  local gated="   Then write the intent you will give the gate in step 4 to \`.scratch/task/intent.md\`, run \`/claims-check . origin/dev --pr-body .scratch/task/intent.md\`, since the gate drafts the PR's body from it, and fix or cut each sentence it names, in the same PR."
+  for name in T14:deliver T12:deliver T14:round T12:round T14:fix T12:fix; do
+    task=${name%%:*}
+    case ${name#*:} in
+      deliver) run_bin -0 team-brief "$task" builder-deliver --set "goal=the goal" ;;
+      round) run_bin -0 team-brief "$task" builder-round --name round-1 --set pr=$pr --set findings=5 \
+        --set findings_file=.work/task/review.md --set goal=g ;;
+      fix) run_bin -0 team-brief "$task" builder-fix --name fix --set read=r --set commits=c --set goal=g ;;
+    esac
+    # A direct-PR project's check reads the body the builder will send; a gated one's reads the
+    # intent, since no PR body exists until the gate drafts one from it.
+    if [[ $task == T14 ]]; then sentence=$direct; else sentence=$gated; fi
+    [[ $(grep -c -F '/claims-check' "$output") -eq 1 ]] || { cat "$output" >&2; return 1; }
+    # The sentence is step 2's last line: right under its git grep line, right above step 3.
+    grep_line=$(grep -n '^2\. Find what your branch made false: .*`git grep` its name' "$output" | cut -d: -f1)
+    check=$(grep -n -x -F "$sentence" "$output" | cut -d: -f1)
+    next=$(sed -n "$((check + 1))p" "$output")
+    [[ -n $grep_line && -n $check && $check -eq $((grep_line + 1)) && $next == "3. "* ]] || { cat "$output" >&2; return 1; }
+  done
 }
 
 @test "a gated project's re-review of its PR, as a direct-PR one's, starts no wait on its checks and runs its local checks before it reads" {
@@ -2420,7 +2447,7 @@ $nothing
       T12:*) assert_contains "$brief" "7. Send \`T12 PR <full url>\` to \`coordinator\`, followed by \`merged dev conflicts: <each file that conflicted, or none>\` when step 6 merged, and stop: the delivery ends there, $gated_ends" ;;
       *:merge-base)
         assert_contains "$brief" "7. Send \`T14 DONE merged main <the full sha of the head> conflicts: <each file that conflicted, or none>\` to \`coordinator\`, which has a fresh reviewer re-check the merge, and stop: you start no wait after it on the PR's GitHub checks, since the coordinator's script waits on them once that review passes, and a red check comes back to you from the coordinator as a fix round."
-        assert_contains "$brief" "there is nothing to merge or push: send step 7's message with no conflicts."
+        assert_contains "$brief" "there is nothing to merge: after a conflict, nothing to push either, so send step 7's message with no conflicts;"
         ;;
     esac
     # A round's own step 5 ends the delivery at its PR, the notes-only round's no different.
@@ -2474,7 +2501,7 @@ There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$
   refute_grep -F -e team-ci-wait -e 'roll-up:' -e 'infrastructure:' -e 'verify` reviewer waits' "$REPO_ROOT/roles/reviewer.md" "$REPO_ROOT/roles/builder.md"
 }
 
-@test "the merge-base brief merges the base, resolves, runs the tests the merge reaches and names the conflicted files" {
+@test "the merge-base brief merges the base, resolves a conflict or fixes what a failed trial merge names, runs the tests the merge reaches and names the conflicted files" {
   sed -i '/^\[home\]$/,/^\[home.pool\]$/s|^toolkits = \[\]$|toolkits = []\nlocal_checks = ["tests/run"]|' \
     "$TEAM_HOME/projects.toml"
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
@@ -2487,7 +2514,7 @@ There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$
     cat <<'EOF'
 # T14 brief (builder): merge main into the team's tooling
 
-Path: feature; you are the builder who brings the task's PR up to date with its base, which moved after the PR was opened.
+Path: feature; you are the builder who brings the task's PR up to date with its base, which moved after the PR was opened: the two conflict, or the base's merge queue dropped the PR because its trial merge, the head merged onto what was ahead of it, failed a check the head had passed.
 Project: home (`Chan-Software-Services/agent-team`), base `main`.
 Worktree: `~/agent-team/.claude/worktrees/2`, branch `feat/T14-team-tooling`.
 PR: https://github.com/Chan-Software-Services/agent-team/pull/9, against `main`.
@@ -2498,9 +2525,10 @@ Task directory: `.work/task/` in the worktree (excluded from git): `spec.md`, `t
 1. Bring the branch to its head on origin, which `team-catch-up` may have moved on a PR: `git fetch origin && git merge --ff-only origin/feat/T14-team-tooling`, leaving the merge out when there is no `origin/feat/T14-team-tooling`; if the merge fails, send `T14 BLOCKED <git's reason>` to `coordinator`.
 2. Read `.work/task/spec.md`, every note in `.work/task/build-notes/` and `.work/task/handoff.md` when it exists, so you resolve each conflict as the task means it; delete `handoff.md` once the merge is pushed.
 3. Merge `origin/main` with a merge commit (`git merge origin/main`, never a rebase), and note each file that conflicted.
-   If `git merge-base --is-ancestor origin/main HEAD` already holds, there is nothing to merge or push: send step 7's message with no conflicts.
+   If `git merge-base --is-ancestor origin/main HEAD` already holds, there is nothing to merge: after a conflict, nothing to push either, so send step 7's message with no conflicts; after a failed trial merge, go to step 4's fix of what failed.
 4. Resolve each conflict so both sides keep what they meant; a resolution that is a judgment call on behaviour goes to `coordinator` as `T14 QUESTION <the conflict> | options: ...`; then commit the merge.
    Then find what the merge made false, a file, command, flag, setting or path that one side renames or removes and the other still names, and fix it in a commit of its own.
+   After a failed trial merge the merge is clean and what it made false is what failed: `coordinator` sends you each check the trial merge failed, with its link, so reproduce each on the merged head and fix it there; when you were sent none, ask with `T14 QUESTION which checks failed on the trial merge`.
 5. Run the tests the merge reaches, those of each file that conflicted and of step 4's fixes: Nothing but you runs home's whole suite, so run it once at your end, as the project's docs say, beside the tests your change reaches as you go.
    Fix the branch until they pass on one head.
 6. Push the branch.
