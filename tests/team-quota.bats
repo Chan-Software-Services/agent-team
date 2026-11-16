@@ -283,13 +283,22 @@ reading() {
 }
 
 @test "status falls back to a machine's older day file when its newest holds no reading" {
-  local yesterday today
-  yesterday=$(date -u -d "@$(($(date +%s) - 86400))" +%FT%TZ) today=$(ago 0)
+  local before yesterday today
+  before=$(ago 2880) yesterday=$(ago 1440) today=$(ago 0)
+  reading laptop "$before" 20
   reading laptop "$yesterday" 30
   echo 'not json' >"$(day_file laptop "$today")"
-  run_bin -0 team-quota status --json
+  # The walk stops at the newest day file that holds a reading, and says nothing on stderr.
+  run_bin -0 --separate-stderr team-quota status --json
+  assert_equal "$stderr" ""
   assert_equal "$(jq -c '{machine: .reading.machine, at: .reading.at, used: .windows[0].used}' <<<"$output")" \
     "{\"machine\":\"laptop\",\"at\":\"$yesterday\",\"used\":30}"
+  # A machine none of whose day files holds a reading reads as none.
+  echo 'not json' >"$(day_file laptop "$yesterday")"
+  echo 'not json' >"$(day_file laptop "$before")"
+  run_bin -0 --separate-stderr team-quota status --json
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c .reading <<<"$output")" null
 }
 
 @test "status leaves out a stored window or model window with a field missing or of another type, and a line left with none" {
