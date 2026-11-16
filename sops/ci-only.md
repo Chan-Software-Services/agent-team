@@ -72,8 +72,11 @@ One records edit by the coordinator, after the proof:
 ## After
 
 - The project's builder briefs name only the changed code's tests.
+  Why: `team-brief` renders the registry's `changed_tests` into them, so no builder runs the whole suite on the machine.
 - Its reviews and merges run no suite, only its remaining `local_checks`.
+  Why: `team-checks` runs exactly those commands, and the suite runs in CI on every PR's head.
 - Its merge waits on the required checks.
+  Why: the suite no one ran on the machine must pass before the PR merges.
 
 ## Moves so far
 
