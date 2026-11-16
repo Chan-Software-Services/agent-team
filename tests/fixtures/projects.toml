@@ -45,6 +45,7 @@ branch_ci = "ci.yml"
 task_dir = ".scratch/task"
 docs = ["CLAUDE.md"]
 toolkits = []
+confine = "on"
 
 [agent-team.pool]
 provider = "git"
