@@ -1460,6 +1460,37 @@ def checks_wait_of:
 # checks_wait_of without its project and review, as team-state prints it.
 def checks_wait: checks_wait_of | if . == null then null else del(.project, .review) end;
 
+# Whether the launch (the input) may be one of $project's: any launch when $project is "" or
+# null, else one in $project or naming no project, as project_reviews counts a review whose
+# project is not known for every project.
+def launch_in($project): ($project // "") == "" or .project == null or .project == $project;
+
+# The index of the latest ci of outcome failed logged after index $r of the task's events on a PR
+# in the repo $repo (owner/name, either owner of a moved one, in any case), or naming no PR, or
+# null: a pass's failed checks that went back as a round (team-next T<n> --ci's), or a findings
+# round's look. A ci of any PR counts when $repo is "" or null.
+def failed_ci_after($r; $repo):
+  . as $events
+  | "https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/" as $prs
+  | [range($r + 1; length) | select($events[.] | .event == "ci" and .outcome == "failed"
+      and (($repo // "") == "" or .url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))]
+  | last;
+
+# What waits on a fix round in $project, whose repo is $repo, over the task's events, or null: the
+# latest review made in $project (project_reviews) when it sent findings back and no launch in
+# $project (launch_in; an ops session's aside) followed it, {review: <its index>, ci: null}; else
+# the latest ci of outcome failed after that review on a PR of $repo (failed_ci_after) when no
+# such launch followed the ci, {review, ci: <its index>}. So a review, a ci or a launch of one
+# repository never starts or takes another's round; with $project "" or null, every review, ci
+# and launch counts, as it did before reviews ran beside each other in two repositories.
+def round_wait($project; $repo):
+  . as $events
+  | def untaken($at): any($events[$at + 1:][]; .event == "launch" and .role != "ops" and launch_in($project)) | not;
+    (project_reviews($project) | last) as $r
+  | if $r == null then null
+    elif ($events[$r].sent_back // []) != [] and untaken($r) then {review: $r, ci: null}
+    else failed_ci_after($r; $repo) as $c | if $c != null and untaken($c) then {review: $r, ci: $c} else null end end;
+
 # Why the task's reviews do not let the default word, given on no head, merge the PR's
 # head $head unasked, one string per reason, none when they do, judged on the latest review of
 # reviewed_head($head), so a head team-catch-up made with no review of its own stands on the
