@@ -256,15 +256,14 @@ Environment=\"GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \
 }
 
 @test "install quotes the worker login's directory in the drop-in, so systemd keeps a home path with a blank in it whole" {
-  local home=$HOME
-  export HOME="$home/a home"
-  UNITS=$HOME/.config/systemd/user
-  mkdir -p "$UNITS"
-  worker_login_on
-  gate_daemon 60757c3c inactive
-  run_bin -0 team-capacity install
-  assert_equal "$(grep '^Environment=' "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" \
-    "Environment=\"GH_CONFIG_DIR=$home/a home/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
+  local home="$HOME/a home"
+  local units=$home/.config/systemd/user
+  mkdir -p "$units"
+  HOME=$home worker_login_on
+  HOME=$home UNITS=$units gate_daemon 60757c3c inactive
+  HOME=$home run_bin -0 team-capacity install
+  assert_equal "$(grep '^Environment=' "$units/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" \
+    "Environment=\"GH_CONFIG_DIR=$home/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
 }
 
 @test "install with the worker login on names a daemon running a pipeline, tries its restart again next time, and check names it meanwhile" {

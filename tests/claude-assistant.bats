@@ -317,7 +317,7 @@ assert_nothing_written() {
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, which the assistant's command-guard hook holds instead.
   assert_equal "$(jq -r --slurpfile a "$settings" '.permissions.deny - $a[0].permissions.deny | .[]' "$REPO_ROOT/coordinator.settings.json" | paste -sd ' ')" \
-    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow Bash(*GH_CONFIG_DIR*) Bash(*GH_TOKEN*) Bash(*GITHUB_TOKEN*)"
+    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow Bash(*GH_CONFIG_DIR*) Bash(*GH_TOKEN*) Bash(*GITHUB_TOKEN*) Bash(*env -i*) Bash(*env --i*) Bash(*env - *) Bash(*exec -c*)"
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
