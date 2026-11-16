@@ -1,5 +1,5 @@
 # The notice record's I/O, sourced after team.sh by the scripts that judge notices (team-timers,
-# team-uptime):
+# team-uptime, and team-janitor for its tmp subcommand):
 #
 #   # shellcheck source=bin/lib/notices.sh
 #   source "$TEAM_LIB/notices.sh"

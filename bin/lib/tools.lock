@@ -149,6 +149,64 @@
       }
     },
     {
+      "name": "rustup",
+      "version_cmd": "rustup --version",
+      "version_pattern": "^rustup ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "pin": "1.29.3",
+      "min": "1.28.0",
+      "pin_mismatch": "WARN",
+      "source": {
+        "arch": "d=$(mktemp -d) && curl -fsSLo \"$d/rustup-init\" https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-gnu/rustup-init && echo \"b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55  $d/rustup-init\" | sha256sum -c - && chmod +x \"$d/rustup-init\" && \"$d/rustup-init\" -y --no-modify-path --default-toolchain none --profile minimal && rm -f \"$d/rustup-init\" && rmdir \"$d\"",
+        "macos": "d=$(mktemp -d) && curl -fsSLo \"$d/rustup-init\" https://static.rust-lang.org/rustup/archive/1.29.3/aarch64-apple-darwin/rustup-init && echo \"63752a1919a3a4793173ec70f8f212621a7ce38ba6a246095984482f4de20f9f  $d/rustup-init\" | shasum -a 256 -c && chmod +x \"$d/rustup-init\" && \"$d/rustup-init\" -y --no-modify-path --default-toolchain none --profile minimal && rm -f \"$d/rustup-init\" && rmdir \"$d\""
+      },
+      "path": {
+        "arch": "~/.cargo/bin",
+        "macos": "~/.cargo/bin"
+      }
+    },
+    {
+      "name": "cargo-nextest",
+      "version_cmd": "cargo-nextest nextest --version",
+      "version_pattern": "^cargo-nextest ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "pin": "0.9.152",
+      "source": {
+        "arch": "f=$(mktemp) && curl -fsSLo \"$f\" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-musl.tar.gz && echo \"521c5f790ed07ee69d0a88403d9d86a8c8ab27977f12fc73f22aa4e7e14a0f71  $f\" | sha256sum -c - && mkdir -p ~/.cargo/bin && tar -xzf \"$f\" -C ~/.cargo/bin cargo-nextest && rm -f \"$f\"",
+        "macos": "f=$(mktemp) && curl -fsSLo \"$f\" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-universal-apple-darwin.tar.gz && echo \"2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76  $f\" | shasum -a 256 -c && mkdir -p ~/.cargo/bin && tar -xzf \"$f\" -C ~/.cargo/bin cargo-nextest && rm -f \"$f\""
+      },
+      "path": {
+        "arch": "~/.cargo/bin",
+        "macos": "~/.cargo/bin"
+      }
+    },
+    {
+      "name": "sccache",
+      "version_cmd": "sccache --version",
+      "version_pattern": "^sccache ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "pin": "0.19.0",
+      "source": {
+        "arch": "f=$(mktemp) && curl -fsSLo \"$f\" https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-unknown-linux-musl.tar.gz && echo \"aa73c7270c997894038c0d8f0d297865f57569e1687883322bc431713d4bb9dd  $f\" | sha256sum -c - && mkdir -p ~/.cargo/bin && tar -xzf \"$f\" -C ~/.cargo/bin --strip-components=1 sccache-v0.19.0-x86_64-unknown-linux-musl/sccache && rm -f \"$f\"",
+        "macos": "f=$(mktemp) && curl -fsSLo \"$f\" https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-aarch64-apple-darwin.tar.gz && echo \"a35a0b7d622618774bc1bb8102d72562dfb21e619f88b153b370d7f89bc286af  $f\" | shasum -a 256 -c && mkdir -p ~/.cargo/bin && tar -xzf \"$f\" -C ~/.cargo/bin --strip-components=1 sccache-v0.19.0-aarch64-apple-darwin/sccache && rm -f \"$f\""
+      },
+      "path": {
+        "arch": "~/.cargo/bin",
+        "macos": "~/.cargo/bin"
+      }
+    },
+    {
+      "name": "cargo-deny",
+      "version_cmd": "cargo-deny --version",
+      "version_pattern": "^cargo-deny ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "pin": "0.20.2",
+      "source": {
+        "arch": "f=$(mktemp) && curl -fsSLo \"$f\" https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz && echo \"9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $f\" | sha256sum -c - && mkdir -p ~/.cargo/bin && tar -xzf \"$f\" -C ~/.cargo/bin --strip-components=1 cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny && rm -f \"$f\"",
+        "macos": "f=$(mktemp) && curl -fsSLo \"$f\" https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-aarch64-apple-darwin.tar.gz && echo \"fe67d82a10d8597a3549364cb733a3f9cc1bfff9031b7ae46384a9f2a72090c3  $f\" | shasum -a 256 -c && mkdir -p ~/.cargo/bin && tar -xzf \"$f\" -C ~/.cargo/bin --strip-components=1 cargo-deny-0.20.2-aarch64-apple-darwin/cargo-deny && rm -f \"$f\""
+      },
+      "path": {
+        "arch": "~/.cargo/bin",
+        "macos": "~/.cargo/bin"
+      }
+    },
+    {
       "name": "mongodump",
       "version_cmd": "mongodump --version",
       "version_pattern": "^mongodump version: ([0-9]+\\.[0-9]+\\.[0-9]+)$",
@@ -184,6 +242,38 @@
       "name": "mongorestore",
       "version_cmd": "mongorestore --version",
       "version_pattern": "^mongorestore version: ([0-9]+\\.[0-9]+\\.[0-9]+)$",
+      "from": "download",
+      "download": {
+        "version": "100.20.1",
+        "index": "https://downloads.mongodb.org/tools/db/full.json",
+        "archives": {
+          "linux-amd64": {
+            "url": "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.20.1.tgz",
+            "sha256": "20f43dcaa37f5a4841ac5a91da685a488a5ebbd81113c018e25a6b544cc350ea"
+          },
+          "linux-arm64": {
+            "url": "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-arm64-100.20.1.tgz",
+            "sha256": "7644e12e351bceea542921e60769e3ed658fc770dc09eed07bc5cc2a1ca2ca41"
+          },
+          "darwin-arm64": {
+            "url": "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-macos-arm64-100.20.1.zip",
+            "sha256": "2d49b4bd58477ce7ffbad2c4d1a686f2befa3ce27e8c7cf8fcd2869d8f73063a"
+          },
+          "darwin-amd64": {
+            "url": "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-macos-x86_64-100.20.1.zip",
+            "sha256": "de677258cb2dd2f8dfce714021dcf5ebdd812b07f391118d3af5200370d2f67c"
+          }
+        }
+      },
+      "dir": {
+        "arch": "~/.local/bin",
+        "macos": "~/.local/bin"
+      }
+    },
+    {
+      "name": "mongoimport",
+      "version_cmd": "mongoimport --version",
+      "version_pattern": "^mongoimport version: ([0-9]+\\.[0-9]+\\.[0-9]+)$",
       "from": "download",
       "download": {
         "version": "100.20.1",

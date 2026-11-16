@@ -83,7 +83,7 @@ open_task() {
   printf '# 01: a\n\nBlocked by: None\nTouches: a.txt\n' >"$dir/tickets/01-a.md"
   printf '# 02: b\n\nBlocked by: None\nTouches: b.txt\n' >"$dir/tickets/02-b.md"
   printf 'a.txt\nb.txt\n' >"$dir/scope.txt"
-  printf '# spec\n\nParallel: 2\n' >"$dir/spec.md"
+  printf '# spec\n\nParallel: 2\n\n## Failure modes and assumptions\n\nnone\n' >"$dir/spec.md"
   echo "note one" >"$dir/build-notes/01.md"
   echo a >"$wt/a.txt"
   git -C "${wt:?}" add a.txt

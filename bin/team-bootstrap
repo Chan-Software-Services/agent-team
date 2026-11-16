@@ -38,18 +38,25 @@
 #   tools      Every other failing tool line, by its fix in bin/lib/tools.lock: nvm (installed
 #              first when missing) with Node and the global npm tools, Bun, Claude Code, the
 #              treehouse release archive for this OS and CPU, no-mistakes built from Daniel's
-#              fork at its pinned commit (with the packages stage's Go and make), mongodump and
-#              mongorestore from MongoDB's Database Tools archive for this OS and CPU (into
-#              ~/.local/bin, no sudo), the 1Password CLI, opencode; then the gate's opencode
-#              wrapper, ~/.no-mistakes/bin/opencode-gate, while the gate-agent line asks for it
-#              (on any gate but a Claude one), and
+#              fork at its pinned commit (with the packages stage's Go and make), rustup and then
+#              the Rust toolchain rust-toolchain.toml pins (its tool rust-toolchain line's fix, after
+#              rustup's in the doctor's order), cargo-nextest, sccache and cargo-deny from their
+#              release archives into ~/.cargo/bin, mongodump, mongorestore and mongoimport from
+#              MongoDB's Database Tools archive for this OS and CPU (into ~/.local/bin, no sudo),
+#              the 1Password CLI, opencode; then the gate's opencode wrapper,
+#              ~/.no-mistakes/bin/opencode-gate, while the gate-agent line asks for it (on any gate
+#              but a Claude one), and
 #              agent_path_override.opencode in ~/.no-mistakes/config.yaml set to its full path,
 #              that key alone, the file's mode kept and none of it printed (a missing config.yaml
 #              is team-secrets restore's, and its agent, opencode or claude with its flags,
 #              Daniel's step); then servers/install, while the servers line fails.
-#              A Claude Code newer than its pin only warns, and is left. ~/.local/bin and
-#              ~/.no-mistakes/bin, which no installer puts on PATH, get one line each in the
-#              shell's rc file (~/.zshrc or ~/.bashrc) when PATH lacks them.
+#              Once the tool lines' fixes have run, a rustup with no default toolchain gets the
+#              channel rust-toolchain.toml pins as its default (rustup default <channel>), so cargo
+#              and rustc work outside the checkout too; a default already set is left.
+#              A Claude Code or rustup newer than its pin only warns, and is left. ~/.local/bin,
+#              ~/.no-mistakes/bin and ~/.cargo/bin, which no installer puts on PATH (rustup's runs
+#              with --no-modify-path), get one line each in the shell's rc file (~/.zshrc or
+#              ~/.bashrc) when PATH lacks them.
 #   projects   Each registered project with a failing checkout, origin, task dir or gate line:
 #              cloned from https://github.com/<repo>.git to its registry path, that exact origin
 #              (treehouse names its pool from it, so a treehouse project whose origin names a
@@ -112,7 +119,7 @@ NVM_VERSION=v0.40.3
 MACOS_PYTHON=python@3.12
 # The directories the tools stage installs into that no installer puts on PATH itself, for the
 # rc file of Daniel's shell; the library puts them on every script's PATH.
-RC_DIRS=("$HOME/.local/bin" "$HOME/.no-mistakes/bin")
+RC_DIRS=("$HOME/.local/bin" "$HOME/.no-mistakes/bin" "$HOME/.cargo/bin")
 usage="usage: team-bootstrap [--name <name>] [--home <path>] [--stage <stage>] [--dry-run]"
 
 args=("$@") name='' home='' only='' dry=0
@@ -436,6 +443,7 @@ stage_tools() {
   # The pinned MCP servers (servers/install), after the Node they install with.
   while IFS=$'\t' read -r check verdict reason fix; do todo+=("$fix"); done < <(lines '^servers$')
   if ((${#todo[@]} + ${#commands[@]} == 0)); then
+    rust_default
     if ((gate)); then name_gate_wrapper; else say "done: every tool is at its pin or above its minimum"; fi
     return
   fi
@@ -458,6 +466,7 @@ stage_tools() {
       daniel "in your own terminal run $(tilde "$self") --stage tools, which installs ${names[*]} with sudo and asks for your password; then team-bootstrap again"
     fi
   fi
+  rust_default
   ((!gate)) || name_gate_wrapper
 
   # The rc file of Daniel's shell, for the directories PATH lacked when this run started.
@@ -475,6 +484,22 @@ stage_tools() {
       act "printf '%s\\n' $(printf %q "$line") >>$(printf %q "$file")" "add $(tilde "$dir") to PATH in $(tilde "$file")"
     fi
   done
+}
+
+# rustup's default toolchain set to the channel the code checkout's rust-toolchain.toml pins when
+# rustup has none (rustup-init runs with --default-toolchain none), so the cargo and rustc of
+# ~/.cargo/bin, first on PATH, work outside the checkout too; a default already set is left. A
+# rustup not yet installed has none, which only a dry run gets to; a toolchain list that fails is
+# the doctor's tool rust-toolchain line's to name.
+rust_default() {
+  local toml rc=0 list channel
+  toml=$(dirname "$bin")/rust-toolchain.toml
+  [[ -f $toml ]] || return 0
+  list=$(cd / && RUSTUP_AUTO_INSTALL=0 bounded 30 rustup toolchain list 2>/dev/null </dev/null) || rc=$?
+  if ((rc == 127 && !dry || rc && rc != 127)); then return 0; fi
+  ! grep -qE '\((.+, )?default(, .+)?\)$' <<<"$list" || return 0
+  channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toml")
+  act "rustup default $channel"
 }
 
 # Point ~/.no-mistakes/config.yaml's agent_path_override.opencode at the gate's wrapper by its full
