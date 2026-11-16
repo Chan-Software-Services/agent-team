@@ -305,6 +305,86 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf"
 }
 
+@test "waiting-input: never for a builder idle after the pr it delivered, while nothing is asked of it since" {
+  # Claude Code calls a session blocked when its last turn's summary says it waits on someone
+  # (here "awaiting Daniel's go to merge"), with no dialog open: status idle, no waitingFor.
+  opened T12
+  launch T12 builder 5fcd3daf
+  event T12 pr '{url: "https://github.com/owner/proj/pull/5", head: "1234567"}'
+  launch T12 reviewer 7e7e7e7e
+  sessions "$(session 5fcd3daf T12-builder idle blocked)" "$(session 7e7e7e7e T12-reviewer busy working)"
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # Nor once a park that is not the builder's has come and gone meanwhile, logged as the scripts
+  # write it: a blocked and the resumed that ends it carry no session.
+  event T12 blocked '{reason: "a denied read"}'
+  event T12 resumed '{all: true}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # The same for every kind that opens a park: the reviewer's pause, with its session or none.
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  event T12 paused '{reason: "GitHub unreachable", cause: "offline", role: "reviewer", session: "7e7e7e7e"}'
+  event T12 resumed '{all: true}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  event T12 paused '{reason: "the usage limit", cause: "limit"}'
+  event T12 resumed '{all: true}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # A resumed that names a brief sent out is work asked again, as is one after the builder's own
+  # blocked.
+  event T12 resumed '{brief: "brief-merge-base"}'
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  event T12 blocked '{reason: "a refused push", session: "5fcd3daf"}'
+  event T12 resumed '{all: true}'
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+  # With no reviewer at work the next step is the coordinator's, as for any idle worker.
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  sessions "$(session 5fcd3daf T12-builder idle blocked)"
+  run_bin -1 team-sweep
+  assert_equal "${#lines[@]}" 1
+  assert_contains "$output" "T12 no-worker: every live worker is idle with a ledger event since its launch"
+  # A dialog open (a permission prompt, a question) is still named, whatever it delivered.
+  sessions "$(session 5fcd3daf T12-builder waiting blocked)" "$(session 7e7e7e7e T12-reviewer busy working)"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+  sessions "$(session 5fcd3daf T12-builder idle blocked | jq -c '. + {waitingFor: "dialog open"}')" \
+    "$(session 7e7e7e7e T12-reviewer busy working)"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+  # So is one blocked once something is asked of it since: the review's findings came back.
+  sessions "$(session 5fcd3daf T12-builder idle blocked)"
+  event T12 review '{verdict: "findings", head: "1234567", findings: {blocking: 1}, sent_back: [1]}'
+  event T12 "done" '{role: "reviewer", session: "7e7e7e7e"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input; next: read claude logs 5fcd3daf, then answer it in one line or put the question to Daniel with team-log T12 asked"
+  # And one that delivered nothing, or whose pr came before its launch.
+  : >"$TEAM_HOME/ledger.jsonl"
+  opened T12
+  event T12 pr '{url: "https://github.com/owner/proj/pull/5", head: "1234567"}'
+  launch T12 builder 5fcd3daf
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+  # A later builder's launch after the pr is work asked of the task again.
+  : >"$TEAM_HOME/ledger.jsonl"
+  opened T12
+  launch T12 builder 5fcd3daf
+  event T12 pr '{url: "https://github.com/owner/proj/pull/5", head: "1234567"}'
+  launch T12 builder 6a6a6a6a
+  sessions "$(session 5fcd3daf T12-builder idle blocked)" "$(session 6a6a6a6a T12-builder busy working)"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
+}
+
 @test "silent: a live, idle session with no ledger event for its task since its launch" {
   opened T8
   launch T8 builder 4f2a9c1e

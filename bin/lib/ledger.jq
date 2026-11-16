@@ -1874,12 +1874,36 @@ def waiting_on:
       + (if length > 1 then ", and \(length - 1) more running" else "" end)
   end;
 
+# Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
+# task's events after that launch: a pr follows it, and after the latest one come only launches of
+# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
+# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
+# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
+# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
+# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
+# work again.
+def delivered($launch):
+  def effect: lifecycle_table.kinds[.event // ""].effect // null;
+  $launch.role == "builder" and ($launch.ticket | type) != "string"
+  and ((map(.event == "pr") | rindex(true)) as $pr
+    | $pr != null
+      and (.[$pr + 1:] as $after
+        | all(range($after | length); . as $k | $after[$k]
+            | if .event == "launch" then .role == "reviewer"
+              elif effect == "park" then .session != $launch.session
+              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
+              else (.session | type) == "string" and .session != $launch.session end)));
+
 # The no-worker, waiting-input, silent, stalled, ticket-gone and ticket-worktree-left findings of
 # an open task that is not parked, the stalled one from session-activity's object as team-sweep
 # passes it ($activity: {sessions}, its object keyed by full session id, or {error} when it
 # failed, where none is stalled). A live session is judged by its latest launch, and one waiting
 # for input is not also called silent; stalled is a busy session, not waiting for input, whose
 # transcripts have gone unwritten past its limit (stall_limits).
+# A session waits for input when its state is blocked, but for a builder that delivered
+# (delivered) with no dialog open (its status idle, no waitingFor): Claude Code also calls a
+# session blocked when its last turn's summary says it waits on someone, as a builder's does
+# after its PR ("awaiting the merge word"), and that one is idle with an event since its launch.
 # A live session is at work while it is busy, waiting for input, or idle with no ledger event
 # since its launch (silent); idle with an event since, it has handed the next step back to the
 # coordinator, so a task with no session at work is no-worker however many are live. A ticket
@@ -1907,9 +1931,11 @@ def task_findings($sessions; $activity):
       | .launch as $l | $events[.i + 1:] as $since
       | . + if ($l.ticket | type) == "string" then
           {ended: any($since[]; ends_launch($l)), quiet: (any($since[]; .session == $l.session or .ticket == $l.ticket) | not)}
-        else {ended: false, quiet: (.i == $count - 1)} end]
+        else {ended: false, quiet: (.i == $count - 1)} end
+      | . + {prompted: (.live.state == "blocked"
+          and ((.live.status == "idle" and .live.waitingFor == null and ($since | delivered($l))) | not))}]
      | unique_by(.short) | sort_by(.i)) as $live
-  | ($live | map(select(.live.state == "blocked" or .live.status != "idle" or .quiet
+  | ($live | map(select(.prompted or .live.status != "idle" or .quiet
       or ((.launch.ticket | type) == "string" and (.ended | not))))) as $at_work
   | [$events | running_ticket_launches[]
      | select(live_session(.session; $sessions) == null and (stowed_after(.i) | not) and (IN(.ticket; $parked_tickets[]) | not))
@@ -1946,7 +1972,7 @@ def task_findings($sessions; $activity):
       end
     else empty end,
     ($live[]
-      | if .live.state == "blocked" then
+      | if .prompted then
           finding($task; "waiting-input"; .short; .name; "\(.name) \(.short) is waiting for input";
             "read claude logs \(.short), then answer it in one line or put the question to Daniel with team-log \($task) asked")
         elif .live.status == "idle" and .quiet and (IN(.launch.ticket; $parked_tickets[]) | not) then
