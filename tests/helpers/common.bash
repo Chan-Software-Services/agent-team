@@ -5,6 +5,10 @@
 # cgroups or 1Password. A test of a script that runs Docker adds a stub docker with `load
 # helpers/docker` (tests/helpers/docker.bash documents it), and never reaches this machine's
 # Docker, which DOCKER_HOST points away from.
+# The sandbox's TMPDIR is the test's own $BATS_TEST_TMPDIR/tmp, made empty, so a test's mktemp,
+# each script's under test and each inner bats' run directory land where bats removes them, and
+# a test run leaves nothing in /tmp; a test that needs the TMPDIR the suite started with saves it
+# before calling `sandbox`.
 # Bats runs a DEBUG trap before every command of the test's own shell, its functions included,
 # which makes code that loops there (a matrix of commands, a parse in bash) 20 or more times
 # slower than the same code in a script: wrap such code in `untraced` (below), as the deny-rule
@@ -140,7 +144,10 @@ sandbox() {
   # above all (tool_dirs in bin/lib/team.sh).
   export TEAM_SYSTEM_ROOT=$root/system
   export TEAM_CGROUP_ROOT=$root/cgroup-root
-  mkdir -p "$TEAM_HOME" "$HOME/.claude/channels/discord" "$STUB_CALLS" "$STUB_FIXTURES" "$TEAM_CGROUP_ROOT/proc"
+  # Every script under test and every inner bats makes its temporary files in the test's own
+  # directory, which bats removes, never in the TMPDIR the suite was started with.
+  export TMPDIR=$root/tmp
+  mkdir -p "$TEAM_HOME" "$HOME/.claude/channels/discord" "$STUB_CALLS" "$STUB_FIXTURES" "$TEAM_CGROUP_ROOT/proc" "$TMPDIR"
   : >"$TEAM_HOME/ledger.jsonl"
   echo "DISCORD_BOT_TOKEN=$FAKE_DISCORD_TOKEN" >"$HOME/.claude/channels/discord/.env"
 

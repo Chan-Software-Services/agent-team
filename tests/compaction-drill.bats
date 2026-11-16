@@ -9,9 +9,7 @@ load helpers/common
 setup() {
   sandbox
   fixture=$REPO_ROOT/tests/fixtures/compaction-drill
-  # The drill's sandbox lands here, so a test can see it is gone afterwards.
-  export TMPDIR=$BATS_TEST_TMPDIR/tmp
-  mkdir -p "$TMPDIR"
+  # The drill's sandbox lands in the sandbox's TMPDIR, so a test can see it is gone afterwards.
   export DRILL_CODE=$REPO_ROOT
   # team-drill names the machine it records on.
   mkdir -p "$HOME/.config/agent-team"
