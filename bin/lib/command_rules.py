@@ -46,6 +46,12 @@ The rows, in order:
     worker_refusal reads them).
   role-unset: either, or an element of either, named by unset, or either by env's -u (alone or
     ending a short cluster, its value joined or next) or --unset. The same reason.
+  login-assigned: an assignment of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN (LOGIN_VARIABLES,
+    bin/lib/github-login.sh's), in every form role-assigned reads, by the same reader. Reason: a
+    session's GitHub login is its settings' (bin/lib/github-login.sh's worker_login_env), whether
+    or not bin/lib/worker-login names one.
+  login-unset: any of them, or an element, in every form role-unset reads, by the same reader.
+    The same reason.
   environment-emptied: a command named team-<anything> or claude-coordinator behind env -i (alone
     or among env's short options), env --ignore-environment (or a prefix GNU takes), env - or
     exec -c, past any wrappers between or in a string a shell runs there: it would run with no
@@ -124,6 +130,8 @@ import kill_rules  # noqa: E402
 import outbound  # noqa: E402
 
 ROLE_VARIABLES = ("AGENT_TEAM_ROLE", "AGENT_TEAM_TASK")
+# The names that choose a session's GitHub login, bin/lib/github-login.sh's LOGIN_VARIABLES.
+LOGIN_VARIABLES = ("GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN")
 DECLARERS = frozenset("export declare typeset local readonly let read mapfile readarray".split())
 # What runs a script by its path, with its options before it.
 INTERPRETERS = frozenset(("node", "deno", "bun", "npx", "source", "."))
@@ -264,10 +272,9 @@ def _capture(command, context):
     return False
 
 
-def _role_word(word, ends):
-    """Whether word names AGENT_TEAM_ROLE or AGENT_TEAM_TASK, followed by nothing or by one of
-    ends."""
-    for variable in ROLE_VARIABLES:
+def _names_word(variables, word, ends):
+    """Whether word names one of variables, followed by nothing or by one of ends."""
+    for variable in variables:
         if word.startswith(variable):
             rest = word[len(variable) :]
             if not rest or rest[0] in ends:
@@ -275,46 +282,64 @@ def _role_word(word, ends):
     return False
 
 
-def _assigned(command, context):
-    if any(_role_word(word, "=+[") and ASSIGNMENT.match(word) for word in command.assignments):
-        return True
-    for words in heads(command):
-        if not words:
-            continue
-        name, args = command_name(words[0]), list(words[1:])
-        if name in DECLARERS and any(_role_word(word, "=+[<) \t\n'\";&|") for word in args):
+def _assigned(variables):
+    """A test refusing an assignment of one of variables, or of an element of one, alone, before
+    a command or through env, or one named by a declarer or printf -v."""
+
+    def assigned(command, context):
+        if any(_names_word(variables, word, "=+[") and ASSIGNMENT.match(word) for word in command.assignments):
             return True
-        if name == "printf":
-            for k, word in enumerate(args):
-                if word == "-v" and k + 1 < len(args) and args[k + 1].startswith(ROLE_VARIABLES):
-                    return True
-                if word.startswith(tuple("-v" + variable for variable in ROLE_VARIABLES)):
-                    return True
-    return False
+        for words in heads(command):
+            if not words:
+                continue
+            name, args = command_name(words[0]), list(words[1:])
+            if name in DECLARERS and any(_names_word(variables, word, "=+[<) \t\n'\";&|") for word in args):
+                return True
+            if name == "printf":
+                for k, word in enumerate(args):
+                    if word == "-v" and k + 1 < len(args) and args[k + 1].startswith(variables):
+                        return True
+                    if word.startswith(tuple("-v" + variable for variable in variables)):
+                        return True
+        return False
+
+    return assigned
 
 
-def _env_unsets(words):
-    """Whether env's words unset either variable: -u or --unset with it, joined or next."""
+def _env_unsets(variables, words):
+    """Whether env's words unset one of variables: -u or --unset with it, joined or next."""
     for k, word in enumerate(words):
         following = words[k + 1] if k + 1 < len(words) else ""
         unset = ENV_UNSET.fullmatch(word) or word == "--unset"
-        if unset and following.startswith(ROLE_VARIABLES):
+        if unset and following.startswith(variables):
             return True
         joined = ENV_UNSET.match(word)
-        if joined and word[joined.end() :].startswith(ROLE_VARIABLES):
+        if joined and word[joined.end() :].startswith(variables):
             return True
-        if word.startswith("--unset=") and word[len("--unset=") :].startswith(ROLE_VARIABLES):
+        if word.startswith("--unset=") and word[len("--unset=") :].startswith(variables):
             return True
     return False
 
 
-def _unset(command, context):
-    for words in heads(command):
-        if words and command_name(words[0]) == "unset" and any(_role_word(word, "[") for word in words[1:]):
-            return True
-        if words and command_name(words[0]) == "env" and _env_unsets(list(words[1:])):
-            return True
-    return any(command_name(words[0]) == "env" and _env_unsets(list(words[1:])) for words in from_wrappers(command))
+def _unset(variables):
+    """A test refusing one of variables, or an element of one, named by unset, or one by env's -u
+    or --unset."""
+
+    def unset(command, context):
+        for words in heads(command):
+            if not words:
+                continue
+            name, args = command_name(words[0]), list(words[1:])
+            if name == "unset" and any(_names_word(variables, word, "[") for word in args):
+                return True
+            if name == "env" and _env_unsets(variables, args):
+                return True
+        return any(
+            command_name(words[0]) == "env" and _env_unsets(variables, list(words[1:]))
+            for words in from_wrappers(command)
+        )
+
+    return unset
 
 
 def _team_script(word):
@@ -371,6 +396,7 @@ def _upload(command, context):
 
 
 ROLE_REASON = "a worker's role and task are its settings' ({})"
+LOGIN_REASON = "a session's GitHub login is its settings' ({})"
 
 ROWS = (
     Row(
@@ -383,8 +409,22 @@ ROWS = (
         _capture,
         "the frontend toolkit's capture script is Daniel's own sessions' (run by its path or by an interpreter)",
     ),
-    Row("role-assigned", _assigned, ROLE_REASON.format("an assignment of AGENT_TEAM_ROLE or AGENT_TEAM_TASK")),
-    Row("role-unset", _unset, ROLE_REASON.format("an unset of AGENT_TEAM_ROLE or AGENT_TEAM_TASK")),
+    Row(
+        "role-assigned",
+        _assigned(ROLE_VARIABLES),
+        ROLE_REASON.format("an assignment of AGENT_TEAM_ROLE or AGENT_TEAM_TASK"),
+    ),
+    Row("role-unset", _unset(ROLE_VARIABLES), ROLE_REASON.format("an unset of AGENT_TEAM_ROLE or AGENT_TEAM_TASK")),
+    Row(
+        "login-assigned",
+        _assigned(LOGIN_VARIABLES),
+        LOGIN_REASON.format("an assignment of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN"),
+    ),
+    Row(
+        "login-unset",
+        _unset(LOGIN_VARIABLES),
+        LOGIN_REASON.format("an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN"),
+    ),
     Row(
         "environment-emptied",
         _emptied,
