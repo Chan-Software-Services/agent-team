@@ -2146,12 +2146,13 @@ YAML
 }
 
 # The registry fixture is shaped like the team home's, whose required checks for agent-team are
-# the ones dev's protection requires: CI's job ids, each a check name on GitHub.
-@test "CI's jobs are exactly agent-team's required checks, and agent-team has no local checks" {
+# the ones dev's protection requires: CI's job ids, each a check name on GitHub, but the shard
+# jobs, the plan the shards split by (shard-plan) and the shards themselves (test-shards).
+@test "CI's jobs but the shard jobs are exactly agent-team's required checks, and agent-team has no local checks" {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   run_bin -0 team-project agent-team
   assert_equal "$(jq -c '[.required_checks, .local_checks]' <<<"$output")" \
-    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -v -- '-shards$' | jq -R . | jq -cs .),[]]"
+    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -vE -- '^shard-|-shards$' | jq -R . | jq -cs .),[]]"
 }
 
 # A shard job is never a required check itself: the job of the required id waits for every shard,
@@ -2170,6 +2171,71 @@ YAML
     job_block "$id" | grep -qxF "          RESULT: \${{ needs.$id-shards.result }}" || { echo "$id reads no result of $id-shards" >&2; return 1; }
     job_block "$id" | grep -qxF "        run: '[[ \$RESULT == success ]]'" || { echo "$id does not pass only on success" >&2; return 1; }
   done
+}
+
+# Every shard splits by one timings file, which shard-plan writes from the latest successful CI
+# run through the Actions API, else copies from the checkout, and which it alone may read: its
+# token reads the repository and its Actions runs, and no other job's token reads the Actions API.
+@test "test-shards splits by the timings shard-plan reads from the latest successful run, and only shard-plan reads the Actions API" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml id ids plan shards
+  job_block() { sed -n "/^jobs:\$/,\$p" "$ci" | sed -n "/^  $1:\$/,/^  [a-z_-]*:\$/p" | sed '$d'; }
+  plan=$(job_block shard-plan | grep -v '^ *#')
+  shards=$(job_block test-shards | grep -v '^ *#')
+  # The workflow's token reads the contents alone; shard-plan's reads the Actions runs too.
+  assert_equal "$(sed -n '/^permissions:$/,/^[^ ]/p' "$ci" | sed '$d')" $'permissions:\n  contents: read'
+  assert_equal "$(sed -n '/^    permissions:$/,/^    [^ ]/p' <<<"$plan" | sed '$d' | sed 's/ *#.*//')" $'    permissions:\n      contents: read\n      actions: read'
+  grep -qx '    runs-on: ubuntu-24.04' <<<"$plan"
+  grep -qx '    timeout-minutes: 5' <<<"$plan"
+  grep -qxF '          GH_TOKEN: ${{ github.token }}' <<<"$plan"
+  # It writes the latest successful run's timings, else warns and copies the committed file, so it
+  # never fails the run, and uploads either as timings.
+  grep -qF 'if ! tests/shards update --to timings/timings.tsv 2>update.err; then' <<<"$plan"
+  grep -qF '::warning::' <<<"$plan"
+  grep -qxF '            cp tests/timings.tsv timings/timings.tsv' <<<"$plan"
+  grep -qx '      - uses: actions/upload-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$plan"
+  grep -qxF '          name: timings' <<<"$plan"
+  grep -qxF '          path: timings/timings.tsv' <<<"$plan"
+  # Every shard waits for it and downloads its timings over tests/timings.tsv before it runs.
+  grep -qx '    needs: shard-plan' <<<"$shards"
+  grep -qx '      - uses: actions/download-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$shards"
+  grep -qxF '          name: timings' <<<"$shards"
+  grep -qxF '          path: tests' <<<"$shards"
+  (($(grep -n 'actions/download-artifact' <<<"$shards" | cut -d: -f1) < $(grep -nF 'tests/run bats --shard' <<<"$shards" | cut -d: -f1)))
+  # No other job reads the Actions API: none grants itself a permission or takes the run's token.
+  ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
+  for id in $ids; do
+    [[ $id != shard-plan ]] || continue
+    if job_block "$id" | grep -v '^ *#' | grep -nE 'permissions:|actions:|github\.token|GITHUB_TOKEN|GH_TOKEN|\bgh (run|api|workflow)\b'; then
+      echo "$id reads the Actions API or takes a permission" >&2
+      return 1
+    fi
+  done
+}
+
+# A newer run of a branch cancels an older one of the same workflow and event (a pull request's
+# runs, or a branch's dispatched ones), never a merge queue's trial commit, whose ref is its own,
+# and never a run of another event, since team-ci-run waits on a dispatched run or the PR's.
+@test "CI and zizmor's online run cancel a branch's older run of the same event, never a merge queue's" {
+  local workflow
+  for workflow in ci.yml zizmor-online.yml; do
+    assert_equal "$(sed -n '/^concurrency:$/,/^[^ ]/p' "$REPO_ROOT/.github/workflows/$workflow" | sed '$d')" \
+      "concurrency:
+  group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.head_ref || github.ref }}
+  cancel-in-progress: \${{ github.event_name != 'merge_group' }}"
+  done
+}
+
+# A download in a workflow retries a transient failure, as a release download's HTTP 504 failed the
+# required zizmor job twice on one head.
+@test "every curl in a workflow retries a transient failure" {
+  local workflow line found=0
+  for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
+    while IFS= read -r line; do
+      found=$((found + 1))
+      [[ $line == *'curl --retry 5 --retry-all-errors '* ]] || { echo "${workflow##*/}: $line" >&2; return 1; }
+    done < <(grep -v '^ *#' "$workflow" | grep -E '(^|[^a-z])curl ')
+  done
+  ((found >= 5))
 }
 
 # The toolkit tests run MongoDB's Database Tools, which CI installs by the lock's own commands, so

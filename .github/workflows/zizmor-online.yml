@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+# A newer run of a branch cancels its older run of the same event, as CI's do.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
 jobs:
   zizmor-online:
     runs-on: ubuntu-24.04
@@ -27,7 +32,7 @@ jobs:
       - name: Install zizmor ${{ env.ZIZMOR_VERSION }}
         run: |
           archive=zizmor-x86_64-unknown-linux-gnu.tar.gz
-          curl -fsSLO "https://github.com/zizmorcore/zizmor/releases/download/v$ZIZMOR_VERSION/$archive"
+          curl --retry 5 --retry-all-errors -fsSLO "https://github.com/zizmorcore/zizmor/releases/download/v$ZIZMOR_VERSION/$archive"
           echo "$ZIZMOR_SHA256  $archive" | sha256sum -c -
           mkdir zizmor-bin
           tar -xzf "$archive" -C zizmor-bin zizmor
