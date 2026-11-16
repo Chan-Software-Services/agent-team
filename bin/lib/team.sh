@@ -19,6 +19,7 @@
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
+# It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
 # shellcheck shell=bash
@@ -73,6 +74,9 @@ elif [[ -z ${TEAM_HOME:-} ]]; then
 fi
 # This library's directory, which holds the ledger contract: code, never the team home's data.
 TEAM_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# The GitHub logins, the worker login's and the owner's: where each lives and how a script runs gh on it.
+# shellcheck source=bin/lib/github-login.sh
+source "$TEAM_LIB/github-login.sh"
 # The extensions of an image, an extended regular expression's alternatives matched in any case:
 # the records hook refuses them (data-check) and a task's archive leaves them out
 # (archive_left_out), so a screenshot never reaches the team home's history.

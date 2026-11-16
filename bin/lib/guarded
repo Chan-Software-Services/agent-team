@@ -18,6 +18,8 @@
 # guards on its code repository: team-merge with the library and jq it runs, the scripts whose
 # events and checks it reads (team-checks, team-heavy, team-next, team-catch-up,
 # team-review-status, team-review-check, and bin/lib/review-app, which names the reviewer App),
+# bin/lib/worker-login, which names the worker login, and bin/lib/github-login.sh, which says where
+# it and the owner login live,
 # team-ask and team-run-approved, team-log, which logs the reviews, words and approvals team-merge
 # reads, team-project, the registry's one reader, the launchers (team-worker, claude-coordinator,
 # claude-assistant and their shared bin/lib/launch.sh), the lease, the hooks, the permission
@@ -48,6 +50,6 @@ guardrails@own bin/lib/(guarded|ledger-contract\.json|lifecycle\.json|data-check
 guardrails@own bin/hooks/.*
 guardrails@own settings/[^/]*\.json
 guardrails@own (coordinator|assistant)\.settings\.json
-guardrails@own bin/lib/(team\.sh|platform\.sh|launch\.sh|ledger\.jq|messages\.jq|review-app)
+guardrails@own bin/lib/(team\.sh|platform\.sh|launch\.sh|github-login\.sh|ledger\.jq|messages\.jq|review-app|worker-login)
 guardrails@own bin/team-(next|catch-up|review-check)
 guardrails@own roles/.*

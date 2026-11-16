@@ -63,6 +63,32 @@ atlas_host_files() {
 
 # D6 (T31): the production toolkits go public without the Atlas cluster's host, which only the
 # 1Password item's connection string holds.
+@test "a committed bin/lib/worker-login, when there is one, is one login= line of a GitHub login" {
+  [[ -e $REPO_ROOT/bin/lib/worker-login ]] || skip "this checkout names no worker login"
+  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh" && worker_login' repo "$REPO_ROOT"
+  assert_equal "$status" 0
+  assert_equal "$stderr" ""
+  assert_equal "$(cat "$REPO_ROOT/bin/lib/worker-login")" "login=$output"
+}
+
+# copy_bin's copy at <dest> of the checkout <checkout>'s bin/, its shared copies made under
+# <run> as a run's are: copy_bin_of <checkout> <run> <dest>
+copy_bin_of() {
+  # shellcheck disable=SC2034 # copy_bin reads both
+  local REPO_ROOT=$1 BATS_RUN_TMPDIR=$2
+  copy_bin "$3"
+}
+
+@test "a copy of bin/ (copy_bin) has no bin/lib/worker-login and no bin/lib/review-app, even from a checkout that commits both" {
+  local checkout=$BATS_TEST_TMPDIR/checkout copy=$BATS_TEST_TMPDIR/copy
+  mkdir -p "$checkout" "$BATS_TEST_TMPDIR/run"
+  cp -R "$REPO_ROOT/bin" "$checkout/bin"
+  echo login=some-bot >"$checkout/bin/lib/worker-login"
+  printf 'id=1\nslug=some-app\n' >"$checkout/bin/lib/review-app"
+  copy_bin_of "$checkout" "$BATS_TEST_TMPDIR/run" "$copy"
+  [[ -f $copy/lib/github-login.sh && ! -e $copy/lib/worker-login && ! -e $copy/lib/review-app ]]
+}
+
 @test "no tracked code file names an Atlas cluster host" {
   run -0 atlas_host_files "$REPO_ROOT"
   assert_equal "$output" ""

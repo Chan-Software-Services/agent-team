@@ -27,6 +27,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `error-view.sh`: a sibling script's failure as the `{error}` a view holds in its place, its last stderr line with `~` for the home directory, for `team-queue`, `team-snapshot` and `team-sweep`.
     - `gate-claude-settings.json`: the settings the gate's Claude takes with `--settings`, its commit attribution off and `command-guard` run on Bash from `~/agent-team`, since it loads no user settings.
     - `gate-config.awk`: reads and sets the one key the team writes in Daniel's no-mistakes config (`agent_path_override`'s opencode), and reads `agent_args_override`'s list for one agent.
+    - `github-login.sh`: where the worker login and the owner login live, sourced by `team.sh`: the worker login's constant read, its gh directory judged, a session's environment on it, and gh run on either login.
     - `guarded`: the short list, one extended regular expression per line with its area, `@<project>` or `@own` for one project's line, any changed path of which brings a merge on the default word, the approved plan, back to Daniel for the per-head word, read by `team-merge` from its own checkout.
     - `health.jq`: the health module, the one place that says what unhealthy means: the fold of each heartbeat run into the health record, the ledger's one-pass scan, every health threshold, and the view `team-timers health` prints, its problems and its line in markup and plain text.
     - `kill_rules.py`: `command_rules.py`'s kill rows, refusing a kill by name or pattern, tmux's `kill-*`, and a kill of PIDs read from input, of a PID it cannot read, of a process group, every process or PID 0 or 1, or of a literal PID not proven its own, each naming its allowed way.
@@ -57,6 +58,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `tools.lock`: the tools `team-doctor` checks, pinned or with a minimum, and their source per OS (for treehouse and no-mistakes, a GitHub release with each archive's checksum, or a fork's commit).
     - `uptime.jq`: `team-uptime`'s rules, the counting of each production check, when one is down, its outages judged as notices through `notice.jq`, each post's text, and the status line.
     - `vendor/git-filter-repo/`: git filter-repo 2.47.0, vendored with its MIT license.
+    - `worker-login`: the worker login's GitHub account, one `login=<name>` line, a committed constant; with no such file the worker login is off and every session runs on the machine's own GitHub login.
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
@@ -191,6 +193,7 @@ It holds:
   The sandbox's `TEAM_SYSTEM_ROOT` puts the library's system tool directories (treehouse's `/usr/local/bin` on Arch) inside it, so a PATH a test trims never gets the machine's own tools back on it.
   The sandbox refuses a TMPDIR under `/home` or `/Users` (a job's own tmp under HOME, say), whose paths the ledger reads as a machine's HOME: run the tests with one outside them, as the default is.
   A script run from this checkout has the reviewer App on, since `bin/lib/review-app` names it, while a copy of `bin/` (`copy_bin`) has it off: a test that needs either says so, with `review_app_on` or `review_app_off`.
+  A copy of `bin/` has the worker login off too, whatever this checkout commits: a test that needs it on says so with `worker_login_on`, which also writes the login's file into the sandbox's HOME.
   `tests/helpers/common.bash` documents the helpers.
 - macOS assesses each new executable file on its first run, about a quarter of a second each, so a test never writes or copies an executable it could share: `stub_command`, `copy_bin` and the doctor's version stubs hard-link a read-only copy made once per run (`shared` in `tests/helpers/common.bash`).
 - No test reads the records of the checkout it runs in, so the suite passes on the code alone: a test that needs a real-shaped registry or secrets manifest copies it from `tests/fixtures/`, and `team-doctor`'s `records` line checks the team home's real ledger, registry and secrets description.
