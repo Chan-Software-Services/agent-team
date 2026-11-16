@@ -125,6 +125,37 @@
         "idempotentHint": false,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "check-integrity",
+      "description": "Run the invariants saved in Chan-Software-Services/Conventioner's back-end/integrity/invariants.json, read at the ref named (origin/main, what production runs, when left out), against conventioner on production through the read user, read-only: each invariant is an aggregation pipeline whose every output document is one violation. Answers the commit read and, per invariant, PASS, or FAIL with the count (>10,000 at the cap) and at most 50 ids of the documents that break it, or the error it ran into; never a document. Refuses, before it connects, a malformed file and any invariant that could write or run code on the server. Runs only in a checkout of that repository.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$",
+            "description": "The commit of the project's repository to read the invariants file from: a branch, a tag or a commit sha; origin/main, what production runs, when left out."
+          },
+          "invariants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]{1,64}$"
+            },
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "The invariants to run, by name (application-market-exists); every invariant in the file when left out."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
     }
   ]
 }

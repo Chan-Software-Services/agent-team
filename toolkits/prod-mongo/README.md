@@ -10,6 +10,7 @@ The MCP tools, from the server's own `tools/list` (`evals/mocks/prod-mongo/_tool
 
 ```text
 mcp__prod-mongo__backup
+mcp__prod-mongo__check-integrity
 mcp__prod-mongo__list-backups
 mcp__prod-mongo__prepare-undo
 mcp__prod-mongo__rehearse-migrations
@@ -19,7 +20,7 @@ mcp__prod-mongo__restore-drill
 Nothing else: no tool writes to the database, restores to production, or takes a path or a connection string; `prepare-undo` reads production and prepares the `mongoimport` or `mongorestore` Daniel runs, never running it, and writes the document it would import only into the dump's folder.
 The skills are `backing-up-production-data`, for `backup`, `restore-drill` and `list-backups`, and `rehearsing-production-changes`, for `rehearse-migrations` and `prepare-undo` (`skills/`), the only ones this toolkit adds.
 This list is the server's, not yet a live session's: the ops load check's inventory (`team-load-check --role ops --toolkit prod-mongo`), once it has run on Daniel's real credential, replaces it.
-`docs/access.md` says what the toolkit can and cannot reach; `docs/rehearsing.md` what a rehearsal builds and runs, where its logs are and what its report holds; and `docs/restoring.md`, for Daniel, where the dumps are, how to drill one by hand, how to restore one to production or delete it, and how to run a prepared undo.
+`docs/access.md` says what the toolkit can and cannot reach; `docs/rehearsing.md` what a rehearsal builds and runs, where its logs are and what its report holds; `docs/restoring.md`, for Daniel, where the dumps are, how to drill one by hand, how to restore one to production or delete it, and how to run a prepared undo; and `docs/integrity.md`, for Conventioner's builders, the invariants file `check-integrity` reads, its format and its read-only rule.
 
 ## Its credential
 

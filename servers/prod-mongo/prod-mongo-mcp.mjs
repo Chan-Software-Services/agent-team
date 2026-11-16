@@ -5,9 +5,9 @@
 // `reference` is the 1Password secret reference of a connection string, `database` the one
 // database every tool works on, `root` the backups folder, written from ~/ (PROD_MONGO_ROOT
 // replaces it, for the tests only), and `repositories` the names (owner/name) of the repository
-// whose migrations a rehearsal runs. Before it answers MCP's initialize it, in order: refuses any
-// argument; finds mongodump on PATH and reads its version, so no 1Password prompt is spent on a
-// launch that cannot back up; imports the pinned MCP SDK and MongoDB driver; reads the connection
+// whose migrations a rehearsal runs and whose invariants an integrity check reads. Before it
+// answers MCP's initialize it, in order: refuses any argument; finds mongodump on PATH and reads
+// its version, so no 1Password prompt is spent on a launch that cannot back up; imports the pinned MCP SDK and MongoDB driver; reads the connection
 // string with readSecrets (op-secret.mjs), checked as prod-read's is. On any failure it exits 1
 // with one `<name>: <reason>` line on stderr, never holding the value.
 // The value lives only in this function's closure, never in process.env: no child gets it but
@@ -20,9 +20,10 @@
 // (rehearse.mjs, which runs scripts/rehearse.mjs the same way, in the server's working directory,
 // the session's worktree) and prepare-undo (undo.mjs, which reads production and prepares a
 // command for Daniel, never running it), each checking the root against root.mjs's rules before
-// it touches it.
+// it touches it, and check-integrity (integrity.mjs, which reads the invariants file of the
+// repository's checkout, the working directory, and runs it read-only on production).
 // One long call runs at a time: a backup, a restore-drill or a rehearse-migrations while any of
-// them runs is refused at once; list-backups and prepare-undo take no such lock. A long tool
+// them runs is refused at once; list-backups, prepare-undo and check-integrity take no such lock. A long tool
 // sends a progress notification per step when the call carries a progressToken. A tool's run gives
 // its answer's text, or { text, isError } for an answer that is an error in its own form.
 import { connectionStringRefusal } from "../mongodb-mcp.mjs";
@@ -30,6 +31,7 @@ import { readSecrets } from "../op-secret.mjs";
 import { scrubber, toolVersion } from "./children.mjs";
 import { takeBackup } from "./backup.mjs";
 import { drillTool } from "./drill.mjs";
+import { checkIntegrity, integrityInput } from "./integrity.mjs";
 import { kept, listing } from "./list.mjs";
 import { rehearseInput, rehearseTool } from "./rehearse.mjs";
 import { Refusal } from "./refusal.mjs";
@@ -135,6 +137,19 @@ export async function startProdMongo({ name, reference, database, root: configur
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       long: false,
       run: ({ input }) => prepareUndo({ MongoClient: sdk.MongoClient, BSON: sdk.BSON, value, database, root, shown, scrubbed, input }),
+    },
+    {
+      name: "check-integrity",
+      description:
+        `Run the invariants saved in ${repositories[0]}'s back-end/integrity/invariants.json, read at the ref named (origin/main, what production runs, ` +
+        `when left out), against ${database} on production through the read user, read-only: each invariant is an aggregation pipeline whose every ` +
+        "output document is one violation. Answers the commit read and, per invariant, PASS, or FAIL with the count (>10,000 at the cap) and at most 50 " +
+        "ids of the documents that break it, or the error it ran into; never a document. Refuses, before it connects, a malformed file and any invariant " +
+        "that could write or run code on the server. Runs only in a checkout of that repository.",
+      inputSchema: integrityInput,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      long: false,
+      run: ({ input, progress }) => checkIntegrity({ MongoClient: sdk.MongoClient, BSON: sdk.BSON, value, database, scrubbed, input, progress, repositories }),
     },
   ];
 

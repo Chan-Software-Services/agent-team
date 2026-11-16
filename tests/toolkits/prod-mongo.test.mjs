@@ -20,6 +20,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, chmodSync, constants, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
+import { createServer } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, beforeEach, describe, test } from "node:test";
 import { gzipSync } from "node:zlib";
@@ -28,7 +29,9 @@ import { capped, changeLine, compareCollections, compareDatabases, differs, fiel
 import { childEnv, scrubber } from "../../servers/prod-mongo/children.mjs";
 import { humanBytes } from "../../servers/prod-mongo/dump.mjs";
 import { kept } from "../../servers/prod-mongo/list.mjs";
-import { checkoutRefusal, rehearsalAnswer, resolveRef } from "../../servers/prod-mongo/rehearse.mjs";
+import { allowedStages, invariantsPath, readInvariants, readOnlyRefusal } from "../../servers/prod-mongo/integrity.mjs";
+import { rehearsalAnswer } from "../../servers/prod-mongo/rehearse.mjs";
+import { checkoutRefusal, resolveRef } from "../../servers/prod-mongo/repository.mjs";
 import { restoreLimit } from "../../servers/prod-mongo/restore.mjs";
 import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.mjs";
 import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
@@ -209,10 +212,10 @@ test("no file of the toolkit or its server is executable", () => {
   }
 });
 
-test("the tools are backup and list-backups, taking no input, restore-drill, taking a backup's name or nothing, rehearse-migrations and prepare-undo", async () => {
+test("the tools are backup and list-backups, taking no input, restore-drill, taking a backup's name or nothing, rehearse-migrations, prepare-undo and check-integrity", async () => {
   await withServer(async (server) => {
     const tools = await server.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ["backup", "list-backups", "restore-drill", "rehearse-migrations", "prepare-undo"]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["backup", "list-backups", "restore-drill", "rehearse-migrations", "prepare-undo", "check-integrity"]);
     for (const tool of tools.slice(0, 2)) assert.deepEqual(tool.inputSchema, { type: "object", properties: {}, additionalProperties: false }, tool.name);
     assert.equal(tools[1].annotations.readOnlyHint, true);
     const { inputSchema } = tools[2];
@@ -1205,6 +1208,44 @@ const pythonImage = "python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c
 // What one fixture migration prints and uses in a field's name: never to reach an answer.
 const printed = "printed-by-a-migration@example.com";
 
+// The fixture's invariants file, at its base commit, so on origin's main: a reference that must
+// exist, a value that must be unique (each market of a shared city named by its id), a role from a
+// list, a field every document needs, a collection the seed lacks, and a date in Extended JSON v2.
+const fixtureInvariants = {
+  version: 1,
+  invariants: [
+    {
+      name: "application-market-exists",
+      description: "Every application names a market that exists.",
+      collection: "applications",
+      pipeline: [
+        { $lookup: { from: "markets", localField: "market_id", foreignField: "id", as: "market" } },
+        { $match: { market: { $size: 0 } } },
+      ],
+    },
+    {
+      name: "market-city-unique",
+      description: "No two markets share a city.",
+      collection: "markets",
+      pipeline: [
+        { $group: { _id: "$city", markets: { $push: { _id: "$_id", id: "$id" } }, n: { $sum: 1 } } },
+        { $match: { n: { $gt: 1 } } },
+        { $unwind: "$markets" },
+        { $replaceRoot: { newRoot: "$markets" } },
+      ],
+    },
+    { name: "account-role-known", description: "Every account is a vendor or an admin.", collection: "accounts", pipeline: [{ $match: { role: { $nin: ["vendor", "admin"] } } }] },
+    { name: "market-has-stalls", description: "Every market has a stall.", collection: "markets", pipeline: [{ $match: { stalls: { $not: { $gt: 0 } } } }] },
+    { name: "seat-assigned", description: "Every seat is assigned.", collection: "seats", pipeline: [{ $match: { assigned: { $ne: true } } }] },
+    {
+      name: "applied-since-launch",
+      description: "No application is dated before the launch.",
+      collection: "applications",
+      pipeline: [{ $match: { applied: { $lt: { $date: "2020-01-01T00:00:00Z" } } } }],
+    },
+  ],
+};
+
 function fixtureConventioner() {
   const dir = tempDir("conventioner");
   const work = join(dir, "checkout");
@@ -1231,6 +1272,7 @@ COPY . .
 USER appuser
 `,
     "back-end/.dockerignore": "tests/\n",
+    "back-end/integrity/invariants.json": `${JSON.stringify(fixtureInvariants, null, 2)}\n`,
     "back-end/db_config.py": `import os
 from pymongo import MongoClient
 
@@ -1500,7 +1542,7 @@ describe("rehearse-migrations", () => {
       { input: { ref: repo.base, migrations: Array(21).fill("open_big_markets.py") }, reason: "migrations must be 1 to 20 script names, each as migrate_phase.py" },
       { input: { migrations: ["open_big_markets.py"] }, reason: "ref must be a commit sha, a branch or a tag, of letters, digits and . _ / - only" },
       { input: { ref: repo.base, migrations: ["open_big_markets.py"], cwd: "/" }, whole: "rehearse-migrations: takes no cwd" },
-      { cwd: join(other, "checkout"), input: { ref: repo.base, migrations: ["open_big_markets.py"] }, reason: "the working directory's origin is not Chan-Software-Services/Conventioner, whose migrations a rehearsal runs" },
+      { cwd: join(other, "checkout"), input: { ref: repo.base, migrations: ["open_big_markets.py"] }, reason: "the working directory's origin is not Chan-Software-Services/Conventioner" },
       { cwd: other, input: { ref: repo.base, migrations: ["open_big_markets.py"] }, reason: "the working directory is not a git checkout with an origin, so it is not a checkout of Chan-Software-Services/Conventioner" },
     ];
     for (const { cwd = repo.work, input, reason, whole } of cases) {
@@ -1538,7 +1580,7 @@ describe("rehearse-migrations", () => {
       "/srv/mirror/github.com/Chan-Software-Services/Conventioner", "ssh://git@other.example/github.com/chanjdaniel/Conventioner.git",
     ]) {
       const refusal = refusalOf(url);
-      assert.equal(refusal, "the working directory's origin is not Chan-Software-Services/Conventioner, whose migrations a rehearsal runs", url);
+      assert.equal(refusal, "the working directory's origin is not Chan-Software-Services/Conventioner", url);
       assert.ok(!refusal.includes(url));
     }
   });
@@ -1565,7 +1607,7 @@ describe("rehearse-migrations", () => {
     for (const [ref, sha] of [["release", repo.release], ["origin/release", repo.release], ["main", repo.base], ["v1", repo.release], ["v2", repo.release], [repo.base, repo.base], [repo.base.slice(0, 10), repo.base]]) {
       assert.deepEqual(resolved(ref), { sha }, ref);
     }
-    const unpushed = (ref) => ({ refusal: `${ref} names ${local.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is rehearsed` });
+    const unpushed = (ref) => ({ refusal: `${ref} names ${local.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is read` });
     assert.deepEqual(resolved(local), unpushed(local));
     assert.deepEqual(resolved(local.slice(0, 12)), unpushed(local.slice(0, 12)));
     for (const ref of ["local-only", "no-such-branch"]) {
@@ -2237,6 +2279,258 @@ describe("prepare-undo", () => {
       assert.equal(result.text, "prepare-undo: failed: could not reach the database");
     }, { value: unreachable() });
     assert.deepEqual(undosOf(stamp), []);
+  });
+});
+
+// A loopback port that counts the connections made to it and drops each: a connection string to it
+// proves, by a count of 0, that a call refused before it connected.
+async function connectionCounter() {
+  let connections = 0;
+  const listener = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const { port } = listener.address();
+  return {
+    uri: `mongodb://ops-read:${marker}@127.0.0.1:${port}/?authSource=admin&serverSelectionTimeoutMS=2000`,
+    count: () => connections,
+    close: () => new Promise((resolve) => listener.close(resolve)),
+  };
+}
+
+describe("check-integrity", () => {
+  const { BSON } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
+  const hashed = (id) => `sha256:${createHash("sha256").update(JSON.stringify(id)).digest("hex").slice(0, 12)}`;
+  const at = (sha, ref) => `${sha.slice(0, 12)} (${ref})`;
+  let repo;
+  let branches = 0;
+  // The violations each test starts from: two applications whose market does not exist, one dated
+  // before the launch, a fourth market in Vancouver, and the email-keyed account with an unknown role.
+  let violations;
+  before(() => {
+    repo = fixtureConventioner();
+  });
+  beforeEach(async () => {
+    repo.originFor(home);
+    const db = production.client.db("conventioner");
+    const applications = await db.collection("applications").find({}, { projection: { _id: 1 } }).sort({ _id: 1 }).toArray();
+    for (const [n, { _id }] of applications.entries()) {
+      await db.collection("applications").updateOne({ _id }, { $set: { market_id: n < 3 ? marketIds[n] : randomUUID(), applied: new Date(n === 1 ? "2019-05-01" : "2024-05-01") } });
+    }
+    const sharedCity = randomUUID();
+    await db.collection("markets").insertOne({ id: sharedCity, name: "Riverside Day Market", city: "Vancouver", stalls: 12 });
+    await db.collection("accounts").updateOne({ _id: email }, { $set: { role: "ghost" } });
+    const hex = (n) => applications[n]._id.toHexString();
+    violations = {
+      missingMarket: [hex(3), hex(4)].sort(),
+      early: hex(1),
+      sharedCity: [marketIds[0], sharedCity].sort(),
+    };
+  });
+  const integrityServer = (body, options = {}) => withServer(body, { cwd: repo.work, ...options });
+  // A commit on a new branch of origin's, its invariants file `file` (an object, a text, or null for
+  // none), forgotten here as the release's is, so only the call's fetch brings it.
+  const pushed = (file) => {
+    const branch = `integrity-${(branches += 1)}`;
+    repo.git(repo.work, "checkout", "--quiet", "-b", branch);
+    if (file === null) repo.git(repo.work, "rm", "--quiet", invariantsPath);
+    else repo.write(invariantsPath, typeof file === "string" ? file : `${JSON.stringify(file, null, 2)}\n`);
+    repo.git(repo.work, "commit", "--quiet", "--all", "--message", branch);
+    const sha = repo.git(repo.work, "rev-parse", "HEAD");
+    repo.git(repo.work, "push", "--quiet", repo.bare, branch);
+    repo.git(repo.work, "checkout", "--quiet", "main");
+    repo.git(repo.work, "branch", "--quiet", "-D", branch);
+    return { branch, sha };
+  };
+  const named = (...names) => fixtureInvariants.invariants.filter(({ name }) => names.includes(name));
+  const header = (sha, ref, verdict) => `Integrity of conventioner on production by back-end/integrity/invariants.json at ${at(sha, ref)}: ${verdict}`;
+  const snapshot = () => snapshotDatabase(production.client.db("conventioner"), BSON);
+
+  test("takes a ref and the invariants' names, both optional, each held to its pattern", async () => {
+    await integrityServer(async (server) => {
+      const tool = (await server.listTools()).find(({ name }) => name === "check-integrity");
+      const { properties, required, additionalProperties } = tool.inputSchema;
+      assert.deepEqual(Object.keys(properties), ["ref", "invariants"]);
+      assert.equal(required, undefined);
+      assert.equal(additionalProperties, false);
+      assert.equal(properties.ref.pattern, "^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$");
+      assert.equal(properties.invariants.items.pattern, "^[a-z0-9-]{1,64}$");
+      assert.deepEqual([properties.invariants.minItems, properties.invariants.maxItems], [1, 50]);
+      assert.equal(tool.annotations.readOnlyHint, true);
+    });
+  });
+
+  test("runs every invariant of origin's main on production: each failing one named with its count and ids, an email-shaped _id hashed, the others passing, nothing written", async () => {
+    const before = await snapshot();
+    await integrityServer(async (server) => {
+      const result = await server.callTool("check-integrity", {}, { progressToken: "c" });
+      const progress = server.fromServer.filter(({ method, params }) => method === "notifications/progress" && params.progressToken === "c").map(({ params }) => params.message);
+      assert.ok(!result.isError, result.text);
+      assert.equal(result.text, [
+        header(repo.base, "origin/main", "4 of 6 invariants failed"),
+        `- application-market-exists: FAIL: 2 documents: ${violations.missingMarket.join(", ")}`,
+        `- market-city-unique: FAIL: 2 documents: ${violations.sharedCity.join(", ")}`,
+        `- account-role-known: FAIL: 1 document: ${hashed(email)}`,
+        "- market-has-stalls: PASS",
+        "- seat-assigned: PASS (production has no collection seats)",
+        `- applied-since-launch: FAIL: 1 document: ${violations.early}`,
+      ].join("\n"));
+      assert.ok(!result.text.includes(email) && !result.text.includes("Vancouver") && !result.text.includes("Riverside"), result.text);
+      assert.deepEqual(progress, ["fetching origin", ...fixtureInvariants.invariants.map(({ name }, n) => `checking ${name} (${n + 1} of 6)`)]);
+    });
+    assert.ok(!compareDatabases(before, await snapshot()).some(differs), "the check changed production");
+    assert.deepEqual(backups(), [], "the check wrote under the backups root");
+  });
+
+  test("runs only the invariants named, in the file's order, from the commit a ref of origin's names, fetched for the call", async () => {
+    const { branch, sha } = pushed({ version: 1, invariants: [...named("account-role-known", "market-has-stalls"), { ...named("seat-assigned")[0], name: "seat-held" }] });
+    await integrityServer(async (server) => {
+      const result = await server.callTool("check-integrity", { ref: branch, invariants: ["seat-held", "account-role-known"] });
+      assert.equal(result.text, [header(sha, branch, "1 of 2 invariants failed"), `- account-role-known: FAIL: 1 document: ${hashed(email)}`, "- seat-held: PASS (production has no collection seats)"].join("\n"));
+      const one = await server.callTool("check-integrity", { ref: branch, invariants: ["market-has-stalls"] });
+      assert.equal(one.text, [header(sha, branch, "its 1 invariant passed"), "- market-has-stalls: PASS"].join("\n"));
+    });
+    // With origin out of reach, the branch is read as the checkout last fetched it, and says so.
+    repo.originFor(home, false);
+    await integrityServer(async (server) => {
+      const result = await server.callTool("check-integrity", { ref: branch, invariants: ["market-has-stalls"] });
+      assert.equal(result.text, [header(sha, branch, "its 1 invariant passed"), "- market-has-stalls: PASS", "git fetch origin failed, so the ref was read as this checkout last fetched it."].join("\n"));
+    });
+  });
+
+  test("counts up to 10,000 violations and reports more as >10,000, with 50 ids", async () => {
+    const seats = production.client.db("conventioner").collection("seats");
+    await seats.insertMany(Array.from({ length: 10_000 }, (_, n) => ({ _id: n + 1, assigned: false })));
+    const ids = (total) => Array.from({ length: total }, (_, n) => String(n + 1)).sort().slice(0, 50).join(", ");
+    await integrityServer(async (server) => {
+      const exact = await server.callTool("check-integrity", { invariants: ["seat-assigned"] });
+      assert.equal(exact.text, [header(repo.base, "origin/main", "1 of 1 invariant failed"), `- seat-assigned: FAIL: 10,000 documents: ${ids(10_000)} and 9,950 more`].join("\n"));
+      await seats.insertOne({ _id: 10_001, assigned: false });
+      const over = await server.callTool("check-integrity", { invariants: ["seat-assigned"] });
+      assert.equal(over.text, [header(repo.base, "origin/main", "1 of 1 invariant failed"), `- seat-assigned: FAIL: >10,000 documents: ${ids(10_001)} and more`].join("\n"));
+      // The read stops at 10,001: a violation inserted last, whose id would sort first, is not read.
+      await seats.insertOne({ _id: 0, assigned: false });
+      const past = await server.callTool("check-integrity", { invariants: ["seat-assigned"] });
+      assert.equal(past.text, over.text);
+    });
+  });
+
+  test("names an invariant that errors by the server's code name, quoting no value, and still runs the others", async () => {
+    const throws = { name: "market-name-number", description: "Every market's name is a number.", collection: "markets", pipeline: [{ $addFields: { n: { $toInt: "$name" } } }, { $match: { n: { $lt: 0 } } }] };
+    const { branch, sha } = pushed({ version: 1, invariants: [...named("market-has-stalls"), throws, ...named("account-role-known")] });
+    await integrityServer(async (server) => {
+      const result = await server.callTool("check-integrity", { ref: branch });
+      assert.ok(result.isError, result.text);
+      const lines = result.text.split("\n");
+      assert.deepEqual([lines[0], lines[1], lines[3]], [header(sha, branch, "1 of 3 invariants failed, 1 could not run"), "- market-has-stalls: PASS", `- account-role-known: FAIL: 1 document: ${hashed(email)}`]);
+      assert.match(lines[2], /^- market-name-number: ERROR: ConversionFailure: \S/);
+      for (const value of ["Riverside", "Harbour", "Lakeside", "Night Market"]) assert.ok(!lines[2].includes(value), lines[2]);
+      assert.equal(lines.length, 4);
+    });
+  });
+
+  test("refuses before any connection: a file that writes, runs code, uses a stage off the allowlist or is not JSON, a name it lacks, a ref or names outside their patterns, no checkout; a commit with no file has no invariants", async (t) => {
+    const counter = await connectionCounter();
+    t.after(() => counter.close());
+    const one = (invariant) => ({ version: 1, invariants: [...named("market-has-stalls"), invariant] });
+    const merges = pushed(one({ name: "writes-back", description: "Writes the markets back.", collection: "markets", pipeline: [{ $match: {} }, { $merge: { into: "markets" } }] }));
+    const runsCode = pushed(one({ name: "runs-code", description: "Runs JavaScript.", collection: "markets", pipeline: [{ $project: { x: { $function: { body: "function() { return 1; }", args: [], lang: "js" } } } }] }));
+    const samples = pushed(one({ name: "samples", description: "Takes a sample.", collection: "markets", pipeline: [{ $sample: { size: 1 } }] }));
+    const malformed = pushed('{"version": 1, "invariants": [\n');
+    const none = pushed(null);
+    const refused = (commit, reason) => `check-integrity: failed: back-end/integrity/invariants.json at ${at(commit.sha, commit.branch)} is refused, so nothing was checked: ${reason}`;
+    const elsewhere = tempDir("not-a-checkout");
+    await integrityServer(async (server) => {
+      const refusals = [
+        [{ ref: merges.branch }, refused(merges, "the invariant writes-back: its stage 2 is $merge, which writes a collection; an invariant only reads")],
+        [{ ref: runsCode.branch }, refused(runsCode, "the invariant runs-code: its stage 1 ($project) holds $function, which runs JavaScript on the server; an invariant only reads")],
+        [{ ref: samples.branch }, refused(samples, "the invariant samples: its stage 1 is $sample, which is not on the read-only allowlist of the prod-mongo toolkit's docs/integrity.md; an invariant only reads")],
+        [{ invariants: ["market-has-stalls", "no-such-check"] }, `check-integrity: failed: back-end/integrity/invariants.json at ${at(repo.base, "origin/main")} has no invariant no-such-check: it has ${fixtureInvariants.invariants.map(({ name }) => name).join(", ")}`],
+        [{ ref: "no-such-branch" }, "check-integrity: failed: no-such-branch names no branch or tag of Chan-Software-Services/Conventioner's origin, nor a commit on one of its branches, in this checkout"],
+        [{ ref: "--upload-pack=x" }, "check-integrity: failed: ref must be a commit sha, a branch or a tag, of letters, digits and . _ / - only"],
+        [{ invariants: ["Market Has Stalls"] }, "check-integrity: failed: invariants must be 1 to 50 invariants' names, each as application-market-exists"],
+        [{ invariants: [] }, "check-integrity: failed: invariants must be 1 to 50 invariants' names, each as application-market-exists"],
+        [{ invariants: ["market-has-stalls", "market-has-stalls"] }, "check-integrity: failed: invariants names market-has-stalls twice"],
+        [{ path: "/tmp" }, "check-integrity: takes no path"],
+      ];
+      for (const [args, expected] of refusals) {
+        const result = await server.callTool("check-integrity", args);
+        assert.ok(result.isError, JSON.stringify(args));
+        assert.equal(result.text, expected, JSON.stringify(args));
+      }
+      const notJson = await server.callTool("check-integrity", { ref: malformed.branch });
+      assert.ok(notJson.isError);
+      assert.ok(notJson.text.startsWith(refused(malformed, "it is not JSON (")), notJson.text);
+      const empty = await server.callTool("check-integrity", { ref: none.branch });
+      assert.ok(!empty.isError, empty.text);
+      assert.equal(empty.text, `No invariants at ${at(none.sha, none.branch)}: it holds no back-end/integrity/invariants.json, so nothing was checked.`);
+    }, { value: counter.uri });
+    await integrityServer(async (server) => {
+      const result = await server.callTool("check-integrity", {});
+      assert.equal(result.text, "check-integrity: failed: the working directory is not a git checkout with an origin, so it is not a checkout of Chan-Software-Services/Conventioner");
+    }, { value: counter.uri, cwd: elsewhere });
+    assert.equal(counter.count(), 0, "a refused call connected");
+
+    // The counter counts: a call it lets through connects, and cannot reach a database there.
+    await integrityServer(async (server) => {
+      const result = await server.callTool("check-integrity", { invariants: ["market-has-stalls"] });
+      assert.equal(result.text, "check-integrity: failed: could not reach the database");
+    }, { value: counter.uri });
+    assert.ok(counter.count() > 0, "the call that went through made no connection");
+  });
+
+  describe("the invariants file's rules", () => {
+    const { EJSON } = BSON;
+    const file = (...invariants) => JSON.stringify({ version: 1, invariants });
+    const invariant = (pipeline, extra = {}) => ({ name: "an-invariant", description: "An invariant.", collection: "markets", pipeline, ...extra });
+    const refusalOf = (...invariants) => readInvariants(file(...invariants), EJSON).refusal;
+
+    test("the read-only rule refuses what writes or runs code anywhere, and any stage off the allowlist, naming the stage", () => {
+      const cases = [
+        [[{ $out: "copy" }], "its stage 1 is $out, which writes a collection"],
+        [[{ $match: {} }, { $facet: { a: [{ $match: {} }], b: [{ $merge: { into: "x" } }] } }], 'its stage 2 ($facet), its facet "b"\'s stage 1 is $merge, which writes a collection'],
+        [[{ $match: { $where: "this.stalls > 1" } }], "its stage 1 ($match) holds $where, which runs JavaScript on the server"],
+        [[{ $group: { _id: null, all: { $accumulator: { init: "function() {}" } } } }], "its stage 1 ($group) holds $accumulator, which runs JavaScript on the server"],
+        [[{ $match: { stalls: { $eq: { $code: "function() {}" } } } }], "its stage 1 ($match) holds $code, which is JavaScript"],
+        [[{ $lookup: { from: "applications", pipeline: [{ $sample: { size: 1 } }], as: "a" } }], "its stage 1 ($lookup), its pipeline's stage 1 is $sample, which is not on the read-only allowlist of the prod-mongo toolkit's docs/integrity.md"],
+        [[{ $unionWith: { coll: "applications", pipeline: [{ $out: "x" }] } }], "its stage 1 ($unionWith), its pipeline's stage 1 is $out, which writes a collection"],
+        [[{ $match: {}, $limit: 1 }], "its stage 1 is not one stage, an object of one key"],
+        [[{ $indexStats: {} }], "its stage 1 is $indexStats, which is not on the read-only allowlist of the prod-mongo toolkit's docs/integrity.md"],
+      ];
+      for (const [pipeline, expected] of cases) assert.equal(readOnlyRefusal(pipeline), expected, JSON.stringify(pipeline));
+      const every = allowedStages.map((stage) => ({ [stage]: stage === "$unionWith" ? { coll: "markets", pipeline: [{ $match: {} }] } : {} }));
+      assert.equal(readOnlyRefusal(every), undefined);
+      assert.equal(readOnlyRefusal(fixtureInvariants.invariants.flatMap(({ pipeline }) => pipeline)), undefined);
+    });
+
+    test("the format: version 1, the keys, unique names, a one-line description, a collection, 1 to 100 stages of Extended JSON v2, at most 50 invariants", () => {
+      const { invariants } = readInvariants(JSON.stringify(fixtureInvariants), EJSON);
+      assert.deepEqual(invariants.map(({ name }) => name), fixtureInvariants.invariants.map(({ name }) => name));
+      assert.ok(invariants[5].pipeline[0].$match.applied.$lt instanceof Date, "the $date was not read as a date");
+      const cases = [
+        ["[]", "it is not a JSON object"],
+        [JSON.stringify({ version: 2, invariants: [] }), "its version is 2, not 1, the one this toolkit reads"],
+        [JSON.stringify({ version: 1, invariants: [], checks: [] }), 'it holds "checks", which is not a key of the format (version and invariants)'],
+        [JSON.stringify({ version: 1, invariants: {} }), "its invariants is not a list"],
+        [file(...Array.from({ length: 51 }, (_, n) => invariant([{ $match: {} }], { name: `check-${n}` }))), "it lists 51 invariants, more than the 50 a check runs"],
+        [file("a string"), "invariant 1 is not an object"],
+        [file(invariant([{ $match: {} }], { name: "Not_A_Name" })), "invariant 1's name is not 1 to 64 of a-z, 0-9 and -"],
+        [file(invariant([{ $match: {} }]), invariant([{ $match: {} }])), "the invariant an-invariant is named twice"],
+        [file(invariant([{ $match: {} }], { severity: "high" })), 'the invariant an-invariant holds "severity", which is not a key of an invariant (name, description, collection and pipeline)'],
+        [file(invariant([{ $match: {} }], { description: "Two\nlines." })), "the invariant an-invariant's description is not one line of 1 to 200 characters"],
+        [file(invariant([{ $match: {} }], { description: "x".repeat(201) })), "the invariant an-invariant's description is not one line of 1 to 200 characters"],
+        [file(invariant([{ $match: {} }], { collection: "system.users" })), "the invariant an-invariant's collection is not a collection's name, of letters, digits and . _ - only, and not system.*"],
+        [file(invariant([{ $match: {} }], { collection: "../markets" })), "the invariant an-invariant's collection is not a collection's name, of letters, digits and . _ - only, and not system.*"],
+        [file(invariant([])), "the invariant an-invariant's pipeline is not a list of 1 to 100 stages"],
+        [file(invariant(Array.from({ length: 101 }, () => ({ $match: {} })))), "the invariant an-invariant's pipeline is not a list of 1 to 100 stages"],
+        [file(invariant([{ $out: "x" }])), "the invariant an-invariant: its stage 1 is $out, which writes a collection; an invariant only reads"],
+      ];
+      for (const [text, expected] of cases) assert.equal(readInvariants(text, EJSON).refusal, expected, text.slice(0, 200));
+      assert.match(refusalOf(invariant([{ $match: { _id: { $oid: "not-hex" } } }])), /^the invariant an-invariant's pipeline is not Extended JSON v2 \(.+\)$/);
+      assert.match(readInvariants('{"version": 1,', EJSON).refusal, /^it is not JSON \(.+\)$/);
+      assert.deepEqual(readInvariants(JSON.stringify({ version: 1, invariants: [] }), EJSON), { invariants: [] });
+    });
   });
 });
 
