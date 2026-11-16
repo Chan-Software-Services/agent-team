@@ -1948,12 +1948,12 @@ assert_no_answer_logged() {
     --from-message 'T7 BLOCKED command-guard  a recursive delete of /tmp/x; outside  ;  took its allowed way  '
   # A worker may name the way it took after the marker, in parentheses or after a comma, a colon
   # or a dash: the denial is the same, and its way keeps that text, its separator and blanks aside.
-  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a relative scope.txt target in a chained call could not be resolved","session":"b0000001","way":"(Write tool and absolute paths)"}' \
-    --from-message 'T7 BLOCKED command-guard a relative scope.txt target in a chained call could not be resolved; took its allowed way (Write tool and absolute paths)'
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/w","session":"b0000001","way":"(Write tool and absolute paths)"}' \
+    --from-message 'T7 BLOCKED command-guard a recursive delete of /tmp/w; took its allowed way (Write tool and absolute paths)'
   logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a kill of $p, a PID the guard cannot read","session":"b0000001","way":"($(jobs -p))"}' \
     --from-message 'T7 BLOCKED command-guard a kill of $p, a PID the guard cannot read; took its allowed way ($(jobs -p))'
-  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/y","session":"b0000001","way":"the Write tool with full paths, and nothing is parked."}' \
-    --from-message 'T7 BLOCKED command-guard a recursive delete of /tmp/y; took its allowed way, the Write tool with full paths, and nothing is parked.'
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/y","session":"b0000001","way":"the Write tool, then went on"}' \
+    --from-message 'T7 BLOCKED command-guard a recursive delete of /tmp/y; took its allowed way, the Write tool, then went on'
   logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /var/tmp/z","session":"b0000001","way":"left it in place"}' \
     --from-message 'T7 BLOCKED command-guard a recursive delete of /var/tmp/z; took its allowed way:  left it in place'
   logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a kill of PID 9","session":"b0000001","way":"killed the literal PID"}' \
