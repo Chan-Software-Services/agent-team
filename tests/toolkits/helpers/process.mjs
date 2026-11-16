@@ -1,10 +1,22 @@
 // What a running process holds, read on Linux and macOS: the environment and the sockets from
 // /proc on Linux, and through ps and lsof on macOS, which has no /proc; the children through ps
-// on both.
+// on both. And the end of what a test started, so a failed or timed-out test leaves nothing
+// running that holds node --test open.
 //
 //   startingEnvironment(pid)   the environment the process started with (Linux: its
 //                              /proc/<pid>/environ; macOS: what `ps -E` appends to its command)
 //   children(pid)              the pids of the process's children (`ps -A`, on both systems)
+//   descendants(pids)          the pids of every live process below any of `pids`: their
+//                              children, their children's, and on, from one `ps -A`
+//   owned(t, child)            `child`, a spawned ChildProcess, which endTree ends when test `t`
+//                              ends, passed, failed or timed out (node:test runs `t.after` on each)
+//   await endTree(child, { graceMs })
+//                              ends `child` and every process below it: reads its tree first,
+//                              since a process whose parent ends is no longer below it; sends the
+//                              child SIGTERM and waits up to `graceMs` (5 s) for it to exit, so a
+//                              script that cleans up on SIGTERM (the restore drill removing its
+//                              throwaway) does; then SIGKILLs what of the tree still runs, the
+//                              child too, and resolves once the child has exited
 //   inetPeers(pid)             the remote address of every TCP and UDP socket it holds, as
 //                              "host:port": an IPv4 address, or an IPv4-mapped IPv6 one, as
 //                              dotted IPv4 on both systems; any other IPv6 address in each
@@ -24,10 +36,63 @@ export function startingEnvironment(pid) {
   return execFileSync("ps", ["-E", "-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" });
 }
 
+const processTable = () =>
+  execFileSync("ps", ["-A", "-o", "pid=", "-o", "ppid="], { encoding: "utf8" })
+    .trim().split("\n").map((line) => line.trim().split(/\s+/));
+
 export function children(pid) {
-  return execFileSync("ps", ["-A", "-o", "pid=", "-o", "ppid="], { encoding: "utf8" })
-    .trim().split("\n").map((line) => line.trim().split(/\s+/))
-    .filter(([, ppid]) => ppid === String(pid)).map(([child]) => child);
+  return processTable().filter(([, ppid]) => ppid === String(pid)).map(([child]) => child);
+}
+
+export function descendants(pids) {
+  const below = new Map();
+  for (const [pid, ppid] of processTable()) below.set(ppid, [...(below.get(ppid) ?? []), pid]);
+  const found = new Set();
+  const queue = pids.map(String);
+  while (queue.length) {
+    for (const pid of below.get(queue.shift()) ?? []) {
+      if (found.has(pid)) continue;
+      found.add(pid);
+      queue.push(pid);
+    }
+  }
+  return [...found].map(Number);
+}
+
+export function owned(t, child) {
+  t.after(() => endTree(child));
+  return child;
+}
+
+const running = (child) => child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+
+// Resolves true once `child` has exited, or false after `ms` (never, with no `ms`).
+function exited(child, ms) {
+  if (!running(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = ms === undefined ? undefined : setTimeout(() => resolve(false), ms);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+export async function endTree(child, { graceMs = 5_000 } = {}) {
+  if (!running(child)) return;
+  const tree = descendants([child.pid]);
+  child.kill("SIGTERM");
+  await exited(child, graceMs);
+  for (const pid of [...tree, ...descendants(tree)]) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (error) {
+      // Gone already, or a pid reused by another user's process since the tree was read.
+      if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+    }
+  }
+  if (running(child)) child.kill("SIGKILL");
+  await exited(child);
 }
 
 export function inetPeers(pid) {
