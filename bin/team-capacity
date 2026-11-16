@@ -121,7 +121,7 @@
 #                      from one that is. A session's use is its scope's
 #                      (agent-team-T<n>-<id>.scope's working set and CPUUsageNSec, or
 #                      agent-team-T<n>-<id>-<pid>.scope's while its process runs there, as place
-#                      says) on Linux, else
+#                      says, and none while it is read in neither) on Linux, else
 #                      its process tree's memory (each process's as above: its proportional
 #                      set size on Linux where readable, else resident) and CPU seconds, but the
 #                      team-heavy that holds the heavy-run lock (its holder line's pid) and what

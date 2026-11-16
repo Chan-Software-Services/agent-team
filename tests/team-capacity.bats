@@ -663,19 +663,22 @@ team_reading() {
       (.sessions | map(.memory / $mib))])' "$STATE_DIR/readings.jsonl")" '[["T7",0,[0]],["T9",300,[300]]]'
 }
 
-@test "sample: a session placed again in its own pid's scope uses that scope's, and what its old scope holds is its task's" {
+@test "sample: a session placed again in its own pid's scope uses that scope's, one in neither of its scopes its tree, and what an old scope holds is its task's" {
   sample_machine
   local old new
   old=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
   new=$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)
   # The browser T7's builder's first process left, in its old scope, and the restarted builder in
-  # its own pid's scope; T9's reviewer, not placed, uses its tree.
+  # its own pid's scope; T9's reviewer, restarted and not placed again yet, runs in neither of its
+  # scopes, so it uses its tree, not what its old scope still holds.
   proc 150 1 1024 30 /tmp "$old"
   proc 100 99 512 60 "$T7_WT" "$new"
-  proc 200 1 300 40 "$T9_WT"
+  proc 200 1 300 40 "$T9_WT" "/user.slice/user-1000.slice/session-2.scope"
   sessions "a1b2c3d4 T7-builder 100" "b1b2c3d4 T9-reviewer 200"
   cgroup_memory agent-team-T7.slice 1536 0
   cgroup_memory agent-team-T7-a1b2c3d4.scope 1024 0 0 agent-team-T7.slice
+  cgroup_memory agent-team-T9-b1b2c3d4.scope 2048 0 0 agent-team-T9.slice
+  unit agent-team-T9-b1b2c3d4.scope CPUUsageNSec=900000000000
   cgroup_memory agent-team-T7-a1b2c3d4-100.scope 512 0 0 agent-team-T7.slice
   unit agent-team-T7-a1b2c3d4-100.scope CPUUsageNSec=60000000000
   run_bin -0 team-capacity sample
@@ -683,7 +686,7 @@ team_reading() {
       (.sessions | map([.id, .memory / $mib, .cpu_seconds]))])' "$STATE_DIR/readings.jsonl")" \
     '[["T7",1536,[["a1b2c3d4",512,60]]],["T9",300,[["b1b2c3d4",300,40]]]]'
   assert_equal "$(stub_calls systemctl)" \
-    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4-100.scope","agent-team-T9-b1b2c3d4.scope"]'
+    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4-100.scope"]'
 }
 
 @test "sample: a task's CPU is its slice's since the newest reading and its processes' outside the slice since the snapshot" {
