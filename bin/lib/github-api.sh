@@ -56,7 +56,8 @@
 #                      "another reader held <endpoint> for 30 s"), it serves an entry another
 #                      process refreshed meanwhile, or sends gh api -i <endpoint>, with
 #                      If-None-Match: <etag> when the entry has one, notes the budget and logs
-#                      the request: a 2xx is stored and served, a 304 serves the stored body
+#                      the request: a 2xx with a JSON body is stored and served (one with none
+#                      is a failure, "not JSON"), a 304 serves the stored body
 #                      and marks it fetched now, each returning 0 and removing a limit.json of
 #                      the answer's resource or all; a refusal for the limit writes limit.json
 #                      and returns 3; anything else returns 1. With no state directory it can
@@ -229,7 +230,8 @@ gh_lift_limit() {
 }
 
 # gh_log <method> <endpoint> <status> <resource> <used> <counted>: one line of today's log, an empty
-# argument null; the line that starts a day's log prunes the old logs and cache entries first.
+# method, status, resource or used null; the line that starts a day's log prunes the old logs and
+# cache entries first.
 gh_log() {
   local gh_now_s gh_day gh_log_file
   gh_now_s=$(gh_now) || return 0

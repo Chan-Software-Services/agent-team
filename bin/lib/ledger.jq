@@ -1843,8 +1843,9 @@ def ci_due_finding:
 # up to about 115; ci_wait, 110 minutes, while a running call runs team-ci-wait, whose deadline of
 # 90 minutes of sleeps (GitHub's rate limit slept out within it) ends it by about 100, each look's
 # reads taking a few seconds on top of its interval; ci_run, 205 minutes, while a running call
-# runs team-ci-run, which ends in that wait after at most two 2-minute graces and 90 minutes of
-# sleeps through GitHub's rate limit, so by about 194; interview, none (null),
+# runs team-ci-run, which ends in that wait after at most two graces (2 minutes each, up to 5 at a
+# look interval of 300 s) and 90 minutes of sleeps through GitHub's rate limit, so by about 200;
+# interview, none (null),
 # while a running call waits on Daniel with team-thread wait. session-activity names each call's limit from its whole command. team-sweep
 # reads the session-activity floor from default too, since no session quieter than it is stalled.
 def stall_limits: {default: 3000, gate: 10800, ci_wait: 6600, ci_run: 12300, interview: null};
