@@ -1328,14 +1328,6 @@ confined_in() {
   done
 }
 
-@test "a launched worker's chrome-devtools-axi session is named for its task and role" {
-  open_task T7
-  local role
-  for role in builder reviewer; do
-    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit browser -- go
-    assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" "T7-$role"
-  done
-}
 
 @test "the browser toolkit adds its plugin directory and no MCP server" {
   open_task T7
@@ -2567,11 +2559,11 @@ matcher_matches() {
   run -1 grep -Eq '@[A-Z_]+@' "$TEAM_HOME/tasks/T7/settings.ops.json" "$TEAM_HOME/tasks/T7/mcp.ops.json"
 }
 
-@test "@TEAM_CODE@, @TASK@, @TASK_DIR@, @WORKTREE@ and @ROLE@ are substituted in the settings and the MCP config" {
+@test "@TEAM_CODE@, @TASK@, @TASK_DIR@, @WORKTREE@, @ROLE@ and @SESSION@ are substituted in the settings and the MCP config" {
   fake_checkout
-  echo '{"env": {"WHO": "@ROLE@", "WHERE": "@WORKTREE@"}, "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "@TEAM_CODE@/bin/hooks/x @TASK@", "args": ["@TASK_DIR@"]}]}]}}' \
+  echo '{"env": {"WHO": "@ROLE@", "WHERE": "@WORKTREE@", "NAME": "@SESSION@"}, "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "@TEAM_CODE@/bin/hooks/x @TASK@", "args": ["@TASK_DIR@"]}]}]}}' \
     >"$code/settings/planner.json"
-  echo '{"mcpServers": {"alpha": {"command": "@TEAM_CODE@/a", "args": ["--task", "@TASK@", "@TASK_DIR@", "@ROLE@"], "env": {"ROOT": "@WORKTREE@"}}}}' >"$code/toolkits/kit-a/.mcp.json"
+  echo '{"mcpServers": {"alpha": {"command": "@TEAM_CODE@/a", "args": ["--task", "@TASK@", "@TASK_DIR@", "@ROLE@", "@SESSION@"], "env": {"ROOT": "@WORKTREE@"}}}}' >"$code/toolkits/kit-a/.mcp.json"
   open_task T7
   # The worktree by its real path, though the launch names it through a symlink.
   ln -s "$wt1" "$HOME/slot-link"
@@ -2581,9 +2573,10 @@ matcher_matches() {
   assert_equal "$(jq -c '.hooks.PreToolUse[-1].hooks[0] | [.command, .args[0]]' "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" \
     "$(jq -cn --arg code "$code" --arg t "$TEAM_HOME/tasks/T7" '["\($code)/bin/hooks/x T7", $t]')"
   assert_equal "$(jq -r .env.WHO "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" planner
+  assert_equal "$(jq -r .env.NAME "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" T7-planner
   assert_equal "$(jq -r .env.WHERE "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" "$(realpath "$wt1")"
   assert_equal "$(jq -c . "$TEAM_HOME/tasks/T7/mcp.planner.proj.json")" \
-    "$(jq -cn --arg code "$code" --arg t "$TEAM_HOME/tasks/T7" --arg wt "$(realpath "$wt1")" '{mcpServers: {alpha: {command: "\($code)/a", args: ["--task", "T7", $t, "planner"], env: {ROOT: $wt}}}}')"
+    "$(jq -cn --arg code "$code" --arg t "$TEAM_HOME/tasks/T7" --arg wt "$(realpath "$wt1")" '{mcpServers: {alpha: {command: "\($code)/a", args: ["--task", "T7", $t, "planner", "T7-planner"], env: {ROOT: $wt}}}}')"
 }
 
 # The ledger lines given on stdin, one per line, each "launch <task> <role> <session> <worktree>"
@@ -3140,6 +3133,22 @@ build_brief() {
   mkdir -p "$TEAM_HOME/tasks/T7"
   echo "# T7 brief (builder): ticket $1" >"$TEAM_HOME/tasks/T7/brief-build-$1.md"
   echo "$TEAM_HOME/tasks/T7/brief-build-$1.md"
+}
+
+@test "a launched worker's chrome-devtools-axi session is its session's name, so two ticket builders never share one" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  local role
+  for role in builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit browser -- go
+    assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" "T7-$role"
+  done
+  local n
+  for n in 03 07; do
+    ticket_worktree "$n"
+    run_bin -0 team-worker T7 builder "$twt" --toolkit browser -- "Read your brief at $(build_brief "$n")"
+    assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$TEAM_HOME/tasks/T7/settings.builder.proj--$n.json")" "T7-builder-$n"
+  done
 }
 
 @test "a builder in ticket NN's worktree is T<n>-builder-NN, logs ticket and the ticket branch, and has files of its own" {

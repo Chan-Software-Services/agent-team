@@ -910,10 +910,11 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
 }
 
 # chrome-devtools-axi runs one bridge and browser per session name, and a session's Bash calls keep
-# no exported variable, so the worker settings name each worker's session for its task and role
-# (team-worker fills both in), and two UI workers on one machine never share a browser.
-@test "each worker's chrome-devtools-axi runs in a session named for its task and role" {
-  assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$REPO_ROOT/settings/worker.json")" '@TASK@-@ROLE@'
+# no exported variable, so the worker settings name each worker's axi session for its own session
+# name (team-worker fills it in, a ticket builder's T<n>-builder-NN), and two UI workers on one
+# machine never share a browser.
+@test "each worker's chrome-devtools-axi runs in a session named for its own session" {
+  assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$REPO_ROOT/settings/worker.json")" '@SESSION@'
   assert_equal "$(jq -r '.env.CHROME_DEVTOOLS_AXI_SESSION // "unset"' "$REPO_ROOT/coordinator.settings.json")" unset
 }
 

@@ -122,9 +122,11 @@
 # after the project for ticket NN's builder (settings.builder.<project>--NN.json), and
 # settings.<role>.json and mcp.<role>.json otherwise; @TEAM_CODE@ in either names this checkout,
 # @TASK@ the task, @TASK_DIR@ the team home's tasks/<task>/, @WORKTREE@ the worktree by its real
-# path (the effect toolkit's Foldkit DevTools server's project root), and @ROLE@ the role (the
+# path (the effect toolkit's Foldkit DevTools server's project root), @ROLE@ the role (the
 # settings' AGENT_TEAM_ROLE, the signal a hook sees in a team session, and with AGENT_TEAM_TASK,
-# the task, what worker_refusal in bin/lib/team.sh reads). The registry's
+# the task, what worker_refusal in bin/lib/team.sh reads), and @SESSION@ the session's name,
+# T<n>-<role> or a ticket builder's T<n>-builder-NN (the settings' CHROME_DEVTOOLS_AXI_SESSION,
+# so each session drives a chrome-devtools-axi browser of its own). The registry's
 # projects, in its order, fill four more, for the autoMode lines: @PROJECT_REPOS@ each one's
 # repo and primary checkout ("owner/a (primary checkout ~/a) and owner/b (...)"),
 # @PROJECT_ORIGINS@ each one's origin, its own owner's ("github.com/owner/a or github.com/c/d"),
@@ -800,9 +802,12 @@ facts=$(while IFS= read -r name; do team_project "$name" || exit 1; done <<<"$re
 
 # @TEAM_CODE@ names this checkout, where the hooks and toolkits live; @TASK@ names the task, and
 # @TASK_DIR@ its directory in the team home, where its records live (the ops log); @WORKTREE@ the
-# worktree; @ROLE@ the role; the @PROJECT_*@ four the registry's projects.
+# worktree; @ROLE@ the role; @SESSION@ the session's name; the @PROJECT_*@ four the registry's
+# projects.
+name=$task-$role${ticket:+-$ticket}
 substitute='walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TASK@"; $task)
-  | gsub("@TASK_DIR@"; $taskdir) | gsub("@WORKTREE@"; $worktree) | gsub("@ROLE@"; $role) | gsub("@PROJECT_REPOS@"; $facts.repos)
+  | gsub("@TASK_DIR@"; $taskdir) | gsub("@WORKTREE@"; $worktree) | gsub("@ROLE@"; $role) | gsub("@SESSION@"; $session)
+  | gsub("@PROJECT_REPOS@"; $facts.repos)
   | gsub("@PROJECT_VISIBILITY@"; $facts.visibility) | gsub("@PROJECT_BASES@"; $facts.bases)
   | gsub("@PROJECT_ORIGINS@"; $facts.origins) else . end)'
 
@@ -828,7 +833,7 @@ shell_prefix=''
 # built-in rules) once, where it first stands. T0's planner, builder and reviewer get Remote
 # Control off (see the header).
 settings=$taskdir/settings.$stem.json
-jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
+jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --arg session "$name" --argjson facts "$facts" \
   --arg memory "$memory" --arg shell_prefix "$shell_prefix" --arg git_dir "$common_dir" '.[0] as $base | .[1] as $own
   | ($base * $own)
   | .permissions.deny = (($base.permissions.deny // []) + ($own.permissions.deny // []))
@@ -867,7 +872,7 @@ for kit in "${toolkits[@]}"; do
 done
 if [[ ${#mcp_files[@]} -gt 0 ]]; then
   server_roles=$(jq -s 'add // {}' "${roles_files[@]}" </dev/null) || exit 1
-  jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
+  jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --arg session "$name" --argjson facts "$facts" \
     --argjson roles "$server_roles" '{mcpServers: (map(.mcpServers // {}) | add
       | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role)))
       | if $role == "ops" then map_values(.env = (.env // {}) + {AGENT_TEAM_ROLE: "ops"}) else . end)} | '"$substitute" \
@@ -986,7 +991,6 @@ else
   mv -f -- "$tmp" "$system_prompt"
 fi
 
-name=$task-$role${ticket:+-$ticket}
 # --mcp-config and --tools take several values, so neither may come right before the prompt.
 out=$(cd "$worktree" && claude --bg "${restricted[@]}" "${sources[@]}" \
   --strict-mcp-config --mcp-config "$mcp" \
