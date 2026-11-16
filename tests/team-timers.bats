@@ -2097,12 +2097,17 @@ LINES
   done
   jq -cn --arg ts "$(date -u -d '1 hour ago' +%FT%TZ)" '{ts: $ts, mode: "auto", level: "none", by: "auto", machine: "home-pc"}' \
     >"$TEAM_HOME/level.jsonl"
+  # tmp: a stale no-mistakes leftover under the sandbox's /tmp root, on a tmpfs 10% full.
+  mkdir -p "$TEAM_SYSTEM_ROOT/tmp/nm-cli-home-1"
+  touch -d '125 minutes ago' "$TEAM_SYSTEM_ROOT/tmp/nm-cli-home-1"
+  echo "tmpfs 17179869184 1717986919 rw,usrquota" >"$BATS_TEST_TMPDIR/df"
+  export TEAM_TMP_DF=$BATS_TEST_TMPDIR/df
   # stacks: the sweep stops the idle conventioner-2; checkpoint: always a line; pack: 200 loose
   # objects; janitor: no report of today yet.
   add_loose 200
   run_bin -0 team-timers run
   assert_equal "$output" "$(cat "$log")"
-  assert_equal "$(steps "$output")" "lease checkpoint coordinator uptime inbox finished capacity level stacks pack janitor"
+  assert_equal "$(steps "$output")" "lease checkpoint coordinator uptime tmp inbox finished capacity level stacks pack janitor"
 }
 
 @test "the stacks and janitor steps are off without stack.json, without their keys and while they are false: no line, no call" {
