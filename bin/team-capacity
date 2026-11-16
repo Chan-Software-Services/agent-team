@@ -28,11 +28,12 @@
 #          malformed) the drop-in is the one without it, and with a gate daemon unit its first
 #          line says "the gate's daemon stays on the machine's own GitHub login: <why>". A gate
 #          daemon that runs (ActiveState active) outside the slice, whose drop-in it just
-#          rewrote, or whose process's GH_CONFIG_DIR is not what its drop-in names (or, the
-#          worker login on, holds a GH_TOKEN or GITHUB_TOKEN that is not empty) is restarted
-#          with `no-mistakes daemon restart`, never --force, which refuses while a pipeline runs:
-#          then the daemon is left as it is, and it says why and that a later install restarts
-#          it. Each file written, the reload and each restart is one line; with nothing to do it
+#          rewrote, or whose process is on another login than its drop-in names (with the
+#          worker login on, a GH_CONFIG_DIR other than its directory, or a GH_TOKEN or
+#          GITHUB_TOKEN that is not empty; off, the worker login's directory as GH_CONFIG_DIR)
+#          is restarted with `no-mistakes daemon restart`, never --force, which refuses while a
+#          pipeline runs: then the daemon is left as it is, and it says why and that a later
+#          install restarts it. Each file written, the reload and each restart is one line; with nothing to do it
 #          says so. Idempotent. Exit 1 when the user manager does not answer the reload.
 # place    On Linux, adopts each live team session (claude agents --json: every session named
 #          T<n>-<role>, or T<n>-<role>-<NN> as a ticket's builder is, whose process runs, never

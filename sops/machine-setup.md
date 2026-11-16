@@ -235,7 +235,7 @@ On a machine the worker login is `gh`'s own login file, `~/.config/agent-team/gh
 `bin/lib/github-login.sh` is the one place that knows where either login lives.
 With the worker login on:
 
-- `team-worker`, `claude-coordinator` and `claude-assistant` give their session `GH_CONFIG_DIR` naming that directory and `GH_TOKEN` and `GITHUB_TOKEN` empty, so `gh`, `gh-axi` and git all answer with the worker login; each refuses to start a session, naming `team-secrets restore`, while the file is missing, empty or off its mode.
+- `team-worker` (but for an ops session), `claude-coordinator` and `claude-assistant` give their session `GH_CONFIG_DIR` naming that directory and `GH_TOKEN` and `GITHUB_TOKEN` empty, so `gh`, `gh-axi` and git all answer with the worker login; each refuses to start a session, naming `team-secrets restore`, while the file is missing, empty or off its mode.
 - `command-guard` refuses a session's own assignment or unset of those three names, and the coordinator's settings deny a Bash call naming them, since its session runs no `command-guard`; both hold with the worker login off too.
 - `team-merge` runs on the owner login throughout, whatever session runs it.
 - The team home's git asks the owner login for github.com, through two credential helper values of its own checkout, which `team-bootstrap`'s machine stage sets and the doctor's `team home login` line checks, the worker login on or off.
