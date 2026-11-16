@@ -229,8 +229,8 @@ gh_calls() {
 }
 
 # The stub sleep moves on to the next look, and the reader's clock on by its seconds, and, after
-# LOOK_LIMIT looks (default 200, 100 minutes), stops the wait with exit 99, so a wait that never
-# ends shows as that exit. The uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
+# LOOK_LIMIT looks (default 200), stops the wait with exit 99, so a wait that never ends shows as
+# that exit. The uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
 stub_sleep() {
   stub_command sleep uname
   stub_reply uname Linux

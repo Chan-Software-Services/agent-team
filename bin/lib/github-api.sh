@@ -22,8 +22,8 @@
 #   calls-<UTC date>.jsonl
 #                      one line per request sent, {at (UTC time), by, for, method, endpoint (its
 #                      query cut), status (the HTTP code, null with none), resource, used,
-#                      counted}; counted is false for a 304 and a refusal for the limit, true for
-#                      every other request.
+#                      counted}; counted is false for a 304, a refusal for the limit and
+#                      gh_call's read of gh api rate_limit, true for every other request.
 # Every write but the log's goes to a temporary file in the same directory, moved into place;
 # budget.json's and limit.json's under state.lock. The log is appended a line at a time; the
 # request that starts a day's log removes the logs of days more than 2 before it and the cache
