@@ -38,7 +38,7 @@
 #                  a ticket's builder is at work until a done of its session or its ticket's
 #                  ticket-done), and no ticket-gone;
 #                  merged is told to close, and merged-part (a merged naming phases_left, phases
-#                  with a ticket not done) to launch the next phase's first ticket's builder
+#                  with a ticket not done) to start the next phase with team-next T<n> --fill
 #   waiting-input  a live session of an open task, not parked, whose state is blocked; never a
 #                  builder with no dialog open (its status idle, no waitingFor) that delivered: a
 #                  pr since its launch, and since the latest one only launches of a reviewer,

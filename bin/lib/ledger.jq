@@ -1959,7 +1959,7 @@ def task_findings($sessions; $activity):
             (map(select(.event == "merged" and .phases_left != null)) | last | .phases_left | map(tostring) | join(", ")) as $left
             | finding($task; "no-worker"; $session; $name;
                 "a part merged, with phase \($left) still to build, \($how) (latest \($name) \($session))";
-                "launch the next phase's first ticket's builder (team-tickets \($task) names it)")
+                "start the next phase with team-next \($task) --fill")
           elif $live == [] then
             finding($task; "no-worker"; $session; $name;
               "no live session among its \($launches | length) launch\(if ($launches | length) == 1 then "" else "es" end) (latest \($name) \($session))";

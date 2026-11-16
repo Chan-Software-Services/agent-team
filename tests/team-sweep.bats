@@ -248,10 +248,10 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   launch T7 builder 22222222
   event T7 merged '{pr: 5, merge: "abcdef0", head: "1234567", by: "daniel", phases_left: [2, 3]}'
   run_bin -1 team-sweep
-  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with no live worker (latest T7-builder 22222222); next: launch the next phase's first ticket's builder (team-tickets T7 names it)"
+  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with no live worker (latest T7-builder 22222222); next: start the next phase with team-next T7 --fill"
   sessions "$(session 22222222 T7-builder idle working)"
   run_bin -1 team-sweep
-  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with every live worker idle (latest T7-builder 22222222); next: launch the next phase's first ticket's builder (team-tickets T7 names it)"
+  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with every live worker idle (latest T7-builder 22222222); next: start the next phase with team-next T7 --fill"
   # The next phase's builder at work is enough.
   launch T7 builder 33333333
   sessions "$(session 33333333 T7-builder busy working)"
