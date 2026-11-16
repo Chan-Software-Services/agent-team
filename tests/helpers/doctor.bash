@@ -26,6 +26,12 @@ declare -gA FORMAT=(
   # The real build also names its commit in parentheses after the version, which the pattern
   # skips; a stub at any version leaves it out.
   [no-mistakes]='no-mistakes version v%s 2026-10-31T01:47:41Z'
+  # rustup's line in the form of its source, its commit and date placeholders, then its notes on
+  # stderr; the cargo tools' lines as the pinned releases print them on home-pc.
+  [rustup]=$'rustup %s (0000000000 2026-11-04)\ninfo: This is the version for the rustup toolchain manager, not the rustc compiler.'
+  [cargo-nextest]=$'cargo-nextest %s (26ebeda79 2026-11-13)\nrelease: %s\ncommit-hash: 26ebeda79b9ae1d008cf64ddb01984bcaa6e1239'
+  [sccache]='sccache %s'
+  [cargo-deny]='cargo-deny %s'
   [op]='%s'
   [git]='git version %s'
   [jq]='jq-%s'

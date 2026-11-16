@@ -71,16 +71,17 @@ lock_has_its_shape() {
 @test "tools.lock lists every tool of the spec once per OS, each with a version_cmd, a pattern, a pin or a min, and its sources" {
   lock_has_its_shape
   local os both=(claude node codegraph gh-axi chrome-devtools-axi chrome-devtools-mcp lavish-axi opencode bun
-    treehouse no-mistakes op git jq tmux gh rsync docker docker-compose python bash go)
+    treehouse no-mistakes rustup cargo-nextest sccache cargo-deny op git jq tmux gh rsync docker docker-compose python bash go)
   local mac_only=(coreutils findutils gnu-sed grep flock) arch_only=(make unzip)
   for os in arch macos; do
     local expected=("${both[@]}")
     if [[ $os == arch ]]; then expected+=("${arch_only[@]}"); else expected+=("${mac_only[@]}"); fi
     assert_equal "$(lock_tools "$os" | cut -f1 | sort)" "$(printf '%s\n' "${expected[@]}" | sort)"
   done
-  # Pinned: the tools the bootstrap installs itself, op on Linux only; Claude Code only warns.
+  # Pinned: the tools the bootstrap installs itself, op on Linux only; Claude Code and rustup, which
+  # update themselves, only warn.
   assert_equal "$(jq -r '[.tools[] | select(.pin or .from) | .name] | join(" ")' "$LOCK")" \
-    "claude node codegraph gh-axi chrome-devtools-axi chrome-devtools-mcp lavish-axi opencode bun treehouse no-mistakes op"
+    "claude node codegraph gh-axi chrome-devtools-axi chrome-devtools-mcp lavish-axi opencode bun treehouse no-mistakes rustup cargo-nextest sccache cargo-deny op"
   # treehouse is a GitHub release, each archive's checksum recorded; no-mistakes is Daniel's fork,
   # built at a commit on its main past upstream's release (the next test holds its version to
   # both), and keeps upstream's release, which from = "release" would pin instead.
@@ -92,9 +93,10 @@ lock_has_its_shape() {
   # The fork builds with Go (its go.mod's version) and make, from the OS packages.
   assert_equal "$(jq -r '[.tools[] | select(.name | IN("go", "make")) | "\(.name)>=\(.min):\(.source | keys | join(","))"] | join(" ")' "$LOCK")" \
     "go>=1.25.0:arch,macos make>=4.0:arch"
-  assert_equal "$(jq -r '[.tools[] | select(.pin_mismatch) | "\(.name)=\(.pin_mismatch)"] | join(" ")' "$LOCK")" "claude=WARN"
-  # Claude Code also has a floor, the first version whose hooks honour onFailure.
-  assert_equal "$(jq -r '[.tools[] | select(.pin and .min) | "\(.name)>=\(.min)"] | join(" ")' "$LOCK")" "claude>=2.1.295"
+  assert_equal "$(jq -r '[.tools[] | select(.pin_mismatch) | "\(.name)=\(.pin_mismatch)"] | join(" ")' "$LOCK")" "claude=WARN rustup=WARN"
+  # Claude Code also has a floor, the first version whose hooks honour onFailure, and rustup the
+  # first whose toolchain install with no toolchain installs rust-toolchain.toml's.
+  assert_equal "$(jq -r '[.tools[] | select(.pin and .min) | "\(.name)>=\(.min)"] | join(" ")' "$LOCK")" "claude>=2.1.295 rustup>=1.28.0"
   assert_equal "$(jq -r '.tools[] | select(.name == "docker-compose") | .min' "$LOCK")" 2.24.0
 }
 
@@ -271,6 +273,116 @@ lock_has_its_shape() {
   # The other tools resolve exactly as before.
   assert_equal "$(jq -L "$REPO_ROOT/bin/lib" -c --arg os arch --arg machine x86_64 'include "tools"; tools_for($os; $machine) | select(.name != "no-mistakes")' "$lock")" \
     "$(jq -L "$REPO_ROOT/bin/lib" -c --arg os arch --arg machine x86_64 'include "tools"; tools_for($os; $machine) | select(.name != "no-mistakes")' "$LOCK")"
+}
+
+@test "the Rust tools install into ~/.cargo/bin with no sudo, each checking its recorded SHA-256 before anything runs or is unpacked" {
+  local os name source check before after
+  for os in arch macos; do
+    if [[ $os == arch ]]; then check='sha256sum -c -'; else check='shasum -a 256 -c'; fi
+    for name in rustup cargo-nextest sccache cargo-deny; do
+      source=$(lock_of "$name" ".source.$os")
+      [[ $source != *sudo* ]] || { echo "$name on $os: $source" >&2; return 1; }
+      # shellcheck disable=SC2088 # the lock's ~, written as the lock writes it
+      assert_equal "$(lock_of "$name" ".path.$os")" '~/.cargo/bin'
+      # One check, of a recorded SHA-256, and nothing unpacked or run before it.
+      assert_equal "$(grep -o -F -- "$check" <<<"$source" | wc -l)" 1
+      before=${source%%"$check"*} after=${source#*"$check"}
+      [[ $before =~ echo\ \"[0-9a-f]{64}\ \  ]] || { echo "$name on $os: no SHA-256 before $check: $source" >&2; return 1; }
+      [[ $before != *tar\ * && $before != *chmod* && $before != *-y\ * ]] || { echo "$name on $os: acts before its check: $source" >&2; return 1; }
+      [[ $after == *'~/.cargo/bin'* || $after == *'rustup-init" -y --no-modify-path --default-toolchain none --profile minimal'* ]] ||
+        { echo "$name on $os: $source" >&2; return 1; }
+    done
+  done
+  # rustup-init installs only when it is named so, and the toolchain is rust-toolchain.toml's.
+  assert_contains "$(lock_of rustup .source.arch)" '/rustup/archive/1.29.3/x86_64-unknown-linux-gnu/rustup-init && '
+  assert_contains "$(lock_of rustup .source.macos)" '/rustup/archive/1.29.3/aarch64-apple-darwin/rustup-init && '
+  # The library puts ~/.cargo/bin on PATH, before the system's /usr/bin/cargo.
+  jq -L "$REPO_ROOT/bin/lib" -r --arg os arch --arg home "$HOME" --arg nvm "$HOME/.nvm" --arg brew '' --arg root '' \
+    'include "tools"; tool_dirs($os; $home; $nvm; $brew; $root)' "$LOCK" | grep -qxF "$HOME/.cargo/bin"
+}
+
+# The channel rust-toolchain.toml pins.
+rust_channel() {
+  sed -n 's/^channel = "\(.*\)"$/\1/p' "$REPO_ROOT/rust-toolchain.toml"
+}
+
+# rustup lists the pinned toolchain's installed components as <component>... (default the four
+# rust-toolchain.toml names), each with the host's target as rustup prints it, rust-src without.
+rust_components() {
+  local channel component lines=(cargo-x86_64-unknown-linux-gnu rust-std-x86_64-unknown-linux-gnu rustc-x86_64-unknown-linux-gnu)
+  channel=$(rust_channel)
+  (($#)) || set -- rustfmt clippy rust-analyzer rust-src
+  for component; do
+    if [[ $component == rust-src ]]; then lines+=(rust-src); else lines+=("$component-x86_64-unknown-linux-gnu"); fi
+  done
+  answer "rustup component list --installed --toolchain $channel" "$(printf '%s\n' "${lines[@]}" | sort)"
+}
+
+# The code checkout holds rust-toolchain.toml, rustup has its toolchain with every component, and
+# cargo is rustup's proxy in ~/.cargo/bin, as rustup-init leaves it.
+rust_toolchain() {
+  cp "$REPO_ROOT/rust-toolchain.toml" "$CODE_CHECKOUT/"
+  answer "rustup toolchain list" "stable-x86_64-unknown-linux-gnu (default)
+$(rust_channel)-x86_64-unknown-linux-gnu (active)"
+  rust_components
+  mkdir -p "$HOME/.cargo/bin"
+  ln "$(shared rust-cargo-proxy <<<'#!/bin/sh')" "$HOME/.cargo/bin/cargo"
+}
+
+@test "tool rust-toolchain passes with rust-toolchain.toml's toolchain and its four components, cargo being rustup's in ~/.cargo/bin" {
+  only_checks 035-rust.sh
+  tools_at arch
+  rust_toolchain
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS os: Arch Linux
+PASS tool rust-toolchain: $(rust_channel) with clippy, rust-analyzer, rust-src, rustfmt"
+}
+
+@test "tool rust-toolchain fails without rustup, without the toolchain or lacking a component, its fix rustup toolchain install in the code checkout" {
+  local channel fix
+  channel=$(rust_channel)
+  fix="cd $CODE_CHECKOUT && rustup toolchain install"
+  only_checks 035-rust.sh
+  tools_at arch
+  rust_toolchain
+  answer "rustup toolchain list"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: rustup is not installed; fix: $fix"
+  # Another toolchain, a longer version starting with the same digits, or none.
+  answer "rustup toolchain list" "stable-x86_64-unknown-linux-gnu (default)
+${channel}0-x86_64-unknown-linux-gnu"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: $channel is not installed; fix: $fix"
+  answer "rustup toolchain list" "no installed toolchains"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: $channel is not installed; fix: $fix"
+  answer "rustup toolchain list" "$channel-x86_64-unknown-linux-gnu (active)"
+  rust_components rustfmt rust-analyzer
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: $channel lacks clippy, rust-src; fix: $fix"
+  # The code checkout under HOME is named by ~, as on a machine.
+  mv "$CODE_CHECKOUT" "$HOME/agent-team"
+  CODE_CHECKOUT=$HOME/agent-team run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: $channel lacks clippy, rust-src; fix: cd ~/agent-team && rustup toolchain install"
+}
+
+@test "tool rust-toolchain fails while cargo is another than rustup's in ~/.cargo/bin, its fix the lock's rustup install" {
+  only_checks 035-rust.sh
+  tools_at arch
+  rust_toolchain
+  rm "$HOME/.cargo/bin/cargo"
+  # The system's cargo, first on PATH once ~/.cargo/bin has none.
+  tool_stub cargo
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: cargo is $TOOL_STUBS/cargo, not ~/.cargo/bin/cargo; fix: $(lock_of rustup .source.arch)"
+}
+
+@test "no rust-toolchain.toml in the code checkout gives no tool rust-toolchain line" {
+  only_checks 035-rust.sh
+  tools_at arch
+  answer "rustup toolchain list"
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS os: Arch Linux"
 }
 
 @test "on macOS each missing tool fails its line with its Homebrew or install command" {
