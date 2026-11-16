@@ -9,11 +9,12 @@
 #
 # It runs team-doctor first (--json, printing each line as the doctor does), and stops there,
 # leasing and launching nothing, on a FAIL that bears on a session it starts: any FAIL but the
-# gate's (gate-agent) and the per-project lines (checkout, origin, task dir, gate, slots, leases,
-# trust, branches, changes) of a project other than the code checkout's own, past which it goes
-# on, naming each on stderr; the planner form also stops on a checkout, task dir, slots or leases
-# FAIL of a treehouse project, whose lease it rehearses, and the ops form on any per-project FAIL
-# of the project its worktree is in. TEAM_DOCTOR names the doctor to run instead (the tests'
+# gate's (gate-agent) and the per-project lines (checkout, origin, moved origin, task dir, gate,
+# slots, leases, trust, branches, changes) of a project other than the code checkout's own, past
+# which it goes on, naming each on stderr; the planner form also stops on a checkout, task dir,
+# slots or leases FAIL of a treehouse project, whose lease it rehearses, and the ops form on any
+# per-project FAIL of the project its worktree is in. The doctor's moved origins line, of the code
+# checkout and the team home, stops every form. TEAM_DOCTOR names the doctor to run instead (the tests'
 # seam), which answers --json.
 #
 # Usage: team-load-check [--toolkit <name>]...
@@ -355,8 +356,9 @@ jq -r '.[] | "\(.verdict) \(.check): \(.reason)" + (if .fix == "" then "" else "
 # gate's, which no session of the load check runs, or a per-project line of a registered project
 # no session needs: every form needs the code checkout's own project, whose main checkout its
 # worktree is made from; the planner form the lines of each treehouse project its lease rehearsal
-# leases from; the ops form every line of the project its worktree is in.
-project_lines=(checkout origin 'task dir' gate slots leases trust branches changes)
+# leases from; the ops form every line of the project its worktree is in. The doctor's moved
+# origins line, the code checkout's and the team home's, is no project's, so it always stops.
+project_lines=(checkout origin 'moved origin' 'task dir' gate slots leases trust branches changes)
 lease_lines=(checkout 'task dir' slots leases)
 declare -A registered=() needs_all=() needs_lease=()
 mapfile -t fails < <(jq -r '.[] | select(.verdict == "FAIL") | .check' <<<"$doctor")

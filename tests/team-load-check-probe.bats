@@ -612,18 +612,23 @@ FAIL builder unrefused: expected refused, got no-verdict"
   assert_equal "$(stub_calls claude)" ""
   [[ ! -e $wt ]]
 
-  doctor_results FAIL 'checkout code'
-  run_bin -1 --separate-stderr team-load-check --probe --role planner
-  assert_equal "$stderr" "$stopped"
-  assert_equal "$(stub_calls claude)" ""
+  # A moved origin of the code checkout or the team home, or of the code checkout's project.
+  local check
+  for check in 'checkout code' 'moved origins' 'moved origin code'; do
+    doctor_results FAIL "$check"
+    run_bin -1 --separate-stderr team-load-check --probe --role planner
+    assert_equal "$stderr" "$stopped"
+    assert_equal "$(stub_calls claude)" ""
+  done
 
-  # Another project's line, and a treehouse project's slots, whose lease the probe never rehearses,
-  # bear on none of its sessions, even a planner's.
+  # Another project's line, its moved origin among them, and a treehouse project's slots, whose
+  # lease the probe never rehearses, bear on none of its sessions, even a planner's.
   registry "$(printf '%s\n' '[proj.pool]' 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' \
     'return = "scripts/th-return.sh"' 'slots = [".treehouse/proj-abc123/1/proj"]')"
-  doctor_results FAIL 'checkout site' FAIL 'slots proj'
+  doctor_results FAIL 'checkout site' FAIL 'moved origin site' FAIL 'slots proj'
   run_bin -0 --separate-stderr team-load-check --probe --role planner
   assert_equal "$stderr" "$(going_on 'checkout site')
+$(going_on 'moved origin site')
 $(going_on 'slots proj')"
   assert_equal "$(verdicts)" "$(passes planner)"
 }
