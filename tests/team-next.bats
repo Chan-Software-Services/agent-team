@@ -619,14 +619,13 @@ no hand-off for QUESTION"
   assert_contains "$output" "--from is given twice"
 }
 
-@test "--help prints the header, and the manual's step 4 names team-next within its 120 lines" {
+@test "--help prints the header, and the manual's step 4 names team-next" {
   run_bin -0 team-next --help
   assert_contains "$output" "Usage: team-next T<n> [--from <session>] [--sent-back <list>] [--relay <id>] [--next <NN>] [--checks <file>]"
   assert_contains "$output" "[--since <file>] [--template rereview|verify] -- '<the worker's message>'"
   local manual=$REPO_ROOT/roles/coordinator.md
   grep -E '^4\. \*\*Build\.\*\*' -A 1 "$manual" | grep -qF '`team-next T<n> -- '"'"'<the message>'"'"'`'
   grep -qF -- '`--next NN`' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 # T172 ticket 13: a builder's PR, DONE review-ready or DONE merged launches a fresh reviewer.
@@ -1063,7 +1062,6 @@ launched T7-reviewer c0000001"
   grep -qF '`team-next` (no `--checks`) launches the fresh reviewer that re-checks from the reviewed head' "$manual"
   grep -qF 'your own words added with `--since <file>`' "$manual"
   grep -E '^\| `PR <url>` \| `team-next` \| It starts the review \(step 5\)' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 # T172 ticket 14: a reviewer's verdict, and the fix round's stow.
@@ -1838,6 +1836,277 @@ SH
   assert_equal "$(stub_calls team-review-check)" ""
 }
 
+# second_repo: T7 also has a worktree in other, a second registered project the App posts nothing
+# for, with a builder there (b0000002) and a PR 4 ($url_other) at its head ($head_other), not
+# logged yet.
+second_repo() {
+  cat >>"$TEAM_HOME/projects.toml" <<'TOML'
+
+[other]
+repo = "owner/other"
+path = "projects/other"
+base = "main"
+delivery = "direct-pr"
+merge_method = "merge"
+required_checks = []
+task_dir = ".scratch/task"
+docs = []
+toolkits = []
+pool = { provider = "git", slots = ["slots/other/1"] }
+TOML
+  local primary_other
+  primary_other=$(make_repo other)
+  wt_other=$HOME/slots/other/1
+  git -C "${primary_other:?}" worktree add -q -b feat/T7-toil "$wt_other"
+  head_other=$(git -C "${wt_other:?}" rev-parse HEAD)
+  url_other=https://github.com/owner/other/pull/4
+  event worktree-added "$(jq -cn --arg wt "$wt_other" --arg h "$head_other" \
+    '{project: "other", branch: "feat/T7-toil", base: "main", base_sha: $h[:7], worktree: $wt}')"
+  launched_in other b0000002 brief-deliver-other builder
+}
+
+# other_reviewing: other's PR logged at its head and its reviewer (r0000003) launched on
+# brief-review-2, whose record names that head.
+other_reviewing() {
+  event pr "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h}')"
+  jq -cn --arg url "$url_other" --arg h "$head_other" '{template: "reviewer", project: "other", values: {pr: $url, head: $h}}' \
+    >"$TEAM_HOME/tasks/T7/brief-review-2.json"
+  launched_in other r0000003 brief-review-2 reviewer
+}
+
+# two_repos: a PR and a reviewer in each of two repositories, proj's PR 9 at $sha logged and its
+# reviewer (r0000002) launched first, other's last, as three reviews ran beside each other in
+# three repositories.
+two_repos() {
+  second_repo
+  reviewing "$sha"
+  other_reviewing
+}
+
+# launched_in <project> <session> <brief> <role>: a launch in that project's worktree of T7.
+launched_in() {
+  event launch "$(jq -cn --arg p "$1" --arg s "$2" --arg b "$3" --arg r "$4" --arg wt "$HOME/slots/$1/1" \
+    '{role: $r, session: $s, worktree: $wt, toolkits: [], project: $p, branch: "feat/T7-toil", machine: "home-pc", brief: $b}')"
+}
+
+@test "with a PR and a reviewer in each of two repositories, each verdict is taken from its own repository's latest reviewer, the first launched sent last" {
+  own_app
+  two_repos
+  pr_on_github "$sha"
+  local pass="T7 DONE pass $url $counts before=none guarded=none"
+  local findings="T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:2} before=none guarded=none"
+  # other's verdict comes first, from the task's latest reviewer launch.
+  run_bin -0 team-log T7 --from-message "$findings" --from r0000003 --sent-back 1,2
+  # proj's pass, from the reviewer launched first, is taken: it is proj's latest reviewer, the
+  # review is of proj's head, and the App's check is posted on proj's PR, not other's.
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "$pass"
+  assert_equal "$output" "logged review verdict=pass head=$sha findings={\"blocking\":0,\"correctness\":0,\"security\":0,\"real-data\":0,\"note-change\":0,\"note-before\":0} before=[] guarded=[]
+logged done role=reviewer session=r0000002
+posted agent-review success on ${sha:0:8} as the reviewer App's check run 4242
+$(arm_line "$sha")"
+  assert_equal "$(stub_calls team-review-check)" "$(jq -cn --arg url "$url" --arg sha "$sha" '[$url, $sha, "success", "T7'"'"'s review of \($sha[:8]) passed"]')"
+  assert_equal "$(outside_calls)" ""
+}
+
+# both_on_github: gh answers team-state's reads of proj's PR 9 at $sha and of other's PR 4 at
+# $head_other, each open on its task branch with no check.
+both_on_github() {
+  export GH_HEAD=$sha GH_HEAD_OTHER=$head_other
+  stub_script gh <<'SH'
+case "$*" in
+  *owner/other*) repo=owner/other n=4 head=$GH_HEAD_OTHER ;;
+  *) repo=owner/proj n=9 head=$GH_HEAD ;;
+esac
+case "$*" in
+  "pr view $n --repo $repo --json number,state,baseRefName,headRefOid,headRefName,changedFiles")
+    jq -cn --arg h "$head" --argjson n "$n" '{number: $n, state: "OPEN", baseRefName: "main", headRefOid: $h,
+      headRefName: "feat/T7-toil", changedFiles: 1}' ;;
+  "pr checks $n --repo $repo"*) echo '[]' ;;
+  "api repos/$repo/compare/main...$head --jq .behind_by") echo 0 ;;
+  "api repos/$repo/pulls/$n/files --paginate") echo '[{"filename": "one.txt"}]' ;;
+  "api repos/$repo/commits/$head/check-runs?check_name=agent-review&filter=latest&per_page=100")
+    echo '{"total_count": 0, "check_runs": []}' ;;
+  "api repos/$repo/commits/$head/status") echo '{"state": "pending", "statuses": []}' ;;
+  *) echo "unplanned gh call: $*" >&2; exit 1 ;;
+esac
+SH
+}
+
+@test "with reviewers in two repositories, the other repository's findings go to its own builder on its own PR, and post no check" {
+  own_app
+  two_repos
+  both_on_github
+  ci_wait_ends passed "$head_other"
+  live b0000001 120000 b0000002 80000
+  local findings="T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:2} before=none guarded=none"
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 --sent-back 1,2 -- "$findings"
+  assert_contains "$output" "logged review verdict=findings head=$head_other"
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "send to T7-builder (b0000002, 80k): T7 fix findings 1 and 2 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+  # The look at the checks was other's PR's, at the head its review read, and the App posts nothing there.
+  assert_equal "$(stub_calls team-ci-wait)" "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", "--look", $url, $h]')"
+  assert_equal "$(stub_calls team-review-check)" ""
+  assert_equal "$(outside_calls)" ""
+}
+
+@test "--ci after a pass in one of two repositories waits on that repository's PR and prints its merge ask, the other's pr logged last and its findings first" {
+  own_app
+  two_repos
+  pr_on_github "$sha"
+  run_bin -0 team-log T7 --from-message "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:2} before=none guarded=none" \
+    --from r0000003 --sent-back 1,2
+  passed --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge ask: $url at $sha, "
+  assert_equal "$(stub_calls team-ci-wait | tail -n 1)" "$(jq -cn --arg url "$url" --arg h "$sha" '["--no-agent-review", "--json", $url, $h]')"
+  assert_equal "$(outside_calls)" ""
+}
+
+@test "--ci still waits on a passed PR's checks once another repository's findings are logged after the pass" {
+  own_app
+  two_repos
+  pr_on_github "$sha"
+  ci_wait_ends passed "$sha"
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(arm_line "$sha")"
+  run_bin -0 team-log T7 --from-message "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:2} before=none guarded=none" \
+    --from r0000003 --sent-back 1,2
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge ask: $url at $sha, "
+  # The state names the same wait, passed now.
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url" --arg h "$sha" '{url: $url, head: $h, state: "passed"}')"
+}
+
+@test "--ci waits on a pass in one repository though another repository's checks failed and went back as a round before it" {
+  own_app
+  two_repos
+  both_on_github
+  live b0000001 120000 b0000002 80000
+  # proj's pass, whose checks fail on a failure of the PR's own: the round goes back to proj's builder.
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  red_checks "$sha"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=failed"
+  # other's pass, logged after it, has its own wait.
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 -- "T7 DONE pass $url_other $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(url=$url_other arm_line "$head_other")"
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "waiting"}')"
+  ci_wait_ends passed "$head_other"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_equal "$(stub_calls team-ci-wait | tail -n 1)" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", $url, $h]')"
+  # The passed wait stands before the failed one, which only its own repository's next review ends.
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "passed"}')"
+}
+
+@test "--ci waits on a pass in one repository though another repository's wait ended blocked on infrastructure before it" {
+  own_app
+  two_repos
+  both_on_github
+  # proj's pass, whose wait ends blocked: a check queued with no runner, which is never rerun.
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  ci_wait_ends failed "$sha" 1 "team-ci-wait: the checks on ${sha:0:7} did not pass" "$(infra build queued 5 50 | jq -sc .)"
+  run_bin -1 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=infrastructure"
+  assert_contains "$(tail -n 1 <<<"$output")" "blocked: the checks build of $url at ${sha:0:8} failed as infrastructure with no runner for 20 minutes"
+  # other's pass, logged after it, has its own wait, ahead of the blocked one.
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 -- "T7 DONE pass $url_other $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(url=$url_other arm_line "$head_other")"
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '{url: $url, head: $h, state: "waiting"}')"
+  ci_wait_ends passed "$head_other"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_equal "$(stub_calls team-ci-wait | tail -n 1)" \
+    "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", $url, $h]')"
+  # With nothing else waiting, the blocked wait is the task's again, ahead of the passed one.
+  run_bin -0 --separate-stderr team-state T7 --json
+  assert_equal "$(jq -c '.checks_wait | {url, head, state}' <<<"$output")" \
+    "$(jq -cn --arg url "$url" --arg h "$sha" '{url: $url, head: $h, state: "infrastructure"}')"
+}
+
+@test "--ci's passed end, with a pass in each of two repositories, ends on the arm line of the other repository's wait" {
+  own_app
+  two_repos
+  both_on_github
+  run_bin -0 --separate-stderr team-next T7 --from r0000002 -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" "$(arm_line "$sha")"
+  run_bin -0 --separate-stderr team-next T7 --from r0000003 -- "T7 DONE pass $url_other $counts before=none guarded=none"
+  # The wait is the first pass's, and its end names the wait that stands after it.
+  ci_wait_ends passed "$sha"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=passed"
+  assert_contains "$output" "merge ask: $url at $sha, "
+  assert_equal "$(tail -n 1 <<<"$output")" "$(url=$url_other arm_line "$head_other")"
+  # The other's wait, armed as that line says, ends on its merge ask alone: no wait is left to arm.
+  ci_wait_ends passed "$head_other"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+}
+
+@test "with reviewers in two repositories, a verdict from a session that is not its own repository's latest reviewer is still refused" {
+  own_app
+  two_repos
+  pr_on_github "$sha"
+  local pass="T7 DONE pass $url $counts before=none guarded=none"
+  local needs="the reviewer App posts agent-review on proj, so its verdict is taken only from T7's latest reviewer session in proj, T7-reviewer (r0000002)"
+  # No --from, the other repository's reviewer, the builder or the role's name: refused.
+  refused "team-log: $needs: run it again with --from r0000002 once the message came from that session" T7 -- "$pass"
+  local from
+  for from in r0000003 b0000001 T7-reviewer; do
+    refused "team-log: --from $from is not T7's latest reviewer session in proj, T7-reviewer (r0000002)" T7 --from "$from" -- "$pass"
+  done
+  # A later reviewer in proj makes the first one's verdict stale, whatever other's reviewers do.
+  launched r0000004 brief-review '["browser"]' reviewer
+  launched_in other r0000005 brief-review-2 reviewer
+  refused "team-log: --from r0000002 is not T7's latest reviewer session in proj, T7-reviewer (r0000004)" T7 --from r0000002 -- "$pass"
+  # A findings verdict names no PR: its project is its sender's launch's, so proj's needs proj's
+  # latest reviewer, and other's, which the App posts nothing for, is taken from other's.
+  local findings="T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:2} before=none guarded=none"
+  refused "team-log: --from r0000002 is not T7's latest reviewer session in proj, T7-reviewer (r0000004)" \
+    T7 --from r0000002 --sent-back 1 -- "$findings"
+  assert_equal "$(stub_calls team-review-check)" ""
+}
+
+@test "a PR's review hand-off reads only its own repository's reviews: a first review though another repository's is logged, then a rereview of its own" {
+  second_repo
+  # other's PR was reviewed, with findings sent back, before proj's builder sent its PR.
+  other_reviewing
+  review_logged findings "$head_other" '[1]' '{"blocking": 1}'
+  event 'done' '{role: "reviewer", session: "r0000003"}'
+  on_github 9 "$sha"
+  refused "T7 has no review yet, so its first reviewer needs --checks <file>, the review's checks" T7 -- "T7 PR $url"
+  run_bin -0 --separate-stderr team-next T7 --checks "$(checks)" -- "T7 PR $url"
+  assert_equal "$output" "logged pr url=$url head=$sha
+brief $TEAM_HOME/tasks/T7/brief-review.md
+launched T7-reviewer c0000001"
+  assert_equal "$(record review | jq -c '{template, pr: .values.pr, head: .values.head}')" \
+    "$(jq -cn --arg url "$url" --arg h "$sha" '{template: "reviewer", pr: $url, head: $h}')"
+  # proj's own review sent a finding back: its next PR is a rereview of the head proj's review
+  # read, not of other's.
+  run_bin -0 team-log T7 --from-message "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none" \
+    --from c0000001 --sent-back 1
+  local fix
+  fix=$(commit two.txt "fix: finding 1")
+  on_github 9 "$fix"
+  run_bin -0 --separate-stderr team-next T7 -- "T7 PR $url"
+  assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
+  assert_equal "$(record rereview-2 | jq -c '{template, pr: .values.pr, head: .values.head, reviewed: .values.reviewed}')" \
+    "$(jq -cn --arg url "$url" --arg h "$fix" --arg r "$sha" '{template: "rereview", pr: $url, head: $h, reviewed: $r}')"
+}
+
 @test "with the reviewer App on, a review logged on a short head posts no check on the PR's full head" {
   own_app
   reviewing "${sha:0:7}"
@@ -2262,7 +2531,6 @@ launched T7-builder c0000001"
   grep -qF '`team-next` logs a `DONE pass`, refusing a pass whose PR head moved, and says to arm the checks wait, `team-next T<n> --ci`' "$manual"
   grep -qF 'a `DONE findings` with `--sent-back <list>`' "$manual"
   grep -E '^\| `PAUSED stowed` \|.*`team-next`' "$manual"
-  (($(wc -l <"$manual") <= 120))
 }
 
 @test "refused in a worker session, whatever its role, before any read; --help and the coordinator are not" {

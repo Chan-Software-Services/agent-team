@@ -519,3 +519,96 @@ assistant_call() {
   assistant_call -0 "gh pr view 6"
   assistant_call -0 "git push"
 }
+
+# Calls that only write or search text naming a fenced command, or look one up, and run none.
+text_only_calls() {
+  calls=(
+    $'cat > handoff.md <<\'EOF\'\nNext:\ngh pr create --fill\ngit push origin HEAD\nteam-ci-run shop feat/x abc\nteam-thread wait T7\nteam-post --coordinator --file q.md\nteam-merge T7\nteam-current\nEOF'
+    $'cat > handoff.md <<EOF\nNext:\ngh pr create --fill\n  git push\nEOF'
+    $'python3 - <<\'PY\'\nimport pathlib\npathlib.Path("note.md").write_text("""\ngh pr create --fill\ngit push\nteam-answer T7 yes\n""")\nPY'
+    $'echo \'next: run\ngh pr create\ngit push\' > note.md'
+    'printf "%s\n" "then; gh pr create" "and; git push" >> notes.md'
+    "echo 'run \`gh pr view 6\` and \`git push\`, then \`team-ci-wait\`' >> notes.md"
+    "git commit -m 'fix the fence; git push later (gh pr create)'"
+    "grep -rn '^gh \\|(git push)\\|; team-inbox' bin"
+    $'tee -a notes.md <<\'EOF\' >/dev/null\n$(gh api user)\n`git push`\nEOF'
+    # A lookup of the tool, which runs none.
+    "command -v gh" "command -V gh-axi >/dev/null && echo found"
+  )
+}
+
+@test "a file write, a search or a lookup that names gh, git push or a team command passes, fenced and held offline, for every role" {
+  local command calls
+  text_only_calls
+  fence
+  for command in "${calls[@]}"; do
+    bash_call -0 "$command"
+    coordinator_call -0 "$command"
+    assistant_call -0 "$command"
+  done
+  rm "$state/fenced"
+  echo '{"since": "2026-10-22T13:05:00Z", "posted": true}' >"$state/offline"
+  for command in "${calls[@]}"; do
+    bash_call -0 "$command"
+    assistant_call -0 "$command"
+  done
+  rm "$state/offline"
+  steal_lease laptop home-pc
+  : >"$STUB_CALLS/git-net.log"
+  for command in "${calls[@]}"; do
+    bash_call -0 "$command"
+    coordinator_call -0 "$command"
+    assistant_call -0 "$command"
+  done
+  # None is a call the lease decides, so origin is never asked.
+  assert_equal "$(probes)" 0
+}
+
+@test "gh and git push behind a wrapper, in a string a shell runs, in a substitution or piped into a shell, and a push behind any command, are blocked as when run directly" {
+  local command hold runs=("env gh pr view 6" "env -u GH_TOKEN git push" "bash -c 'gh pr view 6'" 'sh -c "cd wt && git push"'
+    "echo 6 | xargs gh pr view" "(cd wt; git push)" "eval 'gh pr view 6'" "git log -1 | gh pr comment 6 -F -"
+    "command gh pr view 6" "/usr/bin/gh pr view 6" "/usr/bin/git push" "git -C wt push origin HEAD" "git -c http.version=HTTP/1.1 push"
+    "git --git-dir wt/.git push" "timeout 30 gh pr checks 6" "nohup git push &" 'echo "$(gh api user)"' 'user=`gh api user`'
+    "echo 'gh pr view 6' | bash" $'sh <<\'EOF\'\ngit push\nEOF' $'cat > note.md <<EOF\n$(gh api user)\nEOF'
+    "find . -name x -exec gh pr view {} ;" "f() { gh pr view 6; }; f" "coproc gh pr view 6" "time git push"
+    $'cat > handoff.md <<\'EOF\'\ngh pr create\nEOF\ngit push' "g''h pr view 6" 'git "push"'
+    # A push behind a command the walk knows as no wrapper, and one eval runs from a substitution.
+    "strace -f -o out git push" "ssh-agent git push" "op run -- git -C wt push" "ssh host git push"
+    $'eval "$(cat <<EOF\ngit push origin HEAD\nEOF\n)"' 'eval "$(echo git push)"'
+    # A push among echo's or printf's unquoted words, which something else may run.
+    'sh -c "$(echo git push origin)"' '$(echo git push origin HEAD)' 'bash <(echo git push origin)'
+    'x=`echo git push origin`; $x' "echo then run git push >> notes.md")
+  for command in "${runs[@]}"; do
+    bash_call -0 "$command"
+  done
+  mkdir -p "$state"
+  echo '{"since": "2026-10-22T13:05:00Z", "posted": true}' >"$state/offline"
+  hold="Blocked: GitHub is unreachable (since $(date -d 2026-10-22T13:05:00Z +%H:%M)); the team is holding: commit locally, write handoff.md, send T<n> PAUSED offline, and wait."
+  for command in "${runs[@]}"; do
+    bash_call -2 "$command"
+    assert_equal "$stderr" "$hold"
+  done
+  rm "$state/offline"
+  fence
+  for command in "${runs[@]}"; do
+    [[ $command == *push* ]] || continue
+    bash_call -2 "$command"
+    assert_contains "$stderr" "a fenced machine pushes nothing; commit locally and stop."
+    coordinator_call -2 "$command"
+    assistant_call -2 "$command"
+  done
+  assert_equal "$(probes)" 0
+}
+
+@test "a command it cannot read is refused, naming the reader's error; one naming no fenced command never reaches the reader" {
+  # A brace range of more words than the walk expands.
+  bash_call -2 "gh pr view {1..5000}"
+  assert_contains "$stderr" "Blocked: lease-fence could not read the command (fence_rules.py: ValueError: "
+  assert_contains "$stderr" "); a guard that cannot decide refuses, so report it as BLOCKED and do not reach it another way."
+  # With a python3 that fails, a call naming none of the reader's words still passes at once.
+  printf '#!/usr/bin/env bash\necho "python3: broken" >&2\nexit 1\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  bash_call -0 "ls -la && git status"
+  bash_call -2 "git stash push -m wip"
+  assert_equal "$stderr" "Blocked: lease-fence could not read the command (python3: broken); a guard that cannot decide refuses, so report it as BLOCKED and do not reach it another way."
+}

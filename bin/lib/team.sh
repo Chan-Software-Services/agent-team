@@ -17,7 +17,7 @@
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_merge, clean_base_merges, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
-# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COMMAND_START, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
+# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
@@ -90,14 +90,6 @@ DATA_PROVIDER='^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me
 # pack, so none stays loose); team-doctor's team home pack line warns at twice as many.
 # shellcheck disable=SC2034 # read by team-timers and team-doctor
 PACK_LOOSE=200
-
-# Where a command starts in a Bash command's text, the opening of an extended regular expression a
-# hook follows with a command's name: at the start, after a separator, a parenthesis (a subshell's
-# or a case pattern's), a brace (a group's or a function's body), a backtick or a line break, past
-# the reserved words a command may follow there ({, !, if, then, else, elif, do, while, until,
-# time and coproc), any variable assignments and a directory. bin/hooks/lease-fence reads it.
-# shellcheck disable=SC2034 # read by the hook
-COMMAND_START=$'(^|[;&|(){`\n])[[:space:]]*((\\{|!|if|then|else|elif|do|while|until|time|coproc)[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:];&|]*/)?'
 
 # Refuse with a reason on stderr.
 die() {
@@ -225,11 +217,13 @@ LEDGER_TASKS=() LEDGER_KINDS=() LEDGER_PUSH_DUE='' LEDGER_INBOX_DUE=''
 # Under the lock, the event of a writer in bin/lib/lifecycle.json's refusing_writers is checked
 # against the task's state, its events read from the ledger and folded in one jq run
 # (transition_problems in bin/lib/ledger.jq), so no other writer appends between the read and the
-# append. An event the table takes is appended with nothing said. One it refuses is, while the
-# table's lifecycle_from is null or after the event's ts, appended with one line on stderr per
-# problem, "<script>: lifecycle: <problem> (logged anyway; bin/lib/lifecycle.json refuses it from
-# its lifecycle_from, not set yet)", or "..., <lifecycle_from>)"; from lifecycle_from on, refused,
-# "refusing a ledger event: lifecycle: <problems joined by ; >", with nothing appended. Any other
+# append. An event the table takes is appended with nothing said. One it refuses is, from the
+# table's lifecycle_from on, refused, "refusing a ledger event: lifecycle: <problems joined by ; >",
+# with nothing appended; the table's is 2026-11-15T11:58:29Z, so it refuses every event logged now.
+# With a lifecycle_from that is null or after the event's ts, as a test sets one, it is appended
+# with one line on stderr per problem, "<script>: lifecycle: <problem> (logged anyway;
+# bin/lib/lifecycle.json refuses it from its lifecycle_from, not set yet)", or
+# "..., <lifecycle_from>)". Any other
 # writer acted before it logs, so its event is appended unchecked, saying nothing, and team-log
 # --check-lifecycle names it. With <seconds>, the lock is waited on at most that long, and a lock
 # still held then is a refusal, before any lifecycle check, and so is a lock or ledger that cannot
@@ -2460,25 +2454,35 @@ ticket_graph_dir() {
 # A task's state, as team-state --json prints it but compact, from its events (one JSON array in
 # ledger order), the live session list, its live workers' transcripts and, when it has a pr event,
 # GitHub. GitHub failures are carried in the pr part; a broken registry or an unreadable session
-# list fails with the reason on stderr: task_state_json '<events>'
+# list fails with the reason on stderr. With a project, the pr part is of the latest pr event in
+# that project (by the event's project, else by its URL's repo, each repo under its new owner),
+# null when it has none, in place of the task's latest pr event:
+# task_state_json '<events>' [<project>]
 task_state_json() (
-  local events=$1 state pr dir session_id context contexts=() out authority
+  local events=$1 pr_project=${2:-} pr_repo='' state pr dir session_id context contexts=() out authority
   local task tickets graph_dir html png fresh page_digest
   live_sessions
   while IFS= read -r session_id; do
     context=$(session_context "$session_id")
     [[ -z $context ]] || contexts+=("$session_id" "$context")
   done < <(ledger_jq 'live_session_ids($sessions)[]' -r --argjson sessions "$LIVE_SESSIONS" <<<"$events")
+  if [[ -n $pr_project ]]; then
+    pr_repo=$(team_project "$pr_project" repo) || exit 1
+  fi
   # In one jq run, a line each: the state, with each live session's context; the task; and its
-  # latest pr event (null when none).
+  # latest pr event, in the project when one is given (null when none).
   out=$(ledger_jq '. as $events
     | ($ARGS.positional | [range(0; length; 2) as $i | {key: .[$i], value: (.[$i + 1] | tonumber)}] | from_entries) as $contexts
     | ($sessions | map(if type == "object" then
         .context = ($contexts[.sessionId // "" | tostring] // null) else . end)) as $sessions
     | task_state($sessions; $home)
     | tojson, ($events[0].task | tostring),
-      ($events | map(select(.event == "pr")) | last | tojson)' \
-    -r --argjson sessions "$LIVE_SESSIONS" --args "${contexts[@]}" <<<"$events") || exit 1
+      ($events | map(select(.event == "pr" and ($project == ""
+          or (if .project != null then .project == $project
+              else (.url | strings | canonical_url | ascii_downcase
+                | startswith("https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/")) end)))) | last | tojson)' \
+    -r --argjson sessions "$LIVE_SESSIONS" --arg project "$pr_project" --arg repo "$pr_repo" \
+    --args "${contexts[@]}" <<<"$events") || exit 1
   { IFS= read -r state && IFS= read -r task && IFS= read -r pr; } <<<"$out"
   # The ticket total: the ticket files team-tickets reads, null when it refuses them. The graph:
   # the page team-tickets --graph wrote in the task directory of the first ticket, fresh while it

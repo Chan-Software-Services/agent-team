@@ -9,11 +9,13 @@
 # (~/.config/agent-team/machine, or null), used a percentage (above 100 once a window is
 # exceeded) and resets_at a UTC time (YYYY-MM-DDTHH:MM:SSZ). windows holds every window of
 # rate_limits under its own name (five_hour, the 5-hour window; seven_day, the week; and any
-# other, such as seven_day_sonnet) whose used_percentage and resets_at (epoch seconds) are numbers;
-# models each per-model weekly window of rate_limits.model_scoped (Fable's) whose display_name is a
-# string, utilization a number from 0 to 1000 (a percentage, as /usage gives it) and resets_at an
-# ISO time. A window or model window with a field missing or of another type is left out, never
-# the whole reading.
+# other a later Claude Code may add) whose used_percentage and resets_at (epoch seconds) are numbers;
+# models each per-model weekly window of rate_limits.model_scoped whose display_name is a string,
+# utilization a number from 0 to 1000 (a percentage, as /usage gives it) and resets_at an ISO time.
+# Claude Code 2.1.325's status line gives five_hour and seven_day alone (spend_limit behind a
+# gateway) and no model_scoped: each model's own week (Fable's) is only in its usage fetch, which
+# /usage shows, so models stays empty until a Claude Code gives the status line one. A window or
+# model window with a field missing or of another type is left out, never the whole reading.
 # line: the status line command, which settings/worker.json and coordinator.settings.json set
 # (and the shared user config, for Daniel's own sessions). It reads Claude Code's JSON on stdin,
 # giving up on input still open after QUOTA_READ_SECONDS, and prints one line: the model's display
@@ -36,13 +38,16 @@
 # prints "read on <machine> <n> min ago" (": stale, over 180 minutes old" past QUOTA_FRESH_MINUTES),
 # then one line per window, five_hour, seven_day, every other window by name and each model window
 # as model:<name>: "<name> <n>% (<reset_text>)", with ", past <thresholds>" for the thresholds it
-# has crossed. A window's reset_text is "resets <ddd HH:MM>", or "reset at <ddd HH:MM>, since this
-# reading" once that time has passed, in the machine's local time: the words every reader of the
-# status shows. A window crosses a threshold of QUOTA_THRESHOLDS when its use is at least the
-# threshold and it has not reset since the reading. With no reading anywhere it prints "no quota
-# reading yet: no session has shown a status line since team-quota was set up". With --json (schema
-# team-quota/1): {schema, reading (or null), age_minutes (or null), fresh (age_minutes at most 180),
-# windows: [{name, used, resets_at, reset (true once resets_at has passed), reset_text, crossed}]}.
+# has crossed, then, when the reading holds no model window, "model windows: none in this reading,
+# since Claude Code's status line gives no model's own week (/usage shows it)". A window's
+# reset_text is "resets <ddd HH:MM>", or "reset at <ddd HH:MM>, since this reading" once that time
+# has passed, in the machine's local time: the words every reader of the status shows. A window
+# crosses a threshold of QUOTA_THRESHOLDS when its use is at least the threshold and it has not
+# reset since the reading. With no reading anywhere it prints "no quota reading yet: no session
+# has shown a status line since team-quota was set up". With --json (schema team-quota/1):
+# {schema, reading (or null), age_minutes (or null), fresh (age_minutes at most 180), windows:
+# [{name, used, resets_at, reset (true once resets_at has passed), reset_text, crossed}],
+# model_note: that sentence when a reading holds no model window, else null}.
 # Reads only, and exits 0 whenever the team home reads.
 # Exit 0 done, 1 refused, 2 usage error.
 set -euo pipefail
@@ -75,6 +80,10 @@ QUOTA_FRESH_MINUTES=180
 # The percentages each window is judged against: the week warns at 70 and again at 90, the
 # 5-hour window and each model's week at 90, when sessions are about to stall.
 QUOTA_THRESHOLDS='{"seven_day": [70, 90], "five_hour": [90], "model": [90]}'
+
+# What the status says of a reading with no model window, so no reader takes the week for a
+# model's own limit (the header says why a reading holds none).
+QUOTA_NO_MODEL="model windows: none in this reading, since Claude Code's status line gives no model's own week (/usage shows it)"
 
 STATE_DIR=$HOME/.local/state/agent-team
 STATE=$STATE_DIR/quota.json
@@ -192,7 +201,7 @@ newest_reading() {
 # shellcheck disable=SC2016 # jq's variables
 STATUS_JQ=$QUOTA_JQ'
 now as $now
-| if . == null then {schema: "team-quota/1", reading: null, age_minutes: null, fresh: false, windows: []}
+| if . == null then {schema: "team-quota/1", reading: null, age_minutes: null, fresh: false, windows: [], model_note: null}
   else . as $r
   | ((($now - ($r.at | fromdateiso8601)) / 60 | floor) | if . < 0 then 0 else . end) as $age
   | def crossing($thresholds): (.resets_at | fromdateiso8601) as $t | ($t <= $now) as $reset | . as $w
@@ -203,7 +212,8 @@ now as $now
       | sort_by(if .name == "five_hour" then 0 elif .name == "seven_day" then 1 else 2 end, .name)
       | map(crossing($thresholds[.name] // []))) as $windows
   | ($r.models | sort_by(.name) | map({name: "model:\(.name)", used, resets_at} | crossing($thresholds.model))) as $models
-  | {schema: "team-quota/1", reading: $r, age_minutes: $age, fresh: ($age <= $fresh), windows: ($windows + $models)}
+  | {schema: "team-quota/1", reading: $r, age_minutes: $age, fresh: ($age <= $fresh), windows: ($windows + $models),
+     model_note: (if $models == [] then $no_model else null end)}
   end
 '
 
@@ -213,7 +223,8 @@ STATUS_TEXT_JQ='
 if .reading == null then "no quota reading yet: no session has shown a status line since team-quota was set up"
   else "read on \(.reading.machine // "an unnamed machine") \(.age_minutes) min ago\(if .fresh then "" else ": stale, over \($fresh) minutes old" end)",
     (.windows[] | "\(.name) \(.used | floor)% (\(.reset_text))"
-        + (if .crossed == [] then "" else ", past \(.crossed | map("\(.)%") | if length > 1 then (.[:-1] | join(", ")) + " and " + .[-1] else .[0] end)" end))
+        + (if .crossed == [] then "" else ", past \(.crossed | map("\(.)%") | if length > 1 then (.[:-1] | join(", ")) + " and " + .[-1] else .[0] end)" end)),
+    (.model_note // empty)
   end
 '
 
@@ -226,7 +237,8 @@ quota_status() {
     esac
     shift
   done
-  status=$(newest_reading | LC_ALL=C jq -c --argjson thresholds "$QUOTA_THRESHOLDS" --argjson fresh "$QUOTA_FRESH_MINUTES" "$STATUS_JQ")
+  status=$(newest_reading | LC_ALL=C jq -c --argjson thresholds "$QUOTA_THRESHOLDS" --argjson fresh "$QUOTA_FRESH_MINUTES" \
+    --arg no_model "$QUOTA_NO_MODEL" "$STATUS_JQ")
   if [[ -n $json ]]; then
     printf '%s\n' "$status"
   else
