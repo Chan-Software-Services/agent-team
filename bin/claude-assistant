@@ -42,17 +42,17 @@
 #   --prompt      the session's first prompt, in place of "You are the assistant. Daniel talks to
 #                 you in #assistant on Discord. Wait for their messages."
 #   --load-check  team-load-check's form, for its --probe and --context of the assistant: it
-#                 launches T0-assistant in <worktree> with the assistant's settings and role prompt
-#                 but the Discord plugin off (its server denied with the others), no --channels
-#                 and no Stop or SessionStart hook (assistant-stop and assistant-digest read the
-#                 live assistant's list and hand-offs, which this session must never act on, so
-#                 --context measures its start without the digest), and Remote Control off
-#                 (remoteControlAtStartup false), so it leaves no row in Daniel's Remote Control
-#                 list on claude.ai, and prints the session's id alone, as team-worker does. Its
-#                 settings and MCP config are
+#                 launches T0-assistant in <worktree> with the assistant's settings and role
+#                 prompt but the Discord plugin off (its server denied with the others), no
+#                 --channels and no Stop or SessionStart hook (assistant-stop and
+#                 assistant-digest read the live assistant's list and hand-offs, which this
+#                 session must never act on, so --context measures its start without the
+#                 digest), and Remote Control off (remoteControlAtStartup false), so it leaves
+#                 no row in Daniel's Remote Control list on claude.ai, and prints the session's
+#                 id alone, as team-worker does. Its settings and MCP config are
 #                 ~/.local/state/agent-team/assistant-load-check.settings.json and .mcp.json, so
-#                 the live assistant's stay as they are. It is no assistant, so it
-#                 takes no launch lock and none of the refusals above but a malformed command line
+#                 the live assistant's stay as they are. It is no assistant, so it takes no
+#                 launch lock and none of the refusals above but a malformed command line
 #                 (exit 2) and a <worktree> that is no directory, and writes no Discord state.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"

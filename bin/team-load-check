@@ -132,8 +132,8 @@
 # --role assistant, in the context and probe forms only, launches the assistant instead, through
 # this checkout's bin/claude-assistant --load-check in the same worktree: its own settings and role
 # prompt, in bypass mode, with the Discord plugin off, no --channels and Remote Control off, named
-# T0-assistant, so it is no assistant to the singleton check. It takes no --toolkit, and has no effective autoMode to
-# check, which its line says.
+# T0-assistant, so it is no assistant to the singleton check. It takes no --toolkit, and has no
+# effective autoMode to check, which its line says.
 #
 # The probe form proves, live, what each worker role (or with --role assistant, the assistant) is
 # refused, and which layer refuses it: a deny rule, a hook, auto mode, or the script it runs, which
