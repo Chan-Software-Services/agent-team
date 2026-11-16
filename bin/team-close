@@ -36,6 +36,8 @@
 # removed by that path and named on stderr when it is a directory of this user's, a link or
 # anything else there left and named, a missing one nothing (test seam: TEAM_SYSTEM_ROOT stands
 # for / in that path, as in the library's tool_dirs);
+# ~/.config/agent-team/confine/T<n>/, the session directories bin/lib/confine-session wrote for
+# its confined sessions (each one's roots and its shell program), removed and named the same way;
 # each worktree's task directory mirrored to tasks/T<n>/scratch/ (the opened project) or
 # tasks/T<n>/scratch-<project>/ (an added one), a ticket worktree's to its task worktree's with
 # --NN after it (scratch--03), less what archive_left_out (bin/lib/team.sh)
@@ -666,6 +668,20 @@ if [[ -L $session_tmp || -e $session_tmp ]]; then
     echo "team-close: removed $session_tmp/, the session tmp of the task's confined sessions" >&2
   else
     echo "team-close: warning: could not remove all of $session_tmp/, the session tmp of the task's confined sessions" >&2
+  fi
+fi
+
+# The session directories bin/lib/confine-session wrote for the task's confined sessions (each a
+# session's roots and its shell program), by their literal path, as the session tmp above: only a
+# directory of this user's, never through a link.
+session_dirs=$HOME/.config/agent-team/confine/$task
+if [[ -L $session_dirs || -e $session_dirs ]]; then
+  if [[ -L $session_dirs || ! -d $session_dirs || ! -O $session_dirs ]]; then
+    echo "team-close: left $session_dirs, which is no directory of this user's, where the task's session directories would be" >&2
+  elif rm -rf -- "$session_dirs"; then
+    echo "team-close: removed $session_dirs/, the session directories of the task's confined sessions" >&2
+  else
+    echo "team-close: warning: could not remove all of $session_dirs/, the session directories of the task's confined sessions" >&2
   fi
 fi
 

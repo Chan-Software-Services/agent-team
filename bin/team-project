@@ -72,7 +72,8 @@
 #                    team-worker states in each worker's autoMode lines (default "public", the
 #                    reading that treats whatever reaches the repository as published)
 #   confine          optional: "off" or "on", whether team-worker runs every shell command of the
-#                    project's planners, builders and reviewers through bin/lib/confine-shell,
+#                    project's planners, builders and reviewers through the program
+#                    bin/lib/confine-session writes for the session, its shell and shell prefix,
 #                    where the kernel refuses a delete outside the session's roots (default "off")
 # Per project pool ([<name>.pool]), where task worktrees come from:
 #   provider         "treehouse" (leased pre-warmed slots) or "git" (plain git worktrees)

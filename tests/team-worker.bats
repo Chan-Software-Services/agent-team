@@ -1242,63 +1242,139 @@ role_texts() {
   [[ -x $REPO_ROOT/bin/hooks/axi-banner && -x $REPO_ROOT/bin/hooks/denial-log ]]
 }
 
-# The prefix, the worktree and the common git directory a launch's settings <file> give its shell
-# commands, as JSON.
+# What a launch's settings <file> give its shell commands, as JSON: the shell, the prefix, the
+# rustup switch, and the two variables phase 4 named the roots by, which no launch sets now.
 confinement() {
-  jq -c '[.env.CLAUDE_CODE_SHELL_PREFIX, .env.AGENT_TEAM_WORKTREE, .env.AGENT_TEAM_GIT_DIR]' "$1"
+  jq -c '[.env.CLAUDE_CODE_SHELL, .env.CLAUDE_CODE_SHELL_PREFIX, .env.RUSTUP_AUTO_INSTALL, .env.AGENT_TEAM_WORKTREE, .env.AGENT_TEAM_GIT_DIR]' "$1"
 }
 
-# What confinement prints for a confined launch in <worktree>: the checkout's prefix, the
-# worktree's real path and its common git directory as git names it.
-confined_in() {
-  jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$1")" \
-    --arg git "$(realpath "$(git -C "${1:?}" rev-parse --path-format=absolute --git-common-dir)")" \
-    '["\($code)/bin/lib/confine-shell", $wt, $git]'
+UNCONFINED='[null,null,null,null,null]'
+
+# The session directory of <task>'s launch with the generated files' <stem>: session_directory <task> <stem>
+session_directory() {
+  echo "$HOME/.config/agent-team/confine/$1/$2"
 }
 
-@test "a project with confine on renders the shell prefix, the worktree and its common git directory for planner, builder and reviewer, never ops" {
+# What confinement prints for a confined launch: its session directory's program as the shell
+# and the prefix, and no automatic toolchain install: confined_as <task> <stem>
+confined_as() {
+  jq -cn --arg program "$(session_directory "$1" "$2")/bash" '[$program, $program, "0", null, null]'
+}
+
+# Holds <task>'s session directory for <stem> to a launch in <worktree>: the program there, and
+# the session file with the worktree, its common git directory as git names it, the session tmp
+# team-close removes, the team home among the kept directories and the job tmp of the id the
+# launcher printed: session_written <task> <stem> <worktree> <session id>
+session_written() {
+  local dir
+  dir=$(session_directory "$1" "$2")
+  assert_equal "$(stat -c %a "$dir" "$dir/session.json" "$dir/bash" | tr '\n' ' ')" "700 400 500 "
+  assert_equal "$(tail -n 1 "$dir/bash")" "exec '$REPO_ROOT/bin/lib/confine-shell' --session '$dir/session.json' \"\$@\""
+  assert_equal "$(jq -c --arg team "$(realpath "$TEAM_HOME")" \
+    '[.version, .task, .home, .worktree, .git_dir, .session_tmp, .job_tmp, (.kept | index($team) != null), (.kept | length)]' "$dir/session.json")" \
+    "$(jq -cn --arg task "$1" --arg home "$HOME" --arg wt "$(realpath "$3")" \
+      --arg git "$(realpath "$(git -C "${3:?}" rev-parse --path-format=absolute --git-common-dir)")" \
+      --arg tmp "$TEAM_SYSTEM_ROOT/tmp/agent-team-$1" \
+      --arg id "$4" '[1, $task, $home, $wt, $git, $tmp, "\($home)/.claude/jobs/\($id)/tmp", true, 3]')"
+}
+
+@test "a project with confine on writes a session directory and renders its program as the shell and the prefix for planner, builder and reviewer, never ops" {
   registry --first 'confine = "on"' proj other
   open_task T7
   ops_stub
   local role
   for role in planner builder reviewer; do
     run_bin -0 team-worker T7 "$role" "$wt1" -- go
-    assert_equal "$(confinement "$(generated settings "$role")")" "$(confined_in "$wt1")"
+    assert_equal "$(confinement "$(generated settings "$role")")" "$(confined_as T7 "$role.proj")"
+    session_written T7 "$role.proj" "$wt1" "${lines[-1]}"
   done
-  [[ -x $REPO_ROOT/bin/lib/confine-shell ]]
+  [[ $(jq -r .git_dir "$(session_directory T7 builder.proj)/session.json") == */.git ]]
+  # The program runs a line where the session's roots are, as a session's prefix would.
+  if (($(python3 -I "$REPO_ROOT/bin/lib/confine.py" --abi) >= 2)); then
+    mkdir -p "$TEAM_SYSTEM_ROOT/tmp"
+    : >"$wt1/in" && : >"$HOME/out"
+    run "$(session_directory T7 builder.proj)/bash" "rm $wt1/in $HOME/out"
+    [[ $status -ne 0 && ! -e $wt1/in && -e $HOME/out ]]
+  fi
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
-  assert_equal "$(confinement "$(generated settings ops)")" '[null,null,null]'
+  assert_equal "$(confinement "$(generated settings ops)")" "$UNCONFINED"
+  [[ ! -e $(session_directory T7 ops) ]]
+  assert_equal "$(ls "$HOME/.config/agent-team/confine/T7")" "builder.proj
+planner.proj
+reviewer.proj"
 }
 
-@test "a project with confine off or no confine key renders no shell prefix, worktree or git directory" {
+@test "a relaunch writes the session directory anew" {
+  registry --first 'confine = "on"' proj other
+  open_task T7
+  local dir
+  dir=$(session_directory T7 builder.proj)
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  session_written T7 builder.proj "$wt1" 4f2a9c1e
+  # What a session left in its file is gone at the next launch.
+  chmod u+w "$dir/session.json"
+  echo '{"version": 1, "worktree": "/"}' >"$dir/session.json"
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  session_written T7 builder.proj "$wt1" 4f2a9c1e
+}
+
+@test "a refusal of confine-session ends the launch with its text, and a job tmp that cannot be recorded is a warning" {
+  registry --first 'confine = "on"' proj other
+  open_task T7
+  local dir
+  dir=$(session_directory T7 builder.proj)
+  mkdir -p "$HOME/.config/agent-team" "$HOME/elsewhere"
+  ln -s "$HOME/elsewhere" "$HOME/.config/agent-team/confine"
+  run_bin -1 team-worker T7 builder "$wt1" -- go
+  assert_equal "$output" "confine-session: $HOME/.config/agent-team/confine is a link, no directory or another user's"
+  assert_equal "$(stub_calls claude)" ""
+  [[ -z $(ls -A "$HOME/elsewhere") ]]
+  rm "${HOME:?}/.config/agent-team/confine"
+  # The session is running by the time its id is known, so the launch stands: here the session
+  # file is gone by then, a directory in its place.
+  echo "$dir/session.json" >"$STUB_FIXTURES/session-file"
+  stub_script claude <<'EOF'
+if [[ $1 == agents ]]; then echo '[{"id": "4f2a9c1e", "name": "T7-builder", "pid": 4242}]'; exit 0; fi
+file=$(<"$STUB_FIXTURES/session-file")
+rm -f "${file:?}" && mkdir "$file"
+echo "Started background session 4f2a9c1e (${*: -2:1}). Attach with: claude attach 4f2a9c1e"
+EOF
+  run --separate-stderr "$REPO_ROOT/bin/team-worker" T7 builder "$wt1" -- go
+  assert_equal "$status" 0
+  assert_equal "$output" 4f2a9c1e
+  assert_contains "$stderr" "team-worker: warning: could not record T7-builder's job tmp ($dir/session.json is no session file of this user's), so its commands cannot remove or rename there"
+}
+
+@test "a project with confine off or no confine key renders no shell, prefix or rustup switch, and writes no session directory" {
   open_task T7
   run_bin -0 team-worker T7 builder "$wt1" -- go
-  assert_equal "$(confinement "$(generated settings builder)")" '[null,null,null]'
+  assert_equal "$(confinement "$(generated settings builder)")" "$UNCONFINED"
   registry --first 'confine = "off"' proj other
   run_bin -0 team-worker T7 reviewer "$wt1" -- go
-  assert_equal "$(confinement "$(generated settings reviewer)")" '[null,null,null]'
+  assert_equal "$(confinement "$(generated settings reviewer)")" "$UNCONFINED"
   registry --first 'confine = "on"' other proj
   run_bin -0 team-worker T7 planner "$wt1" -- go
-  assert_equal "$(confinement "$(generated settings planner)")" '[null,null,null]'
+  assert_equal "$(confinement "$(generated settings planner)")" "$UNCONFINED"
+  [[ ! -e $HOME/.config/agent-team/confine ]]
 }
 
 @test "T0, the load check, is always confined but for ops, whatever its project says or with none" {
   ops_stub
-  local role confined
-  confined=$(confined_in "$wt1")
-  [[ $(jq -r '.[2]' <<<"$confined") == */.git ]]
+  local role
   for role in planner builder reviewer; do
     run_bin -0 team-worker T0 "$role" "$wt1" -- go
-    assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.$role.proj.json")" "$confined"
+    assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.$role.proj.json")" "$(confined_as T0 "$role.proj")"
+    session_written T0 "$role.proj" "$wt1" "${lines[-1]}"
   done
   run_bin -0 team-worker T0 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
-  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.ops.json")" '[null,null,null]'
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.ops.json")" "$UNCONFINED"
   # A worktree of no registered project is confined too.
   local loose
   loose=$(make_repo loose)
   git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
   run_bin -0 team-worker T0 builder "$HOME/slots/loose/1" -- go
-  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.builder.json")" "$(confined_in "$HOME/slots/loose/1")"
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.builder.json")" "$(confined_as T0 builder)"
+  session_written T0 builder "$HOME/slots/loose/1" "${lines[-1]}"
 }
 
 @test "every hook of a worker role's settings is in exec form, which Claude Code runs without the shell prefix" {

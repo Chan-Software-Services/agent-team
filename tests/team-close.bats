@@ -230,11 +230,19 @@ T2"
 }
 
 # The session tmp confine.py makes for the task's confined sessions, /tmp/agent-team-T<n>, which
-# the sandbox's TEAM_SYSTEM_ROOT holds here, goes with the task once its sessions are stopped.
-@test "the task's session tmp is removed and named, another task's kept, and a missing one is no error" {
+# the sandbox's TEAM_SYSTEM_ROOT holds here, goes with the task once its sessions are stopped, and
+# so do the session directories confine-session wrote for them, ~/.config/agent-team/confine/T<n>.
+@test "the task's session tmp and session directories are removed and named, another task's kept, and a missing one is no error" {
   run_bin -0 team-open home feature feat work "Do the work"
-  local slot=${home_slots[0]} tmp=$TEAM_SYSTEM_ROOT/tmp outside=$BATS_TEST_TMPDIR/outside
+  local slot=${home_slots[0]} tmp=$TEAM_SYSTEM_ROOT/tmp outside=$BATS_TEST_TMPDIR/outside dirs=$HOME/.config/agent-team/confine
   mkdir -p "$slot/.scratch/task" "$tmp/agent-team-T1/build/deep" "$tmp/agent-team-T2" "$tmp/agent-team-T10" "$outside"
+  mkdir -p "$dirs/T1/builder.home" "$dirs/T1/reviewer.home" "$dirs/T10/builder.home"
+  printf '#!/bin/sh\n' >"$dirs/T1/builder.home/bash"
+  echo '{}' >"$dirs/T1/builder.home/session.json"
+  chmod 500 "$dirs/T1/builder.home/bash"
+  chmod 400 "$dirs/T1/builder.home/session.json"
+  chmod 700 "$dirs/T1/builder.home"
+  ln -s "$outside" "$dirs/T1/reviewer.home/link"
   echo "spec" >"$slot/.scratch/task/spec.md"
   : >"$tmp/agent-team-T1/build/deep/file"
   : >"$outside/kept"
@@ -243,8 +251,10 @@ T2"
   run_bin -0 --separate-stderr team-close T1
   [[ ! -e $tmp/agent-team-T1 ]]
   assert_contains "$stderr" "team-close: removed $tmp/agent-team-T1/, the session tmp of the task's confined sessions"
+  [[ ! -e $dirs/T1 ]]
+  assert_contains "$stderr" "team-close: removed $dirs/T1/, the session directories of the task's confined sessions"
   # Nothing a link inside it names, and no other task's.
-  [[ -f $outside/kept && -d $tmp/agent-team-T2 && -d $tmp/agent-team-T10 ]]
+  [[ -f $outside/kept && -d $tmp/agent-team-T2 && -d $tmp/agent-team-T10 && -d $dirs/T10/builder.home ]]
 
   run_bin -0 team-open home feature feat more "Do more work"
   work_and_push "${home_slots[0]}" more.txt
@@ -253,19 +263,22 @@ T2"
   run_bin -0 team-open home feature feat last "Do the last work"
   work_and_push "${home_slots[0]}" last.txt
   run_bin -0 --separate-stderr team-close T3
-  [[ $stderr != *"session tmp"* ]]
+  [[ $stderr != *"session tmp"* && $stderr != *"session directories"* ]]
 }
 
-@test "a link or a file where the task's session tmp would be is left as it is, and named" {
+@test "a link or a file where the task's session tmp or session directories would be is left as it is, and named" {
   run_bin -0 team-open home feature feat work "Do the work"
   local slot=${home_slots[0]} tmp=$TEAM_SYSTEM_ROOT/tmp outside=$BATS_TEST_TMPDIR/outside
   mkdir -p "$slot/.scratch/task" "$tmp" "$outside"
   echo "spec" >"$slot/.scratch/task/spec.md"
   : >"$outside/kept"
   ln -s "$outside" "$tmp/agent-team-T1"
+  mkdir -p "$HOME/.config/agent-team/confine"
+  ln -s "$outside" "$HOME/.config/agent-team/confine/T1"
   work_and_push "$slot" feature.txt
   run_bin -0 --separate-stderr team-close T1
-  [[ -L $tmp/agent-team-T1 && -f $outside/kept ]]
+  [[ -L $tmp/agent-team-T1 && -L $HOME/.config/agent-team/confine/T1 && -f $outside/kept ]]
+  assert_contains "$stderr" "team-close: left $HOME/.config/agent-team/confine/T1, which is no directory of this user's, where the task's session directories would be"
   assert_contains "$stderr" "team-close: left $tmp/agent-team-T1, which is no directory of this user's, where the task's session tmp would be"
 
   run_bin -0 team-open home feature feat more "Do more work"
