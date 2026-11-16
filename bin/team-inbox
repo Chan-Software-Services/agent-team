@@ -14,11 +14,10 @@
 # interview-thread with no planner's done or plan-approved after it) with no walk on in that
 # thread, "<task> <title>: interview under way <its thread>"; each walk under way (team-ui --walk,
 # on), "<task> <title>: walk under way <the thread it runs in>", or no thread with none; and the
-# asks of the team home's two lists, the coordinator's
-# tasks/current.md, then the assistant's assistant/current.md (team-current's ask lines, questions
-# to Daniel with no asked, in the form with an end and added or the old one; current_item in
-# bin/lib/ledger.jq), each with "Assistant: " first when it is the assistant's, its task unless -,
-# its text and its where when that is a URL.
+# asks of the team home's two lists, the coordinator's tasks/current.md, then the assistant's
+# assistant/current.md (team-current's ask lines, questions to Daniel with no asked, in the form
+# with an end and added or the old one; current_item in bin/lib/ledger.jq), each with "Assistant: "
+# first when it is the assistant's, its task unless -, its text and its where when that is a URL.
 # They are ranked by what each answer unblocks, the most first: while the item holds its task (an
 # ask no launch went past, a PR ready to merge, an interview or a walk under way), its task and
 # each other open task whose standing blocked park is on that task (cause task), and the task's

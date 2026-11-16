@@ -2,9 +2,10 @@
 # Prove what a worker can and cannot reach, with a throwaway session on task T0, and that each
 # treehouse pool hands out a clean slot.
 # Each T0 planner, builder and reviewer it starts has Remote Control off (team-worker sets
-# remoteControlAtStartup false in the settings it generates for one), so a run leaves no row in
+# remoteControlAtStartup false in the settings it generates for one), so they leave no row in
 # Daniel's Remote Control list on claude.ai; its ops session keeps settings/ops.json's Remote
-# Control, as a task's ops session does.
+# Control, as a task's ops session does, and the --role assistant form's T0-assistant, launched
+# through bin/claude-assistant, keeps the assistant's settings.
 #
 # It runs team-doctor first (--json, printing each line as the doctor does), and stops there,
 # leasing and launching nothing, on a FAIL that bears on a session it starts: any FAIL but the

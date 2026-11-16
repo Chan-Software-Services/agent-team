@@ -440,6 +440,19 @@ merge_ready_rounds() {
     '{"building":2,"review":1,"merging":1,"wait:daniel":2}'
 }
 
+@test "a per-head word on a head the ledger logs only after it stands from that head's review on, as team-inbox reads it" {
+  local rounds
+  mapfile -t rounds < <(merge_ready_rounds)
+  # Daniel's word names a fix head before its review logs it; a merge of the base then moves the
+  # head on and its re-review passes: team-inbox leaves the PR out, so no wait on Daniel after it.
+  assert_equal "$(t90_hours 06:00 "${rounds[@]}" \
+    '03:00 merge-approved {url: "https://github.com/chanjdaniel/agent-team/pull/30", head: "bbbbbbb", discord_message: "1"}' \
+    '03:30 review {verdict: "pass", head: "bbbbbbb"}' \
+    '04:00 pr {url: "https://github.com/chanjdaniel/agent-team/pull/30", head: "ccccccc"}' \
+    '04:30 review {verdict: "pass", head: "ccccccc"}')" \
+    '{"building":1,"review":1,"merging":0.5,"unattributed":2.5,"wait:daniel":1}'
+}
+
 @test "a PR ready to merge while the default word stands is merging, and one sent back is building" {
   local rounds
   mapfile -t rounds < <(merge_ready_rounds)
