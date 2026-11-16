@@ -146,6 +146,8 @@ Workers' permissions do not allow the `busctl` call by hand: the tests use a stu
 The heartbeat's `capacity` step runs `team-capacity sample` on the lease holder every run, every 5 minutes, then `team-capacity place --quiet`, which places again any live team session outside its slice (one the claude daemon restarted, say).
 Each reading goes to `~/.local/state/agent-team/capacity/readings.jsonl`, kept for 24 hours.
 Its machine's part (`bin/lib/reading.sh`) is the memory, what the other programs use, and the team's processes, found by their working directory and their descent, their CPU read against a snapshot of the last reading's, `procs.tsv` beside the readings.
+A snapshot misses a process that started and ended between two readings (a test, a compiler, a `shellcheck`), so on Linux the team's CPU is its slice's instead: each reading keeps `agent-team.slice`'s `CPUUsageNSec` as `team_cpu_nsec` (null off Linux, when the user manager does not answer, or with no counter).
+With a snapshot and that counter in this reading and the newest stored one, `cpu.team` is the counter's rise (all of it when it fell), plus the team's processes outside the slice since the snapshot, over the seconds, plus the stacks' share of a core, and `cpu.others` leaves out every process in the slice; else both are the processes' sums.
 On top of it, each reading says each task's use:
 
 - On Linux, a task's memory is its slice's working set, plus its team processes outside the team's slice, plus its running team stacks (their `task` label), since Docker's containers are outside every user slice.

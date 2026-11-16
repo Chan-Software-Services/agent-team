@@ -107,6 +107,10 @@ def reading_procs($in; $paths):
             busy: (if $in.previous == null then null
                    elif $then != null and .seconds >= $then then .seconds - $then else .seconds end)}];
 
+# The team and gate stacks' CPU in a reading's input <in> (machine_reading's), in cores.
+def reading_stacks_cpu($in):
+  [$in.stacks.projects // [] | .[] | select(.class == "team" or .class == "gate") | .cpu_percent // 0] | add // 0 | . / 100;
+
 # A reading of the machine's load, from $in: {at (UTC, YYYY-MM-DDTHH:MM:SSZ), os, total and
 # available (memory, in bytes), cpus, procs ([{pid, ppid, rss (KiB), seconds (cumulative CPU),
 # cwd ("" when unreadable), cgroup ("" when unread)}]), paths (the team paths), stacks
@@ -119,7 +123,7 @@ def machine_reading($in):
   reading_procs($in; $in.paths) as $procs
   | [$in.stacks.projects // [] | .[] | select(.class == "team" or .class == "gate")] as $stacks
   | ([$stacks[].memory_bytes // 0] | add // 0) as $stacks_memory
-  | (([$stacks[].cpu_percent // 0] | add // 0) / 100) as $stacks_cpu
+  | reading_stacks_cpu($in) as $stacks_cpu
   | (([$procs[] | select(.team) | .rss * 1024] | add // 0) + $stacks_memory) as $team
   | {at: $in.at, os: $in.os, docker: ($in.stacks != null),
      memory: {total: $in.total, available: $in.available, team: $team,
@@ -158,10 +162,11 @@ def reading_tasks($in):
    ($in.procs[] | .cgroup // "" | slice_task // empty)]
   | unique | sort_by(.[1:] | tonumber);
 
-# The user manager's units a reading reads on Linux: each task's slice, each live team session's
-# scope, the running heavy run's scope, and the gate's daemon units <gate_units>.
+# The user manager's units a reading reads on Linux: the team's slice, each task's slice, each
+# live team session's scope, the running heavy run's scope, and the gate's daemon units <gate_units>.
 def capacity_units($in):
-  [(reading_tasks($in)[] | "agent-team-\(.).slice"),
+  ["agent-team.slice",
+   (reading_tasks($in)[] | "agent-team-\(.).slice"),
    (team_sessions($in)[] | "agent-team-\(.task)-\(.id).scope"),
    ($in.heavy // empty | "agent-team-heavy-\(.).scope"),
    $in.gate_units[]];
@@ -173,6 +178,10 @@ def capacity_units($in):
 # did not answer or off Linux), gate_units (the
 # gate's daemon units), gate_root (~/.no-mistakes), heavy (the pid of the team-heavy that holds the
 # heavy-run lock, or null) and prior (the newest stored reading, or null).
+# The team's CPU (cpu.team) is its slice's: the rise of agent-team.slice's CPUUsageNSec since
+# prior's team_cpu_nsec (the whole counter when it fell), plus the team processes outside the slice
+# since the snapshot, over the seconds, plus the stacks'; the others' (cpu.others) then leaves out
+# every process in the slice. With no snapshot, no counter now or in prior, it is machine_reading's.
 # Each process is a task's when its directory is that task's held worktree or below it, or it
 # descends from one that is, the nearest one deciding; on Linux one in a task's slice is counted
 # by the slice's working set and CPUUsageNSec instead. A session's use is its scope's on Linux,
@@ -206,6 +215,16 @@ def capacity_reading($in):
   | (if $timed then $in.previous.seconds else null end) as $seconds
   | ($in.prior.tasks // [] | map({key: .task, value: .cpu_nsec}) | from_entries) as $prior_nsec
   | ($in.prior.systemd == true) as $prior_read
+  | unit("agent-team.slice").CPUUsageNSec as $team_nsec
+  | (if $timed and ($team_nsec | type) == "number" and ($in.prior.team_cpu_nsec | type) == "number" then
+       ($team_nsec - $in.prior.team_cpu_nsec) as $delta
+       | reading_stacks_cpu($in) as $stacks_cpu
+       | $base.cpu
+         + {team: (((if $delta < 0 then $team_nsec else $delta end) / 1e9
+                    + ([$procs[] | select(.team and (.in_team | not)) | .busy] | add // 0)) / $seconds + $stacks_cpu | hundredths),
+            others: ([([$procs[] | select((.team or .in_team) | not) | .busy] | add // 0) / $seconds - $stacks_cpu, 0] | max
+                     | hundredths)}
+     else $base.cpu end) as $cpu
   | [team_sessions($in)[]
      | [limit(4096; .pid | tostring | recurse($kids[.] // [] | .[] | select(. != ($in.heavy // "" | tostring))))] as $tree
      | ([$tree[] | $by_pid[.].rss // 0] | add | gib_bytes) as $rss
@@ -251,7 +270,9 @@ def capacity_reading($in):
   | (first($in.gate_units[] | unit(.) | select(.WorkingSet != null)) // {}) as $daemon
   | [$procs[] | select(.gate)] as $gate_procs
   | $base
-    + {systemd: (if $in.os == "linux" then $in.units != null else null end),
+    + {cpu: $cpu,
+       team_cpu_nsec: $team_nsec,
+       systemd: (if $in.os == "linux" then $in.units != null else null end),
        sessions: ($in.sessions != null),
        tasks: $tasks,
        stacks: [$stacks[] | .cpu |= hundredths],

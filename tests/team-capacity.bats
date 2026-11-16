@@ -580,9 +580,9 @@ team_reading() {
   # The machine's part: the team's processes by directory and descent.
   assert_equal "$(jq -c --argjson mib "$MIB" '[.memory.total, .memory.team - 628935884 - 315621376, .cpu]' <<<"$reading" |
     jq -c --argjson mib "$MIB" '.[1] /= $mib')" '[34359738368,1638,null]'
-  # One systemctl call for every task's slice, every live team session's scope and the heavy run's.
+  # One systemctl call for the team's slice, every task's slice, every live team session's scope and the heavy run's.
   assert_equal "$(stub_calls systemctl)" \
-    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4.scope","agent-team-T9-b1b2c3d4.scope","agent-team-heavy-210.scope"]'
+    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team.slice","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4.scope","agent-team-T9-b1b2c3d4.scope","agent-team-heavy-210.scope"]'
 }
 
 @test "sample: a cgroup's use is its working set, so page cache never counts and a group it cannot read counts its processes" {
@@ -631,6 +631,84 @@ team_reading() {
   assert_equal "$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c '.cpu.seconds as $s | [.cpu.seconds >= 300,
       (.tasks[0].cpu == ((175 / $s + 0.5012) * 100 | round / 100)), (.tasks[1].cpu == ((60 / $s) * 100 | round / 100)),
       .tasks[0].cpu_nsec]')" '[true,true,true,240000000000]'
+}
+
+# team_cpu_machine <slice CPU seconds> <builder's> <outside shell's> <in-slice stranger's> <other program's>:
+# the processes of sample_machine's T7 at those cumulative CPU seconds, and the team slice's counter:
+# its builder in its scope, a shell in its worktree outside the slice, a process in the builder's
+# scope whose directory is no team path, and another program. The stacks use 50% of a core.
+team_cpu_machine() {
+  local scope
+  scope=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
+  : >"$TEAM_READING_PROCS"
+  proc 100 99 512 "$2" "$T7_WT" "$scope"
+  proc 102 1 100 "$3" "$T7_WT/src"
+  proc 104 1 10 "$4" /tmp "$scope"
+  proc 400 1 2048 "$5" /
+  sessions "a1b2c3d4 T7-builder 100"
+  docker_state stats 'map(.CPUPerc = (if .Name == "conventioner-2-mongodb-1" then "50.00%" else "0.00%" end))'
+  unit agent-team.slice CPUUsageNSec="$1"000000000
+}
+
+# The newest reading's [team_cpu_nsec, cpu.team == <team CPU seconds> / seconds + 0.5,
+# cpu.others == max(<others' CPU seconds> / seconds - 0.5, 0)], each to hundredths.
+team_cpu_of() {
+  tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c --argjson team "$1" --argjson others "$2" '
+    def h: . * 100 | round / 100;
+    .cpu.seconds as $s
+    | [.team_cpu_nsec, .cpu.team == ($team / $s + 0.5 | h),
+       .cpu.others == ([$others / $s - 0.5, 0] | max | h)]'
+}
+
+@test "sample: the team's CPU is its slice's rise since the newest reading and its processes' outside the slice since the snapshot" {
+  sample_machine
+  team_cpu_machine 1000 60 5 10 100
+  run_bin -0 team-capacity sample
+  assert_equal "$(jq -c '[.team_cpu_nsec, .cpu]' "$STATE_DIR/readings.jsonl")" '[1000000000000,null]'
+  # Five minutes later the slice used 2,370 s, though its processes alive now used 140 s and 40 s
+  # of their own: the rest ran in processes that ended between the readings. The shell outside
+  # the slice used 25 s, the other program 300 s; the stranger in the slice is the team's.
+  age_by 300
+  team_cpu_machine 3370 200 30 50 400
+  run_bin -0 team-capacity sample
+  assert_equal "$(team_cpu_of 2395 300)" '[3370000000000,true,true]'
+  # team-level shows it as the team's cores.
+  local cores
+  cores=$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -r '.cpu.team * 10 | round / 10 | tostring')
+  run_bin -0 team-level status --stored
+  assert_contains "$output" "the team uses "
+  assert_contains "$output" " and $cores cores"
+}
+
+@test "sample: with a prior reading that has no team_cpu_nsec, the team's CPU is its processes', and the next reading is the slice's" {
+  sample_machine
+  team_cpu_machine 1000 60 5 10 100
+  run_bin -0 team-capacity sample
+  # The reading before this change: no counter.
+  jq -c 'del(.team_cpu_nsec)' "$STATE_DIR/readings.jsonl" >"$STATE_DIR/readings.jsonl.new"
+  mv "$STATE_DIR/readings.jsonl.new" "$STATE_DIR/readings.jsonl"
+  age_by 300
+  team_cpu_machine 3370 200 30 50 400
+  run_bin -0 team-capacity sample
+  # The team's processes, the builder's 140 s and the shell's 25 s; the stranger in the slice is the others'.
+  assert_equal "$(team_cpu_of 165 340)" '[3370000000000,true,true]'
+  age_by 300
+  team_cpu_machine 4000 260 40 60 700
+  run_bin -0 team-capacity sample
+  assert_equal "$(team_cpu_of 640 300)" '[4000000000000,true,true]'
+}
+
+@test "sample: with the user manager not answering, team_cpu_nsec is null and the team's CPU is its processes'" {
+  sample_machine
+  team_cpu_machine 1000 60 5 10 100
+  run_bin -0 team-capacity sample
+  age_by 300
+  team_cpu_machine 3370 200 30 50 400
+  mkdir -p "$HOME/.fake-systemd"
+  touch "$HOME/.fake-systemd/down"
+  run_bin -0 team-capacity sample
+  assert_equal "$(team_cpu_of 165 340)" '[null,true,true]'
+  assert_equal "$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c .systemd)" false
 }
 
 @test "the reading reads a heavy run's holder line by team-heavy's own form" {
