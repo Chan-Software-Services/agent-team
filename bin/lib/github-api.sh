@@ -22,9 +22,11 @@
 #   calls-<UTC date>.jsonl
 #                      one line per request sent, {at (UTC time), by, for, method, endpoint (its
 #                      query cut), status (the HTTP code, null with none), resource, used,
-#                      counted}; counted is false for a 304, a refusal for the limit, a
+#                      counted}; counted is false for a 304, a refusal for the limit, a gh_read
 #                      request GitHub never answered (status null) and gh_call's read of gh api
-#                      rate_limit, true for every other request.
+#                      rate_limit, and true for every other request, a gh_call that fails with
+#                      no HTTP code in gh's stderr (status null) among them, since gh_call cannot
+#                      tell whether GitHub answered it.
 # Every write but the log's goes to a temporary file in the same directory, moved into place;
 # budget.json's and limit.json's under state.lock. The log is appended a line at a time; the
 # request that starts a day's log removes the logs of days more than 2 before it, the cache
