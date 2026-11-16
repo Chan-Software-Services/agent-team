@@ -1,11 +1,12 @@
 // What a running process holds, read on Linux and macOS: the environment and the sockets from
-// /proc on Linux, and through ps and lsof on macOS, which has no /proc; the children through ps
-// on both. And the end of what a test started, so a failed or timed-out test leaves nothing
-// running that holds node --test open.
+// /proc on Linux, and through ps and lsof on macOS, which has no /proc; the children and each
+// process's start time from /proc on Linux and through ps on macOS. And the end of what a test
+// started, so a failed or timed-out test leaves nothing running that holds node --test open.
 //
 //   startingEnvironment(pid)   the environment the process started with (Linux: its
 //                              /proc/<pid>/environ; macOS: what `ps -E` appends to its command)
-//   children(pid)              the pids of the process's children (`ps -A`, on both systems)
+//   children(pid)              the pids of the process's children (Linux: /proc/<pid>/stat's
+//                              ppid; macOS: `ps -A`)
 //   owned(t, child)            returns `child`, a spawned ChildProcess, after arranging that it
 //                              and every process below it end when test `t` ends, passed, failed
 //                              or timed out (node:test runs `t.after` on each): the tree is read
@@ -37,9 +38,31 @@ export function startingEnvironment(pid) {
   return execFileSync("ps", ["-E", "-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" });
 }
 
-// Every process: [pid, ppid, started], `started` being ps's start time, to the second, so a pid
-// read twice is the same process only when its start is the same.
-const processTable = () =>
+// Every process: [pid, ppid, started], `started` being its start time, so a pid read twice is the
+// same process only when its start is the same. On Linux the start is field 22 of
+// /proc/<pid>/stat, in clock ticks since boot, which no step of the wall clock moves (ps's
+// lstart is the boot time plus those ticks, and an NTP step moves the boot time it reads); on
+// macOS, which has no /proc, it is ps's lstart, to the second.
+const processTable = () => (linux ? procProcessTable() : psProcessTable());
+
+function procProcessTable() {
+  const table = [];
+  for (const pid of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+    let stat;
+    try {
+      stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      continue; // Gone while we looked.
+    }
+    // The command name, field 2, is in parentheses and may hold blanks or parentheses itself, so
+    // the fields are counted from after its last ")": field 3 first, ppid field 4, start field 22.
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    table.push([pid, fields[1], fields[19]]);
+  }
+  return table;
+}
+
+const psProcessTable = () =>
   execFileSync("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "lstart="], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } })
     .trim().split("\n").map((line) => {
       const [pid, ppid, ...started] = line.trim().split(/\s+/);
