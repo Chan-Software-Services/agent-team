@@ -45,17 +45,23 @@ from_now() {
   date -u -d "@$(($(date +%s) + $1 * 3600))" +%FT%TZ
 }
 
+# day_file <machine> <at>: the path of <machine>'s day file of the time <at>, the file team-quota
+# line appends a reading taken then to, its directory made.
+day_file() {
+  mkdir -p "$TEAM_HOME/usage/$1/quota"
+  echo "$TEAM_HOME/usage/$1/quota/${2%%T*}.jsonl"
+}
+
 # reading <machine> <at> <seven_day used> [<five_hour used> [<Fable used>]]: a reading as team-quota
 # line writes one, appended to <machine>'s day file of <at>, its windows resetting in a day.
 reading() {
-  local dir=$TEAM_HOME/usage/$1/quota reset
-  reset=$(from_now 24)
-  mkdir -p "$dir"
+  local file reset
+  file=$(day_file "$1" "$2") reset=$(from_now 24)
   jq -cn --arg m "$1" --arg at "$2" --argjson week "$3" --arg hour "${4:-}" --arg fable "${5:-}" --arg reset "$reset" \
     '{at: $at, machine: $m, windows: ({seven_day: {used: $week, resets_at: $reset}}
       + if $hour == "" then {} else {five_hour: {used: ($hour | tonumber), resets_at: $reset}} end),
       models: (if $fable == "" then [] else [{name: "Fable", used: ($fable | tonumber), resets_at: $reset}] end)}' \
-    >>"$dir/${2%%T*}.jsonl"
+    >>"$file"
 }
 
 @test "--help prints the header" {
@@ -247,10 +253,9 @@ reading() {
 @test "status reads a window that has reset since the reading as crossing nothing" {
   local at
   at=$(ago 30)
-  mkdir -p "$TEAM_HOME/usage/laptop/quota"
   jq -cn --arg at "$at" --arg past "$(ago 10)" --arg reset "$(from_now 2)" \
     '{at: $at, machine: "laptop", windows: {five_hour: {used: 97, resets_at: $past}, seven_day: {used: 72, resets_at: $reset}}, models: []}' \
-    >"$TEAM_HOME/usage/laptop/quota/${at%%T*}.jsonl"
+    >"$(day_file laptop "$at")"
   run_bin -0 team-quota status --json
   assert_equal "$(jq -c '.windows | map({name, crossed})' <<<"$output")" '[{"name":"five_hour","crossed":[]},{"name":"seven_day","crossed":[70]}]'
   # Each window says whether it has reset and its reset in the words every reader shows.
@@ -268,7 +273,7 @@ reading() {
   local at file
   at=$(ago 40)
   # The day file the reading went to, which just after midnight UTC is yesterday's, not today's.
-  file=$TEAM_HOME/usage/laptop/quota/${at%%T*}.jsonl
+  file=$(day_file laptop "$at")
   reading laptop "$at" 30
   echo 'not json' >>"$file"
   echo '{"at": 5}' >>"$file"
@@ -281,7 +286,7 @@ reading() {
   at=$(ago 40) reset=$(from_now 24)
   # Every line goes to the first reading's day file, which status reads as the newest one even when
   # a later line's time falls on the next day, just after midnight UTC.
-  file=$TEAM_HOME/usage/laptop/quota/${at%%T*}.jsonl
+  file=$(day_file laptop "$at")
   reading laptop "$at" 30
   # A newer line whose every window is bad is no reading: the older one stands.
   jq -cn --arg at "$(ago 30)" --arg reset "$reset" \
