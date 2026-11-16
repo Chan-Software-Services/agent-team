@@ -141,7 +141,7 @@ EOF
 
   run_bin -0 team-doctor --help
   assert_contains "$output" "
-  quota model   team-quota status --json: passes while a model window is fresh; warns when none is read, fresh or readable, with why.
+  quota model   team-quota status --json: passes while the model reading is fresh; warns when none is read, fresh or readable, with why.
 "
 }
 

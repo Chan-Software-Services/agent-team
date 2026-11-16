@@ -38,10 +38,11 @@
 # usage: ask Claude Code itself for what its /usage screen shows, and record the answer's model
 # windows. It starts one headless Claude Code (claude -p over stream-json, with no prompt, so no
 # model call; no transcript, --no-session-persistence; no MCP server, --strict-mcp-config; no hook,
-# disableAllHooks), its stderr dropped, in a fresh empty directory it removes afterwards, bounded
-# by timeout (QUOTA_USAGE_SECONDS, then a kill QUOTA_USAGE_KILL_SECONDS later). It sends the
-# control request initialize, as the SDK does first, then get_usage with skip_behaviors (the SDK's
-# experimental usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET, whose shape may change),
+# disableAllHooks), its stderr dropped, in a fresh empty directory it removes afterwards while it
+# is still empty (rmdir), bounded by timeout (QUOTA_USAGE_SECONDS, then a kill
+# QUOTA_USAGE_KILL_SECONDS later). It sends the control request initialize, as the SDK does first,
+# then get_usage with skip_behaviors (the SDK's experimental
+# usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET, whose shape may change),
 # reads lines until that answer, every other line ignored, then closes Claude Code's input and
 # waits for it; TEAM_QUOTA_USAGE_SECONDS, a test seam, sets QUOTA_USAGE_SECONDS. Claude Code
 # fetches the usage with its own login, reusing its own answer for a minute: no team code reads a

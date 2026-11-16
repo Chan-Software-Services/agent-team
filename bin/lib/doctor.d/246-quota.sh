@@ -1,11 +1,10 @@
-# quota model   team-quota status --json: passes while a model window is fresh; warns when none is read, fresh or readable, with why.
+# quota model   team-quota status --json: passes while the model reading is fresh; warns when none is read, fresh or readable, with why.
 #               Passes naming each fresh model window and the reading's age and machine
 #               ("Fable's week 96%, read 4 min ago on home-pc"), or saying the fresh reading gives
 #               no model's own week; warns otherwise with the status's model note (no model
-#               reading, a stale one, this machine's last read failed, or no reading at all), since
-#               a rule on a model's week then falls back to the week, and warns when team-quota
-#               status fails or prints no status. Never fails, and never runs team-quota usage, so
-#               it starts no Claude Code.
+#               reading, a stale one, this machine's last read failed, or no reading at all), and
+#               warns when team-quota status fails or prints no status. Never fails, and never runs
+#               team-quota usage, so it starts no Claude Code.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # bin and err, the doctor's
 
