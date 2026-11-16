@@ -15,7 +15,7 @@ A rehearsal runs a release's migrations on a copy of production restored from a 
 The ops session's worktree, the server's working directory, must be a checkout of Conventioner (its `origin` names `Chan-Software-Services/Conventioner` or `chanjdaniel/Conventioner` on GitHub).
 The check reads `origin`'s URL as the checkout's git config holds it, not where a `url.<base>.insteadOf` rule may send the fetch.
 The server fetches `origin` (a failed fetch is a line in the answer, and a branch is then read as the checkout last fetched it), and resolves `ref` as origin has it: a branch of origin's, else a tag of origin's, else a commit's hex, never a local branch or tag, so a stale local `dev` or a moved local tag cannot stand in for origin's.
-A tag is read from origin at the call (`git ls-remote`, since git keeps no copy of origin's tags), so it needs origin to be reachable: when origin's tags cannot be listed, a ref that names no branch of origin's is refused, saying so.
+A tag is read from origin at the call (`git ls-remote`, since git keeps no remote-tracking copy of origin's tags), so it needs origin to be reachable: when origin's tags cannot be listed, a ref that names no branch of origin's is refused, saying so.
 It refuses a commit that no branch of origin's holds, so a commit never pushed is not rehearsed, and checks each script is a file under `back-end/migrations/` at that commit.
 A script whose text at that commit holds `--dry-run` is marked as taking a dry run.
 Each refusal here comes before the heavy-run lock and before Docker is touched.
