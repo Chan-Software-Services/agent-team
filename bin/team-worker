@@ -103,7 +103,8 @@
 # model; otherwise it runs on the user settings' model, and logs none. Ops never takes one, and
 # T0 none from the registry.
 # The MCP config merges the chosen toolkits' .mcp.json servers, each but those a toolkit's
-# mcp-roles.json names for other roles only.
+# mcp-roles.json names for other roles only; an ops launch's servers each get AGENT_TEAM_ROLE=ops
+# in their own environment, since the production servers read no secret without it.
 # A planner, builder or reviewer of a project whose registry entry says confine = "on", and each
 # of T0's, runs every shell command through bin/lib/confine-shell, where the kernel refuses a
 # delete or rename outside the session's roots: its settings' env holds CLAUDE_CODE_SHELL_PREFIX,
@@ -708,7 +709,8 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
 
 # MCP servers come only from the chosen toolkits; a toolkit's mcp-roles.json names the roles a
 # server of its starts for ({"<server>": ["builder", ...]}), and a server it does not name starts
-# for every role.
+# for every role. An ops launch's servers are each given AGENT_TEAM_ROLE=ops in their own
+# environment, which the 1Password read they share (servers/op-secret.mjs) refuses to run without.
 mcp=$taskdir/mcp.$stem.json
 plugin_args=()
 mcp_files=()
@@ -723,7 +725,8 @@ if [[ ${#mcp_files[@]} -gt 0 ]]; then
   server_roles=$(jq -s 'add // {}' "${roles_files[@]}" </dev/null) || exit 1
   jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
     --argjson roles "$server_roles" '{mcpServers: (map(.mcpServers // {}) | add
-      | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role))))} | '"$substitute" \
+      | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role)))
+      | if $role == "ops" then map_values(.env = (.env // {}) + {AGENT_TEAM_ROLE: "ops"}) else . end)} | '"$substitute" \
     "${mcp_files[@]}" >"$mcp"
 else
   echo '{"mcpServers": {}}' >"$mcp"

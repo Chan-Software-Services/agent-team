@@ -29,4 +29,5 @@
 The connection string lives only in 1Password, in the `agent-team` vault: item `conventioner-prod-read`, field `uri`, the same as `prod-read`'s.
 The toolkit holds only its reference, `op://agent-team/conventioner-prod-read/uri`, which is not secret.
 `scripts/start-server.mjs` reads it with `op read` when the session starts its MCP server, which raises a 1Password approval prompt on the PC (one per launch, even for a session that only drills or lists), then signs `op` out and serves from the same process, so the value exists only in that process's memory.
+It reads only in an ops launch: started in any other session, it exits 1 before it runs `op` (`servers/op-secret.mjs`).
 Rotating or revoking it is Daniel's, in `manual-steps.md` (T16, the standing ops rules), and rotating it changes `prod-read`'s too.
