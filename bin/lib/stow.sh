@@ -12,7 +12,8 @@
 #   stow_branches [quiet]        checks each STOW_OPEN task's branches against origin's, and each
 #                                ticket worktree's work against its wip ref.
 #   stow_push                    pushes STOW_PUSHES.
-#   stow_live [T<n>...]          STOW_LIVE, the live worker sessions of those tasks, or of all.
+#   stow_live [T<n>...]          STOW_LIVE, the worker sessions of those tasks, or of all, in any
+#                                state but stopped.
 #   stow_end_ops                 ends STOW_LIVE's ops sessions with team-ops-end, STOW_ENDED.
 #   stow_stop                    stops and removes STOW_LIVE's other sessions.
 #   stow_stowing <task>          the time of the task's stowing standing (a stow under way), or
@@ -204,14 +205,17 @@ stow_push() {
   done
 }
 
-# The live worker sessions (claude agents --json) of the tasks named, or of every task, ops
-# included, into STOW_LIVE as one JSON array: stow_live [T<n>...]
+# The worker sessions of the tasks named, or of every task, ops included, in any state but
+# stopped, into STOW_LIVE as one JSON array. They are read from the full list (claude agents
+# --json --all), as launch_singleton in launch.sh reads it: the plain list leaves out a background
+# session whose turn is done once the daemon settles its process, though a message wakes it, and
+# only a stopped one is never woken. stow_live [T<n>...]
 stow_live() {
   local sessions
-  sessions=$(claude agents --json 2>"$err" | jq -ce 'select(type == "array")' 2>/dev/null) ||
-    die "cannot read the live session list (claude agents --json)"
+  sessions=$(claude agents --json --all 2>"$err" | jq -ce 'select(type == "array")' 2>/dev/null) ||
+    die "cannot read the session list (claude agents --json --all)"
   STOW_LIVE=$(jq -c --arg pattern "$STOW_WORKER" --argjson named "$(jq -cn '$ARGS.positional' --args -- "$@")" \
-    '[.[] | select(.name | strings | test($pattern))
+    '[.[] | select(.state != "stopped") | select(.name | strings | test($pattern))
       | select($named == [] or IN($named[]; .name | sub("-.*"; "")))]' <<<"$sessions")
 }
 

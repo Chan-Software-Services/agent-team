@@ -2148,6 +2148,31 @@ after"
   [[ ! -e $TEAM_HOME/tasks/T5/brief-other.md ]]
 }
 
+@test "in a two-project task a round brief takes the findings of its own project's latest review, and of one logged with no reviewer's done" {
+  open_two_projects
+  # round_findings <project> <name>: the findings a round brief in <project> derives.
+  round_findings() {
+    run_bin -0 team-brief T5 builder-round --project "$1" --name "$2" --set pr=none --set findings_file=review.md --set goal=g
+    jq -r .values.findings "$TEAM_HOME/tasks/T5/brief-$2.json"
+  }
+  local project
+  for project in conv home; do
+    event T5 launch "$(jq -cn --arg p "$project" '{role: "reviewer", session: "r-\($p)", worktree: "/w/\($p)", toolkits: [],
+      project: $p, branch: "b", machine: "m"}')"
+  done
+  # conv's review is logged first and home's last, each followed by its reviewer's done.
+  event T5 review '{verdict: "findings", head: "a1b2c3d", sent_back: [3, 5]}'
+  event T5 'done' '{role: "reviewer", session: "r-conv"}'
+  event T5 review '{verdict: "findings", head: "e4f5a6b", sent_back: [8]}'
+  event T5 'done' '{role: "reviewer", session: "r-home"}'
+  assert_equal "$(round_findings conv conv-1)" "3 and 5"
+  assert_equal "$(round_findings home home-1)" "8"
+  # A review logged by hand, with no reviewer's done after it, is every project's.
+  event T5 review '{verdict: "findings", head: "0a1b2c3", sent_back: [9]}'
+  assert_equal "$(round_findings conv conv-2)" "9"
+  assert_equal "$(round_findings home home-2)" "9"
+}
+
 @test "a returned worktree no longer counts, so one open worktree needs no --project" {
   open_two_projects
   event T5 worktree-returned "$(jq -cn --arg wt "$HOME/agent-team/.claude/worktrees/1" '{project: "home", worktree: $wt}')"
