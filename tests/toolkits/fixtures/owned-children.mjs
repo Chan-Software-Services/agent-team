@@ -3,12 +3,14 @@
 // tree shaped like a restore drill's: a leader that cleans up on SIGTERM, as the drill removes
 // its throwaway, a spy that holds while its parent lives, as the mongorestore spy does, and a
 // process that ignores SIGTERM and outlives its parent, as a hung mongorestore would. Then one
-// test fails mid-run and the other times out. Every pid goes in OWNED_CHILDREN_DIR as
-// <test>.<role> (leader, spy, stray), and the leader's SIGTERM leaves <test>.cleaned there.
+// test fails mid-run, one times out, and one fails with a stubborn leader, whose SIGTERM starts
+// one more process, as the drill's starts a docker rm, and never exits. The three run at once.
+// Every pid goes in OWNED_CHILDREN_DIR as <test>.<role> (leader, spy, stray, and the stubborn
+// leader's late), and the leader's SIGTERM leaves <test>.cleaned there.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import { owned } from "../helpers/process.mjs";
 
 const dir = process.env.OWNED_CHILDREN_DIR;
@@ -19,19 +21,20 @@ const spy = `sh -c 'trap "" TERM; echo $$ >"$0"; exec sleep 600' "$1" & echo $$ 
 const leader = `
 const { spawn } = require("node:child_process");
 const { writeFileSync } = require("node:fs");
-const [base] = process.argv.slice(1);
+const [base, mode] = process.argv.slice(1);
 writeFileSync(base + ".leader", String(process.pid));
 process.on("SIGTERM", () => {
   writeFileSync(base + ".cleaned", "");
-  process.exit(143);
+  if (mode !== "stubborn") process.exit(143);
+  writeFileSync(base + ".late", String(spawn("sleep", ["600"], { stdio: "ignore" }).pid));
 });
 spawn("sh", ["-c", ${JSON.stringify(spy)}, "spy", base + ".stray", base + ".spy"], { stdio: "ignore" });
 setInterval(() => {}, 60_000);
 `;
 
-async function startTree(t, name) {
+async function startTree(t, name, mode = "") {
   const base = join(dir, name);
-  const child = owned(t, spawn(process.execPath, ["-e", leader, base], { stdio: ["ignore", "pipe", "pipe"] }));
+  const child = owned(t, spawn(process.execPath, ["-e", leader, base, mode], { stdio: ["ignore", "pipe", "pipe"] }));
   child.stdout.on("data", () => {});
   child.stderr.on("data", () => {});
   while (!["leader", "spy", "stray"].every((role) => existsSync(`${base}.${role}`))) {
@@ -40,12 +43,20 @@ async function startTree(t, name) {
   }
 }
 
-test("fails mid-run", async (t) => {
-  await startTree(t, "failed");
-  throw new Error("failed mid-run, as the test asked");
-});
+describe("trees", { concurrency: true }, () => {
+  test("fails mid-run", async (t) => {
+    await startTree(t, "failed");
+    throw new Error("failed mid-run, as the test asked");
+  });
 
-test("times out mid-run", { timeout: 5_000 }, async (t) => {
-  await startTree(t, "timed-out");
-  await new Promise(() => {});
+  // Room for a loaded machine's node and sh starts before the timeout, which the tree must beat.
+  test("times out mid-run", { timeout: 20_000 }, async (t) => {
+    await startTree(t, "timed-out");
+    await new Promise(() => {});
+  });
+
+  test("fails mid-run with a stubborn leader", async (t) => {
+    await startTree(t, "stubborn", "stubborn");
+    throw new Error("failed mid-run with a stubborn leader, as the test asked");
+  });
 });
