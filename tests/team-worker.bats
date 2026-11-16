@@ -1328,7 +1328,6 @@ confined_in() {
   done
 }
 
-
 @test "the browser toolkit adds its plugin directory and no MCP server" {
   open_task T7
   run_bin -0 team-worker T7 builder "$wt1" --toolkit browser -- go
