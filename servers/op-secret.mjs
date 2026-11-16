@@ -1,6 +1,6 @@
 // Read secrets from 1Password for a toolkit's MCP server, and keep this process from starting a
-// child that would inherit them: the shared part of each server body (mongodb-mcp.mjs and
-// vercel-mcp.mjs).
+// child that would inherit them: the shared part of each server body (mongodb-mcp.mjs,
+// vercel-mcp.mjs and prod-mongo/prod-mongo-mcp.mjs).
 //
 //   const [first, second] = readSecrets(name, [reference, ...], (value, reference) => reason)
 //   refuseChildProcesses(name)
