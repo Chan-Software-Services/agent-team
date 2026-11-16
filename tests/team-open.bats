@@ -536,6 +536,18 @@ holding() {
   assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" ""
 }
 
+@test "when capacity.lock stays held, a new task exits 75 saying it cannot tell yet whether a task fits, claiming nothing" {
+  capacity_room $((16 * 1073741824)) full
+  # team-capacity's wait for capacity.lock running out, as flock -w 120 ends after 2 minutes.
+  fails_on_call flock 120
+  run_bin -75 --separate-stderr team-open proj feature feat busy "Busy"
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-open: cannot tell yet whether a task fits: team-capacity: another admission still holds ~/.local/state/agent-team/capacity.lock after 2 minutes"
+  [[ ! -e $TEAM_HOME/tasks/T1 && ! -e $slots/1 && ! -e $primary/.claude/worktrees ]]
+  assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" ""
+  [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
+}
+
 @test "finishing a half-open task asks for no room" {
   stub_reply curl '{"message":"Missing Access"}'
   run_bin -1 team-open proj feature feat flaky "Flaky"
@@ -627,6 +639,7 @@ EOF
   assert_contains "$output" "a git pool's only exit 75 is its lock"
   assert_contains "$output" "team-capacity admit --kind session:builder --dry-run"
   assert_contains "$output" "no room to open a task"
+  assert_contains "$output" "cannot tell yet whether a task fits"
   [[ $output != *"never refuses an open"* ]]
   [[ $output != *"every slot is taken"* && $output != *"slot lock"* && $output != *"machine's cap"* ]]
 }
