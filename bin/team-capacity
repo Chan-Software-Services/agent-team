@@ -20,8 +20,14 @@
 #          ~/.config/systemd/user/agent-team.slice (a description, no limits), and for each gate
 #          daemon unit no-mistakes wrote there, no-mistakes-daemon-<hash>.service, a drop-in
 #          no-mistakes-daemon-<hash>.service.d/agent-team.conf holding Slice=agent-team.slice, so
-#          every gate run is the team's; then systemctl --user daemon-reload when it wrote
-#          anything. A gate daemon that runs (ActiveState active) outside the slice is restarted
+#          every gate run is the team's, and, when this checkout's bin/lib/worker-login names the
+#          worker login and it is usable here, Environment=GH_CONFIG_DIR=<its gh directory>, so
+#          the gate pushes and opens its pull requests on it; then systemctl --user daemon-reload
+#          when it wrote anything. With the worker login on but not usable (or its constant
+#          malformed) the drop-in is the one without it, and with a gate daemon unit its first
+#          line says "the gate's daemon stays on the machine's own GitHub login: <why>". A gate
+#          daemon that runs (ActiveState active) outside the slice, whose drop-in it just
+#          rewrote, or whose process's GH_CONFIG_DIR is not what its drop-in names is restarted
 #          with `no-mistakes daemon restart`, never --force, which refuses while a pipeline runs:
 #          then the daemon is left as it is, and it says why and that a later install restarts
 #          it. Each file written, the reload and each restart is one line; with nothing to do it
@@ -57,8 +63,10 @@
 #          it FAILs, since the level's limits need the slice, when systemctl --user does not
 #          answer or the user manager's cgroup.controllers lacks cpu or memory; it WARNs when
 #          agent-team.slice is not installed as install writes it, a gate daemon unit lacks its
-#          drop-in (both fixed by team-capacity install, Daniel's yes), a running gate daemon is
-#          outside the slice (its restart waits on its pipeline), the session list cannot be
+#          drop-in or has another than install writes, one not naming the worker login while it
+#          is on included (both fixed by team-capacity install, Daniel's yes), a running gate
+#          daemon is outside the slice or on another GitHub login than its drop-in names (its
+#          restart waits on its pipeline), the session list cannot be
 #          read, a live team session runs outside its task's slice (fixed by team-capacity
 #          place), or, with the slice installed, the limits team-level last applied
 #          (~/.local/state/agent-team/level/applied.json) are missing or another mode and level's
@@ -71,6 +79,9 @@
 #          the heartbeat log's capacity lines, or team-timers enable with --heartbeat disabled. The
 #          passing reason, after the level's words, is "systemd backend: agent-team.slice holds the
 #          team, <n> live team session(s) in it" on Linux, and the macOS words below on macOS.
+#          With a gate daemon unit and the worker login on but not usable, the reason ends with
+#          install's "the gate's daemon stays on the machine's own GitHub login: <why>", which
+#          changes no verdict.
 # sample   Takes one reading of the machine's load with the team's use per task and appends it to
 #          ~/.local/state/agent-team/capacity/readings.jsonl, kept to the last 24 hours (the
 #          heartbeat's capacity step runs it every 5 minutes), printing nothing; within 60
@@ -470,9 +481,30 @@ slice_unit() {
     '' '[Slice]'
 }
 
-# A gate daemon's drop-in, as install writes it.
+# The GitHub login the gate's daemon gets: GATE_LOGIN the worker login, and GATE_LOGIN_DIR its gh
+# directory, when it is on and usable; GATE_LOGIN_NOTE why the daemon stays on the machine's own
+# login when it is on but not usable (a malformed constant included). All empty when it is off.
+gate_login() {
+  local name problem
+  GATE_LOGIN='' GATE_LOGIN_DIR='' GATE_LOGIN_NOTE=''
+  if ! name=$(worker_login 2>/dev/null); then
+    problem=$(worker_login 2>&1 >/dev/null) || true
+    GATE_LOGIN_NOTE=${problem#"${0##*/}: "}
+  elif [[ -n $name ]]; then
+    if problem=$(worker_login_problem); then
+      GATE_LOGIN_NOTE=$problem
+    else
+      GATE_LOGIN=$name GATE_LOGIN_DIR=$(worker_login_dir)
+    fi
+  fi
+  [[ -z $GATE_LOGIN_NOTE ]] || GATE_LOGIN_NOTE="the gate's daemon stays on the machine's own GitHub login: $GATE_LOGIN_NOTE"
+}
+
+# A gate daemon's drop-in, as install writes it: the team's slice, and with the worker login on
+# and usable (gate_login), its gh directory.
 drop_in() {
   printf '%s\n' '# team-capacity install: every gate run in the team'\''s slice.' '[Service]' "Slice=$SLICE"
+  [[ -z $GATE_LOGIN_DIR ]] || printf '%s\n' "Environment=GH_CONFIG_DIR=$GATE_LOGIN_DIR"
 }
 
 # The gate daemon units no-mistakes wrote, one name per line, sorted.
@@ -498,6 +530,24 @@ daemon_outside() {
   [[ $(unit_property "$1" ActiveState) == active ]] && ! in_team_slice "$(unit_property "$1" ControlGroup)/"
 }
 
+# Whether the running gate daemon <unit>'s process is on another GitHub login than its drop-in
+# names: with the worker login on, its GH_CONFIG_DIR is not the worker's directory; off, it is.
+# A process whose environment cannot be read is not judged.
+daemon_login_stale() {
+  local pid environ got
+  [[ $(unit_property "$1" ActiveState) == active ]] || return 1
+  pid=$(unit_property "$1" MainPID)
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+  environ=$ROOT/proc/$pid/environ
+  [[ -r $environ ]] || return 1
+  got=$(tr '\0' '\n' <"$environ" 2>/dev/null | sed -n 's/^GH_CONFIG_DIR=//p' | head -n 1) || return 1
+  if [[ -n $GATE_LOGIN_DIR ]]; then
+    [[ $got != "$GATE_LOGIN_DIR" ]]
+  else
+    [[ -n $got && $got == "$(worker_login_dir)" ]]
+  fi
+}
+
 # Write <file> with stdin's content when it differs, saying so; returns 1 when nothing changed.
 write_if_changed() {
   local file=$1 content
@@ -510,15 +560,20 @@ write_if_changed() {
 }
 
 install() {
-  local changed=0 unit out rc cgroup did=0
+  local changed=0 unit out rc cgroup did=0 outside waits rewritten=()
   if [[ $os == macos ]]; then
     echo "team-capacity: no cgroups on macOS: nothing to install" >&2
     return 0
   fi
+  gate_login
+  [[ -z $GATE_LOGIN_NOTE || -z $(gate_units) ]] || echo "$GATE_LOGIN_NOTE"
   if slice_unit | write_if_changed "$UNITS/$SLICE"; then changed=1; fi
   while IFS= read -r unit; do
     [[ -n $unit ]] || continue
-    if drop_in | write_if_changed "$UNITS/$unit.d/$DROP_IN"; then changed=1; fi
+    if drop_in | write_if_changed "$UNITS/$unit.d/$DROP_IN"; then
+      changed=1
+      rewritten+=("$unit")
+    fi
   done < <(gate_units)
   if ((changed)); then
     out=$(systemctl --user daemon-reload 2>&1) ||
@@ -526,16 +581,28 @@ install() {
     echo "reloaded the user manager"
     did=1
   fi
+  # A running daemon restarts when it runs outside the slice, its drop-in was just rewritten, or
+  # its process is on another GitHub login than its drop-in names.
   while IFS= read -r unit; do
-    if [[ -z $unit ]] || ! daemon_outside "$unit"; then continue; fi
+    [[ -n $unit && $(unit_property "$unit" ActiveState) == active ]] || continue
+    outside=0
+    ! daemon_outside "$unit" || outside=1
+    if ((!outside)) && [[ " ${rewritten[*]} " != *" $unit "* ]] && ! daemon_login_stale "$unit"; then continue; fi
     did=1 rc=0
     out=$(no-mistakes daemon restart 2>&1 </dev/null) || rc=$?
     if ((rc)); then
-      echo "the gate's daemon $unit runs a pipeline (no-mistakes daemon restart: $(grep -m1 . <<<"$out" || echo "exit $rc")), so it stays outside $SLICE until it restarts: once no gate runs, run team-capacity install again"
-    elif cgroup=$(unit_property "$unit" ControlGroup) && in_team_slice "$cgroup/"; then
-      echo "restarted the gate's daemon $unit into $SLICE (no pipeline was running)"
-    else
+      if ((outside)); then waits="it stays outside $SLICE"; else waits="it runs on the GitHub login it started with"; fi
+      echo "the gate's daemon $unit runs a pipeline (no-mistakes daemon restart: $(grep -m1 . <<<"$out" || echo "exit $rc")), so $waits until it restarts: once no gate runs, run team-capacity install again"
+    elif ! cgroup=$(unit_property "$unit" ControlGroup) || ! in_team_slice "$cgroup/"; then
       echo "the gate's daemon $unit still runs outside $SLICE after no-mistakes daemon restart ($cgroup); run team-capacity install again once no gate runs"
+    elif daemon_login_stale "$unit"; then
+      echo "the gate's daemon $unit still runs on the GitHub login it started with after no-mistakes daemon restart; run team-capacity install again once no gate runs"
+    elif ((outside)); then
+      echo "restarted the gate's daemon $unit into $SLICE (no pipeline was running)"
+    elif [[ -n $GATE_LOGIN ]]; then
+      echo "restarted the gate's daemon $unit onto the worker login $GATE_LOGIN (no pipeline was running)"
+    else
+      echo "restarted the gate's daemon $unit onto the machine's own GitHub login (no pipeline was running)"
     fi
   done < <(gate_units)
   ((did)) || echo "$SLICE and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
@@ -698,7 +765,7 @@ place() {
 
 # The doctor's resources line, as the header's check says.
 check() {
-  local problems=() out controllers file unit placed=0 id name pid cgroup manager=1 shown=() list
+  local problems=() notes=() out controllers file unit placed=0 id name pid cgroup manager=1 shown=() list
   problem() { problems+=("$(jq -cn --arg v "$1" --arg r "$2" --arg f "${3:-}" '{verdict: $v, reason: $r, fix: $f}')"); }
   if [[ $os == linux ]]; then
     if ! out=$(systemctl --user show -P Version 2>&1); then
@@ -715,12 +782,22 @@ check() {
     if [[ ! -f $UNITS/$SLICE || $(cat "$UNITS/$SLICE") != "$(slice_unit)" ]]; then
       problem WARN "$SLICE is not installed" "team-capacity install (Daniel's yes)"
     fi
+    gate_login
+    [[ -z $GATE_LOGIN_NOTE || -z $(gate_units) ]] || notes+=("$GATE_LOGIN_NOTE")
     while IFS= read -r unit; do
       [[ -n $unit ]] || continue
-      if [[ ! -f $UNITS/$unit.d/$DROP_IN || $(cat "$UNITS/$unit.d/$DROP_IN") != "$(drop_in)" ]]; then
+      if [[ ! -f $UNITS/$unit.d/$DROP_IN ]] || ! grep -qxF "Slice=$SLICE" "$UNITS/$unit.d/$DROP_IN"; then
         problem WARN "the gate's daemon $unit has no drop-in putting it in $SLICE" "team-capacity install (Daniel's yes)"
+      elif [[ $(cat "$UNITS/$unit.d/$DROP_IN") != "$(drop_in)" ]]; then
+        if [[ -n $GATE_LOGIN ]]; then
+          problem WARN "the gate's daemon $unit has a drop-in that does not name the worker login $GATE_LOGIN" "team-capacity install (Daniel's yes)"
+        else
+          problem WARN "the gate's daemon $unit has a drop-in other than team-capacity install writes" "team-capacity install (Daniel's yes)"
+        fi
       elif ((manager)) && daemon_outside "$unit"; then
         problem WARN "the gate's daemon $unit still runs outside $SLICE, its restart waiting" "team-capacity install once no gate runs"
+      elif ((manager)) && daemon_login_stale "$unit"; then
+        problem WARN "the gate's daemon $unit still runs on the GitHub login it started with, its restart waiting" "team-capacity install once no gate runs"
       fi
     done < <(gate_units)
     if ! LIVE_SESSIONS=$(claude agents --json 2>/dev/null | jq -ce 'select(type == "array")' 2>/dev/null); then
@@ -758,7 +835,8 @@ check() {
         "team-timers enable"
     fi
   fi
-  printf '%s\n' "${problems[@]}" | jq -sc --arg os "$os" --argjson placed "$placed" --arg level "$LEVEL_SAYS" '
+  printf '%s\n' "${problems[@]}" | jq -sc --arg os "$os" --argjson placed "$placed" --arg level "$LEVEL_SAYS" \
+    --args '
     map(select(. != null)) as $p
     | {os: $os,
        backend: (if $os == "macos" then "macos" else "systemd" end),
@@ -767,9 +845,10 @@ check() {
          + if $p != [] then $p | map(.reason)
            elif $os == "macos" then ["macOS backend, admission and stow only: no cgroups, so no hard CPU or memory limit holds the team'"'"'s sessions, heavy runs or gate; the team'"'"'s containers'"'"' CPU is held with docker update, and their memory within Docker Desktop'"'"'s VM"]
            else ["systemd backend: agent-team.slice holds the team, \($placed) live team session\(if $placed == 1 then "" else "s" end) in it"] end
+         + $ARGS.positional
          | join("; ")),
        fix: ($p | map(.fix | select(. != "")) | unique | join("; ")),
-       problems: $p}' >"$work/check.json"
+       problems: $p}' ${notes[@]+"${notes[@]}"} >"$work/check.json"
   if ((json)); then
     cat "$work/check.json"
   else
