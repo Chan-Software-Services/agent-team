@@ -14,8 +14,9 @@
 # Actions runs (actions: read); every other job's reads the contents alone.
 # A newer run cancels an older one of the same event and ref, a pull request's (its
 # refs/pull/<n>/merge) or a branch's dispatched one, never a run of another event, which
-# team-ci-run may be waiting on, and never a merge queue's trial commit. Every curl this file runs itself retries a transient failure (curl --retry); the
-# toolkits job's downloads by tools.lock's own commands do not.
+# team-ci-run may be waiting on, and never a merge queue's trial commit. Every curl this file runs
+# itself retries a transient failure (curl --retry); the toolkits job's downloads by tools.lock's
+# own commands do not.
 # Each job has a time limit (timeout-minutes), about twice its longest recent run, so a hang ends
 # long before GitHub's 6-hour default; each that runs bats has one above tests/run's file limit
 # (TESTS_FILE_MINUTES), so tests/run names a hung file before the job is stopped.
