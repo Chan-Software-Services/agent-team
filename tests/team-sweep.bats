@@ -1041,6 +1041,107 @@ due() {
   assert_contains "$output" "T3 no-worker: merged and not closed"
 }
 
+@test "queue-wait: a PR in the merge queue with no team-merge holding the task's lock, and no merge-due for it" {
+  local url=https://github.com/owner/proj/pull/5 pid
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 queue-wait: PR $url is in the merge queue since 2026-10-22T03:00:00Z with no team-merge waiting on it; next: run team-merge T3 with Bash run_in_background, which goes on waiting and logs how it ends"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .session, .name, .next])' <<<"$output")" \
+    '[["T3","queue-wait",null,null,"run team-merge T3 with Bash run_in_background, which goes on waiting and logs how it ends"]]'
+  # A lock file nobody holds, as a team-merge that ended leaves it, changes nothing.
+  mkdir -p "$HOME/.local/state/agent-team/merge"
+  echo 4242 >"$HOME/.local/state/agent-team/merge/T3.lock"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T3 queue-wait"
+  # While a team-merge holds the lock, nothing is found, and the sweep takes no lock of its own:
+  # the holder's is still the only one.
+  pid=$(hold_merge_lock T3)
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # Another task's lock is not this one's.
+  release_merge_lock "$pid"
+  pid=$(hold_merge_lock T4)
+  run_bin -1 team-sweep
+  assert_contains "$output" "T3 queue-wait"
+  release_merge_lock "$pid"
+  # Dropped from the queue, the PR is merge-due again; queued again and merged, it is neither.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "GitHub gives no reason"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  event T3 merged '{pr: 5, merge: "9999999", head: "a1b2c3d", by: "the approved plan", url: "https://github.com/owner/proj/pull/5"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 no-worker: merged and not closed, with every live worker idle (latest T3-reviewer 11111111); next: close it with team-close T3"
+  no_github
+}
+
+@test "a queued of a head the task has since moved past stands for no PR in the queue: merge-due again, and no queue-wait" {
+  local url=https://github.com/owner/proj/pull/5
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  # A push took the PR out of the queue with no team-merge waiting, so no dequeued was logged;
+  # the new head is logged, reviewed and passed, and its checks are green.
+  event T3 pr '{url: "https://github.com/owner/proj/pull/5", head: "b2c3d4e5f6"}'
+  event T3 review '{verdict: "pass", head: "b2c3d4e5f6", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ci T3 passed b2c3d4e5f6
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  # A fix after findings is reviewed at a head no pr event logs: the review alone moves past it.
+  jq -c 'select(.event != "pr" or .head != "b2c3d4e5f6")' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  no_github
+}
+
+@test "trial-failed: a PR the queue dropped for a failure of its own goes to the merge-base round, with no merge-due, until it is reviewed again" {
+  local url=https://github.com/owner/proj/pull/5
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "failed checks",
+    failed: [{name: "test", class: "pr", kind: "failed", link: "https://github.com/owner/proj/actions/runs/1/job/2", step: "Run tests"},
+      {name: "data", class: "infrastructure", kind: "setup", link: "", step: ""}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 trial-failed: PR $url failed test on the merge queue's trial merge, which dropped it at 2026-10-22T03:30:00Z; next: run team-next T3 --ci, which names the builder-merge-base step and who takes it, then a rereview; never team-merge T3 on the same head"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .session, .name])' <<<"$output")" '[["T3","trial-failed",null,null]]'
+  # The round's rereview ends it: the default word's merge is due again.
+  event T3 review '{verdict: "pass", head: "c3d4e5f6a7", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ci T3 passed c3d4e5f6a7
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  # A drop with no failure of the PR's own is merge-due as before.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "dequeued", url: $url, head: "c3d4e5f6a7", reason: "the checks timed out",
+    failed: [{name: "data", class: "infrastructure", kind: "setup", link: "", step: ""}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  no_github
+}
+
+@test "merge-due: none while a team-merge holds the task's lock, before its queued is logged" {
+  local pid
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  pid=$(hold_merge_lock T3)
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  release_merge_lock "$pid"
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+}
+
 @test "merge-due: none while the latest review, a pass logged through team-log, sent findings back" {
   opened T3
   launch T3 builder 11111111
@@ -1702,7 +1803,7 @@ EOF
   code_checkout
   local lib=$BATS_TEST_TMPDIR/code/bin/lib
   rm -f "$lib/ledger.jq"
-  { cat "$REPO_ROOT/bin/lib/ledger.jq"; echo 'def sweep($a; $b; $c; $d; $e; $f): "" | halt_error(4);'; } >"$lib/ledger.jq"
+  { cat "$REPO_ROOT/bin/lib/ledger.jq"; echo 'def sweep($a; $b; $c; $d; $e; $f; $g): "" | halt_error(4);'; } >"$lib/ledger.jq"
   looks '[]'
   run_bin -1 --separate-stderr team-sweep --wait
   assert_equal "$stderr" "team-sweep: a look failed with exit 4 and nothing on stderr, for 5 minutes running"
@@ -1715,7 +1816,7 @@ EOF
   # A merge replaces the library under the running watch, and its next look fails on the new
   # definitions, as PR 111's change of own_covered's shape did on 2026-11-12.
   local code=$BATS_TEST_TMPDIR/code lib=$BATS_TEST_TMPDIR/code/bin/lib
-  printf '%s\n' "{ cat '$lib/ledger.jq'; echo 'def sweep(\$a; \$b; \$c; \$d; \$e; \$f): error(\"Cannot index array\");'; } >'$lib/ledger.jq.new'" \
+  printf '%s\n' "{ cat '$lib/ledger.jq'; echo 'def sweep(\$a; \$b; \$c; \$d; \$e; \$f; \$g): error(\"Cannot index array\");'; } >'$lib/ledger.jq.new'" \
     "mv '$lib/ledger.jq.new' '$lib/ledger.jq'" >"$BATS_TEST_TMPDIR/at-look.2"
   run_bin -1 --separate-stderr team-sweep --wait
   assert_equal "$output" ""

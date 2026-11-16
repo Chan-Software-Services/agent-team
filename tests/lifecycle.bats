@@ -110,6 +110,26 @@ builder_launch() {
   assert_equal "$(fold_read 'task_status + " " + phase')" "closed closed"
 }
 
+@test "a queued and a dequeued are taken by an open task and leave it awaiting merge" {
+  opened feature
+  on pr '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}'
+  on review '{verdict: "pass", head: "1111111"}'
+  assert_equal "$(fold_read phase)" awaiting-merge
+  assert_equal "$(problems queued '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}')" ""
+  on queued '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}'
+  assert_equal "$(fold_read 'phase + " " + lifecycle.since')" "awaiting-merge 2026-11-01T00:02:00Z"
+  assert_equal "$(problems dequeued '{url: "https://github.com/owner/proj/pull/5", head: "1111111", reason: "checks failed"}')" ""
+  on dequeued '{url: "https://github.com/owner/proj/pull/5", head: "1111111", reason: "checks failed"}'
+  assert_equal "$(fold_read 'phase + " " + lifecycle.since')" "awaiting-merge 2026-11-01T00:02:00Z"
+  assert_equal "$(fold_read 'lifecycle.prs | map([.number, .verdict, .merged])')" '[[5,"pass",false]]'
+  on merged '{pr: 5, merge: "9f8e7d6", head: "1111111", by: "Daniel", url: "https://github.com/owner/proj/pull/5"}'
+  assert_equal "$(fold_read phase)" merged
+  # Both are the table's rows, with no effect, and team-merge's alone in the contract.
+  assert_equal "$(fold_read 'lifecycle_table.kinds | [.queued, .dequeued]')" '[{},{}]'
+  assert_equal "$(fold_read '$contract.kinds | [.queued, .dequeued] | map([.writer, .inbox, .required, .optional])')" \
+    '[["team-merge",true,{"url":"string","head":"string"},{"project":"string"}],["team-merge",true,{"url":"string","head":"string","reason":"string"},{"failed":"array"}]]'
+}
+
 @test "a pass on a fix's head counts for the pr logged at that head after it, as for a rewrite to it" {
   opened feature
   on pr '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}'

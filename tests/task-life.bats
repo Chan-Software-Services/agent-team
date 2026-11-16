@@ -148,6 +148,9 @@ case "$1 $2" in
   "api repos/"*)
     if [[ $2 =~ ^repos/([^/]+/[^/]+)/branches/(.+)$ ]]; then
       jq -n --arg b "${BASH_REMATCH[2]}" '{name: $b, protected: false}'
+    elif [[ $2 =~ ^repos/[^/]+/[^/]+/rules/branches/ && $3 == --paginate ]]; then
+      # No ruleset covers a base.
+      echo '[]'
     elif [[ $2 =~ ^repos/[^/]+/([^/]+)/compare/([^.]+)\.\.\.(.+)$ && $3 == --jq && $4 == .behind_by ]]; then
       # How many commits the base has that the head lacks.
       git --git-dir "${ORIGINS:?}/${BASH_REMATCH[1]}.git" rev-list --count "${BASH_REMATCH[3]}..${BASH_REMATCH[2]}"

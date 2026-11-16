@@ -89,10 +89,14 @@ head_runs() {
 stub_gh() {
   stub_script gh <<'EOF'
 n=$(cat "$GH_DIR/look")
+printf '%s\n' "$*" >>"$GH_DIR/calls"
 case "$*" in
   "pr view 217 --repo owner/proj --json state,headRefOid") what=view ;;
   "pr checks 217 --repo owner/proj --json name,state,bucket,link,workflow") what=checks ;;
   "api repos/owner/proj/actions/runs?head_sha="*"&per_page=100") what=runs ;;
+  "api graphql "*) what=entry ;;
+  "api repos/owner/proj/commits/"*"/check-runs?filter=latest&per_page=100 --paginate") what=check-runs ;;
+  "api repos/owner/proj/commits/"*"/status?per_page=100") what=statuses ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") what=running ;;
   "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${2%/jobs*} what=jobs-${what##*/} ;;
   "api repos/owner/proj/actions/runs/"*) what=run-${2##*/} ;;
@@ -110,6 +114,39 @@ esac
 printf '%s\n' "$body"
 if [[ $what == checks ]] && jq -e 'any(.[]; .bucket == "pending")' <<<"$body" >/dev/null; then exit 8; fi
 EOF
+}
+
+# entry <look> <PR state> [<trial sha>]: the PR and its merge queue entry as GraphQL answers them,
+# from <look> on, the entry's head commit <trial sha>, or no entry.
+entry() {
+  answer "$1" entry "$(jq -cn --arg state "$2" --arg trial "${3:-}" '{data: {repository: {pullRequest: {state: $state,
+    mergeQueueEntry: (if $trial == "" then null else {headCommit: {oid: $trial}} end)}}}}')"
+}
+
+# check_run <name> <status> [<conclusion> [<run id> [<job id>]]]: one check run of a commit as the
+# REST API shows it, its html_url an Actions job link of run <run id> and job <job id> (default
+# 9<run id>; no run given: a link outside Actions).
+check_run() {
+  jq -cn --arg name "$1" --arg status "$2" --arg conclusion "${3:-}" --arg run "${4:-}" --arg job "${5:-9${4:-}}" '{name: $name,
+    status: $status, conclusion: (if $conclusion == "" then null else $conclusion end),
+    html_url: (if $run == "" then "https://ci.example.invalid/\($name)"
+      else "https://github.com/owner/proj/actions/runs/\($run)/job/\($job)" end),
+    output: {title: "OUTPUT-MARKER"}}'
+}
+
+# check_runs <look> <check run>...: the trial commit's check runs from <look> on.
+check_runs() {
+  local look=$1
+  shift
+  answer "$look" check-runs "$(jq -cs '{total_count: length, check_runs: .}' <<<"$*")"
+}
+
+# statuses <look> [<context>:<state>]...: the trial commit's statuses from <look> on.
+statuses() {
+  local look=$1
+  shift
+  answer "$look" statuses "$(jq -cn '{state: "pending", statuses: [$ARGS.positional[] | split(":")
+    | {context: .[0], state: .[1], target_url: "https://ci.example.invalid/\(.[0])", description: "OUTPUT-MARKER"}]}' --args "$@")"
 }
 
 # running <look> <count>: how many workflow runs of the repository GitHub lists as in progress, the
@@ -1118,6 +1155,179 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   run_bin team-ci-wait --json --look "$url"
   assert_equal "$status" 1
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["agent-review","pr","failed"]]'
+}
+
+@test "--merge-group reads every page of the trial commit's check runs: a check still running on a later page holds the pass" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  # Two pages, as gh api --paginate prints them: one JSON document after the other.
+  answer 0 check-runs "$(jq -cn --argjson a "$(check_run test completed success)" '{total_count: 2, check_runs: [$a]}')
+$(jq -cn --argjson b "$(check_run late in_progress)" '{total_count: 2, check_runs: [$b]}')"
+  head_runs 0
+  statuses 0
+  TEAM_CI_WAIT_DEADLINE_SECONDS=0 run_bin team-ci-wait --merge-group "$trial" --json "$url"
+  assert_equal "$(jq -r '.outcome' <<<"${lines[-1]}")" deadline
+  assert_contains "$output" "late"
+}
+
+@test "--merge-group waits on the trial commit's check runs and statuses, and passes once each passed for 2 minutes" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test in_progress '' 7001)" "$(check_run agent-review completed success)"
+  workflow_run 0 7001 in_progress
+  head_runs 0 7001:CI:in_progress
+  statuses 0 CodeQL:pending
+  check_runs 3 "$(check_run test completed success 7001)" "$(check_run agent-review completed success)" \
+    "$(check_run docs completed skipped 7001 97002)" "$(check_run lint completed neutral 7001 97003)"
+  head_runs 3
+  statuses 3 CodeQL:success
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 7
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217, on its trial commit, at 5e5e5e5
+team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, docs skipped, lint skipped, CodeQL passed"
+  assert_equal "$(jq -c '[.outcome, .head, .failures]' <<<"$output")" "[\"passed\",\"$trial\",[]]"
+  # It reads the trial commit alone: never the PR's own checks, and the runs of the trial commit.
+  if grep -E '^pr (view|checks) ' "$GH_DIR/calls"; then return 1; fi
+  grep -Fxq "api repos/owner/proj/actions/runs?head_sha=$trial&per_page=100" "$GH_DIR/calls"
+  grep -Fxq "api repos/owner/proj/commits/$trial/check-runs?filter=latest&per_page=100 --paginate" "$GH_DIR/calls"
+  grep -Fxq "api repos/owner/proj/commits/$trial/status?per_page=100" "$GH_DIR/calls"
+  grep -q "^api graphql .*mergeQueueEntry.* owner=owner -f name=proj -F number=217$" <(tr '\n' ' ' <"$GH_DIR/calls" | sed 's/ api /\napi /g; s/ *$/\n/')
+}
+
+@test "--merge-group classes a trial commit's failures as on a head: the PR's own, setup, a roll-up, a failed status and a required check not listed" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  sed -i 's/^required_checks = .*/required_checks = ["test", "data", "agent-review"]/' "$TEAM_HOME/projects.toml"
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed failure 7001 97001)" "$(check_run "test-shards (2)" completed failure 7001 97002)" \
+    "$(check_run toolkits completed timed_out 7001 97003)" "$(check_run agent-review completed success)"
+  statuses 0 CodeQL:error
+  job 0 97002 runner-1 "Set up job=success" "Run tests=failure"
+  job 0 97003 runner-2 "Set up job=failure"
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.outcome, .head]' <<<"$output")" "[\"failed\",\"$trial\"]"
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .state, .step]]' <<<"$output")" \
+    '[["test-shards (2)","pr","failed","failure","Run tests"],["CodeQL","pr","failed","error",null],["toolkits","infrastructure","setup","timed_out","Set up job"],["test","rollup","rollup","failure",null]]'
+  assert_contains "$text_output" "team-ci-wait: the checks on 5e5e5e5 did not pass:"
+  assert_contains "$text_output" "rerun it with gh run rerun 7001 --job 97003 --repo owner/proj"
+  [[ $text_output != *OUTPUT-MARKER* ]]
+  # Every check passed, but a required one never reported on the trial commit; agent-review is
+  # never required here, as on a head.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run test completed success 7001)"
+  statuses 0
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","pr","missing"]]'
+}
+
+@test "--merge-group ends as other-head once the entry is on another trial commit or the PR left the queue, and as closed once it merged" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  next=6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+  check_runs 0 "$(check_run test in_progress '' 7001)"
+  workflow_run 0 7001 in_progress
+  head_runs 0 7001:CI:in_progress
+  statuses 0
+  # The queue rebuilt the entry: at the first look, with no grace, and after two.
+  entry 0 OPEN "$next"
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.outcome, .head, .failures]' <<<"$output")" "[\"other-head\",\"$trial\",[]]"
+  assert_equal "$(jq -r .text <<<"$output")" "team-ci-wait: the queue entry of owner/proj#217 is no longer on the trial commit 5e5e5e5: its trial commit is now 6f6f6f6, whose checks need a wait of their own"
+  echo 0 >"$GH_DIR/look"
+  entry 0 OPEN "$trial"
+  entry 2 OPEN "$next"
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 2
+  assert_equal "$(jq -r .outcome <<<"$output")" other-head
+  # The PR left the queue with nothing failed (cancelled checks are the queue's own doing).
+  echo 0 >"$GH_DIR/look"
+  entry 2 OPEN
+  check_runs 2 "$(check_run test completed cancelled 7001)"
+  head_runs 2
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 2
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" '["other-head",[]]'
+  assert_equal "$(jq -r .text <<<"$output")" "team-ci-wait: the queue entry of owner/proj#217 is no longer on the trial commit 5e5e5e5: the PR is not in the merge queue"
+  # It merged: the entry is gone and the PR's checks no longer matter.
+  echo 0 >"$GH_DIR/look"
+  entry 2 MERGED
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, .head, .text]' <<<"$output")" \
+    "[\"closed\",\"$trial\",\"team-ci-wait: owner/proj#217 is merged: its checks no longer matter\"]"
+}
+
+@test "--merge-group names the failed checks of a trial commit the queue dropped, leaving out the ones it cancelled or left pending" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test in_progress '' 7001 97001)" "$(check_run data in_progress '' 7001 97002)" \
+    "$(check_run toolkits in_progress '' 7001 97003)"
+  workflow_run 0 7001 in_progress
+  head_runs 0 7001:CI:in_progress
+  statuses 0
+  # A check fails while the others run: the wait goes on, as on a head, until the queue acts.
+  check_runs 1 "$(check_run test completed failure 7001 97001)" "$(check_run data in_progress '' 7001 97002)" \
+    "$(check_run toolkits in_progress '' 7001 97003)"
+  entry 3 OPEN
+  check_runs 3 "$(check_run test completed failure 7001 97001)" "$(check_run data completed cancelled 7001 97002)" \
+    "$(check_run toolkits in_progress '' 7001 97003)"
+  job 0 97001 runner-1 "Set up job=success" "Run actions/checkout@v4=failure"
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 3
+  assert_equal "$(jq -c '[.outcome, .head]' <<<"$output")" "[\"failed\",\"$trial\"]"
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .step]]' <<<"$output")" \
+    '[["test","infrastructure","setup","Run actions/checkout@v4"]]'
+  # The cancelled job is never read.
+  if grep -F "actions/jobs/97002" "$GH_DIR/calls"; then return 1; fi
+}
+
+@test "--merge-group keeps the deadline and the unreadable limit, each exit 75" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test in_progress '' 7001)"
+  workflow_run 0 7001 in_progress
+  head_runs 0 7001:CI:in_progress
+  statuses 0
+  TEAM_CI_WAIT_DEADLINE_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 75
+  assert_equal "$(ended_at)" 2
+  assert_equal "$(jq -c '[.outcome, .head]' <<<"$output")" "[\"deadline\",\"$trial\"]"
+  assert_contains "$(jq -r .text <<<"$output")" "1 minute, and checks still pending on 5e5e5e5: test (in_progress, run 7001 in_progress)"
+  echo 0 >"$GH_DIR/look"
+  answer 0 entry fail
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 75
+  assert_equal "$(jq -c '[.outcome, .head]' <<<"$output")" '["unreadable",null]'
+  assert_contains "$(jq -r .text <<<"$output")" "gh api graphql: error connecting to api.github.com"
+  # A PR GitHub does not know is no readable look either.
+  echo 0 >"$GH_DIR/look"
+  answer 0 entry '{"data": {"repository": {"pullRequest": null}}}'
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 75
+  assert_contains "$(jq -r .text <<<"$output")" "gh api graphql: no such pull request"
+}
+
+@test "--merge-group takes a full sha, no sha after the URL and no --look" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  run_bin team-ci-wait --merge-group 5e5e5e5 "$url"
+  assert_equal "$status" 2
+  assert_contains "$output" "--merge-group takes the trial commit's full 40-hex sha"
+  run_bin team-ci-wait --merge-group "$url"
+  assert_equal "$status" 2
+  run_bin team-ci-wait --merge-group "$trial" "$url" "$head"
+  assert_equal "$status" 2
+  run_bin team-ci-wait --look --merge-group "$trial" "$url"
+  assert_equal "$status" 2
+  run_bin team-ci-wait --merge-group "$trial"
+  assert_equal "$status" 2
+  [[ ! -e $GH_DIR/calls ]]
 }
 
 # The queued clock counts only the looks at which nothing else of the repository runs: with builders

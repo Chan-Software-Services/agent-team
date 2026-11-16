@@ -60,9 +60,14 @@
 # own_project in bin/lib/team.sh, or the team's own on a plan Daniel approved with the reviewer App
 # on, the default not withdrawn for it, the task's branch logged and its reviews letting it merge
 # unasked), so team-merge merges it on that word; one it refuses comes back as the coordinator's
-# ask, its text naming the PR's URL, listed with the asks. While the reviewer App is off (no
-# bin/lib/review-app), the team's own project's ready PRs are listed, since they merge only on the
-# per-head word.
+# ask, its text naming the PR's URL, listed with the asks. A PR that stands in the merge queue
+# (queue_state in bin/lib/ledger.jq: the task's latest queued, dequeued or merged of it is a queued,
+# with no other head logged since, by a pr event of the PR or by any review of the task) is left out
+# too, since team-merge is landing it, and so is one the queue dropped for a failure of its own on
+# the trial merge until a pr event of it or a review of the task follows the drop (queue_state's
+# round_due), since the round is the builder's and no word is asked on the head that failed. While
+# the reviewer App is off (no bin/lib/review-app), the team's own project's ready PRs are listed,
+# since they merge only on the per-head word.
 # While a withdrawal of the default word stands (the latest merge-default-withdrawn or
 # merge-default-restored of any task covering some PR is that withdrawal), one line per withdrawal
 # after the items names what it is for and links Daniel's message: "-# Default merge word
