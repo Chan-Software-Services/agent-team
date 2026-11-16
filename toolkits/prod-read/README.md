@@ -36,7 +36,8 @@ The read user's connection string lives only in 1Password, at `op://agent-team/c
 - The launcher reads the reference with `op read` (a 1Password prompt on the PC), signs `op` out, and starts the pinned MongoDB MCP server (`servers/`, installed by `servers/install`) in the same process, so the connection string is never in a starting environment.
   The shared body is `servers/mongodb-mcp.mjs`.
 - Only an ops launch starts it: every other session's settings deny a shell command that runs the launcher or the MongoDB MCP server (with `node`, `bun`, `deno`, `env`, `npx` or `npm exec`, or by its path, though neither file is executable), while reading them stays allowed, or a `claude` given a production toolkit by `--plugin-dir` or `--mcp-config`, and a worker is denied `team-worker`'s ops role and the ops load check.
-  These are speed bumps (`tests/repo.bats`): Daniel's rule of approving a 1Password prompt only right after an announced launch is what holds.
+  The 1Password read every server body shares (`servers/op-secret.mjs`) checks that it runs in an ops launch: it exits 1 before it runs `op` unless `AGENT_TEAM_ROLE` is `ops`, which `bin/team-worker` gives an ops launch in its settings and in each server's environment.
+  The deny rules (`tests/repo.bats`) and that check are speed bumps: Daniel's rule of approving a 1Password prompt only right after an announced launch is what holds.
 - The server is read-only, with server-side JavaScript, telemetry and disk logs off.
 
 ## Tests and evals

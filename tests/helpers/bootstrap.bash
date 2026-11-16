@@ -94,6 +94,11 @@ nvm() {
 SH
 NVM
     ;;
+  # rustup-init installs rustup and its cargo proxy in ~/.cargo/bin, logging its arguments.
+  -fsSLo\ */rustup-init\ https://static.rust-lang.org/rustup/archive/*)
+    printf '%s\n' 'echo "rustup-init $*" >>"$STUB_CALLS/rustup-init.log"' 'source "$REPO_ROOT/tests/helpers/doctor.bash"' \
+      'mark_installed rustup' 'answer "rustup toolchain list" "no installed toolchains"' \
+      'mkdir -p "$HOME/.cargo/bin" && printf "#!/bin/sh\n" >"$HOME/.cargo/bin/cargo" && chmod +x "$HOME/.cargo/bin/cargo"' >"$2" ;;
   -fsSLo\ *) ;;
   *) source "$STUB_FIXTURES/curl-doctor.sh" ;;
 esac
@@ -152,8 +157,9 @@ if [[ \${1:-} == clone && \${3:-} == https://github.com/* ]]; then
   exit
 fi
 EOF
+  # tar unpacks the member it is named, under a top directory it strips or not.
   wrapper tar <<'EOF'
-if [[ $1 == -xzf ]]; then mark_installed "${!#}"; exit 0; fi
+if [[ $1 == -xzf ]]; then member=${!#} && mark_installed "${member##*/}"; exit 0; fi
 EOF
   wrapper make <<'EOF'
 if [[ $1 == -C && -f $2/.fork ]]; then echo "make ${*:3}" >>"$STUB_CALLS/fork-build.log"; exit 0; fi
@@ -220,7 +226,7 @@ install_calls() {
   # The clock line's HEAD and the interview channel line's Discord reads change nothing.
   stub_calls curl | grep -v -e '"-sSI"' -e '"https://discord.com/api/v10/' | sed 's/^/curl /' || true
   stub_calls claude | grep -E '^\["plugin","(marketplace","add|install|disable)"' | sed 's/^/claude /' || true
-  cat "$STUB_CALLS"/{git-clone,fork-build,no-mistakes-init,nvm,servers-install}.log 2>/dev/null || true
+  cat "$STUB_CALLS"/{git-clone,fork-build,no-mistakes-init,nvm,servers-install,rustup-init}.log 2>/dev/null || true
 }
 
 # What a run may change, listed with each file's size and modification time: HOME (the stubs'

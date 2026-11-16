@@ -7,9 +7,15 @@
 #   pr url  https://github.com/<owner>/<name>/pull/<n>, in a registered project's repo
 #   file    a non-empty .md file inside the task directory (the project's task_dir) of the git
 #           checkout that holds it, symlinks resolved first
+#           with a Not verified section: a "## Not verified" or "### Not verified" heading line
+#           (any case, trailing blanks allowed) outside a fenced code block, whose body, to the next
+#           heading of the same or a higher level, holds a list item ("-", "*", "+" or "1." with
+#           text) or a line reading none (any case, an optional final period); fenced lines count
+#           for nothing
 # Prints the comment's URL.
 # Refused, exit 2 with nothing posted: any other command line; exit 1: a repo no project has, any
-# other file, and a comment GitHub refuses.
+# other file, a file with no Not verified section (saying to add a "## Not verified" list of what
+# the change touches that nothing proved, or none, before its counts), and a comment GitHub refuses.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
@@ -25,5 +31,25 @@ task_dir=$(realpath -m -- "$top/$(team_project "$project" task_dir)")
 # By text, not by identity (same_path): a file named in another case than git's top level is
 # refused, the safe side, and the reviewer names its own file under the worktree it runs in.
 [[ $file == "$task_dir"/* ]] || die "$2 is not inside the task directory $task_dir"
+
+# Whether the file has a Not verified section that lists something or says none.
+has_not_verified() {
+  awk '
+    { text = $0; sub(/\r$/, "", text) }
+    text ~ /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    match(text, /^#+([[:space:]]|$)/) {
+      depth = RLENGTH - (substr(text, RLENGTH, 1) ~ /[[:space:]]/)
+      if (open && depth <= level) open = 0
+      if (depth >= 2 && depth <= 3 && tolower(substr(text, depth + 1)) ~ /^[[:space:]]+not verified[[:space:]]*$/) {
+        open = 1; level = depth
+      }
+      next
+    }
+    open && (text ~ /^[[:space:]]*([-*+]|[0-9]+\.)[[:space:]]+[^[:space:]]/ ||
+             tolower(text) ~ /^[[:space:]]*none\.?[[:space:]]*$/) { found = 1; exit }
+    END { exit !found }' "$1"
+}
+has_not_verified "$file" || die "$2 has no Not verified section: before its counts, add a ## Not verified list of what this change touches that no reading, test, CI or check proved, or none; nothing was posted"
 
 gh pr comment "$number" --repo "$repo" --body-file "$file" || die "GitHub refused the comment on $url"

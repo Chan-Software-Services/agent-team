@@ -27,4 +27,5 @@ An insert into a collection that does not exist still creates it, since MongoDB 
 The connection string lives only in 1Password, in the `agent-team` vault: item `conventioner-prod-write`, field `uri`.
 The toolkit holds only its reference, `op://agent-team/conventioner-prod-write/uri`, which is not secret.
 `scripts/start-server.mjs` reads it with `op read` when the session starts its MCP server, which raises its own 1Password approval prompt on the PC, separate from `prod-read`'s; it then signs `op` out and starts the server in the same process, so the value exists only in that process's memory, never in an environment, a file, a transcript or a log.
+It reads only in an ops launch: started in any other session, it exits 1 before it runs `op` (`servers/op-secret.mjs`).
 Rotating or revoking it is Daniel's, in `manual-steps.md` (T16, the standing ops rules).
