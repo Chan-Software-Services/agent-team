@@ -239,6 +239,9 @@
 # TEAM_SWEEP_NOW (a UTC time, as 2026-11-15T10:00:00Z) stands for now where an assistant-handoff's
 # wait is counted, and nowhere else, the tests' seam; a due item's day is team-current's own
 # (TEAM_CURRENT_NOW).
+# Every temporary file a run makes, a look's and its background views', is in one directory of the
+# run under TMPDIR, which it removes at its end in every mode, by TERM, INT or HUP too, once it has
+# sent TERM to what the views still running run and waited for them; only a KILL leaves it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/error-view.sh
@@ -274,6 +277,29 @@ esac
 ledger=$TEAM_HOME/ledger.jsonl
 [[ -e $ledger ]] || ledger=/dev/null
 
+# The run's directory, as the header says. The views still running when the run ends are its own
+# background jobs, whose pids it has not yet waited for, so none is another process's: the
+# command each runs is sent TERM, so it ends by its own traps and removes its own scratch, and each
+# view, which then ends in a moment, is waited for, so none writes into the directory while it is
+# removed.
+run_tmp=$(mktemp -d)
+end_run() {
+  local -a views children
+  mapfile -t views < <(jobs -p)
+  if ((${#views[@]})); then
+    mapfile -t children < <(ps -A -o pid=,ppid= | awk -v views=" ${views[*]} " 'index(views, " " $2 " ") { print $1 }')
+    ((${#children[@]} == 0)) || kill -TERM "${children[@]}" 2>/dev/null || true
+    wait "${views[@]}" 2>/dev/null || true
+  fi
+  rm -rf "$run_tmp"
+}
+trap end_run EXIT
+
+# A new temporary file of the run, named for what it holds: run_file <name>
+run_file() {
+  mktemp "$run_tmp/$1.XXXXXX"
+}
+
 # The quiet time from which session-activity may read a session's transcripts: the default stall
 # limit, since no session quieter than that is stalled.
 parse_after=$(ledger_jq 'stall_limits.default' -nr)
@@ -285,7 +311,7 @@ parse_after=$(ledger_jq 'stall_limits.default' -nr)
 # still come.
 session_activity() {
   local out errors status=0 reason
-  errors=$(mktemp)
+  errors=$(run_file activity.err)
   out=$("$TEAM_LIB/session-activity" --parse-after "$parse_after" <<<"$1" 2>"$errors") || status=$?
   if ((status)); then
     reason=$(grep . "$errors" | tail -n 1) || reason="session-activity failed with exit $status and no reason given"
@@ -306,7 +332,7 @@ session_activity() {
 # fails: level_plan <file>
 level_plan() {
   local out err line
-  out=$(mktemp) err=$(mktemp)
+  out=$(run_file plan.out) err=$(run_file plan.err)
   if TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-capacity" plan --json --sessions "$1" >"$out" 2>"$err" </dev/null; then
     jq -c . "$out"
   else
@@ -326,7 +352,7 @@ HEALTH_TIMEOUT=10
 health_view() {
   local out err rc=0 line
   if ! machine_name >/dev/null 2>&1; then echo '{}'; return; fi
-  out=$(mktemp) err=$(mktemp)
+  out=$(run_file health.out) err=$(run_file health.err)
   TEAM_HOME=$TEAM_HOME bounded "$HEALTH_TIMEOUT" "$(dirname "$TEAM_LIB")/team-timers" health --json >"$out" 2>"$err" </dev/null || rc=$?
   if ! jq -ce 'select(type == "object" and .schema == "team-health/1" and (.problems | type) == "array")' "$out" 2>/dev/null; then
     if ((rc == 124)); then
@@ -345,7 +371,7 @@ health_view() {
 # <args>...
 script_view() {
   local schema=$1 script=$2 out err rc=0
-  out=$(mktemp) err=$(mktemp)
+  out=$(run_file "$script.out") err=$(run_file "$script.err")
   TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/$script" "${@:3}" >"$out" 2>"$err" </dev/null || rc=$?
   if ((rc > 1)) || ! jq -ce --arg schema "$schema" 'select(type == "object" and .schema == $schema)' "$out" 2>/dev/null; then
     error_view "$err" "$script $3 $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no $schema view"; fi)"
@@ -358,7 +384,7 @@ script_view() {
 # directory) when it fails or prints no list: handoffs_view
 handoffs_view() {
   local out err rc=0
-  out=$(mktemp) err=$(mktemp)
+  out=$(run_file handoffs.out) err=$(run_file handoffs.err)
   TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-assistant" list --open --to coordinator --json >"$out" 2>"$err" </dev/null || rc=$?
   if ((rc)) || ! jq -ce 'select(type == "array")' "$out" 2>/dev/null; then
     error_view "$err" "team-assistant list $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no list"; fi)"
@@ -373,7 +399,7 @@ handoffs_view() {
 own_covered() {
   local found err
   if ! ledger_jq 'ledger_events | default_may_hold' -nRe "$ledger" >/dev/null; then echo '{"projects": [], "app": null}'; return; fi
-  err=$(mktemp)
+  err=$(run_file own.err)
   if found=$(own_projects 2>"$err"); then
     printf '%s\n' "$found"
   else
@@ -390,7 +416,7 @@ look() {
   local sessions plan activity plan_file own health plan_pid health_pid queue current due handoffs
   local queue_pid='' current_pid='' due_pid='' handoffs_pid='' found rc=0
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
-  plan_file=$(mktemp)
+  plan_file=$(run_file plan)
   printf '%s\n' "$sessions" >"$plan_file.sessions"
   echo null >"$plan_file.queue"
   echo null >"$plan_file.current"
@@ -481,8 +507,7 @@ look_failure() {
 wait_for_finding() {
   local look_n=0 failing_since='' key first=1 status started changed
   local -A initial=() since=() now=()
-  err=$(mktemp)
-  trap 'rm -f "$err"' EXIT
+  err=$(run_file look.err)
   started=$(code_sums)
   while :; do
     if look 2>"$err"; then

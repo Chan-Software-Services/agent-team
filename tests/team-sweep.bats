@@ -2693,3 +2693,70 @@ assistant-handoff: team-assistant list printed no list: fix what team-assistant 
   run_bin -1 team-sweep
   assert_equal "$(stub_calls team-assistant)" ""
 }
+
+# A code checkout whose team-assistant hangs on its list, its pid in $STUB_FIXTURES/assistant.pid,
+# so a look stands waiting on its hand-offs' view, every other file of the look made; the hand-off
+# log is there, so the look starts that view.
+hanging_handoffs() {
+  queue_room
+  handoff_sent H1 task assistant coordinator 45
+  ln -f "$BATS_RUN_TMPDIR/shared/stub" "$CODE_CHECKOUT/bin/team-assistant"
+  stub_script team-assistant <<'SH'
+echo "$$" >"$STUB_FIXTURES/assistant.pid.new"
+mv "$STUB_FIXTURES/assistant.pid.new" "$STUB_FIXTURES/assistant.pid"
+exec "$(command -pv sleep)" 30
+SH
+}
+
+# sweep_ended_by_term <args>...: run team-sweep <args> in the background until its look waits on
+# the hanging team-assistant, end it with TERM, and check it ended by the signal and left nothing
+# under its TMPDIR. The sweep's end sends TERM to the hung team-assistant; the test stops it by its
+# pid too, should it still run.
+sweep_ended_by_term() {
+  local sweep tries=0 code=0
+  rm -f "$STUB_FIXTURES/assistant.pid"
+  guard_sandbox
+  "$CODE_CHECKOUT/bin/team-sweep" "$@" >"$BATS_TEST_TMPDIR/sweep.out" 2>&1 3>&- &
+  sweep=$!
+  until [[ -e $STUB_FIXTURES/assistant.pid ]]; do
+    if ((++tries == 100)); then
+      kill "$sweep" 2>/dev/null || true
+      echo "team-sweep $* never asked team-assistant for its list" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  kill -TERM "$sweep"
+  wait "$sweep" || code=$?
+  kill "$(cat "$STUB_FIXTURES/assistant.pid")" 2>/dev/null || true
+  assert_equal "$code" 143
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+}
+
+@test "a text look, a --json look and a --wait ended by TERM leave no file under their TMPDIR" {
+  hanging_handoffs
+  sweep_ended_by_term
+  sweep_ended_by_term --json
+  sweep_ended_by_term --wait
+}
+
+@test "a look that ends normally leaves no file under its TMPDIR, in each mode" {
+  queue_room
+  handoff_sent H1 task assistant coordinator 45
+  opened T3
+  launch T3 builder 4f2a9c1e
+  sessions "$(session 4f2a9c1e T3-builder idle)"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "T3 silent: T3-builder 4f2a9c1e is idle with no ledger event since its launch at 2026-10-22T02:10:00Z; next: read claude logs 4f2a9c1e, then send it one line or log what is known with team-log
+hand-off H1 (task) from the assistant has waited 45 min: read it with team-assistant show H1, act, and answer it"
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -r '.[].kind' <<<"$output")" $'silent\nassistant-handoff'
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+  # The watch ends on T3's no-worker, new at its second look, once it has stood three minutes.
+  looks "[$(session 4f2a9c1e T3-builder busy working)]" '[]'
+  run_bin -0 team-sweep --wait
+  assert_contains "$output" "T3 no-worker: "
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+}
