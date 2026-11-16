@@ -100,7 +100,7 @@ password=owner-fixture-token"
   assert_equal "$(cat "$STUB_CALLS/gh.env")" "GH_CONFIG_DIR=unset GH_TOKEN=unset GITHUB_TOKEN=unset"
   [[ ! -e $STUB_CALLS/global-helper.log ]]
   # Outside the team home the global helper answers, as it does for a project checkout.
-  run -0 env GIT_TERMINAL_PROMPT=0 git -C "$HOME" credential fill <<<$'protocol=https\nhost=github.com\n'
+  run -0 env GIT_TERMINAL_PROMPT=0 git -C "${HOME:?}" credential fill <<<$'protocol=https\nhost=github.com\n'
   assert_contains "$output" password=global-token
   assert_equal "$(cat "$STUB_CALLS/global-helper.log")" global
 }
