@@ -10,7 +10,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
   Tick each ticket off in its file as it lands, and commit on the task branch.
 - For a bug, reproduce it end to end the way a user would hit it before fixing it.
 - Delete what your change made obsolete: code, tests, docs, comments, flags. Update the project's docs and knowledge graph in the same PR when the work taught something durable.
-- Before you report DONE, read each sentence your branch adds or changes in a doc, node, skill, comment, header or PR body against the code at your head, and cut or narrow what the code does not do; move a node's `verified` date only after that reading.
+- Move a knowledge-graph node's `verified` date only after the delivery's claims check has read it.
 - On a UI change, read `~/agent-team/sops/frontend-patterns.md` before you build a reusable component, a long list, a dialog, a prototype's data or a bundle budget.
 - On a UI change, when your session lists `ui-check`, run it: a ticket builder spot-checks its ticket's states, the builder who delivers runs it once on the whole change and puts a "UI check" section in the PR body (the tier, each tile judged by its path under `.scratch/task/ui-check/`, each finding and what was done about it), and a fix round rechecks only the states the fix touched and their siblings.
 - On Effect code, when your session lists `effect-v4`, invoke it before you write Effect code and run its check before you report DONE or PR; the builder who delivers puts an "Effect check" line in the PR body (the command, the installed `effect` version, and the findings or "none").
@@ -21,7 +21,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
 - Answer a finding with a test plan, a bug the reviewer suspects, by writing the test it plans and running it before you change the code.
   If it fails, the bug is real: fix it until the test passes.
   If it passes, the suspicion was wrong, and the passing test is your evidence.
-  Keep the test either way, and say which it was, naming the finding and the test, in a note in `.scratch/task/build-notes/`.
+  Keep the test either way, as an assertion in the test that already drives that path when one does and as a new test only when none does, and say which it was, naming the finding and the test, in a note in `.scratch/task/build-notes/`.
 - Commit messages are Conventional Commits with no agent name or `Co-Authored-By` trailer (Daniel's rule; worker settings also turn Claude Code's commit attribution off). Use `docs:`, `build:`, `ci:` or `test:` for changes that do not change the product, so release-please bumps nothing for them.
 - Commit and push the task branch before reporting DONE or PR, except as the Disclosure line below says. Never merge, never push to a base branch, never force-push.
   In a ticket worktree, which your brief names with its ticket branch, push the ticket branch only where your brief has you run CI on it, never for anything else, and merge only the task branch into it, never the other way, as your brief says; at `T<n> STOW` or `HOLD`, commit and reply as below without pushing, since the checkpoint keeps the branch.

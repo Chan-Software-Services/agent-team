@@ -453,7 +453,7 @@
     },
     {
       "family": "coordinator-scripts",
-      "rules": "^Bash\\((\\*/)?(claude-coordinator|team-(capacity|checkpoint|config|handoff|heavy|lease|load-check|ops-end|records-rewrite|resume|review-comment|secrets|stack|stow|timers)) "
+      "rules": "^Bash\\((\\*/)?(claude-coordinator|team-(capacity|checkpoint|config|handoff|heavy|land|lease|load-check|ops-end|records-rewrite|resume|review-comment|secrets|stack|stow|timers)) "
     },
     {
       "family": "daniels-channel",

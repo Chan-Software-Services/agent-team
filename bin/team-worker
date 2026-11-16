@@ -36,7 +36,10 @@
 # Prints the background session id and logs the launch to ledger.jsonl, with the worktree's
 # project and branch, the machine's team name
 # (~/.config/agent-team/machine), and for ops the request's link and message id. T0, the load check, needs no thread and
-# no lease, is asked none of the task's checks, and is not logged. The session is named
+# no lease, is asked none of the task's checks, and is not logged. Its planner, builder and
+# reviewer start with Remote Control off, remoteControlAtStartup false in their generated settings,
+# which outranks the user settings' word, so a load check leaves no row on claude.ai; its ops keeps
+# settings/ops.json's word, and a real task's worker gets no such key. The session is named
 # T<n>-<role>.
 # A ticket worktree (team-open --ticket's, an open worktree whose event names a ticket) takes
 # only its ticket's builder: any other role is refused, "<worktree> is ticket NN's worktree of
@@ -103,7 +106,8 @@
 # model; otherwise it runs on the user settings' model, and logs none. Ops never takes one, and
 # T0 none from the registry.
 # The MCP config merges the chosen toolkits' .mcp.json servers, each but those a toolkit's
-# mcp-roles.json names for other roles only.
+# mcp-roles.json names for other roles only; an ops launch's servers each get AGENT_TEAM_ROLE=ops
+# in their own environment, since the production servers read no secret without it.
 # A planner, builder or reviewer of a project whose registry entry says confine = "on", and each
 # of T0's, runs every shell command through bin/lib/confine-shell, where the kernel refuses a
 # delete or rename outside the session's roots: its settings' env holds CLAUDE_CODE_SHELL_PREFIX,
@@ -150,6 +154,34 @@
 # projects.toml. The project is the one the task's open worktree names in the ledger, else (T0)
 # the registered project whose primary checkout is the worktree's main checkout; a worktree of no registered project gets no toolkit. T0, the load check, measures a
 # toolkit before any project lists it, so it takes any toolkit unlisted but a production one.
+# A toolkit is named by the plain name of its directory in toolkits/: a name that is empty, holds a
+# slash or is . or .. is a usage error (exit 2), as an unknown one is.
+# A skills-only toolkit needs no line in its project's toolkits list, on any launch, whether given
+# by hand, carried from an earlier launch or added as below, since
+# the list keeps MCP servers and production access per project, and a skills-only toolkit starts
+# neither of them, only adding skills and agents, whose frontmatters hold only the keys below.
+# Skills-only is read from the toolkit's own files at each launch (skills_only_toolkit
+# below), and holds exactly when its directory's entries are only .claude-plugin/, README.md,
+# agents/, skills/ and evals/, each optional and none a symbolic link (so no .mcp.json, .lsp.json,
+# hooks/, scripts/, commands/, bin/ or settings.json); .claude-plugin/ holds only plugin.json, an
+# object whose keys are only name, version, description and author; agents/ holds only *.md files
+# and skills/ only <name>/SKILL.md files, none a symbolic link; each of those files holds no NUL
+# byte and opens with a frontmatter, a first line of --- and then only spaces and tabs, with
+# nothing before it, which ends at a line of --- and then only spaces; every line between holds
+# only printable ASCII, a carriage return at its end aside, and each of them that is not blank, a comment or
+# indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,
+# the first of them not indented, and none has hooks or mcpServers before a colon or opens with ?
+# (a YAML explicit key), so a file this cannot read with certainty is a doubt; evals/, which no
+# session loads, may hold anything. No skill file holds an exclamation mark anywhere, since Claude
+# Code runs a command a skill's text writes with one, and looks for it after filling the skill's
+# arguments in. The toolkit's name, each skill directory's and each agent file's before its .md
+# hold only lowercase letters, digits and dashes, since Claude Code's text of a skill opens with
+# the skill directory's path, where a name could write such a command. A toolkit
+# that fails any of these is checked against the project's list like every other, so one that
+# gains a server, a hook or a script comes back under it on its own.
+# A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets
+# the delivery toolkits, spec-review alone, added after any it was given, each once, and logs them
+# in its toolkits with the rest; a launch of any other template or role adds none.
 # An ops launch runs on one message of Daniel's, the one --request links, and is refused (exit 1,
 # nothing started or logged, before the session list is read) unless that message is in
 # #coordinator or the task's latest thread (T0's, which has no thread, in #coordinator only), was
@@ -212,7 +244,9 @@ while [[ $# -gt 0 && $1 != -- ]]; do
   case $1 in
     --toolkit)
       [[ $# -ge 2 ]] || usage_error "--toolkit needs a name"
-      [[ -d $code/toolkits/$2 ]] || usage_error "unknown toolkit '$2'"
+      # A toolkit is named by its directory's plain name, so no name reaches a directory outside
+      # toolkits/ or names one toolkit twice.
+      [[ -n $2 && $2 != */* && $2 != . && $2 != .. && -d $code/toolkits/$2 ]] || usage_error "unknown toolkit '$2'"
       ! why=$(toolkit_refusal "$2" '') || usage_error "$why"
       toolkits+=("$2")
       shift 2
@@ -315,6 +349,16 @@ if [[ -n $brief && -e $record ]] &&
   echo "team-worker: warning: $record is no brief record team-brief writes, so the launch logs no template" >&2
 fi
 
+# The delivery toolkits: every builder that delivers (a builder-deliver, builder-round or
+# builder-fix brief) gets each, after the toolkits it was given, once.
+DELIVERY_TOOLKITS=(spec-review)
+if [[ $role == builder && $template =~ ^builder-(deliver|round|fix)$ ]]; then
+  for kit in "${DELIVERY_TOOLKITS[@]}"; do
+    [[ -d $code/toolkits/$kit ]] || die "the delivery toolkit '$kit' is not in $code/toolkits"
+    [[ " ${toolkits[*]} " == *" $kit "* ]] || toolkits+=("$kit")
+  done
+fi
+
 # T0 is the load check, not a task: it has no ledger entry and stays out of the ledger.
 worktree_event='' project='' ticket=''
 if [[ $task != T0 ]]; then
@@ -370,9 +414,107 @@ if [[ -z $launch_project ]] && { ((${#toolkits[@]})) || [[ $role != ops ]]; }; t
   launch_project=$(team_project --find path "$main_checkout" | head -n 1) || exit 1
 fi
 
-# A worker gets only the toolkits its worktree's project lists in the registry. T0, the load
-# check, measures a toolkit before any project lists it, so it may take unlisted any but a
-# production one, which toolkit_refusal holds to the ops role.
+# skills_only_toolkit <toolkit directory>: whether the toolkit is skills-only, as the header
+# defines it: nothing in it but a plain manifest, a README, agents, skills and evals, and no hook
+# or server declared in any of them. It runs in a subshell, so its glob options end with it.
+skills_only_toolkit() (
+  shopt -s nullglob dotglob
+  # The C locale, so a range of letters holds ASCII's lowercase ones alone.
+  LC_ALL=C
+  # so_name <name>: a name of lowercase letters, digits and dashes alone. Claude Code's text of a
+  # skill opens with the skill directory's path, so a name may hold nothing a command is written with.
+  so_name() { [[ $1 =~ ^[a-z0-9-]+$ ]]; }
+  so_name "${1##*/}" || exit 1
+  prose=()
+  # so_plain <path>: a regular file that is no symbolic link.
+  so_plain() { [[ -f $1 && ! -L $1 ]]; }
+  # so_dir <path>: a directory that is no symbolic link.
+  so_dir() { [[ -d $1 && ! -L $1 ]]; }
+  for entry in "$1"/*; do
+    case ${entry##*/} in
+      README.md) so_plain "$entry" || exit 1 ;;
+      # No session loads a toolkit's evals, so what they hold does not count.
+      evals) so_dir "$entry" || exit 1 ;;
+      .claude-plugin)
+        so_dir "$entry" || exit 1
+        for file in "$entry"/*; do
+          { [[ ${file##*/} == plugin.json ]] && so_plain "$file"; } || exit 1
+          jq -e 'type == "object" and keys - ["author", "description", "name", "version"] == []' "$file" >/dev/null 2>&1 || exit 1
+        done
+        ;;
+      agents)
+        so_dir "$entry" || exit 1
+        for file in "$entry"/*; do
+          name=${file##*/}
+          { [[ $name == *.md ]] && so_name "${name%.md}" && so_plain "$file"; } || exit 1
+          prose+=("$file")
+        done
+        ;;
+      skills)
+        so_dir "$entry" || exit 1
+        for skill in "$entry"/*; do
+          { so_name "${skill##*/}" && so_dir "$skill"; } || exit 1
+          for file in "$skill"/*; do
+            { [[ ${file##*/} == SKILL.md ]] && so_plain "$file"; } || exit 1
+            prose+=("$file")
+          done
+        done
+        ;;
+      *) exit 1 ;;
+    esac
+  done
+  ((${#prose[@]})) || exit 0
+  # Each file must open with a frontmatter this reads with certainty, and anything else is a doubt
+  # that goes to the allow list, since Claude Code finds a frontmatter with a looser pattern
+  # (^---\s*\n([\s\S]*?)---\s*\n?, whose \s holds spaces outside ASCII) than any line rule. So:
+  # - the first line is --- and then only spaces and tabs, with nothing before it, a byte order
+  #   mark included;
+  # - a later line of --- and then only spaces ends it, and it must end;
+  # - every line between holds only printable ASCII (no tab, no other control or line break
+  #   character, no byte outside ASCII), a carriage return at a line's end aside;
+  # - each of them that is not blank, a comment or indented opens with one of the keys below and a
+  #   colon, so no other spelling of a key (quoted, escaped, an alias, a merge or an explicit key)
+  #   is read as none; the first such line is not indented, so an indented one is a listed key's
+  #   value;
+  # - none has hooks or mcpServers before a colon, quoted or nested, or is an indented explicit
+  #   key (a line opening with ?).
+  # Claude Code ends a frontmatter at the first --- anywhere, so it reads no more than these lines.
+  # awk runs in the C locale, so it reads bytes and its ranges are ASCII's. An awk that holds a
+  # line as a C string ends it at a NUL byte, so a file holding one is a doubt before awk reads
+  # it, by its size against its size with the NULs removed.
+  # A skill's body is read for one thing: Claude Code runs a command written in it when the skill
+  # is used (an exclamation mark and a command in backticks, or a fence that ends in an
+  # exclamation mark), and looks for one after it has filled the skill's arguments in, which can
+  # bring the two together. So a skill file holding an exclamation mark anywhere is a doubt.
+  for file in "${prose[@]}"; do
+    [[ $(wc -c <"$file") -eq $(tr -d '\000' <"$file" | wc -c) ]] || exit 1
+    if [[ ${file##*/} == SKILL.md ]]; then
+      # grep exits 1 only when it read the file and found neither.
+      LC_ALL=C grep -q -F -e '!' "$file" && exit 1
+      [[ $? -eq 1 ]] || exit 1
+    fi
+    LC_ALL=C awk -v keys='name|description|tools|model|omitClaudeMd|argument-hint' '
+      { sub(/\r$/, "") }
+      NR == 1 {
+        if ($0 !~ /^---[ \t]*$/) { doubt = 1; exit }
+        inside = 1; next
+      }
+      !inside { next }
+      /[^ -~]/ { doubt = 1; exit }
+      /^--- *$/ { inside = 0; next }
+      /(hooks|mcpServers)["'\'']? *:/ { doubt = 1; exit }
+      /^ *$/ || /^#/ { next }
+      /^ / { if (!keyed || $0 ~ /^ *\?/) { doubt = 1; exit } next }
+      $0 !~ "^(" keys "):( |$)" { doubt = 1; exit }
+      { keyed = 1 }
+      END { exit (doubt || inside || NR == 0) }' "$file" || exit 1
+  done
+  exit 0
+)
+
+# A worker gets only the toolkits its worktree's project lists in the registry, but a skills-only
+# one, which needs no line there. T0, the load check, measures a toolkit before any project lists
+# it, so it may take unlisted any but a production one, which toolkit_refusal holds to the ops role.
 if ((${#toolkits[@]})); then
   kit_project=$launch_project
   [[ -n $kit_project ]] ||
@@ -380,6 +522,7 @@ if ((${#toolkits[@]})); then
   kit_list=$(team_project "$kit_project" toolkits) || exit 1
   for kit in "${toolkits[@]}"; do
     [[ $task != T0 ]] || toolkit_refusal "$kit" builder >/dev/null || continue
+    ! skills_only_toolkit "$code/toolkits/$kit" || continue
     jq -e --arg kit "$kit" 'index([$kit])' <<<"$kit_list" >/dev/null ||
       die "toolkit '$kit' is not one of $kit_project's toolkits in projects.toml ($(jq -r 'if . == [] then "it lists none" else join(", ") end' <<<"$kit_list")): a new toolkit for a project takes Daniel's yes, then its name in that project's toolkits line in projects.toml"
   done
@@ -682,7 +825,8 @@ shell_prefix=''
 # Role settings layered on the shared worker settings; permission lists, each event's hook list
 # and each autoMode list are concatenated, the shared ones first, so a role's hooks add to the
 # shared hooks and its autoMode lines to the team's; an autoMode list keeps "$defaults" (the
-# built-in rules) once, where it first stands.
+# built-in rules) once, where it first stands. T0's planner, builder and reviewer get Remote
+# Control off (see the header).
 settings=$taskdir/settings.$stem.json
 jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
   --arg memory "$memory" --arg shell_prefix "$shell_prefix" --arg git_dir "$common_dir" '.[0] as $base | .[1] as $own
@@ -701,6 +845,7 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
           if $line == "$defaults" and any(.[]; . == "$defaults") then . else . + [$line] end))
     else . end
   | .worktree.bgIsolation = "none"
+  | if $task == "T0" and $role != "ops" then .remoteControlAtStartup = false else . end
   | if $memory != "" then .autoMemoryDirectory = $memory else . end
   | if $shell_prefix != "" then .env += {CLAUDE_CODE_SHELL_PREFIX: $shell_prefix, AGENT_TEAM_WORKTREE: $worktree, AGENT_TEAM_GIT_DIR: $git_dir} else . end
   | '"$substitute" \
@@ -708,7 +853,8 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
 
 # MCP servers come only from the chosen toolkits; a toolkit's mcp-roles.json names the roles a
 # server of its starts for ({"<server>": ["builder", ...]}), and a server it does not name starts
-# for every role.
+# for every role. An ops launch's servers are each given AGENT_TEAM_ROLE=ops in their own
+# environment, which the 1Password read they share (servers/op-secret.mjs) refuses to run without.
 mcp=$taskdir/mcp.$stem.json
 plugin_args=()
 mcp_files=()
@@ -723,7 +869,8 @@ if [[ ${#mcp_files[@]} -gt 0 ]]; then
   server_roles=$(jq -s 'add // {}' "${roles_files[@]}" </dev/null) || exit 1
   jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
     --argjson roles "$server_roles" '{mcpServers: (map(.mcpServers // {}) | add
-      | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role))))} | '"$substitute" \
+      | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role)))
+      | if $role == "ops" then map_values(.env = (.env // {}) + {AGENT_TEAM_ROLE: "ops"}) else . end)} | '"$substitute" \
     "${mcp_files[@]}" >"$mcp"
 else
   echo '{"mcpServers": {}}' >"$mcp"
