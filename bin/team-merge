@@ -78,8 +78,9 @@
 #   head.
 # Then, for a project with local_checks, team-checks runs them on the PR's head (fetched from
 # origin) from the primary checkout, labelled "team-merge T<n>" under the heavy-run lock, and each
-# must pass (exit 75: the lock stayed held, try again later); the head read again after must not
-# have moved.
+# must pass (exit 75: the lock stayed held, try again later), a refusal giving each other one's
+# result as team-checks prints it, with where its whole log is kept, the lines that name a failure
+# and its last lines; the head read again after must not have moved.
 # Any failure is exit 1 with every reason, and gh pr merge is never called.
 # Then: gh pr merge <number> --repo <repo> --<merge_method> --match-head-commit <head>, never
 # --auto or --admin; the PR is read again and must be merged (if gh left it open with auto-merge
