@@ -589,7 +589,8 @@ file_reasons() {
     assistant.settings.json \
     bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/team-next \
     bin/team-catch-up bin/team-review-check bin/team-log bin/team-project bin/lib/lifecycle.json roles/reviewer.md \
-    roles/coordinator.md deny.toml rust-toolchain.toml .cargo/config.toml; do
+    roles/coordinator.md deny.toml rust-toolchain.toml .cargo/config.toml rust-toolchain .cargo/config \
+    crates/team-core/.cargo/config.toml crates/team-core/rust-toolchain.toml; do
     paths+=("$path")
     expected+=("$path is a guarded path (guardrails): a change there comes back to Daniel")
   done
