@@ -149,7 +149,7 @@ mcp__prod-write__update: Production Deploy"
 
 @test "every worker's settings run it on each PermissionDenied, and the contract lets it write denied" {
   assert_equal "$(jq -c '.hooks.PermissionDenied' "$REPO_ROOT/settings/worker.json")" \
-    '[{"hooks":[{"type":"command","command":"@TEAM_CODE@/bin/hooks/denial-log","timeout":10}]}]'
+    '[{"hooks":[{"type":"command","command":"@TEAM_CODE@/bin/hooks/denial-log","args":[],"timeout":10}]}]'
   [[ -x $REPO_ROOT/bin/hooks/denial-log ]]
   assert_equal "$(jq -c '.kinds.denied.writer' "$REPO_ROOT/bin/lib/ledger-contract.json")" '["team-log","denial-log"]'
   run_bin -0 hooks/denial-log --help
