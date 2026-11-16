@@ -3126,7 +3126,10 @@ logged done role=builder session=c0000001"
   h2=$(built 02 two.txt)
   lock=$HOME/.local/state/agent-team/integrate/T7.lock
   mkdir -p "${lock%/*}"
-  flock "$lock" -c "touch '$BATS_TEST_TMPDIR/held'; sleep 2" 3>&- &
+  # Held until the marker goes, never for a fixed time a loaded runner may outlast before team-next
+  # reaches the lock.
+  touch "$BATS_TEST_TMPDIR/hold"
+  flock "$lock" -c "touch '$BATS_TEST_TMPDIR/held'; while [[ -e '$BATS_TEST_TMPDIR/hold' ]]; do sleep 0.1; done" 3>&- &
   pid=$!
   until [[ -e $BATS_TEST_TMPDIR/held ]]; do sleep 0.1; done
   before=$(state)$'\n'$(refs)
@@ -3135,6 +3138,7 @@ logged done role=builder session=c0000001"
   assert_equal "$(state)"$'\n'"$(refs)" "$before"
   TEAM_NEXT_LOCK_SECONDS=soon run_bin -2 team-next T7 -- "T7 DONE 02 $h2 two"
   assert_contains "$output" "TEAM_NEXT_LOCK_SECONDS takes a whole number of seconds, got 'soon'"
+  rm "$BATS_TEST_TMPDIR/hold"
   wait "$pid"
 }
 
