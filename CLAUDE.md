@@ -195,6 +195,8 @@ It holds:
 - The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
   Each test file's header comment says what it checks and against what.
   No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
+  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+  `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.
