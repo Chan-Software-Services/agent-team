@@ -35,7 +35,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { driverReason, stampOf } from "./backup.mjs";
-import { answersTo, capped, compareCollections, dumpFiles, entryOf, idList, printableId, readBsonGz, snapshotBsonGz, snapshotCollection } from "./changes.mjs";
+import { answersTo, capped, compareCollections, dumpFiles, entryOf, idList, printableId, readBsonGz, snapshotBsonGz, snapshotCollection, uuid } from "./changes.mjs";
 import { count, plural } from "./dump.mjs";
 import { Refusal } from "./refusal.mjs";
 import { checkRoot, dumpByStamp, stampPattern } from "./root.mjs";
@@ -124,7 +124,6 @@ async function findInCollection(collection, given, BSON) {
   return found;
 }
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const toCollection = "so prepare the collection's undo instead (prepare-undo with no id)";
 
 // An _id as the answers print it: its own printed form, or the hash of one that has none.

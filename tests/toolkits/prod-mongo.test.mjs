@@ -1539,26 +1539,34 @@ describe("rehearse-migrations", () => {
     }
   });
 
-  test("a ref names origin's branch or tag, never a local branch of the same name, and a commit only when a branch of origin holds it", () => {
-    const checkout = join(tempDir("refs"), "checkout");
-    repo.git(dirname(checkout), "clone", "--quiet", repo.bare, "checkout");
-    // A stale local release at base, while origin's is a commit ahead; main moved on by a commit
-    // never pushed, and a tag on it.
+  test("a ref names origin's branch or tag, never a local branch or tag of the same name, and a commit only when a branch of origin holds it", () => {
+    // An origin of its own, so the tags pushed here reach no other test.
+    const dir = tempDir("refs");
+    repo.git(dir, "clone", "--quiet", "--bare", repo.bare, "origin.git");
+    repo.git(dir, "clone", "--quiet", join(dir, "origin.git"), "checkout");
+    const checkout = join(dir, "checkout");
+    // Origin's tags: v1 on the release's commit, and v2, annotated, on it too.
+    repo.git(checkout, "tag", "v1", repo.release);
+    repo.git(checkout, "tag", "--annotate", "--message", "v2", "v2", repo.release);
+    repo.git(checkout, "push", "--quiet", "origin", "v1", "v2");
+    // Here: a stale local release at base, while origin's is a commit ahead; v1 moved to base; main
+    // moved on by a commit never pushed, and a tag on it origin never had.
     repo.git(checkout, "branch", "--quiet", "release", repo.base);
+    repo.git(checkout, "tag", "--force", "v1", repo.base);
     repo.git(checkout, "commit", "--quiet", "--allow-empty", "--message", "never pushed");
     const local = repo.git(checkout, "rev-parse", "HEAD");
     repo.git(checkout, "tag", "local-only");
-    repo.git(checkout, "tag", "v1", repo.release);
     const repository = "Chan-Software-Services/Conventioner";
     const resolved = (ref) => resolveRef(checkout, ref, repository);
-    for (const [ref, sha] of [["release", repo.release], ["origin/release", repo.release], ["main", repo.base], ["v1", repo.release], [repo.base, repo.base], [repo.base.slice(0, 10), repo.base]]) {
+    for (const [ref, sha] of [["release", repo.release], ["origin/release", repo.release], ["main", repo.base], ["v1", repo.release], ["v2", repo.release], [repo.base, repo.base], [repo.base.slice(0, 10), repo.base]]) {
       assert.deepEqual(resolved(ref), { sha }, ref);
     }
     const unpushed = (ref) => ({ refusal: `${ref} names ${local.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is rehearsed` });
     assert.deepEqual(resolved(local), unpushed(local));
     assert.deepEqual(resolved(local.slice(0, 12)), unpushed(local.slice(0, 12)));
-    assert.deepEqual(resolved("local-only"), unpushed("local-only"));
-    assert.deepEqual(resolved("no-such-branch"), { refusal: `no-such-branch names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` });
+    for (const ref of ["local-only", "no-such-branch"]) {
+      assert.deepEqual(resolved(ref), { refusal: `${ref} names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` }, ref);
+    }
   });
 
   // The script as Daniel runs it: from the checkout, with no MCP server and no op.

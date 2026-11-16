@@ -37,6 +37,8 @@
 //   printableId(key, BSON)   the one id any tool prints for a document, from `key`, the BSON bytes
 //                            of a document holding only its _id and its top-level id
 //   fieldName, idLimit       the pattern a field's name is reported by, and 50
+//   uuid                     the pattern of a UUID-shaped string, the printable id's rule for a
+//                            top-level id
 //
 // A `documents` is a Map from a document's _id (its BSON type and bytes, as base64) to { id, hash,
 // fields }: its printable id, a hash of the whole document and a Map of each top-level field's
@@ -59,7 +61,7 @@ import { count, dumped } from "./dump.mjs";
 export const fieldName = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 export const idLimit = 50;
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const hashOf = (...parts) => {
   const hash = createHash("sha256");

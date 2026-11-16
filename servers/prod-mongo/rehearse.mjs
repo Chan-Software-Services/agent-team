@@ -26,15 +26,16 @@
 //                            GitHub, the first the one named in a refusal), or undefined
 //   resolveRef(cwd, ref, repository)
 //                            { sha } of the commit `ref` names as origin has it (a branch of
-//                            origin's, else a tag, else a commit's hex), held by a branch of
-//                            origin's, or { refusal }
+//                            origin's, else origin's tag, by git ls-remote, else a commit's hex),
+//                            held by a branch of origin's, or { refusal }
 //
 // The tool, before the heavy-run lock and before Docker: the working directory's origin
 // (`git config --get remote.origin.url`, the URL as the checkout holds it, never printed, since one
 // may carry a token) must name one of `repositories`; `git fetch --quiet origin`, whose failure is
 // a line in the answer, not a refusal; the ref resolved as origin has it (resolveRef), never as a
 // local branch; and each script must be a file at <sha>:back-end/migrations/<script>. git gets childEnv() with
-// GIT_TERMINAL_PROMPT=0, and the fetch alone SSH_AUTH_SOCK when set, for an ssh origin.
+// GIT_TERMINAL_PROMPT=0, and the fetch and resolveRef's ls-remote SSH_AUTH_SOCK when set, for an
+// ssh origin.
 //
 // The script takes a backup's stamp, a commit's full sha and 1 to 20 script names (and --text),
 // never a path or a connection string: it reads no credential, so it cannot reach production. It
@@ -125,8 +126,11 @@ export const rehearseInput = {
 
 const isScript = (name) => typeof name === "string" && name.length <= scriptLength && scriptPattern.test(name);
 
-function git(cwd, args) {
-  const ran = spawnSync("git", args, { cwd, env: childEnv({ GIT_TERMINAL_PROMPT: "0" }), stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 30_000 });
+// SSH_AUTH_SOCK when set, for a call that reaches an ssh origin.
+const sshAgent = () => (process.env.SSH_AUTH_SOCK === undefined ? {} : { SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK });
+
+function git(cwd, args, extra = {}) {
+  const ran = spawnSync("git", args, { cwd, env: childEnv({ GIT_TERMINAL_PROMPT: "0", ...extra }), stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 30_000 });
   return { ok: !ran.error && ran.status === 0, stdout: (ran.stdout ?? "").trim(), missing: ran.error?.code === "ENOENT" };
 }
 
@@ -143,15 +147,30 @@ export function checkoutRefusal(cwd, repositories) {
   return undefined;
 }
 
-// The commit a ref names, as origin has it: a branch of origin's (`<ref>` or `origin/<ref>`), else a
-// tag, else a commit's hex; never a local branch, so a stale one cannot stand in for origin's.
+// The commit a ref names, as origin has it: a branch of origin's (`<ref>` or `origin/<ref>`), else
+// origin's tag, else a commit's hex; never a local branch or tag, so a stale or moved one cannot
+// stand in for origin's. Git keeps no remote-tracking tags, so origin's tag is read with
+// `git ls-remote` (its peeled commit for an annotated tag), and that commit must be in the checkout.
 // The commit must be on a branch of origin's, so one never pushed is not rehearsed.
 // { sha }, or { refusal }.
 export function resolveRef(cwd, ref, repository) {
-  const candidates = [`refs/remotes/origin/${ref}`, ...(ref.startsWith("origin/") ? [`refs/remotes/${ref}`] : []), `refs/tags/${ref}`, ...(hexPattern.test(ref) ? [ref] : [])];
-  const sha = candidates
-    .map((candidate) => git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${candidate}^{commit}`]))
-    .find(({ ok, stdout }) => ok && shaPattern.test(stdout))?.stdout;
+  const commit = (name) => {
+    const resolved = git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${name}^{commit}`]);
+    return resolved.ok && shaPattern.test(resolved.stdout) ? resolved.stdout : undefined;
+  };
+  const originTag = () => {
+    const tag = `refs/tags/${ref}`;
+    const listed = git(cwd, ["ls-remote", "--tags", "origin", tag], sshAgent());
+    if (!listed.ok) return undefined;
+    const lines = new Map(listed.stdout.split("\n").map((line) => line.split("\t").reverse()));
+    const sha = lines.get(`${tag}^{}`) ?? lines.get(tag);
+    return sha && shaPattern.test(sha) ? commit(sha) : undefined;
+  };
+  const sha =
+    commit(`refs/remotes/origin/${ref}`) ??
+    (ref.startsWith("origin/") ? commit(`refs/remotes/${ref}`) : undefined) ??
+    originTag() ??
+    (hexPattern.test(ref) ? commit(ref) : undefined);
   if (!sha) return { refusal: `${ref} names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` };
   const held = git(cwd, ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/remotes/origin/"]);
   if (!held.ok || !held.stdout) return { refusal: `${ref} names ${sha.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is rehearsed` };
@@ -184,10 +203,9 @@ export async function rehearseTool({ input, root, shown, scrubbed, progress, rep
   const refusal = checkoutRefusal(cwd, repositories);
   if (refusal) throw new Refusal(refusal);
   progress("fetching origin");
-  const ssh = process.env.SSH_AUTH_SOCK === undefined ? {} : { SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK };
   let fetched;
   try {
-    const ran = await run("git", ["fetch", "--quiet", "origin"], { cwd, env: childEnv({ GIT_TERMINAL_PROMPT: "0", ...ssh }), timeoutMs: 120_000 });
+    const ran = await run("git", ["fetch", "--quiet", "origin"], { cwd, env: childEnv({ GIT_TERMINAL_PROMPT: "0", ...sshAgent() }), timeoutMs: 120_000 });
     fetched = ran.code === 0;
   } catch {
     fetched = false;
