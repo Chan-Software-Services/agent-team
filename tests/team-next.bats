@@ -688,7 +688,9 @@ launched T7-reviewer c0000001"
     "$(jq -cn --arg wt "$wt" '{role: "reviewer", session: "c0000001", worktree: $wt, toolkits: ["browser"], brief: "brief-review"}')"
   assert_equal "$(record review | jq -cS .)" \
     "$(jq -cnS --arg url "$url" --arg h "$sha" '{template: "reviewer", values: {checks: "1. team-next launches the reviewer.", head: $h, pr: $url,
-      instruction_files: "`origin/main...\($h)` changes no instruction or session-settings file: no `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md` at any depth, and no path under a `.claude/` directory."}}')"
+      instruction_files: "`origin/main...\($h)` changes no instruction or session-settings file: no `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md` at any depth, and no path under a `.claude/` directory.",
+      dropped_tests: "`origin/main...\($h)` removes, skips and focuses no test it can read: no `@test` (bats), `it(` or `test(` (JavaScript and TypeScript), `def test_` (Python) or `func Test` (Go) is gone, and no skip or focus marker is added.",
+      dependencies: "`origin/main...\($h)` adds and changes no direct dependency in a `package.json`, `requirements*.in`, `requirements*.txt` or `go.mod`, lock files aside."}}')"
   grep -qF "review \`origin/main...$sha\`" "$TEAM_HOME/tasks/T7/brief-review.md"
   grep -qxF "1. team-next launches the reviewer." "$TEAM_HOME/tasks/T7/brief-review.md"
   assert_equal "$(bg_calls | jq -r 'last')" "Read your brief at $TEAM_HOME/tasks/T7/brief-review.md"
@@ -3126,20 +3128,20 @@ logged done role=builder session=c0000001"
   h2=$(built 02 two.txt)
   lock=$HOME/.local/state/agent-team/integrate/T7.lock
   mkdir -p "${lock%/*}"
-  # Held until the marker goes, never for a fixed time a loaded runner may outlast before team-next
-  # reaches the lock.
-  touch "$BATS_TEST_TMPDIR/hold"
-  flock "$lock" -c "touch '$BATS_TEST_TMPDIR/held'; while [[ -e '$BATS_TEST_TMPDIR/hold' ]]; do sleep 0.1; done" 3>&- &
+  # The holder keeps the lock until the test releases it, at most 60 seconds, so a slow start of
+  # team-next under load still finds it held.
+  flock "$lock" -c "touch '$BATS_TEST_TMPDIR/held'
+    for _ in \$(seq 600); do [[ -e '$BATS_TEST_TMPDIR/release' ]] && break; sleep 0.1; done" 3>&- &
   pid=$!
   until [[ -e $BATS_TEST_TMPDIR/held ]]; do sleep 0.1; done
   before=$(state)$'\n'$(refs)
   TEAM_NEXT_LOCK_SECONDS=0 run_bin -75 --separate-stderr team-next T7 -- "T7 DONE 02 $h2 two"
+  touch "$BATS_TEST_TMPDIR/release"
+  wait "$pid"
   assert_equal "$(tail -n 1 <<<"$stderr")" "team-next: another team-next is integrating a ticket of T7 ($lock); run this again"
   assert_equal "$(state)"$'\n'"$(refs)" "$before"
   TEAM_NEXT_LOCK_SECONDS=soon run_bin -2 team-next T7 -- "T7 DONE 02 $h2 two"
   assert_contains "$output" "TEAM_NEXT_LOCK_SECONDS takes a whole number of seconds, got 'soon'"
-  rm "$BATS_TEST_TMPDIR/hold"
-  wait "$pid"
 }
 
 @test "two integrations of one DONE wait on the lock while it is held, then take it in turn, the second reading the first's ticket-done" {
