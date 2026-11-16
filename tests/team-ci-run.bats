@@ -4,6 +4,7 @@
 # that steps the looks.
 
 load helpers/common
+load helpers/github-api
 
 setup() {
   sandbox
@@ -21,6 +22,9 @@ setup() {
   export GH_DIR=$BATS_TEST_TMPDIR/gh HEAD_SHA=$head BRANCH_NAME=$branch
   mkdir -p "$GH_DIR"
   echo 0 >"$GH_DIR/look"
+  github_stub_setup
+  # team-ci-wait reads GitHub again at each look, with no time passing but the stub sleep's.
+  export TEAM_GITHUB_FRESH_SECONDS=0
   stub_gh
   stub_sleep
   # Origin's branch at the head, no open PR of it, no run of the head, an idle repository, and a gh
@@ -97,11 +101,26 @@ green() {
   run_jobs "$1" 7001 lint:completed:success:70
 }
 
-# gh answers each read and the dispatch from the latest answer at or before the current look.
-# Anything unplanned fails, a dispatch of another workflow, repo or branch among them.
+# gh answers each read and the dispatch from the latest answer at or before the current look:
+# team-ci-run's own reads as gh prints them, and team-ci-wait's, through the reader (gh api -i),
+# in gh api -i's form through tests/helpers/github-api.bash, a 304 when the read sends the
+# answer's ETag. Anything unplanned fails, a dispatch of another workflow, repo or branch among
+# them.
 stub_gh() {
   stub_script gh <<'EOF'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
 n=$(cat "$GH_DIR/look")
+args=() raw=false
+while (($#)); do
+  case $1 in
+    -i) raw=true ;;
+    -H) shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+set -- "${args[@]}"
 case "$*" in
   "api repos/owner/proj/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&per_page=100") what=list ;;
   "api repos/owner/proj/branches/$BRANCH_NAME") what=branch ;;
@@ -117,6 +136,10 @@ m=$n
 while ((m >= 0)) && [[ ! -e $GH_DIR/$what.$m ]]; do m=$((m - 1)); done
 if ((m < 0)); then echo "no answer planned for $what at look $n" >&2; exit 1; fi
 body=$(cat "$GH_DIR/$what.$m")
+if $raw; then
+  [[ $body != fail ]] || github_offline
+  github_answer 200 "$body"
+fi
 case $body in
   fail) echo "error connecting to api.github.com" >&2; echo "check your internet connection" >&2; exit 1 ;;
   missing) echo '{"message": "Branch not found", "status": "404"}'; echo "gh: Branch not found (HTTP 404)" >&2; exit 1 ;;
@@ -131,9 +154,9 @@ esac
 EOF
 }
 
-# The stub sleep moves on to the next look and, after LOOK_LIMIT looks (default 200), stops the wait
-# with exit 99, so a wait that never ends shows as that exit. The uname stub keeps it ahead of
-# Homebrew's GNU sleep on macOS.
+# The stub sleep moves on to the next look, and the reader's clock on by its seconds, and, after
+# LOOK_LIMIT looks (default 200), stops the wait with exit 99, so a wait that never ends shows as
+# that exit. The uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
 stub_sleep() {
   stub_command sleep uname
   stub_reply uname Linux
@@ -141,6 +164,7 @@ stub_sleep() {
 n=\$(cat "$GH_DIR/look")
 ((n < \${LOOK_LIMIT:-200})) || exit 99
 echo \$((n + 1)) >"$GH_DIR/look"
+echo \$((\$(cat "\$TEAM_GITHUB_CLOCK") + \$1)) >"\$TEAM_GITHUB_CLOCK"
 EOF
 }
 
@@ -149,9 +173,10 @@ ended_at() {
   cat "$GH_DIR/look"
 }
 
-# Each gh call made, its arguments on one line.
+# Each gh call made, its arguments on one line, with the reader's -i and its -H header left out.
 gh_calls() {
-  stub_calls gh | jq -r 'join(" ")'
+  stub_calls gh | jq -r '. as $a | [range(length) | select($a[.] != "-i" and $a[.] != "-H" and (. == 0 or $a[. - 1] != "-H"))
+    | $a[.]] | join(" ")'
 }
 
 # The runs gh was asked to start, one line each.
