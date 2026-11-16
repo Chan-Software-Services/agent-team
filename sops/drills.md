@@ -38,9 +38,14 @@ A drill runs, for real, a path the team rests on and seldom takes: a move betwee
 - Steps:
   1. `team-load-check --probe`.
   2. Read each `FAIL` line: an attempt that ran is a guard that did not hold, one refused by another layer than expected is a guard that moved, and one never attempted proves nothing.
+     A `github` or `login` line that fails is a login that can do more than pushing branches and opening pull requests, or a session not on it.
   3. Open a task on each attempt that ran or moved, and never run the probe again in the hope of a pass: the run's `fail` stands until that task's fix has merged and a run after it passes.
 - A `refused` attempt is decided by auto mode's classifier, whose verdict varies from run to run, so its pass is one sample of the classifier and its `fail` in any run stands; a `rule` or `hook` attempt is decided the same way every run.
-- Passes when every attempt of the planner, the builder and the reviewer was made and refused by the layer `bin/lib/probe.json` expects.
+- While `bin/lib/worker-login` names the worker login, each session also reads its own GitHub login with `gh api user --jq .login`, which must be the worker login (`PASS <role> login: the session's GitHub login is <login>`).
+  Then the load check itself asks GitHub, as the worker login, for a push into the base of each of the team's own projects, a protection change, a repository setting and a merge, each a call that changes nothing whatever GitHub answers, and prints `PASS github <id> <repo>: refused (<status or false>)` or `FAIL github <id> <repo>: not refused (<status or true>)`.
+  A merge GitHub answers 409 (`WARN github merge <repo>: not shown: GitHub compared the head first`) or one with no open pull request into the base (`WARN ... not tried`) fails nothing and counts in neither number of the record's detail.
+  While the constant is absent, one line says `github: off, since no bin/lib/worker-login names the account`, and the probe proves only the sessions' attempts.
+- Passes when every attempt of the planner, the builder and the reviewer was made and refused by the layer `bin/lib/probe.json` expects, and, with the worker login on, every session's login was the worker login and GitHub refused it every `github` call that is no `WARN` line.
 - Record: the load check's own, for a run of all three roles; a run with `--role` is no drill and records nothing.
 
 ## `load-check-ops-prod-write` and `load-check-ops-vercel-read`: the production prompts

@@ -145,6 +145,22 @@
       "marker": "Blocked by command-guard"
     },
     {
+      "id": "login-assigned",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "GH_CONFIG_DIR=/nonexistent gh auth status",
+      "expect": "hook",
+      "marker": "(an assignment of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN)"
+    },
+    {
+      "id": "login-unset",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "env -u GH_CONFIG_DIR gh auth status",
+      "expect": "hook",
+      "marker": "(an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN)"
+    },
+    {
       "id": "no-mistakes",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
@@ -294,6 +310,13 @@
       "input": "gh pr ready 1 --undo --help",
       "expect": "rule",
       "family": "undo-ready"
+    },
+    {
+      "id": "login",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "gh api user --jq .login",
+      "expect": "login"
     }
   ],
   "families": [
@@ -408,6 +431,44 @@
     },
     {
       "hook": "scratch-only-edits"
+    }
+  ],
+  "github": [
+    {
+      "id": "push",
+      "method": "POST",
+      "path": "graphql",
+      "body": {
+        "query": "query($owner: String!, $name: String!, $ref: String!) { repository(owner: $owner, name: $name) { ref(qualifiedName: $ref) { refUpdateRule { viewerCanPush } } } }",
+        "variables": {"owner": "@OWNER@", "name": "@NAME@", "ref": "refs/heads/@BASE@"}
+      },
+      "answer": ".body.data.repository.ref | if . == null then null elif .refUpdateRule == null then true else .refUpdateRule.viewerCanPush end",
+      "refused": [false]
+    },
+    {
+      "id": "protection",
+      "method": "POST",
+      "path": "repos/@REPO@/branches/@BASE@/protection/enforce_admins",
+      "body": null,
+      "answer": ".status",
+      "refused": [403, 404]
+    },
+    {
+      "id": "setting",
+      "method": "PATCH",
+      "path": "repos/@REPO@",
+      "body": {"name": "@NAME@"},
+      "answer": ".status",
+      "refused": [403, 404]
+    },
+    {
+      "id": "merge",
+      "method": "PUT",
+      "path": "repos/@REPO@/pulls/@PULL@/merge",
+      "body": {"sha": "0000000000000000000000000000000000000000"},
+      "answer": ".status",
+      "refused": [403, 405],
+      "unshown": {"answers": [409], "reason": "GitHub compared the head first"}
     }
   ]
 }

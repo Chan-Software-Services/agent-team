@@ -277,13 +277,35 @@ probe_rules() {
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
       or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused") | not)
+      or (.expect | IN("rule", "hook", "refused", "login") | not)
       or ((.expect == "hook") != (.marker | type == "string"))
       or ((.expect == "rule") != (.family | type == "string"))
       or (.family != null and (.family | IN($families[]) | not)))
     | .id' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
+  assert_equal "$out" ""
+}
+
+# The probe's github calls are the data file's alone: team-load-check spells no call's method, path
+# or body, so a call is changed in one place.
+@test "every github call of the refusal probe is well formed, and team-load-check spells none of them" {
+  local probe=$REPO_ROOT/bin/lib/probe.json out word
+  out=$(jq -r '.github[]
+    | select((.id | test("^[a-z]+(-[a-z]+)*$") | not) or (.method | IN("GET", "POST", "PATCH", "PUT", "DELETE") | not)
+      or (.path | type) != "string" or (.body | IN(null) or type == "object" | not)
+      or (.answer | type) != "string" or (.refused | type) != "array" or .refused == []
+      or (.unshown != null and ((.unshown.answers | type) != "array" or (.unshown.reason | type) != "string")))
+    | .id' "$probe")
+  assert_equal "$out" ""
+  assert_equal "$(jq -r '[.github[].id] | join(" ")' "$probe")" "push protection setting merge"
+  # Each call's path past its placeholders, and each string of its body, is nowhere in the script,
+  # but repos/, which its own reads of the repository and its pull requests start with too.
+  while IFS= read -r word; do
+    [[ -n $word ]] || continue
+    if grep -qF -- "$word" "$REPO_ROOT/bin/team-load-check"; then out+="$word "; fi
+  done < <(jq -r '.github[] | (.path | split("@") | map(select(length > 3 and . != "repos/" and (test("^[A-Z]+$") | not)))[]),
+    (.body // {} | .. | strings | select(test("^@[A-Z]+@$") | not))' "$probe")
   assert_equal "$out" ""
 }
 
