@@ -6,7 +6,9 @@
 #               and fails below its min, 2.1.295, which a hook's onFailure needs; rustup, which
 #               rustup update updates, and fails below 1.28.0, the first whose toolchain install
 #               with no toolchain installs rust-toolchain.toml's).
-#               Each runs with the library's PATH, the tool directories of the lock first, and a
+#               Each runs with the library's PATH, the tool directories of the lock first, and
+#               RUSTUP_AUTO_INSTALL=0, so rustup --version in a checkout whose rust-toolchain.toml
+#               names a toolchain not installed reports instead of installing it; a
 #               tool the lock marks show_path (Python) names the command it found ("3.12.4 at
 #               /opt/homebrew/opt/python@3.12/libexec/bin/python3").
 #               The fix is the lock's install command for this OS and machine type (uname -m),
@@ -41,6 +43,7 @@ probe_tool() {
   read -ra words <<<"$2"
   (
     rc=0
+    export RUSTUP_AUTO_INSTALL=0
     bounded 30 "${words[@]}" >"$1" 2>&1 </dev/null || rc=$?
     echo "$rc" >"$1.rc"
   ) &

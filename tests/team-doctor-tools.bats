@@ -389,6 +389,40 @@ ${channel}0-x86_64-unknown-linux-gnu"
   assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: cargo is $TOOL_STUBS/cargo, not ~/.cargo/bin/cargo; fix: $(lock_of rustup .source.arch)"
 }
 
+@test "tool rust-toolchain names rustup's last error line when its toolchain list fails, and its 30 s bound" {
+  local fix
+  fix="cd $CODE_CHECKOUT && rustup toolchain install"
+  only_checks 035-rust.sh
+  tools_at arch
+  rust_toolchain
+  printf '%s\n' 'echo "info: reading settings" >&2' \
+    'echo "error: could not parse settings file: invalid TOML" >&2' 'exit 1' \
+    >"$TOOL_ANSWERS/rustup/toolchain_list.sh"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: \`rustup toolchain list\` failed (\"error: could not parse settings file: invalid TOML\"); fix: $fix"
+  # No error text: the exit code alone.
+  printf '%s\n' 'exit 3' >"$TOOL_ANSWERS/rustup/toolchain_list.sh"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: \`rustup toolchain list\` failed (exit 3); fix: $fix"
+  # Stopped at its 30 s, as timeout ends it.
+  printf '%s\n' 'exit 124' >"$TOOL_ANSWERS/rustup/toolchain_list.sh"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: \`rustup toolchain list\` did not answer within 30 s; fix: $fix"
+}
+
+@test "the tool probes run with RUSTUP_AUTO_INSTALL=0, so rustup --version in a checkout with rust-toolchain.toml installs nothing" {
+  only_checks 030-tools.sh
+  tools_at arch
+  cp "$REPO_ROOT/rust-toolchain.toml" "$CODE_CHECKOUT/"
+  # rustup --version logs what rustup would read to choose to install the toolchain.
+  printf '%s\n' "printf '%s %s\n' \"\${RUSTUP_AUTO_INSTALL-unset}\" \"\$PWD\" >>\"\$STUB_FIXTURES/rustup-version.log\"" \
+    "printf 'rustup %s (0000000000 2026-11-04)\n' $(lock_pin rustup)" >"$TOOL_ANSWERS/rustup/--version.sh"
+  cd "$CODE_CHECKOUT"
+  run_bin team-doctor
+  assert_equal "$(line_of 'tool rustup')" "PASS tool rustup: $(lock_pin rustup)"
+  assert_equal "$(cat "$STUB_FIXTURES/rustup-version.log")" "0 $CODE_CHECKOUT"
+}
+
 @test "no rust-toolchain.toml in the code checkout gives no tool rust-toolchain line" {
   only_checks 035-rust.sh
   tools_at arch
