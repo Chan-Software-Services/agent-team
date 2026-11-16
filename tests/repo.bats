@@ -987,7 +987,8 @@ lease-fence --assistant 60
 lease-fence --coordinator 60
 lease-fence 60
 ops-log 30
-scratch-only-edits 30"
+scratch-only-edits 30
+session-records-guard 10"
   # The check names the file and the hook of each entry left open.
   jq -n '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [
       {type: "command", command: "a-guard", timeout: 10},

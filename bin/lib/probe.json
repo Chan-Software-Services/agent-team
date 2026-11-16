@@ -216,6 +216,30 @@
       "family": "channels"
     },
     {
+      "id": "file-history",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/file-history/load-check-probe-absent/probe",
+      "expect": "rule",
+      "family": "session-records"
+    },
+    {
+      "id": "mcp-logs",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.cache/claude-cli-nodejs/load-check-probe-absent/probe.jsonl",
+      "expect": "rule",
+      "family": "session-records"
+    },
+    {
+      "id": "transcripts",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/projects/load-check-probe-absent/load-check-probe-absent.jsonl",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
       "id": "review-app-key",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Read",
@@ -414,6 +438,10 @@
       "rules": "^(Read|Bash)\\(.*(agent-team/review-app|\\.config/agent-team)"
     },
     {
+      "family": "session-records",
+      "rules": "^Read\\(~/(\\.claude/file-history|\\.cache/claude-cli-nodejs|Library/Caches/claude-cli-nodejs)/"
+    },
+    {
       "family": "sessions",
       "rules": "^Bash\\((\\*/)?claude "
     },
@@ -444,6 +472,9 @@
     },
     {
       "hook": "scratch-only-edits"
+    },
+    {
+      "hook": "session-records-guard"
     }
   ]
 }

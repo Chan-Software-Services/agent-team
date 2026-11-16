@@ -27,7 +27,9 @@
 #                                          CLAUDE_PROJECT_DIR), so a reworded hook shows here;
 #                                          it runs with a TMPDIR of its own and no
 #                                          CLAUDE_JOB_DIR, since the scratch hook lets a shell
-#                                          write under either, and the sandbox is under TMPDIR
+#                                          write under either, and the sandbox is under TMPDIR;
+#                                          the call is a session's of its own, HOOK_SESSION, as
+#                                          the session records guard reads one
 #   as_text_list                           a filter turning a result's string content into the
 #                                          list form
 
@@ -65,10 +67,13 @@ tool_result() {
           content: (if $text != "" then $text else .text // "" end)}]}}'
 }
 
+# The session each hook_result call is made as.
+HOOK_SESSION=0f1e2d3c-4b5a-4698-8776-655443322110
 hook_result() {
   local id=$1 hook=$2 tool=$3 input=$4 cwd=$5 message
   message=$(jq -cn --arg tool "$tool" --argjson input "$input" --arg cwd "$cwd" \
-    '{hook_event_name: "PreToolUse", cwd: $cwd, tool_name: $tool, tool_input: $input}' |
+    --arg session "$HOOK_SESSION" \
+    '{session_id: $session, hook_event_name: "PreToolUse", cwd: $cwd, tool_name: $tool, tool_input: $input}' |
     TMPDIR=$BATS_TEST_TMPDIR/hook-tmp CLAUDE_JOB_DIR='' CLAUDE_PROJECT_DIR=$cwd \
       "$REPO_ROOT/bin/hooks/$hook" 2>&1 >/dev/null) && {
     echo "hook_result: bin/hooks/$hook let the $tool call through" >&2
