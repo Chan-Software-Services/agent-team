@@ -764,6 +764,31 @@ TOML
   assert_contains "$stderr" "alpha.visibility: must be one of public, private"
 }
 
+@test "confine is optional, off by default, and off or on" {
+  run_bin -0 team-project alpha confine
+  assert_equal "$output" off
+  run_bin -0 team-project alpha
+  assert_equal "$(jq -r .confine <<<"$output")" off
+  sed -i '0,/^toolkits = \[\]$/s||toolkits = []\nconfine = "on"|' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --check
+  run_bin -0 team-project alpha confine
+  assert_equal "$output" on
+  run_bin -0 team-project beta confine
+  assert_equal "$output" off
+  run_bin -0 team-project --find confine on
+  assert_equal "$output" alpha
+
+  sed -i 's|^confine = "on"$|confine = "yes"|' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" "alpha.confine: must be one of off, on"
+}
+
+@test "the fixture registry confines one project" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --find confine on
+  assert_equal "$output" agent-team
+}
+
 @test "changed_tests is optional, empty by default, and one line of text" {
   run_bin -0 team-project alpha changed_tests
   assert_equal "$output" ''

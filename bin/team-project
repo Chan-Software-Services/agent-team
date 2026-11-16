@@ -71,6 +71,9 @@
 #   visibility       optional: "public" or "private", the GitHub repository's visibility, which
 #                    team-worker states in each worker's autoMode lines (default "public", the
 #                    reading that treats whatever reaches the repository as published)
+#   confine          optional: "off" or "on", whether team-worker runs every shell command of the
+#                    project's planners, builders and reviewers through bin/lib/confine-shell,
+#                    where the kernel refuses a delete outside the session's roots (default "off")
 # Per project pool ([<name>.pool]), where task worktrees come from:
 #   provider         "treehouse" (leased pre-warmed slots) or "git" (plain git worktrees)
 #   lease, return    treehouse only: the lease and return commands, run from the primary
@@ -139,7 +142,7 @@ RESERVED = {
     "own": "the team's own project in bin/lib/guarded's @own lines",
 }
 # Optional keys, with the value a project without one has.
-PROJECT_OPTIONAL = {"local_checks": [], "changed_tests": "", "branch_ci": "", "models": {}, "uptime": [], "visibility": "public"}
+PROJECT_OPTIONAL = {"local_checks": [], "changed_tests": "", "branch_ci": "", "models": {}, "uptime": [], "visibility": "public", "confine": "off"}
 # A branch_ci: one workflow's file name, no directory.
 BRANCH_CI = re.compile(r"[A-Za-z0-9._-]+\.ya?ml")
 # Keys no project may hold any more, each with why and what to do, which --check names in place of
@@ -153,6 +156,8 @@ UPTIME_LIMIT = 10
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # The values a project's visibility takes.
 VISIBILITIES = ("public", "private")
+# The values a project's confine takes.
+CONFINES = ("off", "on")
 # The roles a project's models table may name: the worker roles but ops, whose production work
 # stays on the default model.
 MODEL_ROLES = ("planner", "builder", "reviewer")
@@ -439,6 +444,8 @@ def check(registry):
         check_models(name, project.get("models", {}), problems)
         if project.get("visibility", "public") not in VISIBILITIES:
             problems.append(f"{name}.visibility: must be one of {', '.join(VISIBILITIES)}")
+        if project.get("confine", "off") not in CONFINES:
+            problems.append(f"{name}.confine: must be one of {', '.join(CONFINES)}")
         if is_string_list(project.get("docs")):
             problems.extend(
                 f"{name}.docs: '{doc}' must be a relative path"
