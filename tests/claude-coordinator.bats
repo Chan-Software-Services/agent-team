@@ -612,3 +612,117 @@ SH
   run_bin -0 claude-coordinator
   assert_equal "$(sort -u "$STUB_CALLS/git.lock")" "git: lock held"
 }
+
+# The worker login (bin/lib/github-login.sh): with bin/lib/worker-login naming an account, the
+# session's settings point gh and git at that login's own directory, and a launch refuses while
+# the login is named but not on this machine.
+
+# The refusal when the login is named but its file is not usable, by what is wrong with the file:
+# login_refusal <login> <what of hosts.yml>
+login_refusal() {
+  # shellcheck disable=SC2088 # ~ is part of the message as the script prints it
+  echo "claude-coordinator: the worker login $1 is not on this machine (~/.config/agent-team/gh-worker/hosts.yml $2): Daniel's team-secrets restore brings it (the secret worker-github-login)"
+}
+
+@test "with the worker login on, its settings hold the login's environment, and nothing else changes" {
+  local settings=$HOME/.local/state/agent-team/coordinator.settings.json off
+  code_checkout
+  worker_login_off
+  run_bin -0 claude-coordinator
+  off=$(jq -c . "$settings")
+  worker_login_on
+  run_bin -0 claude-coordinator
+  assert_equal "$(jq -c '[.env.GH_CONFIG_DIR, .env.GH_TOKEN, .env.GITHUB_TOKEN]' "$settings")" \
+    "$(jq -cn --arg dir "$HOME/.config/agent-team/gh-worker" '[$dir, "", ""]')"
+  assert_equal "$(jq -c 'del(.env.GH_CONFIG_DIR, .env.GH_TOKEN, .env.GITHUB_TOKEN)' "$settings")" "$off"
+  assert_equal "$(grep -c -- '"--bg"' "$STUB_CALLS/claude.log")" 2
+}
+
+@test "with the worker login off, its settings are today's: the template, with no login of its own" {
+  local settings=$HOME/.local/state/agent-team/coordinator.settings.json
+  code_checkout
+  worker_login_on
+  worker_login_off
+  run_bin -0 claude-coordinator
+  assert_equal "$(jq -c 'del(.deniedMcpServers, .skillOverrides)' "$settings")" \
+    "$(jq -c --arg code "$CODE_CHECKOUT" 'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) else . end) | del(.skillOverrides)' \
+      "$CODE_CHECKOUT/coordinator.settings.json")"
+  assert_equal "$(jq -c '.env | keys | map(select(test("^(GH_|GITHUB_)")))' "$settings")" '[]'
+}
+
+@test "with the worker login named but not on this machine, it refuses before writing or starting anything" {
+  local dir=$HOME/.config/agent-team/gh-worker state=$HOME/.local/state/agent-team
+  code_checkout
+  worker_login_on team-bot
+  rm "$dir/hosts.yml"
+  run_bin -1 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "$(login_refusal team-bot 'is missing')"
+  : >"$dir/hosts.yml"
+  chmod 600 "$dir/hosts.yml"
+  run_bin -1 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "$(login_refusal team-bot 'is empty')"
+  echo 'github.com:' >"$dir/hosts.yml"
+  chmod 644 "$dir/hosts.yml"
+  run_bin -1 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "$(login_refusal team-bot 'is mode 644, not 600')"
+  # It asked only for the session list, the check it makes first.
+  assert_equal "$(stub_calls claude | sort -u)" '["agents","--json","--all"]'
+  assert_not_launched
+  [[ ! -e $state/coordinator.settings.json && ! -e $state/coordinator.mcp.json ]]
+}
+
+@test "a malformed worker login constant refuses the launch with the reader's message" {
+  local state=$HOME/.local/state/agent-team
+  code_checkout
+  worker_login_on
+  printf '%s\n' 'login=team-bot' 'login=other' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  run_bin -1 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "claude-coordinator: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line"
+  assert_not_launched
+  [[ ! -e $state/coordinator.settings.json && ! -e $state/coordinator.mcp.json ]]
+}
+
+@test "the login check comes after the lock and the one-session check" {
+  code_checkout
+  worker_login_on team-bot
+  rm "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  sessions "$(session 5e6f7a8b 5e6f7a8b-3333 coordinator idle)"
+  run_bin -1 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "claude-coordinator: a coordinator is already live: session 5e6f7a8b; stop it with claude stop 5e6f7a8b first"
+  mkdir -p "${lock%/*}"
+  exec {held}>"$lock"
+  flock -n "$held"
+  guard_sandbox
+  run -1 --separate-stderr timeout 10 "$CODE_CHECKOUT/bin/claude-coordinator"
+  exec {held}>&-
+  assert_equal "$stderr" "claude-coordinator: another claude-coordinator is launching right now (it holds $lock)"
+}
+
+# Its session runs no command-guard, so its own settings refuse the plain spelling of a change to
+# its GitHub login; the team's scripts that choose a login do so inside themselves, unseen here.
+@test "its settings deny a command that sets or unsets its GitHub login, and leave gh and team-merge" {
+  local settings=$REPO_ROOT/coordinator.settings.json rule command
+  for rule in 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)'; do
+    jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
+      { echo "coordinator.settings.json does not deny $rule" >&2; return 1; }
+  done
+  for command in 'GH_CONFIG_DIR= gh auth status' 'export GH_TOKEN=x' 'env -u GITHUB_TOKEN gh api user' \
+    'unset GH_CONFIG_DIR GH_TOKEN' 'cd ~ && GH_CONFIG_DIR=/tmp/x gh pr list'; do
+    denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
+  done
+  for command in 'gh auth status' 'gh pr list' 'team-merge https://github.com/me/shop/pull/5' \
+    'team-next T5 --ci' 'git push origin feat/T1-x'; do
+    if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
+  done
+}
+
+@test "no command its manual or its skills name holds a GitHub login variable, which its settings deny" {
+  local found
+  found=$(grep -rnE 'GH_CONFIG_DIR|GH_TOKEN|GITHUB_TOKEN' "$REPO_ROOT/roles/coordinator.md" "$REPO_ROOT/plugins/coordinator-skills/" || true)
+  assert_equal "$found" ""
+}
+
+@test "its header says the session runs on the worker login when one is named" {
+  run_bin -0 claude-coordinator --help
+  assert_contains "$(tr -s ' \n' '  ' <<<"$output")" "Its session runs on the worker login when bin/lib/worker-login names one"
+}

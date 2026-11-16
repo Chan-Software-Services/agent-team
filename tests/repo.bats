@@ -1544,9 +1544,12 @@ coordinator_deny_gaps() {
   done
   # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a
   # path (a whole tool the coordinator denies is one it does not use, which
-  # tests/claude-assistant.bats lists), and its launcher's header names the same families.
+  # tests/claude-assistant.bats lists), but for the coordinator's own three on its GitHub login,
+  # which the assistant's command-guard hook holds, and its launcher's header names the same
+  # families.
   assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
-  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" ""
+  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" \
+    "$(printf '%s\n' 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)')"
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \
