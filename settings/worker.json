@@ -533,27 +533,27 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "\"@TEAM_CODE@/bin/hooks/axi-banner\" gh-axi", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "@TEAM_CODE@/bin/hooks/axi-banner", "args": ["gh-axi"], "timeout": 10 }]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/lease-fence", "onFailure": "block", "timeout": 60 },
-          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/command-guard", "onFailure": "block", "timeout": 10 }
+          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/lease-fence", "args": [], "onFailure": "block", "timeout": 60 },
+          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/command-guard", "args": [], "onFailure": "block", "timeout": 10 }
         ]
       },
       {
         "matcher": "Read|Grep|Glob",
         "hooks": [
-          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/session-records-guard", "onFailure": "block", "timeout": 10 }
+          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/session-records-guard", "args": [], "onFailure": "block", "timeout": 10 }
         ]
       }
     ],
     "PermissionDenied": [
       {
-        "hooks": [{ "type": "command", "command": "@TEAM_CODE@/bin/hooks/denial-log", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "@TEAM_CODE@/bin/hooks/denial-log", "args": [], "timeout": 10 }]
       }
     ]
   }

@@ -32,6 +32,10 @@
 # task's UI captures (team-ui, and the images team-thread wait saves), and
 # ~/.local/state/agent-team/prompts/T<n>/, the system prompts team-worker generated for its
 # sessions, removed, since they stay on this machine and are never archived;
+# /tmp/agent-team-T<n>/, the session tmp bin/lib/confine.py made for its confined sessions,
+# removed by that path and named on stderr when it is a directory of this user's, a link or
+# anything else there left and named, a missing one nothing (test seam: TEAM_SYSTEM_ROOT stands
+# for / in that path, as in the library's tool_dirs);
 # each worktree's task directory mirrored to tasks/T<n>/scratch/ (the opened project) or
 # tasks/T<n>/scratch-<project>/ (an added one), a ticket worktree's to its task worktree's with
 # --NN after it (scratch--03), less what archive_left_out (bin/lib/team.sh)
@@ -236,10 +240,11 @@ unlanded() {
   ahead=$(git -C "$wt" rev-list --count "$head" --not --exclude='origin/wip/*' --exclude='origin/salvage/*' --remotes=origin)
   if ((ahead > 0)); then
     # Not on origin: a squash or rebase merge leaves the head only as a merged PR's head.
-    repo=$(team_project "$project" repo) || {
+    # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
+    if ! repo=$(team_project "$project" repo) || ! repo=$(canonical_repo "$repo"); then
       echo "cannot read $project's repo from projects.toml"
       return
-    }
+    fi
     ((ahead == 1)) && ahead="1 commit" || ahead="$ahead commits"
     if [[ -n $base ]]; then
       if ! github "$scratch" prs pr list --repo "$repo" --head "$base" --state merged --json number,headRefOid; then
@@ -649,6 +654,20 @@ fi
 if [[ -e $HOME/.local/state/agent-team/prompts/$task ]]; then
   rm -rf -- "$HOME/.local/state/agent-team/prompts/$task"
   echo "team-close: removed ~/.local/state/agent-team/prompts/$task/, the system prompts team-worker generated for the task's sessions" >&2
+fi
+
+# The session tmp bin/lib/confine.py made for the task's confined sessions, by its literal path:
+# removed only when it is a directory of this user's, never through a link, and a removal that
+# fails is a warning, since nothing of the task is in it.
+session_tmp=${TEAM_SYSTEM_ROOT:-}/tmp/agent-team-$task
+if [[ -L $session_tmp || -e $session_tmp ]]; then
+  if [[ -L $session_tmp || ! -d $session_tmp || ! -O $session_tmp ]]; then
+    echo "team-close: left $session_tmp, which is no directory of this user's, where the task's session tmp would be" >&2
+  elif rm -rf -- "$session_tmp"; then
+    echo "team-close: removed $session_tmp/, the session tmp of the task's confined sessions" >&2
+  else
+    echo "team-close: warning: could not remove all of $session_tmp/, the session tmp of the task's confined sessions" >&2
+  fi
 fi
 
 # Mirror each worktree's task directory into tasks/T<n>/.

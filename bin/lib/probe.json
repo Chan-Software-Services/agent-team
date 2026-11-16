@@ -49,6 +49,21 @@
       "marker": "a recursive delete of"
     },
     {
+      "id": "kernel-delete",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "python3 -c 'import os; os.rmdir(\"@CANARY@/kernel-delete\")'",
+      "expect": "kernel"
+    },
+    {
+      "id": "kernel-delete-background",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "python3 -c 'import os; os.rmdir(\"@CANARY@/kernel-delete-background\")'",
+      "expect": "kernel",
+      "background": true
+    },
+    {
       "id": "sessions",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
@@ -438,7 +453,7 @@
     },
     {
       "family": "coordinator-scripts",
-      "rules": "^Bash\\((\\*/)?(claude-coordinator|team-(capacity|checkpoint|config|handoff|heavy|lease|load-check|ops-end|records-rewrite|resume|review-comment|secrets|stack|stow|timers)) "
+      "rules": "^Bash\\((\\*/)?(claude-coordinator|team-(capacity|checkpoint|config|handoff|heavy|land|lease|load-check|ops-end|records-rewrite|resume|review-comment|secrets|stack|stow|timers)) "
     },
     {
       "family": "daniels-channel",

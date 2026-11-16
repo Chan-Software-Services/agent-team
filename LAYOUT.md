@@ -20,6 +20,9 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
     - `command_text.py`: a Bash command's code text (heredoc bodies out unless a shell may read one, `-c` strings and what is piped into a shell in) and the walk of each simple command it runs, past wrappers, into tools' strings, for `command_rules.py`; `team-tokens` takes its heredoc rule.
     - `compact-hold.sh`: the record of the coordinator's held auto-compaction, one file per session, written under its lock, and its log of each hold, tell, reminder, stow and release, for `bin/hooks/compact-hold` and `team-stowed`.
+    - `confine-roots`: the roots every confined session has beside its own, one path per line, starting with the team's machine state `~/.local/state/agent-team`; a guarded path, and none may be in the team home, `~/.config/agent-team` or `~/.claude`.
+    - `confine-shell`: the prefix a confined worker's Claude Code runs its shell commands through (`CLAUDE_CODE_SHELL_PREFIX`, which `team-worker` sets where the project's `confine` is `"on"` and for the load check's T0), handing the command line to `confine.py --session`.
+    - `confine.py`: the kernel layer, which enters a Landlock domain and runs its command there, so a remove or a rename of a directory entry succeeds only under its roots (`--root`, and `--session`'s for a worker or gate agent), and runs it unconfined, saying so, with no Landlock.
     - `data-check`: the one scan the CI's `data` job and the records' hook refuse with.
     - `delete_rules.py`: `command_rules.py`'s delete rows, refusing a recursive delete (`rm -r`, `find -delete`, `find -exec rm`) outside the worktree and the job's tmp, of either, its `.scratch/task` or what holds one, of a `.git`, an empty variable or no `find` start path, or of an unread path.
     - `doctor.d/`: `team-doctor`'s checks, one file each, which it sources in the order of their names (a new check is a new file, its number between its neighbours').
@@ -106,7 +109,9 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
-  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`.
+  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`, and `confine-seams.py`, which runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
+  - `tests/merge-queue-drill`: run by hand by the coordinator, since it merges real PRs; it lands two PRs at once through a scratch repository's merge queue with `team-land` in a sandbox team home, checks each trial commit, and records its run.
+  - `tests/merge-queue-drill.bats`: dry-runs `tests/merge-queue-drill` on a stub `gh`, a stub `team-land` and a bare repository.
   - `tests/README.md`: the reference for writing a test, a test helper or a CI job: how `tests/run` runs, CI's jobs, the toolkit tests and the sandbox's seams, which `CLAUDE.md` points to.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
   - `tests/task-life.bats`: a whole task's life across the scripts.
@@ -121,7 +126,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `frontend/`: for Daniel's own session and the coordinator's intake, a walk's planner by `team-ui --capture` alone, never a build worker: the pinned Chrome DevTools MCP server on the Agent Chrome's localhost pages, `ui-capture` of Daniel's page and its selected element, and a skill to fix it.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.
-  - `spec-review/`: the `spec-review` skill, which has two fresh, read-only reader agents read a task's spec and tickets in parallel, as a stranger and as its builder, and writes their findings to `spec-review.md` for the spec's author to sort.
+  - `spec-review/`: the `spec-review` skill, two fresh readers of a task's spec and tickets, and `claims-check`, a fresh reader of a branch's prose against its code, which `team-worker` gives every delivering builder.
   - `vercel-read/`: for the ops role only, read-only access to Conventioner's two Vercel projects through the team's own MCP server, which sends only GET requests to a fixed set of endpoints on two project-scoped tokens from 1Password.
 
 `.scratch/task/` is the task directory of a task on this repo, ignored by git.

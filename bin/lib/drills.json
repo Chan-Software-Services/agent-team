@@ -128,12 +128,15 @@
     },
     {
       "name": "load-check-probe",
-      "what": "The load check's probe form: a live planner, builder and reviewer each make the attempts of bin/lib/probe.json, and each is refused by the layer it expects.",
+      "what": "The load check's probe form: a live planner, builder and reviewer each make the attempts of bin/lib/probe.json, and each is refused by the layer it expects, the kernel for a delete outside a confined session's roots.",
       "by": "coordinator",
       "proves": [
         "bin/team-load-check",
         "bin/lib/probe.json",
         "bin/team-worker",
+        "bin/lib/confine.py",
+        "bin/lib/confine-shell",
+        "bin/lib/confine-roots",
         "bin/hooks/",
         "roles/planner.md",
         "roles/builder.md",
@@ -153,6 +156,19 @@
         "bin/team-next",
         "bin/team-open",
         "bin/team-close"
+      ]
+    },
+    {
+      "name": "merge-queue",
+      "what": "Two pull requests land at once through a scratch repository's merge queue with team-land, each trial commit proved and given the reviewer App's agent-review, with no catch-up.",
+      "by": "coordinator",
+      "proves": [
+        "bin/team-land",
+        "bin/team-merge",
+        "bin/team-review-check",
+        "bin/team-review-status",
+        "bin/team-ci-wait",
+        "tests/merge-queue-drill"
       ]
     },
     {

@@ -1,8 +1,9 @@
-// A toolkit's MCP server started exactly as its .mcp.json declares, with @TEAM_CODE@ resolved to
-// this checkout and @WORKTREE@ to a session's worktree (what team-worker does), spoken to over
-// stdio by a minimal MCP client.
+// A toolkit's MCP server started as its .mcp.json declares, with @TEAM_CODE@ resolved to this
+// checkout and @WORKTREE@ to a session's worktree, and AGENT_TEAM_ROLE=ops in its environment unless
+// the test names another role or none (what team-worker does for an ops launch's servers), spoken
+// to over stdio by a minimal MCP client.
 //
-//   const server = startToolkitServer("prod-read", { home, opDir, env, path });
+//   const server = startToolkitServer("prod-read", { home, opDir, env, path, role });
 //   await server.initialize();                         or initialize({ elicitation: true })
 //   const tools = await server.listTools();
 //   const result = await server.callTool("find", { database, collection, filter });
@@ -95,12 +96,13 @@ function spyDir() {
 }
 
 // Start the server with a small, explicit environment: HOME, PATH (the spies, then testPath()
-// unless `path` replaces it), OP_STUB_DIR, plus `env`.
+// unless `path` replaces it), OP_STUB_DIR, the entry's own `env`, AGENT_TEAM_ROLE (`role`, an ops
+// launch's unless the test names another, or null for none), plus `env`.
 export function startToolkitServer(toolkit, options) {
   return startServer(serverConfig(toolkit), options);
 }
 
-export function startServer({ command, args: configArgs = [], env: configEnv = {} }, { home, opDir, env = {}, path = testPath(), args = [] }) {
+export function startServer({ command, args: configArgs = [], env: configEnv = {} }, { home, opDir, env = {}, path = testPath(), args = [], role = "ops" }) {
   const spies = spyDir();
   const child = spawn(command, [...configArgs, ...args], {
     env: {
@@ -108,6 +110,7 @@ export function startServer({ command, args: configArgs = [], env: configEnv = {
       PATH: `${spies.dir}:${path}`,
       OP_STUB_DIR: opDir,
       ...configEnv,
+      ...(role === null ? {} : { AGENT_TEAM_ROLE: role }),
       ...env,
     },
     stdio: ["pipe", "pipe", "pipe"],
