@@ -20,5 +20,5 @@ servers/.install.lock
 # The toolkits' eval runs (claude plugin eval)
 toolkits/*/evals/results/
 
-# Python bytecode, which an import of a bin/lib helper by hand writes
+# Python's bytecode, which a test that loads a script of bin/lib as a module would leave
 __pycache__/
