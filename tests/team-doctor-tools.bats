@@ -396,10 +396,10 @@ ${channel}0-x86_64-unknown-linux-gnu"
   tools_at arch
   rust_toolchain
   printf '%s\n' 'echo "info: reading settings" >&2' \
-    'echo "error: could not parse settings file: invalid TOML" >&2' 'exit 1' \
+    "echo \"error: could not parse settings file: '\$HOME/.rustup/settings.toml': invalid TOML\" >&2" 'exit 1' \
     >"$TOOL_ANSWERS/rustup/toolchain_list.sh"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: \`rustup toolchain list\` failed (\"error: could not parse settings file: invalid TOML\"); fix: $fix"
+  assert_equal "$(line_of 'tool rust-toolchain')" "FAIL tool rust-toolchain: \`rustup toolchain list\` failed (\"error: could not parse settings file: '~/.rustup/settings.toml': invalid TOML\"); fix: $fix"
   # No error text: the exit code alone.
   printf '%s\n' 'exit 3' >"$TOOL_ANSWERS/rustup/toolchain_list.sh"
   run_bin -1 team-doctor

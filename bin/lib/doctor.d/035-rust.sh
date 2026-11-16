@@ -1,16 +1,17 @@
 # tool rust-toolchain
 #               The Rust toolchain the code checkout's rust-toolchain.toml pins (its channel and
-#               components), as rustup sees it run there: installed with every component it
-#               names, and cargo, found on the library's PATH, rustup's ~/.cargo/bin/cargo, which
-#               runs it ("1.100.0 with clippy, rust-analyzer, rust-src, rustfmt"). Without rustup
-#               (rustup's own line installs it), when rustup toolchain list fails (naming its last
-#               stderr line, else its exit code) or does not answer within 30 s, without the
-#               toolchain or lacking a component it fails, the fix `cd <code checkout> && rustup toolchain install`, which installs
-#               what rust-toolchain.toml names; another cargo first on PATH (a rustup installed
-#               elsewhere, whose own cargo the library's ~/.cargo/bin does not shadow) fails, the
-#               fix the tool rustup line's install command from bin/lib/tools.lock, which puts
-#               rustup and its cargo in ~/.cargo/bin. No line without a rust-toolchain.toml, nor on
-#               an OS whose tools go unchecked.
+#               components), as rustup sees it run there: installed with every component it names,
+#               and cargo, found on the library's PATH, rustup's ~/.cargo/bin/cargo, which runs it
+#               ("1.100.0 with clippy, rust-analyzer, rust-src, rustfmt"). Without rustup (rustup's
+#               own line installs it), when rustup toolchain list fails (naming its last stderr
+#               line, the home directory as ~, else its exit code) or does not answer within 30 s,
+#               without the toolchain or lacking a component it fails, the fix `cd <code checkout>
+#               && rustup toolchain install`, which installs what rust-toolchain.toml names;
+#               another cargo first on PATH (a rustup installed elsewhere, whose own cargo the
+#               library's ~/.cargo/bin does not shadow) fails, the fix the tool rustup line's
+#               install command from bin/lib/tools.lock, which puts rustup and its cargo in
+#               ~/.cargo/bin. No line without a rust-toolchain.toml, nor on an OS whose tools go
+#               unchecked.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # bin and os, the doctor's
 # reads state from: 010-os.sh
@@ -42,6 +43,7 @@ if [[ -n $os && -f $rust_code/rust-toolchain.toml ]]; then
     report "tool rust-toolchain" FAIL "\`rustup toolchain list\` did not answer within 30 s" "$rust_fix"
   elif ((rust_rc)); then
     rust_error=$(grep . "$err" | tail -n 1 || true)
+    rust_error=${rust_error//"$HOME"/\~}
     if [[ -n $rust_error ]]; then rust_error="\"$rust_error\""; else rust_error="exit $rust_rc"; fi
     report "tool rust-toolchain" FAIL "\`rustup toolchain list\` failed ($rust_error)" "$rust_fix"
   elif ! grep -qE "^${rust_channel//./\\.}-[a-z0-9_]+-" <<<"$rust_toolchains"; then
