@@ -98,7 +98,28 @@
 #                  Discord and the plan's files are not read: team-merge says when a changed path
 #                  is guarded or outside the plan's scope, the plan changed since its approval, or
 #                  a message does not read back. When the registry cannot be read, no task is
-#                  merge-due and a line on stderr says why
+#                  merge-due and a line on stderr says why. A PR that stands in the merge queue
+#                  (queue_state in bin/lib/ledger.jq: the task's latest queued, dequeued or merged
+#                  of it is a queued, with no other head logged since, by a pr event of the PR
+#                  or by any review of the task) is
+#                  never named, nor one the queue dropped for a failure of its own, which
+#                  trial-failed names, nor any PR of a task whose merge lock a process holds,
+#                  which team-merge is landing
+#   queue-wait     an open task's PR that stands in the merge queue while no process holds the
+#                  task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
+#                  taking it (merge_lock_held in bin/lib/team.sh), with session null: "PR <url> is
+#                  in the merge queue since <the queued's time> with no team-merge waiting on it;
+#                  next: run team-merge T<n> with Bash run_in_background, which goes on waiting and
+#                  logs how it ends", beside the task's other findings
+#   trial-failed   an open task in awaiting-merge, with no ask open and nothing parking it and no
+#                  merge-base round in flight, whose PR the merge queue dropped for a failure of
+#                  its own on the trial merge (its latest queued, dequeued or merged is a dequeued
+#                  whose failed holds one of class pr, with no pr event of it and no review since;
+#                  queue_state's round_due in bin/lib/ledger.jq), with session null: "PR <url>
+#                  failed <checks> on the merge queue's trial merge, which dropped it at <the
+#                  dequeued's time>; next: run team-next T<n> --ci, which names the
+#                  builder-merge-base step and who takes it, then a rereview; never team-merge
+#                  T<n> on the same head", beside the task's other findings
 #   ticket-gone    a running ticket of an open task, not parked (its latest launch in its ticket
 #                  worktree with no done of its session and no ticket-done of its ticket since),
 #                  whose builder's session is not live, with no stowed after that launch and no
@@ -388,7 +409,7 @@ own_covered() {
 # list cannot be read, and with the sweep's exit code when its jq fails.
 look() {
   local sessions plan activity plan_file own health plan_pid health_pid queue current due handoffs
-  local queue_pid='' current_pid='' due_pid='' handoffs_pid='' found rc=0
+  local queue_pid='' current_pid='' due_pid='' handoffs_pid='' found landing rc=0
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
   plan_file=$(mktemp)
   printf '%s\n' "$sessions" >"$plan_file.sessions"
@@ -423,9 +444,10 @@ look() {
   [[ -n $plan ]] || plan='{"error": "team-capacity plan printed nothing"}'
   [[ -n $health ]] || health='{"error": "team-timers health printed nothing"}'
   own=$(own_covered)
-  found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self)' -nRc \
+  landing=$(merge_locks_held)
+  found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self; $landing)' -nRc \
     --argjson sessions "$sessions" --argjson plan "$plan" --argjson activity "$activity" --argjson own "$own" \
-    --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" "$ledger") || rc=$?
+    --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" --argjson landing "$landing" "$ledger") || rc=$?
   [[ -z $queue_pid ]] || wait "$queue_pid" || true
   [[ -z $current_pid ]] || wait "$current_pid" || true
   [[ -z $due_pid ]] || wait "$due_pid" || true

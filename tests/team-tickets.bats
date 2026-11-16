@@ -3,10 +3,11 @@
 # team-tickets: a task's tickets read from each open worktree's task directory, with their strict
 # Blocked by:, Waits for:, Phase: and Touches: lines and spec.md's Parallel: line, each said done,
 # running, ready, waiting or blocked from the ledger; --check refuses a malformed set, a Touches:
-# path outside scope.txt and two tickets that may build at once and share a path. The fixture
-# tickets are T172's as planned (tests/fixtures/tickets-T172/), with no builder's ticks or notes,
-# and a small set with Touches: lines, its scope.txt and spec.md (tests/fixtures/tickets-touches/);
-# each test's ledger says which are done.
+# path outside scope.txt, two tickets that may build at once and share a path, and a spec without
+# one ## Failure modes and assumptions section holding an item. The fixture tickets are T172's as
+# planned (tests/fixtures/tickets-T172/), with no builder's ticks or notes, beside a stand-in
+# spec.md holding that section, and a small set with Touches: lines, its scope.txt and spec.md
+# (tests/fixtures/tickets-touches/); each test's ledger says which are done.
 
 load helpers/common
 load helpers/tickets
@@ -14,7 +15,8 @@ load helpers/tickets
 setup() {
   sandbox
   tickets_sandbox
-  cp "$REPO_ROOT"/tests/fixtures/tickets-T172/*.md "$tickets/"
+  cp "$REPO_ROOT"/tests/fixtures/tickets-T172/[0-9][0-9]-*.md "$tickets/"
+  cp "$REPO_ROOT"/tests/fixtures/tickets-T172/spec.md "$task_dir/"
 }
 
 @test "lists each fixture ticket with its state, and what a blocked one waits on" {
@@ -97,7 +99,7 @@ setup() {
 
 @test "--check passes the fixture set and says how many tickets it read" {
   run_bin -0 --separate-stderr team-tickets T172 --check
-  assert_equal "$output" "T172: 19 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed"
+  assert_equal "$output" "T172: 19 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
 }
 
 @test "the bold and the plain labels both parse" {
@@ -133,7 +135,7 @@ setup() {
   run_bin -0 --separate-stderr team-tickets T172 --json
   assert_equal "$(jq -c 'map([.ticket, .phase])' <<<"$output")" '[["01",1],["02",2],["03",2]]'
   run_bin -0 --separate-stderr team-tickets T172 --check
-  assert_equal "$output" "T172: 3 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed"
+  assert_equal "$output" "T172: 3 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
 }
 
 @test "--check refuses a malformed or second Phase: line, and a blocker in a later phase than its ticket" {
@@ -251,7 +253,7 @@ touches_set() {
 @test "--check passes a set with Touches: lines and a Parallel: line; --json gives each ticket's touches" {
   touches_set
   run_bin -0 --separate-stderr team-tickets T172 --check
-  assert_equal "$output" "T172: 7 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed"
+  assert_equal "$output" "T172: 7 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
   run_bin -0 --separate-stderr team-tickets T172 --json
   assert_equal "$(jq -c 'map([.ticket, .touches])' <<<"$output")" \
     '[["01",["bin/team-a","tests/team-a.bats"]],["02",["bin/lib/one.jq","tests/team-b.bats"]],["03",["bin/lib/","docs/manual.md"]],["04",["bin/team-a","docs/manual.md"]],["05",["docs/manual.md"]],["06",["bin/team-a"]],["07",null]]'
@@ -319,7 +321,7 @@ team-tickets: $tickets/08-outside.md:5: tests/ is in no line of scope.txt"
   [[ $stderr != *"07-unbounded"* ]]
   # With no Touches: line in any ticket, no scope.txt is needed.
   fresh_tickets
-  rm "$task_dir/spec.md"
+  spec_file "$task_dir/spec.md"
   ticket 01-plain "Blocked by: None"
   run_bin -0 --separate-stderr team-tickets T172 --check
 }
@@ -364,24 +366,109 @@ team-tickets: $tickets/08-shares.md:5: tickets 06 and 08 may build at once (phas
   local form="a malformed Parallel: line; write 'Parallel: 2' or 'Parallel: 2, 1', a cap from 1 to 3 per phase, the label optionally bold, nothing else on the line"
   local value
   for value in "Parallel: 0" "Parallel: 4" "Parallel: 2,1" "Parallel: two" "Parallel: 2, 1 for now" "- Parallel: 2" "parallel: 2" "**Parallel:**"; do
-    printf '%s\n' "# spec" "" "$value" >"$task_dir/spec.md"
+    spec_file "$task_dir/spec.md" "$value"
     run_bin -1 --separate-stderr team-tickets T172 --check
     assert_equal "$stderr" "team-tickets: $task_dir/spec.md:3: $form"
   done
-  printf '%s\n' "# spec" "" "**Parallel:** 3" "Parallel: 1, 2" >"$task_dir/spec.md"
+  spec_file "$task_dir/spec.md" "**Parallel:** 3" "Parallel: 1, 2"
   run_bin -1 --separate-stderr team-tickets T172 --check
   assert_equal "$stderr" "team-tickets: $task_dir/spec.md:4: a second Parallel: line (the first is line 3)"
-  printf '%s\n' "# spec" "" "Parallel: 2, 1, 3" >"$task_dir/spec.md"
+  spec_file "$task_dir/spec.md" "Parallel: 2, 1, 3"
   run_bin -1 --separate-stderr team-tickets T172 --check
   assert_equal "$stderr" "team-tickets: $task_dir/spec.md:3: Parallel: names 3 caps, but the tickets have 2 phases"
   # Fewer caps than phases are fine (the last holds for later ones), and so is no Parallel: line.
-  printf '%s\n' "# spec" "" "**Parallel:** 3  " "The Parallel: line is the planner's." >"$task_dir/spec.md"
+  spec_file "$task_dir/spec.md" "**Parallel:** 3  " "The Parallel: line is the planner's."
   run_bin -0 --separate-stderr team-tickets T172 --check
-  rm "$task_dir/spec.md"
+  spec_file "$task_dir/spec.md"
   run_bin -0 --separate-stderr team-tickets T172 --check
   # A Parallel: line in a ticket is no spec's line.
   ticket 08-parallel "Phase: 2" "Blocked by: 07" "Parallel: 9"
   run_bin -0 --separate-stderr team-tickets T172 --check
+}
+
+@test "--check refuses a task directory with no spec.md, no failure modes section, a second one or an empty one" {
+  local section="## Failure modes and assumptions"
+  rm "$task_dir/spec.md"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-tickets: $task_dir/spec.md: no spec.md beside the tickets: write it, with a $section section"
+  # No section, a level-3 heading of its name, or the name in prose or a heading of another name.
+  printf '%s\n' "# spec" "" "### Failure modes and assumptions" "" "- a crash" "" \
+    "The ## Failure modes and assumptions section is required." "## Failure modes" "- a crash" >"$task_dir/spec.md"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$stderr" "team-tickets: $task_dir/spec.md: no $section section: list each failure mode the change must handle with its handling and the test that proves it, and each assumption not verified that would change the design, or none"
+  # A second section is named at its line, after the first.
+  spec_file "$task_dir/spec.md" "## Testing Decisions" "" "- tests" "" "$section" "" "- again"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$stderr" "team-tickets: $task_dir/spec.md:11: a second $section section (the first is line 7)"
+  # An empty one: nothing before the next heading of level 1 or 2, prose, a subsection with
+  # nothing, a list marker with no text, or an item only inside a fence.
+  # Each body's lines are joined by |.
+  local body lines
+  for body in "" "Nothing here." "### Failure modes|" "-" "- " "1." '```|- a crash|```' "nothing" "none of these"; do
+    IFS='|' read -ra lines <<<"$body"
+    printf '%s\n' "# spec" "" "$section" "" "${lines[@]}" "" "## Testing Decisions" "" "- tests" >"$task_dir/spec.md"
+    run_bin -1 --separate-stderr team-tickets T172 --check
+    assert_equal "$stderr" "team-tickets: $task_dir/spec.md:3: the $section section is empty: list its items, or write none"
+  done
+  printf '%s\n' "# spec" "" "$section" >"$task_dir/spec.md"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$stderr" "team-tickets: $task_dir/spec.md:3: the $section section is empty: list its items, or write none"
+  # Each task directory with tickets is held to its own spec.md.
+  spec_file "$task_dir/spec.md"
+  local wt2=$BATS_TEST_TMPDIR/wt2
+  mkdir -p "$wt2/.work/task/tickets"
+  printf '# 20: other\n\nBlocked by: None\n' >"$wt2/.work/task/tickets/20-other.md"
+  event T172 worktree-added "$(jq -cn --arg wt "$wt2" \
+    '{project: "other", branch: "feat/T172-other", base: "main", base_sha: "644a76b", worktree: $wt}')"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$stderr" "team-tickets: $wt2/.work/task/spec.md: no spec.md beside the tickets: write it, with a $section section"
+  spec_file "$wt2/.work/task/spec.md"
+  run_bin -0 --separate-stderr team-tickets T172 --check
+  assert_equal "$output" "T172: 20 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
+}
+
+@test "the failure modes section is found in any case, with ### subsections, a list item or none, never inside a fence" {
+  local section="## Failure modes and assumptions"
+  local clean="T172: 19 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
+  local heading body
+  for heading in "$section" "## failure Modes AND assumptions  " "## FAILURE MODES AND ASSUMPTIONS"; do
+    for body in "- a crash: rerun" "* a crash" "+ a crash" "1. a crash" "  - an indented item" "none" "None." "NONE" "- none"; do
+      printf '%s\n' "# spec" "" "$heading" "" "$body" "" "## Testing Decisions" >"$task_dir/spec.md"
+      run_bin -0 --separate-stderr team-tickets T172 --check
+      assert_equal "$output" "$clean"
+    done
+  done
+  # Its ### subsections are inside it, and the item may be under one, after prose.
+  printf '%s\n' "# spec" "" "$section" "" "Each is handled." "" "### Failure modes" "" "### Assumptions" "" "- one" "" "# Appendix" >"$task_dir/spec.md"
+  run_bin -0 --separate-stderr team-tickets T172 --check
+  # A heading inside a fenced block is no section, and ends none: the item after it counts.
+  printf '%s\n' "# spec" "" '```markdown' "$section" "" "- in the fence" '```' "" "$section" "" '~~~' "## Testing Decisions" '~~~' "- a crash" >"$task_dir/spec.md"
+  run_bin -0 --separate-stderr team-tickets T172 --check
+  assert_equal "$output" "$clean"
+  printf '%s\n' "# spec" "" '```markdown' "$section" "" "- in the fence" '```' >"$task_dir/spec.md"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_contains "$stderr" "team-tickets: $task_dir/spec.md: no $section section"
+}
+
+@test "the listing and --json read a task whose spec lacks the failure modes section, or has no spec, as before" {
+  local listing json
+  run_bin -0 --separate-stderr team-tickets T172
+  listing=$output
+  run_bin -0 --separate-stderr team-tickets T172 --json
+  json=$output
+  printf '%s\n' "# spec" "" "Parallel: 2" >"$task_dir/spec.md"
+  run_bin -0 --separate-stderr team-tickets T172
+  assert_equal "$output" "$listing"
+  assert_equal "$stderr" ""
+  run_bin -0 --separate-stderr team-tickets T172 --json
+  assert_equal "$output" "$json"
+  assert_equal "$(jq length <<<"$output")" 19
+  rm "$task_dir/spec.md"
+  run_bin -0 --separate-stderr team-tickets T172
+  assert_equal "$output" "$listing"
+  run_bin -0 --separate-stderr team-tickets T172 --json
+  assert_equal "$output" "$json"
 }
 
 @test "each task directory's tickets are held to its own scope.txt, and tickets of two projects never share a path" {
@@ -391,6 +478,7 @@ team-tickets: $tickets/08-shares.md:5: tickets 06 and 08 may build at once (phas
   local wt2=$BATS_TEST_TMPDIR/wt2
   mkdir -p "$wt2/.work/task/tickets"
   printf '%s\n' bin/team-a bin/team-b >"$wt2/.work/task/scope.txt"
+  spec_file "$wt2/.work/task/spec.md"
   printf '# 02: second\n\nBlocked by: None\n\nTouches: bin/team-a, bin/team-b\n' >"$wt2/.work/task/tickets/02-second.md"
   event T172 worktree-added "$(jq -cn --arg wt "$wt2" \
     '{project: "other", branch: "feat/T172-other", base: "main", base_sha: "644a76b", worktree: $wt}')"
@@ -436,11 +524,13 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
   assert_equal "$(cat "$TEAM_HOME/ledger.jsonl"; cat "$tickets"/*.md)" "$before"
 }
 
-@test "--help prints the header with both line formats" {
+@test "--help prints the header with both line formats and the failure modes check" {
   run_bin -0 team-tickets --help
   assert_contains "$output" "Usage: team-tickets T<n> [--check | --json"
   assert_contains "$output" "Blocked by: None"
   assert_contains "$output" "Waits for:"
+  assert_contains "$output" '"## Failure modes and assumptions" section in its spec.md'
+  assert_contains "$output" "a task directory with no spec.md, a spec with no such"
 }
 
 @test "the planner's role and briefs give the line formats, the Phase:, Touches: and Parallel: lines and the check, and the manual names team-tickets" {
@@ -462,4 +552,18 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
     'Bash(@TEAM_CODE@/bin/team-tickets @TASK@ --check)'
   assert_contains "$(cat "$REPO_ROOT/roles/coordinator.md")" '`team-tickets T<n> --check`'
   assert_contains "$(cat "$REPO_ROOT/roles/coordinator.md")" '`team-tickets T<n>` shows'
+}
+
+@test "each build-path planner brief asks for the failure modes section, right after the decisions line" {
+  mkdir -p "$TEAM_HOME/tasks/T172"
+  event T172 thread '{discord_thread: "1563000000000000012"}'
+  event T172 interview-thread '{discord_thread: "1565400000000000012"}'
+  local template decisions failure
+  decisions='and end with the line `Left to the builder: none`, or each choice left open and why.'
+  failure='   Between its Implementation Decisions and its Testing Decisions it has a `## Failure modes and assumptions` section, which `team-tickets --check` requires: each way the change can fail that it must handle (a crash mid-step, a rerun, two runs at once, a record or a service missing), with its handling and the test that proves it, and each assumption you could not verify that would change the design if wrong, or `none`; leave out what would change nothing.'
+  for template in planner-feature planner-interview; do
+    run_bin -0 team-brief T172 "$template" --name "$template" --set 'read=- `AGENTS.md`.'
+    grep -A1 -F -- "$decisions" "$output" | tail -n 1 | grep -qxF -- "$failure" ||
+      { echo "$template lacks the failure modes line after the decisions line" >&2; cat "$output" >&2; return 1; }
+  done
 }

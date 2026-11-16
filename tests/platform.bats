@@ -77,13 +77,15 @@ library_path() {
 $HOME/.nvm/$node_dir
 $HOME/.bun/bin
 $TEAM_SYSTEM_ROOT/usr/local/bin
-$HOME/.no-mistakes/bin"
+$HOME/.no-mistakes/bin
+$HOME/.cargo/bin"
   stub_reply uname Darwin
   NVM_DIR=$BATS_TEST_TMPDIR/nvm run -0 library_tool_dirs
   assert_equal "$output" "$HOME/.local/bin
 $BATS_TEST_TMPDIR/nvm/$node_dir
 $HOME/.bun/bin
 $HOME/.no-mistakes/bin
+$HOME/.cargo/bin
 $brew/opt/python@3.12/libexec/bin"
   # The OS has none: the team runs on Arch and macOS only.
   stub_reply uname Linux

@@ -6,6 +6,7 @@
 #
 # Usage: team-ci-wait [--no-agent-review] [--json] [--look] <pr url> [<sha>]
 #        team-ci-wait [--json] [--look] --run <run url> [<sha>]
+#        team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>
 #   --no-agent-review
 #           leave the agent-review check out of every look, as though GitHub had not reported it:
 #           the checks wait after a pass and the findings round's look (team-next), which run once
@@ -14,10 +15,14 @@
 #   --json  print one JSON object instead of the text, on every end but a refused command line
 #           (below); the exit code is as without it
 #   --look  take one readable look at <sha> and end, with no wait (below)
+#   --merge-group <trial sha>
+#           wait on the checks of the merge queue's trial commit for the PR, the full 40-hex sha,
+#           in place of the PR's head (below); team-land runs it
 #   --run <run url>
 #           wait on that one workflow run in place of a PR's checks (below, "With --run"):
 #           https://github.com/<owner>/<name>/actions/runs/<id>, in a registered project's repo;
-#           --no-agent-review does not go with it, since a run has no review check
+#           --no-agent-review and --merge-group do not go with it, since a run has no review check
+#           and no queue entry
 #           the options come in any order, before the PR URL or the sha
 #   pr url  https://github.com/<owner>/<name>/pull/<n>, in a registered project's repo
 #   sha     the head its caller means (the commit it pushed, the head it reviews), in full or
@@ -125,6 +130,21 @@
 # lowercase, null for a missing one), link, run, job (the Actions run and job ids as numbers, else
 # null), step (the first failing step's name, else null), rerun (the command its line gives, else
 # null)}, and [] on any other end.
+# --merge-group waits on the trial commit the merge queue built for the PR, with the same clocks,
+# classes, deadlines and outcomes, --json's head the trial commit, and these differences. Each look
+# reads the PR's state and its queue entry's head commit (gh api graphql), the commit's check runs
+# (gh api repos/<repo>/commits/<trial sha>/check-runs?filter=latest&per_page=100 --paginate, so
+# every page of them) and its statuses
+# (gh api repos/<repo>/commits/<trial sha>/status?per_page=100) in place of gh pr checks, each
+# read as gh pr checks reads a check (a check run's html_url its link; a conclusion of success
+# passed, of skipped or neutral skipped, of cancelled cancelled, any other a failure), and the
+# workflow runs of the trial commit. There is no grace, since the caller read the trial commit
+# from the entry. Once the entry's head commit is no longer <trial sha> (the queue rebuilt the
+# entry onto another trial commit, landed it or dropped it), the wait ends at that look: on a
+# merged or closed PR as on a head; when a check of the trial commit failed, as a failure, exit 1,
+# the cancelled and pending checks of that look left out, since the queue cancels the rest of a
+# commit it gives up; else exit 1 (other-head), naming where the entry is. --look and a <sha>
+# after the URL are refused with it.
 # With --run, the wait is on the one workflow run, read as a PR's checks are, but for what follows.
 # Each look reads the run (gh api repos/<repo>/actions/runs/<id>), its jobs, the latest attempt's
 # (gh api repos/<repo>/actions/runs/<id>/jobs?per_page=100), and the repository's runs in progress
@@ -174,13 +194,19 @@ GRACE_SECONDS=${TEAM_CI_WAIT_GRACE_SECONDS:-120}
 [[ $GRACE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_WAIT_GRACE_SECONDS must be a number of seconds"
 [[ $QUEUED_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_WAIT_QUEUED_SECONDS must be a number of seconds"
 usage="usage: team-ci-wait [--no-agent-review] [--json] [--look] <pr url> [<sha>]
-       team-ci-wait [--json] [--look] --run <run url> [<sha>]"
-without_review=false json=false look=false run_url=''
+       team-ci-wait [--json] [--look] --run <run url> [<sha>]
+       team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>"
+without_review=false json=false look=false group='' run_url=''
 while [[ ${1:-} == --* ]]; do
   case $1 in
     --no-agent-review) without_review=true ;;
     --json) json=true ;;
     --look) look=true ;;
+    --merge-group)
+      [[ ${2:-} =~ ^[0-9a-f]{40}$ ]] || usage_error "--merge-group takes the trial commit's full 40-hex sha; $usage"
+      group=$2
+      shift
+      ;;
     --run)
       [[ -z $run_url && $# -ge 2 ]] || usage_error "$usage"
       run_url=$2
@@ -205,10 +231,12 @@ registered_run() {
   printf '%s\n' "$project" "$repo" "$id"
 }
 
-# The mode: a workflow run's (--run), its id in run_id, or a PR's, its number in number. The texts
-# that differ between them: whose a failure of the head's own is, and what to do after a rerun.
+# The mode: a workflow run's (--run), its id in run_id, a PR's queue trial commit's
+# (--merge-group), its sha in group, or a PR's head's, the PR's number in number. The texts that
+# differ between a run and a PR: whose a failure of the head's own is, and what to do after a rerun.
 if [[ -n $run_url ]]; then
   $without_review && usage_error "--no-agent-review does not go with --run: a workflow run has no review check"
+  [[ -z $group ]] || usage_error "--merge-group does not go with --run: a workflow run has no queue entry"
   [[ $# -eq 0 || ($# -eq 1 && $1 =~ ^[0-9a-f]{7,40}$) ]] || usage_error "$usage"
   expected=${1:-}
   found=$(registered_run "$run_url")
@@ -218,8 +246,13 @@ if [[ -n $run_url ]]; then
   # A completed run's jobs are final until a rerun, so its reading stands at once.
   SETTLE_SECONDS=0
 else
-  [[ $# -eq 1 || ($# -eq 2 && $2 =~ ^[0-9a-f]{7,40}$) ]] || usage_error "$usage"
-  expected=${2:-}
+  if [[ -n $group ]]; then
+    if [[ $# -ne 1 ]] || $look; then usage_error "$usage"; fi
+    expected=$group
+  else
+    [[ $# -eq 1 || ($# -eq 2 && $2 =~ ^[0-9a-f]{7,40}$) ]] || usage_error "$usage"
+    expected=${2:-}
+  fi
   found=$(registered_pr "$1")
   { read -r project && read -r repo && read -r number; } <<<"$found"
   run_id=''
@@ -244,12 +277,38 @@ finish() {
   exit "$2"
 }
 
-# Read one look into $dir/look, {state, head, checks: [{name, state, bucket, link, run}], open_runs:
-# [{id, name, status}], busy}, each pending check's run {id, status, conclusion, updated_at} when
-# its link is an Actions job link, else null, open_runs the head's workflow runs not yet completed
-# (with --run, the run itself), and busy whether something of the repository runs: more workflow
-# runs in progress than open_runs has, or a check in progress of an Actions run not completed. It
-# fails with gh's reason in $dir/error, and leaves the last look's file as it was.
+# --merge-group's reads of a look: $dir/view, {state, headRefOid: the trial commit, entry: the
+# head commit of the PR's queue entry, "" with none}, and $dir/checks, the trial commit's check
+# runs and statuses as gh pr checks gives a PR's; fails with gh's reason in $dir/error.
+read_group() {
+  # shellcheck disable=SC2016 # the query's variables are GraphQL's
+  github "$dir" entry api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    state mergeQueueEntry { headCommit { oid } } } } }' \
+    -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$number" || return 1
+  if ! jq -e --arg sha "$group" '.data.repository.pullRequest | objects
+    | {state, headRefOid: $sha, entry: (.mergeQueueEntry.headCommit.oid // "")}' "$dir/entry" >"$dir/view" 2>/dev/null; then
+    echo "gh api graphql: no such pull request" >"$dir/error"
+    return 1
+  fi
+  github "$dir" check-runs api "repos/$repo/commits/$group/check-runs?filter=latest&per_page=100" --paginate || return 1
+  github "$dir" statuses api "repos/$repo/commits/$group/status?per_page=100" || return 1
+  jq -n --slurpfile runs "$dir/check-runs" --slurpfile statuses "$dir/statuses" '
+    [($runs[].check_runs[] | (if .status == "completed" then .conclusion // "" else .status end) as $state
+      | {name, state: ($state | ascii_upcase), link: (.html_url // ""),
+         bucket: ({success: "pass", skipped: "skipping", neutral: "skipping", cancelled: "cancel"}[$state]
+           // (if .status == "completed" then "fail" else "pending" end))}),
+     ($statuses[0].statuses[] | {name: .context, state: (.state | ascii_upcase), link: (.target_url // ""),
+       bucket: ({success: "pass", pending: "pending"}[.state] // "fail")})]' >"$dir/checks"
+}
+
+# Read one look into $dir/look, {state, head, entry, checks: [{name, state, bucket, link, run}],
+# open_runs: [{id, name, status}], busy}, each pending check's run {id, status, conclusion,
+# updated_at} when its link is an Actions job link, else null, open_runs the head's workflow runs
+# not yet completed (with --run, the run itself), entry the head commit of the PR's queue entry
+# with --merge-group ("" with none), else null, and busy whether something of the repository runs:
+# more workflow runs in progress than open_runs has, or a check in progress of an Actions run not
+# completed. It fails with gh's reason in $dir/error, and leaves the last look's file as it was.
 read_look() {
   if [[ -n $run_id ]]; then read_run; else read_pr; fi || return 1
   github "$dir" running api "repos/$repo/actions/runs?status=in_progress&per_page=1" || return 1
@@ -290,8 +349,12 @@ read_run() {
 read_pr() {
   local id files=()
   rm -f "$dir"/run-*
-  github "$dir" view pr view "$number" --repo "$repo" --json state,headRefOid || return 1
-  github "$dir" checks pr checks "$number" --repo "$repo" --json name,state,bucket,link,workflow || return 1
+  if [[ -n $group ]]; then
+    read_group || return 1
+  else
+    github "$dir" view pr view "$number" --repo "$repo" --json state,headRefOid || return 1
+    github "$dir" checks pr checks "$number" --repo "$repo" --json name,state,bucket,link,workflow || return 1
+  fi
   github "$dir" head-runs api "repos/$repo/actions/runs?head_sha=$(jq -r .headRefOid "$dir/view")&per_page=100" || return 1
   while IFS= read -r id; do
     github "$dir" "run-$id" api "repos/$repo/actions/runs/$id" || return 1
@@ -301,7 +364,7 @@ read_pr() {
   jq -n --slurpfile view "$dir/view" --slurpfile checks "$dir/checks" --slurpfile head_runs "$dir/head-runs" --argjson without_review "$without_review" \
     --argjson runs "$(jq -s 'map({key: (.id | tostring), value: {id, status, conclusion, updated_at}}) | from_entries' \
       /dev/null "${files[@]}")" '
-    {state: $view[0].state, head: $view[0].headRefOid,
+    {state: $view[0].state, head: $view[0].headRefOid, entry: $view[0].entry,
      checks: [$checks[0][] | select($without_review and .name == "agent-review" | not) | {name, state: (.state | ascii_downcase), bucket, link: (.link // ""),
        run: (if .bucket == "pending" then $runs[(.link // "") | capture("/actions/runs/(?<id>[0-9]+)/job/[0-9]+").id // ""]
          else null end)}],
@@ -488,7 +551,7 @@ while :; do
       if [[ -n $run_id ]]; then
         $json || $look || echo "team-ci-wait: waiting on CI run $run_id of $repo at ${head:0:7}"
       else
-        $json || $look || echo "team-ci-wait: waiting on the checks of $repo#$number at ${head:0:7}"
+        $json || $look || echo "team-ci-wait: waiting on the checks of $repo#$number${group:+, on its trial commit,} at ${head:0:7}"
       fi
     fi
     if [[ $state != OPEN ]]; then
@@ -496,6 +559,20 @@ while :; do
     fi
     if [[ $head != "$first_head" ]]; then
       finish moved 1 "team-ci-wait: the head of $repo#$number moved from ${first_head:0:7} to ${head:0:7}: the new head's checks need a wait of their own"
+    fi
+    if [[ -n $group ]]; then
+      entry=$(jq -r .entry "$dir/look")
+      if [[ $entry != "$group" ]]; then
+        # The queue gave this commit up: a failed check is why, and the rest it cancelled or left.
+        if jq -e 'any(.checks[]; .bucket == "fail")' "$dir/look" >/dev/null; then
+          jq '.checks |= map(select(.bucket != "cancel" and .bucket != "pending")) | .open_runs = []' "$dir/look" >"$dir/look.left"
+          mv "$dir/look.left" "$dir/look"
+          stuck_json='[]' queued_json='[]'
+          report '[]'
+          finish failed 1 "$text"
+        fi
+        finish other-head 1 "team-ci-wait: the queue entry of $repo#$number is no longer on the trial commit ${group:0:7}: $(if [[ -n $entry ]]; then echo "its trial commit is now ${entry:0:7}, whose checks need a wait of their own"; else echo "the PR is not in the merge queue"; fi)"
+      fi
     fi
     $look && look_end
     # The clocks: a pending check whose run completed is stuck, and one of an Actions run still

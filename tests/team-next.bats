@@ -688,7 +688,9 @@ launched T7-reviewer c0000001"
     "$(jq -cn --arg wt "$wt" '{role: "reviewer", session: "c0000001", worktree: $wt, toolkits: ["browser"], brief: "brief-review"}')"
   assert_equal "$(record review | jq -cS .)" \
     "$(jq -cnS --arg url "$url" --arg h "$sha" '{template: "reviewer", values: {checks: "1. team-next launches the reviewer.", head: $h, pr: $url,
-      instruction_files: "`origin/main...\($h)` changes no instruction or session-settings file: no `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md` at any depth, and no path under a `.claude/` directory."}}')"
+      instruction_files: "`origin/main...\($h)` changes no instruction or session-settings file: no `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md` at any depth, and no path under a `.claude/` directory.",
+      dropped_tests: "`origin/main...\($h)` removes, skips and focuses no test it can read: no `@test` (bats), `it(` or `test(` (JavaScript and TypeScript), `def test_` (Python) or `func Test` (Go) is gone, and no skip or focus marker is added.",
+      dependencies: "`origin/main...\($h)` adds and changes no direct dependency in a `package.json`, `requirements*.in`, `requirements*.txt` or `go.mod`, lock files aside."}}')"
   grep -qF "review \`origin/main...$sha\`" "$TEAM_HOME/tasks/T7/brief-review.md"
   grep -qxF "1. team-next launches the reviewer." "$TEAM_HOME/tasks/T7/brief-review.md"
   assert_equal "$(bg_calls | jq -r 'last')" "Read your brief at $TEAM_HOME/tasks/T7/brief-review.md"
@@ -1073,7 +1075,9 @@ counts="findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,n
 # required checks (none), the compare of main with <head> (0 behind by default), the real
 # team-ci-wait's look at it (the PR's state and head, no workflow run of the head and none of the
 # repository in progress), so a findings round's look ends on its first look, and, read only with
-# the reviewer App on, the head's agent-review check runs and commit statuses (none).
+# the reviewer App on, the head's agent-review check runs and commit statuses (none). With GH_QUEUE
+# set, it answers the reads of main's rules too, a ruleset with a merge queue; else those fail, as
+# a base whose rules cannot be read.
 pr_on_github() {
   export GH_HEAD=$1 GH_BEHIND=${2:-0}
   export GH_CHECKS=${3:-'[{"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'}
@@ -1092,6 +1096,10 @@ case "$*" in
   "api repos/owner/proj/commits/$GH_HEAD/check-runs?check_name=agent-review&filter=latest&per_page=100")
     echo '{"total_count": 0, "check_runs": []}' ;;
   "api repos/owner/proj/commits/$GH_HEAD/status") echo '{"state": "pending", "statuses": []}' ;;
+  "api repos/owner/proj/branches/main") [[ -n ${GH_QUEUE:-} ]] && echo '{"name": "main", "protected": true}' ;;
+  "api repos/owner/proj/rules/branches/main --paginate")
+    [[ -n ${GH_QUEUE:-} ]] && echo '[{"type": "merge_queue", "ruleset_id": 9, "parameters": {"merge_method": "MERGE"}}]' ;;
+  "api repos/owner/proj/rulesets/9") [[ -n ${GH_QUEUE:-} ]] && echo '{"id": 9, "name": "main", "bypass_actors": []}' ;;
   *) echo "unplanned gh call: $*" >&2; exit 1 ;;
 esac
 SH
@@ -1125,11 +1133,11 @@ live() {
 }
 
 # The calls that could reach Discord, merge or post: curl's, and gh's beyond team-state's and
-# team-ci-wait's reads.
+# team-ci-wait's reads (the base's rules among them, its branch, rules/branches and rulesets).
 outside_calls() {
   stub_calls curl
   stub_calls gh | jq -c 'select((.[0] == "pr" and (.[1] == "view" or .[1] == "checks"))
-    or (.[0] == "api" and (.[1] | test("/compare/|/pulls/[0-9]+/files$|/actions/runs[?](head_sha=|status=in_progress&)|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
+    or (.[0] == "api" and (.[1] | test("/compare/|/branches/|/rulesets/[0-9]+$|/pulls/[0-9]+/files$|/actions/runs[?](head_sha=|status=in_progress&)|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
 }
 
 @test "a pass whose PR head moved past the reviewed head is refused naming both, nothing logged" {
@@ -1263,6 +1271,49 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   assert_equal "$(tail -n 1 <<<"$output")" \
     "merge base: $url is 3 behind main and conflicts on one.txt, so it merges main first (step 6): T7-builder b0000001 is gone, so launch a fresh builder on team-brief T7 builder-merge-base"
   assert_equal "$(outside_calls)" ""
+}
+
+@test "--ci on a base with a merge queue gives a PR only behind it the merge line, with no catch-up, and a conflict the builder-merge-base step" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 3
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_contains "$output" "logged ci url=$url head=$sha outcome=passed"
+  [[ $output != *"merge base"* && $output != *team-catch-up* ]]
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge on the default word: run team-merge T7 for $url at $sha, agent-review success, checks green"
+  assert_equal "$(git -C "${primary:?}" status --porcelain)" ""
+  # A conflict is still the holder's to merge, queue or not.
+  echo "dev's own text" >"${BATS_TEST_TMPDIR:?}/other/one.txt"
+  git -C "${BATS_TEST_TMPDIR:?}/other" add -A
+  git -C "${BATS_TEST_TMPDIR:?}/other" commit -q -m "feat: one more task"
+  git -C "${BATS_TEST_TMPDIR:?}/other" push -q origin main
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge base: $url is 3 behind main and conflicts on one.txt, so it merges main first (step 6): render team-brief T7 builder-merge-base, send its path to T7-builder (b0000001, 120k) and log team-log T7 resumed brief=<its file name without .md>, which holds team-sweep's merge-due"
+  assert_equal "$(outside_calls)" ""
+}
+
+@test "--ci on a PR the merge queue dropped for a failure of its own prints the builder-merge-base step, never the merge line, until it is reviewed again" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 0
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7"
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed checks",
+      failed: [{name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"}, {name: "lint", class: "pr", kind: "failed", link: "", step: ""}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge base: $url failed test and lint on the merge queue's trial merge, which dropped it at 2026-10-23T10:00:00Z, so the builder fixes it on the branch (step 6): render team-brief T7 builder-merge-base, send its path to T7-builder (b0000001, 120k) and log team-log T7 resumed brief=<its file name without .md>, which holds team-sweep's merge-due"
+  [[ $output != *"run team-merge"* ]]
 }
 
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {
@@ -2476,7 +2527,7 @@ launched T7-builder c0000001"
   assert_equal "$(record round-1 | jq -cS .)" "$(jq -cnS --arg url "$url" '{template: "builder-round",
     values: {findings: "3 and 5", findings_file: ".scratch/task/review.md", goal: "Coordinator toil goes to the scripts.", pr: $url}}')"
   assert_equal "$(logged_from $((count + 1)) | jq -c 'select(.event == "launch") | {role, worktree, toolkits, brief}')" \
-    "$(jq -cn --arg wt "$wt" '{role: "builder", worktree: $wt, toolkits: ["browser"], brief: "brief-round-1"}')"
+    "$(jq -cn --arg wt "$wt" '{role: "builder", worktree: $wt, toolkits: ["browser", "spec-review"], brief: "brief-round-1"}')"
   # A second stow after that launch launches nothing.
   run_bin -0 --separate-stderr team-next T7 -- "T7 PAUSED stowed"
   assert_equal "$output" "logged paused reason=stowed cause=stow role=builder session=c0000001
@@ -3077,19 +3128,20 @@ logged done role=builder session=c0000001"
   h2=$(built 02 two.txt)
   lock=$HOME/.local/state/agent-team/integrate/T7.lock
   mkdir -p "${lock%/*}"
-  # Held until the marker goes, so a slow runner cannot outlast the holder.
-  touch "$BATS_TEST_TMPDIR/hold"
-  flock "$lock" -c "touch '$BATS_TEST_TMPDIR/held'; while [[ -e '$BATS_TEST_TMPDIR/hold' ]]; do sleep 0.1; done" 3>&- &
+  # The holder keeps the lock until the test releases it, at most 60 seconds, so a slow start of
+  # team-next under load still finds it held.
+  flock "$lock" -c "touch '$BATS_TEST_TMPDIR/held'
+    for _ in \$(seq 600); do [[ -e '$BATS_TEST_TMPDIR/release' ]] && break; sleep 0.1; done" 3>&- &
   pid=$!
   until [[ -e $BATS_TEST_TMPDIR/held ]]; do sleep 0.1; done
   before=$(state)$'\n'$(refs)
   TEAM_NEXT_LOCK_SECONDS=0 run_bin -75 --separate-stderr team-next T7 -- "T7 DONE 02 $h2 two"
+  touch "$BATS_TEST_TMPDIR/release"
+  wait "$pid"
   assert_equal "$(tail -n 1 <<<"$stderr")" "team-next: another team-next is integrating a ticket of T7 ($lock); run this again"
   assert_equal "$(state)"$'\n'"$(refs)" "$before"
   TEAM_NEXT_LOCK_SECONDS=soon run_bin -2 team-next T7 -- "T7 DONE 02 $h2 two"
   assert_contains "$output" "TEAM_NEXT_LOCK_SECONDS takes a whole number of seconds, got 'soon'"
-  rm "$BATS_TEST_TMPDIR/hold"
-  wait "$pid"
 }
 
 @test "two integrations of one DONE wait on the lock while it is held, then take it in turn, the second reading the first's ticket-done" {
