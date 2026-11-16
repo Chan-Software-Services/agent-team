@@ -59,6 +59,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
     - `ticket_graph.py`: draws a task's ticket list, as `team-tickets --json` prints it, as the self-contained HTML page of its dependency graph that `team-tickets --html` writes.
     - `time.jq`: `team-time`'s split of each task's time into phases, and its counts.
+    - `tmp-leftovers`: the names of what the team's test runs leave in `/tmp` and `/var/tmp`, one `<maker> <expression>` per line, the only names `team-janitor tmp` removes by, read from its own checkout.
+    - `tmp.sh`: `team-janitor tmp`'s sweep of the stale leftovers in `/tmp` and `/var/tmp` and its warning: the rules (type, owner, a list, task or gate name, age, no live process), the removal, each removal's line and day file, the reading of `/tmp`, `status` and the `tmp` notice.
     - `tools.jq`: turns `tools.lock` into each tool's pin and install command for a machine.
     - `tools.lock`: the tools `team-doctor` checks, pinned or with a minimum, and their source per OS (for treehouse and no-mistakes, a GitHub release with each archive's checksum, or a fork's commit; for MongoDB's Database Tools, the publisher's archive with its checksum).
     - `uptime.jq`: `team-uptime`'s rules, the counting of each production check, when one is down, its outages judged as notices through `notice.jq`, each post's text, and the status line.
@@ -100,6 +102,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `portability.md`: moving the team between machines.
   - `records-rewrite.md`: the cutover that rewrites the records repository's history with `team-records-rewrite`, each step Daniel's or the coordinator's.
   - `resources.md`: the team's resources: its systemd user slice and each task's, `team-capacity install`, the placement of worker sessions and the gate in it, the checked assumptions, the readings per task, the learned costs, heavy runs' scopes, and the doctor's `resources` line.
+  - `tmp.md`: the team's temporary files: `team-janitor tmp`'s roots, rules and list and how a line is added, the session tmp and task-named scratch, what a run says and where, the warning, the heartbeat's step, the doctor's `tmp` line and the test seams.
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
@@ -196,6 +199,8 @@ It holds:
 - The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
   Each test file's header comment says what it checks and against what.
   No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
+  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+  `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.
