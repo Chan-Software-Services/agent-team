@@ -26,7 +26,7 @@ An entry is removed only when every rule holds, each checked again on the entry 
   `tests/run` stops a bats file at 40 minutes, and the next rule covers a longer run.
 - **Not live**: no process of this user names it, by its full path followed by `/`, a space, a `:`, a line break or the end, in its working directory, its open files (a lock, a pid file), its command line or its environment (`/proc` on Linux, `lsof` and `ps` on macOS).
   The processes are read once, only when an entry passed the rules above; when they cannot be read, nothing is removed and the run exits 1 saying why.
-  Only the lines that name a path under a root are kept in the run's scratch, so no other value of a process's environment is written there.
+  Each variable of an environment is a line of its own (on macOS each `ps` line is cut at the start of each ` <NAME>=` word), and only the lines that name a path under a root are kept in the run's scratch, so no other value of a process's environment is written there.
 
 A directory is made writable first (`chmod -R`, which changes no link), so a read-only tree such as a Go module cache goes too, then removed with `rm -rf --one-file-system`; a file with `rm -f`.
 A removal that fails is said on stderr, the rest of the run goes on, and the run exits 1.

@@ -66,9 +66,11 @@
 #             line break or the end, is in no process's working directory, open files (a lock,
 #             a pid file), command line or environment (/proc on Linux; lsof and ps on macOS),
 #             this run's own process and its children aside. The processes are read once, and
-#             only when an entry passed the rules above, keeping only the lines that name a path
-#             under a root, so no environment's other values reach the run's scratch; when they
-#             cannot be read, nothing is removed and the run exits 1 saying why.
+#             only when an entry passed the rules above, one variable of an environment per line
+#             (on macOS each ps line is cut at the start of each " <NAME>=" word), keeping only
+#             the lines that name a path under a root, so no environment's other values reach
+#             the run's scratch; when they cannot be read, nothing is removed and the run exits 1
+#             saying why.
 # A directory is made writable first (chmod -R, which changes no link), so a read-only tree goes
 # too, and removed with rm -rf --one-file-system; a file with rm -f. A session tmp removed whole
 # takes its entries with it; one kept, an open task's or a live one, has the list applied inside.

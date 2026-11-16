@@ -304,6 +304,34 @@ removed $VAR_ROOT/nm-cli-home-4 (0 MB, untouched 2 h; no-mistakes)"
   assert_equal "$(cat "$text")" "TEAM_TMP_TEST_DIR=$TMP_ROOT/kept"
 }
 
+@test "on macOS team-janitor tmp keeps each live entry lsof or ps names, and only the rooted words of a ps line in its scratch" {
+  as_macos
+  stale_dir "$TMP_ROOT/nm-cli-home-1"
+  stale_dir "$TMP_ROOT/nm-cli-home-7"
+  stale_dir "$TMP_ROOT/bats-run-AbC123"
+  stale_dir "$VAR_ROOT/nm-cli-home-4"
+  # lsof: a process with its working directory in one entry; ps: one with another on its command
+  # line and a third in its environment, beside a secret.
+  stub_command lsof ps
+  stub_reply lsof "p500
+fcwd
+n$TMP_ROOT/nm-cli-home-7"
+  stub_reply ps "  500     1 sleep 300 $VAR_ROOT/nm-cli-home-4 SECRET=hunter2-not-a-root HOLD=$TMP_ROOT/bats-run-AbC123 PATH=/usr/bin:/bin"
+  # The run's scratch kept as a killed run would leave it, as on Linux. The stubs are already on
+  # PATH, and platform.sh reads uname with TEAM_PATH_FIRST off PATH, which would miss uname's stub.
+  mkdir "$BATS_TEST_TMPDIR/run-tmp"
+  fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
+  unset TEAM_PATH_FIRST
+  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -5 team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  [[ -d $TMP_ROOT/nm-cli-home-7 && -d $TMP_ROOT/bats-run-AbC123 && -d $VAR_ROOT/nm-cli-home-4 ]]
+  local text
+  text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)
+  assert_equal "$(cat "$text")" "$TMP_ROOT/nm-cli-home-7
+  500     1 sleep 300 $VAR_ROOT/nm-cli-home-4
+HOLD=$TMP_ROOT/bats-run-AbC123"
+}
+
 @test "team-janitor tmp removes a read-only tree, and a directory holding a link without what the link points at" {
   stale_dir "$TMP_ROOT/nm-cli-home-1"
   mkdir -p "$TMP_ROOT/nm-cli-home-1/pkg/mod/cache"

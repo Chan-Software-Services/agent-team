@@ -173,13 +173,22 @@ tmp_read_processes() {
   local tmp_out=$TMP_WORK/processes tmp_failed=$TMP_WORK/processes.failed tmp_self=$$ tmp_rc=0
   if [[ ${TEAM_KERNEL:-$(uname -s)} == Darwin ]]; then
     # lsof prints p<pid>, then f<descriptor> and n<name>, per open file, the working directory
-    # among them; ps one process per line.
+    # among them; ps one process per line, its command line then its whole environment, which is
+    # cut at the start of each " <NAME>=" word, so the root filter keeps one variable, never the
+    # line's other values.
     {
       lsof -u "$(id -u)" -Fpn 2>"$TMP_WORK/processes.err" |
         awk -v self="$tmp_self" '/^p/ { skip = ($0 == "p" self) } /^n/ && !skip { print substr($0, 2) }' ||
         echo "lsof failed: $(tmp_last_line "$TMP_WORK/processes.err")" >"$tmp_failed"
       ps -x -E -ww -o pid=,ppid=,command= 2>"$TMP_WORK/processes.err" |
-        awk -v self="$tmp_self" '$1 != self && $2 != self' ||
+        awk -v self="$tmp_self" '$1 != self && $2 != self {
+          line = $0
+          while (match(substr(line, 2), / [A-Za-z_][A-Za-z0-9_]*=/)) {
+            print substr(line, 1, RSTART)
+            line = substr(line, RSTART + 2)
+          }
+          print line
+        }' ||
         echo "ps failed: $(tmp_last_line "$TMP_WORK/processes.err")" >"$tmp_failed"
     } | tmp_rooted >"$tmp_out" || tmp_rc=$?
   else
