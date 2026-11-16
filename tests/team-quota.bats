@@ -80,12 +80,15 @@ usage_reading() {
 # claude_stub: put on PATH a claude that answers as Claude Code's stream-json control protocol does:
 # it prints a line of its own and one that is not JSON, then, for each line read on stdin, answers
 # an initialize with a success and a get_usage with the fixture $QUOTA_ANSWER (a control_response's
-# response member) given the request's id. It records its working directory and how many entries
-# that held in $STUB_CALLS/claude.cwd and claude.entries, and each stdin line in claude.stdin; the
-# stub records its arguments in claude.log.
+# response member) given the request's id. It records its start's epoch second in
+# $STUB_CALLS/claude.started, then waits $QUOTA_STUB_DELAY seconds (none unless set), its open
+# descriptors in claude.fds (where there is a /proc), its working directory and how many entries
+# that held in claude.cwd and claude.entries, and each stdin line in claude.stdin; the stub records
+# its arguments in claude.log.
 claude_stub() {
   stub_script claude <<'EOF'
 date -u +%s >"$STUB_CALLS/claude.started"
+sleep "${QUOTA_STUB_DELAY:-0}"
 pwd >"$STUB_CALLS/claude.cwd"
 if [[ -d /proc/$$/fd ]]; then ls -l "/proc/$$/fd" >"$STUB_CALLS/claude.fds"; fi
 shopt -s nullglob dotglob
@@ -228,7 +231,8 @@ path_without() {
 }
 
 @test "usage starts one headless Claude Code with the spec's flags, in an empty directory it removes, and asks get_usage after initialize" {
-  usage usage-good
+  # The stub waits a second after its start, so an at taken after the exchange is a later second.
+  QUOTA_STUB_DELAY=1 usage usage-good
   assert_equal "$status" 0
   assert_equal "$(wc -l <"$STUB_CALLS/claude.log")" 1
   assert_equal "$(<"$STUB_CALLS/claude.log")" \
@@ -246,7 +250,7 @@ path_without() {
   # Claude Code inherits no descriptor of the usage lock, so nothing it leaves running holds the
   # lock past the read (read from /proc, where there is one).
   if [[ -e $STUB_CALLS/claude.fds ]]; then
-    ! grep -F quota-usage.lock "$STUB_CALLS/claude.fds"
+    ! grep -F quota-usage.lock "$STUB_CALLS/claude.fds" || { echo "Claude Code holds the usage lock" >&2; return 1; }
   fi
 }
 
