@@ -4,9 +4,10 @@
 Usage: python3 -I command_text.py              (the command on stdin; prints the text on stdout)
        python3 -I command_text.py --commands   (the command on stdin; prints its walk, below)
 
-bin/lib/command_rules.py, the rule table bin/hooks/command-guard runs, imports code_parts,
-blank_heredocs and commands, the walk of each simple command, from it, with heads and the other
-readings of where a command's name may stand; its kill rows, kill_rules.py, import command_name
+bin/lib/command_rules.py, the rule table bin/hooks/command-guard runs, imports call_commands,
+each simple command a call runs (code_parts, blank_heredocs and commands, the walk, together),
+from it, with heads and the other readings of where a command's name may stand, as
+bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does; its kill rows, kill_rules.py, import command_name
 and heads_behind, and its delete rows, delete_rules.py, those with the walk, simple_commands,
 find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
@@ -1595,6 +1596,17 @@ def commands(text):
     """Each Command the text runs, as the header says: each simple command (simple_commands), then
     the commands of each string, find -exec, script file or sourced file it runs, in turn."""
     return _commands(text, 0, (), DIRECT)
+
+
+def call_commands(command):
+    """Each Command a Bash call's command runs, for a guard that reads every one: those of each
+    of its code parts (code_parts), each heredoc a part still opens blanked, then those of the
+    command's own text, whose heredoc bodies the walk leaves out as Bash reads them: a line of the
+    code text that an unquoted body keeps from its first $( or backtick on may open a substitution
+    that never closes (an escaped backtick), which would hide the lines after it."""
+    walked = [found for part in code_parts(command) for found in commands(blank_heredocs(part))]
+    walked += commands(command)
+    return walked
 
 
 # What runs the command after it, past its options, as a reading of where a command starts takes
