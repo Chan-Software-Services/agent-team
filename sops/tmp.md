@@ -48,7 +48,8 @@ To add a source, add one line to that file in a PR on this repository:
 - A session tmp is `agent-team-T<n>`, a task's own session `TMPDIR`, or `agent-team-gate-<8 characters>`, a gate session's, a real directory of this user's directly under the `/tmp` root, never a link.
 - A closed task's session tmp is removed whole, read-only trees included, and a gate session's once it is a day old.
 - An open task's session tmp is never removed whole: the list alone applies to the entries directly inside it.
-- A worker's scratch that must be outside the home directory (a bats `TMPDIR`, a reviewer's test directory) is made as `mktemp -d /tmp/T<n>-<what>.XXXXXX`, which the task rule removes once the task is closed, though the worker itself cannot, since `command-guard` refuses its recursive delete outside its worktree and job tmp.
+- A worker's scratch that must be outside the home directory (a bats `TMPDIR`, a reviewer's test directory) goes under `$TMPDIR` in a confined session, whose `$TMPDIR` is its task's session tmp, since the kernel refuses its removals outside its roots (`$TMPDIR` among them), so bats could not clean up a run directory made anywhere else; that session tmp is removed whole once the task is closed.
+- On a machine with no confinement (no Landlock) such scratch is made as `mktemp -d /tmp/T<n>-<what>.XXXXXX`, which the task rule removes once the task is closed, though the worker itself cannot, since `command-guard` refuses its recursive delete outside its worktree and job tmp.
   While the task is open it is kept, so a resumed session finds its files.
 
 ## What a run says, and where

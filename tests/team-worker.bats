@@ -852,7 +852,7 @@ session-records-guard block 10"
       "$(sort <<<"$expected")"
     # The write hook holds ops to its one file, and planners and reviewers to .scratch/.
     case $role in
-      planner | reviewer) expected=null ;;
+      planner | reviewer) expected='[]' ;;
       ops) expected='[".scratch/answer.md"]' ;;
       *) expected='' ;;
     esac
@@ -1234,11 +1234,79 @@ role_texts() {
     settings=$(generated settings "$role")
     assert_equal "$(jq -r .env.AGENT_TEAM_ROLE "$settings")" "$role"
     assert_equal "$(jq -c '[.hooks.SessionStart[].hooks[] | [.command, .timeout]]' "$settings")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '[["\"\($code)/bin/hooks/axi-banner\" gh-axi", 10]]')"
+      "$(jq -cn --arg code "$REPO_ROOT" '[["\($code)/bin/hooks/axi-banner", 10]]')"
+    assert_equal "$(jq -c '[.hooks.SessionStart[].hooks[].args]' "$settings")" '[["gh-axi"]]'
     assert_equal "$(jq -c '[.hooks.PermissionDenied[] | [.matcher, (.hooks[] | .command, .timeout)]]' "$settings")" \
       "$(jq -cn --arg code "$REPO_ROOT" '[[null, "\($code)/bin/hooks/denial-log", 10]]')"
   done
   [[ -x $REPO_ROOT/bin/hooks/axi-banner && -x $REPO_ROOT/bin/hooks/denial-log ]]
+}
+
+# The prefix, the worktree and the common git directory a launch's settings <file> give its shell
+# commands, as JSON.
+confinement() {
+  jq -c '[.env.CLAUDE_CODE_SHELL_PREFIX, .env.AGENT_TEAM_WORKTREE, .env.AGENT_TEAM_GIT_DIR]' "$1"
+}
+
+# What confinement prints for a confined launch in <worktree>: the checkout's prefix, the
+# worktree's real path and its common git directory as git names it.
+confined_in() {
+  jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$1")" \
+    --arg git "$(realpath "$(git -C "${1:?}" rev-parse --path-format=absolute --git-common-dir)")" \
+    '["\($code)/bin/lib/confine-shell", $wt, $git]'
+}
+
+@test "a project with confine on renders the shell prefix, the worktree and its common git directory for planner, builder and reviewer, never ops" {
+  registry --first 'confine = "on"' proj other
+  open_task T7
+  ops_stub
+  local role
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    assert_equal "$(confinement "$(generated settings "$role")")" "$(confined_in "$wt1")"
+  done
+  [[ -x $REPO_ROOT/bin/lib/confine-shell ]]
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(confinement "$(generated settings ops)")" '[null,null,null]'
+}
+
+@test "a project with confine off or no confine key renders no shell prefix, worktree or git directory" {
+  open_task T7
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  assert_equal "$(confinement "$(generated settings builder)")" '[null,null,null]'
+  registry --first 'confine = "off"' proj other
+  run_bin -0 team-worker T7 reviewer "$wt1" -- go
+  assert_equal "$(confinement "$(generated settings reviewer)")" '[null,null,null]'
+  registry --first 'confine = "on"' other proj
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(confinement "$(generated settings planner)")" '[null,null,null]'
+}
+
+@test "T0, the load check, is always confined but for ops, whatever its project says or with none" {
+  ops_stub
+  local role confined
+  confined=$(confined_in "$wt1")
+  [[ $(jq -r '.[2]' <<<"$confined") == */.git ]]
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T0 "$role" "$wt1" -- go
+    assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.$role.proj.json")" "$confined"
+  done
+  run_bin -0 team-worker T0 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.ops.json")" '[null,null,null]'
+  # A worktree of no registered project is confined too.
+  local loose
+  loose=$(make_repo loose)
+  git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
+  run_bin -0 team-worker T0 builder "$HOME/slots/loose/1" -- go
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.builder.json")" "$(confined_in "$HOME/slots/loose/1")"
+}
+
+@test "every hook of a worker role's settings is in exec form, which Claude Code runs without the shell prefix" {
+  local file
+  for file in "$REPO_ROOT"/settings/*.json; do
+    assert_equal "$file: $(jq -c '[.hooks // {} | .[][] | .hooks[] | select((.args | type) != "array") | .command]' "$file")" "$file: []"
+    assert_equal "$file: $(jq -c '[.hooks // {} | .[][] | .hooks[] | select(.command | test("[ \"]")) | .command]' "$file")" "$file: []"
+  done
 }
 
 @test "a launched worker's chrome-devtools-axi session is named for its task and role" {
@@ -1868,13 +1936,13 @@ assert_prod_write_gated() {
   assert_contains "$output" "so a relaunch"
 }
 
-@test "the generated ops MCP config starts the real prod-read launcher and holds no secret" {
+@test "the generated ops MCP config starts the real prod-read launcher with an ops launch's role and holds no secret" {
   open_task T7
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
   local mcp=$TEAM_HOME/tasks/T7/mcp.ops.json
   assert_equal "$(jq -c . "$mcp")" "$(jq -cn --arg code "$REPO_ROOT" '{mcpServers: {"prod-read": {command: "node",
-    args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"]}}}')"
+    args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}}}')"
   run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
   # The worker settings' deny rules name mongodb+srv:// themselves.
   run -1 grep -Eq 'mongodb(\+srv)?://|MDB_MCP_CONNECTION|op://|password' \
@@ -1960,8 +2028,8 @@ Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
 
   local mcp=$t/mcp.ops.json
   assert_equal "$(jq -c . "$mcp")" "$(jq -cn --arg code "$REPO_ROOT" '{mcpServers: {
-    "prod-read": {command: "node", args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"]},
-    "prod-write": {command: "node", args: ["\($code)/toolkits/prod-write/scripts/start-server.mjs"]}}}')"
+    "prod-read": {command: "node", args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}},
+    "prod-write": {command: "node", args: ["\($code)/toolkits/prod-write/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}}}')"
   run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
 
   local s=$t/settings.ops.json
@@ -2007,7 +2075,7 @@ matcher_matches() {
     # The real launcher, which reads its tokens itself: the config holds no secret.
     local mcp=$t/mcp.ops.json
     assert_equal "$(jq -c '.mcpServers["vercel-read"]' "$mcp")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/vercel-read/scripts/start-server.mjs"]}')"
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/vercel-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}')"
     assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(jq -cn --args '$ARGS.positional' "${kits[@]}")"
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|vcp_|VERCEL|op://|token|mongodb(\+srv)?://|password' "$mcp"
 
@@ -2045,7 +2113,7 @@ matcher_matches() {
     # own 90-minute timeout for its long calls: the config holds no secret.
     local mcp=$t/mcp.ops.json
     assert_equal "$(jq -c '.mcpServers["prod-mongo"]' "$mcp")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000}')"
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000, env: {AGENT_TEAM_ROLE: "ops"}}')"
     assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(printf '%s\n' "${kits[@]}" | jq -R . | jq -sc 'sort')"
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
 
