@@ -158,7 +158,8 @@ worker_login_check() {
       report "worker login" FAIL "the registry cannot be read: $(first_error)" "the records line's fix, then run team-doctor again"
       return
     fi
-    repo=$(jq -r .repo <<<"$registry_reply") base=$(jq -r .base <<<"$registry_reply")
+    # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
+    repo=$(canonical_repo "$(jq -r .repo <<<"$registry_reply")") base=$(jq -r .base <<<"$registry_reply")
     [[ $(jq -r .delivery <<<"$registry_reply") != no-mistakes ]] || gate=1
     if ! facts=$(with_worker_login bounded 30 gh api "repos/$repo" 2>"$err" </dev/null) ||
       ! jq -e '.permissions.push == true' <<<"$facts" >/dev/null 2>&1; then

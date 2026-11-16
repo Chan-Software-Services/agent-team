@@ -673,6 +673,20 @@ queue_on() {
   assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c chanjdaniel || true)" 0
 }
 
+@test "the merge queue line reads each base's rules on the owner login, whatever GitHub login the doctor's session names" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  queue_on owner/site
+  # The stub gh logs the three login variables of each call before it answers.
+  { printf '%s\n' 'printf "GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n" "${GH_CONFIG_DIR-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"'
+    cat "$STUB_FIXTURES/gh.sh"; } >"$STUB_FIXTURES/gh.sh.new"
+  mv "$STUB_FIXTURES/gh.sh.new" "$STUB_FIXTURES/gh.sh"
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN=fixture-session-token GITHUB_TOKEN=fixture-session-token \
+    run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$(sort -u "$STUB_CALLS/gh.env")" "GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>"
+}
+
 @test "the merge queue line fails on a queue whose merge method is not the registry's, a strict rule, or classic protection beside it, the first of them" {
   only_checks 113-merge-queue.sh
   tools_at arch

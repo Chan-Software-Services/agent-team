@@ -873,6 +873,19 @@ api --include --method PUT repos/owner/agent-team/pulls/7/merge --input -"
   left_nothing
 }
 
+@test "a registry still naming a moved repo's old owner has each github call ask for the repo where it is now" {
+  login_on
+  # bin/'s files are links to the run's shared copy: replace the file, never write into it.
+  local moves=$CODE_CHECKOUT/bin/lib/repo-moves.json
+  jq '.moves += [{from: "old-owner/agent-team", to: "owner/agent-team", on: "2026-11-01"}]' "$moves" >"$moves.new"
+  rm "$moves"
+  mv "$moves.new" "$moves"
+  sed -i 's#^repo = "owner/agent-team"$#repo = "old-owner/agent-team"#' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all)"
+  assert_equal "$(grep -c old-owner "$STUB_CALLS/gh.env" || true)" 0
+}
+
 @test "each github call GitHub does not refuse fails the probe, naming its answer" {
   login_on
   local n

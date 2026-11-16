@@ -181,6 +181,14 @@ fails_with() {
   assert_equal "$(line_of 'worker login' | cut -d: -f1)" "PASS worker login"
 }
 
+@test "the worker login line asks GitHub for a moved repo where it is now, never by the registry's old owner" {
+  sed -i "s#^repo = \"$CONVENTIONER_REPO\"\$#repo = \"chanjdaniel/Conventioner\"#" "$TEAM_HOME/projects.toml"
+  assert_equal "$(grep -c '^repo = "chanjdaniel/Conventioner"$' "$TEAM_HOME/projects.toml")" 1
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'worker login' | cut -d: -f1)" "PASS worker login"
+  assert_equal "$(stub_calls gh | jq -r 'join(" ")' | grep -c chanjdaniel || true)" 0
+}
+
 @test "the worker login line fails on the owner's own account" {
   worker_login_on Team-Owner
   echo Team-Owner >"$STUB_FIXTURES/worker-as"

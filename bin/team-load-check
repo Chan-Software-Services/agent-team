@@ -1105,15 +1105,17 @@ probe_github_line() {
   fi
 }
 
-# probe_github_project <repo> <base>: one line per github call of bin/lib/probe.json, each made by
-# this script with worker_gh's environment, bounded to 30 seconds and with gh api's --include, so
+# probe_github_project <repo> <base>: one line per github call of bin/lib/probe.json for <repo> at
+# the end of its moves (canonical_repo, bin/lib/repo-moves.json), where GitHub has it now, each made
+# by this script with worker_gh's environment, bounded to 30 seconds and with gh api's --include, so
 # its HTTP status reads the same whatever GitHub answers. In a call's path and body @REPO@ is
-# <repo>, @BASE@ <base>, @OWNER@ and @NAME@ the repository's owner and name as GitHub reads them
-# for the worker login in the same run, and @PULL@ the lowest-numbered open pull request into
-# <base>; a call's answer is its jq program on {status, body}.
+# <repo>, @BASE@ <base>, @OWNER@ and @NAME@ the repository's owner and name as GitHub reads them for
+# the worker login in the same run, and @PULL@ the lowest-numbered open pull request into <base>; a
+# call's answer is its jq program on {status, body}.
 probe_github_project() {
-  local repo=$1 base=$2 err=$wt/.scratch/probe-github-err facts owner name pull='' raw call id path body reply answer
+  local repo base=$2 err=$wt/.scratch/probe-github-err facts owner name pull='' raw call id path body reply answer
   local -a input
+  repo=$(canonical_repo "$1")
   if ! facts=$(with_worker_login bounded 30 gh api "repos/$repo" 2>"$err" </dev/null) ||
     ! owner=$(jq -er .owner.login <<<"$facts" 2>/dev/null) || ! name=$(jq -er .name <<<"$facts" 2>/dev/null); then
     jq -r --arg repo "$repo" --arg why "$(head -n 1 "$err")" \
