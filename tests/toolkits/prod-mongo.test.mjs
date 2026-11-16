@@ -1582,16 +1582,17 @@ describe("rehearse-migrations", () => {
     }
   });
 
-  // The script as Daniel runs it: from the checkout, with no MCP server and no op.
-  const byHand = (args, { cwd = repo.work, heavy = true } = {}) => {
+  // The script as Daniel runs it: from the checkout, with no MCP server and no op; it ends with
+  // test `t`.
+  const byHand = (t, args, { cwd = repo.work, heavy = true } = {}) => {
     const env = { HOME: home, PATH: [docker.dir, toolsDir, testPath()].join(":"), PROD_MONGO_ROOT: root };
     const command = heavy ? [join(repoRoot, "bin", "team-heavy"), "run", "--kind", "rehearsal", "--", process.execPath, script, ...args] : [process.execPath, script, ...args];
-    return spawn(command[0], command.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    return owned(t, spawn(command[0], command.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] }));
   };
 
-  test("run by hand through team-heavy: one JSON object, stopped at a migration that exits non-zero with its exit code, the next not run, and exit 1", async () => {
+  test("run by hand through team-heavy: one JSON object, stopped at a migration that exits non-zero with its exit code, the next not run, and exit 1", async (t) => {
     const stamp = await takeBackup();
-    const ran = await ended(byHand([stamp, repo.base, "exits_three.py", "close_small_markets.py"]));
+    const ran = await ended(byHand(t, [stamp, repo.base, "exits_three.py", "close_small_markets.py"]));
     assert.equal(ran.code, 1, ran.stderr);
     assert.equal(ran.stdout.split("\n").filter(Boolean).length, 1, ran.stdout);
     const result = JSON.parse(ran.stdout);
@@ -1620,16 +1621,16 @@ describe("rehearse-migrations", () => {
     assert.deepEqual(readdirSync(join(root, stamp, "rehearsals", at)).sort(), ["1-exits_three.py.run.log", "report.json"]);
     assert.equal(madeAndGone().runs.length, 2);
 
-    const refused = await ended(byHand([stamp, repo.base.slice(0, 12), "open_big_markets.py", "--text"]));
+    const refused = await ended(byHand(t, [stamp, repo.base.slice(0, 12), "open_big_markets.py", "--text"]));
     assert.equal(refused.code, 1);
     assert.equal(refused.stdout, "rehearse-migrations: failed: takes a backup's name, a commit's full sha and 1 to 20 migration scripts' names, each as migrate_phase.py (and --text for the answer as text)\n");
-    const elsewhere = await ended(byHand([stamp, repo.base, "open_big_markets.py"], { cwd: repo.dir }));
+    const elsewhere = await ended(byHand(t, [stamp, repo.base, "open_big_markets.py"], { cwd: repo.dir }));
     assert.deepEqual(JSON.parse(elsewhere.stdout), { refused: "the working directory is not a git checkout with an origin, so it is not a checkout of Chan-Software-Services/Conventioner" });
   });
 
-  test("removes the migration's container, the throwaway, the network and the image when stopped by a signal, and writes no report", async () => {
+  test("removes the migration's container, the throwaway, the network and the image when stopped by a signal, and writes no report", async (t) => {
     const stamp = await takeBackup();
-    const child = byHand([stamp, repo.base, "waits.py"], { heavy: false });
+    const child = byHand(t, [stamp, repo.base, "waits.py"], { heavy: false });
     const done = ended(child);
     const log = () => {
       const [at] = rehearsalsOf(stamp).filter((name) => !name.startsWith("."));
@@ -1740,7 +1741,7 @@ print("reached the throwaway as mongodb", flush=True)
     madeAndGone();
   });
 
-  test("refuses a rehearsal while a backup runs, and answers that the machine is busy while another run holds the heavy-run lock, running nothing", async () => {
+  test("refuses a rehearsal while a backup runs, and answers that the machine is busy while another run holds the heavy-run lock, running nothing", async (t) => {
     spy.set("hold");
     await rehearseServer(async (server) => {
       const first = server.callTool("backup", {});
@@ -1754,16 +1755,13 @@ print("reached the throwaway as mongodb", flush=True)
     const lock = join(home, ".local", "state", "agent-team", "heavy.lock");
     mkdirSync(dirname(lock), { recursive: true });
     writeFileSync(lock, "the test's own run (pid 1) since now\n");
-    const holder = spawn("flock", [lock, "sleep", "300"], { stdio: "ignore" });
-    try {
-      await until(() => spawnSync("flock", ["-n", lock, "true"]).status !== 0);
-      await withServer(async (server) => {
-        const result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py"], backup: stamp });
-        assert.deepEqual([result.isError, result.text], [true, "rehearse-migrations: the machine is busy: the heavy-run lock is held by the test's own run (pid 1) since now; ask again later"]);
-      }, { path: drillPath(), cwd: repo.work, env: { PROD_MONGO_HEAVY_WAIT_MINUTES: "0" } });
-    } finally {
-      holder.kill();
-    }
+    // flock and its sleep, which holds the lock, both end with the test.
+    owned(t, spawn("flock", [lock, "sleep", "300"], { stdio: "ignore" }));
+    await until(() => spawnSync("flock", ["-n", lock, "true"]).status !== 0);
+    await withServer(async (server) => {
+      const result = await server.callTool("rehearse-migrations", { ref: repo.base, migrations: ["open_big_markets.py"], backup: stamp });
+      assert.deepEqual([result.isError, result.text], [true, "rehearse-migrations: the machine is busy: the heavy-run lock is held by the test's own run (pid 1) since now; ask again later"]);
+    }, { path: drillPath(), cwd: repo.work, env: { PROD_MONGO_HEAVY_WAIT_MINUTES: "0" } });
     assert.deepEqual(docker.calls(), [], "docker ran");
     assert.deepEqual(rehearsalsOf(stamp), []);
   });
