@@ -2256,8 +2256,8 @@ YAML
   done
 }
 
-# A download in a workflow retries a transient failure, as a release download's HTTP 504 failed the
-# required zizmor job twice on one head.
+# A curl written in a workflow file retries a transient failure, as a release download's HTTP 504
+# failed the required zizmor job twice on one head.
 @test "every curl in a workflow retries a transient failure" {
   local workflow line found=0
   for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
