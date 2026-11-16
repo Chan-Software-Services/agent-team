@@ -49,7 +49,9 @@
 #      stderr. A machine whose lease its handoff already released prints the message again.
 # --retire, once the message is posted: refuses while this machine holds the lease, then starts a
 # detached process (its own session) that, 3 s after the call returns, runs claude stop
-# and claude rm for each live session named coordinator, logging to retire.log.
+# and claude rm for each session named coordinator in any state but stopped (claude agents --json
+# --all, which also lists one whose turn is done), logging to retire.log; with none, or no session
+# list, it refuses.
 # In ~/.local/state/agent-team/: handoff.json, this handoff's progress (the lease's epoch and
 # taken_at, the last step done, whether it is --here's and what step 4 captured); handoff.lock,
 # one handoff at a time; retire.log.
@@ -98,10 +100,12 @@ prefixed() {
   while IFS= read -r line; do printf '%s: %s\n' "$1" "$line"; done
 }
 
-# The live session list, claude agents --json.
+# The sessions in any state but stopped, from the full list (claude agents --json --all): the
+# plain list leaves out a background session whose turn is done once the daemon settles its
+# process, though a message wakes it, and only a stopped one is never woken.
 read_sessions() {
-  claude agents --json 2>"$err" | jq -ce 'select(type == "array")' 2>/dev/null ||
-    die "cannot read the live session list (claude agents --json)"
+  claude agents --json --all 2>"$err" | jq -ce 'select(type == "array") | map(select(.state != "stopped"))' 2>/dev/null ||
+    die "cannot read the session list (claude agents --json --all)"
 }
 
 # The open tasks whose latest machine event (stowed, launch, worktree-moved) is not a stowed from
