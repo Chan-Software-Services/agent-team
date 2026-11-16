@@ -47,8 +47,10 @@ TOML
   docker_stub "$HOME/slots/home/1"
   capacity_room $((16 * 1024 * 1024 * 1024))
 
-  # claude: agents --json from sessions.json; stop marks a session stopped, rm takes it off the
-  # list; both fail once $STUB_FIXTURES/claude-stop-refuse exists.
+  # claude: agents --json --all from sessions.json, and agents --json without the rows marked
+  # listed false, as Claude Code leaves out a background session whose turn is done once the
+  # daemon settles its process; stop marks a session stopped, rm takes it off the list; both fail
+  # once $STUB_FIXTURES/claude-stop-refuse exists.
   cat >"$BATS_TEST_TMPDIR/sessions.json" <<'JSON'
 [{"id": "3169fcbd", "sessionId": "3169fcbd-1111", "name": "coordinator", "status": "busy", "state": "working"},
  {"id": "a1a1a1a1", "sessionId": "a1a1a1a1-1111", "name": "T1-builder", "status": "busy", "state": "working"},
@@ -59,7 +61,8 @@ JSON
   stub_script claude <<'SH'
 list=$BATS_TEST_TMPDIR/sessions.json
 case "$*" in
-  'agents --json' | 'agents --json --all') cat "$list" ;;
+  'agents --json') jq 'map(select(.listed != false))' "$list" ;;
+  'agents --json --all') cat "$list" ;;
   'stop '*) [[ ! -e $STUB_FIXTURES/claude-stop-refuse ]] || { echo "cannot stop $2" >&2; exit 1; }
     jq --arg id "$2" 'map(if .id == $id then .status = "stopped" else . end)' "$list" >"$list.next" && mv "$list.next" "$list" ;;
   'rm '*) [[ ! -e $STUB_FIXTURES/claude-stop-refuse ]] || { echo "cannot remove $2" >&2; exit 1; }
@@ -312,6 +315,36 @@ T1 stow-failed: feat/T1-work1 (home) has diverged from origin: 1 commits here an
   # T1's builder still runs: its stow failed before its session stopped.
   assert_equal "$(stops_and_removes)" "stop a2a2a2a2
 rm a2a2a2a2"
+}
+
+@test "a builder whose turn is done, listed only with --all, is stopped and removed; a stopped one is left" {
+  jq 'map(if .name == "T1-builder" then .state = "stopped" | .listed = false
+    elif .name == "T2-builder" then .listed = false else . end)' \
+    "$BATS_TEST_TMPDIR/sessions.json" >"$BATS_TEST_TMPDIR/sessions.next"
+  mv "$BATS_TEST_TMPDIR/sessions.next" "$BATS_TEST_TMPDIR/sessions.json"
+
+  run_bin -0 --separate-stderr team-stow T1 T2
+  assert_contains "$output" "sessions: T2: stopped and removed T2-builder (a2a2a2a2)
+sessions: T1: no live session"
+  assert_equal "$(stops_and_removes)" "stop a2a2a2a2
+rm a2a2a2a2"
+  assert_equal "$(jq -r '.[].name' "$BATS_TEST_TMPDIR/sessions.json" | paste -sd ' ')" "coordinator T1-builder T3-builder my-T1-builder"
+  assert_equal "$(stowed_events | jq -c '[.task, .sessions]')" '["T1",[]]
+["T2",["builder"]]'
+}
+
+@test "a session list that cannot be read stops the stow, with no session stopped" {
+  cp "$STUB_FIXTURES/claude.sh" "$BATS_TEST_TMPDIR/claude-real.sh"
+  stub_script claude <<'SH'
+case "$*" in
+  'agents --json --all') echo "error: daemon down" >&2; exit 1 ;;
+  *) bash "$BATS_TEST_TMPDIR/claude-real.sh" "$@" ;;
+esac
+SH
+  run_bin -1 --separate-stderr team-stow T1
+  assert_contains "$stderr" "team-stow: cannot read the session list (claude agents --json --all)"
+  assert_equal "$(stops_and_removes)" ""
+  assert_equal "$(stowed_events)" ""
 }
 
 @test "a session that will not stop refuses its task, which logs no stowed" {

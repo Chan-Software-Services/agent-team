@@ -621,6 +621,50 @@ rm 3169fcbd"
   assert_contains "$(cat "$state/retire.log")" "retiring 3169fcbd"
 }
 
+# Set <key> of the session named <name> in the session list to the JSON <value>:
+# set_session <name> <key> <value>
+set_session() {
+  jq --arg name "$1" --arg key "$2" --argjson value "$3" 'map(if .name == $name then .[$key] = $value else . end)' \
+    "$BATS_TEST_TMPDIR/sessions.json" >"$BATS_TEST_TMPDIR/sessions.next"
+  mv "$BATS_TEST_TMPDIR/sessions.next" "$BATS_TEST_TMPDIR/sessions.json"
+}
+
+@test "--retire stops and removes a coordinator whose turn is done, listed only with --all; a stopped one is no live session, and no session list refuses" {
+  run_bin -0 team-handoff
+  : >"$STUB_CALLS/claude.log"
+  set_session coordinator listed false
+  set_session coordinator state '"stopped"'
+  run_bin -1 --separate-stderr team-handoff --retire
+  assert_equal "$stderr" "team-handoff: no live session is named coordinator"
+
+  set_session coordinator state '"done"'
+  run_bin -0 team-handoff --retire
+  assert_contains "$output" "the coordinator (3169fcbd) is stopped and removed in 3s"
+  local tries=0
+  until [[ $(stops_and_removes) == *"rm 3169fcbd"* ]] || ((tries++ > 100)); do sleep 0.1; done
+  assert_equal "$(stops_and_removes)" "stop 3169fcbd
+rm 3169fcbd"
+
+  cp "$STUB_FIXTURES/claude.sh" "$BATS_TEST_TMPDIR/claude-real.sh"
+  stub_script claude <<'SH'
+case "$*" in
+  'agents --json --all') echo "error: daemon down" >&2; exit 1 ;;
+  *) bash "$BATS_TEST_TMPDIR/claude-real.sh" "$@" ;;
+esac
+SH
+  run_bin -1 --separate-stderr team-handoff --retire
+  assert_equal "$stderr" "team-handoff: cannot read the session list (claude agents --json --all)"
+}
+
+@test "a handoff's stow stops and removes a worker whose turn is done, listed only with --all" {
+  set_session T1-builder listed false
+  run_bin -0 --separate-stderr team-handoff
+  assert_contains "$output" "sessions: T1: stopped and removed T1-builder (81f08540)"
+  assert_equal "$(stops_and_removes)" "stop 81f08540
+rm 81f08540"
+  assert_equal "$(stowed_events | jq -c .sessions)" '["builder"]'
+}
+
 @test "it needs a machine name, and refuses a malformed command line" {
   run_bin -2 team-handoff --now
   assert_equal "$output" "team-handoff: usage: team-handoff [--here] [--json] | --check | --retire"

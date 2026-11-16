@@ -59,17 +59,21 @@
 # Prints the task's facts as JSON; the project's other open tasks go to stderr, each with the files
 # its branch changes against the base (git diff --name-only origin/<base>...<branch>, origin's
 # branch when pushed, else the local one), or "no branch yet". Exit 75 when a new task has no room
-# (below), when the pool's lock stays held (a git pool's only exit 75 is its lock), or when the
-# lease command fails (a treehouse pool, whose own max_trees caps it), listing the slots and who
-# holds them (a lease holder, else the task its branch names).
+# or the room check could not tell yet (below), when the pool's lock stays held
+# (a git pool's only exit 75 is its lock), or when the lease command fails (a treehouse pool, whose
+# own max_trees caps it), listing the slots and who holds them (a lease holder, else the task its
+# branch names).
 # The level bounds the open tasks, the pool listing no bound but a treehouse pool's own max_trees:
 # a new task (the form with a path, type, slug and title, with or without --task) first runs its
 # own checkout's team-capacity admit --kind session:builder --dry-run, after the arguments and the
 # registry are read and before the number is claimed or anything is taken, since every task soon
 # launches a builder, the largest worker it starts. With no room it exits 75,
 # "team-open: no room to open a task: <team-capacity's reason>", naming the level, and memory
-# when that is short; when team-capacity cannot tell (no reading to size the budget by), exit 1,
-# "team-open: cannot tell whether a task fits: <its reason>"; either way nothing is claimed. It
+# when that is short; on any other exit 75 of team-capacity's, whose reason does not start "no room
+# for" (another admission still holding capacity.lock after 2 minutes), it exits 75 too,
+# "team-open: cannot tell yet whether a task fits: <its reason>", to try again; when team-capacity
+# cannot tell (no reading to size the budget by), exit 1,
+# "team-open: cannot tell whether a task fits: <its reason>"; in each case nothing is claimed. It
 # is skipped when a worktree already holds the task's branch (finishing a half-open task), and
 # never runs for --add, --ticket or --resume, whose task is open already. Each launch is still
 # admitted on its own by team-worker, so two opens at once may both pass the check while only one
@@ -299,7 +303,8 @@ fi
 
 # The room check (see the header), before a new task claims its number or takes anything: the level
 # must have room for a builder, the largest worker a task starts, as team-capacity admit would judge
-# one now, keeping no admission. A worktree of the primary checkout already holding <branch> ("" for
+# one now, keeping no admission; a check that capacity.lock kept from judging is "cannot tell yet",
+# exit 75 as no room is. A worktree of the primary checkout already holding <branch> ("" for
 # a number not yet claimed) is a half-open task to finish, which needs none.
 room_to_open() {
   local list err rc=0 reason
@@ -311,7 +316,13 @@ room_to_open() {
   ((rc != 0)) || return 0
   reason=$(grep . <<<"$err" | tail -n 1) || reason="team-capacity admit failed (exit $rc), giving no reason"
   if ((rc == 75)); then
-    echo "team-open: no room to open a task: $reason" >&2
+    # team-capacity's own "no room for ..." is the answer; any other 75 (capacity.lock still held)
+    # is no answer yet.
+    if [[ $reason == "no room for"* ]]; then
+      echo "team-open: no room to open a task: $reason" >&2
+    else
+      echo "team-open: cannot tell yet whether a task fits: $reason" >&2
+    fi
     exit 75
   fi
   die "cannot tell whether a task fits: $reason"
