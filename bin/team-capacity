@@ -21,13 +21,15 @@
 #          daemon unit no-mistakes wrote there, no-mistakes-daemon-<hash>.service, a drop-in
 #          no-mistakes-daemon-<hash>.service.d/agent-team.conf holding Slice=agent-team.slice, so
 #          every gate run is the team's, and, when this checkout's bin/lib/worker-login names the
-#          worker login and it is usable here, Environment=GH_CONFIG_DIR=<its gh directory>, so
-#          the gate pushes and opens its pull requests on it; then systemctl --user daemon-reload
+#          worker login and it is usable here, Environment="GH_CONFIG_DIR=<its gh directory>"
+#          "GH_TOKEN=" "GITHUB_TOKEN=", so the gate pushes and opens its pull requests on it
+#          whatever token the user manager holds; then systemctl --user daemon-reload
 #          when it wrote anything. With the worker login on but not usable (or its constant
 #          malformed) the drop-in is the one without it, and with a gate daemon unit its first
 #          line says "the gate's daemon stays on the machine's own GitHub login: <why>". A gate
 #          daemon that runs (ActiveState active) outside the slice, whose drop-in it just
-#          rewrote, or whose process's GH_CONFIG_DIR is not what its drop-in names is restarted
+#          rewrote, or whose process's GH_CONFIG_DIR is not what its drop-in names (or, the
+#          worker login on, holds a GH_TOKEN or GITHUB_TOKEN that is not empty) is restarted
 #          with `no-mistakes daemon restart`, never --force, which refuses while a pipeline runs:
 #          then the daemon is left as it is, and it says why and that a later install restarts
 #          it. Each file written, the reload and each restart is one line; with nothing to do it
@@ -511,10 +513,19 @@ gate_login() {
 }
 
 # A gate daemon's drop-in, as install writes it: the team's slice, and with the worker login on
-# and usable (gate_login), its gh directory.
+# and usable (gate_login), a session's environment on it, worker_login_env's (its gh directory,
+# and GH_TOKEN and GITHUB_TOKEN empty, so a token in the user manager's environment never wins),
+# each assignment in double quotes as systemd reads them, so a blank in the home path is kept.
 drop_in() {
+  local pair quoted words=()
   printf '%s\n' '# team-capacity install: every gate run in the team'\''s slice.' '[Service]' "Slice=$SLICE"
-  [[ -z $GATE_LOGIN_DIR ]] || printf '%s\n' "Environment=GH_CONFIG_DIR=$GATE_LOGIN_DIR"
+  [[ -n $GATE_LOGIN_DIR ]] || return 0
+  while IFS= read -r pair; do
+    quoted=${pair//\\/\\\\}
+    quoted=${quoted//\"/\\\"}
+    words+=("\"${quoted//%/%%}\"")
+  done < <(worker_login_env)
+  printf 'Environment=%s\n' "${words[*]}"
 }
 
 # The gate daemon units no-mistakes wrote, one name per line, sorted.
@@ -541,18 +552,20 @@ daemon_outside() {
 }
 
 # Whether the running gate daemon <unit>'s process is on another GitHub login than its drop-in
-# names: with the worker login on, its GH_CONFIG_DIR is not the worker's directory; off, it is.
+# names: with the worker login on, its GH_CONFIG_DIR is not the worker's directory, or it holds a
+# GH_TOKEN or GITHUB_TOKEN that is not empty; off, its GH_CONFIG_DIR is the worker's directory.
 # A process whose environment cannot be read is not judged.
 daemon_login_stale() {
-  local pid environ got
+  local pid environ got vars
   [[ $(unit_property "$1" ActiveState) == active ]] || return 1
   pid=$(unit_property "$1" MainPID)
   [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
   environ=$ROOT/proc/$pid/environ
   [[ -r $environ ]] || return 1
-  got=$(tr '\0' '\n' <"$environ" 2>/dev/null | sed -n 's/^GH_CONFIG_DIR=//p' | head -n 1) || return 1
+  vars=$(tr '\0' '\n' <"$environ" 2>/dev/null) || return 1
+  got=$(sed -n 's/^GH_CONFIG_DIR=//p' <<<"$vars" | head -n 1)
   if [[ -n $GATE_LOGIN_DIR ]]; then
-    [[ $got != "$GATE_LOGIN_DIR" ]]
+    [[ $got != "$GATE_LOGIN_DIR" ]] || grep -qE '^(GH_TOKEN|GITHUB_TOKEN)=.' <<<"$vars"
   else
     [[ -n $got && $got == "$(worker_login_dir)" ]]
   fi

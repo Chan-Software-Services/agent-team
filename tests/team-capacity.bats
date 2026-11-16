@@ -209,7 +209,7 @@ pid=$(($(cat "$state/$unit.MainPID") + 1))
 echo "$pid" >"$state/$unit.MainPID"
 echo "/user.slice/user-$(id -u).slice/user@$(id -u).service/agent.slice/agent-team.slice/$unit" >"$state/$unit.ControlGroup"
 mkdir -p "$TEAM_CGROUP_ROOT/proc/$pid"
-dir=$(sed -n 's/^Environment=GH_CONFIG_DIR=//p' "$HOME/.config/systemd/user/$unit.d/agent-team.conf")
+dir=$(sed -n 's/^Environment="GH_CONFIG_DIR=\([^"]*\)".*/\1/p' "$HOME/.config/systemd/user/$unit.d/agent-team.conf")
 { printf '%s\0' PATH=/usr/bin; [[ -z $dir ]] || printf '%s\0' "GH_CONFIG_DIR=$dir"; } >"$TEAM_CGROUP_ROOT/proc/$pid/environ"
 echo "daemon restarted"
 EOF
@@ -237,7 +237,7 @@ restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker 
   assert_equal "$(cat "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" "# team-capacity install: every gate run in the team's slice.
 [Service]
 Slice=agent-team.slice
-Environment=GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker"
+Environment=\"GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
   assert_equal "$(tr '\0' '\n' <"$TEAM_CGROUP_ROOT/proc/701/environ" | grep '^GH_CONFIG_DIR=')" "GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker"
   assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
 
@@ -246,6 +246,25 @@ Environment=GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker"
   assert_equal "$output" "agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
   assert_equal "$(stub_calls systemctl | jq -c 'select(.[1] != "show")')" ""
   assert_equal "$(stub_calls no-mistakes)" ""
+
+  # A daemon on the worker's directory that still holds a token, which would answer before it, is
+  # on another login than its drop-in names, and restarts.
+  printf '%s\0' PATH=/usr/bin "GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker" GH_TOKEN=fixture-token \
+    >"$TEAM_CGROUP_ROOT/proc/701/environ"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+}
+
+@test "install quotes the worker login's directory in the drop-in, so systemd keeps a home path with a blank in it whole" {
+  local home=$HOME
+  export HOME="$home/a home"
+  UNITS=$HOME/.config/systemd/user
+  mkdir -p "$UNITS"
+  worker_login_on
+  gate_daemon 60757c3c inactive
+  run_bin -0 team-capacity install
+  assert_equal "$(grep '^Environment=' "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" \
+    "Environment=\"GH_CONFIG_DIR=$home/a home/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
 }
 
 @test "install with the worker login on names a daemon running a pipeline, tries its restart again next time, and check names it meanwhile" {

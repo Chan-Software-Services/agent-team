@@ -124,7 +124,7 @@ systemd nests a slice under every dash prefix of its name, so `agent-team-T175.s
 `team-capacity install` writes `~/.config/systemd/user/agent-team.slice` and, for each gate daemon unit no-mistakes wrote there (`no-mistakes-daemon-<hash>.service`), a drop-in `agent-team.conf` holding `Slice=agent-team.slice`, then reloads the user manager.
 It is Daniel's yes, as `team-timers enable` is.
 The drop-in is a file of its own in the unit's `.d` directory, never an edit of the unit no-mistakes writes.
-The same drop-in names the daemon's GitHub login: when `bin/lib/worker-login` names the worker login and it is usable on the machine, it adds `Environment=GH_CONFIG_DIR=<its gh directory>`, so the gate pushes and opens its pull requests on that login.
+The same drop-in names the daemon's GitHub login: when `bin/lib/worker-login` names the worker login and it is usable on the machine, it adds one `Environment=` line naming that login's gh directory as `GH_CONFIG_DIR` and setting `GH_TOKEN` and `GITHUB_TOKEN` empty, each assignment quoted, so the gate pushes and opens its pull requests on that login whatever token the user manager's environment holds.
 With the login off the drop-in is the one above, and with it on but not usable `install` and `check` say why the daemon stays on the machine's own login.
 The gate's daemon takes the slice and the login only when it restarts: `install` restarts a running one outside the slice, or on another login than its drop-in names, with `no-mistakes daemon restart`, never `--force`, which refuses while a pipeline runs, and then says to run `install` again once no gate runs.
 
