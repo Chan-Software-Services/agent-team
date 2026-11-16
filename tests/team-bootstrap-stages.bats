@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2153 # TOOL_STUBS, CONVENTIONER and the other globals are helpers/doctor.bash's
 # team-bootstrap: a fresh machine set up stage by stage, on the machine tests/helpers/bootstrap.bash
-# builds. This file: the tools stage's gate config, and the projects, config and heartbeat stages.
+# builds. This file: the tools stage's gate config and Rust tools, and the projects, config and heartbeat stages.
 
 load helpers/common
 load helpers/doctor
@@ -72,6 +72,83 @@ agent_path_override:
   assert_equal "$output" "tools: done: every tool is at its pin or above its minimum"
   run_bin -1 team-bootstrap --stage check
   assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: gate-agent: Daniel runs team-secrets restore in their own terminal (the secret no-mistakes-config), then $CODE_CHECKOUT/bin/team-bootstrap --stage tools sets agent_path_override: {opencode: $wrapper} in it (~/.no-mistakes/config.yaml is not there)"
+}
+
+# rustup default <channel> logs its call and makes <channel> the default rustup toolchain list
+# shows, as rustup 1.28 on marks it: rust_default_sets <channel>
+rust_default_sets() {
+  printf '%s\n' 'echo "rustup default $2" >>"$STUB_CALLS/rustup-init.log"' \
+    'source "$REPO_ROOT/tests/helpers/doctor.bash"' \
+    "answer 'rustup toolchain list' '$1-x86_64-unknown-linux-gnu (active, default)'" \
+    >"$TOOL_ANSWERS/rustup/default_$1.sh"
+}
+
+@test "tools: the Rust tools install under ~/.cargo/bin in the doctor's order, the toolchain after rustup, and ~/.cargo/bin gets its rc line" {
+  tools_at arch
+  local name channel expected
+  channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$REPO_ROOT/rust-toolchain.toml")
+  for name in rustup cargo-nextest sccache cargo-deny; do answer "$(lock_of "$name" .version_cmd)"; done
+  cp "$REPO_ROOT/rust-toolchain.toml" "$CODE_CHECKOUT/"
+  answer "rustup toolchain list"
+  # rustup toolchain install, run in the code checkout, installs the toolchain and its components.
+  printf '%s\n' 'echo "rustup toolchain install in $PWD" >>"$STUB_CALLS/rustup-init.log"' \
+    'source "$REPO_ROOT/tests/helpers/doctor.bash"' \
+    "answer 'rustup toolchain list' '$channel-x86_64-unknown-linux-gnu (active)'" \
+    "answer 'rustup component list --installed --toolchain $channel' \"\$(printf '%s\\n' clippy-x86_64-unknown-linux-gnu rust-analyzer-x86_64-unknown-linux-gnu rust-src rustfmt-x86_64-unknown-linux-gnu)\"" \
+    >"$TOOL_ANSWERS/rustup/toolchain_install.sh"
+  rust_default_sets "$channel"
+  expected=$(for name in rustup cargo-nextest sccache cargo-deny; do echo "tools: would run: $(lock_of "$name" .source.arch)"; done
+    echo "tools: would run: cd $CODE_CHECKOUT && rustup toolchain install"
+    echo "tools: would run: rustup default $channel")
+  # ~/.no-mistakes/bin is the sandbox's, off PATH; ~/.cargo/bin is there only once installed.
+  run_bin -0 team-bootstrap --stage tools --dry-run
+  assert_equal "$output" "$expected
+tools: would run: add ~/.no-mistakes/bin to PATH in ~/.bashrc"
+  assert_equal "$(install_calls)" ""
+
+  run_bin -0 team-bootstrap --stage tools
+  assert_equal "$output" "${expected//would run/running}
+tools: running: add ~/.no-mistakes/bin to PATH in ~/.bashrc
+tools: running: add ~/.cargo/bin to PATH in ~/.bashrc"
+  assert_equal "$(cat "$STUB_CALLS/rustup-init.log")" "rustup-init -y --no-modify-path --default-toolchain none --profile minimal
+rustup toolchain install in $CODE_CHECKOUT
+rustup default $channel"
+  grep -qxF 'export PATH="$HOME/.cargo/bin:$PATH" # team-bootstrap' "$HOME/.bashrc"
+  run_bin -0 team-bootstrap --stage check
+  assert_equal "$(stage_lines check | tail -n1)" "summary: set up, and this machine holds the lease"
+  # Once it is on PATH, the rc file gains no second line.
+  PATH=$HOME/.cargo/bin:$PATH run_bin -0 team-bootstrap --stage tools
+  assert_equal "$output" "tools: done: every tool is at its pin or above its minimum"
+  assert_equal "$(grep -c cargo "$HOME/.bashrc")" 1
+}
+
+@test "tools: rustup with no default toolchain gets rust-toolchain.toml's channel as its default, and a default already set is left" {
+  tools_at arch
+  local channel
+  channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$REPO_ROOT/rust-toolchain.toml")
+  cp "$REPO_ROOT/rust-toolchain.toml" "$CODE_CHECKOUT/"
+  mkdir -p "$HOME/.cargo/bin"
+  ln "$(shared rust-cargo-proxy <<<'#!/bin/sh')" "$HOME/.cargo/bin/cargo"
+  answer "rustup toolchain list" "$channel-x86_64-unknown-linux-gnu (active)"
+  answer "rustup component list --installed --toolchain $channel" "$(printf '%s\n' clippy-x86_64-unknown-linux-gnu \
+    rust-analyzer-x86_64-unknown-linux-gnu rust-src rustfmt-x86_64-unknown-linux-gnu)"
+  rust_default_sets "$channel"
+  # Every tool passes, and rustup has the pinned toolchain but no default.
+  PATH=$HOME/.cargo/bin:$PATH run_bin -0 team-bootstrap --stage tools --dry-run
+  assert_equal "$output" "tools: would run: rustup default $channel
+tools: done: every tool is at its pin or above its minimum"
+  PATH=$HOME/.cargo/bin:$PATH run_bin -0 team-bootstrap --stage tools
+  assert_equal "$output" "tools: running: rustup default $channel
+tools: done: every tool is at its pin or above its minimum"
+  assert_equal "$(cat "$STUB_CALLS/rustup-init.log")" "rustup default $channel"
+  # Then, or with another default Daniel set, nothing changes it.
+  PATH=$HOME/.cargo/bin:$PATH run_bin -0 team-bootstrap --stage tools
+  assert_equal "$output" "tools: done: every tool is at its pin or above its minimum"
+  answer "rustup toolchain list" "stable-x86_64-unknown-linux-gnu (default)
+$channel-x86_64-unknown-linux-gnu (active)"
+  PATH=$HOME/.cargo/bin:$PATH run_bin -0 team-bootstrap --stage tools
+  assert_equal "$output" "tools: done: every tool is at its pin or above its minimum"
+  assert_equal "$(cat "$STUB_CALLS/rustup-init.log")" "rustup default $channel"
 }
 
 @test "check lists each failing secret with its reason, so a wrong mode is never called missing" {

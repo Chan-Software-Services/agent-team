@@ -139,6 +139,37 @@ ledger.jsonl: a record
 sops/machine-setup.md: a record"
 }
 
+# The toolchain rustup installs in every checkout: the pinned stable release, with the components
+# rust-analyzer resolves the standard library with and the check runs.
+@test "rust-toolchain.toml pins Rust 1.100.0, the minimal profile, rustfmt, clippy, rust-analyzer and rust-src" {
+  assert_equal "$(grep -v -e '^#' -e '^$' "$REPO_ROOT/rust-toolchain.toml")" '[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
+}
+
+# Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
+# read on home-pc from the pinned releases, rustup's from its source, since its install there was
+# refused (its commit and date are placeholders). Each pattern reads the pin from its line.
+@test "each Rust tool's version pattern in tools.lock reads its pin from the tool's version line" {
+  local name line rust_pattern pin version
+  while IFS=$'\t' read -r name line; do
+    rust_pattern=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+    pin=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")
+    version=''
+    [[ $line =~ $rust_pattern ]] && version=${BASH_REMATCH[1]}
+    assert_equal "$name $version" "$name $pin"
+  done <<'LINES'
+rustup	rustup 1.29.3 (0000000000 2026-11-04)
+cargo-nextest	cargo-nextest 0.9.152 (26ebeda79 2026-11-13)
+sccache	sccache 0.19.0
+cargo-deny	cargo-deny 0.20.2
+LINES
+  # rustup's note on stderr names rustc's version, which is never read as rustup's.
+  rust_pattern=$(jq -r '.tools[] | select(.name == "rustup") | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+  [[ ! 'info: the currently active `rustc` version is `rustc 1.100.0 (1a2b3c4d5 2026-11-12)`' =~ $rust_pattern ]]
+}
+
 @test "each machine's usage and time day files in the team home are records, never code" {
   local copy=$BATS_TEST_TMPDIR/copy
   path_copy "$copy"
@@ -400,7 +431,7 @@ probe_denies() {
 @test "every writer of an inbox kind calls refresh_inbox" {
   local contract=$REPO_ROOT/bin/lib/ledger-contract.json writer missing=()
   assert_equal "$(jq -r '[.kinds | to_entries[] | select(.value.inbox == true) | .key] | sort | join(" ")' "$contract")" \
-    "answered asked blocked closed done interview-thread merge-approved merge-default-restored merge-default-withdrawn merged plan-approval-withdrawn plan-approved pr resumed review ticket-done waiting walk"
+    "answered asked blocked closed dequeued done interview-thread merge-approved merge-default-restored merge-default-withdrawn merged plan-approval-withdrawn plan-approved pr queued resumed review ticket-done waiting walk"
   for writer in $(jq -r '[.kinds[] | select(.inbox == true) | .writer] | flatten | unique[]' "$contract"); do
     grep -qE '^[[:space:]]*refresh_inbox$' "$REPO_ROOT/bin/$writer" || missing+=("$writer")
   done
@@ -1966,14 +1997,23 @@ team-review-status https://github.com/me/shop/pull/5 a1b2c3d4e5f60718293a4b5c6d7
 COMMANDS
 }
 
-@test "GitHub's CI and zizmor's online run run on every pull request to dev and main and by hand, and no workflow runs on a push or for a fork's target" {
-  local workflow
-  # The top-level keys under on:, and the branches its pull_request names.
+@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
+  local workflow ci=$REPO_ROOT/.github/workflows/ci.yml
+  # The top-level keys under on:, the branches its pull_request names, and merge_group's types.
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$ci")" \
+    $'pull_request\nmerge_group\nworkflow_dispatch'
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    types: //p' "$ci")" "[checks_requested]"
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/zizmor-online.yml")" \
+    $'pull_request\nworkflow_dispatch'
   for workflow in ci.yml zizmor-online.yml; do
-    assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/$workflow")" \
-      $'pull_request\nworkflow_dispatch'
     assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    branches: //p' "$REPO_ROOT/.github/workflows/$workflow")" "[dev, main]"
   done
+  # The data job reads a trial commit's range from the merge group, beside the pull request's.
+  run -0 sed -n '/^  data:$/,/^  [a-z]/p' "$ci"
+  assert_contains "$output" '${{ github.event.merge_group.base_sha }}'
+  assert_contains "$output" '${{ github.event.merge_group.head_sha }}'
+  assert_contains "$output" '${{ github.event.pull_request.base.sha }}'
+  assert_contains "$output" '${{ github.event.pull_request.head.sha }}'
   for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
     if grep -nE '^\s*(push|pull_request_target|schedule):' "$workflow"; then
       echo "$workflow runs on a push, a schedule or with a fork's target's secrets" >&2
@@ -3150,4 +3190,44 @@ briefs_without_gotchas() {
   for path in bin/lib/review-app bin/team-review-check; do
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
+}
+
+# The names team-janitor tmp may remove (bin/lib/tmp-leftovers): each line a maker, a project of
+# the registry fixture or bats, and an expression that begins with at least 6 literal characters
+# and holds no |, so no alternation widens it past that beginning, and none is a name another
+# program makes: mktemp's default, systemd's, Claude Code's or pytest's. Says the first line it
+# refuses on stderr and fails: leftovers_hold <file>
+leftovers_hold() {
+  local file=$1 names line maker expression name count=0
+  names=$(sed -n 's/^\[\([a-z0-9-]*\)\]$/\1/p' "$REPO_ROOT/tests/fixtures/projects.toml")
+  while IFS= read -r line; do
+    [[ -n $line && $line != '#'* ]] || continue
+    count=$((count + 1))
+    [[ $line =~ ^([a-z0-9-]+)\ ([^[:space:]]+)$ ]] || { echo "bin/lib/tmp-leftovers: '$line' is not <maker> <expression>" >&2; return 1; }
+    maker=${BASH_REMATCH[1]} expression=${BASH_REMATCH[2]}
+    [[ $maker == bats ]] || grep -Fxq -- "$maker" <<<"$names" ||
+      { echo "bin/lib/tmp-leftovers: the maker of '$line' is neither bats nor a project of the registry fixture" >&2; return 1; }
+    [[ $expression =~ ^[A-Za-z0-9_-]{6} ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' does not begin with 6 literal characters" >&2; return 1; }
+    [[ $expression != *'|'* ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' holds a |, which would widen the names it removes" >&2; return 1; }
+    for name in tmp.AbCdEfGhIj systemd-private-x claude-1000 pytest-of-user; do
+      if [[ $name =~ ^($expression)$ ]]; then
+        echo "bin/lib/tmp-leftovers: '$expression' matches $name, which is not the team's" >&2
+        return 1
+      fi
+    done
+  done <"$file"
+  ((count >= 12))
+}
+
+@test "every line of bin/lib/tmp-leftovers is a maker and an expression that begins with 6 literal characters, holds no | and matches no other program's name" {
+  leftovers_hold "$REPO_ROOT/bin/lib/tmp-leftovers"
+}
+
+@test "the leftovers' check refuses a line whose expression widens itself with an alternation" {
+  { cat "$REPO_ROOT/bin/lib/tmp-leftovers"; echo 'no-mistakes nm-cli-home-[0-9]+|[a-z]+'; } >"$BATS_TEST_TMPDIR/tmp-leftovers"
+  run leftovers_hold "$BATS_TEST_TMPDIR/tmp-leftovers"
+  assert_equal "$status" 1
+  assert_equal "$output" "bin/lib/tmp-leftovers: 'nm-cli-home-[0-9]+|[a-z]+' holds a |, which would widen the names it removes"
 }

@@ -60,6 +60,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
     - `ticket_graph.py`: draws a task's ticket list, as `team-tickets --json` prints it, as the self-contained HTML page of its dependency graph that `team-tickets --html` writes.
     - `time.jq`: `team-time`'s split of each task's time into phases, and its counts.
+    - `tmp-leftovers`: the names of what the team's test runs leave in `/tmp` and `/var/tmp`, one `<maker> <expression>` per line, the only names `team-janitor tmp` removes by, read from its own checkout.
+    - `tmp.sh`: `team-janitor tmp`'s sweep of the stale leftovers in `/tmp` and `/var/tmp` and its warning: the rules (type, owner, a list, task or gate name, age, no live process), the removal, each removal's line and day file, the reading of `/tmp`, `status` and the `tmp` notice.
     - `tools.jq`: turns `tools.lock` into each tool's pin and install command for a machine.
     - `tools.lock`: the tools `team-doctor` checks, pinned or with a minimum, and their source per OS (for treehouse and no-mistakes, a GitHub release with each archive's checksum, or a fork's commit; for MongoDB's Database Tools, the publisher's archive with its checksum).
     - `uptime.jq`: `team-uptime`'s rules, the counting of each production check, when one is down, its outages judged as notices through `notice.jq`, each post's text, and the status line.
@@ -71,6 +73,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
 - `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's and the assistant's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
+- `rust-toolchain.toml`: the Rust toolchain every checkout builds with, its channel, profile and components, which rustup reads below the root and `team-doctor`'s `tool rust-toolchain` line checks.
 - `servers/`: the MCP servers the toolkits and sessions run, the MCP client `ui-capture` speaks with, the `chrome-devtools-axi` client the browser toolkit's test runs, and the packages the effect toolkit's tests check its skill, hook and Foldkit DevTools server against.
   - `install`: puts them in the gitignored `servers/node_modules/`, as `team-bootstrap` does while `team-doctor`'s `servers` line fails.
   - `package.json` and `package-lock.json`: the packages and their pins, among them:
@@ -100,6 +103,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `portability.md`: moving the team between machines.
   - `records-rewrite.md`: the cutover that rewrites the records repository's history with `team-records-rewrite`, each step Daniel's or the coordinator's.
   - `resources.md`: the team's resources: its systemd user slice and each task's, `team-capacity install`, the placement of worker sessions and the gate in it, the checked assumptions, the readings per task, the learned costs, heavy runs' scopes, and the doctor's `resources` line.
+  - `tmp.md`: the team's temporary files: `team-janitor tmp`'s roots, rules and list and how a line is added, the session tmp and task-named scratch, what a run says and where, the warning, the heartbeat's step, the doctor's `tmp` line and the test seams.
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
@@ -110,6 +114,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`, and `confine-seams.py`, which runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
+  - `tests/merge-queue-drill`: run by hand by the coordinator, since it merges real PRs; it lands two PRs at once through a scratch repository's merge queue with `team-land` in a sandbox team home, checks each trial commit, and records its run.
+  - `tests/merge-queue-drill.bats`: dry-runs `tests/merge-queue-drill` on a stub `gh`, a stub `team-land` and a bare repository.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
   - `tests/task-life.bats`: a whole task's life across the scripts.
   - `tests/timings.tsv`: each bats file's seconds on Linux in one CI run, and on macOS as the last CI run with macOS jobs had them, which `tests/shards` weighs it by.
@@ -182,17 +188,20 @@ It holds:
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
   So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them and a gate's end-to-end run, and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
-- A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard job `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main` and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
+- A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard job `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main`, on each trial commit a merge queue builds (`merge_group`, its `checks_requested` type) and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
+  On a trial commit the `data` job reads what it adds to the commit the queue built it on (the merge group's base and head shas).
   Each job has a time limit (`timeout-minutes`), about twice its longest recent run, and each that runs bats one above `tests/run`'s file limit, which `tests/repo.bats` holds.
   `dev`'s protection and `projects.toml`'s `required_checks` for `agent-team` require each job by its id, so renaming a job changes a required check, and `team-merge` merges only with every one passed on the PR's exact head.
-  `tests/repo.bats` holds the jobs but the shard jobs to the registry fixture's `required_checks`, and each shard job to the job that waits for it, and no workflow runs on a push, a schedule or `pull_request_target`.
+  `tests/repo.bats` holds the jobs but the shard jobs to the registry fixture's `required_checks`, and each shard job to the job that waits for it, and each workflow's triggers, and no workflow runs on a push, a schedule or `pull_request_target`.
   The `zizmor` job audits the workflows offline with zizmor, pinned by version and sha256 as gitleaks is, and fails on any finding; an accepted one is ignored on its own line as `# zizmor: ignore[<audit>] <reason>`, which `tests/repo.bats` holds, with no zizmor config to ignore more.
-  `.github/workflows/zizmor-online.yml` runs the same zizmor on the same triggers with the run's read-only token, for its online audits (an impostor commit, a known-vulnerable action, ref confusion); it is never a required check, since it depends on GitHub's API, and `tests/repo.bats` holds its triggers and its zizmor pin to `ci.yml`'s.
+  `.github/workflows/zizmor-online.yml` runs the same zizmor on every PR to `dev` and to `main` and by hand, never on a trial commit, with the run's read-only token, for its online audits (an impostor commit, a known-vulnerable action, ref confusion); it is never a required check, since it depends on GitHub's API, and `tests/repo.bats` holds its triggers and its zizmor pin to `ci.yml`'s.
   A project that still lists `local_checks` in `projects.toml` has them run through `bin/team-checks`, in a fresh detached worktree of the head: by `team-merge` before it merges, and by reviewers on the head they review; `agent-team` lists none, so for it `team-checks` says so and passes.
   The Bootstrap workflow (`.github/workflows/bootstrap.yml`) runs only by hand: `team-bootstrap` on a fresh macOS runner and in an Arch container, which installs real tools.
 - The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
   Each test file's header comment says what it checks and against what.
   No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
+  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+  `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.

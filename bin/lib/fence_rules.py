@@ -23,7 +23,7 @@ The classes:
     push, ssh host git push, op run -- git push, $(echo git push)), so an unquoted mention is a
     push too (echo then git push >> notes.md), and a quoted one, one word, is none.
   gh: gh or gh-axi.
-  team_write: team-merge, team-catch-up, team-open or team-close.
+  team_write: team-merge, team-land, team-catch-up, team-open or team-close.
   assistant_write: team-assistant or team-current.
   post: team-post, team-ask or team-inbox.
   answer: team-answer.
@@ -59,6 +59,7 @@ NAMED = {
     "gh": "gh",
     "gh-axi": "gh",
     "team-merge": "team_write",
+    "team-land": "team_write",
     "team-catch-up": "team_write",
     "team-open": "team_write",
     "team-close": "team_write",

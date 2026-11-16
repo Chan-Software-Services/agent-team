@@ -972,3 +972,28 @@ app_case() {
     {context: "deploy", app_id: 15368}]}' "$gh_dir/branch.json" >"$gh_dir/branch.next" && mv "$gh_dir/branch.next" "$gh_dir/branch.json"
   refused "required check deploy is missing on the head"
 }
+
+@test "a check a ruleset of the base requires is required as the protection's are, and a base whose rules cannot be read merges nothing" {
+  pinned --ruleset none
+  jq '.[0].parameters.required_status_checks += [{context: "deploy", integration_id: 15368}]' "$gh_dir/rules.json" \
+    >"$gh_dir/rules.next" && mv "$gh_dir/rules.next" "$gh_dir/rules.json"
+  refused "required check deploy is missing on the head"
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  rm "$gh_dir/rules.json"
+  refused "GitHub cannot be read: gh api repos/owner/proj/rules/branches/dev: cat: "
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  pinned --ruleset none
+  rm "$gh_dir/ruleset-42.json"
+  refused "GitHub cannot be read: gh api repos/owner/proj/rulesets/42: cat: "
+}
+
+@test "a base GitHub calls unprotected has no rules read, so a private repository whose rulesets GitHub refuses to read still merges" {
+  echo '{"name": "dev", "protected": false, "protection": {"enabled": false,
+    "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}}' >"$gh_dir/branch.json"
+  rm "$gh_dir/rules.json"
+  run_bin -0 team-merge T14
+  assert_equal "$(merged_events | jq -r .event)" merged
+  assert_equal "$(stub_calls gh | jq -c 'select(.[1] // "" | test("/rules/|/rulesets/"))')" ""
+}
