@@ -10,9 +10,10 @@
 #               set-url origin https://github.com/<to>.git, or for a treehouse project the pool
 #               move, since treehouse names a pool from the origin URL (sops/portability.md, A
 #               repository that moves owner); this line passes saying how many origins it read,
-#               and a project's its origin. A checkout that is missing or has no origin is left
-#               to the other lines, a project's with no line here, as are the team home while the
-#               team home line fails and the projects while team-project refuses the registry.
+#               and a project's its origin. A checkout that is missing or has no origin, or a
+#               project's path that is no primary checkout, is left to the other lines, a
+#               project's with no line here, as are the team home while the team home line fails
+#               and the projects while team-project refuses the registry.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # bin, the doctor's; home_ok, from the team home check
 # reads state from: 080-team-home.sh
@@ -48,13 +49,19 @@ if project_registry --list 2>/dev/null; then
   done <<<"$registry_reply"
 fi
 
-# moved_judge <i>: false when checkout <i> is missing or has no origin, which are the other lines';
+# moved_judge <i>: false when checkout <i> is missing or has no origin, or is a project's and no
+# primary checkout, which are the other lines' (a worktree would show its checkout's origin);
 # else true, with moved_url and moved_shown its origin and path, and moved_reason and moved_fix
 # empty, or naming the move and its fix when the origin names a moved repository.
 moved_judge() {
-  local path=${moved_paths[$1]} to
+  local path=${moved_paths[$1]} to top
   moved_reason='' moved_fix=''
   [[ -d $path ]] || return 1
+  if [[ -n ${moved_projects[$1]} ]]; then
+    top=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) && same_path "$top" "$path" &&
+      same_path "$(git -C "$path" rev-parse --path-format=absolute --git-common-dir)" \
+        "$(git -C "$path" rev-parse --absolute-git-dir)" || return 1
+  fi
   moved_url=$(git -C "$path" remote get-url origin 2>/dev/null) || return 1
   moved_shown=$(tilde "$path")
   to=$(moved_origin "$moved_url")
