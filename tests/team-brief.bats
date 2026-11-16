@@ -112,6 +112,14 @@ refute_grep() {
   if grep -n "$@"; then return 1; fi
 }
 
+# The sentence asking for <file>'s Not verified section, with the clause on team-review-comment
+# when a re-review's brief posts it (a first review's posting line names it instead):
+# not_verified <file> [posts].
+not_verified() {
+  local sentence="Before its counts, \`$1\` holds a \`## Not verified\` section: each behaviour this change touches that neither your reading, a test, CI nor a check proved (on a platform CI does not run, against a real outside service or real data, or a step only Daniel can take), each with what would prove it, or the line \`none\`; it is no finding and moves no count"
+  if [[ ${2-} == posts ]]; then echo "$sentence, and \`team-review-comment\` refuses to post a file without it."; else echo "$sentence."; fi
+}
+
 # Everything under the task's directory, for "nothing written".
 task_files() {
   (cd "$TEAM_HOME/tasks" && find . -type f -printf '%P %s\n' | sort)
@@ -598,6 +606,7 @@ the checks
 
 - Local checks: none.
   Run them on `@HEAD@` with `@CODE@/bin/team-checks conv @HEAD@`, which runs them as `team-merge` does, in a fresh detached worktree of that head, and say in `.scratch/task/review.md` whether it passed; a failure is **blocking**, and they set no GitHub status.
+- Before its counts, `.scratch/task/review.md` holds a `## Not verified` section: each behaviour this change touches that neither your reading, a test, CI nor a check proved (on a platform CI does not run, against a real outside service or real data, or a step only Daniel can take), each with what would prove it, or the line `none`; it is no finding and moves no count.
 - There is no PR yet: the builder stopped before the no-mistakes gate, which runs once this review passes or its findings are fixed, and reviews the code line by line after you.
 - Write your findings to `.scratch/task/review.md`, numbered, each with its file and line, one kind, `blocking`, `note: correctness`, `note: security`, `note: real-data` or `note`, and one scope, `change` (a line the branch adds or changes) or `before` (code it did not change).
   End it with the count of each kind, the plain notes as `note-change` and `note-before` (0 for none), the numbers of the `before` notes, and the guarded areas the change touches, of `ci`, `migrations`, `deploy`, `permissions`, `secrets` and `guardrails`, by the paths `@CODE@/bin/lib/guarded` lists for the project or by what the code does in a file of any name (CI or the checks a PR must pass, a migration of production data, the deploy, auth or permission checks, secrets handling and, on agent-team, the team's guards), or none.
@@ -634,7 +643,7 @@ EOF
   run_bin -0 team-brief T14 reviewer --name review --set pr=$pr --set head="$head" --set "checks=the checks"
   brief=$(<"$output")
   assert_contains "$brief" "branch \`feat/T14-team-tooling\`; review \`origin/main...$head\`."
-  assert_contains "$brief" "The comment on PR $pr is that file, posted with this exact command, the only comment your settings allow: \`$CODE_CHECKOUT/bin/team-review-comment $pr .work/task/review.md\`."
+  assert_contains "$brief" "The comment on PR $pr is that file, posted with this exact command, the only comment your settings allow: \`$CODE_CHECKOUT/bin/team-review-comment $pr .work/task/review.md\`, which refuses a file with no \`## Not verified\` section."
   assert_contains "$brief" "\`$CODE_CHECKOUT/bin/team-review-status $pr $head <success|failure> \"<one line, at most 140 characters>\"\`."
   refute_grep -F 'reviewer App' "$output"
   assert_contains "$brief" "- Send \`T14 DONE pass $pr findings=blocking:<n>,correctness:<n>,security:<n>,real-data:<n>,note-change:<n>,note-before:<n> before=<the before notes' numbers, comma-separated, or none> guarded=<areas, comma-separated, or none>\` or \`T14 DONE findings .work/task/review.md findings=blocking:<n>,correctness:<n>,security:<n>,real-data:<n>,note-change:<n>,note-before:<n> before=<the before notes' numbers, comma-separated, or none> guarded=<areas, comma-separated, or none>\` to \`coordinator\`, the counts, numbers and areas as \`.work/task/review.md\` gives them."
@@ -734,6 +743,7 @@ EOF
     assert_contains "$brief" "the findings that stand at \`$at\`, its new ones and any earlier one sent back and not fixed, the plain notes as \`note-change\` and \`note-before\` (0 for none), the numbers of its new \`before\` notes"
     assert_contains "$brief" "- Send \`$task DONE pass $pr $counts $widening\` or \`$task DONE findings $dir/review.md $counts $widening\` to \`coordinator\`, the counts, numbers and areas as \`$dir/rereview.md\` gives them."
     assert_contains "$brief" "then write the same result alone to \`$dir/rereview.md\`.
+  $(not_verified "$dir/rereview.md" posts)
   $(marks "${revs[$task]}")
   Give in it the count of each kind"
   done
@@ -743,6 +753,7 @@ EOF
   assert_contains "$brief" "No PR yet: reviewed at \`${revs[T12]}\`"
   assert_contains "$brief" "- Send \`T12 DONE pass ${heads[T12]} $counts $widening\` or \`T12 DONE findings .scratch/task/review.md $counts $widening\` to \`coordinator\`, the counts, numbers and areas as \`.scratch/task/rereview.md\` gives them."
   assert_contains "$brief" "then write the same result alone to \`.scratch/task/rereview.md\`.
+  $(not_verified .scratch/task/rereview.md)
   $(marks "${revs[T12]}")
   Give in it the count of each kind"
   # The first review and the verify mark none: neither reads a fix that may widen.
@@ -750,6 +761,50 @@ EOF
   refute_grep -F 'widening' "$TEAM_HOME/tasks/T14/brief-review.md"
   run_bin -0 team-brief T14 verify --name verify --set pr=$pr --set head="${heads[T14]}" --set findings=3
   refute_grep -F 'widening' "$output"
+}
+
+@test "each review brief asks for a Not verified section before the counts, and each that posts names the refusal" {
+  open_t12
+  open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
+  local -A heads=()
+  reviewed_branch T12 dev
+  heads[T12]=$head
+  reviewed_branch T14 main
+  heads[T14]=$head
+  local pr=https://github.com/Chan-Software-Services/agent-team/pull/9 brief
+  local written='then write the same result alone to'
+  # A first review's bullet follows the local checks' and comes before the delivery partial's,
+  # before its PR (T12, gated) and on it (T14).
+  run_bin -0 team-brief T12 reviewer --name review --set head="${heads[T12]}" --set "checks=the checks"
+  assert_contains "$(<"$output")" "they set no GitHub status.
+- $(not_verified .scratch/task/review.md)
+- There is no PR yet:"
+  run_bin -0 team-brief T14 reviewer --name review --set pr=$pr --set head="${heads[T14]}" --set "checks=the checks"
+  brief=$(<"$output")
+  assert_contains "$brief" "they set no GitHub status.
+- $(not_verified .work/task/review.md)
+- Write your findings to"
+  # Only its posting line, which a first review before its PR never renders, names the refusal.
+  assert_contains "$brief" "\`$REPO_ROOT/bin/team-review-comment $pr .work/task/review.md\`, which refuses a file with no \`## Not verified\` section."
+  refute_grep -F 'refuses a file with no' "$TEAM_HOME/tasks/T12/brief-review.md"
+  # A re-review and a verify on the PR post rereview.md, so they name the refusal.
+  run_bin -0 team-brief T14 rereview --name rereview --set pr=$pr --set head="${heads[T14]}" --set "since=the fix"
+  assert_contains "$(<"$output")" "$written \`.work/task/rereview.md\`.
+  $(not_verified .work/task/rereview.md posts)
+  Mark a new finding"
+  run_bin -0 team-brief T14 verify --name verify --set pr=$pr --set head="${heads[T14]}" --set findings=5
+  assert_contains "$(<"$output")" "$written \`.work/task/rereview.md\`.
+  $(not_verified .work/task/rereview.md posts)
+  Give in it the count"
+  # Before the PR they post nothing, so the sentence ends at its count.
+  run_bin -0 team-brief T12 rereview --name rereview --set head="${heads[T12]}" --set "since=the fix"
+  assert_contains "$(<"$output")" "$written \`.scratch/task/rereview.md\`.
+  $(not_verified .scratch/task/rereview.md)
+  Mark a new finding"
+  run_bin -0 team-brief T12 verify --name verify --set head="${heads[T12]}" --set findings=5
+  assert_contains "$(<"$output")" "$written \`.scratch/task/rereview.md\`.
+  $(not_verified .scratch/task/rereview.md)
+  Give in it the count"
 }
 
 @test "each build-path planner brief gives one round rule in the same sentences: at most 8, numbered with a recommendation, facts looked up" {
@@ -1186,6 +1241,7 @@ Name each listed dependency in `review.md` with its version; one `spec.md` does 
 ## Deliver
 
 - Add the result to `.work/task/review.md` under a heading naming `def5678`, its new findings numbered on from the last, each with its file and line, one kind, `blocking`, `note: correctness`, `note: security`, `note: real-data` or `note`, and its scope, `change`; then write the same result alone to `.work/task/rereview.md`.
+  Before its counts, `.work/task/rereview.md` holds a `## Not verified` section: each behaviour this change touches that neither your reading, a test, CI nor a check proved (on a platform CI does not run, against a real outside service or real data, or a step only Daniel can take), each with what would prove it, or the line `none`; it is no finding and moves no count, and `team-review-comment` refuses to post a file without it.
   Give in it the count of each kind among the findings that stand at `def5678`, its new ones and any note sent back and not fixed, the plain notes as `note-change` and `note-before` (0 for none), and the guarded areas the change touches, of `ci`, `migrations`, `deploy`, `permissions`, `secrets` and `guardrails`, by the paths `@CODE@/bin/lib/guarded` lists for the project or by what the code does in a file of any name (CI or the checks a PR must pass, a migration of production data, the deploy, auth or permission checks, secrets handling and, on agent-team, the team's guards), or none.
   Post that as one PR comment with this exact command, the only comment your settings allow: `@CODE@/bin/team-review-comment https://github.com/Chan-Software-Services/agent-team/pull/9 .work/task/rereview.md`.
 - The status on the head you reviewed, with this exact command, the only status your settings allow: `@CODE@/bin/team-review-status https://github.com/Chan-Software-Services/agent-team/pull/9 def5678 <success|failure> "<one line, at most 140 characters>"`.

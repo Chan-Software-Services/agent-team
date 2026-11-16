@@ -32,6 +32,7 @@ Name each listed dependency in `review.md` with its version; one `spec.md` does 
 
 - Local checks: {{local_checks}}.
   Run them on `{{head}}` with `{{team_bin}}/team-checks {{project}} {{head}}`, which runs them as `team-merge` does, in a fresh detached worktree of that head, and say in `{{task_dir}}/review.md` whether it passed; a failure is **blocking**, and they set no GitHub status.
+- Before its counts, `{{task_dir}}/review.md` holds a `## Not verified` section: each behaviour this change touches that neither your reading, a test, CI nor a check proved (on a platform CI does not run, against a real outside service or real data, or a step only Daniel can take), each with what would prove it, or the line `none`; it is no finding and moves no count.
 {{> review}}
 
 ## Rules
