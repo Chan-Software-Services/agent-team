@@ -5,7 +5,10 @@
 # home-pc holds the lease on a bare origin, the stub claude lists the coordinator and the assistant,
 # the service managers are fakes, and Discord is the inbox helper's fake, which keeps each alert's body. A
 # reading is this machine's quota state file, as team-quota line writes it; its resets are in 2036,
-# so it never rots, and a reset window is one whose resets_at has passed.
+# so it never rots, and a reset window is one whose resets_at has passed. Before the status, the step
+# runs team-quota usage --if-due, which every test but those of a fake team-quota finds not due:
+# setup writes a usage attempt record of just now, so no test starts the sandbox's stub claude
+# as a headless Claude Code.
 
 load helpers/common
 load helpers/inbox
@@ -24,6 +27,9 @@ setup() {
   inbox_guild_kept
   # The posts' times are this machine's local time: a zone off UTC by a half hour shows it.
   export TZ=Asia/Kolkata
+  # A usage read of just now, which read no model window: usage --if-due is not due for 10 minutes.
+  mkdir -p "$state"
+  jq -cn --arg at "$(date -u +%FT%TZ)" '{at: $at, ok: true, why: null, reading: null}' >"$state/quota-usage.json"
 }
 
 WEEK_RESETS=2036-11-17T09:00:00Z
@@ -59,16 +65,55 @@ quota_keys() {
   jq -c '[.notices[] | select(.source == "quota") | .key] | sort' "$state/notices.json"
 }
 
-# Replace team-quota with the bash read from stdin, in a code checkout of the test's own.
+# Replace team-quota with the bash read from stdin, in a code checkout of the test's own, the real
+# one kept beside it as team-quota.real. Each call first appends a line to $BATS_TEST_TMPDIR/quota-calls:
+# "<arguments> | TEAM_HOME=<its TEAM_HOME> | stdin=<what its stdin is> | lock=<open or closed>", the
+# last two read from /proc (empty where there is none). A usage call then runs
+# $BATS_TEST_TMPDIR/usage, which fake_usage writes, or with none prints nothing and exits 0; every
+# other call runs the bash read.
 fake_quota() {
   CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
   if [[ ! -d $CODE_CHECKOUT/bin ]]; then
     mkdir -p "$CODE_CHECKOUT"
     copy_bin "$CODE_CHECKOUT/bin"
+    mv "$CODE_CHECKOUT/bin/team-quota" "$CODE_CHECKOUT/bin/team-quota.real"
   fi
-  rm "$CODE_CHECKOUT/bin/team-quota"
-  { echo '#!/usr/bin/env bash'; cat; } >"$CODE_CHECKOUT/bin/team-quota"
+  rm -f "$CODE_CHECKOUT/bin/team-quota"
+  {
+    cat <<'EOF'
+#!/usr/bin/env bash
+here=${0%/code/bin/team-quota}
+stdin='' lock=''
+if [[ -d /proc/$$/fd ]]; then
+  stdin=$(readlink "/proc/$$/fd/0")
+  lock=closed
+  ! ls -l "/proc/$$/fd" | grep -q 'heartbeat[.]lock' || lock=open
+fi
+printf '%s | TEAM_HOME=%s | stdin=%s | lock=%s\n' "$*" "$TEAM_HOME" "$stdin" "$lock" >>"$here/quota-calls"
+if [[ ${1:-} == usage ]]; then
+  [[ ! -f $here/usage ]] || exec bash "$here/usage" "$@"
+  exit 0
+fi
+EOF
+    cat
+  } >"$CODE_CHECKOUT/bin/team-quota"
   chmod +x "$CODE_CHECKOUT/bin/team-quota"
+}
+
+# The fake team-quota's usage: the bash read from stdin, run with usage's arguments.
+fake_usage() {
+  cat >"$BATS_TEST_TMPDIR/usage"
+}
+
+# The calls the fake team-quota had, their arguments only, one per line.
+quota_calls() {
+  [[ -f $BATS_TEST_TMPDIR/quota-calls ]] || return 0
+  sed 's/ | TEAM_HOME=.*//' "$BATS_TEST_TMPDIR/quota-calls"
+}
+
+# The heartbeat log's quota lines, their times cut.
+quota_log() {
+  grep ' quota: ' "$log" | sed -E 's/^[0-9T:-]+Z //' || true
 }
 
 @test "notice.jq's table has the quota source: its open post retried, no end action, never reminded" {
@@ -228,4 +273,99 @@ echo "not json"
 EOF
   run_bin -1 team-timers run
   grep -E "quota: failed: team-quota status printed no team-quota/1 object$" "$log"
+}
+
+@test "the step reads the model windows with team-quota usage --if-due before the status, TEAM_HOME passed and stdin and the run's lock closed" {
+  fake_quota <<'EOF'
+exec "$0.real" "$@"
+EOF
+  run_bin -0 team-timers run
+  # The capacity step reads the status again later in the run.
+  assert_equal "$(quota_calls | head -n 2)" "usage --if-due
+status --json"
+  local call
+  while IFS= read -r call; do
+    assert_contains "$call" " | TEAM_HOME=$TEAM_HOME | "
+    if [[ -d /proc/self/fd ]]; then
+      assert_contains "$call" " | stdin=/dev/null | lock=closed"
+    fi
+  done <"$BATS_TEST_TMPDIR/quota-calls"
+  # A usage that prints nothing logs nothing.
+  assert_equal "$(quota_log)" ""
+}
+
+@test "each line usage prints is logged, and a failed or locked usage read neither fails the step nor stops the week's notice" {
+  fake_quota <<'EOF'
+exec "$0.real" "$@"
+EOF
+  fake_usage <<'EOF'
+echo "model windows not read: Claude Code gave no get_usage answer within 45 s"
+echo "a second line"
+exit 1
+EOF
+  reading 72
+  run_bin -0 team-timers run
+  assert_equal "$(quota_log | grep -v ': posted to #coordinator')" "quota: model windows not read: Claude Code gave no get_usage answer within 45 s
+quota: a second line"
+  assert_equal "$(alerts_posted)" "Claude usage: the week is at 72%, past 70%; it resets $(local_clock "$WEEK_RESETS")."
+  run grep ' quota: failed' "$log"
+  assert_equal "$status" 1
+
+  # A line on stderr is logged too.
+  : >"$log"
+  fake_usage <<'EOF'
+echo "team-quota: the reading could not be appended to the day file; the attempt record keeps it" >&2
+EOF
+  run_bin -0 team-timers run
+  assert_equal "$(quota_log | grep -v ': posted to #coordinator')" "quota: team-quota: the reading could not be appended to the day file; the attempt record keeps it"
+
+  # Another read holding the lock: exit 75, its stderr line logged by no one.
+  : >"$log"
+  fake_usage <<'EOF'
+echo "another usage read is running" >&2
+exit 75
+EOF
+  reading 92
+  run_bin -0 team-timers run
+  assert_equal "$(quota_log | grep -v ': posted to #coordinator')" ""
+  assert_equal "$(alerts_posted | tail -n 1)" "Claude usage: the week is at 92%, past 90%; it resets $(local_clock "$WEEK_RESETS")."
+  run_bin -0 team-timers health --json
+  jq -e '[.problems[] | select(.key == "step-quota")] == []' <<<"$output"
+}
+
+@test "a usage read that hangs is stopped after its limit and killed later, and the step still judges the status" {
+  fake_quota <<'EOF'
+exec "$0.real" "$@"
+EOF
+  # It ignores the stop, so only the kill ends it.
+  fake_usage <<'EOF'
+trap '' TERM
+exec sleep 30
+EOF
+  reading 72
+  local start=$SECONDS
+  TEAM_TIMERS_QUOTA_USAGE_SECONDS=1 TEAM_TIMERS_KILL_SECONDS=1 run_bin -0 team-timers run
+  ((SECONDS - start < 20))
+  assert_equal "$(quota_log | grep -v ': posted to #coordinator')" "quota: usage read timed out after 1 s"
+  assert_equal "$(quota_calls | head -n 2)" "usage --if-due
+status --json"
+  assert_equal "$(alerts_posted)" "Claude usage: the week is at 72%, past 70%; it resets $(local_clock "$WEEK_RESETS")."
+}
+
+@test "a fresh Fable window from the usage read of the same run posts Fable's 90% notice" {
+  fake_quota <<'EOF'
+exec "$0.real" "$@"
+EOF
+  # As team-quota usage records a good answer: the attempt record's reading, read now.
+  fake_usage <<EOF
+jq -cn --arg at "\$(date -u +%FT%TZ)" '{at: \$at, ok: true, why: null,
+  reading: {at: \$at, machine: "home-pc", source: "usage",
+    windows: {seven_day: {used: 60, resets_at: "$WEEK_RESETS"}},
+    models: [{name: "Fable", used: 96, resets_at: "$WEEK_RESETS"}]}}' >"\$HOME/.local/state/agent-team/quota-usage.json"
+echo "model windows read: Fable 96% (resets $(local_clock "$WEEK_RESETS"))"
+EOF
+  run_bin -0 team-timers run
+  assert_equal "$(alerts_posted)" "Claude usage: Fable's week is at 96%, past 90%; it resets $(local_clock "$WEEK_RESETS")."
+  assert_equal "$(quota_keys)" "[\"model:Fable/90/$WEEK_RESETS\"]"
+  grep -xF "quota: model windows read: Fable 96% (resets $(local_clock "$WEEK_RESETS"))" <(quota_log)
 }
