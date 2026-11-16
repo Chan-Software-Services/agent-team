@@ -267,7 +267,7 @@ EOF
   run_bin -1 --separate-stderr team-lease renew
   assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), assistant (a55157a7); the heartbeat is not installed; nothing to disable; could not stop T5-builder (81f08540): error: no such session; team-lease take clears the fence"
   jq -e '.holder == "laptop" and .epoch == 2' "$state/fenced"
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","a55157a7"]' '["stop","81f08540"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","a55157a7"]' '["stop","81f08540"]')"
   lease_json | jq -e '.holder == "laptop"'
   run_bin -1 --separate-stderr team-lease check
   assert_contains "$stderr" "home-pc is fenced since"
@@ -294,6 +294,53 @@ EOF
   run_bin -1 --separate-stderr team-lease renew
   assert_contains "$stderr" "fenced home-pc: stopped coordinator (3169fcbd), assistant (a55157a7);"
   assert_equal "$(stub_calls claude | grep stop)" "$(printf '%s\n' '["stop","3169fcbd"]' '["stop","a55157a7"]')"
+}
+
+@test "the fence stops a builder and a coordinator whose turn is done, which only agents --json --all lists, and leaves the stopped ones" {
+  stub_script claude <<'EOF'
+case "$*" in
+  'agents --json') echo '[{"id": "77777777", "name": "T5-reviewer"}]' ;;
+  'agents --json --all') echo '[{"id": "3169fcbd", "name": "coordinator", "state": "done"},
+    {"id": "81f08540", "name": "T5-builder", "state": "done"}, {"id": "77777777", "name": "T5-reviewer", "state": "working"},
+    {"id": "99999999", "name": "T5-builder", "state": "stopped"}, {"id": "c7737929", "name": "coordinator", "state": "stopped"},
+    {"id": "1baf2408", "name": "notes", "state": "done"}]' ;;
+  stop*) ;;
+esac
+EOF
+  run_bin -0 team-lease take
+  steal_lease laptop home-pc
+  run_bin -1 --separate-stderr team-lease renew
+  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), T5-builder (81f08540), T5-reviewer (77777777); the heartbeat is not installed; nothing to disable; team-lease take clears the fence"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]' '["stop","77777777"]')"
+}
+
+@test "with the full session list unreadable the fence stops what the plain list names and says so" {
+  stub_script claude <<'EOF'
+case "$*" in
+  'agents --json --all') echo "error: unknown option --all" >&2; exit 1 ;;
+  'agents --json') echo '[{"id": "3169fcbd", "name": "coordinator"}, {"id": "81f08540", "name": "T5-builder"}]' ;;
+  stop*) ;;
+esac
+EOF
+  run_bin -0 team-lease take
+  steal_lease laptop home-pc
+  run_bin -1 --separate-stderr team-lease renew
+  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), T5-builder (81f08540); the heartbeat is not installed; nothing to disable; could not read the session list with --all (claude agents --json --all), so a session whose turn is done may still run: stop it with claude stop <id>; team-lease take clears the fence"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["agents","--json"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
+}
+
+@test "with neither session list readable the fence stops nothing and says so" {
+  stub_script claude <<'EOF'
+case "$*" in
+  agents*) echo "error: the daemon is not running" >&2; exit 1 ;;
+  stop*) ;;
+esac
+EOF
+  run_bin -0 team-lease take
+  steal_lease laptop home-pc
+  run_bin -1 --separate-stderr team-lease renew
+  assert_equal "$stderr" "team-lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: no team session was live; the heartbeat is not installed; nothing to disable; could not read the live session list (claude agents --json), so no session was stopped; team-lease take clears the fence"
+  assert_equal "$(stub_calls claude | grep -c stop)" 0
 }
 
 @test "the fence ends an ops session with team-ops-end, deleting its transcript; one it cannot end is stopped and said" {

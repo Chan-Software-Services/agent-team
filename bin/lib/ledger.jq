@@ -2489,12 +2489,27 @@ def approves_pr($pr):
   .event == "merge-approved" and (.url | strings | rtrimstr("/")) == ($pr.url | rtrimstr("/"))
   and (.head == null or same_head(.head; $pr.head));
 
+# Whether Daniel's per-head word stands for the PR $pr (one of task_prs) on the task's events, as
+# sops/merging.md has it as far as the ledger shows: the latest merge-approved naming its url (a
+# trailing slash aside) names a head the ledger logged for it (head_logged), or none, as a legacy
+# line, and no review logged after that event has a verdict other than pass. So the word holds
+# through a merge of the base whose re-review passed, and a review that found something ends it;
+# that the new head adds only merges of the base stays team-merge's to check.
+def word_stands($pr):
+  ($pr.url | rtrimstr("/")) as $url
+  | ([to_entries[] | select(.value.event == "merge-approved" and (.value.url | strings | rtrimstr("/")) == $url)]
+     | last) as $approval
+  | $approval != null
+    and ($approval.value.head == null or head_logged($url; $approval.value.head) != null)
+    and all(.[$approval.key + 1:][]; .event != "review" or .verdict == "pass");
+
 # The task's PRs that wait on Daniel's word to merge, from task_prs: none unless its phase is
 # awaiting-merge, then each not merged that no merge-approved names at its head (approves_pr),
 # that does not stand in the merge queue (queued_prs: its word was given, and team-merge is landing
 # it), that the queue did not drop for a failure of its own with no head logged since
 # (trial_failed_prs: the round is the builder's, and no word is asked on the head that failed its
-# trial merge), and whose default word does not hold on the ledger
+# trial merge), whose per-head word does not stand (word_stands), and whose default word does not
+# hold on the ledger
 # (default_holds over $withdrawals, default_events', and $own, own_projects' {projects, app}, the
 # team's own and the reviewer App; with $own null, as when the registry cannot be read, none holds).
 def merge_ready_prs($withdrawals; $own):
@@ -2503,7 +2518,7 @@ def merge_ready_prs($withdrawals; $own):
   | if phase != "awaiting-merge" then []
     else [$events | (queued_prs, trial_failed_prs)[] | .url] as $queued
     | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
-      | select(any($events[]; approves_pr($pr)) | not)
+      | select(any($events[]; approves_pr($pr)) or ($events | word_stands($pr)) | not)
       | select($own != null and ($events | default_holds($pr; $withdrawals; $own)) | not)] end;
 
 # Each open task's count of the other open tasks blocked on it, over by_task's answer: {"T<n>": n},
