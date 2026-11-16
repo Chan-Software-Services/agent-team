@@ -1471,9 +1471,10 @@ def launch_in($project): ($project // "") == "" or .project == null or .project 
 # round's look. A ci of any PR counts when $repo is "" or null.
 def failed_ci_after($r; $repo):
   . as $events
+  | ($repo // "") as $repo
   | "https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/" as $prs
   | [range($r + 1; length) | select($events[.] | .event == "ci" and .outcome == "failed"
-      and (($repo // "") == "" or .url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))]
+      and ($repo == "" or .url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))]
   | last;
 
 # What waits on a fix round in $project, whose repo is $repo, over the task's events, or null: the

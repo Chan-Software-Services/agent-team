@@ -879,9 +879,10 @@ same_def='def same($p): .event == $p.event and
 # - briefs: the briefs the task's launches read, one name a line (brief_launched).
 # - sender_wt, launch_project, sender_ticket, sender_session: the worktree, as a local path, the
 #   project, the ticket (a ticket worktree's builder's) and the session of the launch of the session
-#   the parsed done names (a launch of null's when it names none).
+#   the parsed done or paused names (a paused's as team-log names the sender; a launch of null's
+#   when it names none).
 # - review: the message's review, or null.
-launch_def='def sender_launch: ($parsed | map(select(.event == "done")) | first | .session | tostring) as $session
+launch_def='def sender_launch: ($parsed | map(select(.event == "done" or .event == "paused")) | first | .session | tostring) as $session
   | map(select(.event == "launch" and .session == $session)) | last
   | . + {worktree: (.worktree | local_path($home))};'
 held_prog="$same_def"' . as $events
@@ -1352,14 +1353,15 @@ fill() {
   fi
 }
 
-# A stow's round is of the stowed builder's project: its launch's (the paused's session, as
-# team-log names the sender), else the task's latest builder launch's; its repo is that project's.
+# A stow's round is of the stowed builder's project: its launch's (launch_project, the paused's
+# session as team-log names the sender), else the task's latest builder launch's; its repo is that
+# project's.
 round_project='' round_repo=''
 if [[ $handoff == round ]]; then
-  round_project=$(jq -r --argjson parsed "$parsed" '
-    ([$parsed[] | select(.event == "paused") | .session | strings] | first) as $s
-    | map(select(.event == "launch" and .role == "builder"))
-    | ((map(select($s != null and .session == $s)) | last) // last) | .project // empty' <<<"$events")
+  round_project=$launch_project
+  if [[ -z $round_project ]]; then
+    round_project=$(jq -r 'map(select(.event == "launch" and .role == "builder")) | last | .project // empty' <<<"$events")
+  fi
   if [[ -n $round_project ]]; then round_repo=$(team_project "$round_project" repo) || exit 1; fi
 fi
 
