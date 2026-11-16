@@ -1936,13 +1936,13 @@ assert_prod_write_gated() {
   assert_contains "$output" "so a relaunch"
 }
 
-@test "the generated ops MCP config starts the real prod-read launcher and holds no secret" {
+@test "the generated ops MCP config starts the real prod-read launcher with an ops launch's role and holds no secret" {
   open_task T7
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
   local mcp=$TEAM_HOME/tasks/T7/mcp.ops.json
   assert_equal "$(jq -c . "$mcp")" "$(jq -cn --arg code "$REPO_ROOT" '{mcpServers: {"prod-read": {command: "node",
-    args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"]}}}')"
+    args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}}}')"
   run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
   # The worker settings' deny rules name mongodb+srv:// themselves.
   run -1 grep -Eq 'mongodb(\+srv)?://|MDB_MCP_CONNECTION|op://|password' \
@@ -2028,8 +2028,8 @@ Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
 
   local mcp=$t/mcp.ops.json
   assert_equal "$(jq -c . "$mcp")" "$(jq -cn --arg code "$REPO_ROOT" '{mcpServers: {
-    "prod-read": {command: "node", args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"]},
-    "prod-write": {command: "node", args: ["\($code)/toolkits/prod-write/scripts/start-server.mjs"]}}}')"
+    "prod-read": {command: "node", args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}},
+    "prod-write": {command: "node", args: ["\($code)/toolkits/prod-write/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}}}')"
   run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
 
   local s=$t/settings.ops.json
@@ -2075,7 +2075,7 @@ matcher_matches() {
     # The real launcher, which reads its tokens itself: the config holds no secret.
     local mcp=$t/mcp.ops.json
     assert_equal "$(jq -c '.mcpServers["vercel-read"]' "$mcp")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/vercel-read/scripts/start-server.mjs"]}')"
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/vercel-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}')"
     assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(jq -cn --args '$ARGS.positional' "${kits[@]}")"
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|vcp_|VERCEL|op://|token|mongodb(\+srv)?://|password' "$mcp"
 
@@ -2113,7 +2113,7 @@ matcher_matches() {
     # own 90-minute timeout for its long calls: the config holds no secret.
     local mcp=$t/mcp.ops.json
     assert_equal "$(jq -c '.mcpServers["prod-mongo"]' "$mcp")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000}')"
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000, env: {AGENT_TEAM_ROLE: "ops"}}')"
     assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(printf '%s\n' "${kits[@]}" | jq -R . | jq -sc 'sort')"
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
 
