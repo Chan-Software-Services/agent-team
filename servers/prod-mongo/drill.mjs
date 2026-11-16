@@ -16,16 +16,14 @@
 //                            it 30 minutes after it starts (runHeavy's bound), and answers
 //                            { text, isError }
 //   drillAnswer(result)      the tool's answer to the script's JSON: { text, isError }
-//   restoreLimit             restore.mjs's, the largest restore a drill takes
 //
 // The script takes exactly one argument, a backup's stamp (and --text), never a path or a
 // connection string: it reads no credential, so it cannot reach production. Before Docker is
 // touched it checks the root (root.mjs's rules), the stamp (a verified dump directly under the
 // root), the dump's database and size, and that mongorestore and the driver are installed; each
 // failure there is a refusal. Then it removes what an earlier run left past its expiry, starts the
-// throwaway, restores with `mongorestore --config=<fifo> --nsInclude '<database>.*' --gzip --dir
-// <folder>/dump`, the throwaway's connection string going through a FIFO in the dump's 0700
-// drills/ folder, compares each collection's document count and index names (and each view's
+// throwaway, restores the dump into it (restore.mjs's restoreDump, its FIFO in the dump's 0700
+// drills/ folder), compares each collection's document count and index names (and each view's
 // being there) with the manifest, writes drills/<at>.json (mode 0600, `verdict` PASS or FAIL, the
 // name the drill's start stamp) and removes the throwaway, on every path: at the end, on an error,
 // and on SIGINT, SIGTERM and SIGHUP. A Docker failure is no verdict on the dump, so it writes no
@@ -33,36 +31,26 @@
 // The JSON forms: { refused }; { failed, stamp, folder, container, removed, cleanup }; and
 // { verdict, stamp, folder, at, record, seconds, mongorestore, container, collections,
 // restoreError?, removed, cleanup }, every path written from ~/.
-import { existsSync, mkdirSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stampOf } from "./backup.mjs";
 import { count, dumped, duration, plural } from "./dump.mjs";
-import { checkout, overtimeText, runHeavy, steps } from "./heavy.mjs";
-import { listRoot } from "./list.mjs";
+import { busyText, checkout, overtimeText, runHeavy, scriptStart, steps } from "./heavy.mjs";
 import { Refusal } from "./refusal.mjs";
-import { restorableDump, restoreDump, restoreTools } from "./restore.mjs";
-import { backupsRoot, checkRoot, dumpByStamp } from "./root.mjs";
+import { chosenDump, restorableDump, restoreDump, restoreTools } from "./restore.mjs";
+import { backupsRoot } from "./root.mjs";
 import { expiredLines, removeExpired, removeThrowaway, startThrowaway, throwawayImage, throwawayName } from "./throwaway.mjs";
 
-export { restoreLimit } from "./restore.mjs";
-
 const script = join(checkout, "toolkits", "prod-mongo", "scripts", "restore-drill.mjs");
-const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
 
 // Each step of the script, one line on its stderr, which drillTool relays as a progress
 // notification and a person running it by hand reads as it goes.
 const { step, names } = steps("restore-drill");
 
 export async function restoreDrill({ argv, database, root: configuredRoot }) {
-  process.umask(0o077);
-  const asText = argv.includes("--text");
-  const rest = argv.filter((arg) => arg !== "--text");
   const { root, shown } = backupsRoot(configuredRoot);
   const state = { name: undefined, removed: [], stamp: undefined, folder: undefined };
 
-  const print = (result) => {
-    writeSync(1, asText ? `${drillAnswer(result).text}\n` : `${JSON.stringify(result)}\n`);
-  };
   const failed = (reason, cleanup) => ({
     failed: reason,
     stamp: state.stamp,
@@ -71,13 +59,11 @@ export async function restoreDrill({ argv, database, root: configuredRoot }) {
     removed: state.removed,
     cleanup: cleanup ?? null,
   });
-  for (const [signal, number] of Object.entries(signals)) {
-    process.on(signal, () => {
-      const cleanup = state.name ? removeThrowaway(state.name) : null;
-      print(failed(`the drill was stopped (${signal})`, cleanup));
-      process.exit(128 + number);
-    });
-  }
+  const { rest, print } = scriptStart({
+    argv,
+    answer: drillAnswer,
+    stopped: (signal) => failed(`the drill was stopped (${signal})`, state.name ? removeThrowaway(state.name) : null),
+  });
 
   let result;
   try {
@@ -181,18 +167,13 @@ async function compare(client, database, manifest) {
 }
 
 export async function drillTool({ input, root, shown, scrubbed, progress }) {
-  const shownRoot = shown(root);
-  const { real, missing, note } = checkRoot(root, { shown });
-  if (missing) throw new Refusal(`${shownRoot} does not exist yet, so it holds no backup to drill`);
-  const stamp = input.backup ?? listRoot(real).dumps.find(({ verified }) => verified)?.stamp;
-  if (stamp === undefined) throw new Refusal(`${shownRoot} holds no verified backup to drill: take one with backup first`);
-  dumpByStamp(real, stamp, shownRoot);
+  const { stamp, note } = chosenDump({ root, shown, stamp: input.backup, verb: "drill" });
 
   progress(`drilling ${stamp}, through the machine's heavy-run lock`);
   const { busy, overtime, result } = await runHeavy({
     tool: "restore-drill", kind: "restore-drill", noun: "drill", script, args: [stamp], label: `prod-mongo restore-drill ${stamp}`, boundMinutes: 30, progress, scrubbed,
   });
-  if (busy !== undefined) return { text: `restore-drill: the machine is busy: ${busy}; ask again later`, isError: true };
+  if (busy !== undefined) return { text: busyText("restore-drill", busy), isError: true };
   if (overtime) return { text: overtimeText("restore-drill", "drill", overtime), isError: true };
   const answer = drillAnswer(result);
   return note ? { ...answer, text: `${answer.text}\n${note}` } : answer;

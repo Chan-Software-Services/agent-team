@@ -20,6 +20,15 @@
 //   overtimeText(tool, noun, overtime, logs)
 //                            the failure's answer for a run past its bound: what was stopped, what
 //                            is left, and the logs so far when `logs` names them
+//   busyText(tool, busy)     the answer when the heavy-run lock was still held: runHeavy's `busy`
+//   leftText(left)           what docker could not remove, and which run removes it
+//   logsSoFar(logs)          the line naming a failed run's logs folder, never its content
+//   scriptStart({ argv, answer, stopped })
+//                            a container script's start: the umask 077, --text taken out of `argv`,
+//                            and a handler of SIGINT, SIGTERM and SIGHUP that prints `stopped(signal)`
+//                            and exits 128 plus the signal's number; { rest, print }, `print(result)`
+//                            writing the one JSON object on stdout, or `answer(result).text` with
+//                            --text
 //
 // The bound: `boundMinutes` from the script's first line on stderr (it runs only once team-heavy
 // holds the lock and has admitted it), or the wait plus the bound from the start when no line comes.
@@ -45,6 +54,26 @@ import { removeNamed } from "./throwaway.mjs";
 export const checkout = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const teamHeavy = join(checkout, "bin", "team-heavy");
+const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
+
+export function scriptStart({ argv, answer, stopped }) {
+  process.umask(0o077);
+  const asText = argv.includes("--text");
+  const print = (result) => {
+    writeSync(1, asText ? `${answer(result).text}\n` : `${JSON.stringify(result)}\n`);
+  };
+  for (const [signal, number] of Object.entries(signals)) {
+    process.on(signal, () => {
+      print(stopped(signal));
+      process.exit(128 + number);
+    });
+  }
+  return { rest: argv.filter((arg) => arg !== "--text"), print };
+}
+
+export const busyText = (tool, busy) => `${tool}: the machine is busy: ${busy}; ask again later`;
+export const leftText = (left) => `docker could not remove ${left.join(", ")}, which the next rehearsal or drill removes once an hour old`;
+export const logsSoFar = (logs) => `Logs so far, for Daniel to read in a terminal (never quoted here): ${logs}`;
 
 export function steps(tool) {
   const prefix = `${tool}: `;
@@ -140,10 +169,8 @@ export async function runHeavy({ tool, kind, noun, script, args, label, boundMin
 }
 
 export function overtimeText(tool, noun, { limit, cleanup }, logs) {
-  const left = cleanup.gone
-    ? "what it made in Docker was removed, so nothing was left running"
-    : `but docker could not remove ${cleanup.left.join(", ")}, which the next rehearsal or drill removes once an hour old`;
+  const left = cleanup.gone ? "what it made in Docker was removed, so nothing was left running" : `but ${leftText(cleanup.left)}`;
   const lines = [`${tool}: failed: the ${noun} ran past its ${limit}, so it was stopped; ${left}.`];
-  if (logs) lines.push(`Logs so far, for Daniel to read in a terminal (never quoted here): ${logs}`);
+  if (logs) lines.push(logsSoFar(logs));
   return lines.join("\n");
 }

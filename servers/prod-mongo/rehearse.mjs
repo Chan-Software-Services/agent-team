@@ -24,12 +24,16 @@
 //   checkoutRefusal(cwd, repositories)
 //                            why `cwd` is not a checkout of one of `repositories` (owner/name on
 //                            GitHub, the first the one named in a refusal), or undefined
+//   resolveRef(cwd, ref, repository)
+//                            { sha } of the commit `ref` names as origin has it (a branch of
+//                            origin's, else a tag, else a commit's hex), held by a branch of
+//                            origin's, or { refusal }
 //
 // The tool, before the heavy-run lock and before Docker: the working directory's origin
 // (`git config --get remote.origin.url`, the URL as the checkout holds it, never printed, since one
 // may carry a token) must name one of `repositories`; `git fetch --quiet origin`, whose failure is
-// a line in the answer, not a refusal; `git rev-parse --verify <ref>^{commit}`; and each script
-// must be a file at <sha>:back-end/migrations/<script>. git gets childEnv() with
+// a line in the answer, not a refusal; the ref resolved as origin has it (resolveRef), never as a
+// local branch; and each script must be a file at <sha>:back-end/migrations/<script>. git gets childEnv() with
 // GIT_TERMINAL_PROMPT=0, and the fetch alone SSH_AUTH_SOCK when set, for an ssh origin.
 //
 // The script takes a backup's stamp, a commit's full sha and 1 to 20 script names (and --text),
@@ -67,28 +71,27 @@
 // stopped the rehearsal, `wrote` true when it was a dry run that changed something; `notRun` the
 // steps after it, each { n, script, mode }; and `cleanup` { gone, left }; every path written from ~/.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, createReadStream, existsSync, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stampOf } from "./backup.mjs";
 import { capped, changeCounts, changeLine, compareDatabases, differs, snapshotDatabase } from "./changes.mjs";
 import { childEnv, lastLine, run, scrubber } from "./children.mjs";
 import { count, duration, limit, plural } from "./dump.mjs";
-import { checkout, overtimeText, runHeavy, steps } from "./heavy.mjs";
-import { listRoot } from "./list.mjs";
+import { busyText, checkout, leftText, logsSoFar, overtimeText, runHeavy, scriptStart, steps } from "./heavy.mjs";
 import { Refusal } from "./refusal.mjs";
-import { restorableDump, restoreDump, restoreTools } from "./restore.mjs";
-import { backupsRoot, checkRoot, dumpByStamp, stampPattern } from "./root.mjs";
+import { chosenDump, restorableDump, restoreDump, restoreTools } from "./restore.mjs";
+import { backupsRoot, stampPattern } from "./root.mjs";
 import { docker, expiredLines, removeExpired, removeThrowaway, startThrowaway, throwawayImage, throwawayName, toolkitLabels } from "./throwaway.mjs";
 
 const tool = "rehearse-migrations";
 const script = join(checkout, "toolkits", "prod-mongo", "scripts", "rehearse.mjs");
-const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
 const { step, names } = steps(tool);
 
 const refPattern = /^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$/;
 const scriptPattern = /^[A-Za-z0-9_]+\.py$/;
 const scriptLength = 100;
 const shaPattern = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+const hexPattern = /^[0-9a-f]{7,64}$/i;
 const mostScripts = 20;
 
 const buildMs = 15 * 60_000;
@@ -132,11 +135,27 @@ export function checkoutRefusal(cwd, repositories) {
   const origin = git(cwd, ["config", "--get", "remote.origin.url"]);
   if (origin.missing) return "git is not installed";
   if (!origin.ok || !origin.stdout) return `the working directory is not a git checkout with an origin, so it is not a checkout of ${repository}`;
-  const named = /(?:^|[/@])github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(origin.stdout)?.[1];
+  // GitHub's host at the URL's start, so no other host or path can end in its name.
+  const named = /^(?:https:\/\/(?:[^@/]+@)?|ssh:\/\/git@|git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(origin.stdout)?.[1];
   if (!named || !repositories.some((known) => known.toLowerCase() === named.toLowerCase())) {
     return `the working directory's origin is not ${repository}, whose migrations a rehearsal runs`;
   }
   return undefined;
+}
+
+// The commit a ref names, as origin has it: a branch of origin's (`<ref>` or `origin/<ref>`), else a
+// tag, else a commit's hex; never a local branch, so a stale one cannot stand in for origin's.
+// The commit must be on a branch of origin's, so one never pushed is not rehearsed.
+// { sha }, or { refusal }.
+export function resolveRef(cwd, ref, repository) {
+  const candidates = [`refs/remotes/origin/${ref}`, ...(ref.startsWith("origin/") ? [`refs/remotes/${ref}`] : []), `refs/tags/${ref}`, ...(hexPattern.test(ref) ? [ref] : [])];
+  const sha = candidates
+    .map((candidate) => git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${candidate}^{commit}`]))
+    .find(({ ok, stdout }) => ok && shaPattern.test(stdout))?.stdout;
+  if (!sha) return { refusal: `${ref} names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` };
+  const held = git(cwd, ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/remotes/origin/"]);
+  if (!held.ok || !held.stdout) return { refusal: `${ref} names ${sha.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is rehearsed` };
+  return { sha };
 }
 
 export function takesDryRun(cwd, sha, name) {
@@ -159,12 +178,7 @@ export async function rehearseTool({ input, root, shown, scrubbed, progress, rep
   if (!Array.isArray(migrations) || migrations.length < 1 || migrations.length > mostScripts || !migrations.every(isScript)) {
     throw new Refusal(`migrations must be 1 to ${mostScripts} script names, each as migrate_phase.py`);
   }
-  const shownRoot = shown(root);
-  const { real, missing, note } = checkRoot(root, { shown });
-  if (missing) throw new Refusal(`${shownRoot} does not exist yet, so it holds no backup to rehearse on`);
-  const stamp = backup ?? listRoot(real).dumps.find(({ verified }) => verified)?.stamp;
-  if (stamp === undefined) throw new Refusal(`${shownRoot} holds no verified backup to rehearse on: take one with backup first`);
-  dumpByStamp(real, stamp, shownRoot);
+  const { stamp, note } = chosenDump({ root, shown, stamp: backup, verb: "rehearse on" });
 
   const cwd = process.cwd();
   const refusal = checkoutRefusal(cwd, repositories);
@@ -179,9 +193,8 @@ export async function rehearseTool({ input, root, shown, scrubbed, progress, rep
     fetched = false;
   }
   const stale = fetched ? "" : "git fetch origin failed, so the ref was read as this checkout last fetched it.";
-  const resolved = git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]);
-  if (!resolved.ok || !shaPattern.test(resolved.stdout)) throw new Refusal(`${ref} names no commit of ${repositories[0]} in this checkout${fetched ? "" : ", and git fetch origin failed"}`);
-  const sha = resolved.stdout;
+  const { sha, refusal: unresolved } = resolveRef(cwd, ref, repositories[0]);
+  if (unresolved) throw new Refusal(`${unresolved}${fetched ? "" : ", and git fetch origin failed"}`);
   const absent = scriptsRefusal(cwd, sha, migrations);
   if (absent) throw new Refusal(absent);
 
@@ -190,23 +203,17 @@ export async function rehearseTool({ input, root, shown, scrubbed, progress, rep
   const { busy, overtime, result } = await runHeavy({
     tool, kind: "rehearsal", noun: "rehearsal", script, args: [stamp, sha, ...migrations], label: `prod-mongo rehearsal ${stamp}`, boundMinutes: 45, progress, scrubbed,
   });
-  if (busy !== undefined) return { text: `${tool}: the machine is busy: ${busy}; ask again later`, isError: true };
+  if (busy !== undefined) return { text: busyText(tool, busy), isError: true };
   if (overtime) return { text: [overtimeText(tool, "rehearsal", overtime, result?.logs), stale, note].filter(Boolean).join("\n"), isError: true };
   const answer = rehearsalAnswer(result);
   return { ...answer, text: [answer.text, stale, note].filter(Boolean).join("\n") };
 }
 
 export async function rehearse({ argv, database, root: configuredRoot, repositories }) {
-  process.umask(0o077);
-  const asText = argv.includes("--text");
-  const rest = argv.filter((arg) => arg !== "--text");
   const { root, shown } = backupsRoot(configuredRoot);
   // What the run made in Docker and has not yet removed, and what a failure's answer names.
   const state = { stamp: undefined, folder: undefined, sha: undefined, logs: undefined, removed: [], uri: "", made: {} };
 
-  const print = (result) => {
-    writeSync(1, asText ? `${rehearsalAnswer(result).text}\n` : `${JSON.stringify(result)}\n`);
-  };
   const failed = (reason) => ({
     failed: reason,
     stamp: state.stamp,
@@ -216,12 +223,7 @@ export async function rehearse({ argv, database, root: configuredRoot, repositor
     removed: state.removed,
     cleanup: cleanup(state.made),
   });
-  for (const [signal, number] of Object.entries(signals)) {
-    process.on(signal, () => {
-      print(failed(`the rehearsal was stopped (${signal})`));
-      process.exit(128 + number);
-    });
-  }
+  const { rest, print } = scriptStart({ argv, answer: rehearsalAnswer, stopped: (signal) => failed(`the rehearsal was stopped (${signal})`) });
 
   let result;
   try {
@@ -472,7 +474,7 @@ async function lineCount(path) {
 
 function cleanupClause(cleanup) {
   if (!cleanup || cleanup.gone) return "nothing left running";
-  return `but docker could not remove ${cleanup.left.join(", ")}, which the next rehearsal or drill removes once an hour old`;
+  return `but ${leftText(cleanup.left)}`;
 }
 
 function outcome({ exit, signal, timedOut, seconds }) {
@@ -502,7 +504,7 @@ export function rehearsalAnswer(result) {
   if (result.refused) return { text: `${tool}: failed: ${result.refused}`, isError: true };
   if (result.failed) {
     const lines = [`${tool}: failed: ${result.failed}; ${cleanupClause(result.cleanup)}.`];
-    if (result.logs) lines.push(`Logs so far, for Daniel to read in a terminal (never quoted here): ${result.logs}`);
+    if (result.logs) lines.push(logsSoFar(result.logs));
     return { text: [...lines, ...expiredLines(result.removed)].join("\n"), isError: true };
   }
   const { folder, sha, seconds, steps: ran, stopped, notRun = [], logs, cleanup: cleaned } = result;

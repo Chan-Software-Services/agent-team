@@ -90,6 +90,11 @@ The tool finds the document in the dump by its id (the id the toolkit's answers 
 - **Created since the dump** (in production, not in the dump): it writes `{"_id": ...}` alone to that file and prepares `mongoimport --mode delete`, which deletes production's document of that `_id`.
 - **The same in both**: it answers that there is nothing to undo, and prepares and writes nothing.
 
+It refuses, preparing and writing nothing, when the id names more than one document in the dump or in production, and when putting the dump's document back would not leave production as the dump holds it, pointing to the collection's undo instead:
+
+- production has no collection of that name now, so an import would make it with none of the dump's indexes but `_id`'s;
+- production holds the document's top-level `id` under another `_id` (it was deleted and created again), so an upsert would leave two documents with that `id`.
+
 Only that one document changes: a write since the dump to any other document stays.
 
 ### A whole collection

@@ -27,9 +27,9 @@ import { roomRefusal, stampOf } from "../../servers/prod-mongo/backup.mjs";
 import { capped, changeLine, compareCollections, compareDatabases, differs, fieldName, idLimit, printableId, snapshotBsonGz, snapshotDatabase, snapshotDump } from "../../servers/prod-mongo/changes.mjs";
 import { childEnv, scrubber } from "../../servers/prod-mongo/children.mjs";
 import { humanBytes } from "../../servers/prod-mongo/dump.mjs";
-import { restoreLimit } from "../../servers/prod-mongo/drill.mjs";
 import { kept } from "../../servers/prod-mongo/list.mjs";
-import { checkoutRefusal, rehearsalAnswer } from "../../servers/prod-mongo/rehearse.mjs";
+import { checkoutRefusal, rehearsalAnswer, resolveRef } from "../../servers/prod-mongo/rehearse.mjs";
+import { restoreLimit } from "../../servers/prod-mongo/restore.mjs";
 import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.mjs";
 import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
 import { opStub, repoRoot, startToolkitServer, stubDir, tempDir, testPath } from "./helpers/mcp.mjs";
@@ -1278,6 +1278,9 @@ time.sleep(300)
   const base = git(work, "rev-parse", "HEAD");
   git(dir, "clone", "--quiet", "--bare", work, bare);
   git(work, "remote", "add", "origin", "https://github.com/chanjdaniel/Conventioner.git");
+  // The checkout has fetched origin's main once, as any clone has: a rehearsal takes only a commit
+  // a branch of origin's holds.
+  git(work, "update-ref", "refs/remotes/origin/main", base);
   // The release's commit, pushed to the origin and then forgotten here: only a fetch brings its branch.
   git(work, "checkout", "--quiet", "-b", "release");
   write("back-end/migrations/open_big_markets.py", migration(`db.markets.update_many({"stalls": {"$gte": 20}}, {"$set": {"phase": "open", "opened_by": "release"}})
@@ -1348,7 +1351,8 @@ describe("rehearse-migrations", () => {
   test("runs each migration of the commit on a restored dump, dry first where it takes --dry-run, and answers what each changed by counts, ids and fields, never its output", async () => {
     const stamp = await takeBackup();
     const vendor3 = (await production.client.db("conventioner").collection("applications").findOne({ "vendor.name": "Vendor 3" }))._id.toHexString();
-    // This HOME's git cannot reach the origin: the fetch fails, and the commit is one the checkout holds.
+    // This HOME's git cannot reach the origin: the fetch fails, and the commit is one origin's main
+    // held when the checkout last fetched it.
     repo.originFor(home, false);
     let text;
     await rehearseServer(async (server) => {
@@ -1483,7 +1487,7 @@ describe("rehearse-migrations", () => {
     repo.git(other, "clone", "--quiet", repo.bare, "checkout");
     repo.git(join(other, "checkout"), "remote", "set-url", "origin", "https://github.com/chanjdaniel/agent-team.git");
     const cases = [
-      { input: { ref: "no-such-branch", migrations: ["open_big_markets.py"] }, reason: "no-such-branch names no commit of Chan-Software-Services/Conventioner in this checkout" },
+      { input: { ref: "no-such-branch", migrations: ["open_big_markets.py"] }, reason: "no-such-branch names no branch or tag of Chan-Software-Services/Conventioner's origin, nor a commit on one of its branches, in this checkout" },
       { input: { ref: repo.base, migrations: ["open_big_markets.py", "not_there.py"] }, reason: `back-end/migrations/not_there.py is not a file at ${repo.base.slice(0, 8)}` },
       { input: { ref: repo.base, migrations: ["open_big_markets.py"], backup: "2020-01-01T000000Z" }, reason: "~/conventioner-backups holds no backup 2020-01-01T000000Z" },
       { input: { ref: "--upload-pack=touch", migrations: ["open_big_markets.py"] }, reason: "ref must be a commit sha, a branch or a tag, of letters, digits and . _ / - only" },
@@ -1525,11 +1529,36 @@ describe("rehearse-migrations", () => {
     for (const url of [
       "https://github.com/someone/Conventioner.git", "https://github.com/chanjdaniel/Conventioner-fork.git", "https://example.com/chanjdaniel/Conventioner.git",
       "https://notgithub.com/chanjdaniel/Conventioner.git", "https://github.com/chanjdaniel/Conventioner/extra.git", repo.bare,
+      // Another host, or a local path, whose path only ends in GitHub's.
+      "https://other.example/github.com/Chan-Software-Services/Conventioner.git", "file:///srv/mirror/github.com/Chan-Software-Services/Conventioner",
+      "/srv/mirror/github.com/Chan-Software-Services/Conventioner", "ssh://git@other.example/github.com/chanjdaniel/Conventioner.git",
     ]) {
       const refusal = refusalOf(url);
       assert.equal(refusal, "the working directory's origin is not Chan-Software-Services/Conventioner, whose migrations a rehearsal runs", url);
       assert.ok(!refusal.includes(url));
     }
+  });
+
+  test("a ref names origin's branch or tag, never a local branch of the same name, and a commit only when a branch of origin holds it", () => {
+    const checkout = join(tempDir("refs"), "checkout");
+    repo.git(dirname(checkout), "clone", "--quiet", repo.bare, "checkout");
+    // A stale local release at base, while origin's is a commit ahead; main moved on by a commit
+    // never pushed, and a tag on it.
+    repo.git(checkout, "branch", "--quiet", "release", repo.base);
+    repo.git(checkout, "commit", "--quiet", "--allow-empty", "--message", "never pushed");
+    const local = repo.git(checkout, "rev-parse", "HEAD");
+    repo.git(checkout, "tag", "local-only");
+    repo.git(checkout, "tag", "v1", repo.release);
+    const repository = "Chan-Software-Services/Conventioner";
+    const resolved = (ref) => resolveRef(checkout, ref, repository);
+    for (const [ref, sha] of [["release", repo.release], ["origin/release", repo.release], ["main", repo.base], ["v1", repo.release], [repo.base, repo.base], [repo.base.slice(0, 10), repo.base]]) {
+      assert.deepEqual(resolved(ref), { sha }, ref);
+    }
+    const unpushed = (ref) => ({ refusal: `${ref} names ${local.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is rehearsed` });
+    assert.deepEqual(resolved(local), unpushed(local));
+    assert.deepEqual(resolved(local.slice(0, 12)), unpushed(local.slice(0, 12)));
+    assert.deepEqual(resolved("local-only"), unpushed("local-only"));
+    assert.deepEqual(resolved("no-such-branch"), { refusal: `no-such-branch names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` });
   });
 
   // The script as Daniel runs it: from the checkout, with no MCP server and no op.
@@ -1676,6 +1705,7 @@ print("reached the throwaway as mongodb", flush=True)
     repo.git(repo.work, "add", "--all");
     repo.git(repo.work, "commit", "--quiet", "--message", "reaches out");
     const sha = repo.git(repo.work, "rev-parse", "HEAD");
+    repo.git(repo.work, "push", "--quiet", repo.bare, "reaches-out");
     repo.git(repo.work, "checkout", "--quiet", "main");
     let result;
     await rehearseServer(async (server) => {
@@ -1727,6 +1757,7 @@ print("reached the throwaway as mongodb", flush=True)
     repo.write("back-end/Dockerfile", `${dockerfile}RUN echo 'mongodb://someone:${secret}@db.internal/x {"email": "${printed}"}' && exit 7\n`);
     repo.git(repo.work, "commit", "--quiet", "--all", "--message", "a build that fails");
     const sha = repo.git(repo.work, "rev-parse", "HEAD");
+    repo.git(repo.work, "push", "--quiet", repo.bare, "broken-build");
     repo.git(repo.work, "checkout", "--quiet", "main");
     let result;
     await rehearseServer(async (server) => {
@@ -2028,6 +2059,49 @@ describe("prepare-undo", () => {
     assert.deepEqual(JSON.parse(read("report.json")).state, "created");
     assert.match(runPrepared(text), / --collection markets --mode delete --file /);
     await matchesDump(stamp, "markets");
+  });
+
+  test("a document deleted and created again under another _id: refused by its id and by its _id's hex, pointing to the collection's undo", async () => {
+    const stamp = await takeBackup();
+    const markets = live().collection("markets");
+    const { _id: old, ...rest } = await markets.findOne({ id: marketIds[1] });
+    await markets.deleteOne({ _id: old });
+    const { insertedId } = await markets.insertOne({ ...rest, stalls: 26 });
+    const reason = `prepare-undo: failed: ${marketIds[1]} is the document ${old.toHexString()} in the dump, but production holds its id under another _id, ${insertedId.toHexString()}: ` +
+      "putting the dump's document back would leave two documents with that id, so prepare the collection's undo instead (prepare-undo with no id)";
+    for (const id of [marketIds[1], old.toHexString()]) {
+      const { text, isError, at } = await prepare(stamp, { collection: "markets", id });
+      assert.ok(isError, text);
+      assert.equal(text, reason, id);
+      assert.equal(at, undefined);
+    }
+    assert.deepEqual(undosOf(stamp), []);
+  });
+
+  test("an id that names two documents, in the dump or in production, is refused, asking for the _id", async () => {
+    const markets = live().collection("markets");
+    await markets.insertOne({ id: marketIds[0], name: "Riverside Night Market, again", stalls: 2 });
+    const stamp = await takeBackup();
+    const twice = randomUUID();
+    await markets.insertMany([{ id: twice, name: "Twice 1" }, { id: twice, name: "Twice 2" }]);
+    for (const [id, where] of [[marketIds[0], "in the dump"], [twice, "in production"]]) {
+      const { text, isError, at } = await prepare(stamp, { collection: "markets", id });
+      assert.ok(isError, text);
+      assert.equal(text, `prepare-undo: failed: ${id} names 2 documents of the collection ${where}: give the _id's hex or UUID, as the answers print it, instead`);
+      assert.equal(at, undefined);
+    }
+    assert.deepEqual(undosOf(stamp), []);
+  });
+
+  test("one document of a collection production no longer has: refused, pointing to the collection's undo, which keeps the dump's indexes", async () => {
+    const stamp = await takeBackup();
+    await live().collection("open_markets").drop();
+    await live().collection("markets").drop();
+    const { text, isError, at } = await prepare(stamp, { collection: "markets", id: marketIds[1] });
+    assert.ok(isError, text);
+    assert.equal(text, "prepare-undo: failed: production has no collection markets now, and an import of one document would make it with none of the dump's indexes but _id's, so prepare the collection's undo instead (prepare-undo with no id)");
+    assert.equal(at, undefined);
+    assert.deepEqual(undosOf(stamp), []);
   });
 
   test("a document that already matches the dump, or a collection that does: nothing to undo, and nothing written", async () => {

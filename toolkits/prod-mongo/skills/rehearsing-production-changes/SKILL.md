@@ -74,7 +74,7 @@ When a request asks what a migration printed, its output, its warnings or a log,
 ## When a call fails
 
 An answer that is an error (`rehearse-migrations: failed: ...`, `prepare-undo: failed: ...`) is reported as it is, in `T<n> FAILED <the tool's line>`, and nothing is called again: never retry, never rehearse with another ref, dump or set of scripts to see whether it passes.
-A refusal is such a line too: the worktree is not Conventioner's, the ref names no commit, a script is not at that commit, the collection or the id is not in the dump.
+A refusal is such a line too: the worktree is not Conventioner's, the ref names no commit of its origin's, a script is not at that commit, the collection or the id is not in the dump, or the undo of one document points to the collection's undo instead.
 A failed image build is the release's or the network's, not the dump's: report its line as it is.
 `rehearse-migrations: the machine is busy: <why>; ask again later` is not a failure: report it as `T<n> BLOCKED rehearse-migrations the machine is busy`, with the backup's lines when this session took one.
 `a backup is already running` (or a drill or a rehearsal) means a long call of this session has not answered yet: wait for that answer.

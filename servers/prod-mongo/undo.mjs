@@ -15,7 +15,11 @@
 //
 // One document: it finds the document in the dump's .bson.gz by its id; reads production's by its
 // _id (or, when the dump has none of that id, scans production's collection for it); and compares
-// their hashes. When they are the same, nothing is written. When production's differs or is gone,
+// their hashes. An id that names more than one document on either side is refused, and so is the
+// dump's document when production has no collection of that name (an import would make it with
+// only the _id index) or holds the document's top-level UUID id under another _id (an upsert
+// would leave two documents with that id); both refusals point to the collection's undo.
+// When the hashes are the same, nothing is written. When production's differs or is gone,
 // it writes the dump's document as canonical Extended JSON v2 to undo/<at>/<collection>.json and
 // prepares `mongoimport --mode upsert` from that file; when the document is in production only
 // (created since the dump), it writes {"_id": <its _id>} there and prepares `--mode delete`.
@@ -31,12 +35,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { driverReason, stampOf } from "./backup.mjs";
-import { answersTo, capped, compareCollections, dumpFiles, entryOf, idList, readBsonGz, snapshotBsonGz, snapshotCollection } from "./changes.mjs";
+import { answersTo, capped, compareCollections, dumpFiles, entryOf, idList, printableId, readBsonGz, snapshotBsonGz, snapshotCollection } from "./changes.mjs";
 import { count, plural } from "./dump.mjs";
 import { Refusal } from "./refusal.mjs";
 import { checkRoot, dumpByStamp, stampPattern } from "./root.mjs";
 
-const tool = "prepare-undo";
 // A collection's name as a file name and a shell word: what Conventioner's names are.
 const collectionPattern = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$/;
 const idPattern = /^[!-~](?:[ -~]{0,198}[!-~])?$/;
@@ -121,6 +124,12 @@ async function findInCollection(collection, given, BSON) {
   return found;
 }
 
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const toCollection = "so prepare the collection's undo instead (prepare-undo with no id)";
+
+// An _id as the answers print it: its own printed form, or the hash of one that has none.
+const shownIdOf = (_id, BSON) => printableId(BSON.serialize({ _id }), BSON);
+
 const many = (given, n, where) =>
   new Refusal(`${given} names ${count(n)} documents of the collection ${where}: give the _id's hex or UUID, as the answers print it, instead`);
 
@@ -187,15 +196,29 @@ async function documentUndo({ client, BSON, database, collection, file, scrubbed
   if (listed && listed.type === "view") throw new Refusal(`production's ${collection} is a view now, so a document cannot be put back into it`);
   const live = client.db(database).collection(collection);
 
-  let dumped = inDump[0];
+  const [dumped] = inDump;
+  if (dumped && !listed) {
+    throw new Refusal(`production has no collection ${collection} now, and an import of one document would make it with none of the dump's indexes but _id's, ${toCollection}`);
+  }
   let current;
   try {
     if (dumped) {
-      const { _id } = BSON.deserialize(dumped.doc, exact);
-      const [raw] = listed ? await live.find({ _id }, { raw: true }).limit(1).toArray() : [];
+      const { _id, id: sharedId } = BSON.deserialize(dumped.doc, exact);
+      const [raw] = await live.find({ _id }, { raw: true }).limit(1).toArray();
       if (raw) {
         const doc = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
         current = { entry: entryOf(doc, BSON), doc };
+      }
+      // A document deleted and created again keeps its top-level id under a new _id: an upsert of
+      // the dump's would leave two documents with that id, however the document was named.
+      if (typeof sharedId === "string" && uuid.test(sharedId)) {
+        const [other] = await live.find({ id: sharedId, _id: { $ne: _id } }, { projection: { _id: 1 } }).limit(1).toArray();
+        if (other) {
+          throw new Refusal(
+            `${dumped.entry.id} is the document ${shownIdOf(_id, BSON)} in the dump, but production holds its id under another _id, ${shownIdOf(other._id, BSON)}: ` +
+              `putting the dump's document back would leave two documents with that id, ${toCollection}`,
+          );
+        }
       }
     } else {
       const inProduction = listed ? await findInCollection(live, id, BSON) : [];

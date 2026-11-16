@@ -1,6 +1,7 @@
 // prod-mongo's change engine: what a collection held at one moment, as hashes only, and what
 // differs between two such moments. The rehearsal compares the throwaway before and after each
-// migration with it; no document is decoded into text on the way.
+// migration with it, and the undo production's collection or document with the dump's; no
+// document is decoded into text on the way.
 //
 //   await snapshotBsonGz(path, BSON)        the documents of a dump's <collection>.bson.gz
 //   await snapshotCollection(collection, BSON)

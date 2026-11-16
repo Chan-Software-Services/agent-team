@@ -5,15 +5,17 @@ A rehearsal runs a release's migrations on a copy of production restored from a 
 
 ## What you ask for
 
-- `ref`: the Conventioner commit you will release, as a full sha (or a branch or a tag, resolved to its commit at the call).
+- `ref`: the Conventioner commit you will release, as a full sha (or a branch or a tag of origin's, resolved to its commit at the call).
 - `migrations`: the scripts under `back-end/migrations/` in the order the release's runbook runs them, 1 to 20, each named as `migrate_to_one_stage.py`.
 - `backup`: the dump to rehearse on, by its stamp; the newest verified dump when left out.
   The ops skill takes a fresh backup and its drill first unless the request names one, since an older dump is older than production now.
 
 ## What it checks first
 
-The ops session's worktree, the server's working directory, must be a checkout of Conventioner (its `origin` names `Chan-Software-Services/Conventioner` or `chanjdaniel/Conventioner`).
-The server fetches `origin` (a failed fetch is a line in the answer, and the ref is then read as the checkout last fetched it), resolves `ref` to a commit, and checks each script is a file under `back-end/migrations/` at that commit.
+The ops session's worktree, the server's working directory, must be a checkout of Conventioner (its `origin` names `Chan-Software-Services/Conventioner` or `chanjdaniel/Conventioner` on GitHub).
+The check reads `origin`'s URL as the checkout's git config holds it, not where a `url.<base>.insteadOf` rule may send the fetch.
+The server fetches `origin` (a failed fetch is a line in the answer, and the ref is then read as the checkout last fetched it), and resolves `ref` as origin has it: a branch of origin's, else a tag, else a commit's hex, never a local branch, so a stale local `dev` cannot stand in for origin's.
+It refuses a commit that no branch of origin's holds, so a commit never pushed is not rehearsed, and checks each script is a file under `back-end/migrations/` at that commit.
 A script whose text at that commit holds `--dry-run` is marked as taking a dry run.
 Each refusal here comes before the heavy-run lock and before Docker is touched.
 
@@ -30,6 +32,7 @@ The script reads no credential and takes no connection string, so it cannot reac
 5. For each script in order: when it takes a dry run, it runs it with `--dry-run`, snapshots and compares; then it runs it for real, snapshots and compares again.
    Each run is a container of the image on the internal network alone, `timeout 600 python migrations/<script> [--dry-run]`, with 1 GiB of memory, through the image's own entrypoint, and the throwaway's connection string (host `mongodb`) in the `docker` command's environment, never its arguments.
 6. It writes the report and removes the throwaway, the network, the migration containers and the image, on every path: at the end, at a stop, on an error, and on Ctrl-C, SIGTERM and SIGHUP.
+   Docker's build cache and the base image the build pulled stay: they hold no data, only the back end's layers and Python packages, but take disk space for each new set of requirements, and the toolkit never prunes them.
 
 What stops the rehearsal, at that step, with the steps after it named as not run:
 
@@ -38,7 +41,7 @@ What stops the rehearsal, at that step, with the steps after it named as not run
 - a run whose `docker run` is still going 30 seconds past that limit, which is killed.
 
 Past 45 minutes the server stops the whole run (TERM, then KILL 30 seconds on) and removes, by id, what the script said it would make.
-Every object is labelled `owner=agent-team`, `kind=drill`, `toolkit=prod-mongo` and an `expires` an hour on, so a rehearsal killed outright leaves nothing past the next drill or rehearsal (`sops/docker.md`).
+Every object is labelled `owner=agent-team`, `kind=drill`, `toolkit=prod-mongo` and an `expires` an hour on, so a rehearsal killed outright leaves none of them past the next drill or rehearsal (`sops/docker.md`).
 
 ## No route out
 

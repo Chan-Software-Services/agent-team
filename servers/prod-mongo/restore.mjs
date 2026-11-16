@@ -1,6 +1,11 @@
 // What prod-mongo's two container scripts share when they restore a dump into a throwaway
 // MongoDB (throwaway.mjs): the restore drill (drill.mjs) and the migration rehearsal (rehearse.mjs).
 //
+//   chosenDump({ root, shown, stamp, verb })
+//                            a tool's check of its dump before the heavy-run lock: the root
+//                            (root.mjs's rules), the stamp given or else the newest verified dump,
+//                            and that stamp (a verified dump directly under the root); { stamp,
+//                            note }, `note` checkRoot's, or a Refusal worded with `verb` ("drill")
 //   restoreLimit             512 MiB: the largest restore a throwaway takes, read from the manifest's
 //                            restoredBytes (the database's data and indexes, uncompressed, never the
 //                            gzipped dump's size), since tmpfs in the throwaway's 2 GiB cap, beside
@@ -23,12 +28,23 @@
 import { join } from "node:path";
 import { lastLine, runWithConfig, scrubber, toolVersion, yamlConfig } from "./children.mjs";
 import { humanBytes, limit } from "./dump.mjs";
+import { listRoot } from "./list.mjs";
 import { Refusal } from "./refusal.mjs";
 import { checkRoot, dumpByStamp } from "./root.mjs";
 
 export const restoreLimit = 512 * 1024 ** 2;
 
 const mongorestoreTimeoutMs = 20 * 60_000;
+
+export function chosenDump({ root, shown, stamp: given, verb }) {
+  const shownRoot = shown(root);
+  const { real, missing, note } = checkRoot(root, { shown });
+  if (missing) throw new Refusal(`${shownRoot} does not exist yet, so it holds no backup to ${verb}`);
+  const stamp = given ?? listRoot(real).dumps.find(({ verified }) => verified)?.stamp;
+  if (stamp === undefined) throw new Refusal(`${shownRoot} holds no verified backup to ${verb}: take one with backup first`);
+  dumpByStamp(real, stamp, shownRoot);
+  return { stamp, note };
+}
 
 export function restorableDump({ root, shown, stamp: given, database, verb, noun }) {
   const shownRoot = shown(root);
