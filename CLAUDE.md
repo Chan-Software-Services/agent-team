@@ -54,6 +54,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `records-rewrite/`: `team-records-rewrite`'s drop list, message expression, S02 callback and `verify.py`.
     - `repo-moves.json`: the repositories that moved owner, each old `owner/name` to its new one with the date, a constant `ledger.jq` imports, so a PR URL under either owner is one PR to the ledger's event readers, and `team-project` reads for `--find repo` and `--check`.
     - `review-app`: the reviewer App's id and slug, one `id=<n>` and one `slug=<s>` line, a committed constant; with no such file the App is off and agent-team merges on the per-head word alone.
+    - `review_facts.py`: the facts of a diff a review brief lists for its reviewer, the tests it drops and the direct dependencies it adds or changes, which `team-brief` derives as `dropped_tests` and `dependencies`.
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
@@ -112,6 +113,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill`: run by hand by the coordinator, since it starts a real Claude session; it compacts a coordinator-shaped session in a sandbox team home built from `tests/fixtures/compaction-drill/`, checks it still knows each task's wait and every current item, and records its run.
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
+  - `tests/fixtures/guard-corpus/allowed.jsonl`: the calls every guard hook must allow, one JSON object a line with the roles that make it, in the shapes of real ones with fixture values only.
+  - `tests/guard-corpus.bats`: runs each role's PreToolUse hooks, as its settings files write them, on that corpus's calls, with the lease held and, for a call marked `local`, on a fenced machine and while the team holds offline.
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, among them:
     - `confine-seams.py`: runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.

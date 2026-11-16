@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # List a task's tickets with each one's state, or check their Blocked by:, Waits for:, Phase: and
-# Touches: lines and the spec's Parallel: line.
+# Touches: lines, the spec's Parallel: line and its failure modes and assumptions section.
 #
 # Usage: team-tickets T<n> [--check | --json | --html <file> | --graph]
 # The tickets are the files tickets/NN-<slug>.md in the task directory (the project's task_dir) of
@@ -49,8 +49,17 @@
 # blocks the other, directly or through other tickets) and share a path (equal, or one a directory
 # the other is under), named once per pair at the higher-numbered ticket's Touches: line with the
 # first path both touch; and a second or malformed Parallel: line in spec.md, or one naming more
-# caps than the tickets have phases. The listing refuses such a set the same way. A clean set
-# prints how many tickets it read; one with none says so on stderr.
+# caps than the tickets have phases. The listing refuses such a set the same way. --check alone,
+# never the listing or --json, also holds each task directory with ticket files to one
+# "## Failure modes and assumptions" section in its spec.md, the heading matched in any case with
+# trailing blanks allowed and outside a fenced code block, whose body, to the next heading of
+# level 1 or 2 (its ### subsections are inside it), holds a list item ("-", "*", "+" or "1." and
+# text) or a line reading none (any case, an optional final period). It refuses, at
+# <dir>/spec.md or the section's line, a task directory with no spec.md, a spec with no such
+# section (saying what to list: each failure mode the change must handle with its handling and
+# its test, and each assumption not verified that would change the design, or none), a second
+# section and an empty one.
+# A clean set prints how many tickets it read; one with none says so on stderr.
 # --html <file> writes the tickets as one self-contained HTML page of their dependency graph
 # (bin/lib/ticket_graph.py draws it, its header says how): each ticket a box by level, top to
 # bottom, with its number, state, minutes and slug, each phase a band, an arrow per Blocked by:
@@ -196,6 +205,25 @@ read_lines() {
 }
 
 
+# Each "## Failure modes and assumptions" section of the spec files, outside fenced code blocks, as
+# "<file>\t<line>\t<1 when its body holds a list item or a none line, else 0>", its body running
+# to the next heading of level 1 or 2: read_sections <file>...
+read_sections() {
+  awk '
+    function emit() { if (open) printf "%s\t%d\t%d\n", file, line, items; open = 0 }
+    FNR == 1 { emit(); fence = 0 }
+    { text = $0; sub(/\r$/, "", text) }
+    text ~ /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    tolower(text) ~ /^## failure modes and assumptions[[:space:]]*$/ {
+      emit(); open = 1; file = FILENAME; line = FNR; items = 0; next
+    }
+    text ~ /^##?([[:space:]]|$)/ { emit(); next }
+    open && (text ~ /^[[:space:]]*([-*+]|[0-9]+\.)[[:space:]]+[^[:space:]]/ ||
+             tolower(text) ~ /^[[:space:]]*none\.?[[:space:]]*$/) { items = 1 }
+    END { emit() }' "$@"
+}
+
 # Each path line of the scope.txt files, as "<scope.txt>\t<line>\t<path>", blank lines skipped.
 read_scopes() {
   awk '{ path = $0; sub(/\r$/, "", path); sub(/^[[:space:]]+/, "", path); sub(/[[:space:]]+$/, "", path) }
@@ -210,12 +238,15 @@ marks_tsv=''
 ((${#files[@]} == 0)) || marks_tsv=$(read_lines "${files[@]}" "${specs[@]}")
 scope_tsv=''
 ((${#scopes[@]} == 0)) || scope_tsv=$(read_scopes "${scopes[@]}")
+sections_tsv=''
+[[ -z $check ]] || ((${#specs[@]} == 0)) || sections_tsv=$(read_sections "${specs[@]}")
 
 # The analysis, over the task's events as its input: {problems, tickets}, each problem
 # "<file>[:<line>]: <reason>", each ticket with its state.
 read -r -d '' program <<'JQ' || true
 def where($m): "\($m.file):\($m.line)";
 def blocked_form: "write 'Blocked by: None' or 'Blocked by: 01, 03'";
+def failure_section: "## Failure modes and assumptions";
 def touches_malformed: "a malformed Touches: line; write 'Touches: bin/team-next, tests/team-next.bats', repository paths as scope.txt has them (a directory ending in /) joined by ', ', with no leading /, no . or .., no glob and no space, the label optionally bold";
 # Whether path $p is under the directory $d (a path ending in /); whether it is in the scope line
 # $l (equal to it, or under it); whether two paths are shared (equal, or one under the other), and
@@ -304,7 +335,17 @@ def cycle($g; $start):
           | "\(where(.)): a malformed Parallel: line; write 'Parallel: 2' or 'Parallel: 2, 1', a cap from 1 to 3 per phase, the label optionally bold, nothing else on the line"),
         (.[0] | select(. and .good and $named != []) | (.value | split(", ") | length) as $k
           | ([$phase[]] | max) as $p | select($k > $p)
-          | "\(where(.)): Parallel: names \($k) caps, but the tickets have \($p) phases"))
+          | "\(where(.)): Parallel: names \($k) caps, but the tickets have \($p) phases")),
+    # --check alone holds each task directory with ticket files to its spec's one section.
+    (select($check != "") | $dirs[] | .dir as $dir | select([$files[] | select(.dir == $dir)] != [])
+      | if .spec == "" then "\($dir)/spec.md: no spec.md beside the tickets: write it, with a \(failure_section) section"
+        else .spec as $spec | [$sections[] | select(.file == $spec)]
+          | if . == [] then "\($spec): no \(failure_section) section: list each failure mode the change must handle with its handling and the test that proves it, and each assumption not verified that would change the design, or none"
+            else .[0].line as $first | to_entries[] | .key as $k | .value
+              | (select($k > 0) | "\(where(.)): a second \(failure_section) section (the first is line \($first))"),
+                (select(.items | not) | "\(where(.)): the \(failure_section) section is empty: list its items, or write none")
+            end
+        end)
   ] as $problems
 | ($events | to_entries) as $indexed
 | (reduce ($named[] | .ticket) as $n ({};
@@ -341,11 +382,13 @@ JQ
 mode=text
 [[ -z $json$html_set$graph ]] || mode=json
 out=$(jq -r --arg task "$task" --arg files_tsv "$files_tsv" --arg marks_tsv "$marks_tsv" --arg dirs_tsv "$dirs_tsv" \
-  --arg scope_tsv "$scope_tsv" --arg me "${0##*/}" --arg mode "$mode" '
+  --arg scope_tsv "$scope_tsv" --arg sections_tsv "$sections_tsv" --arg check "$check" --arg me "${0##*/}" \
+  --arg mode "$mode" '
   def rows: split("\n") | map(select(. != "") | split("\t"));
   ($files_tsv | rows | map({project: .[0], file: .[1], dir: .[2]})) as $files
   | ($dirs_tsv | rows | map({project: .[0], dir: .[1], scope: (.[2] // ""), spec: (.[3] // "")})) as $dirs
   | ($scope_tsv | rows | map({file: .[0], line: (.[1] | tonumber), path: .[2]})) as $scope
+  | ($sections_tsv | rows | map({file: .[0], line: (.[1] | tonumber), items: (.[2] == "1")})) as $sections
   | ($marks_tsv | rows | map({file: .[0], line: (.[1] | tonumber), label: .[2], good: (.[3] == "1"), value: .[4]})) as $marks
   | ('"$program"')
   | "\(.problems | length) \(.tickets | length)",
@@ -367,7 +410,7 @@ fi
 ((count || ! graph)) || die "$task has no tickets, so it has no graph"
 ((count)) || echo "${0##*/}: $task has no tickets in its open worktrees" >&2
 if [[ -n $check ]]; then
-  ((count == 0)) || echo "$task: $count tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed"
+  ((count == 0)) || echo "$task: $count tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
   exit 0
 fi
 
