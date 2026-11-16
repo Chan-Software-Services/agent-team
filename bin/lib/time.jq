@@ -101,12 +101,17 @@ def walk_parks: .unparked as $unparked | [.fold.parks[] | select(IN(.id; $unpark
 
 # Whether a walk state's task waits on Daniel's merge word, as merge_ready_prs reads it at this
 # point of the walk: the fold's phase is awaiting-merge and an open PR has no merge-approved so far
-# (approved) naming it at its head (approves_pr). A default word that holds is the walk's merging
-# phase, read before this.
+# (approved) naming it at its head (approves_pr), and no per-head word standing for its url
+# (words, word_stands' rule as the walk keeps it: a merge-approved naming a head the ledger has
+# logged for its url, or none, sets its url standing; one naming a head not yet logged waits in
+# pending until a pr or review event logs it, then sets it standing; a later merge-approved of
+# the url replaces both, and a review whose verdict is not pass drops every one). A default word
+# that holds is the walk's merging phase, read before this.
 def awaits_merge_word:
-  .approved as $approved
+  .approved as $approved | .words as $words
   | (.fold | lifecycle_phase) == "awaiting-merge"
-    and any(.fold | lifecycle_open_prs[]; . as $pr | any($approved[]; approves_pr($pr)) | not);
+    and any(.fold | lifecycle_open_prs[];
+      . as $pr | (any($approved[]; approves_pr($pr)) or IN($pr.url | rtrimstr("/"); $words[])) | not);
 
 # A walk state's class: its latest standing park's, else a wait on Daniel while its ask wait
 # stands, or while no worker is at work and the fold holds an ask open or the task waits on
@@ -115,9 +120,10 @@ def idle_class:
   (walk_parks | last | if . == null then null else park_time_class end)
   // if .askwait != null or (.phase == "unattributed" and (.fold.asks != [] or awaits_merge_word)) then "wait:daniel" else .phase end;
 def task_segments($end):
-  ([.[] | select(.event == "opened") | .ts | fromdate] | first) as $t0
+  . as $all
+  | ([.[] | select(.event == "opened") | .ts | fromdate] | first) as $t0
   | (([range(length) as $i | select(.[$i].ts | fromdate > $end) | $i] | first) // length) as $n
-  | reduce .[:$n][] as $e ({phase: "unattributed", word: null, preapproved: [], planned: false, held_back: false, fold: lifecycle_start, unparked: [], approved: [],
+  | reduce .[:$n][] as $e ({phase: "unattributed", word: null, preapproved: [], planned: false, held_back: false, fold: lifecycle_start, unparked: [], approved: [], words: [], pending: [],
         askwait: null, fix: false, cur: $t0, segments: []};
       ($e.ts | fromdate) as $ts
       | (if ($e | is_park) and ($e.since | type) == "string" then
@@ -148,6 +154,11 @@ def task_segments($end):
             elif $e.event == "merge-approved" then
               .phase = "merging" | .word = "head" | .askwait = null
               | .approved += [$e]
+              | ($e.url | if type == "string" then rtrimstr("/") else null end) as $url
+              | if $url == null then .
+                else .words -= [$url] | .pending |= map(select(.url != $url))
+                  | if $e.head == null or ($all[:$i + 1] | head_logged($url; $e.head)) != null then .words += [$url]
+                    else .pending += [{url: $url, head: $e.head}] end end
             elif $e.event == "merge-preapproved" then .preapproved = (.preapproved - [$e.project]) + [$e.project]
             elif $e.event == "merge-preapproval-withdrawn" then
               .preapproved -= [$e.project]
@@ -159,6 +170,12 @@ def task_segments($end):
               | if .phase == "merging" and .word == "default" then .phase = "unattributed" else . end
             else . end
         end)
+      | (if IN($e.event; "pr", "review") and ($e.head | type) == "string" and .pending != [] then
+          ($all[:$i + 1]) as $seen
+          | (.pending | map(select(. as $p | $seen | head_logged($p.url; $p.head) != null))) as $logged
+          | .words = (.words - ($logged | map(.url))) + ($logged | map(.url)) | .pending -= $logged
+        else . end)
+      | (if $e.event == "review" and $e.verdict != "pass" then .words = [] | .pending = [] else . end)
       | .fix = (if $e.event == "review" then ($e.sent_back // [] | length) > 0
           elif ($e.event == "launch" and $e.role != "builder") or ($e.event == "done" and $e.role != "reviewer")
             or IN($e.event; "merged", "pr", "ticket-done") then false
