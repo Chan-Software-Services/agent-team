@@ -16,7 +16,7 @@ The team itself (coordinator and workers) runs here only after stage 9, because 
 **Rules for the agent:**
 
 - Secrets reach this machine only through `team-secrets restore`, which Daniel runs in their own terminal; you check them with `team-secrets check`, which prints ids and verdicts only.
-  Leave alone every secret file, credentials file, `~/.claude.json`, `~/.claude/channels/` and the reviewer App's key `~/.config/agent-team/review-app.pem`: never read, print, copy or hash them, and never run `op`.
+  Leave alone every secret file, credentials file, `~/.claude.json`, `~/.claude/channels/`, the reviewer App's key `~/.config/agent-team/review-app.pem` and the worker login's `~/.config/agent-team/gh-worker/`: never read, print, copy or hash them, and never run `op`.
 - The lease is Daniel's: run `team-resume` only when Daniel says the team should run here (stage 9); a steal is Daniel's alone, typed in their own terminal.
 - Anything needing `sudo` or an admin password is Daniel's, in their own terminal; the bootstrap stops with the exact command.
 - Three settings are Daniel's call even where you could write them: the code checkout's and the team home's `core.hooksPath` (every team session is denied setting it), `autoMode.environment` (what auto mode's classifier believes about this machine, which every worker reads before the team's own lines, `settings/worker.json`'s `autoMode`), and a `team-config apply` that replaces a file or skill changed on this machine.
@@ -32,12 +32,12 @@ Each stage after the first is one `~/agent-team/bin/team-bootstrap` run; read it
 | # | Stage | Who | Done when |
 | - | - | - | - |
 | 1 | git, gh, GitHub login, the code checkout and the team home cloned, the team home's setting written | agent, Daniel logs in | `SETUP.md` stage 1's checks pass |
-| 2 | Preflight and the machine's name | agent, Daniel names it | `machine: named this machine <name>` or `done`, `machine: done: ~/.config/agent-team/home names ~/agent-team-records`, `machine: done: the team home fetches only dev and lease`, and `machine: done: the team home shares history with origin's dev` |
+| 2 | Preflight, the machine's name, and `team-bootstrap` setting the team home's login (the owner login) | agent, Daniel names it | `machine: named this machine <name>` or `done`, `machine: done: ~/.config/agent-team/home names ~/agent-team-records`, `machine: done: the team home fetches only dev and lease`, and `machine: done: the team home shares history with origin's dev` |
 | 3 | OS packages | agent; Daniel's terminal on Arch | `packages: done` |
 | 4 | Tools at their pins | agent; Daniel's terminal for `sudo` | `tools: done` |
 | 5 | Projects | agent | `projects: done` |
 | 6 | Claude config, plugins and the heartbeat | agent, Daniel restarts the session | `config: done` and `heartbeat: done` |
-| 7 | Daniel's steps | Daniel, one at a time | `check` lists no `Daniel <n>:` line |
+| 7 | Daniel's steps, `team-secrets restore` among them, which brings the worker login with the other secrets | Daniel, one at a time | `check` lists no `Daniel <n>:` line |
 | 8 | Verification and the summary | agent | `team-doctor` has no FAIL and `team-load-check` passes |
 | 9 | Taking the team (only when Daniel says so) | Daniel decides, agent runs | the coordinator runs here and is pinned |
 
@@ -55,10 +55,11 @@ Each stage after the first is one `~/agent-team/bin/team-bootstrap` run; read it
    When it is missing, `~/agent-team/bin/team-bootstrap --home agent-team-records --stage machine` writes it (it can go with `--name` in one run).
    The bootstrap writes it once: a setting that names another checkout is left as it is, and a path with no checkout yet is refused until the clone is there.
    Until it is written, nothing names the team home: every script but the bootstrap refuses, naming the setting, the doctor's `team home` line fails, and the machine stage stops on Daniel's step to clone `~/agent-team-records` (when it is missing) and name it.
-4. The machine stage then fetches the team home and asks the doctor for its `team home history` line alone.
+4. While the doctor's `team home login` line fails, the machine stage gives the team home's own git config two values of `credential.https://github.com.helper`, an empty one and then the `gh` that `command -v gh` finds as git's credential helper on the owner login, so the team home's git reaches the records on the owner login from any session, the worker login on or off (section 6).
+5. The machine stage then fetches the team home and asks the doctor for its `team home history` line alone.
    A team home that shares no history with origin's `dev` is a clone from before a rewrite of the records' history, such as the records rewrite of 2026-10-28, and the stage stops on it as Daniel's re-clone (section 3), so no later stage reads the old records.
    A fetch that fails is said on one line, and the line is read as the team home was last fetched.
-5. The machine's resource levels need no question: the defaults in `bin/team-capacity`'s header hold, and only a machine that differs gets a `~/.config/agent-team/capacity.json` (`sops/resources.md`, "The settings").
+6. The machine's resource levels need no question: the defaults in `bin/team-capacity`'s header hold, and only a machine that differs gets a `~/.config/agent-team/capacity.json` (`sops/resources.md`, "The settings").
    Like the name, that file is this machine's own and never moved; the bootstrap does not write it.
 
 ### Stage 3: OS packages
@@ -173,7 +174,7 @@ A machine that held the team before and whose checkouts and tools have fallen be
 | Docker access | 7 | macOS: open Docker Desktop, accept its license, and turn on Settings, General, "Start Docker Desktop when you sign in", so a restart never leaves the team without Docker; Arch: own terminal, `sudo systemctl enable --now docker.service`, then `sudo usermod -aG docker $USER` and a new login if the doctor then says permission denied | GUI or `sudo` |
 | The Docker veth sysctl (Arch), when the doctor's `docker veth` line warns: without it each new Docker veth gets an IPv6 link-local address, whose coming and going makes Chromium fail a page load with `net::ERR_NETWORK_CHANGED`, the end-to-end flake home-pc had until it was set on 2026-11-14 (79 of 80 runs passed beside a container started every 3 s before it, 80 of 80 after) | 7 | own terminal: `echo 'net.ipv6.conf.default.addr_gen_mode = 1' \| sudo tee /etc/sysctl.d/90-docker-no-ll6.conf`, then `sudo sysctl --system` | `sudo` |
 | 1Password app: install, sign in, CLI integration (and on Arch, unlock with system authentication) | 7 | macOS: `brew install --cask 1password`; Arch: the native AUR package; then the app's Settings > Developer > Integrate with 1Password CLI | account login, app settings |
-| `team-secrets restore` | 7 | own terminal: `~/agent-team/bin/team-secrets restore`; it fetches a secret that is missing, empty or off its mode (a file off its mode may be another machine's old copy, so it is replaced, the old one kept beside it as `<file>.bak-<date and time>`, mode 600), the reviewer App's key `~/.config/agent-team/review-app.pem` among them once the team home's `machine/secrets.json` lists its `review-app-key` entry; the doctor's `review app` line checks the key, beside `dev`'s pin of the App's `agent-review` check, once `bin/lib/review-app` names the App (`sops/merging.md`, "agent-team behind the reviewer App") | Touch ID or system authentication; values never reach an agent |
+| `team-secrets restore` | 7 | own terminal: `~/agent-team/bin/team-secrets restore`; it fetches a secret that is missing, empty or off its mode (a file off its mode may be another machine's old copy, so it is replaced, the old one kept beside it as `<file>.bak-<date and time>`, mode 600), the reviewer App's key `~/.config/agent-team/review-app.pem` among them once the team home's `machine/secrets.json` lists its `review-app-key` entry, and the worker login's `~/.config/agent-team/gh-worker/hosts.yml` once it lists `worker-github-login` (section 6); the doctor's `review app` line checks the key, beside `dev`'s pin of the App's `agent-review` check, once `bin/lib/review-app` names the App (`sops/merging.md`, "agent-team behind the reviewer App") | Touch ID or system authentication; values never reach an agent |
 | `#coordinator` letting in only Daniel, when the doctor's `discord access` line fails on a restored `access.json` | 7 | Daniel's own Claude Code session: the `/discord:access group add <#coordinator id> --no-mention --allow <their id>` the line names | the plugin edits `access.json` only on Daniel's own command |
 | The interview channel, when the doctor's `interview channel` line fails on its group or the bot's permissions (the channel is the server's, made once, its id `INTERVIEW_CHANNEL` in `bin/lib/team.sh`) | 7 | Daniel's own Claude Code session for `/discord:access group rm <its id>`; Discord's channel settings for the bot role's View Channel, Read Message History, Create Public Threads, Send Messages in Threads and Attach Files | the plugin edits `access.json` only on Daniel's own command, and the server is Daniel's |
 | `~/.no-mistakes/config.yaml` running the gate on opencode or Claude Code, when restore did not bring it in | 7 | Daniel's own edit: `agent: opencode` (the tools stage sets `agent_path_override`'s `opencode` to the wrapper), or `agent: claude` with `agent_args_override: {claude: [--setting-sources, "project,local", --strict-mcp-config, --settings, <the code checkout>/bin/lib/gate-claude-settings.json]}` | it is Daniel's own config file |
@@ -211,7 +212,7 @@ On a fresh machine, Daniel meets them in this order (recorded from `team-bootstr
 | Home path | `/home/<user>` | `/Users/<user>`; recorded paths under either are read as the same path under this `$HOME` |
 | Filesystem | case-sensitive | APFS, case-insensitive by default; no repo has case-only name clashes today, and path case no longer matters for the registry: the scripts compare checkout paths by file identity, so `Documents/projects` in `projects.toml` names `~/Documents/Projects` |
 | Release archives | `linux-amd64` | `darwin-arm64` or `darwin-amd64` |
-| The gate's environment | the no-mistakes daemon is a systemd user unit; `~/.no-mistakes/bin/opencode-gate` sets opencode's environment, so the unit needs no drop-in | a LaunchAgent that no-mistakes rewrites on each start, keeping only `HOME`, `PATH` and proxy variables; the same wrapper sets opencode's environment |
+| The gate's environment | the no-mistakes daemon is a systemd user unit; `~/.no-mistakes/bin/opencode-gate` sets opencode's environment, and `team-capacity install`'s drop-in names the worker login's directory when the worker login is on (section 6) | a LaunchAgent that no-mistakes rewrites on each start, keeping only `HOME`, `PATH` and proxy variables; the same wrapper sets opencode's environment, and the daemon runs on the machine's own GitHub login, which the doctor's `worker login` line warns of while the worker login is on |
 
 ## 5. When something fails
 
@@ -219,3 +220,46 @@ On a fresh machine, Daniel meets them in this order (recorded from `team-bootstr
 - A FAIL line names its fix; when the fix is Daniel's, ask for it in one request as section 3 says.
 - `--dry-run` says what each stage would run, and Daniel's steps, changing nothing.
 - The same step failing twice, or GitHub unreachable: the rules in section 1.
+
+## 6. The worker login
+
+The **worker login** is the GitHub account the team's sessions (planner, builder, reviewer, the coordinator and the assistant) and, on Linux, the gate's daemon push branches and open pull requests with: it has the Write role on each project's repository and no access to the records repository.
+The **owner login** is the machine's own `gh` login, the repositories' owner, which `team-merge`, the team home's own git traffic and Daniel's own terminal run on.
+
+`bin/lib/worker-login` names the account in one `login=<the account's login>` line, a committed constant that changes only through a PR to `dev`, never a registry key, since the registry is a record.
+With no such file the worker login is off: every session runs on the machine's own GitHub login, as before, and nothing in this section changes a machine.
+A file that is anything but that one line refuses every launch, naming the file.
+
+On a machine the worker login is `gh`'s own login file, `~/.config/agent-team/gh-worker/hosts.yml`, mode 600 in a directory of mode 700, the secret `worker-github-login`, which `team-secrets restore` brings, as it brings every secret.
+`bin/lib/github-login.sh` is the one place that knows where either login lives.
+With the worker login on:
+
+- `team-worker`, `claude-coordinator` and `claude-assistant` give their session `GH_CONFIG_DIR` naming that directory and `GH_TOKEN` and `GITHUB_TOKEN` empty, so `gh`, `gh-axi` and git all answer with the worker login; each refuses to start a session, naming `team-secrets restore`, while the file is missing, empty or off its mode.
+- `command-guard` refuses a session's own assignment or unset of those three names, and the coordinator's settings deny a Bash call naming them, since its session runs no `command-guard`; both hold with the worker login off too.
+- `team-merge` runs on the owner login throughout, whatever session runs it.
+- The team home's git asks the owner login for github.com, through two credential helper values of its own checkout, which `team-bootstrap`'s machine stage sets and the doctor's `team home login` line checks, the worker login on or off.
+- `team-capacity install` gives the gate's daemon the worker login in its drop-in; on macOS the daemon stays on the machine's own GitHub login.
+- The doctor's `worker login` line fails while the file is missing, is the owner's account, holds a token with scopes beyond `repo` and `workflow`, reaches the records repository, administers a project or cannot push to one, and fails or warns where GitHub does not restrict a project's base branch to the owner; `team-load-check --probe` shows GitHub refusing the worker login a push, a merge, a protection change and a repository setting on the team's own project.
+
+### The steps, in order
+
+Until step 8, every session runs on the machine's own GitHub login, as before.
+
+1. Daniel: create the machine account, with two-factor authentication, and give the coordinator its login.
+2. Daniel: invite it to the organization `Chan-Software-Services` as a member, with the Write role on each project's repository and no access to the records repository.
+3. Daniel, then the coordinator: Daniel transfers each project still under their personal account to the organization and gives the account Write on it; the coordinator edits the registry's `repo` of each, and the PR that commits `bin/lib/worker-login` adds each move to `bin/lib/repo-moves.json`.
+4. Daniel: on `dev` and `main` of each public project, turn on "Restrict who can push to matching branches" with the owner alone, and "Do not allow bypassing the above settings"; a project with no protection yet gets its first rule this way.
+   GitHub holds that restriction only for an organization's repositories, and on the Free plan only for public ones, so the doctor warns, never fails, for the rest.
+5. Daniel, signed in as the machine account: create one classic token with the scopes `repo` and `workflow`, expiring in a year.
+6. Daniel, in their own terminal: write the login with the one command below, pasting the token and ending the input with Ctrl-D, then run `~/agent-team/bin/team-secrets save worker-github-login` once the coordinator has added its entry to the team home's `machine/secrets.json`; on the other machine, `~/agent-team/bin/team-secrets restore`.
+7. Daniel: remove the owner's `github.com` entry from `~/.git-credentials`, the file of git's generic `store` helper, which git never asks for github.com, since an empty helper value comes first.
+8. Once the PR that commits `bin/lib/worker-login` merges, on each machine: Daniel runs `~/agent-team/bin/team-bootstrap` (the team home's helpers) and `~/agent-team/bin/team-capacity install` (the gate's daemon) and restarts the coordinator and the assistant, then the coordinator runs the `load-check-probe` drill (`sops/drills.md`).
+
+The one login command, run in Daniel's own terminal, never in a session:
+
+```
+mkdir -m 700 -p ~/.config/agent-team/gh-worker && GH_CONFIG_DIR=~/.config/agent-team/gh-worker gh auth login --hostname github.com --git-protocol https --insecure-storage --with-token
+```
+
+A new token, when the old one expires or the doctor's `worker login` line asks for one, is steps 5 and 6 again; the team home's `machine/secrets.md` says how the other machine takes it.
+Sessions running when the constant lands keep the login they started with; a session started after it on a machine without the file is refused until the restore.
