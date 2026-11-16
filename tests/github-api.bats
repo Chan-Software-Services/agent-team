@@ -157,6 +157,34 @@ $e 200"
   assert_equal "$(github_requests)" "$ep 200"
 }
 
+@test "a reader that waited on the lock of an entry another's write left stopped partway reads again, never serving the old body" {
+  plan "$ep" 200 '{"number":217,"head":"A"}'
+  read_ep
+  tick 60
+  plan "$ep" 200 '{"number":217,"head":"B"}'
+  lock=$state/cache/$(key "$ep").lock
+  guard_sandbox
+  # Another reader holds the entry's lock until the test releases it.
+  # shellcheck disable=SC2016
+  bash -c 'exec 9>>"$1" && flock -n 9 && : >"$2/held" &&
+    while [[ ! -e $2/release ]]; do sleep 0.05; done' _ "$lock" "$out" >/dev/null 2>&1 3>&- &
+  holder=$!
+  while [[ ! -e $out/held ]]; do kill -0 "$holder"; sleep 0.05; done
+  "$reader" gh_read "$out" body "$ep" >"$out/report" 2>&1 3>&- &
+  waiter=$!
+  # The waiter has read the entry's fetched and blocks on the lock.
+  until pgrep -P "$waiter" -x flock >/dev/null; do kill -0 "$waiter"; sleep 0.05; done
+  # What the other's write leaves when it stops after its first step: no ETag, fetched 0.
+  jq -cn --arg e "$ep" '{endpoint: $e, etag: null, fetched: 0, status: 200}' >"$state/cache/$(key "$ep").json"
+  : >"$out/release"
+  wait "$holder"
+  wait "$waiter"
+  assert_equal "$(cat "$out/report")" "rc=0 status=200 until= resource= kind="
+  assert_equal "$(cat "$out/body")" '{"number":217,"head":"B"}'
+  assert_equal "$(github_requests)" "$ep 200
+$ep 200"
+}
+
 @test "a primary refusal writes limit.json, and no read is sent until the clock passes its until" {
   reset=$(($(now) + 600))
   github_budget core 5000 5000 "$reset"

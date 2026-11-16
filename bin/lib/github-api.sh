@@ -318,8 +318,10 @@ gh_read() {
     return 1
   fi
   gh_rc=0
-  # Another process may have read it, or met the limit, while this one waited.
+  # Another process may have read it, or met the limit, while this one waited; a fetched of 0 is a
+  # write stopped partway, never a read.
   gh_after=$(gh_entry_fetched "$gh_key")
+  [[ $gh_after != 0 ]] || gh_after=''
   gh_now_s=$(gh_now) || gh_rc=1
   if ((gh_rc != 0)); then
     :
