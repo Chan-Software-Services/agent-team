@@ -243,6 +243,63 @@ left T8-reviewer 4f2a9c1e: already in agent-team-T8-4f2a9c1e.scope"
   assert_contains "$(cgroup_of 101)" "agent-team-T7-heavy.scope"
 }
 
+@test "place puts a restarted session whose old scope is still loaded in a scope of its new process's own, leaving what the old scope holds there" {
+  # T7's builder's first process left a browser running in its scope; the claude daemon restarted
+  # the session as pid 100, in the Konsole tab's scope, and the old scope's name is still loaded.
+  local old
+  old=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
+  fake_process 150 1 "$old" chrome-devtools-axi bridge
+  fake_process 151 150 "$old" chrome --headless
+  echo agent-team-T7-a1b2c3d4.scope >"$STUB_FIXTURES/busctl-loaded"
+  session_tree 100
+  sessions "a1b2c3d4 T7-builder 100"
+  run_bin -0 --separate-stderr team-capacity place
+  assert_equal "$stderr" ""
+  assert_equal "$output" "placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4-100.scope (4 processes)"
+  assert_equal "$(placements)" "agent-team-T7-a1b2c3d4.scope agent-team-T7.slice 100 99 101 102
+agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice 100 99 101 102"
+  assert_equal "$(cgroup_of 100)" "$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)"
+  assert_equal "$(cgroup_of 102)" "$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)"
+  # What the old scope holds stays there, in the task's slice.
+  assert_equal "$(cgroup_of 150)" "$old"
+  assert_equal "$(cgroup_of 151)" "$old"
+
+  # Placed now, so the next heartbeat's place and a launch's place by id move nothing.
+  : >"$STUB_CALLS/busctl.log"
+  run_bin -0 team-capacity place
+  assert_equal "$output" "left T7-builder a1b2c3d4: already in agent-team-T7-a1b2c3d4-100.scope"
+  run_bin -0 team-capacity place a1b2c3d4
+  assert_equal "$output" "left T7-builder a1b2c3d4: already in agent-team-T7-a1b2c3d4-100.scope"
+  assert_equal "$(stub_calls busctl)" ""
+  # The doctor's line counts it as in its task's slice.
+  run_bin -0 team-capacity check --json
+  assert_equal "$(jq -r '.problems[].reason' <<<"$output")" "agent-team.slice is not installed"
+
+  # Restarted again while both scopes hold processes, as pid 200: its own pid's scope again.
+  rm -r "${TEAM_CGROUP_ROOT:?}/proc/100"
+  session_tree 200
+  sessions "a1b2c3d4 T7-builder 200"
+  run_bin -0 team-capacity place a1b2c3d4
+  assert_equal "$output" "placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4-200.scope (4 processes)"
+  assert_equal "$(cgroup_of 101)" "$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)"
+  assert_equal "$(cgroup_of 150)" "$old"
+}
+
+@test "place says a refusal of a restarted session's own pid's scope as any other, and once the old scope has ended uses the session's id alone" {
+  session_tree 100
+  sessions "a1b2c3d4 T7-builder 100"
+  printf '%s\n' agent-team-T7-a1b2c3d4.scope agent-team-T7-a1b2c3d4-100.scope >"$STUB_FIXTURES/busctl-loaded"
+  run_bin -1 --separate-stderr team-capacity place
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-capacity: could not place T7-builder a1b2c3d4 (pid 100) in agent-team-T7.slice: Call failed: Unit agent-team-T7-a1b2c3d4-100.scope was already loaded or has a fragment file."
+  # The old scope ended, so its name is free again.
+  rm "$STUB_FIXTURES/busctl-loaded"
+  : >"$STUB_CALLS/busctl.log"
+  run_bin -0 team-capacity place
+  assert_equal "$output" "placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4.scope (4 processes)"
+  assert_equal "$(placements)" "agent-team-T7-a1b2c3d4.scope agent-team-T7.slice 100 99 101 102"
+}
+
 @test "place tries once more with a fresh tree when a process ends before the call, says each session it cannot place while it places the others, and skips one whose process is gone" {
   session_tree 100
   session_tree 200
@@ -604,6 +661,29 @@ team_reading() {
   assert_contains "$output" "  T7: 0.6 GiB; builder a1b2c3d4 0.0 GiB, stack conventioner-2 0.6 GiB"
   assert_equal "$(jq -c --argjson mib "$MIB" '.tasks | map([.task, ((.memory - ([.stacks[].memory] | add // 0)) / $mib),
       (.sessions | map(.memory / $mib))])' "$STATE_DIR/readings.jsonl")" '[["T7",0,[0]],["T9",300,[300]]]'
+}
+
+@test "sample: a session placed again in its own pid's scope uses that scope's, and what its old scope holds is its task's" {
+  sample_machine
+  local old new
+  old=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
+  new=$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)
+  # The browser T7's builder's first process left, in its old scope, and the restarted builder in
+  # its own pid's scope; T9's reviewer, not placed, uses its tree.
+  proc 150 1 1024 30 /tmp "$old"
+  proc 100 99 512 60 "$T7_WT" "$new"
+  proc 200 1 300 40 "$T9_WT"
+  sessions "a1b2c3d4 T7-builder 100" "b1b2c3d4 T9-reviewer 200"
+  cgroup_memory agent-team-T7.slice 1536 0
+  cgroup_memory agent-team-T7-a1b2c3d4.scope 1024 0 0 agent-team-T7.slice
+  cgroup_memory agent-team-T7-a1b2c3d4-100.scope 512 0 0 agent-team-T7.slice
+  unit agent-team-T7-a1b2c3d4-100.scope CPUUsageNSec=60000000000
+  run_bin -0 team-capacity sample
+  assert_equal "$(jq -c --argjson mib "$MIB" '.tasks | map([.task, ((.memory - ([.stacks[].memory] | add // 0)) / $mib),
+      (.sessions | map([.id, .memory / $mib, .cpu_seconds]))])' "$STATE_DIR/readings.jsonl")" \
+    '[["T7",1536,[["a1b2c3d4",512,60]]],["T9",300,[["b1b2c3d4",300,40]]]]'
+  assert_equal "$(stub_calls systemctl)" \
+    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4-100.scope","agent-team-T9-b1b2c3d4.scope"]'
 }
 
 @test "sample: a task's CPU is its slice's since the newest reading and its processes' outside the slice since the snapshot" {

@@ -43,8 +43,13 @@
 #          while the session's process runs, once more at once with its pid from a fresh list and
 #          a fresh tree (a process that ended meanwhile); with ids, while the call says a process
 #          is gone (No such process), again a second apart until the id's seconds have passed.
-#          With no ids, as the heartbeat and the doctor's fix run it, nothing waits. A session
-#          already in its scope is left. Each placed and left session is one line on stdout (with
+#          With no ids, as the heartbeat and the doctor's fix run it, nothing waits. When the call
+#          says the session's scope is still loaded (Unit ... was already loaded), as it is while
+#          it holds what an earlier process of the session left running (one the claude daemon
+#          restarted), those stay there, counted in the task's slice, and the session goes at once
+#          in agent-team-T<n>-<id>-<pid>.scope, named by its process's pid, in the same slice,
+#          a refusal of which fails as any other call's. A session already in either scope is
+#          left. Each placed and left session is one line on stdout (with
 #          --quiet, the heartbeat's, only each placed one), each one it cannot place one line on
 #          stderr, and the others are still placed; exit 1 when any failed.
 # check    What the doctor's resources line says, as {os, backend (systemd on Linux, macos on
@@ -114,7 +119,9 @@
 #                      no slice, every process that is the task's. A process is the task's when its
 #                      working directory is that task's held worktree or below it, or it descends
 #                      from one that is. A session's use is its scope's
-#                      (agent-team-T<n>-<id>.scope's working set and CPUUsageNSec) on Linux, else
+#                      (agent-team-T<n>-<id>.scope's working set and CPUUsageNSec, or
+#                      agent-team-T<n>-<id>-<pid>.scope's while its process runs there, as place
+#                      says) on Linux, else
 #                      its process tree's memory (each process's as above: its proportional
 #                      set size on Linux where readable, else resident) and CPU seconds, but the
 #                      team-heavy that holds the heavy-run lock (its holder line's pid) and what
@@ -620,17 +627,19 @@ reread_sessions() {
 # Place one live team session <id> <name> <pid>, its retries bounded by <deadline> (microseconds,
 # empty with no ids); returns 1 when it could not.
 place_one() {
-  local id=$1 name=$2 pid=$3 deadline=$4 task scope slice pids out tries=0 sid fresh
+  local id=$1 name=$2 pid=$3 deadline=$4 task base scope slice pids out tries=0 sid fresh cgroup
   task=${name%%-*}
-  scope=agent-team-$task-$id.scope slice=agent-team-$task.slice
+  base=agent-team-$task-$id
+  scope=$base.scope slice=agent-team-$task.slice
   if [[ ! $pid =~ ^[0-9]+$ || ! -d $ROOT/proc/$pid ]]; then
     # A listed session whose process is gone is no live one: only one named by id fails.
     ((${#ids[@]} == 0)) && return 0
     echo "team-capacity: could not place $name $id: its process ${pid:-(none listed)} is gone" >&2
     return 1
   fi
-  if [[ $(cgroup_of "$pid") == */$slice/$scope ]]; then
-    ((quiet)) || echo "left $name $id: already in $scope"
+  cgroup=$(cgroup_of "$pid")
+  if [[ $cgroup == */$slice/$scope || $cgroup == */$slice/$base-$pid.scope ]]; then
+    ((quiet)) || echo "left $name $id: already in ${cgroup##*/}"
     return 0
   fi
   while :; do
@@ -638,6 +647,13 @@ place_one() {
     if out=$(start_scope "$scope" "$slice" "${pids[@]}" 2>&1); then
       echo "placed $name $id in $scope (${#pids[@]} process$( ((${#pids[@]} == 1)) || echo es))"
       return 0
+    fi
+    # The session's own scope is still loaded, holding what an earlier process of the session
+    # left running (one the claude daemon restarted): that stays there, and this process goes in
+    # a scope of its own pid's, at once.
+    if [[ $scope == "$base.scope" && $out == *"Unit $scope was already loaded"* ]]; then
+      scope=$base-$pid.scope
+      continue
     fi
     tries=$((tries + 1))
     [[ -d $ROOT/proc/$pid ]] || break
@@ -650,6 +666,7 @@ place_one() {
     reread_sessions
     IFS=$'\t' read -r sid _ fresh < <(team_sessions "$id") || true
     [[ $sid == "$id" && $fresh =~ ^[0-9]+$ && -d $ROOT/proc/$fresh ]] && pid=$fresh
+    [[ $scope == "$base.scope" ]] || scope=$base-$pid.scope
   done
   echo "team-capacity: could not place $name $id (pid $pid) in $slice: $(grep -m1 . <<<"$out" || echo "busctl failed")" >&2
   return 1

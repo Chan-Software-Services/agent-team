@@ -160,11 +160,24 @@ def reading_tasks($in):
    ($in.procs[] | .cgroup // "" | slice_task // empty)]
   | unique | sort_by(.[1:] | tonumber);
 
+# The scope a live team session (team_sessions') is read by, from <cgroups> ({"<pid>": its cgroup
+# path}): agent-team-T<n>-<id>-<pid>.scope when its process runs there, as place puts a session
+# whose agent-team-T<n>-<id>.scope still holds what an earlier process of it left, else
+# agent-team-T<n>-<id>.scope.
+def session_scope($cgroups):
+  "agent-team-\(.task)-\(.id)" as $base
+  | ($cgroups[.pid | tostring] // "" | split("/") | last // "") as $unit
+  | if $unit == "\($base)-\(.pid).scope" then $unit else "\($base).scope" end;
+
+# Each process's cgroup path of $in.procs, {"<pid>": its cgroup}.
+def proc_cgroups($in): $in.procs | map({key: (.pid | tostring), value: (.cgroup // "")}) | from_entries;
+
 # The user manager's units a reading reads on Linux: each task's slice, each live team session's
-# scope, the running heavy run's scope, and the gate's daemon units <gate_units>.
+# scope (session_scope's), the running heavy run's scope, and the gate's daemon units <gate_units>.
 def capacity_units($in):
-  [(reading_tasks($in)[] | "agent-team-\(.).slice"),
-   (team_sessions($in)[] | "agent-team-\(.task)-\(.id).scope"),
+  proc_cgroups($in) as $cgroups
+  | [(reading_tasks($in)[] | "agent-team-\(.).slice"),
+   (team_sessions($in)[] | session_scope($cgroups)),
    ($in.heavy // empty | "agent-team-heavy-\(.).scope"),
    $in.gate_units[]];
 
@@ -177,7 +190,8 @@ def capacity_units($in):
 # heavy-run lock, or null) and prior (the newest stored reading, or null).
 # Each process is a task's when its directory is that task's held worktree or below it, or it
 # descends from one that is, the nearest one deciding; on Linux one in a task's slice is counted
-# by the slice's working set and CPUUsageNSec instead. A session's use is its scope's on Linux,
+# by the slice's working set and CPUUsageNSec instead. A session's use is its scope's on Linux
+# (session_scope's),
 # else its process tree's (the session and its descendants, but a heavy run's team-heavy and what
 # it runs, whose cost is heavy:<kind>'s). The running heavy run's use is its scope's
 # (agent-team-heavy-<pid>.scope) on Linux, else the tree of its team-heavy. The gate runs a
@@ -191,6 +205,7 @@ def capacity_reading($in):
   def under($path): . as $cwd | $cwd != "" and ($cwd == $path or ($cwd | startswith($path + "/")));
   def unit($name): ($in.units // {})[$name] // {};
   machine_reading($in) as $base
+  | proc_cgroups($in) as $cgroups
   | ($in.held | sort_by(-(.worktree | length))) as $held
   | ($in.procs | map({key: (.pid | tostring), value: (.ppid | tostring)}) | from_entries) as $parent
   | ($in.procs | map({key: (.ppid | tostring), value: (.pid | tostring)}) | group_by(.key)
@@ -212,7 +227,7 @@ def capacity_reading($in):
      | [limit(4096; .pid | tostring | recurse($kids[.] // [] | .[] | select(. != ($in.heavy // "" | tostring))))] as $tree
      | ([$tree[] | $by_pid[.].kib // 0] | add | gib_bytes) as $tree_memory
      | ([$tree[] | $by_pid[.].seconds // 0] | add) as $tree_seconds
-     | unit("agent-team-\(.task)-\(.id).scope") as $scope
+     | unit(session_scope($cgroups)) as $scope
      | {id, task, role, memory: ($scope.WorkingSet // $tree_memory),
         cpu_seconds: (if $scope.CPUUsageNSec != null then $scope.CPUUsageNSec / 1e9 else $tree_seconds end | hundredths)}]
     as $sessions
