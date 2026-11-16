@@ -1463,13 +1463,13 @@ again() {
   # A toolkit that is not skills-only still needs the project's line, on a delivery too.
   unlist codegraph
   again T7
-  refused_launch "toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, effect, kit-a, kit-b, kit-c): $UNLISTED" \
+  refused_launch "toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, kit-a, kit-b, kit-c): $UNLISTED" \
     T7 builder "$wt1" --toolkit codegraph -- "$brief_prompt"
 }
 
 @test "a ticket builder, a launch with no brief record and a reviewer get no delivery toolkit; given spec-review unlisted they launch with it, and another unlisted toolkit is refused as before" {
   unlist spec-review codegraph
-  local unlisted="toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, effect, kit-a, kit-b, kit-c): $UNLISTED"
+  local unlisted="toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, kit-a, kit-b, kit-c): $UNLISTED"
   # launch: "<role> <template, or none for a prompt naming no brief>"
   local launch role template prompt
   for launch in "builder builder-ticket" "builder builder-merge-base" "builder resume" "builder none" \
@@ -1652,7 +1652,7 @@ skills_only_kit() {
     calls=$(bg_calls | wc -l) logged=$(wc -l <"$TEAM_HOME/ledger.jsonl")
     run_fake T7 planner "$wt1" --toolkit "$kit" -- go
     assert_equal "$change: $status" "$change: 1"
-    assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, browser, codegraph, effect, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
+    assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, codegraph, effect, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
     assert_equal "$change: $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$change: $calls $logged"
   done
   # The toolkit's own name is in that text too: one that is not lowercase letters, digits and
