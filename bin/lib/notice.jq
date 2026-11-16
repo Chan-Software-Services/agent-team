@@ -3,8 +3,9 @@
 # their notices through it and do the I/O (Discord, the record's file, its lock): bin/team-timers
 # for the health alerts, the offline hold's posts, the login refusal's and the quota's crossings,
 # bin/team-uptime for the production outages (through bin/lib/uptime.jq), and bin/team-janitor tmp
-# for a memory /tmp past half full (through bin/lib/tmp.sh), all through bin/lib/notices.sh. These are pure functions of the record, a source's standing problems, the
-# lease record's taken_at and now; nothing here knows a source's texts or thresholds.
+# for a memory /tmp past half full (through bin/lib/tmp.sh), all through bin/lib/notices.sh. These
+# are pure functions of the record, a source's standing problems, the lease record's taken_at and
+# now; nothing here knows a source's texts or thresholds.
 # No includes. Included as: jq -L bin/lib 'include "notice"; ...'
 #
 # The record, ~/.local/state/agent-team/notices.json, is team-notices/1, one per machine:

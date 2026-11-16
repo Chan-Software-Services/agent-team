@@ -74,9 +74,10 @@
 # and its age (in minutes below 120, else in whole hours):
 #   removed /tmp/nm-cli-home-123 (373 MB, untouched 5 h; no-mistakes)
 # whose last part is the list line's maker, "T367 is closed" for the task rule, or "a gate
-# session's tmp" for the gate rule, and the same line, as "- HH:MM <line>" in local time, is appended to the day's file,
-# ~/.local/state/agent-team/janitor/tmp-<local date>.md, made with the title "# Temp files removed
-# on <machine>, <date>" at the day's first removal. A run that removes nothing prints nothing.
+# session's tmp" for the gate rule, and the same line, as "- HH:MM <line>" in local time, is
+# appended to the day's file, ~/.local/state/agent-team/janitor/tmp-<local date>.md, made with the
+# title "# Temp files removed on <machine>, <date>" at the day's first removal. A run that removes
+# nothing prints nothing.
 # A removal that fails is said on stderr ("team-janitor: could not remove <path>: <rm's last
 # line>"), and the rest of the run goes on.
 # One run at a time, by a lock on ~/.local/state/agent-team/tmp.lock: a second run prints
