@@ -547,7 +547,7 @@
       {
         "matcher": "Read|Grep|Glob",
         "hooks": [
-          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/session-records-guard", "onFailure": "block", "timeout": 10 }
+          { "type": "command", "command": "@TEAM_CODE@/bin/hooks/session-records-guard", "args": [], "onFailure": "block", "timeout": 10 }
         ]
       }
     ],
