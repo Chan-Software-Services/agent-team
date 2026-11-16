@@ -81,8 +81,9 @@
 # when the branch is its ancestor, "brought phase <p>'s task branch to origin/<base>: <branch>
 # <old8>..<new8> in <worktree>", so the phase's ticket worktrees, and at cap 1 the task worktree,
 # hold what merged into the base since; a branch that holds the base already is left as it is, and
-# a phase already started is never touched. It never merges, forces or pushes, and refuses the
-# fill, changing nothing, naming the step that clears it: the task worktree off the task branch, or
+# a phase already started is never touched. Every ready ticket's project is checked before any
+# branch moves. It never merges, forces or pushes, and refuses the fill, moving no branch and
+# launching nothing, naming the step that clears it: the task worktree off the task branch, or
 # with changes to tracked files or files git does not ignore, or a branch with commits the base
 # does not hold ("have a builder merge origin/<base> into <branch> ..."), exit 1; a base it cannot
 # fetch, exit 75.
@@ -1282,13 +1283,14 @@ changed_files() {
   } | paste -sd, | sed 's/,/, /g'
 }
 
-# bring_to_base <project> <phase>: before the first launch of <phase>, when the project's latest
-# merged names it first among its phases_left (the phase right after a merged part), fetches
-# origin's base into the task worktree in <project> and fast-forwards the task branch to it when
-# the branch is its ancestor, printing what moved; a branch that holds it already is left as it
-# is. Refused, changing nothing, when the worktree is off its branch or has uncommitted changes, or
-# the branch has commits the base does not hold (exit 1), or the base cannot be fetched (exit 75).
-bring_to_base() {
+# base_due <project> <phase>: before the first launch of <phase>, when the project's latest merged
+# names it first among its phases_left (the phase right after a merged part), fetches origin's base
+# into the task worktree in <project> and, when the task branch is its ancestor and not at it, adds
+# "<worktree> <branch> <base> <head> <base's tip>", tab-separated, to moves, for move_to_base; a
+# branch that holds the base already adds nothing. Refused, having moved no branch, when the
+# worktree is off its branch or has uncommitted changes, or the branch has commits the base does
+# not hold (exit 1), or the base cannot be fetched (exit 75).
+base_due() {
   local project=$1 p=$2 line wt branch base on dirty err head onto why stop
   ledger_jq '[.[] | select(.event == "merged" and (.project // $proj) == $proj)] | last
       | . != null and (.phases_left | type) == "array" and .phases_left != [] and (.phases_left | min) == $p' \
@@ -1315,9 +1317,18 @@ bring_to_base() {
   ! git -C "$wt" merge-base --is-ancestor "$onto" HEAD || return 0
   git -C "$wt" merge-base --is-ancestor HEAD "$onto" ||
     die "$why $branch at ${head:0:8} holds commits origin/$base at ${onto:0:8} does not, so it is not brought to origin/$base and $stop: have a builder merge origin/$base into $branch in $wt (a merge commit, never a rebase), then run team-next $task --fill again"
-  git -C "$wt" merge -q --ff-only "$onto" >&2 ||
-    die "$why $branch in $wt cannot fast-forward to origin/$base at ${onto:0:8}; its reason is above"
-  echo "brought phase $p's task branch to origin/$base: $branch ${head:0:8}..${onto:0:8} in $wt"
+  moves+=("$wt"$'\t'"$branch"$'\t'"$base"$'\t'"$head"$'\t'"$onto")
+}
+
+# move_to_base <phase>: fast-forwards each task branch of moves to its base's tip, printing what moved.
+move_to_base() {
+  local move wt branch base head onto
+  for move in "${moves[@]}"; do
+    IFS=$'\t' read -r wt branch base head onto <<<"$move"
+    git -C "$wt" merge -q --ff-only "$onto" >&2 ||
+      die "phase $1 starts after a merged part, but $branch in $wt cannot fast-forward to origin/$base at ${onto:0:8}; its reason is above"
+    echo "brought phase $1's task branch to origin/$base: $branch ${head:0:8}..${onto:0:8} in $wt"
+  done
 }
 
 # fill: launches, in number order (--next's first), each ready ticket of the phase being built (the
@@ -1325,7 +1336,7 @@ bring_to_base() {
 # line a step and, when it launched nothing or tickets wait, the line that says why.
 fill() {
   local tickets phase building cap problem open started running_tsv candidates_tsv n alone project k=0 c
-  local -a running=() starts=() waiting=() todo=() todo_projects=() bare=() launched=()
+  local -a running=() starts=() moves=() waiting=() todo=() todo_projects=() bare=() launched=()
   tickets=$(task_tickets) || exit
   json_vars phase='.phase' building='.building' problem='.problem' open='.open' started='.started' \
     running_tsv='[.running[] | [.ticket, .alone] | @tsv] | join("\n")' \
@@ -1352,10 +1363,13 @@ fill() {
   while IFS=$'\t' read -r n c project; do
     [[ -z $n ]] || { todo+=("$n") bare+=("$c") todo_projects+=("$project"); }
   done <<<"$candidates_tsv"
-  # A phase's first launch after a merged part starts on a task branch that holds origin's base.
+  # A phase's first launch after a merged part starts on a task branch that holds origin's base:
+  # every project's checked first, so a refusal moves no branch.
   if [[ $started == false ]] && ((${#todo[@]})); then
     mapfile -t starts < <(printf '%s\n' "${todo_projects[@]}" | awk '!seen[$0]++')
-    for project in "${starts[@]}"; do bring_to_base "$project" "$phase"; done
+    moves=()
+    for project in "${starts[@]}"; do base_due "$project" "$phase"; done
+    move_to_base "$phase"
   fi
   return_done_tickets
   alone=''

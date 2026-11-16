@@ -2947,6 +2947,20 @@ full: 1 of phase 2's cap 1 build (02); ready and waiting for a slot: 03, 04"
   assert_equal "$(task_tip)" "$own"
 }
 
+@test "--fill checks every ready ticket's project before it moves a task branch, so a refusal in one moves none" {
+  phase_merged 2
+  second_repo
+  echo ".scratch/" >>"$(git -C "${wt_other:?}" rev-parse --git-common-dir)/info/exclude"
+  mkdir -p "$wt_other/.scratch/task/tickets"
+  printf '%s\n' "# 05: fifth" "" "Blocked by: None" "Phase: 2" "" "- [ ] it works" >"$wt_other/.scratch/task/tickets/05-fifth.md"
+  event merged '{pr: 4, merge: "m1", head: "h1", by: "team-merge", project: "other", phases_left: [2]}'
+  echo stray >"$wt_other/stray.txt"
+  local old
+  old=$(task_tip)
+  refused "phase 2 starts after a merged part, but the task worktree $wt_other has uncommitted changes (stray.txt)" T7 --fill
+  assert_equal "$(task_tip)" "$old"
+}
+
 @test "--fill takes the message forms' task checks, needs plan-approved and takes only --next" {
   run_bin -2 team-next T7 --fill -- "T7 DONE 01 $sha done"
   assert_contains "$output" "--fill takes no message"
