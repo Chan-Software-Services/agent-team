@@ -136,7 +136,7 @@ EOF
   # Version stubs that also stand in for what the release archives' commands and the fork's
   # build do: the fork's clone is an empty directory its checkout and make build go along with.
   wrapper git <<EOF
-if [[ \${1:-} == clone && \${3:-} == https://github.com/chanjdaniel/no-mistakes ]]; then
+if [[ \${1:-} == clone && \${3:-} == https://github.com/Chan-Software-Services/no-mistakes ]]; then
   echo "\$*" >>"\$STUB_CALLS/fork-build.log"
   mkdir -p "\${!#}" && : >"\${!#}/.fork"
   exit
@@ -232,7 +232,7 @@ footprint() {
 
 # The install of no-mistakes: a build of Daniel's fork at the lock's commit, on either OS.
 # shellcheck disable=SC2034 # read by the tests
-FORK_BUILD='d=$(mktemp -d) && git clone -q https://github.com/chanjdaniel/no-mistakes "$d" && git -C "$d" checkout -q '$(lock_of no-mistakes .fork.commit)' && make -C "$d" build && mkdir -p ~/.no-mistakes/bin && install -m 755 "$d/bin/no-mistakes" ~/.no-mistakes/bin/no-mistakes && rm -rf "$d"'
+FORK_BUILD='d=$(mktemp -d) && git clone -q https://github.com/Chan-Software-Services/no-mistakes "$d" && git -C "$d" checkout -q '$(lock_of no-mistakes .fork.commit)' && make -C "$d" build && mkdir -p ~/.no-mistakes/bin && install -m 755 "$d/bin/no-mistakes" ~/.no-mistakes/bin/no-mistakes && rm -rf "$d"'
 
 # The lines of <stage> in the output, without the prefix.
 stage_lines() {

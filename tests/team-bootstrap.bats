@@ -98,7 +98,7 @@ running: mkdir -p ~/.no-mistakes/bin && install -m 755 $CODE_CHECKOUT/bin/lib/op
   assert_equal "$(grep -m1 config.yaml <<<"$output")" "tools: ~/.no-mistakes/config.yaml is not there: Daniel's team-secrets restore brings it (the secret no-mistakes-config), then team-bootstrap --stage tools names the wrapper in it"
   # The build: the fork cloned into a new temporary directory (<d> here), built there and installed;
   # <d> is a whole directory, so a HOME under a TMPDIR that mktemp named tmp.* keeps its path.
-  assert_equal "$(sed -E 's#[^ ]*/tmp\.[[:alnum:]]+( |/bin/no-mistakes |$)#<d>\1#g' "$STUB_CALLS/fork-build.log")" "clone -q https://github.com/chanjdaniel/no-mistakes <d>
+  assert_equal "$(sed -E 's#[^ ]*/tmp\.[[:alnum:]]+( |/bin/no-mistakes |$)#<d>\1#g' "$STUB_CALLS/fork-build.log")" "clone -q https://github.com/Chan-Software-Services/no-mistakes <d>
 git checkout -q $(lock_of no-mistakes .fork.commit)
 make build
 install -m 755 <d>/bin/no-mistakes $HOME/.no-mistakes/bin/no-mistakes"

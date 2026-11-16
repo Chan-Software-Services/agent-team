@@ -99,7 +99,7 @@ lock_has_its_shape() {
   assert_equal "$(jq -c '[.tools[] | select(.from == "download") | .download] | unique | length' "$LOCK")" 1
   assert_equal "$(jq -r '[.tools[] | select(.release) | "\(.name)=\(.release.repo)"] | join(" ")' "$LOCK")" \
     "treehouse=kunchenguid/treehouse no-mistakes=kunchenguid/no-mistakes"
-  assert_equal "$(jq -r '.tools[] | select(.fork) | "\(.name)=\(.fork.repo)"' "$LOCK")" "no-mistakes=chanjdaniel/no-mistakes"
+  assert_equal "$(jq -r '.tools[] | select(.fork) | "\(.name)=\(.fork.repo)"' "$LOCK")" "no-mistakes=Chan-Software-Services/no-mistakes"
   # The fork builds with Go (its go.mod's version) and make, from the OS packages.
   assert_equal "$(jq -r '[.tools[] | select(.name | IN("go", "make")) | "\(.name)>=\(.min):\(.source | keys | join(","))"] | join(" ")' "$LOCK")" \
     "go>=1.25.0:arch,macos make>=4.0:arch"
@@ -253,7 +253,7 @@ lock_has_its_shape() {
 @test "no-mistakes is built from Daniel's fork at its pinned commit, on Arch and macOS alike" {
   only_checks 030-tools.sh
   local fix
-  fix='d=$(mktemp -d) && git clone -q https://github.com/chanjdaniel/no-mistakes "$d" && git -C "$d" checkout -q '$(lock_of no-mistakes .fork.commit)' && make -C "$d" build && mkdir -p ~/.no-mistakes/bin && install -m 755 "$d/bin/no-mistakes" ~/.no-mistakes/bin/no-mistakes && rm -rf "$d"'
+  fix='d=$(mktemp -d) && git clone -q https://github.com/Chan-Software-Services/no-mistakes "$d" && git -C "$d" checkout -q '$(lock_of no-mistakes .fork.commit)' && make -C "$d" build && mkdir -p ~/.no-mistakes/bin && install -m 755 "$d/bin/no-mistakes" ~/.no-mistakes/bin/no-mistakes && rm -rf "$d"'
   every_tool_fails arch -
   assert_equal "$(line_of 'tool no-mistakes')" "FAIL tool no-mistakes: not installed; fix: $fix"
   assert_equal "$(line_of 'tool go')" "FAIL tool go: not installed; fix: sudo pacman -S --needed go"
