@@ -335,8 +335,9 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   [[ ! -e $tmp && -d $TEAM_SYSTEM_ROOT/tmp/agent-team-T1 ]]
   [[ ! -e $dirs/T0 && -d $dirs/T1/builder.x ]]
   [[ $stderr != *"session directories"* ]]
-  # A link where each would be, there by the time the sessions are done (the launcher refuses to
-  # launch a session onto a link), is left with what it names.
+  # A link where each would be is left with what it names; the session directories' one is made
+  # by the time the sessions are done, since confine-session refuses to write a session directory
+  # through a link.
   ln -s "$BATS_TEST_TMPDIR/kept" "$tmp"
   printf 'rm -rf %q && ln -s %q %q\n' "${dirs:?}/T0" "$BATS_TEST_TMPDIR/kept" "$dirs/T0" >"$STUB_FIXTURES/session-does"
   rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*

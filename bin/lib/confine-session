@@ -6,13 +6,15 @@
 #                              --team-home <path> --home <path> [--session-tmp <path>]
 #        confine-session job --dir <directory> --session-id <8 hexadecimal characters>
 #
-# write makes <directory>, and each missing parent, mode 700, and in it:
+# write makes <directory>, and each missing directory from <home>/.config/agent-team down to it,
+# mode 700, and in it:
 #   session.json  mode 400, one object: version (1), task, home (--home), kept (the directories no
-#                 root may be, hold or be under: the team home, <home>/.config/agent-team and
-#                 <home>/.claude, each resolved), worktree and git_dir (each resolved),
-#                 session_tmp (--session-tmp, else /tmp/agent-team-<task>) and shell, the first
-#                 executable of /opt/homebrew/bin/bash, /usr/local/bin/bash, /usr/bin/bash and
-#                 /bin/bash, never the one on PATH;
+#                 git directory or confine-roots line may be, hold or be under: the team home,
+#                 <home>/.config/agent-team and <home>/.claude, each resolved), worktree and
+#                 git_dir (each resolved), session_tmp (--session-tmp, else
+#                 /tmp/agent-team-<task>) and shell, the first executable of
+#                 /opt/homebrew/bin/bash, /usr/local/bin/bash, /usr/bin/bash and /bin/bash, never
+#                 the one on PATH;
 #   bash          mode 500, three lines: #!/bin/sh, a comment, and
 #                 exec '<this checkout>/bin/lib/confine-shell' --session '<directory>/session.json' "$@"
 # each written to a temporary name there and renamed into place, so a second write replaces the
@@ -20,8 +22,9 @@
 # CLAUDE_CODE_SHELL and CLAUDE_CODE_SHELL_PREFIX: it enters the domain from the roots in the file
 # and only then runs a shell (bin/lib/confine-shell and bin/lib/confine.py's --help say how).
 # <directory> is <home>/.config/agent-team/confine/<task>/<the launch's stem>: under
-# <home>/.config/agent-team, where confine.py lets no root be, so no confined command removes or
-# renames an entry there, and on the machine, never in the team home, since the program is code.
+# <home>/.config/agent-team, where confine.py lets no git directory or confine-roots line be and
+# no launch puts a root, so no confined command removes or renames an entry there, and on the
+# machine, never in the team home, since the program is code.
 #
 # write refuses (exit 1, "confine-session: <reason>"):
 #   - a <directory> or a checkout path holding a single quote, a newline, " -" or "zsh"

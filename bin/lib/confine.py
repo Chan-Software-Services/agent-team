@@ -30,8 +30,9 @@ longer name that program; whatever the command does inside its roots; and signal
 The domain sets no_new_privs, so a setuid program (sudo) gains nothing inside it, and it can
 never be left: a confined command that runs this wrapper again only narrows its own roots.
 
---session's roots come from the file alone: no variable of the environment names a root, a home
-directory or the team home, and nothing is asked of the worktree's own files. The file is one
+--session's roots come from the file and the file confine-roots beside this one alone: no
+variable of the environment names a root, a home directory or the team home, and nothing is
+asked of the worktree's own files. The file is one
 JSON object, version 1, with the keys task, home, kept, worktree, git_dir, session_tmp, shell
 and, once the session has an id, job_tmp. Each root is resolved through its links:
   - worktree, the session's worktree, never the working directory, so a cd into another
@@ -145,7 +146,8 @@ def _outside_kept(root, kept, named):
     for directory in kept:
         if _within(root, directory) or _within(directory, root):
             raise Refused(f"{named}, which is, holds or is under {directory}; "
-                          "no path of the team home, ~/.config/agent-team or ~/.claude is a root")
+                          "no git directory or confine-roots line may be a path of the team home, "
+                          "~/.config/agent-team or ~/.claude")
 
 
 def _listed_roots(home, kept):
