@@ -3016,6 +3016,35 @@ $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t15\ntests/c
 $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
 }
 
+# tests/shards update ending by die after it made its scratch, on a gh stub whose CI run 4343
+# has no shard job and whose run 4444's shard job log cannot be read.
+@test "tests/shards update that ends by die after making its scratch leaves nothing in its TMPDIR" {
+  local copy=$BATS_TEST_TMPDIR/copy
+  unset TEAM_HOME
+  mkdir -p "$copy/tests"
+  copy_bin "$copy/bin"
+  link_shared tests-shards "$REPO_ROOT/tests/shards" "$copy/tests/shards"
+  stub_script gh <<'SH'
+case "$*" in
+  "run view 4343 --json jobs,headSha,createdAt")
+    echo '{"headSha": "abcdef1234567890", "createdAt": "2026-10-31T12:00:00Z", "jobs": [{"databaseId": 30, "name": "test"}]}' ;;
+  "run view 4444 --json jobs,headSha,createdAt")
+    echo '{"headSha": "abcdef1234567890", "createdAt": "2026-10-31T12:00:00Z", "jobs": [{"databaseId": 11, "name": "test-shards (1)"}]}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+SH
+  printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30\n' >"$copy/tests/timings.tsv"
+  cp "$copy/tests/timings.tsv" "$BATS_TEST_TMPDIR/timings.before"
+  run -1 --separate-stderr "$copy/tests/shards" update 4343
+  assert_equal "$stderr" "shards: CI run 4343 printed no per-file seconds in a shard job"
+  assert_equal "$(ls -A "$TMPDIR")" ""
+  run -1 --separate-stderr "$copy/tests/shards" update 4444
+  assert_contains "$stderr" "shards: cannot read the log of test-shards (1) in CI run 4444"
+  assert_equal "$(ls -A "$TMPDIR")" ""
+  # The timings are left as they were.
+  cmp "$copy/tests/timings.tsv" "$BATS_TEST_TMPDIR/timings.before"
+}
+
 # The timings are data tests/shards reads: each row names a bats file that exists, with whole
 # seconds on Linux and on macOS whole seconds or none (a file CI timed only since it ran no macOS
 # job, which tests/shards weighs there by its bytes), so a removed file takes its row with it.

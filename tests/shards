@@ -31,15 +31,16 @@ timings=$root/tests/timings.tsv
 # "ok|not ok tests/<name>.bats (<n>s)" lines as linux, and each of those files' macos seconds as
 # the timings had them.
 update() {
-  local run=$1 jobs id name scratch sha created
+  local run=$1 jobs id name sha created
   if [[ -z $run ]]; then
     run=$(cd "$root" && gh run list --workflow ci.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
     [[ -n $run ]] || die "no successful CI run to read"
   fi
   jobs=$(cd "$root" && gh run view "$run" --json jobs,headSha,createdAt) || die "cannot read CI run $run"
   sha=$(jq -r .headSha <<<"$jobs") created=$(jq -r .createdAt <<<"$jobs")
+  # An EXIT trap, so a die, which exits, removes it too; a RETURN trap runs only on a return.
   scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' RETURN
+  trap 'rm -rf "$scratch"' EXIT
   while IFS=$'\t' read -r id name; do
     [[ $name == test-shards* ]] || continue
     (cd "$root" && gh run view "$run" --job "$id" --log) |
