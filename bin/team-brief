@@ -161,10 +161,20 @@
 # code spans as instruction_files' are, at most 30 then "- and <n> more in <the files>"; with none,
 # one line saying so. A git failure of the helper's is refused: "cannot list the dropped tests
 # <range> changes in <worktree> (<git's reason>)".
+# dependencies, in the same templates, is derived the same way and never set:
+# bin/lib/review_facts.py dependencies (its header gives the manifests and the lines it reads) reads
+# the same range's changed package.json, requirements*.txt and go.mod files at the merge base and at
+# the head, and each direct dependency the head adds or changes (package.json's four dependency
+# sections, a move between them with the same spec not listed; requirements lines by PEP 503 name,
+# an -e or URL line whole; go.mod's require lines but // indirect ones) is a list item with its
+# version, its section and whether the worktree's <task_dir>/spec.md names it (or that there is no
+# spec.md), and each manifest it cannot read, at the commit it cannot; at most 30 then "- and <n>
+# more in <the manifests>"; with none, one line saying so. A git failure is refused: "cannot list
+# the dependencies <range> changes in <worktree> (<git's reason>)".
 # Refused, exit 1 with nothing written: an unknown template, a task that is not open (no opened
 # event, or closed) or has no open worktree, a placeholder left unfilled (each named), a --set key
-# no placeholder uses, a --set of a task fact, of instruction_files or of dropped_tests, and an
-# existing brief without --force.
+# no placeholder uses, a --set of a task fact, of instruction_files, of dropped_tests or of
+# dependencies, and an existing brief without --force.
 # Prints the brief's path, ready for team-worker's first prompt, and writes its record beside it,
 # tasks/T<n>/brief[-<suffix>].json, replaced with it: {template, project, values}, values holding
 # every placeholder the brief fills but the task's facts, as filled, given or derived.
@@ -233,7 +243,7 @@ for key in "${fact_keys[@]}"; do
   [[ ! -v sets[$key] ]] ||
     die "$key is one of the task's facts, filled from the ledger and the registry; it cannot be set"
 done
-for key in instruction_files dropped_tests; do
+for key in instruction_files dropped_tests dependencies; do
   [[ ! -v sets[$key] ]] ||
     die "$key is derived by git from the base and the head the brief names; it cannot be set"
 done
@@ -539,14 +549,14 @@ file=$TEAM_HOME/tasks/$task/brief${name:+-$name}.md record=${file%.md}.json
 
 # Every placeholder needs a value, and every --set value a placeholder. A derivable placeholder
 # the caller does not set is derived below; since is always derived, the caller's added after it,
-# and instruction_files and dropped_tests always derived, never set.
+# and instruction_files, dropped_tests and dependencies always derived, never set.
 mapfile -t used < <(grep -oE '\{\{[a-z][a-z0-9_]*\}\}' <<<"$text" | sed 's/^{{//; s/}}$//' | sort -u)
 derivable=(reviewed pr head since findings findings_file goal)
 uses() { [[ " ${used[*]} " == *" $1 "* ]]; }
 missing=() unused=() derive=()
 declare -A why=()
 for key in "${used[@]}"; do
-  if [[ $key == since || $key == instruction_files || $key == dropped_tests ]]; then
+  if [[ $key == since || $key == instruction_files || $key == dropped_tests || $key == dependencies ]]; then
     derive+=("$key")
   elif [[ -v sets[$key] ]]; then
     values[$key]=${sets[$key]}
@@ -662,7 +672,7 @@ if deriving since; then
     underivable since "derived from reviewed and head"
   fi
 fi
-for key in instruction_files dropped_tests; do
+for key in instruction_files dropped_tests dependencies; do
   if deriving "$key" && [[ ! -v values[head] ]]; then
     underivable "$key" "derived from head"
   fi
@@ -679,10 +689,10 @@ if ((${#missing[@]})); then
   die "$message"
 fi
 
-# The worktree's git, for the derived since, instruction_files and dropped_tests: the base fetched,
-# and the heads they read fetched too when the worktree lacks them.
+# The worktree's git, for the derived since, instruction_files, dropped_tests and dependencies: the
+# base fetched, and the heads they read fetched too when the worktree lacks them.
 git_keys=()
-for key in since instruction_files dropped_tests; do
+for key in since instruction_files dropped_tests dependencies; do
   ! deriving "$key" || git_keys+=("$key")
 done
 if ((${#git_keys[@]})); then
@@ -794,6 +804,43 @@ if deriving dropped_tests; then
     else
       (.[30:] | map(.file) | unique) as $rest
       | "`\($shown)` drops these tests:\n\n" + (.[:30] | map(item) | join("\n"))
+        + (if $rest == [] then "" else "\n- and \(length - 30) more in \($rest | map(span) | join(", "))" end)
+    end' <<<"$facts")
+fi
+
+# The derived dependencies: each direct dependency the head adds or changes against the base, as the
+# reviewer's diff origin/<base>...<head> has it, read by bin/lib/review_facts.py from git alone, and
+# whether the task's spec.md, in the worktree's task directory, names it.
+if deriving dependencies; then
+  shown="origin/$base...$head" said=$(mktemp)
+  if ! facts=$(python3 -I "$TEAM_LIB/review_facts.py" dependencies "$wt" "refs/remotes/origin/$base" "$head" \
+    "$wt/${values[task_dir]}/spec.md" 2>"$said"); then
+    reason=$(tail -n 1 "$said")
+    rm -f "$said"
+    die "cannot list the dependencies $shown changes in $(tilde "$wt") (${reason:-bin/lib/review_facts.py failed})"
+  fi
+  rm -f "$said"
+  values[dependencies]=$(jq -r --arg shown "$shown" '
+    def span: if test("[[:cntrl:]`]") then "`\(tojson | gsub("`"; "\\u0060"))`" else "`\(.)`" end;
+    def version: if . == "" then "no version" else span end;
+    def named:
+      if .named == true then "named in `spec.md`"
+      elif .named == false then "not named in `spec.md`"
+      else "not named: the task directory has no `spec.md`" end;
+    def section: if .section == null then "" else " in \(.section | span)" end;
+    def item:
+      "- \(.file | span): " + (
+        if .kind == "unreadable" then "cannot be read at `\(.at)`: read its diff by hand"
+        elif .line and .kind == "added" then "\(.name | span) added, \(named)"
+        elif .line then "\(.name | span) changed from \(.from | span), \(named)"
+        elif .kind == "added" then
+          "\(.name | span) added \(if .version == "" then "with no version" else "at \(.version | span)" end)\(section), \(named)"
+        else "\(.name | span) \(.from | version) to \(.version | version)\(section), \(named)" end);
+    if length == 0 then
+      "`\($shown)` adds and changes no direct dependency in a `package.json`, `requirements*.txt` or `go.mod`."
+    else
+      (.[30:] | map(.file) | unique) as $rest
+      | "`\($shown)` adds or changes these direct dependencies:\n\n" + (.[:30] | map(item) | join("\n"))
         + (if $rest == [] then "" else "\n- and \(length - 30) more in \($rest | map(span) | join(", "))" end)
     end' <<<"$facts")
 fi

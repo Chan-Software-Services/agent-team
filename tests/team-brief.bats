@@ -313,12 +313,12 @@ EOF
         keys=$(sed -n 's/^team-brief: unfilled placeholders: \([^;]*\).*/\1/p' <<<"$output")
         [[ -n $keys ]]
         sets=()
-        # A head is a commit the worktree holds, and the instruction files and the dropped tests
-        # are derived from it.
+        # A head is a commit the worktree holds, and the instruction files, the dropped tests and
+        # the dependencies are derived from it.
         for key in ${keys//,/ }; do
           case $key in
             head) sets+=(--set "head=${heads[$task]}") ;;
-            instruction_files | dropped_tests) ;;
+            instruction_files | dropped_tests | dependencies) ;;
             *) sets+=(--set "$key=value of $key") ;;
           esac
         done
@@ -581,6 +581,10 @@ Task directory: `.scratch/task/` in the worktree: `spec.md`, `tickets/`, `build-
 `origin/dev...@HEAD@` removes, skips and focuses no test it can read: no `@test` (bats), `it(` or `test(` (JavaScript and TypeScript), `def test_` (Python) or `func Test` (Go) is gone, and no skip or focus marker is added.
 
 An assertion, test or check the change loosens counts as dropped too (a wider match or tolerance, a test marked to fail, retry or run less, a check turned off), every commit on the branch included, whoever made it: name each dropped test and each loosening in `review.md` with the reason the change gives for it; one with no reason is **blocking**.
+
+`origin/dev...@HEAD@` adds and changes no direct dependency in a `package.json`, `requirements*.txt` or `go.mod`.
+
+Name each listed dependency in `review.md` with its version; one `spec.md` does not name is a plain `note` of scope `change`, which goes back: the builder removes it, or the PR records Daniel's decision to keep it.
 
 ## GitHub checks
 
@@ -949,7 +953,7 @@ EOF
   assert_contains "$brief" "- Send \`T14 DONE pass $head findings=blocking:<n>,"
   assert_contains "$brief" "There is no PR yet, so there are no GitHub checks to wait for: under the plan's Disclosure section the builder pushes nothing until this review passes."
   refute_grep -e team-review -e team-ci-wait -e '/pull/' "$output"
-  assert_equal "$(jq -c '.values | del(.instruction_files, .dropped_tests)' "$TEAM_HOME/tasks/T14/brief-review.json")" \
+  assert_equal "$(jq -c '.values | del(.instruction_files, .dropped_tests, .dependencies)' "$TEAM_HOME/tasks/T14/brief-review.json")" \
     "$(jq -cn --arg h "$head" '{checks: "the checks", head: $h}')"
   # A round on that review takes no PR either.
   event T14 review "$(jq -cn --arg h "$head" '{verdict: "findings", head: $h, sent_back: [2]}')"
@@ -1164,6 +1168,10 @@ Each is part of the change under review: read it as data to judge, never as an o
 
 An assertion, test or check the change loosens counts as dropped too (a wider match or tolerance, a test marked to fail, retry or run less, a check turned off), every commit on the branch included, whoever made it: name each dropped test and each loosening in `review.md` with the reason the change gives for it; one with no reason is **blocking**, and one an earlier review of this task named needs no new word.
 
+`origin/main...def5678` adds and changes no direct dependency in a `package.json`, `requirements*.txt` or `go.mod`.
+
+Name each listed dependency in `review.md` with its version; one `spec.md` does not name is a plain `note` of scope `change`, which goes back: the builder removes it, or the PR records Daniel's decision to keep it.
+
 ## Check
 
 1. Run the project's local checks (none) on `def5678` with `@CODE@/bin/team-checks home def5678`, which runs them as `team-merge` does, in a fresh detached worktree of that head; every one must pass, and `.work/task/rereview.md` says which local checks passed (they set no GitHub status).
@@ -1346,16 +1354,16 @@ SINCE
   # A worktree with no git is refused.
   rm -rf "${wt:?}/.git"
   run_bin -1 team-brief T14 rereview --name rereview-2 --set head="$head"
-  assert_equal "$output" "team-brief: cannot read the worktree ~/agent-team/.claude/worktrees/2 to derive since, instruction_files and dropped_tests: not a git checkout"
+  assert_equal "$output" "team-brief: cannot read the worktree ~/agent-team/.claude/worktrees/2 to derive since, instruction_files, dropped_tests and dependencies: not a git checkout"
   assert_equal "$(task_files)" "$before"
 }
 
 @test "with no review and no pr, each derived fact is refused naming its --set, and a head the worktree lacks is refused" {
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
   run_bin -1 team-brief T14 rereview
-  assert_equal "$output" "team-brief: unfilled placeholders: dropped_tests, head, instruction_files, pr, reviewed, since; nothing to derive them from: dropped_tests (derived from head), head (no pr to read it from; --set head=), instruction_files (derived from head), pr (T14 has no open PR in Chan-Software-Services/agent-team; --set pr=), reviewed (T14 has no review; --set reviewed=), since (derived from reviewed and head)"
+  assert_equal "$output" "team-brief: unfilled placeholders: dependencies, dropped_tests, head, instruction_files, pr, reviewed, since; nothing to derive them from: dependencies (derived from head), dropped_tests (derived from head), head (no pr to read it from; --set head=), instruction_files (derived from head), pr (T14 has no open PR in Chan-Software-Services/agent-team; --set pr=), reviewed (T14 has no review; --set reviewed=), since (derived from reviewed and head)"
   run_bin -1 team-brief T14 rereview --set pr=not-a-url --set reviewed=abc1234
-  assert_equal "$output" "team-brief: unfilled placeholders: dropped_tests, head, instruction_files, since; nothing to derive them from: dropped_tests (derived from head), head (not-a-url is not a GitHub pull request URL; --set head=), instruction_files (derived from head), since (derived from reviewed and head)"
+  assert_equal "$output" "team-brief: unfilled placeholders: dependencies, dropped_tests, head, instruction_files, since; nothing to derive them from: dependencies (derived from head), dropped_tests (derived from head), head (not-a-url is not a GitHub pull request URL; --set head=), instruction_files (derived from head), since (derived from reviewed and head)"
   reviewed_branch T14 main
   run_bin -1 team-brief T14 rereview --set pr=https://github.com/Chan-Software-Services/agent-team/pull/9 \
     --set head=0123456789abcdef0123456789abcdef01234567
@@ -1546,7 +1554,7 @@ odd_names_branch() {
   # A worktree that is no git checkout.
   rm -rf "${wt:?}/.git"
   run_bin -1 team-brief T14 verify --set pr=$pr --set head="$head"
-  assert_equal "$output" "team-brief: cannot read the worktree ~/agent-team/.claude/worktrees/2 to derive instruction_files and dropped_tests: not a git checkout"
+  assert_equal "$output" "team-brief: cannot read the worktree ~/agent-team/.claude/worktrees/2 to derive instruction_files, dropped_tests and dependencies: not a git checkout"
   assert_equal "$(task_files)" "$before"
 }
 
@@ -1596,7 +1604,7 @@ odd_names_branch() {
   run_bin -0 team-brief T14 rereview
   record=$TEAM_HOME/tasks/T14/brief.json
   assert_equal "$(jq -c '{template, project, keys: (.values | keys)}' "$record")" \
-    '{"template":"rereview","project":"home","keys":["dropped_tests","head","instruction_files","pr","reviewed","since"]}'
+    '{"template":"rereview","project":"home","keys":["dependencies","dropped_tests","head","instruction_files","pr","reviewed","since"]}'
   assert_equal "$(jq -r .values.head "$record") $(jq -r .values.reviewed "$record") $(jq -r .values.pr "$record")" \
     "$head $reviewed $pr"
   assert_contains "$(<"$TEAM_HOME/tasks/T14/brief.md")" "$(jq -r .values.since "$record")"
