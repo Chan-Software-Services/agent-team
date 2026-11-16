@@ -3,8 +3,9 @@
 #               components), as rustup sees it run there: installed with every component it
 #               names, and cargo, found on the library's PATH, rustup's ~/.cargo/bin/cargo, which
 #               runs it ("1.100.0 with clippy, rust-analyzer, rust-src, rustfmt"). Without rustup
-#               (rustup's own line installs it), without the toolchain or lacking a component it
-#               fails, the fix `cd <code checkout> && rustup toolchain install`, which installs
+#               (rustup's own line installs it), when rustup toolchain list fails (naming its last
+#               stderr line, else its exit code) or does not answer within 30 s, without the
+#               toolchain or lacking a component it fails, the fix `cd <code checkout> && rustup toolchain install`, which installs
 #               what rust-toolchain.toml names; another cargo first on PATH (a rustup installed
 #               elsewhere, whose own cargo the library's ~/.cargo/bin does not shadow) fails, the
 #               fix the tool rustup line's install command from bin/lib/tools.lock, which puts
@@ -39,7 +40,11 @@ if [[ -n $os && -f $rust_code/rust-toolchain.toml ]]; then
     report "tool rust-toolchain" FAIL "rustup is not installed" "$rust_fix"
   elif ((rust_rc == 124)); then
     report "tool rust-toolchain" FAIL "\`rustup toolchain list\` did not answer within 30 s" "$rust_fix"
-  elif ((rust_rc)) || ! grep -qE "^${rust_channel//./\\.}-[a-z0-9_]+-" <<<"$rust_toolchains"; then
+  elif ((rust_rc)); then
+    rust_error=$(grep . "$err" | tail -n 1 || true)
+    if [[ -n $rust_error ]]; then rust_error="\"$rust_error\""; else rust_error="exit $rust_rc"; fi
+    report "tool rust-toolchain" FAIL "\`rustup toolchain list\` failed ($rust_error)" "$rust_fix"
+  elif ! grep -qE "^${rust_channel//./\\.}-[a-z0-9_]+-" <<<"$rust_toolchains"; then
     report "tool rust-toolchain" FAIL "$rust_channel is not installed" "$rust_fix"
   else
     rust_installed=$(rust_rustup component list --installed --toolchain "$rust_channel") || true
