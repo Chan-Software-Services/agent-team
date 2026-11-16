@@ -27,8 +27,9 @@ setup() {
 }
 
 # answer <look> <what> <answer>: from look <look> on, gh answers <what> (view, checks, runs, running,
-# run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub) or, for checks, "none" (no
-# check run and no status).
+# run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub),
+# "limited:<refusal>" (a refusal for the limit, github_limited's arguments: "limited:primary",
+# "limited:retry-after 60") or, for checks, "none" (no check run and no status).
 answer() {
   printf '%s\n' "$3" >"$GH_DIR/$2.$1"
 }
@@ -139,6 +140,10 @@ while ((m >= 0)) && [[ ! -e $GH_DIR/$from.$m ]]; do m=$((m - 1)); done
 if ((m < 0)); then echo "no answer planned for $what at look $n" >&2; exit 1; fi
 body=$(cat "$GH_DIR/$from.$m")
 [[ $body != fail ]] || github_offline
+if [[ $body == limited:* ]]; then
+  read -ra how <<<"${body#limited:}"
+  github_limited "${how[@]}"
+fi
 if [[ $from == checks ]]; then
   [[ $body != none ]] || body='[]'
   if [[ $what == check-runs ]]; then
@@ -257,7 +262,7 @@ both() {
   assert_equal "${#lines[@]}" 1
   assert_equal "$(jq -r .schema <<<"$output")" team-ci-wait/1
   assert_equal "$(jq -r .text <<<"$output")" "$(sed '/^team-ci-wait: waiting on \(the checks of\|CI run\) /d' <<<"$text_output")"
-  assert_equal "$(jq -r 'keys | join(" ")' <<<"$output")" "failures head outcome schema text"
+  assert_equal "$(jq -r 'keys | join(" ")' <<<"$output")" "failures head limited_until outcome schema text"
 }
 
 @test "T121: a summary check left in_progress on a run that completed ends the wait after 5 minutes, naming the re-run" {
@@ -706,6 +711,118 @@ EOF
   # One look's five reads: the PR, its head's check runs and statuses, the head's runs and the repository's runs in
   # progress.
   assert_equal "$(stub_calls gh | grep -c .)" 5
+}
+
+# GitHub's rate limit: a wait sleeps it out and goes on, never reading it as an outage (T407).
+
+# fresh_run: the next run from look 0 on the clock's start, with no limit, cache or budget left by
+# the last one.
+fresh_run() {
+  echo 0 >"$GH_DIR/look"
+  github_clock 1795000000
+  rm -rf "${HOME:?}/.local/state/agent-team/github"
+}
+
+# limit_line <until> [secondary]: the wait's stderr line for a limit until <until> epoch seconds.
+limit_line() {
+  if [[ ${2:-} == secondary ]]; then
+    echo "team-ci-wait: GitHub's secondary rate limit holds the team's requests until $(date -d "@$1" +%H:%M); this is no outage; waiting for it, then looking again"
+  else
+    echo "team-ci-wait: GitHub's API rate limit for core requests is used up until $(date -d "@$1" +%H:%M), when it resets; this is no outage; waiting for it, then looking again"
+  fi
+}
+
+@test "a primary limit met mid-wait is slept out to its reset, said once on stderr, and the wait passes, its clocks not counting the sleep" {
+  t0=$(github_now)
+  github_budget core 5000 4000 $((t0 + 600))
+  checks 0 "$(check test SUCCESS)"
+  answer 1 view limited:primary
+  pr OPEN "$head" 2
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 0
+  # Look 0 reads, look 1 is refused, look 2 finds the limit standing and sleeps to its reset plus a
+  # second, then the reading stands for its 2 minutes of look intervals, the limit's sleep left out.
+  assert_equal "$(ended_at)" 6
+  assert_equal "${lines[*]}" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d team-ci-wait: every check passed on a1b2c3d: test passed"
+  assert_equal "$stderr" "$(limit_line $((t0 + 600)))"
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 30 541 30 30 30"
+  # Nothing is sent while the limit stands: a read at each look but the one that slept it out.
+  assert_equal "$(github_requests | grep -c 'pulls/217 403')" 1
+  assert_equal "$(github_requests | grep -c 'pulls/217')" 6
+  [[ ! -e $HOME/.local/state/agent-team/offline ]]
+  fresh_run
+  github_budget core 5000 4000 $((t0 + 600))
+  run_bin --separate-stderr team-ci-wait --json "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" "[\"passed\",\"$(date -u -d "@$((t0 + 600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
+  assert_equal "$stderr" "$(limit_line $((t0 + 600)))"
+}
+
+@test "a limit, then GitHub unreachable, ends exit 75 after 5 minutes of the failure alone" {
+  t0=$(github_now)
+  github_budget core 5000 4000 $((t0 + 600))
+  answer 0 view limited:primary
+  answer 2 view fail
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 75
+  # The refusal, a look interval, the limit's sleep, then 5 minutes of failing looks.
+  assert_equal "$(ended_at)" 12
+  assert_equal "$output" "team-ci-wait: GitHub could not be read for 5 minutes running: gh api repos/owner/proj/pulls/217: error connecting to api.github.com"
+  assert_equal "$stderr" "$(limit_line $((t0 + 600)))"
+  [[ ! -e $HOME/.local/state/agent-team/offline ]]
+}
+
+@test "a limit never ends a wait but at its deadline, which then names it" {
+  t0=$(github_now)
+  github_budget core 5000 4000 $((t0 + 3600))
+  answer 0 view limited:primary
+  TEAM_CI_WAIT_DEADLINE_SECONDS=300 run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 75
+  # The limit's sleep stops at the deadline, and the look after it sends nothing.
+  assert_equal "$(ended_at)" 2
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 270"
+  assert_equal "$(github_requests)" "repos/owner/proj/pulls/217 403"
+  assert_equal "$output" "team-ci-wait: 5 minutes, and GitHub not read yet: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 3600))" +%H:%M), when it resets; this is no outage: run team-ci-wait again to wait, or report BLOCKED"
+  assert_equal "$stderr" "$(limit_line $((t0 + 3600)))"
+  fresh_run
+  github_budget core 5000 4000 $((t0 + 3600))
+  TEAM_CI_WAIT_DEADLINE_SECONDS=300 run_bin --separate-stderr team-ci-wait --json "$url"
+  assert_equal "$status" 75
+  assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" "[\"unreadable\",\"$(date -u -d "@$((t0 + 3600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
+}
+
+@test "--look sleeps out a secondary limit inside its grace, and ends unreadable at once on a primary one past it" {
+  t0=$(github_now)
+  checks 0 "$(check test SUCCESS)"
+  answer 0 view "limited:retry-after 60"
+  pr OPEN "$head" 1
+  run_bin --separate-stderr team-ci-wait --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 2
+  assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  assert_equal "$stderr" "$(limit_line $((t0 + 60)) secondary)"
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 31"
+  fresh_run
+  rm "$GH_DIR/view.1"
+  github_budget core 5000 4000 $((t0 + 600))
+  answer 0 view limited:primary
+  run_bin --separate-stderr team-ci-wait --look "$url"
+  assert_equal "$status" 75
+  assert_equal "$(ended_at)" 1
+  assert_equal "$output" "team-ci-wait: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 600))" +%H:%M), when it resets; this is no outage: look again after it"
+  assert_equal "$stderr" ""
+  fresh_run
+  github_budget core 5000 4000 $((t0 + 600))
+  run_bin --separate-stderr team-ci-wait --json --look "$url"
+  assert_equal "$status" 75
+  assert_equal "$(jq -c '[.outcome, .head, .limited_until]' <<<"$output")" "[\"unreadable\",null,\"$(date -u -d "@$((t0 + 600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
+}
+
+@test "--json's limited_until is null on an end that met no limit" {
+  checks 0 "$(check test SUCCESS)"
+  run_bin team-ci-wait --json --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" '["passed",null]'
 }
 
 @test "a malformed command line is a usage error, and a repo no project has is refused" {
