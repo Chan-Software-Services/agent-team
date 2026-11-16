@@ -34,6 +34,7 @@ import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.m
 import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
 import { opStub, repoRoot, startToolkitServer, stubDir, tempDir, testPath } from "./helpers/mcp.mjs";
 import { mongoImage, perThreadCaches, startMongo } from "./helpers/mongo.mjs";
+import { owned } from "./helpers/process.mjs";
 import { assertNoLeak, evalMockTools, launcherRefusalTests } from "./helpers/toolkit.mjs";
 
 const reference = "op://agent-team/conventioner-prod-read/uri";
@@ -69,9 +70,9 @@ const newHome = () => {
 };
 
 // The spy mongodump: it records its argument list, its environment and the kind of file its
-// --config names, then runs the real one; with `hold` it waits after the dump until `go` exists,
-// and with `lose` (collections' names, one per line) it empties each one's dump. It runs no command the
-// helpers spy on (cat, head, hostname).
+// --config names, then runs the real one; with `hold` it waits after the dump until `go` exists
+// or its parent, the server, is gone, and with `lose` (collections' names, one per line) it
+// empties each one's dump. It runs no command the helpers spy on (cat, head, hostname).
 function spyMongodump() {
   const dir = tempDir("mongodump-spy");
   const linux = process.platform === "linux";
@@ -93,7 +94,7 @@ if [ -f "$dir/lose" ]; then
 fi
 if [ -f "$dir/hold" ]; then
   : >"$dir/held"
-  while [ ! -f "$dir/go" ]; do sleep 0.1; done
+  while [ ! -f "$dir/go" ] && kill -0 $PPID 2>/dev/null; do sleep 0.1; done
 fi
 exit $status
 `, { mode: 0o755 });
@@ -1055,22 +1056,19 @@ describe("restore-drill", () => {
     }
   });
 
-  test("answers that the machine is busy while another run holds the heavy-run lock, and runs nothing", async () => {
+  test("answers that the machine is busy while another run holds the heavy-run lock, and runs nothing", async (t) => {
     const stamp = await takeBackup();
     const lock = join(home, ".local", "state", "agent-team", "heavy.lock");
     mkdirSync(dirname(lock), { recursive: true });
     writeFileSync(lock, "the test's own run (pid 1) since now\n");
-    const holder = spawn("flock", [lock, "sleep", "300"], { stdio: "ignore" });
-    try {
-      await until(() => spawnSync("flock", ["-n", lock, "true"]).status !== 0);
-      await withServer(async (server) => {
-        const result = await server.callTool("restore-drill", { backup: stamp });
-        assert.equal(result.isError, true);
-        assert.equal(result.text, "restore-drill: the machine is busy: the heavy-run lock is held by the test's own run (pid 1) since now; ask again later");
-      }, { path: drillPath(), env: { PROD_MONGO_HEAVY_WAIT_MINUTES: "0" } });
-    } finally {
-      holder.kill();
-    }
+    // flock and its sleep, which holds the lock, both end with the test.
+    owned(t, spawn("flock", [lock, "sleep", "300"], { stdio: "ignore" }));
+    await until(() => spawnSync("flock", ["-n", lock, "true"]).status !== 0);
+    await withServer(async (server) => {
+      const result = await server.callTool("restore-drill", { backup: stamp });
+      assert.equal(result.isError, true);
+      assert.equal(result.text, "restore-drill: the machine is busy: the heavy-run lock is held by the test's own run (pid 1) since now; ask again later");
+    }, { path: drillPath(), env: { PROD_MONGO_HEAVY_WAIT_MINUTES: "0" } });
     assert.deepEqual(docker.calls(), [], "docker ran");
     assert.deepEqual(drillsOf(stamp), []);
   });
@@ -1089,19 +1087,19 @@ describe("restore-drill", () => {
   });
 
   // The script as Daniel runs it: through team-heavy (this test's HOME has a lock of its own),
-  // with no MCP server and no op.
-  const byHand = (args, { path = [toolsDir, testPath()].join(":") } = {}) =>
-    spawn(join(repoRoot, "bin", "team-heavy"), ["run", "--kind", "restore-drill", "--", process.execPath, join(repoRoot, "toolkits", "prod-mongo", "scripts", "restore-drill.mjs"), ...args], {
+  // with no MCP server and no op; it ends with test `t`.
+  const byHand = (t, args, { path = [toolsDir, testPath()].join(":") } = {}) =>
+    owned(t, spawn(join(repoRoot, "bin", "team-heavy"), ["run", "--kind", "restore-drill", "--", process.execPath, join(repoRoot, "toolkits", "prod-mongo", "scripts", "restore-drill.mjs"), ...args], {
       env: { HOME: home, PATH: path, PROD_MONGO_ROOT: root },
       stdio: ["ignore", "pipe", "pipe"],
-    });
-  test("run by hand through team-heavy: --text prints the tool's answer, and without it one JSON object", async () => {
+    }));
+  test("run by hand through team-heavy: --text prints the tool's answer, and without it one JSON object", async (t) => {
     const stamp = await takeBackup();
-    const text = await ended(byHand([stamp, "--text"]));
+    const text = await ended(byHand(t, [stamp, "--text"]));
     assert.equal(text.code, 0, text.stderr);
     assert.match(text.stdout, new RegExp(`^Restore drill of ~/conventioner-backups/${stamp}: PASS in \\d+ s, mongorestore `));
     assert.match(text.stdout, /; nothing was left running\.\n$/);
-    const json = await ended(byHand([stamp]));
+    const json = await ended(byHand(t, [stamp]));
     assert.equal(json.code, 0, json.stderr);
     assert.equal(json.stdout.split("\n").filter(Boolean).length, 1, json.stdout);
     const result = JSON.parse(json.stdout);
@@ -1109,7 +1107,7 @@ describe("restore-drill", () => {
     assert.deepEqual(result.cleanup, { gone: true });
     assert.ok(gone(result.container));
     assert.equal(drillsOf(stamp).length, 2);
-    const refused = await ended(byHand(["--uri=mongodb://x", stamp]));
+    const refused = await ended(byHand(t, ["--uri=mongodb://x", stamp]));
     assert.equal(refused.code, 1);
     assert.deepEqual(JSON.parse(refused.stdout), { refused: "takes exactly one argument, a backup's name, its UTC start as 2026-11-08T142305Z (and --text for the answer as text)" });
   });
@@ -1138,14 +1136,14 @@ describe("restore-drill", () => {
     assert.equal(restorer.read("config-kind"), "fifo\n");
   });
 
-  test("stops at once on SIGTERM while docker run still waits, and leaves no container", async () => {
+  test("stops at once on SIGTERM while docker run still waits, and leaves no container", async (t) => {
     const stamp = await takeBackup();
     const script = join(repoRoot, "toolkits", "prod-mongo", "scripts", "restore-drill.mjs");
     docker.set("hold-run");
-    const child = spawn(process.execPath, [script, stamp], {
+    const child = owned(t, spawn(process.execPath, [script, stamp], {
       env: { HOME: home, PATH: [restorer.dir, docker.dir, toolsDir, testPath()].join(":"), PROD_MONGO_ROOT: root },
       stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
     const done = ended(child);
     await until(() => existsSync(join(docker.dir, "run-held")), 60_000);
     const stopped = Date.now();
@@ -1166,22 +1164,28 @@ describe("restore-drill", () => {
     assert.deepEqual(drillsOf(stamp), []);
   });
 
-  test("removes its throwaway when stopped by SIGINT, SIGTERM or SIGHUP mid-drill, and records no verdict", async () => {
+  test("removes its throwaway when stopped by SIGINT, SIGTERM or SIGHUP mid-drill, and records no verdict", async (t) => {
     const stamp = await takeBackup();
-    const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
     const script = join(repoRoot, "toolkits", "prod-mongo", "scripts", "restore-drill.mjs");
-    // One copy of the dump and one holding mongorestore spy per drill, all three at once.
-    const runs = signals.map((signal, n) => {
+    // One drill at a time, as the heavy-run lock runs them, each on its own copy of the dump with a
+    // holding mongorestore spy, stopped by its signal once the spy holds.
+    for (const [n, signal] of ["SIGINT", "SIGTERM", "SIGHUP"].entries()) {
       const copy = `2025-0${n + 1}-01T000000Z`;
       cpSync(join(root, stamp), join(root, copy), { recursive: true });
       const holding = spyMongorestore();
       holding.set("hold");
-      const child = spawn(process.execPath, [script, copy], { env: { HOME: home, PATH: [holding.dir, toolsDir, testPath()].join(":"), PROD_MONGO_ROOT: root }, stdio: ["ignore", "pipe", "pipe"] });
-      return { signal, copy, holding, child, done: ended(child) };
-    });
-    await until(() => runs.every(({ holding }) => holding.read("held") !== null), 180_000);
-    for (const { child, signal } of runs) child.kill(signal);
-    for (const { signal, copy, done } of runs) {
+      const child = owned(t, spawn(process.execPath, [script, copy], { env: { HOME: home, PATH: [holding.dir, toolsDir, testPath()].join(":"), PROD_MONGO_ROOT: root }, stdio: ["ignore", "pipe", "pipe"] }));
+      const done = ended(child);
+      // No deadline of the test's own, which a loaded machine could beat: the wait ends once the
+      // spy holds or the drill has ended, so a drill that fails first fails the test at once with
+      // its own reason, and one that does neither meets tests/run's time limit for a test, whose
+      // end stops the wait and, through owned, the drill.
+      await until(() => holding.read("held") !== null || child.exitCode !== null || child.signalCode !== null, Infinity, t.signal);
+      if (holding.read("held") === null) {
+        const early = await done;
+        assert.fail(`the ${signal} drill ended before its restore held (exit ${early.code ?? early.signal}): ${early.stdout}${early.stderr}`);
+      }
+      child.kill(signal);
       const result = await done;
       assert.equal(result.code, 128 + { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 }[signal], result.stderr);
       const out = JSON.parse(result.stdout);
@@ -2427,10 +2431,13 @@ function ended(child) {
   });
 }
 
-async function until(check, timeoutMs = 60_000) {
+// Polls `check` every 50 ms until it holds, `timeoutMs` passes (Infinity: never), or `signal`, a
+// test's own, is aborted, as node:test aborts it when the test times out.
+async function until(check, timeoutMs = 60_000, signal = undefined) {
   const start = Date.now();
   while (!check()) {
     if (Date.now() - start > timeoutMs) throw new Error("timed out waiting");
+    signal?.throwIfAborted();
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
