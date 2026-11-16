@@ -72,8 +72,8 @@ PS_LONG_VALUES = {"--pid", "--ppid", "--quick-pid", "--sort", "--format", "--use
                   "--Group", "--sid", "--tty", "--cols", "--columns", "--rows", "--width"}
 # ps's selections other than its owner's, each of which procps adds to a -U's rather than narrows
 # it with, so a -U beside one binds nothing: -A, -e, -a, -d, -N, -C, -G, -g, -s and -t, in a
-# cluster too (-ef), --deselect, --ppid, --sid, --tty, --group and --Group, and BSD's a, T and t
-# without a dash (ax). -p, -q, --pid and --quick-pid make no search at all.
+# cluster too (-ef), --deselect, --ppid, --sid, --tty, --group and --Group, their value after = too,
+# and BSD's a, T and t without a dash (ax). -p, -q, --pid and --quick-pid make no search at all.
 PS_SELECTS = set("AeadNCGgst")
 PS_LONG_SELECTS = {"--deselect", "--ppid", "--sid", "--tty", "--group", "--Group"}
 OWNER = re.compile(r"^(-[uU]|--(user|User|uid|euid)(=|$))")
@@ -115,10 +115,12 @@ def other_selection(run):
     while k < len(run):
         w = run[k]
         k += 1
-        if w in PS_LONG_SELECTS:
+        # A long option takes its value as the next word or after = (--ppid="$pid").
+        name, eq, _ = w.partition("=")
+        if name in PS_LONG_SELECTS:
             return w
-        if w in PS_LONG_VALUES:
-            k += 1
+        if name in PS_LONG_VALUES:
+            k += not eq
         elif re.match(r"^-[A-Za-z]+$", w):
             for c in w[1:]:
                 if c in PS_SELECTS:

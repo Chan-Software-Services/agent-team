@@ -2936,6 +2936,11 @@ kill_these() { kill "$@"; }
   ps -U "$me" -C sleep -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
 }
 
+%test "a long selection with its value after =, and a long value option's = that takes no next word" {
+  ps -U "$me" --ppid="$pid" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" --sort=pid -A -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
 %test "bound by owner and path, in a word of its pipeline" {
   pkill -U "$(id -u)" -f "$BATS_TEST_TMPDIR/bin/x"
   run -0 pkill -U "$me" -f "$BATS_FILE_TMPDIR/bin/x"
@@ -2983,9 +2988,11 @@ $forms:48: ps -A -U \$me -o pid=,args=: not bound by its owner (-u or -U, which 
 $forms:52: pkill -U \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:52
 $forms:56: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:56
 $forms:60: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:60
-$forms:64: ps -U \$me -C sleep -o pid=,args=: not bound by its owner (-u or -U, which -C undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:64"
-  # The forms after the first fourteen, bound or reaching no kill, pass alone.
-  sed -i '1,65d' "$forms"
+$forms:64: ps -U \$me -C sleep -o pid=,args=: not bound by its owner (-u or -U, which -C undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:64
+$forms:68: ps -U \$me --ppid=\$pid -o pid=,args=: not bound by its owner (-u or -U, which --ppid=\$pid undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:68
+$forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:68"
+  # The forms after the first fifteen, bound or reaching no kill, pass alone.
+  sed -i '1,70d' "$forms"
   run -0 "$REPO_ROOT/tests/bound-kills" "$forms"
   assert_equal "$output" ""
 }
