@@ -791,15 +791,15 @@ EOF
   grep -qxF -- '- `T<n> QUESTION <text> | options: a / b / c` when the plan leaves a real choice open, or `T<n> QUESTION <path>` for several: every open one whose prerequisites are settled, at most 8, numbered, each with its options and the one you recommend, in one file; facts you look up, never ask. Then wait for the answer.' "$REPO_ROOT/roles/planner.md"
 }
 
-@test "each build-path planner brief has the spec list the glossary terms and ADR candidates, right after its decisions line" {
+@test "each build-path planner brief has the spec list the glossary terms and ADR candidates, right after its failure modes line" {
   open_t12
   event T12 interview-thread '{discord_thread: "1565400000000000012"}'
   local template glossary
   glossary='   When the project keeps a glossary (`CONTEXT.md`, or `CONTEXT-MAP.md` and its contexts'"'"' `CONTEXT.md`) or ADRs (a `docs/adr/` directory), it also lists the new glossary terms and the ADR candidates the builder should write.'
   for template in planner-feature planner-interview; do
     run_bin -0 team-brief T12 "$template" --name "$template" --set 'read=- `AGENTS.md`.'
-    grep -A1 -F '   Its Implementation Decisions name each choice a builder would otherwise make' "$output" | tail -n 1 | grep -qxF -- "$glossary" ||
-      { echo "$template lacks the glossary line after the decisions line" >&2; cat "$output" >&2; return 1; }
+    grep -A1 -F '   Between its Implementation Decisions and its Testing Decisions it has a `## Failure modes and assumptions` section' "$output" | tail -n 1 | grep -qxF -- "$glossary" ||
+      { echo "$template lacks the glossary line after the failure modes line" >&2; cat "$output" >&2; return 1; }
   done
 }
 
