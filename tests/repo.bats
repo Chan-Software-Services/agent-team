@@ -2220,7 +2220,6 @@ YAML
   grep -qxF '          GH_TOKEN: ${{ github.token }}' <<<"$plan"
   # It writes the latest successful run's timings, else warns and copies the committed file, so it
   # never fails the run, and uploads either as timings.
-  grep -qF 'if ! tests/shards update --to timings/timings.tsv 2>update.err; then' <<<"$plan"
   grep -qF '::warning::' <<<"$plan"
   grep -qxF '            cp tests/timings.tsv timings/timings.tsv' <<<"$plan"
   grep -qx '      - uses: actions/upload-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$plan"
@@ -2230,8 +2229,16 @@ YAML
   grep -qx '    needs: shard-plan' <<<"$shards"
   grep -qx '      - uses: actions/download-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$shards"
   grep -qxF '          name: timings' <<<"$shards"
-  grep -qxF '          path: tests' <<<"$shards"
+  grep -qxF '          path: ${{ runner.temp }}/timings' <<<"$shards"
+  grep -qxF '          echo "TESTS_TIMINGS=$RUNNER_TEMP/timings/timings.tsv" >>"$GITHUB_ENV"' <<<"$shards"
   (($(grep -n 'actions/download-artifact' <<<"$shards" | cut -d: -f1) < $(grep -nF 'tests/run bats --shard' <<<"$shards" | cut -d: -f1)))
+  # The committed tests/timings.tsv stays in place, so tests/repo.bats still checks it.
+  if grep -nE 'path: tests$|timings\.tsv +tests/' <<<"$shards"; then echo "test-shards writes over tests/timings.tsv" >&2; return 1; fi
+  # A hung gh ends the update before the job's limit, its failure caught like any other, and the
+  # artifact outlives GitHub's 30-day window for rerunning a shard.
+  grep -qF 'if ! timeout 180 tests/shards update --to timings/timings.tsv 2>update.err; then' <<<"$plan"
+  grep -qxF '          retention-days: 30' <<<"$plan"
+  grep -qxF '          overwrite: true' <<<"$plan"
   # No other job reads the Actions API: none grants itself a permission or takes the run's token.
   ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
   for id in $ids; do
@@ -2243,16 +2250,17 @@ YAML
   done
 }
 
-# A newer run of a branch cancels an older one of the same workflow and event (a pull request's
-# runs, or a branch's dispatched ones), never a merge queue's trial commit, whose ref is its own,
-# and never a run of another event, since team-ci-run waits on a dispatched run or the PR's.
-@test "CI and zizmor's online run cancel a branch's older run of the same event, never a merge queue's" {
+# A newer run cancels an older one of the same workflow, event and ref (a pull request's runs, by
+# its refs/pull/<n>/merge, or a branch's dispatched ones), only for a pull request or a dispatch,
+# never a merge queue's trial commit or a run of another event, since team-ci-run waits on a
+# dispatched run or the PR's.
+@test "CI and zizmor's online run cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
   local workflow
   for workflow in ci.yml zizmor-online.yml; do
     assert_equal "$(sed -n '/^concurrency:$/,/^[^ ]/p' "$REPO_ROOT/.github/workflows/$workflow" | sed '$d')" \
       "concurrency:
-  group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.head_ref || github.ref }}
-  cancel-in-progress: \${{ github.event_name != 'merge_group' }}"
+  group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.ref }}
+  cancel-in-progress: \${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}"
   done
 }
 
@@ -3053,7 +3061,7 @@ $planted:28: rm -rf \"\${x:-}\""
 }
 
 # tests/shards in a checkout of three bats files, a.bats and b.bats timed and c.bats not.
-@test "tests/shards weighs a file by its seconds on this platform, an untimed one by its bytes at the timed rate, and every bytes without timings" {
+@test "tests/shards weighs a file by its seconds on this platform, an untimed one by its bytes at the timed rate, and every bytes without timings, from TESTS_TIMINGS' file when set" {
   local copy=$BATS_TEST_TMPDIR/copy column=2
   [[ $(uname -s) != Darwin ]] || column=3
   unset TEAM_HOME
@@ -3071,6 +3079,11 @@ $planted:28: rm -rf \"\${x:-}\""
   else
     assert_equal "$output" $'1\t40\ttests/c.bats\n2\t20\ttests/a.bats\n2\t10\ttests/b.bats'
   fi
+  # TESTS_TIMINGS names the timings in place of tests/timings.tsv, as CI's shards take shard-plan's,
+  # and a row for a file the checkout lacks (tests/extra.bats) weighs nothing.
+  printf '# fresh\nfile\tlinux\tmacos\ntests/a.bats\t3\t3\ntests/b.bats\t30\t30\ntests/c.bats\t4\t4\ntests/extra.bats\t99\t99\n' >"$BATS_TEST_TMPDIR/fresh.tsv"
+  TESTS_TIMINGS=$BATS_TEST_TMPDIR/fresh.tsv run -0 --separate-stderr "$copy/tests/shards" 2
+  assert_equal "$output" $'1\t30\ttests/b.bats\n2\t4\ttests/c.bats\n2\t3\ttests/a.bats'
   rm "$copy/tests/timings.tsv"
   run -0 --separate-stderr "$copy/tests/shards" 2
   assert_equal "$output" $'1\t2000\ttests/c.bats\n2\t1000\ttests/a.bats\n2\t500\ttests/b.bats'

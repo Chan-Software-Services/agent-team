@@ -14,10 +14,10 @@ on:
 permissions:
   contents: read
 
-# A newer run of a branch cancels its older run of the same event, as CI's do.
+# A newer run cancels an older one of the same event and ref, as CI's do.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   zizmor-online:

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The bats suite's shards, which tests/run bats --shard runs and CI's test-shards jobs each run
 # one of.
-# Each tests/*.bats file weighs its seconds in tests/timings.tsv on this platform (macos on
+# Each tests/*.bats file weighs its seconds in the timings (TESTS_TIMINGS when set, else
+# tests/timings.tsv; a row for a file the checkout lacks weighs nothing) on this platform (macos on
 # macOS, linux elsewhere); a file the timings lack weighs its bytes at the timed files' seconds
 # per byte, so a new file needs no timing yet. The files, the heaviest first (ties by name), each
 # go to the shard with the least weight so far (ties to the lowest number), so one tree splits the
@@ -18,10 +19,10 @@
 #                                         file it lacks has none; a run whose shard jobs printed
 #                                         fewer than half of tests/*.bats is refused, writing
 #                                         nothing, so a partial run cannot skew the split
-# CI's shard-plan job runs update --to on every run, so its shards split by the latest successful
-# run's seconds; the committed tests/timings.tsv is what they split by when that job cannot read
-# a run, and what a local tests/run bats --shard splits by, so refresh it when files are added
-# or the suite's times move.
+# CI's shard-plan job runs update --to on every run and its shards name that file by TESTS_TIMINGS,
+# so they split by the latest successful run's seconds; the committed tests/timings.tsv is what
+# they split by when that job cannot read a run, and what a local tests/run bats --shard splits
+# by, so refresh it when files are added or the suite's times move.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -81,7 +82,7 @@ update() {
 
 # Every file's shard of <n>, as the header says.
 shards() {
-  local n=$1 column=linux given=$timings
+  local n=$1 column=linux given=${TESTS_TIMINGS:-$timings}
   [[ $(uname -s) != Darwin ]] || column=macos
   [[ -f $given ]] || given=/dev/null
   # Weights: the timed seconds, else the bytes at the timed files' seconds per byte (at least 1).
