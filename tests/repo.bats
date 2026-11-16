@@ -2239,7 +2239,7 @@ YAML
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/shards" $k
-    assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [<run id>]"
+    assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
   done
 }
 
@@ -2981,8 +2981,9 @@ $planted:28: rm -rf \"\${x:-}\""
 
 # tests/shards update in a checkout of its own, on a gh stub whose CI run 4242 has two
 # test-shards jobs and two jobs of other names, the test job's log holding a bats line too, over
-# timings whose macOS seconds it keeps, since CI runs no macOS job.
-@test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty" {
+# timings whose macOS seconds it keeps, since CI runs no macOS job; then with --to, and on a
+# checkout with more files than the run timed.
+@test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty, to --to's file if given, and keeps the timings from a run that timed under half the files" {
   local copy=$BATS_TEST_TMPDIR/copy
   unset TEAM_HOME
   mkdir -p "$copy/tests"
@@ -3023,6 +3024,32 @@ $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t15\ntests/c
   assert_equal "$(stub_calls gh | jq -r '.[0:2] | join(" ")' | sort -u)" "run view"
   assert_equal "$(cat "$copy/tests/timings.tsv")" "$header
 $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
+
+  # With --to, the timings go to that file, the macOS seconds still read from tests/timings.tsv,
+  # which stays as it was.
+  printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30\n' >"$copy/tests/timings.tsv"
+  run -0 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$output" "tests/shards: wrote $BATS_TEST_TMPDIR/fresh.tsv from CI run 4242"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/fresh.tsv")" "$header
+$(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
+  assert_equal "$(cat "$copy/tests/timings.tsv")" "$(printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30')"
+  run -0 --separate-stderr "$copy/tests/shards" update 4242 --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$output" "tests/shards: wrote $BATS_TEST_TMPDIR/fresh.tsv from CI run 4242"
+  run -2 --separate-stderr "$copy/tests/shards" update --to
+  assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
+
+  # A run that timed fewer than half the suite's files leaves the timings as they were: the run
+  # timed 3 files (a, b and c), of 6 in the checkout's tests/, then of 7.
+  for name in a b c d e f; do : >"$copy/tests/$name.bats"; done
+  run -0 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/half.tsv"
+  : >"$copy/tests/g.bats"
+  rm "$BATS_TEST_TMPDIR/fresh.tsv"
+  run -1 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$stderr" "shards: CI run 4242 printed 3 of 7 files; keeping the timings"
+  assert_equal "$output" ""
+  [[ ! -e $BATS_TEST_TMPDIR/fresh.tsv ]]
+  run -1 --separate-stderr "$copy/tests/shards" update
+  assert_equal "$(cat "$copy/tests/timings.tsv")" "$(printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30')"
 }
 
 # The timings are data tests/shards reads: each row names a bats file that exists, with whole
