@@ -24,10 +24,14 @@
 #   github_answer <status> <body> [<resource>]
 #                      the answer, 304 with no body when <status> is 200 and the request's
 #                      If-None-Match is the body's ETag; a body's message is gh's stderr reason.
-#   github_limited primary | retry-after [<seconds>] | message-403 | message-429
+#   github_limited primary | retry-after [<seconds>] | message-403 | message-429 | message-primary
+#                  | message-primary-bare
 #                      a refusal for the limit: a primary 403 with X-RateLimit-Remaining: 0, a
 #                      secondary 403 with Retry-After (default 30), a secondary 403 with the
-#                      message only, or a secondary 429 with the message only.
+#                      message only, a secondary 429 with the message only, or a 403 whose message
+#                      names the primary limit, with the budget's X-RateLimit-* headers but none
+#                      at 0 remaining (message-primary) or with no X-RateLimit-* header at all
+#                      (message-primary-bare).
 #   github_offline     gh reached no GitHub: its connection error on stderr, nothing on stdout.
 #   github_rate_limit  gh api rate_limit's JSON, every planned budget, unlogged and uncounted.
 # In the test:
@@ -139,7 +143,7 @@ github_answer() {
 }
 
 github_limited() {
-  local status=403 body extra='' remaining=''
+  local status=403 body extra='' remaining='' headers=true
   case $1 in
     primary)
       remaining=0
@@ -149,6 +153,10 @@ github_limited() {
       extra="Retry-After: ${2:-30}"$'\r\n'
       body='{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits"}'
       ;;
+    message-primary | message-primary-bare)
+      [[ $1 != message-primary-bare ]] || headers=false
+      body='{"message":"API rate limit exceeded for user ID 1.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api"}'
+      ;;
     message-403 | message-429)
       [[ $1 != message-429 ]] || status=429
       body='{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits"}'
@@ -157,7 +165,7 @@ github_limited() {
   esac
   echo "$GITHUB_ENDPOINT $status" >>"$GITHUB_STUB/requests"
   printf 'HTTP/2.0 %s %s\nContent-Type: application/json; charset=utf-8\r\n%s' "$status" "$(github_status_text "$status")" "$extra"
-  github_headers core "$remaining"
+  ! $headers || github_headers core "$remaining"
   printf '\r\n%s\n' "$body"
   echo "gh: $(jq -r .message <<<"$body") (HTTP $status)" >&2
   exit 1

@@ -41,7 +41,7 @@ line=$(awk -F '\t' -v e="$GITHUB_ENDPOINT" '$1 == e {l = $0} END {print l}' "$GI
 [[ -n $line ]] || { echo "no answer planned for gh $*" >&2; exit 1; }
 IFS=$'\t' read -r _ what body resource <<<"$line"
 case $what in
-  primary | message-403 | message-429) github_limited "$what" ;;
+  primary | message-403 | message-429 | message-primary | message-primary-bare) github_limited "$what" ;;
   retry-after:*) github_limited retry-after "${what#*:}" ;;
   offline) github_offline ;;
   *) github_answer "$what" "$body" "${resource:-core}" ;;
@@ -49,9 +49,14 @@ esac
 EOF
 }
 
+# Let bats remove what a test made read-only.
+teardown() {
+  [[ ! -d ${state:-} ]] || chmod -R u+w "$state"
+}
+
 # plan <endpoint> <answer> [<body> [<resource>]]: from now on gh answers <endpoint> with <answer>:
-# an HTTP status with <body>, a refusal (primary, retry-after:<seconds>, message-403, message-429)
-# or offline.
+# an HTTP status with <body>, a refusal (primary, retry-after:<seconds>, message-403, message-429,
+# message-primary, message-primary-bare) or offline.
 plan() {
   printf '%s\t%s\t%s\t%s\n' "$1" "$2" "${3:-}" "${4:-}" >>"$GITHUB_STUB/plan"
 }
@@ -202,6 +207,22 @@ $e 200"
 [429,false]'
 }
 
+@test "a refusal whose message alone names the primary limit holds until its X-RateLimit-Reset, else 60 s" {
+  reset=$(($(now) + 900))
+  github_budget core 5000 4000 "$reset"
+  plan "$ep" message-primary
+  read_ep
+  assert_equal "$output" "rc=3 status=403 until=$reset resource=core kind=primary"
+  assert_equal "$(cat "$out/error")" "GitHub's API rate limit for core requests is used up until $(date -d "@$reset" +%H:%M), when it resets; this is no outage"
+  assert_equal "$(jq -c '[.resource, .kind, .until]' "$state/limit.json")" "[\"core\",\"primary\",$reset]"
+  rm "$state/limit.json"
+  plan "$ep" message-primary-bare
+  read_ep
+  assert_equal "$output" "rc=3 status=403 until=$(($(now) + 60)) resource=core kind=primary"
+  assert_equal "$(jq -c '[.resource, .kind, .until]' "$state/limit.json")" "[\"core\",\"primary\",$(($(now) + 60))]"
+  assert_equal "$(calls_log | jq -c '[.status, .counted]' | sort -u)" '[403,false]'
+}
+
 @test "a 403 for a permission, a 404 and a connection failure are plain failures with GH_STATUS" {
   plan "$ep" 403 '{"message":"Resource not accessible by integration"}'
   read_ep
@@ -218,9 +239,10 @@ $e 200"
   read_ep
   assert_equal "$output" "rc=1 status= until= resource= kind="
   assert_equal "$(cat "$out/error")" "gh api $ep: error connecting to api.github.com"
+  # GitHub counts nothing for a request it never answered.
   assert_equal "$(calls_log | jq -c '[.status, .counted]')" '[403,true]
 [404,true]
-[null,true]'
+[null,false]'
   # A failure stored nothing to serve.
   [[ ! -e $state/cache/$(key "$e").body ]]
 }
@@ -342,6 +364,18 @@ EOF
 [null,"workflow run",null,"core",true]'
 }
 
+@test "gh_call: a failed REST read whose stdout says rate limit, and whose stderr does not, is a plain failure" {
+  stub_script gh <<'STUB'
+echo '{"total_count":101,"check_runs":[{"name":"rate limit guard","output":{"title":"API rate limit exceeded test"}}]}'
+echo 'gh: Server Error (HTTP 502)' >&2
+exit 1
+STUB
+  api gh_call "$out" checks api --paginate "repos/owner/proj/commits/abc/check-runs?per_page=100"
+  assert_equal "$output" "rc=1 status=502 until= resource= kind="
+  assert_equal "$(cat "$out/error")" "gh api --paginate: gh: Server Error (HTTP 502)"
+  [[ ! -e $state/limit.json ]]
+}
+
 @test "gh_spenders counts each command's counted requests of one resource since a time, with their subjects" {
   mkdir -p "$state"
   day=$(date -u -d "@$(now)" +%F)
@@ -386,6 +420,52 @@ EOF
   plan repos/owner/proj/pulls/218 200 '{}'
   api gh_read "$out" other repos/owner/proj/pulls/218
   [[ -e $state/calls-$(day 5).jsonl ]]
+}
+
+@test "the day's first request also prunes the temporary files a killed writer left more than a day ago" {
+  mkdir -p "$state/cache"
+  for f in cache/k.json.Ab12Cd cache/k.body.Ef34Gh budget.json.Ij56Kl limit.json.Mn78Op; do
+    : >"$state/$f"
+    touch -d "@$(($(now) - 90000))" "$state/$f"
+  done
+  : >"$state/cache/n.json.Qr90St"
+  touch -d "@$(($(now) - 3600))" "$state/cache/n.json.Qr90St"
+  plan "$ep" 200 '{"number":217}'
+  read_ep
+  [[ ! -e $state/cache/k.json.Ab12Cd && ! -e $state/cache/k.body.Ef34Gh && ! -e $state/budget.json.Ij56Kl && ! -e $state/limit.json.Mn78Op ]]
+  [[ -e $state/cache/n.json.Qr90St ]]
+}
+
+@test "a state directory that cannot be written reads GitHub direct, never failing the read" {
+  # The cache read-only: an endpoint with no entry is read and served with no entry kept, and an
+  # entry whose 304 cannot be marked fetched is served all the same.
+  plan repos/owner/proj/pulls/218 200 '{"number":218}'
+  api gh_read "$out" other repos/owner/proj/pulls/218
+  tick 60
+  chmod 555 "$state/cache"
+  plan "$ep" 200 '{"number":217}'
+  read_ep
+  assert_equal "$output" "rc=0 status=200 until= resource= kind="
+  assert_equal "$(cat "$out/body")" '{"number":217}'
+  [[ ! -e $state/cache/$(key "$ep").json ]]
+  api gh_read "$out" other repos/owner/proj/pulls/218
+  assert_equal "$output" "rc=0 status=200 until= resource= kind="
+  assert_equal "$(cat "$out/other")" '{"number":218}'
+  assert_equal "$(github_requests | tail -2)" "$ep 200
+repos/owner/proj/pulls/218 304"
+  chmod 755 "$state/cache"
+  # No state directory can be made, a file in its place: a plain read, with no ETag.
+  mv "$state" "$BATS_TEST_TMPDIR/state-aside"
+  echo 'not a directory' >"$state"
+  read_ep
+  assert_equal "$output" "rc=0 status=200 until= resource= kind="
+  assert_equal "$(cat "$out/body")" '{"number":217}'
+  assert_equal "$(stub_calls gh | tail -1)" "$(jq -cn --arg e "$ep" '["api", "-i", $e]')"
+  # A refusal for the limit is still told, though nothing can hold it.
+  github_budget core 5000 5000
+  plan "$ep" primary
+  read_ep
+  assert_equal "${output%% *}" rc=3
 }
 
 @test "gh_limit_text words each limit in local time, and gh_limited names the limit standing for a resource" {

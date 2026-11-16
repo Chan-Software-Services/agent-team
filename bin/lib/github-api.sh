@@ -22,12 +22,15 @@
 #   calls-<UTC date>.jsonl
 #                      one line per request sent, {at (UTC time), by, for, method, endpoint (its
 #                      query cut), status (the HTTP code, null with none), resource, used,
-#                      counted}; counted is false for a 304, a refusal for the limit and
-#                      gh_call's read of gh api rate_limit, true for every other request.
+#                      counted}; counted is false for a 304, a refusal for the limit, a
+#                      request GitHub never answered (status null) and gh_call's read of gh api
+#                      rate_limit, true for every other request.
 # Every write but the log's goes to a temporary file in the same directory, moved into place;
 # budget.json's and limit.json's under state.lock. The log is appended a line at a time; the
-# request that starts a day's log removes the logs of days more than 2 before it and the cache
-# entries fetched more than a day ago.
+# request that starts a day's log removes the logs of days more than 2 before it, the cache
+# entries fetched more than a day ago, and the temporary files a writer killed mid-write left,
+# last changed more than a day ago. A write that cannot be made (a full or unwritable home, say)
+# is skipped and never fails a read: gh_read then reads GitHub direct, as below.
 # Each request is logged with by from GH_BY, else the calling script's name, and for from
 # GH_FOR, else null (team-ci-wait's <owner>/<name>#<n>, say).
 #
@@ -40,6 +43,8 @@
 # It provides:
 #   gh_now             prints now in epoch seconds: the number in the file TEAM_GITHUB_CLOCK
 #                      names when it is set (the tests' clock), else the machine's.
+#   gh_utc <epoch seconds>
+#                      prints that time in UTC as the log writes it (2026-11-16T07:27:14Z).
 #   gh_read <dir> <name> <endpoint> [<fresh seconds>]
 #                      reads one REST GET endpoint (repos/<owner>/<name>/..., query and all),
 #                      its body JSON in <dir>/<name>. While a limit stands for core or all it
@@ -52,18 +57,22 @@
 #                      the request: a 2xx is stored and served, a 304 serves the stored body
 #                      and marks it fetched now, each returning 0 and removing a limit.json of
 #                      the answer's resource or all; a refusal for the limit writes limit.json
-#                      and returns 3; anything else returns 1. GH_STATUS is the served or
-#                      failed answer's HTTP code (empty when gh got none). On a failure or a
-#                      refusal <dir>/error says why: "gh api <endpoint>: <gh's first stderr
-#                      line>", or the limit's text; on a refusal GH_LIMIT_UNTIL (epoch
-#                      seconds), GH_LIMIT_RESOURCE and GH_LIMIT_KIND are the limit's.
+#                      and returns 3; anything else returns 1. With no state directory it can
+#                      make, or an entry's lock it cannot open, it reads direct (no ETag sent,
+#                      nothing kept), and a 2xx whose entry cannot be written, or a 304 whose entry
+#                      cannot be marked fetched, is served all the same. GH_STATUS is the served or
+#                      failed answer's HTTP code (empty when gh got none). On a failure or a refusal
+#                      <dir>/error says why: "gh api <endpoint>: <gh's first stderr line>", or the
+#                      limit's text; on a refusal GH_LIMIT_UNTIL (epoch seconds), GH_LIMIT_RESOURCE
+#                      and GH_LIMIT_KIND are the limit's.
 #   gh_call <dir> <name> <gh arguments...>
 #                      runs one uncached gh call as given (a gh workflow run, a gh api graphql,
 #                      a --paginate read), its stdout in <dir>/<name> as gh prints it, after
 #                      the same check of limit.json (resource graphql for api graphql, else
 #                      core), logging it (status the code gh's stderr names, else 200 on exit 0,
 #                      else null; endpoint graphql, the api path or the subcommand, as
-#                      workflow run). A failure whose output or stderr says "rate limit" reads
+#                      workflow run). A failure whose stderr says "rate limit" (for api
+#                      graphql, or a call that is no api call, its output too) reads
 #                      gh api rate_limit (which GitHub does not count) and takes the reset of
 #                      the call's resource, or of the other, whose remaining is 0, else a
 #                      secondary limit of 60 s, writes limit.json and returns 3, with the
@@ -73,6 +82,13 @@
 #   gh_limited [<resource>...]
 #                      prints the standing limit's until when limit.json stands for one of the
 #                      resources (default core) or all; else fails.
+#   gh_limit_record [<resource>...]
+#                      prints the standing limit as one line, "<until> <resource> <kind>", when
+#                      limit.json stands for one of the resources or all; else fails.
+#   gh_note_budget <resource> <limit> <remaining> <used> <reset>
+#                      writes budget.json's entry for <resource>, read now, as an answer's headers
+#                      do (the heartbeat's gh api rate_limit reading); a write that cannot be made
+#                      is skipped.
 #   gh_limit_text <until> <resource> <kind>
 #                      the one wording of a limit, until in this machine's local time.
 #   gh_interval <base seconds> [<resource>...]
@@ -167,21 +183,21 @@ gh_standing() {
 gh_state_write() {
   local gh_file=$GITHUB_API_DIR/$1 gh_program=$2 gh_fd gh_new gh_rc=0
   shift 2
-  exec {gh_fd}>>"$GITHUB_API_DIR/state.lock" || return 1
+  { exec {gh_fd}>>"$GITHUB_API_DIR/state.lock"; } 2>/dev/null || return 1
   if flock -w 5 "$gh_fd"; then
-    gh_new=$(mktemp "$gh_file.XXXXXX") || gh_rc=1
+    gh_new=$(mktemp "$gh_file.XXXXXX" 2>/dev/null) || gh_rc=1
     if ((gh_rc == 0)); then
       if { if [[ -f $gh_file ]]; then cat "$gh_file"; else echo null; fi; } |
         jq -c "$@" "$gh_program" >"$gh_new" 2>/dev/null; then
         if [[ $(<"$gh_new") == null ]]; then
-          rm -f -- "$gh_new" "$gh_file"
+          rm -f -- "$gh_new" "$gh_file" 2>/dev/null || gh_rc=1
         else
-          mv -f -- "$gh_new" "$gh_file" || gh_rc=1
+          mv -f -- "$gh_new" "$gh_file" 2>/dev/null || gh_rc=1
         fi
       else
         gh_rc=1
       fi
-      rm -f -- "$gh_new"
+      rm -f -- "$gh_new" 2>/dev/null
     fi
   else
     gh_rc=1
@@ -223,13 +239,16 @@ gh_log() {
     'def orNull: if . == "" then null else . end;
     {at: $at, by: $by, for: ($for | orNull), method: ($method | orNull), endpoint: $endpoint,
      status: ($status | orNull | if . == null then null else tonumber end), resource: ($resource | orNull),
-     used: ($used | orNull | if . == null then null else tonumber end), counted: $counted}' >>"$gh_log_file" 2>/dev/null || true
+     used: ($used | orNull | if . == null then null else tonumber end), counted: $counted}' 2>/dev/null >>"$gh_log_file" || true
 }
 
-# gh_prune <now>: removes the logs of days more than 2 before <now>'s and the cache entries
-# fetched more than a day before it, each entry's under its lock when that is free.
+# gh_prune <now>: removes the logs of days more than 2 before <now>'s, the cache entries fetched
+# more than a day before it, each entry's under its lock when that is free, and the temporary files
+# of a write (cache/<key>.json.XXXXXX, cache/<key>.body.XXXXXX, budget.json.XXXXXX,
+# limit.json.XXXXXX) last changed more than a day before it, which only a writer killed mid-write
+# leaves.
 gh_prune() {
-  local gh_oldest gh_file gh_day gh_fetched gh_fd
+  local gh_oldest gh_file gh_day gh_fetched gh_fd gh_changed
   gh_oldest=$(date -u -d "@$(($1 - 2 * 86400))" +%F)
   for gh_file in "$GITHUB_API_DIR"/calls-*.jsonl; do
     [[ -e $gh_file ]] || continue
@@ -241,9 +260,16 @@ gh_prune() {
     gh_fetched=$(jq -r '.fetched // 0' "$gh_file" 2>/dev/null) || gh_fetched=0
     [[ $gh_fetched =~ ^[0-9]+$ ]] || gh_fetched=0
     (($1 - gh_fetched > 86400)) || continue
-    exec {gh_fd}>>"${gh_file%.json}.lock" || continue
-    if flock -n "$gh_fd"; then rm -f -- "$gh_file" "${gh_file%.json}.body" "${gh_file%.json}.lock"; fi
+    { exec {gh_fd}>>"${gh_file%.json}.lock"; } 2>/dev/null || continue
+    if flock -n "$gh_fd"; then rm -f -- "$gh_file" "${gh_file%.json}.body" "${gh_file%.json}.lock" 2>/dev/null; fi
     exec {gh_fd}>&-
+  done
+  for gh_file in "$GITHUB_API_DIR"/cache/*.json.?????? "$GITHUB_API_DIR"/cache/*.body.?????? \
+    "$GITHUB_API_DIR"/budget.json.?????? "$GITHUB_API_DIR"/limit.json.??????; do
+    [[ -f $gh_file ]] || continue
+    gh_changed=$(stat -c %Y -- "$gh_file" 2>/dev/null) || continue
+    (($1 - gh_changed > 86400)) || continue
+    rm -f -- "$gh_file" 2>/dev/null || true
   done
 }
 
@@ -265,8 +291,12 @@ gh_read() {
   local gh_dir=$1 gh_name=$2 gh_endpoint=$3 gh_fresh=${4:-${TEAM_GITHUB_FRESH_SECONDS:-20}}
   local gh_key gh_entry gh_before gh_after gh_now_s gh_fd gh_rc
   GH_STATUS='' GH_LIMIT_UNTIL='' GH_LIMIT_RESOURCE='' GH_LIMIT_KIND=''
-  mkdir -p "$GITHUB_API_DIR/cache" || { echo "gh api $gh_endpoint: $GITHUB_API_DIR could not be made" >"$gh_dir/error"; return 1; }
   gh_standing "$gh_dir" core || return 3
+  # With no cache to keep (its directory cannot be made), the read goes to GitHub direct.
+  if ! mkdir -p "$GITHUB_API_DIR/cache" 2>/dev/null; then
+    gh_fetch "$gh_dir" "$gh_name" "$gh_endpoint" '' ''
+    return
+  fi
   gh_key=$(printf '%s' "$gh_endpoint" | sha256sum) gh_key=${gh_key%% *}
   gh_entry=$GITHUB_API_DIR/cache/$gh_key
   gh_now_s=$(gh_now) || return 1
@@ -275,7 +305,11 @@ gh_read() {
     gh_serve "$gh_dir" "$gh_name" "$gh_key"
     return
   fi
-  exec {gh_fd}>>"$gh_entry.lock" || { echo "gh api $gh_endpoint: its cache lock could not be opened" >"$gh_dir/error"; return 1; }
+  # Nor with an entry's lock that cannot be opened.
+  if ! { exec {gh_fd}>>"$gh_entry.lock"; } 2>/dev/null; then
+    gh_fetch "$gh_dir" "$gh_name" "$gh_endpoint" '' ''
+    return
+  fi
   if ! flock -w "$GITHUB_LOCK_SECONDS" "$gh_fd"; then
     exec {gh_fd}>&-
     echo "another reader held $gh_endpoint for $GITHUB_LOCK_SECONDS s" >"$gh_dir/error"
@@ -299,17 +333,24 @@ gh_read() {
 }
 
 # gh_fetch <dir> <name> <endpoint> <key> <lock fd>: sends the request, under the entry's lock,
-# which gh does not inherit.
+# which gh does not inherit. With no key it reads direct: no ETag sent, nothing kept, a 2xx served
+# from the answer itself; and an answer whose entry cannot be written is served so too.
 gh_fetch() {
-  local gh_dir=$1 gh_name=$2 gh_endpoint=$3 gh_entry=$GITHUB_API_DIR/cache/$4 gh_fd=$5
+  local gh_dir=$1 gh_name=$2 gh_endpoint=$3 gh_entry=${4:+$GITHUB_API_DIR/cache/$4} gh_fd=${5:-}
   local gh_out=$1/$2.answer gh_err=$1/$2.stderr gh_etag='' gh_code='' gh_line gh_header gh_value gh_reason
-  local gh_until gh_kind gh_resource gh_message gh_now_s gh_new
+  local gh_until gh_kind gh_resource gh_message gh_now_s gh_new gh_kept
   local -a gh_args=(api -i)
   local -A gh_h=()
-  gh_etag=$(jq -r '.etag // empty | strings' "$gh_entry.json" 2>/dev/null) || gh_etag=''
-  [[ -f $gh_entry.body ]] || gh_etag=''
+  if [[ -n $gh_entry ]]; then
+    gh_etag=$(jq -r '.etag // empty | strings' "$gh_entry.json" 2>/dev/null) || gh_etag=''
+    [[ -f $gh_entry.body ]] || gh_etag=''
+  fi
   [[ -z $gh_etag ]] || gh_args+=(-H "If-None-Match: $gh_etag")
-  gh "${gh_args[@]}" "$gh_endpoint" >"$gh_out" 2>"$gh_err" {gh_fd}>&- </dev/null || true
+  if [[ -n $gh_fd ]]; then
+    gh "${gh_args[@]}" "$gh_endpoint" >"$gh_out" 2>"$gh_err" {gh_fd}>&- </dev/null || true
+  else
+    gh "${gh_args[@]}" "$gh_endpoint" >"$gh_out" 2>"$gh_err" </dev/null || true
+  fi
   gh_now_s=$(gh_now) || return 1
   # The status line, the headers to the first blank line, \r cut, and the body after it.
   : >"$gh_out.body"
@@ -358,42 +399,60 @@ gh_fetch() {
       return
     fi
   fi
-  if [[ $gh_code == 304 ]]; then
-    gh_log GET "$gh_endpoint" 304 "$gh_resource" "${gh_h[x-ratelimit-used]:-}" false
+  # GitHub counts neither a 304 nor a request it never answered.
+  if [[ $gh_code == 304 || -z $gh_code ]]; then
+    gh_log GET "$gh_endpoint" "$gh_code" "$gh_resource" "${gh_h[x-ratelimit-used]:-}" false
   else
     gh_log GET "$gh_endpoint" "$gh_code" "$gh_resource" "${gh_h[x-ratelimit-used]:-}" true
   fi
 
-  gh_reason='' gh_new=''
+  gh_reason='' gh_new='' gh_kept=true
   if [[ $gh_code == 304 && -n $gh_etag ]]; then
-    if ! { gh_new=$(mktemp "$gh_entry.json.XXXXXX") &&
+    # Marked fetched now; one that cannot be is still served, and asked again at the next read.
+    { gh_new=$(mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
       jq -c --argjson now "$gh_now_s" '.fetched = $now' "$gh_entry.json" >"$gh_new" 2>/dev/null &&
-      mv -f -- "$gh_new" "$gh_entry.json"; }; then
-      gh_reason='the cache entry could not be written'
-    fi
+      mv -f -- "$gh_new" "$gh_entry.json" 2>/dev/null; } || true
   elif [[ $gh_code == 2[0-9][0-9] ]]; then
     if ! jq -e . "$gh_out.body" >/dev/null 2>&1; then
       gh_reason='not JSON'
-    elif ! { gh_new=$(mktemp "$gh_entry.body.XXXXXX") && cp -- "$gh_out.body" "$gh_new" && mv -f -- "$gh_new" "$gh_entry.body" &&
-      gh_new=$(mktemp "$gh_entry.json.XXXXXX") &&
-      jq -cn --arg e "$gh_endpoint" --arg etag "${gh_h[etag]:-}" --argjson now "$gh_now_s" --argjson s "$gh_code" \
-        '{endpoint: $e, etag: (if $etag == "" then null else $etag end), fetched: $now, status: $s}' >"$gh_new" &&
-      mv -f -- "$gh_new" "$gh_entry.json"; }; then
-      gh_reason='the cache entry could not be written'
+    elif [[ -z $gh_entry ]]; then
+      gh_kept=false
+    # The entry with no ETag and never fresh first, so a write stopped before its last step never
+    # pairs a body with an ETag it did not come with; then the body; then the entry whole.
+    elif ! { gh_new=$(mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
+      gh_entry_json "$gh_endpoint" '' 0 "$gh_code" >"$gh_new" && mv -f -- "$gh_new" "$gh_entry.json" 2>/dev/null &&
+      gh_new=$(mktemp "$gh_entry.body.XXXXXX" 2>/dev/null) && cp -- "$gh_out.body" "$gh_new" 2>/dev/null &&
+      mv -f -- "$gh_new" "$gh_entry.body" 2>/dev/null &&
+      gh_new=$(mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
+      gh_entry_json "$gh_endpoint" "${gh_h[etag]:-}" "$gh_now_s" "$gh_code" >"$gh_new" &&
+      mv -f -- "$gh_new" "$gh_entry.json" 2>/dev/null; }; then
+      gh_kept=false
     fi
   else
     gh_reason=$(grep -m1 . "$gh_err" 2>/dev/null) || gh_reason=${gh_code:+HTTP $gh_code}
     gh_reason=${gh_reason:-no answer}
   fi
   # A temporary file a failed write left.
-  [[ -z $gh_new || ! -e $gh_new ]] || rm -f -- "$gh_new"
-  rm -f -- "$gh_out.body" "$gh_err"
+  [[ -z $gh_new || ! -e $gh_new ]] || rm -f -- "$gh_new" 2>/dev/null
+  rm -f -- "$gh_err"
   if [[ -n $gh_reason ]]; then
+    rm -f -- "$gh_out.body"
     echo "gh api $gh_endpoint: $gh_reason" >"$gh_dir/error"
     return 1
   fi
   gh_lift_limit "${gh_resource:-core}"
+  if ! $gh_kept; then
+    mv -f -- "$gh_out.body" "$gh_dir/$gh_name"
+    return
+  fi
+  rm -f -- "$gh_out.body"
   gh_serve "$gh_dir" "$gh_name" "$4"
+}
+
+# gh_entry_json <endpoint> <etag or empty> <fetched> <status>: a cache entry's .json.
+gh_entry_json() {
+  jq -cn --arg e "$1" --arg etag "$2" --argjson now "$3" --argjson s "$4" \
+    '{endpoint: $e, etag: (if $etag == "" then null else $etag end), fetched: $now, status: $s}'
 }
 
 gh_call() {
@@ -403,7 +462,7 @@ gh_call() {
   shift 2
   # shellcheck disable=SC2034 # read by the scripts that source this file
   GH_STATUS='' GH_LIMIT_UNTIL='' GH_LIMIT_RESOURCE='' GH_LIMIT_KIND=''
-  mkdir -p "$GITHUB_API_DIR/cache" || { echo "gh $1 ${2:-}: $GITHUB_API_DIR could not be made" >"$gh_dir/error"; return 1; }
+  mkdir -p "$GITHUB_API_DIR/cache" 2>/dev/null || true
   # What the call reads, for the limit and the log.
   if [[ $1 == api ]]; then
     gh_endpoint='' gh_method=GET
@@ -430,7 +489,13 @@ gh_call() {
     return 0
   fi
   GH_STATUS=$gh_code
-  gh_text=$(cat -- "$gh_dir/$gh_name" "$gh_dir/$gh_name.stderr" 2>/dev/null) || gh_text=''
+  # gh's own error text, and for GraphQL its answer too, whose errors carry RATE_LIMITED: a REST
+  # read's stdout is GitHub's data (a --paginate read's earlier pages), whatever it says.
+  if [[ $1 == api && $gh_resource != graphql ]]; then
+    gh_text=$(cat -- "$gh_dir/$gh_name.stderr" 2>/dev/null) || gh_text=''
+  else
+    gh_text=$(cat -- "$gh_dir/$gh_name" "$gh_dir/$gh_name.stderr" 2>/dev/null) || gh_text=''
+  fi
   if [[ ${gh_text,,} == *"rate limit"* || $gh_text == *RATE_LIMITED* ]]; then
     gh_log "$gh_method" "$gh_endpoint" "$gh_code" "$gh_resource" '' false
     gh_now_s=$(gh_now) || return 1
