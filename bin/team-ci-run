@@ -17,9 +17,10 @@
 # <branch> (GH_FOR). It looks every 10 s (WAIT_SECONDS), or more seldom as the hour's core budget
 # falls (gh_interval 10: 60, 120 or 300 s under a half, a quarter or a tenth left), counting time in
 # the seconds its look sleeps asked for, so a test steps it with a stub sleep, for a grace of 2
-# minutes from its first look (GRACE_SECONDS; TEAM_CI_RUN_GRACE_SECONDS replaces its seconds, a
-# seam of the tests, as the reader's TEAM_GITHUB_CLOCK and TEAM_GITHUB_FRESH_SECONDS are). Before each look, while the team holds offline (offline_hold), it ends at once with
-# exit 75 and the hold's text.
+# minutes from its first look (GRACE_SECONDS; TEAM_CI_RUN_GRACE_SECONDS replaces its seconds, a seam
+# of the tests, as the reader's TEAM_GITHUB_CLOCK and TEAM_GITHUB_FRESH_SECONDS are). Before each
+# look, while the team holds offline (offline_hold), it ends at once with exit 75 and the hold's
+# text.
 # Each look reads the workflow's runs of the head
 # (repos/<repo>/actions/workflows/<branch_ci>/runs?head_sha=<sha>&per_page=100) and, while there is
 # none, origin's branch (repos/<repo>/branches/<branch>, a 404 being no such branch) and the
@@ -68,7 +69,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 source "$TEAM_LIB/github-api.sh"
 
 # Seconds between looks, before the budget raises them, and how long it looks for a push, a PR's run
-# or a started run, and gh may fail; and how long its sleeps for GitHub's rate limit may take in all.
+# or a started run, and gh may fail; and how long its sleeps for GitHub's rate limit may take in
+# all.
 WAIT_SECONDS=10
 GRACE_SECONDS=${TEAM_CI_RUN_GRACE_SECONDS:-120}
 LIMIT_SECONDS=5400

@@ -274,15 +274,15 @@
 #                     time>" and posted once to #coordinator, mentioning no one: "GitHub's API: core
 #                     requests at 72% of 5,000 for the hour, past 70%; it resets at 07:27. Most:
 #                     team-ci-wait 1,830 (9), team-ci-run 240 (3), team-next 40 (2); 1,100 not
-#                     logged (workers' own gh and other scripts)." ("GraphQL points" for graphql; the
-#                     reset in this machine's local time; the top three of the reader's call log's
-#                     counted requests of the hour by the command that sent them, each with its
-#                     subjects counted in brackets, as gh_spenders gives them; and the use no log
-#                     accounts for, left out when 0). As the quota's, a notice stays until its reset
-#                     passes, so a crossing is posted once per window and no lower threshold after a
-#                     higher one; one not yet posted closes with no post once a higher one of its
-#                     window is wanted; then it closes with no post. Each post, failed post and close
-#                     is a log line as the quota step's ("github:
+#                     logged (workers' own gh and other scripts)." ("GraphQL points" for graphql;
+#                     the reset in this machine's local time; the top three of the reader's call
+#                     log's counted requests of the hour by the command that sent them, each with
+#                     its subjects counted in brackets, as gh_spenders gives them; and the use no
+#                     log accounts for, left out when 0). As the quota's, a notice stays until its
+#                     reset passes, so a crossing is posted once per window and no lower threshold
+#                     after a higher one; one not yet posted closes with no post once a higher one
+#                     of its window is wanted; then it closes with no post. Each post, failed post
+#                     and close is a log line as the quota step's ("github:
 #                     core/70/2026-11-16T07:27:14Z: posted to #coordinator (message <id>)"). A read
 #                     that fails, prints no reading or is stopped ("github: failed: gh api
 #                     rate_limit timed out after 20 s"), a notice record it cannot write and a post
@@ -398,36 +398,37 @@
 # sweep findings it last saw, each with the time of the first look that saw it, and the time of the
 # run's look, none when the run made none), notices.json (the notice record, team-notices/1,
 # bin/lib/notice.jq's: the open alerts, the offline notice, the login-refused notice, the quota's
-# crossings and GitHub's API budget's, each with since when, its text, the holding of the lease it opened in, when it was
-# posted and its message, the login refusal's reason in its detail; written whole under
-# notices.lock, through bin/lib/notices.sh; its first write moves health.json's open alerts, the
-# offline flag's posted, the login-refused file and uptime.json's outages from before it there once,
-# and a run strips an alerts key in health.json, a posted in the offline flag and a login-refused
-# file it finds, uptime.json's alerts being team-uptime run's to strip), notices.lock (one writer of
-# the notice record at a time), heartbeat.log ("<UTC time> <step>: <what happened>", kept to its
-# last 1000 lines once it passes 2000), heartbeat-failures.log (each of its lines that reports a
-# problem, the same line: a failed step, a warning, a failed or refused probe and each run's line of
-# an outage, a lease not checked or not renewed, a failed post, a skipped or timed-out run; kept 30
-# days, the older lines dropped once a run), heartbeat.lock (one run at a time), offline ({since}:
-# GitHub unreachable since the UTC time, the hold; read by team-lease status, the fence hook, the
-# doctor and the session digest; whether #coordinator was told is the offline notice's), and on
-# macOS heartbeat.err, the job's stderr (systemd keeps it in the journal).
+# crossings and GitHub's API budget's, each with since when, its text, the holding of the lease it
+# opened in, when it was posted and its message, the login refusal's reason in its detail; written
+# whole under notices.lock, through bin/lib/notices.sh; its first write moves health.json's open
+# alerts, the offline flag's posted, the login-refused file and uptime.json's outages from before it
+# there once, and a run strips an alerts key in health.json, a posted in the offline flag and a
+# login-refused file it finds, uptime.json's alerts being team-uptime run's to strip), notices.lock
+# (one writer of the notice record at a time), heartbeat.log ("<UTC time> <step>: <what happened>",
+# kept to its last 1000 lines once it passes 2000), heartbeat-failures.log (each of its lines that
+# reports a problem, the same line: a failed step, a warning, a failed or refused probe and each
+# run's line of an outage, a lease not checked or not renewed, a failed post, a skipped or timed-out
+# run; kept 30 days, the older lines dropped once a run), heartbeat.lock (one run at a time),
+# offline ({since}: GitHub unreachable since the UTC time, the hold; read by team-lease status, the
+# fence hook, the doctor and the session digest; whether #coordinator was told is the offline
+# notice's), and on macOS heartbeat.err, the job's stderr (systemd keeps it in the journal).
 # TEAM_TIMERS_CHECKPOINT_SECONDS, TEAM_TIMERS_QUEUE_SECONDS, TEAM_TIMERS_CURRENT_SECONDS,
 # TEAM_TIMERS_FINISHED_SECONDS, TEAM_TIMERS_FINISHED_CALL_SECONDS,
 # TEAM_TIMERS_COORDINATOR_SWEEP_SECONDS, TEAM_TIMERS_UPTIME_SECONDS, TEAM_TIMERS_QUOTA_SECONDS,
-# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS, TEAM_TIMERS_LEVEL_SECONDS,
-# TEAM_TIMERS_SWEEP_SECONDS, TEAM_TIMERS_JANITOR_SECONDS, TEAM_TIMERS_RUN_SECONDS,
-# TEAM_TIMERS_LOCK_SECONDS and TEAM_TIMERS_KILL_SECONDS replace the checkpoint step's 300 s, the
-# queue step's 60 s, the current step's 120 s, the finished step's 90 s after which no stop starts,
-# its 30 s for each call (the back step's and the coordinator step's session lists' too), the
-# coordinator step's 60 s for its sweep, the uptime step's 180 s, the quota step's 60 s, the
-# github step's 20 s, the tmp step's 120 s, the capacity step's 60 s for each of its commands, the level step's 300 s, the
-# sweep's 300 s, the janitor's 1200 s, the run's 4200 s, enable's 60 s wait for the run's lock and
-# the 10 s after a time limit at which a command still running is killed, TEAM_TIMERS_FAILURES_DAYS
-# the failures log's 30 days, and TEAM_TIMERS_HEALTH_RUNS, TEAM_TIMERS_HEALTH_STALE_MINUTES,
-# TEAM_TIMERS_HEALTH_STEP_RUNS and TEAM_TIMERS_HEALTH_UNATTENDED_MINUTES the health view's and the
-# alerts' 2 runs, 15 minutes, 12 runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write
-# of the notice record waits for its lock (the tests' seams).
+# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS,
+# TEAM_TIMERS_LEVEL_SECONDS, TEAM_TIMERS_SWEEP_SECONDS, TEAM_TIMERS_JANITOR_SECONDS,
+# TEAM_TIMERS_RUN_SECONDS, TEAM_TIMERS_LOCK_SECONDS and TEAM_TIMERS_KILL_SECONDS replace the
+# checkpoint step's 300 s, the queue step's 60 s, the current step's 120 s, the finished step's 90 s
+# after which no stop starts, its 30 s for each call (the back step's and the coordinator step's
+# session lists' too), the coordinator step's 60 s for its sweep, the uptime step's 180 s, the quota
+# step's 60 s, the github step's 20 s, the tmp step's 120 s, the capacity step's 60 s for each of
+# its commands, the level step's 300 s, the sweep's 300 s, the janitor's 1200 s, the run's 4200 s,
+# enable's 60 s wait for the run's lock and the 10 s after a time limit at which a command still
+# running is killed, TEAM_TIMERS_FAILURES_DAYS the failures log's 30 days, and
+# TEAM_TIMERS_HEALTH_RUNS, TEAM_TIMERS_HEALTH_STALE_MINUTES, TEAM_TIMERS_HEALTH_STEP_RUNS and
+# TEAM_TIMERS_HEALTH_UNATTENDED_MINUTES the health view's and the alerts' 2 runs, 15 minutes, 12
+# runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write of the notice record waits for
+# its lock (the tests' seams).
 # Exit 0 done, 1 refused or a step failed, 2 usage error, 75 GitHub unreachable.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -454,20 +455,21 @@ INBOX_TIMEOUT=120
 # and killed KILL_SECONDS later: the checkpoint 300 (CHECKPOINT_TIMEOUT), the current step 120
 # (CURRENT_TIMEOUT), the queue step 60 (QUEUE_TIMEOUT), the coordinator step's session list 30
 # (FINISHED_CALL_TIMEOUT) and sweep 60 (COORDINATOR_SWEEP_TIMEOUT), the uptime step 180
-# (UPTIME_TIMEOUT), the quota step 60 (QUOTA_TIMEOUT), the github step 20 (GITHUB_TIMEOUT), the
-# tmp step 120 (TMP_TIMEOUT), the inbox step 120 (INBOX_TIMEOUT above), the finished step 120 (its
+# (UPTIME_TIMEOUT), the quota step 60 (QUOTA_TIMEOUT), the github step 20 (GITHUB_TIMEOUT), the tmp
+# step 120 (TMP_TIMEOUT), the inbox step 120 (INBOX_TIMEOUT above), the finished step 120 (its
 # session list and each stop 30 s, FINISHED_CALL_TIMEOUT, and no stop started once FINISHED_TIMEOUT
 # has passed, so at most 90 s and one last stop's 30), the capacity step's sample and place 60 each,
-# the level step 300, the sweep 300, the pack 300 and the janitor 1200. That is 3410 s in all, 3580 s with the kills (10 s each
-# for the other steps' sixteen commands and the finished step's last stop), about 60 minutes. The
-# lease step leaves a lease unrenewed only under 14 minutes old, so a run that hits every limit ends
-# with it about 74 minutes old, past the lease's hour (team-lease's TTL_MINUTES), and the next run
-# starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS later, and renews behind its
-# read of origin. A lease past its ttl is stale, which changes only what team-lease take says on
-# another machine (stale, not fresh): the holder still holds it, and the renewal makes it fresh
-# again. RUN_TIMEOUT, 70 minutes, stops a run that outlasts all of that (a hang before the steps, or
-# in a command no step's limit reaches), so one hang never ends the renewals and checkpoints for
-# good; the systemd service's START_TIMEOUT, 75 minutes, is the backstop behind it.
+# the level step 300, the sweep 300, the pack 300 and the janitor 1200. That is 3410 s in all, 3580
+# s with the kills (10 s each for the other steps' sixteen commands and the finished step's last
+# stop), about 60 minutes. The lease step leaves a lease unrenewed only under 14 minutes old, so a
+# run that hits every limit ends with it about 74 minutes old, past the lease's hour (team-lease's
+# TTL_MINUTES), and the next run starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS
+# later, and renews behind its read of origin. A lease past its ttl is stale, which changes only
+# what team-lease take says on another machine (stale, not fresh): the holder still holds it, and
+# the renewal makes it fresh again. RUN_TIMEOUT, 70 minutes, stops a run that outlasts all of that
+# (a hang before the steps, or in a command no step's limit reaches), so one hang never ends the
+# renewals and checkpoints for good; the systemd service's START_TIMEOUT, 75 minutes, is the
+# backstop behind it.
 CHECKPOINT_TIMEOUT=${TEAM_TIMERS_CHECKPOINT_SECONDS:-300}
 # Seconds past which the checkpoint begins no worktree, two fifths of its limit (120 of 300): one
 # begun by then makes at most two origin calls of 60 s, so its records commit begins in the limit.
