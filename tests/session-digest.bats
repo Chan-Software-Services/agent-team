@@ -301,5 +301,5 @@ EOF
   run grep -lE 'session-digest|team-snapshot' "$REPO_ROOT"/settings/*.json
   assert_equal "$output" ""
   assert_equal "$(jq -r '.hooks.SessionStart[]?.hooks[].command' "$REPO_ROOT"/settings/*.json)" \
-    '"@TEAM_CODE@/bin/hooks/axi-banner" gh-axi'
+    '@TEAM_CODE@/bin/hooks/axi-banner'
 }

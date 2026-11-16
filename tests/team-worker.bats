@@ -852,7 +852,7 @@ session-records-guard block 10"
       "$(sort <<<"$expected")"
     # The write hook holds ops to its one file, and planners and reviewers to .scratch/.
     case $role in
-      planner | reviewer) expected=null ;;
+      planner | reviewer) expected='[]' ;;
       ops) expected='[".scratch/answer.md"]' ;;
       *) expected='' ;;
     esac
@@ -1234,11 +1234,79 @@ role_texts() {
     settings=$(generated settings "$role")
     assert_equal "$(jq -r .env.AGENT_TEAM_ROLE "$settings")" "$role"
     assert_equal "$(jq -c '[.hooks.SessionStart[].hooks[] | [.command, .timeout]]' "$settings")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '[["\"\($code)/bin/hooks/axi-banner\" gh-axi", 10]]')"
+      "$(jq -cn --arg code "$REPO_ROOT" '[["\($code)/bin/hooks/axi-banner", 10]]')"
+    assert_equal "$(jq -c '[.hooks.SessionStart[].hooks[].args]' "$settings")" '[["gh-axi"]]'
     assert_equal "$(jq -c '[.hooks.PermissionDenied[] | [.matcher, (.hooks[] | .command, .timeout)]]' "$settings")" \
       "$(jq -cn --arg code "$REPO_ROOT" '[[null, "\($code)/bin/hooks/denial-log", 10]]')"
   done
   [[ -x $REPO_ROOT/bin/hooks/axi-banner && -x $REPO_ROOT/bin/hooks/denial-log ]]
+}
+
+# The prefix, the worktree and the common git directory a launch's settings <file> give its shell
+# commands, as JSON.
+confinement() {
+  jq -c '[.env.CLAUDE_CODE_SHELL_PREFIX, .env.AGENT_TEAM_WORKTREE, .env.AGENT_TEAM_GIT_DIR]' "$1"
+}
+
+# What confinement prints for a confined launch in <worktree>: the checkout's prefix, the
+# worktree's real path and its common git directory as git names it.
+confined_in() {
+  jq -cn --arg code "$REPO_ROOT" --arg wt "$(realpath "$1")" \
+    --arg git "$(realpath "$(git -C "${1:?}" rev-parse --path-format=absolute --git-common-dir)")" \
+    '["\($code)/bin/lib/confine-shell", $wt, $git]'
+}
+
+@test "a project with confine on renders the shell prefix, the worktree and its common git directory for planner, builder and reviewer, never ops" {
+  registry --first 'confine = "on"' proj other
+  open_task T7
+  ops_stub
+  local role
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    assert_equal "$(confinement "$(generated settings "$role")")" "$(confined_in "$wt1")"
+  done
+  [[ -x $REPO_ROOT/bin/lib/confine-shell ]]
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(confinement "$(generated settings ops)")" '[null,null,null]'
+}
+
+@test "a project with confine off or no confine key renders no shell prefix, worktree or git directory" {
+  open_task T7
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  assert_equal "$(confinement "$(generated settings builder)")" '[null,null,null]'
+  registry --first 'confine = "off"' proj other
+  run_bin -0 team-worker T7 reviewer "$wt1" -- go
+  assert_equal "$(confinement "$(generated settings reviewer)")" '[null,null,null]'
+  registry --first 'confine = "on"' other proj
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(confinement "$(generated settings planner)")" '[null,null,null]'
+}
+
+@test "T0, the load check, is always confined but for ops, whatever its project says or with none" {
+  ops_stub
+  local role confined
+  confined=$(confined_in "$wt1")
+  [[ $(jq -r '.[2]' <<<"$confined") == */.git ]]
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T0 "$role" "$wt1" -- go
+    assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.$role.proj.json")" "$confined"
+  done
+  run_bin -0 team-worker T0 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.ops.json")" '[null,null,null]'
+  # A worktree of no registered project is confined too.
+  local loose
+  loose=$(make_repo loose)
+  git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
+  run_bin -0 team-worker T0 builder "$HOME/slots/loose/1" -- go
+  assert_equal "$(confinement "$TEAM_HOME/tasks/T0/settings.builder.json")" "$(confined_in "$HOME/slots/loose/1")"
+}
+
+@test "every hook of a worker role's settings is in exec form, which Claude Code runs without the shell prefix" {
+  local file
+  for file in "$REPO_ROOT"/settings/*.json; do
+    assert_equal "$file: $(jq -c '[.hooks // {} | .[][] | .hooks[] | select((.args | type) != "array") | .command]' "$file")" "$file: []"
+    assert_equal "$file: $(jq -c '[.hooks // {} | .[][] | .hooks[] | select(.command | test("[ \"]")) | .command]' "$file")" "$file: []"
+  done
 }
 
 @test "a launched worker's chrome-devtools-axi session is named for its task and role" {
@@ -1407,6 +1475,303 @@ UNLISTED="a new toolkit for a project takes Daniel's yes, then its name in that 
   assert_equal "$output" "team-worker: the ops role needs --request <the link to Daniel's Discord message>"
   assert_equal "$(stub_calls claude)" ""
   assert_equal "$(launches)" ""
+}
+# unlist <toolkit>...: take each toolkit out of every project's toolkits line in the test's
+# registry, so the project no longer lists it.
+unlist() {
+  local kit
+  for kit in "$@"; do
+    sed -i "s/\"$kit\", //" "$TEAM_HOME/projects.toml"
+  done
+}
+
+# template_brief <task> <template>: a brief of <task>, brief-work.md, with the record team-brief
+# writes beside it naming <template>, and the first prompt that names it in $brief_prompt.
+template_brief() {
+  mkdir -p "$TEAM_HOME/tasks/$1"
+  echo "the brief" >"$TEAM_HOME/tasks/$1/brief-work.md"
+  jq -cn --arg template "$2" '{template: $template, project: "proj", values: {}}' >"$TEAM_HOME/tasks/$1/brief-work.json"
+  brief_prompt="Read your brief at $TEAM_HOME/tasks/$1/brief-work.md"
+}
+
+# The plugin directories of the last session started, in order.
+plugin_dirs() {
+  bg_calls | tail -n 1 | jq -c '. as $call | [indices("--plugin-dir")[] | $call[. + 1]]'
+}
+
+# again <task>: the ledger emptied and <task> opened again, so the next launch is its first.
+again() {
+  : >"$TEAM_HOME/ledger.jsonl"
+  open_task "$1"
+}
+
+@test "a delivering builder's launch gets the spec-review toolkit its project does not list, after any given and never twice" {
+  unlist spec-review
+  local template kits
+  kits=$REPO_ROOT/toolkits
+  for template in builder-deliver builder-round builder-fix; do
+    again T7
+    template_brief T7 "$template"
+    run_bin -0 team-worker T7 builder "$wt1" -- "$brief_prompt"
+    assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$kits" '["\($k)/spec-review"]')"
+    assert_equal "$(launches | jq -c '{template, toolkits}')" "$(jq -cn --arg t "$template" '{template: $t, toolkits: ["spec-review"]}')"
+    assert_equal "$(jq -c . "$TEAM_HOME/tasks/T7/mcp.builder.proj.json")" '{"mcpServers":{}}'
+  done
+  # After a toolkit the launch was given, which its project lists.
+  again T7
+  run_bin -0 team-worker T7 builder "$wt1" --toolkit browser -- "$brief_prompt"
+  assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$kits" '["\($k)/browser", "\($k)/spec-review"]')"
+  assert_equal "$(launches | jq -c .toolkits)" '["browser","spec-review"]'
+  # Given by hand or carried from an earlier launch, it is not doubled.
+  again T7
+  run_bin -0 team-worker T7 builder "$wt1" --toolkit spec-review --toolkit browser -- "$brief_prompt"
+  assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$kits" '["\($k)/spec-review", "\($k)/browser"]')"
+  assert_equal "$(launches | jq -c .toolkits)" '["spec-review","browser"]'
+  run_bin -0 team-log --check
+  # A toolkit that is not skills-only still needs the project's line, on a delivery too.
+  unlist codegraph
+  again T7
+  refused_launch "toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, kit-a, kit-b, kit-c): $UNLISTED" \
+    T7 builder "$wt1" --toolkit codegraph -- "$brief_prompt"
+}
+
+@test "a ticket builder, a launch with no brief record and a reviewer get no delivery toolkit; given spec-review unlisted they launch with it, and another unlisted toolkit is refused as before" {
+  unlist spec-review codegraph
+  local unlisted="toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, kit-a, kit-b, kit-c): $UNLISTED"
+  # launch: "<role> <template, or none for a prompt naming no brief>"
+  local launch role template prompt
+  for launch in "builder builder-ticket" "builder builder-merge-base" "builder resume" "builder none" \
+    "reviewer reviewer" "reviewer builder-deliver" "planner builder-deliver"; do
+    read -r role template <<<"$launch"
+    prompt=go
+    if [[ $template != none ]]; then
+      template_brief T7 "$template"
+      prompt=$brief_prompt
+    fi
+    again T7
+    run_bin -0 team-worker T7 "$role" "$wt1" -- "$prompt"
+    assert_equal "$launch: $(plugin_dirs) $(launches | jq -c .toolkits)" "$launch: [] []"
+    # The exemption: a skills-only toolkit needs no line in the project's list, on any launch.
+    again T7
+    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit spec-review -- "$prompt"
+    assert_equal "$launch: $(plugin_dirs)" "$launch: $(jq -cn --arg k "$REPO_ROOT/toolkits" '["\($k)/spec-review"]')"
+    assert_equal "$launch: $(launches | jq -c .toolkits)" "$launch: [\"spec-review\"]"
+    # codegraph has hooks/, so it is checked against the list, alone or beside spec-review.
+    again T7
+    refused_launch "$unlisted" T7 "$role" "$wt1" --toolkit codegraph -- "$prompt"
+    refused_launch "$unlisted" T7 "$role" "$wt1" --toolkit spec-review --toolkit codegraph -- "$prompt"
+  done
+}
+
+# skills_only_kit <name>: a fixture toolkit of the fake checkout that is skills-only: a plain
+# manifest, a README, one agent, one skill, and evals holding what no session loads.
+skills_only_kit() {
+  local dir=$code/toolkits/$1
+  mkdir -p "$dir/.claude-plugin" "$dir/agents" "$dir/skills/look" "$dir/evals/case/hooks"
+  echo '{"name": "kit", "version": "0.1.0", "description": "A kit.", "author": {"name": "A"}}' >"$dir/.claude-plugin/plugin.json"
+  echo "# kit" >"$dir/README.md"
+  printf '%s\n' --- "name: reader" "description: Reads." "tools: [Read]" --- "You read. hooks: none of yours." >"$dir/agents/reader.md"
+  printf '%s\n' --- "name: look" "description: Looks." --- "# Look" "mcpServers: this line is prose." >"$dir/skills/look/SKILL.md"
+  echo '{"mcpServers": {"x": {"command": "x"}}}' >"$dir/evals/.mcp.json"
+  echo '{}' >"$dir/evals/case/hooks/hooks.json"
+  echo "echo scaffold" >"$dir/evals/case/scaffold.sh"
+}
+
+@test "a skills-only toolkit launches unlisted, whatever its evals hold, and one with a server, hook, script or any other file is refused unlisted" {
+  fake_checkout
+  skills_only_kit kit-s
+  open_task T7
+  run_fake T7 planner "$wt1" --toolkit kit-s -- go
+  assert_equal "$status" 0
+  assert_equal "$(plugin_dirs)" "$(jq -cn --arg k "$code/toolkits" '["\($k)/kit-s"]')"
+  assert_equal "$(launches | jq -c .toolkits)" '["kit-s"]'
+  # Nothing but a README is skills-only too, and so is the kit with no evals.
+  mkdir "$code/toolkits/kit-r"
+  echo "# kit" >"$code/toolkits/kit-r/README.md"
+  skills_only_kit kit-n
+  rm -r "${code:?}/toolkits/kit-n/evals"
+  # Every listed key, a comment, a blank line and a value that goes on over indented lines hold.
+  printf '%s\n' $'--- \t' "# an agent" "name: reader" "description: >" "  Reads, and names no hook" "" "  of its own." \
+    "tools: [Read]" "model: inherit" "omitClaudeMd: true" --- "You read." >"$code/toolkits/kit-n/agents/reader.md"
+  # So do lines that end with a carriage return and a line feed.
+  printf '%s\r\n' --- "name: look" "description: Looks." 'argument-hint: "[<dir>]"' --- "# Look" 'Look, then run `id` with $ARGUMENTS and $1.' >"$code/toolkits/kit-n/skills/look/SKILL.md"
+  local kit
+  for kit in kit-r kit-n; do
+    again T7
+    run_fake T7 planner "$wt1" --toolkit "$kit" -- go
+    assert_equal "$kit: $status $(launches | jq -c .toolkits)" "$kit: 0 [\"$kit\"]"
+  done
+
+  # Each variant is the skills-only kit with one change, which puts it back under the allow list.
+  local change dir calls logged n=0
+  local -a changes=(
+    'echo "{\"mcpServers\": {}}" >.mcp.json'
+    'echo "{}" >.lsp.json'
+    'mkdir hooks && echo "{}" >hooks/hooks.json'
+    'mkdir scripts'
+    'mkdir commands'
+    'mkdir bin'
+    'echo "{}" >settings.json'
+    'echo "notes" >NOTES.md'
+    'jq ".mcpServers = {}" .claude-plugin/plugin.json >m && mv m .claude-plugin/plugin.json'
+    'jq ".hooks = {}" .claude-plugin/plugin.json >m && mv m .claude-plugin/plugin.json'
+    'echo "[]" >.claude-plugin/plugin.json'
+    'echo "not json" >.claude-plugin/plugin.json'
+    'echo "{}" >.claude-plugin/marketplace.json'
+    'sed -i "2i hooks:" agents/reader.md'
+    'sed -i "2i mcpServers: {x: {command: x}}" agents/reader.md'
+    'sed -i "2i \"hooks\" : {}" skills/look/SKILL.md'
+    'sed -i "2i mcpServers:" skills/look/SKILL.md'
+    'echo "echo run" >agents/run.sh'
+    'mkdir agents/more'
+    'echo "echo run" >skills/look/run.sh'
+    'mkdir skills/look/scripts'
+    'echo "loose" >skills/loose.md'
+    # A symbolic link at each level, each to the same entry of a skills-only kit, so only the
+    # link is the change.
+    'rm README.md && ln -s ../kit-s/README.md README.md'
+    'rm -r evals && ln -s ../kit-s/evals evals'
+    'rm -r .claude-plugin && ln -s ../kit-s/.claude-plugin .claude-plugin'
+    'rm .claude-plugin/plugin.json && ln -s ../../kit-s/.claude-plugin/plugin.json .claude-plugin/plugin.json'
+    'rm -r agents && ln -s ../kit-s/agents agents'
+    'rm agents/reader.md && ln -s ../../kit-s/agents/reader.md agents/reader.md'
+    'rm -r skills && ln -s ../kit-s/skills skills'
+    'rm -r skills/look && ln -s ../../kit-s/skills/look skills/look'
+    'rm skills/look/SKILL.md && ln -s ../../../kit-s/skills/look/SKILL.md skills/look/SKILL.md'
+    # A key of a frontmatter nested under another, in single quotes, as a YAML explicit key, and
+    # in a file that opens with a byte order mark.
+    'printf "%s\n" --- "name: reader" "meta:" "  hooks: {}" --- "You read." >agents/reader.md'
+    "printf '%s\n' --- \"'hooks': {}\" 'name: look' --- '# Look' >skills/look/SKILL.md"
+    'printf "%s\n" --- "name: reader" "? hooks" ": {}" --- "You read." >agents/reader.md'
+    'printf "%s\n" --- "name: look" "? mcpServers" ": {}" --- "# Look" >skills/look/SKILL.md'
+    'sed -i "2i hooks:" agents/reader.md && sed -i "1s/^/\xEF\xBB\xBF/" agents/reader.md'
+    'sed -i "2i mcpServers:" skills/look/SKILL.md && sed -i "1s/^/\xEF\xBB\xBF/" skills/look/SKILL.md'
+    # A key no text match reads as hooks: one spelled with an escape, and an alias as the key.
+    'printf "%s\n" --- "name: reader" "\"h\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%s\n" --- "name: reader" "description: &a hooks" "*a : {}" --- "You read." >agents/reader.md'
+    # So a frontmatter line that is not indented, blank or a comment opens with a listed key:
+    # any other key, a merge key, a frontmatter indented as a whole and one that never ends are refused.
+    'sed -i "2i allowed-tools: Bash" skills/look/SKILL.md'
+    'sed -i "2i permissionMode: bypassPermissions" agents/reader.md'
+    'sed -i "2i name : reader" agents/reader.md'
+    'sed -i "2i <<: {x: 1}" agents/reader.md'
+    'printf "%s\n" --- "  name: reader" "  description: Reads." --- "You read." >agents/reader.md'
+    'printf "%s\n" --- "name: reader" "You read." >agents/reader.md'
+    # A second key on a listed key's line, after a line break that is no line feed: a lone
+    # carriage return, U+0085, U+2028 and U+2029.
+    'printf "%b\n" --- "name: reader\r\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: reader\xC2\x85\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: look\xE2\x80\xA8\"h\\\\x6foks\": {}" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" --- "name: look\xE2\x80\xA9\"h\\\\x6foks\": {}" --- "# Look" >skills/look/SKILL.md'
+    # An opening line Claude Code may take as a frontmatter's and a reader of plain ASCII would
+    # not: --- and then a no-break space, a zero width no-break space, a form feed, a vertical tab.
+    'printf "%b\n" "---\xC2\xA0" "name: reader" "hooks: {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" "---\xEF\xBB\xBF" "name: reader" "hooks: {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" "---\f" "name: look" "hooks: {}" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" "---\v" "name: look" "hooks: {}" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" "---x" "name: reader" --- "You read." >agents/reader.md'
+    # A file that does not open with a frontmatter: none at all, an empty file, a blank line or a
+    # space before the opening line.
+    'echo "You read." >agents/reader.md'
+    ': >skills/look/SKILL.md'
+    'sed -i "1s/^/\\n/" agents/reader.md'
+    'sed -i "1s/^/ /" skills/look/SKILL.md'
+    # A byte in a frontmatter that is no printable ASCII: a letter outside ASCII, a no-break
+    # space alone on a line, a tab in a value and as an indent, a form feed.
+    'printf "%b\n" --- "name: reader" "description: caf\xC3\xA9" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: reader" "\xC2\xA0" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: look" "description: a\tb" --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" --- "name: look" "description:" "\tLooks." --- "# Look" >skills/look/SKILL.md'
+    'printf "%b\n" --- "name: reader" "description: a\fb" --- "You read." >agents/reader.md'
+    # A NUL byte, which an awk that holds a line as a C string would end the line at.
+    'printf "%b\n" --- "name: reader" "\0\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    'printf "%b\n" --- "name: reader\0\"h\\\\x6foks\": {}" --- "You read." >agents/reader.md'
+    # A command Claude Code would run from a skill's body when the skill is used: an exclamation
+    # mark and a command in backticks, and a fence that ends in an exclamation mark.
+    'printf "%s\n" "!\`id\`" >>skills/look/SKILL.md'
+    'printf "%s\n" "\`\`\`!" "id" "\`\`\`" >>skills/look/SKILL.md'
+    # A command only Claude Code's text of the skill holds, once it has filled the arguments in:
+    # so an exclamation mark anywhere in a skill file, its frontmatter included, is a doubt.
+    'printf "%s\n" "!\$ARGUMENTS\`id\`" >>skills/look/SKILL.md'
+    'printf "%s\n" "\`\`\`\$ARGUMENTS!" "id" "\`\`\`" >>skills/look/SKILL.md'
+    'printf "%s\n" "!\$1" >>skills/look/SKILL.md'
+    'echo "Stop! Then look." >>skills/look/SKILL.md'
+    'sed -i "s/^description: Looks\.$/description: Looks!/" skills/look/SKILL.md'
+    # A command in a name, which Claude Code's text of a skill opens with: a skill directory or an
+    # agent file whose name is not lowercase letters, digits and dashes.
+    'printf "%s\n" "id" "\`\`\`" >>skills/look/SKILL.md && mv skills/look "skills/\`\`\`!"'
+    'mv skills/look "skills/a !\`id\`"'
+    'mv skills/look skills/Look'
+    'mv skills/look skills/look_up'
+    'mv skills/look skills/look.v2'
+    'mv skills/look "skills/look up"'
+    'mv agents/reader.md agents/Reader.md'
+    'mv agents/reader.md agents/reader_two.md'
+    'mv agents/reader.md agents/reader.v2.md'
+    'mv agents/reader.md "agents/read er.md"'
+    'mv agents/reader.md agents/.md'
+  )
+  for change in "${changes[@]}"; do
+    n=$((n + 1))
+    kit=kit-v$n dir=$code/toolkits/kit-v$n
+    skills_only_kit "$kit"
+    (cd "${dir:?}" && eval "$change")
+    again T7
+    calls=$(bg_calls | wc -l) logged=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+    run_fake T7 planner "$wt1" --toolkit "$kit" -- go
+    assert_equal "$change: $status" "$change: 1"
+    assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, codegraph, effect, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
+    assert_equal "$change: $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$change: $calls $logged"
+  done
+  # The toolkit's own name is in that text too: one that is not lowercase letters, digits and
+  # dashes is under the allow list, whatever it holds.
+  for kit in kit_u Kit-u kit.u 'kit u' 'kit!u'; do
+    skills_only_kit "$kit"
+    again T7
+    calls=$(bg_calls | wc -l)
+    run_fake T7 planner "$wt1" --toolkit "$kit" -- go
+    assert_equal "$kit: $status" "$kit: 1"
+    assert_contains "$output" "team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml"
+    assert_equal "$kit: $(bg_calls | wc -l)" "$kit: $calls"
+  done
+}
+
+@test "a toolkit name that is no plain directory name is refused at the command line, a skills-only directory outside toolkits/ included" {
+  fake_checkout
+  skills_only_kit kit-s
+  # A directory outside toolkits/ that reads as skills-only, as one a worker could write.
+  mkdir -p "$code/elsewhere/kit"
+  echo "# kit" >"$code/elsewhere/kit/README.md"
+  open_task T7
+  local name calls logged
+  calls=$(bg_calls | wc -l) logged=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+  for name in ../elsewhere/kit kit-s/ kit-s/evals kit-s/../kit-s ./kit-s . .. ../toolkits/kit-s "$code/toolkits/kit-s" ''; do
+    run_fake T7 planner "$wt1" --toolkit "$name" -- go
+    assert_equal "'$name': $status" "'$name': 2"
+    assert_contains "$output" "unknown toolkit '$name'"
+    assert_equal "'$name': $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "'$name': $calls $logged"
+  done
+  # So a delivery's own toolkit is never passed twice under a second spelling.
+  template_brief T7 builder-deliver
+  run_bin -2 team-worker T7 builder "$wt1" --toolkit spec-review/ -- "$brief_prompt"
+  assert_contains "$output" "unknown toolkit 'spec-review/'"
+  assert_equal "$(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$calls $logged"
+}
+
+@test "the help states the delivery toolkits, the skills-only exemption, its reason and the property" {
+  run_bin -0 team-worker --help
+  assert_contains "$output" "A builder's launch whose brief's template is builder-deliver, builder-round or builder-fix gets"
+  assert_contains "$output" "A skills-only toolkit needs no line in its project's toolkits list, on any launch"
+  assert_contains "$output" "the list keeps MCP servers and production access per project, and a skills-only toolkit starts"
+  assert_contains "$output" "Skills-only is read from the toolkit's own files at each launch"
+  assert_contains "$output" "none a symbolic link"
+  assert_contains "$output" "indented opens with name, description, tools, model, omitClaudeMd or argument-hint and a colon,"
+  assert_contains "$output" "none has hooks or mcpServers before a colon or opens with ?"
+  assert_contains "$output" "byte and opens with a frontmatter, a first line of --- and then only spaces and tabs, with"
+  assert_contains "$output" "only printable ASCII, a carriage return at its end aside"
+  assert_contains "$output" "session loads, may hold anything. No skill file holds an exclamation mark anywhere, since Claude"
+  assert_contains "$output" "hold only lowercase letters, digits and dashes, since Claude Code's text of a skill opens with"
+  assert_contains "$output" "a name that is empty, holds a"$'\n'"slash or is . or .. is a usage error (exit 2)"
 }
 
 @test "the worker settings take away the tools and skills no worker uses, and the check notices a named one" {
@@ -1868,13 +2233,13 @@ assert_prod_write_gated() {
   assert_contains "$output" "so a relaunch"
 }
 
-@test "the generated ops MCP config starts the real prod-read launcher and holds no secret" {
+@test "the generated ops MCP config starts the real prod-read launcher with an ops launch's role and holds no secret" {
   open_task T7
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
   local mcp=$TEAM_HOME/tasks/T7/mcp.ops.json
   assert_equal "$(jq -c . "$mcp")" "$(jq -cn --arg code "$REPO_ROOT" '{mcpServers: {"prod-read": {command: "node",
-    args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"]}}}')"
+    args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}}}')"
   run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
   # The worker settings' deny rules name mongodb+srv:// themselves.
   run -1 grep -Eq 'mongodb(\+srv)?://|MDB_MCP_CONNECTION|op://|password' \
@@ -1960,8 +2325,8 @@ Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
 
   local mcp=$t/mcp.ops.json
   assert_equal "$(jq -c . "$mcp")" "$(jq -cn --arg code "$REPO_ROOT" '{mcpServers: {
-    "prod-read": {command: "node", args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"]},
-    "prod-write": {command: "node", args: ["\($code)/toolkits/prod-write/scripts/start-server.mjs"]}}}')"
+    "prod-read": {command: "node", args: ["\($code)/toolkits/prod-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}},
+    "prod-write": {command: "node", args: ["\($code)/toolkits/prod-write/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}}}')"
   run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
 
   local s=$t/settings.ops.json
@@ -2007,7 +2372,7 @@ matcher_matches() {
     # The real launcher, which reads its tokens itself: the config holds no secret.
     local mcp=$t/mcp.ops.json
     assert_equal "$(jq -c '.mcpServers["vercel-read"]' "$mcp")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/vercel-read/scripts/start-server.mjs"]}')"
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/vercel-read/scripts/start-server.mjs"], env: {AGENT_TEAM_ROLE: "ops"}}')"
     assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(jq -cn --args '$ARGS.positional' "${kits[@]}")"
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|vcp_|VERCEL|op://|token|mongodb(\+srv)?://|password' "$mcp"
 
@@ -2045,7 +2410,7 @@ matcher_matches() {
     # own 90-minute timeout for its long calls: the config holds no secret.
     local mcp=$t/mcp.ops.json
     assert_equal "$(jq -c '.mcpServers["prod-mongo"]' "$mcp")" \
-      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000}')"
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000, env: {AGENT_TEAM_ROLE: "ops"}}')"
     assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(printf '%s\n' "${kits[@]}" | jq -R . | jq -sc 'sort')"
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
 

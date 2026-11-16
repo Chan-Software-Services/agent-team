@@ -10,7 +10,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
   Tick each ticket off in its file as it lands, and commit on the task branch.
 - For a bug, reproduce it end to end the way a user would hit it before fixing it.
 - Delete what your change made obsolete: code, tests, docs, comments, flags. Update the project's docs and knowledge graph in the same PR when the work taught something durable.
-- Before you report DONE, read each sentence your branch adds or changes in a doc, node, skill, comment, header or PR body against the code at your head, and cut or narrow what the code does not do; move a node's `verified` date only after that reading.
+- Move a knowledge-graph node's `verified` date only after the delivery's claims check has read it.
 - On a UI change, read `~/agent-team/sops/frontend-patterns.md` before you build a reusable component, a long list, a dialog, a prototype's data or a bundle budget.
 - On a UI change, when your session lists `ui-check`, run it: a ticket builder spot-checks its ticket's states, the builder who delivers runs it once on the whole change and puts a "UI check" section in the PR body (the tier, each tile judged by its path under `.scratch/task/ui-check/`, each finding and what was done about it), and a fix round rechecks only the states the fix touched and their siblings.
 - On Effect code, when your session lists `effect-v4`, invoke it before you write Effect code and run its check before you report DONE or PR; the builder who delivers puts an "Effect check" line in the PR body (the command, the installed `effect` version, and the findings or "none").
