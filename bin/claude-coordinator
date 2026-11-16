@@ -20,7 +20,8 @@
 # Its session runs on the worker login when bin/lib/worker-login names one, by its settings' env
 # (launch_settings in bin/lib/launch.sh), and the launch refuses (exit 1) while that login is not
 # on this machine; since the session runs no command-guard, its settings deny a command naming
-# GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN.
+# GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN, or holding env -i, env --i (--ignore-environment and its
+# prefixes), env - or exec -c, which empty the environment.
 #
 # Its MCP servers are toolkits/coordinator's alone (its README), passed with --mcp-config after
 # @TEAM_CODE@ is replaced, as ~/.local/state/agent-team/coordinator.mcp.json. --strict-mcp-config

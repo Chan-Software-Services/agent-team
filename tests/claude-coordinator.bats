@@ -706,19 +706,24 @@ login_refusal() {
 }
 
 # Its session runs no command-guard, so its own settings refuse the plain spelling of a change to
-# its GitHub login; the team's scripts that choose a login do so inside themselves, unseen here.
+# its GitHub login, an emptied environment among it, which drops GH_CONFIG_DIR; the team's scripts
+# that choose a login do so inside themselves, unseen here.
 @test "its settings deny a command that sets or unsets its GitHub login, and leave gh and team-merge" {
   local settings=$REPO_ROOT/coordinator.settings.json rule command
-  for rule in 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)'; do
+  for rule in 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)' \
+    'Bash(*env -i*)' 'Bash(*env --i*)' 'Bash(*env - *)' 'Bash(*exec -c*)'; do
     jq -e --arg r "$rule" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
       { echo "coordinator.settings.json does not deny $rule" >&2; return 1; }
   done
   for command in 'GH_CONFIG_DIR= gh auth status' 'export GH_TOKEN=x' 'env -u GITHUB_TOKEN gh api user' \
-    'unset GH_CONFIG_DIR GH_TOKEN' 'cd ~ && GH_CONFIG_DIR=/tmp/x gh pr list'; do
+    'unset GH_CONFIG_DIR GH_TOKEN' 'cd ~ && GH_CONFIG_DIR=/tmp/x gh pr list' \
+    'env -i gh auth status' 'env -i PATH=/usr/bin HOME=/tmp/x gh pr list' 'cd ~ && env -iC /tmp gh api user' \
+    'env --ignore-environment gh auth status' 'env --ignore-env git push' 'env - gh pr list' \
+    'exec -c gh auth status' 'bash -c "env -i gh api user"'; do
     denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
   done
   for command in 'gh auth status' 'gh pr list' 'team-merge https://github.com/me/shop/pull/5' \
-    'team-next T5 --ci' 'git push origin feat/T1-x'; do
+    'team-next T5 --ci' 'git push origin feat/T1-x' 'env A=1 team-state T5' 'env -u HOME ls'; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }

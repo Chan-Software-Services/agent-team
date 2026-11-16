@@ -74,6 +74,10 @@ The rows, in order:
     worktree and the job tmp, of either of them, the worktree's .scratch/task or a directory
     holding one, of a repository's .git, of a variable the command leaves empty, by a find with no
     start path, and of a path the guard cannot read before it runs, each naming its allowed way.
+  login-emptied, last so each row above speaks first: any other command behind an emptied
+    environment, as environment-emptied reads one: it would run with no GH_CONFIG_DIR, so gh and
+    git in it, directly or through any program or script, answer as the machine's own login.
+    Reason: a session's GitHub login is its settings', as for the login rows.
 Each row is given the call's context (Context): the command's text, the hook input's cwd, the
 worktree, the job tmp, the roots, the kept paths and the role, each read on a row's first use of
 it; only the kill and delete rows use it, so a call with neither reads no process or file for it.
@@ -359,11 +363,25 @@ def _empties(wrapper):
     return pattern is not None and any(pattern[0].fullmatch(word) for word in wrapper[1:])
 
 
-def _emptied(command, context):
-    # What runs behind an emptied environment, a string a shell runs there among it.
-    if command.words and _team_script(command.words[0]) and any(_empties(w) for w in command.wrappers):
-        return True
-    # A team script past env's or exec's options where the walk took it as an option's value.
+def _command_word(word):
+    """Whether a word may name a command: any but an option."""
+    return bool(word) and not word.startswith("-")
+
+
+def _behind_emptied(runs):
+    """A test refusing a command whose name runs(word) accepts behind an emptied environment."""
+
+    def emptied(command, context):
+        # What runs behind an emptied environment, a string a shell runs there among it.
+        if command.words and runs(command.words[0]) and any(_empties(w) for w in command.wrappers):
+            return True
+        # One past env's or exec's options where the walk took it as an option's value.
+        return _past_emptying_options(command, runs)
+
+    return emptied
+
+
+def _past_emptying_options(command, runs):
     for words in from_wrappers(command):
         for k in leads(words):
             pattern = EMPTIES.get(command_name(words[k]))
@@ -376,7 +394,7 @@ def _emptied(command, context):
                     continue
                 after = rest[e + 1 :]
                 starts = (0, 1) if valued.fullmatch(rest[e]) else (0,)
-                if any(_team_script(after[j]) for j in leads(after, starts)):
+                if any(runs(after[j]) for j in leads(after, starts)):
                     return True
     return False
 
@@ -429,7 +447,7 @@ ROWS = (
     ),
     Row(
         "environment-emptied",
-        _emptied,
+        _behind_emptied(_team_script),
         ROLE_REASON.format(
             "a team script run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c"
         ),
@@ -445,7 +463,17 @@ ROWS = (
         "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
     ),
     Row("upload", _upload, outbound.REASON),
-) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS)
+) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS) + (
+    # Last, so a more particular row behind an emptied environment (a team script, an upload, a
+    # kill or a delete) speaks first.
+    Row(
+        "login-emptied",
+        _behind_emptied(_command_word),
+        LOGIN_REASON.format(
+            "a command run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c"
+        ),
+    ),
+)
 
 
 class RowError(Exception):
