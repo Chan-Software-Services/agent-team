@@ -14,6 +14,16 @@ Task directory: `{{task_dir}}/` in the worktree: `spec.md`, `tickets/`, and `rev
 
 {{instruction_files}}
 
+## Tests and dependencies
+
+{{dropped_tests}}
+
+An assertion, test or check the change loosens counts as dropped too (a wider match or tolerance, a test marked to fail, retry or run less, a check turned off), every commit on the branch included, whoever made it: name each dropped test and each loosening in `review.md` with the reason the change gives for it; one with no reason is **blocking**, and one an earlier review of this task named needs no new word.
+
+{{dependencies}}
+
+Name each listed dependency in `review.md` with its version; one `spec.md` does not name is a plain `note` of scope `change`, which goes back: the builder removes it, or the PR records Daniel's decision to keep it.
+
 ## Check
 
 1. Every finding in `{{task_dir}}/review.md` that went back to the builder (each `blocking`, `note: correctness`, `note: security` and `note: real-data`, and each plain `note` whose scope is `change`) is fixed at `{{head}}`, or the task records Daniel's decision to keep it; a plain `note` whose scope is `before`, on code the branch did not change, is queued as a follow-up, not for this task.
@@ -25,6 +35,7 @@ Task directory: `{{task_dir}}/` in the worktree: `spec.md`, `tickets/`, and `rev
 ## Deliver
 
 - Add the result to `{{task_dir}}/review.md` under a heading naming `{{head}}`, its new findings numbered on from the last, each with its file and line, one kind, `blocking`, `note: correctness`, `note: security`, `note: real-data` or `note`, and one scope, `change` (a line the branch adds or changes) or `before` (code it did not change); then write the same result alone to `{{task_dir}}/rereview.md`.
+  Before its counts, `{{task_dir}}/rereview.md` holds a `## Not verified` section: each behaviour this change touches that neither your reading, a test, CI nor a check proved (on a platform CI does not run, against a real outside service or real data, or a step only Daniel can take), each with what would prove it, or the line `none`; it is no finding and moves no count.
   Mark a new finding `widening` when it sits in code or text the fix since `{{reviewed}}` added for an earlier finding, so reverting that fix would end it, and give their numbers in `rereview.md`'s counts as `widening=<numbers, comma-separated, or none>`.
   Give in it the count of each kind among the findings that stand at `{{head}}`, its new ones and any earlier one sent back and not fixed, the plain notes as `note-change` and `note-before` (0 for none), the numbers of its new `before` notes, and the guarded areas the change touches, of `ci`, `migrations`, `deploy`, `permissions`, `secrets` and `guardrails`, by the paths `{{team_code}}/bin/lib/guarded` lists for the project or by what the code does in a file of any name (CI or the checks a PR must pass, a migration of production data, the deploy, auth or permission checks, secrets handling and, on agent-team, the team's guards), or none.
   Post nothing to GitHub: there is no PR yet, and the re-review of the PR, once the builder opens it, posts the comment and sets the status.
