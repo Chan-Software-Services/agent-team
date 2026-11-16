@@ -115,7 +115,8 @@ reading() {
 @test "a reading is written to the state file and the team home's day file, with every window under its own name" {
   line full
   local today
-  today=$(date -u +%F)
+  # The day of the reading the line wrote, so midnight UTC passing after the line changes nothing.
+  today=$(jq -r '.at[:10]' "$state")
   assert_equal "$(day_files home-pc)" "usage/home-pc/quota/$today.jsonl"
   assert_equal "$(readings)" '{"machine":"home-pc","windows":{"five_hour":{"used":23.4,"resets_at":"2036-11-10T14:00:00Z"},"seven_day":{"used":61.9,"resets_at":"2036-11-14T18:00:00Z"},"seven_day_sonnet":{"used":12,"resets_at":"2036-11-14T18:00:00Z"}},"models":[{"name":"Fable","used":91.2,"resets_at":"2036-11-17T09:00:00Z"}]}'
   assert_equal "$(jq -c . "$state")" "$(jq -c . "$TEAM_HOME/usage/home-pc/quota/$today.jsonl")"
@@ -279,6 +280,16 @@ reading() {
   echo '{"at": 5}' >>"$file"
   run_bin -0 team-quota status --json
   assert_equal "$(jq -c '{age_minutes, used: .windows[0].used}' <<<"$output")" '{"age_minutes":40,"used":30}'
+}
+
+@test "status falls back to a machine's older day file when its newest holds no reading" {
+  local yesterday today
+  yesterday=$(date -u -d "@$(($(date +%s) - 86400))" +%FT%TZ) today=$(ago 0)
+  reading laptop "$yesterday" 30
+  echo 'not json' >"$(day_file laptop "$today")"
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c '{machine: .reading.machine, at: .reading.at, used: .windows[0].used}' <<<"$output")" \
+    "{\"machine\":\"laptop\",\"at\":\"$yesterday\",\"used\":30}"
 }
 
 @test "status leaves out a stored window or model window with a field missing or of another type, and a line left with none" {
