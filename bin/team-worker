@@ -701,7 +701,7 @@ if [[ ${#mcp_files[@]} -gt 0 ]]; then
   jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
     --argjson roles "$server_roles" '{mcpServers: (map(.mcpServers // {}) | add
       | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role)))
-      | if $role == "ops" then map_values(.env = {AGENT_TEAM_ROLE: "ops"} + (.env // {})) else . end)} | '"$substitute" \
+      | if $role == "ops" then map_values(.env = (.env // {}) + {AGENT_TEAM_ROLE: "ops"}) else . end)} | '"$substitute" \
     "${mcp_files[@]}" >"$mcp"
 else
   echo '{"mcpServers": {}}' >"$mcp"

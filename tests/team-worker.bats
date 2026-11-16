@@ -1868,7 +1868,7 @@ assert_prod_write_gated() {
   assert_contains "$output" "so a relaunch"
 }
 
-@test "the generated ops MCP config starts the real prod-read launcher as an ops launch's and holds no secret" {
+@test "the generated ops MCP config starts the real prod-read launcher with an ops launch's role and holds no secret" {
   open_task T7
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go

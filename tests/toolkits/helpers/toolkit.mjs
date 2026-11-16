@@ -31,12 +31,13 @@ export function assertNoLeak(server, { marker, home }) {
 // first read that fails ends the reads. `role`: the session's role in place of ops, or null for
 // none; outside an ops launch op is never called.
 const notAConnectionString = { what: "when the value is not a connection string", reason: /is not a MongoDB connection string$/ };
+const notAnOpsLaunch = /^not an ops launch \(AGENT_TEAM_ROLE is not ops\), so no secret is read$/;
 
 export function launcherRefusalTests(toolkit, context, { reads = 1, notTheSecret = notAConnectionString, path: serverPath = testPath } = {}) {
   const read = Array(reads).fill("read");
   const cases = [
-    { what: "outside an ops launch", role: null, calls: [], reason: /^not an ops launch \(AGENT_TEAM_ROLE is not ops\), so no secret is read$/ },
-    { what: "in another role's session", role: "builder", calls: [], reason: /^not an ops launch \(AGENT_TEAM_ROLE is not ops\), so no secret is read$/ },
+    { what: "outside an ops launch", role: null, calls: [], reason: notAnOpsLaunch },
+    { what: "in another role's session", role: "builder", calls: [], reason: notAnOpsLaunch },
     { what: "when op is not on PATH", path: () => serverPath({ withOp: false }), calls: [], reason: /^op is not on PATH$/ },
     { what: "when op read fails", mode: "fail", calls: ["read"], reason: /^op read failed: .*authorization prompt dismissed/ },
     { what: "when op read returns nothing", value: () => "", calls: [...read, "signout"], reason: /^op read returned an empty value$/ },
@@ -48,7 +49,7 @@ export function launcherRefusalTests(toolkit, context, { reads = 1, notTheSecret
     test(what, async () => {
       const run = context();
       const op = opStub({ value: value ? value(run) : run.value, mode });
-      const server = startToolkitServer(toolkit, { home: run.home, opDir: op.dir, path: path ? path() : serverPath(), args, ...(role === undefined ? {} : { role }) });
+      const server = startToolkitServer(toolkit, { home: run.home, opDir: op.dir, path: path ? path() : serverPath(), args, role });
       try {
         await assert.rejects(server.initialize(), /server exited \(1\)/);
       } finally {

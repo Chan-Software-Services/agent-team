@@ -30,6 +30,7 @@ Two Vercel access tokens, each scoped to one project (Vercel's "Project" scope),
 The same 1Password item holds the Vercel team id (`team-id`) and the two project ids (`front-end-project-id`, `back-end-project-id`), which are not secret but stay out of this public repository.
 The toolkit holds only the references.
 `scripts/start-server.mjs` reads all five with `op read` when the session starts its MCP server, which raises one 1Password approval prompt on the PC; it then signs `op` out and serves from the same process, so the tokens exist only in that process's memory, never in an environment, a file, a transcript or a log, and any error text it writes or answers has each token replaced by `[redacted]`.
+It reads only in an ops launch: started in any other session, it exits 1 before it runs `op` (`servers/op-secret.mjs`).
 Before it serves, it checks that each token reaches its own project and is refused the other, and exits when either check fails.
 These are separate from GitHub's `VERCEL_TOKEN`, the Deploy workflow's, which is scoped to the team.
 
