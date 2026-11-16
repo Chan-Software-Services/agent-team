@@ -88,7 +88,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `mongodb`: the driver the prod-mongo server counts and checks its dumps with, at the version the pinned MongoDB MCP server installs.
     - `typescript`: TypeScript 7, which `effect-tsgo diagnostics` needs installed beside it, though `@effect/tsgo` declares no peer.
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
-  - `prod-mongo/`: the prod-mongo toolkit's server body: its start, its tools, the backups root's rules (`destinationRefusal`), `childEnv` and `scrubbed`, a dump's counts and index names, read without decoding a document, and the throwaway MongoDB the restore drill restores a dump into.
+  - `prod-mongo/`: the prod-mongo toolkit's server body: its start and tools, the backups root's rules, `childEnv` and `scrubbed`, a dump's counts, the throwaway MongoDB a drill or a rehearsal restores a dump into, the snapshots that say what changed, by ids, and the undo it prepares for Daniel.
 - `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder or reviewer loads (`--setting-sources user`), none of its worktree's `.claude/`.
 - `sops/`: standing procedures.
   - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
@@ -133,6 +133,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `coordinator/`: the coordinator's MCP servers and the claude.ai connectors it keeps, no worker's, the only ones `claude-coordinator` lets it load (its README says how the others are denied and how one is added).
   - `effect/`: for an Effect project's planner, builder and reviewer, the `effect-v4` skill (the installed `effect`'s sources, the v3 and beta traps, the check), a hook giving Effect's findings on each TypeScript file edited, and, but for a planner, Foldkit's DevTools server, held to the worktree.
   - `frontend/`: for Daniel's own session and the coordinator's intake, a walk's planner by `team-ui --capture` alone, never a build worker: the pinned Chrome DevTools MCP server on the Agent Chrome's localhost pages, `ui-capture` of Daniel's page and its selected element, and a skill to fix it.
+  - `prod-mongo/`: for the ops role only, backups of Conventioner's production database into `~/conventioner-backups`, their restore drills, rehearsals of a release's migrations on a dump and undos prepared for Daniel, on the read user's connection string from 1Password.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.
   - `spec-review/`: the `spec-review` skill, two fresh readers of a task's spec and tickets, and `claims-check`, a fresh reader of a branch's prose against its code, which `team-worker` gives every delivering builder.
@@ -206,7 +207,7 @@ It holds:
 - The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
   Each test file's header comment says what it checks and against what.
   No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
-  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, rehearsal, `team-heavy` and `flock` they start.
   `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.

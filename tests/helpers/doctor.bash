@@ -34,6 +34,7 @@ declare -gA FORMAT=(
   [cargo-deny]='cargo-deny %s'
   [mongodump]=$'mongodump version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [mongorestore]=$'mongorestore version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
+  [mongoimport]=$'mongoimport version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [op]='%s'
   [git]='git version %s'
   [jq]='jq-%s'
