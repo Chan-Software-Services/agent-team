@@ -33,10 +33,16 @@
 # below. TEAM_CI_WAIT_GRACE_SECONDS replaces the grace's seconds, TEAM_CI_WAIT_QUEUED_SECONDS the
 # queued limit's 20 minutes (QUEUED_SECONDS), and TEAM_CI_WAIT_DEADLINE_SECONDS the deadline's 90
 # minutes (DEADLINE_SECONDS), in seconds (the tests' seams).
-# It looks every 30 s (WAIT_SECONDS) and counts its clocks in seconds, so a test steps it with a
+# The interval before each look is gh_interval's over a base of 30 s (WAIT_SECONDS), or of 60 s
+# (QUEUED_WAIT_SECONDS) when the last readable look waits only on queued things (a check pending,
+# no pending check in_progress and no open workflow run in_progress), but 30 s through the grace
+# for a push and while a reading stands for its 2 minutes; gh_interval raises it to 60, 120 or 300
+# s as the hour's budget of GitHub's core requests (with --merge-group, GraphQL's points too) falls
+# under a half, a quarter or a tenth; no interval runs past the grace's end, in the grace and with
+# --look, or else past the deadline's. It counts its clocks in seconds, so a test steps it with a
 # stub sleep: the grace and the deadline count every second it slept (elapsed), and each other clock
 # (stuck, queued, settled, failing) adds the look interval slept before each look that counts for
-# it, so each ends at the look it would at 30 s a look whatever the interval. It reads GitHub's
+# it, so each ends at its minutes whatever the interval. It reads GitHub's
 # REST API through bin/lib/github-api.sh's reader alone (gh_read, and gh_call where an answer
 # cannot be cached), which logs each request for <repo>#<n> (with --run, <repo> run <id>): every
 # process of the machine shares its cache, and it asks again with the answer's ETag, so a read of
@@ -213,9 +219,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/github-api.sh
 source "$TEAM_LIB/github-api.sh"
 
-# Seconds between looks, how long a check must look stuck or queued, how long a reading with nothing
-# left to wait on must stand, how long gh may fail, and the deadline.
+# Seconds between looks, and while only queued things are pending, how long a check must look stuck
+# or queued, how long a reading with nothing left to wait on must stand, how long gh may fail, and
+# the deadline.
 WAIT_SECONDS=30
+QUEUED_WAIT_SECONDS=60
 STUCK_SECONDS=300
 QUEUED_SECONDS=${TEAM_CI_WAIT_QUEUED_SECONDS:-1200}
 SETTLE_SECONDS=120
@@ -586,15 +594,28 @@ if $look; then failing_limit=$GRACE_SECONDS; else failing_limit=$FAILING_SECONDS
 limits=(core)
 [[ -z $group ]] || limits+=(graphql)
 
-# pause <seconds>: sleep the look interval before the next look.
-pause() {
-  sleep "$1"
-  elapsed=$((elapsed + $1)) slept=$1
-}
-
 # The seconds at which the wait ends: the deadline, and a reading standing then gets its 2 minutes.
 deadline_at() {
   echo $((DEADLINE_SECONDS + (${#settled} ? SETTLE_SECONDS : 0)))
+}
+
+# pause [grace]: sleep the look interval before the next look, gh_interval's over its base: 30 s,
+# or 60 s when the last readable look waits only on queued things, but 30 s in the grace (with
+# "grace") and while a reading stands, and the base alone while a limit stands; at most to the
+# grace's end in the grace and with --look, else to the deadline's.
+pause() {
+  local base=$WAIT_SECONDS seconds end
+  if [[ ${1:-} != grace && -z $settled ]] && jq -e '[.checks[] | select(.bucket == "pending")] as $pending
+    | ($pending | length) > 0 and all($pending[]; .state != "in_progress")
+      and all(.open_runs[]; .status != "in_progress")' "$dir/look" >/dev/null 2>&1; then
+    base=$QUEUED_WAIT_SECONDS
+  fi
+  # A limit standing is slept out at the next look, so the budget its refusal emptied adds nothing.
+  if gh_limited "${limits[@]}" >/dev/null; then seconds=$base; else seconds=$(gh_interval "$base" "${limits[@]}"); fi
+  if [[ ${1:-} == grace ]] || $look; then end=$GRACE_SECONDS; else end=$(deadline_at); fi
+  ((elapsed >= end || seconds <= end - elapsed)) || seconds=$((end - elapsed))
+  sleep "$seconds"
+  elapsed=$((elapsed + seconds)) slept=$seconds
 }
 
 # sleep_limit: when a limit stands for a resource the look reads, sleep it out, to a second past
@@ -649,7 +670,7 @@ while :; do
           finish other-head 1 "team-ci-wait: the head of $repo#$number is ${head:0:7}, not ${expected:0:7}, after $(span "$GRACE_SECONDS") of looks: it is another commit, and its checks are not the ones to wait on; if ${head:0:7} is not your own, report it to the coordinator"
         fi
         # GitHub may not show the push yet: look again.
-        pause "$WAIT_SECONDS"
+        pause grace
         continue
       fi
       first_head=$head
@@ -742,5 +763,5 @@ while :; do
     fi
     finish unreadable 75 "team-ci-wait: $(span "$DEADLINE_SECONDS"), and GitHub not read yet: $(cat "$dir/error"): $again_unread, or report BLOCKED"
   fi
-  pause "$WAIT_SECONDS"
+  pause
 done

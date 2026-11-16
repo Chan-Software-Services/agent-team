@@ -723,6 +723,9 @@ fresh_run() {
   rm -rf "${HOME:?}/.local/state/agent-team/github"
 }
 
+# The limit cases plan a budget with 4,000 of its 5,000 requests left, so the budget alone keeps
+# their interval at 30 s, and a refusal's own empty budget adds nothing while its limit stands.
+
 # limit_line <until> [secondary]: the wait's stderr line for a limit until <until> epoch seconds.
 limit_line() {
   if [[ ${2:-} == secondary ]]; then
@@ -734,7 +737,7 @@ limit_line() {
 
 @test "a primary limit met mid-wait is slept out to its reset, said once on stderr, and the wait passes, its clocks not counting the sleep" {
   t0=$(github_now)
-  github_budget core 5000 4000 $((t0 + 600))
+  github_budget core 5000 1000 $((t0 + 600))
   checks 0 "$(check test SUCCESS)"
   answer 1 view limited:primary
   pr OPEN "$head" 2
@@ -751,7 +754,7 @@ limit_line() {
   assert_equal "$(github_requests | grep -c 'pulls/217')" 6
   [[ ! -e $HOME/.local/state/agent-team/offline ]]
   fresh_run
-  github_budget core 5000 4000 $((t0 + 600))
+  github_budget core 5000 1000 $((t0 + 600))
   run_bin --separate-stderr team-ci-wait --json "$url"
   assert_equal "$status" 0
   assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" "[\"passed\",\"$(date -u -d "@$((t0 + 600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
@@ -760,7 +763,7 @@ limit_line() {
 
 @test "a limit, then GitHub unreachable, ends exit 75 after 5 minutes of the failure alone" {
   t0=$(github_now)
-  github_budget core 5000 4000 $((t0 + 600))
+  github_budget core 5000 1000 $((t0 + 600))
   answer 0 view limited:primary
   answer 2 view fail
   run_bin --separate-stderr team-ci-wait "$url"
@@ -774,7 +777,7 @@ limit_line() {
 
 @test "a limit never ends a wait but at its deadline, which then names it" {
   t0=$(github_now)
-  github_budget core 5000 4000 $((t0 + 3600))
+  github_budget core 5000 1000 $((t0 + 3600))
   answer 0 view limited:primary
   TEAM_CI_WAIT_DEADLINE_SECONDS=300 run_bin --separate-stderr team-ci-wait "$url"
   assert_equal "$status" 75
@@ -785,7 +788,7 @@ limit_line() {
   assert_equal "$output" "team-ci-wait: 5 minutes, and GitHub not read yet: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 3600))" +%H:%M), when it resets; this is no outage: run team-ci-wait again to wait, or report BLOCKED"
   assert_equal "$stderr" "$(limit_line $((t0 + 3600)))"
   fresh_run
-  github_budget core 5000 4000 $((t0 + 3600))
+  github_budget core 5000 1000 $((t0 + 3600))
   TEAM_CI_WAIT_DEADLINE_SECONDS=300 run_bin --separate-stderr team-ci-wait --json "$url"
   assert_equal "$status" 75
   assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" "[\"unreadable\",\"$(date -u -d "@$((t0 + 3600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
@@ -804,7 +807,7 @@ limit_line() {
   assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 31"
   fresh_run
   rm "$GH_DIR/view.1"
-  github_budget core 5000 4000 $((t0 + 600))
+  github_budget core 5000 1000 $((t0 + 600))
   answer 0 view limited:primary
   run_bin --separate-stderr team-ci-wait --look "$url"
   assert_equal "$status" 75
@@ -812,7 +815,7 @@ limit_line() {
   assert_equal "$output" "team-ci-wait: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 600))" +%H:%M), when it resets; this is no outage: look again after it"
   assert_equal "$stderr" ""
   fresh_run
-  github_budget core 5000 4000 $((t0 + 600))
+  github_budget core 5000 1000 $((t0 + 600))
   run_bin --separate-stderr team-ci-wait --json --look "$url"
   assert_equal "$status" 75
   assert_equal "$(jq -c '[.outcome, .head, .limited_until]' <<<"$output")" "[\"unreadable\",null,\"$(date -u -d "@$((t0 + 600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
@@ -823,6 +826,126 @@ limit_line() {
   run_bin team-ci-wait --json --look "$url"
   assert_equal "$status" 0
   assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" '["passed",null]'
+}
+
+# The interval: 30 s, 60 s while only queued things are pending, raised as the hour's budget falls.
+
+# sleeps: the seconds of each sleep since the last sleeps, on one line, the stub sleep's log then
+# emptied for the next run.
+sleeps() {
+  stub_calls sleep | jq -r '.[0]' | paste -sd' '
+  : >"$STUB_CALLS/sleep.log"
+}
+
+@test "the wait looks every 60 s while every pending check and open run is queued, and every 30 s once one is in progress" {
+  checks 0 "$(check test QUEUED 7001)"
+  head_runs 0 7001:CI:queued
+  checks 3 "$(check test IN_PROGRESS 7001)"
+  head_runs 3 7001:CI:in_progress
+  checks 5 "$(check test SUCCESS 7001)"
+  head_runs 5
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 9
+  assert_equal "$(sleeps)" "60 60 60 30 30 30 30 30 30"
+  # A queued check beside a run of the head in progress, or beside a check in progress, is waited on
+  # every 30 s.
+  fresh_run
+  rm "$GH_DIR"/checks.* "$GH_DIR"/runs.*
+  checks 0 "$(check test QUEUED 7001)"
+  head_runs 0 7001:CI:in_progress
+  TEAM_CI_WAIT_DEADLINE_SECONDS=120 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "30 30 30 30"
+  fresh_run
+  checks 0 "$(check test QUEUED 7001)" "$(check lint IN_PROGRESS 7001 72)"
+  head_runs 0 7001:CI:queued
+  TEAM_CI_WAIT_DEADLINE_SECONDS=120 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "30 30 30 30"
+}
+
+@test "the queued clock still ends at 20 minutes of quiet looks, looking every 60 s" {
+  checks 0 "$(check "smoke-shards (1)" QUEUED 7001 71)"
+  head_runs 0 7001:CI:queued
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 20
+  assert_equal "$(sleeps)" "$(printf '60 %.0s' {1..20} | sed 's/ $//')"
+  assert_contains "$output" "infrastructure: smoke-shards (1) is still queued after 20 minutes of looks: no runner took it"
+}
+
+@test "the interval rises to 60, 120 and 300 s as the hour's core budget falls under a half, a quarter and a tenth, and is 30 s once it resets" {
+  checks 0 "$(check test IN_PROGRESS 7001)"
+  head_runs 0 7001:CI:in_progress
+  t0=$(github_now)
+  # Each planned budget leaves room for the wait's own requests without crossing the next threshold.
+  for plan in "2000 30 20" "2600 60 10" "3800 120 5" "4600 300 2"; do
+    read -r used seconds looks <<<"$plan"
+    fresh_run
+    github_budget core 5000 "$used" $((t0 + 3600))
+    TEAM_CI_WAIT_DEADLINE_SECONDS=600 run_bin team-ci-wait "$url"
+    assert_equal "$status" 75
+    assert_equal "$(ended_at)" "$looks"
+    assert_equal "$(sleeps | tr ' ' '\n' | sort -u)" "$seconds"
+  done
+  # The deadline still ends the wait at its minutes, the last interval cut to it.
+  fresh_run
+  github_budget core 5000 4600 $((t0 + 3600))
+  TEAM_CI_WAIT_DEADLINE_SECONDS=500 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "300 200"
+  assert_contains "$output" "team-ci-wait: 500 seconds, and checks still pending on a1b2c3d"
+  # A reading whose reset has passed holds nothing: GitHub has given the hour's budget back.
+  fresh_run
+  github_budget core 5000 4600 $((t0 + 300))
+  TEAM_CI_WAIT_DEADLINE_SECONDS=600 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "300 30 30 30 30 30 30 30 30 30 30"
+}
+
+@test "--merge-group's interval follows GraphQL's budget too, which a PR's wait reads nothing under" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  # The trial commit's checks and the PR head's alike: one in progress.
+  checks 0 "$(check test IN_PROGRESS 7001)"
+  head_runs 0 7001:CI:in_progress
+  t0=$(github_now)
+  mkdir -p "$HOME/.local/state/agent-team/github"
+  jq -n --argjson reset $((t0 + 3600)) --argjson at "$t0" \
+    '{graphql: {limit: 5000, remaining: 400, used: 4600, reset: $reset, at: $at}}' >"$HOME/.local/state/agent-team/github/budget.json"
+  TEAM_CI_WAIT_DEADLINE_SECONDS=600 run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "300 300"
+  echo 0 >"$GH_DIR/look"
+  TEAM_CI_WAIT_DEADLINE_SECONDS=120 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "30 30 30 30"
+}
+
+@test "the grace for a push and a reading that stands look every 30 s; the budget cuts --look's grace to its 2 minutes" {
+  other=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432
+  # Another head's queued checks hold no 60 s look: the wait looks for its push every 30 s.
+  checks 0 "$(check test QUEUED 7001)"
+  head_runs 0 7001:CI:queued
+  run_bin team-ci-wait "$url" "$other"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(sleeps)" "30 30 30 30"
+  # Once the checks pass, the reading stands for its 2 minutes at 30 s a look.
+  echo 0 >"$GH_DIR/look"
+  checks 2 "$(check test SUCCESS 7001)"
+  head_runs 2
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 6
+  assert_equal "$(sleeps)" "60 60 30 30 30 30"
+  # With the budget under a tenth, --look's grace is one look of its 2 minutes, not 5.
+  fresh_run
+  github_budget core 5000 4600 $(($(github_now) + 3600))
+  run_bin team-ci-wait --look "$url" "$other"
+  assert_equal "$status" 1
+  assert_equal "$(sleeps)" "120"
 }
 
 @test "a malformed command line is a usage error, and a repo no project has is refused" {
@@ -1077,7 +1200,8 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   head_runs 0 7001:CI:queued
   run_bin team-ci-wait "$url"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 40
+  # With only queued things pending it looks every 60 s, so its 20 minutes are 20 looks past the first.
+  assert_equal "$(ended_at)" 20
   assert_equal "$output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
 team-ci-wait: the checks on a1b2c3d did not pass:
   infrastructure: smoke-shards (1) is still queued after 20 minutes of looks: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/71); cancel its run with gh run cancel 7001 --repo owner/proj, then rerun the job with gh run rerun 7001 --job 71 --repo owner/proj, then run team-ci-wait again"
@@ -1105,20 +1229,22 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   checks 0 "$(check test QUEUED 7001)"
   workflow_run 0 7001 queued
   head_runs 0 7001:CI:queued
-  checks 30 "$(check test IN_PROGRESS 7001)"
-  workflow_run 30 7001 in_progress
-  checks 60 "$(check test SUCCESS 7001)"
-  head_runs 60
+  # Queued, it looks every 60 s, so look 15 is at 15 minutes; started, every 30 s again.
+  checks 15 "$(check test IN_PROGRESS 7001)"
+  workflow_run 15 7001 in_progress
+  checks 45 "$(check test SUCCESS 7001)"
+  head_runs 45
   run_bin team-ci-wait "$url"
   assert_equal "$status" 0
-  assert_equal "$(ended_at)" 64
+  assert_equal "$(ended_at)" 49
 }
 
 @test "a pending commit status from outside Actions is never called queued, and is waited on to the deadline" {
   checks 0 "$(check test SUCCESS 7001)" "$(check deploy PENDING)"
   TEAM_CI_WAIT_DEADLINE_SECONDS=1800 run_bin team-ci-wait "$url"
   assert_equal "$status" 75
-  assert_equal "$(ended_at)" 60
+  # A pending status is no check in progress, so the wait looks every 60 s: 30 looks to 30 minutes.
+  assert_equal "$(ended_at)" 30
   assert_contains "$output" "deploy (pending, not an Actions run)"
 }
 
@@ -1574,8 +1700,8 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   running 20 0
   TEAM_CI_WAIT_QUEUED_SECONDS=300 run_bin team-ci-wait "$url"
   assert_equal "$status" 1
-  # 20 looks held, then 5 minutes of looks counted.
-  assert_equal "$(ended_at)" 29
+  # 20 looks held, then 5 minutes of looks counted, at 60 s a look while only queued things are pending.
+  assert_equal "$(ended_at)" 24
   assert_contains "$output" "
   infrastructure: smoke-shards (1) is still queued after 5 minutes of looks: no runner took it"
   assert_contains "$(stub_calls gh)" "repos/owner/proj/actions/runs?status=in_progress&per_page=1"
@@ -1604,13 +1730,14 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   checks 0 "$(check test QUEUED 7001)"
   workflow_run 0 7001 queued
   head_runs 0 7001:CI:queued
-  # 4 minutes counted, 9 looks held, one look unread, then the last minute.
-  running 9 2
-  answer 18 running fail
-  running 19 0
+  # 4 minutes counted, 9 looks held, one look unread, then the last minute, at 60 s a look while
+  # only queued things are pending.
+  running 5 2
+  answer 14 running fail
+  running 15 0
   TEAM_CI_WAIT_QUEUED_SECONDS=300 run_bin team-ci-wait "$url"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 20
+  assert_equal "$(ended_at)" 15
   assert_contains "$output" "infrastructure: test is still queued after 5 minutes of looks"
 }
 
@@ -1756,7 +1883,8 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   run_jobs 0 "$(run_job "smoke-shards (1)" queued)"
   run_bin team-ci-wait --run "$run_url" "$head"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 40
+  # Only a queued job pending, it looks every 60 s: 20 minutes are 20 looks past the first.
+  assert_equal "$(ended_at)" 20
   assert_equal "${lines[2]}" "  infrastructure: smoke-shards (1) is still queued after 20 minutes of looks: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/71); cancel its run with gh run cancel 7001 --repo owner/proj, then rerun the job with gh run rerun 7001 --job 71 --repo owner/proj, then wait on the run again"
   # Another run of the repository in progress holds the clock.
   echo 0 >"$GH_DIR/look"
@@ -1764,7 +1892,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   running 30 0
   run_bin team-ci-wait --run "$run_url" "$head"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 69
+  assert_equal "$(ended_at)" 49
   # So does a job of the run itself, the run then the one in progress, to the deadline.
   echo 0 >"$GH_DIR/look"
   the_run 0 in_progress
