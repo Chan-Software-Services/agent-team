@@ -272,10 +272,10 @@ library() {
   # The pass is proj's, its reviewer's done naming a launch in proj; other's reviewer then found
   # something in its own repository.
   event T14 launch '{role: "reviewer", session: "r0000001", project: "proj"}'
-  event T14 done '{role: "reviewer", session: "r0000001"}'
+  event T14 'done' '{role: "reviewer", session: "r0000001"}'
   event T14 launch '{role: "reviewer", session: "r0000002", project: "other"}'
   review 1234567 findings
-  event T14 done '{role: "reviewer", session: "r0000002"}'
+  event T14 'done' '{role: "reviewer", session: "r0000002"}'
   run_bin -0 --separate-stderr team-catch-up T14
   merge=$(git --git-dir="${PROJ_ORIGIN:?}" rev-parse "refs/heads/$branch")
   assert_equal "$(jq -c 'select(.event == "caught-up") | {from, head}' "$TEAM_HOME/ledger.jsonl")" \
@@ -283,7 +283,7 @@ library() {
   # proj's own findings, logged after its pass, are refused as before.
   event T14 launch '{role: "reviewer", session: "r0000003", project: "proj"}'
   review "$merge" findings
-  event T14 done '{role: "reviewer", session: "r0000003"}'
+  event T14 'done' '{role: "reviewer", session: "r0000003"}'
   base_moves src/third.py >/dev/null
   rm -- "$GH_DIR/statuses"
   refused "  the latest review of T14 (of ${merge:0:7}) found something, not a pass: fix and review it first"
@@ -332,7 +332,6 @@ library() {
   evil=$(git -C "${clone:?}" rev-parse HEAD)
   event T14 caught-up "{url: \"$url\", from: \"$head\", head: \"$evil\", base: \"$head\"}"
   base_moves src/third.py >/dev/null
-  rm -- "$GH_DIR/statuses"
   refused "team-catch-up: the head ${evil:0:7} does not stand on the review of ${head:0:7}, which team-catch-up made it from: ${evil:0:7} changes more than the merge of its parents"
 }
 
