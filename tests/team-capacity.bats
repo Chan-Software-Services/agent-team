@@ -711,6 +711,18 @@ team_cpu_of() {
   assert_equal "$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c .systemd)" false
 }
 
+@test "sample on Linux with no task and no session still asks the user manager for the team's slice" {
+  load_docker
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  docker_stub
+  docker_empty
+  proc 400 1 2048 99 /
+  unit agent-team.slice CPUUsageNSec=5000000000
+  run_bin -0 team-capacity sample
+  assert_equal "$(stub_calls systemctl)" '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team.slice"]'
+  assert_equal "$(jq -c '[.tasks, .team_cpu_nsec, .systemd]' "$STATE_DIR/readings.jsonl")" '[[],5000000000,true]'
+}
+
 @test "the reading reads a heavy run's holder line by team-heavy's own form" {
   assert_equal "$(sed -n "s/^HEAVY_HOLDER_FORM=//p" "$REPO_ROOT/bin/team-capacity")" "$(sed -n "s/^HOLDER_FORM=//p" "$REPO_ROOT/bin/team-heavy")"
   [[ -n $(sed -n "s/^HOLDER_FORM=//p" "$REPO_ROOT/bin/team-heavy") ]]
