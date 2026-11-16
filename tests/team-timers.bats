@@ -497,7 +497,7 @@ EOF
   [[ $output =~ ^[0-9T:Z-]+" lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), T5-builder (81f08540); the heartbeat is disabled: agent-team.caffeinate stopped and both removed; agent-team.heartbeat unloads itself when its run in progress ends; team-lease take clears the fence"$ ]]
   assert_equal "$output" "$(tail -n 1 "$log")"
   [[ -e $HOME/.local/state/agent-team/fenced ]]
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
   [[ ! -e $agents/agent-team.heartbeat.plist && ! -e $agents/agent-team.caffeinate.plist ]]
   [[ ! -e $HOME/.fake-launchd/agent-team.caffeinate && ! -e $HOME/.fake-launchd/agent-team.heartbeat ]]
   jq -e '.last_run.ended == "fenced"' "$HOME/.local/state/agent-team/health.json"
@@ -927,15 +927,16 @@ SH
   assert_equal "$(steps "$output")" "lease checkpoint"
 }
 
-# The ids of the processes whose arguments are exactly "sleep $TEAM_TIMERS_RUN_SECONDS", each
-# killed, so a run that leaves one never holds the file's run open.
+# The ids of the processes this test started (own_pids) whose arguments are exactly
+# "sleep $TEAM_TIMERS_RUN_SECONDS", each killed, so a run that leaves one never holds the file's
+# run open.
 leftover_timers() {
   local pid
-  command -p ps -A -o pid=,args= | awk -v n="$TEAM_TIMERS_RUN_SECONDS" '$2 == "sleep" && $3 == n && NF == 3 { print $1 }' |
-    while read -r pid; do
-      kill -KILL "$pid" 2>/dev/null || true
-      echo "$pid"
-    done
+  own_pids | while read -r pid; do
+    [[ $(command -p ps -o args= -p "$pid" 2>/dev/null) == "sleep $TEAM_TIMERS_RUN_SECONDS" ]] || continue
+    kill -KILL "$pid" 2>/dev/null || true
+    echo "$pid"
+  done
 }
 
 @test "a run leaves no timer behind, even when the process list misses the timer's sleep" {
@@ -1953,7 +1954,7 @@ EOF
   [[ $output =~ ^[0-9T:Z-]+" lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), T5-builder (81f08540), T12-reviewer (a3586a81); the heartbeat is disabled: agent-team-heartbeat.timer stopped and removed; team-lease take clears the fence"$ ]]
   assert_equal "$output" "$(tail -n 1 "$log")"
   jq -e '.holder == "laptop" and .epoch == 2 and ((.since | fromdateiso8601) > now - 120)' "$HOME/.local/state/agent-team/fenced"
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]' '["stop","a3586a81"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]' '["stop","a3586a81"]')"
   [[ ! -e $units/agent-team-heartbeat.timer && ! -e $HOME/.fake-systemd/agent-team-heartbeat.timer.enabled ]]
   assert_equal "$(stub_calls curl)" ""
   assert_equal "$(lease_tip)" "$tip"
@@ -2099,12 +2100,17 @@ LINES
   done
   jq -cn --arg ts "$(date -u -d '1 hour ago' +%FT%TZ)" '{ts: $ts, mode: "auto", level: "none", by: "auto", machine: "home-pc"}' \
     >"$TEAM_HOME/level.jsonl"
+  # tmp: a stale no-mistakes leftover under the sandbox's /tmp root, on a tmpfs 10% full.
+  mkdir -p "$TEAM_SYSTEM_ROOT/tmp/nm-cli-home-1"
+  touch -d '125 minutes ago' "$TEAM_SYSTEM_ROOT/tmp/nm-cli-home-1"
+  echo "tmpfs 17179869184 1717986919 rw,usrquota" >"$BATS_TEST_TMPDIR/df"
+  export TEAM_TMP_DF=$BATS_TEST_TMPDIR/df
   # stacks: the sweep stops the idle conventioner-2; checkpoint: always a line; pack: 200 loose
   # objects; janitor: no report of today yet.
   add_loose 200
   run_bin -0 team-timers run
   assert_equal "$output" "$(cat "$log")"
-  assert_equal "$(steps "$output")" "lease checkpoint coordinator uptime inbox finished capacity level stacks pack janitor"
+  assert_equal "$(steps "$output")" "lease checkpoint coordinator uptime tmp inbox finished capacity level stacks pack janitor"
 }
 
 @test "the stacks and janitor steps are off without stack.json, without their keys and while they are false: no line, no call" {

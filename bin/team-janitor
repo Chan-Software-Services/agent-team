@@ -3,10 +3,12 @@
 # on what Docker holds, and alerts #coordinator when something needs Daniel (sops/docker.md).
 #
 # Usage: team-janitor [--dry-run]
+#        team-janitor tmp [--dry-run]   (the sweep of temporary files, below)
+#        team-janitor tmp status [--json]
 #
-# Runs team-stack reap --apply, then writes the day's report,
-# ~/.local/state/agent-team/janitor/<local date>.md, a second run of the day replacing it, with
-# these sections:
+# With no subcommand, the daily Docker run: it runs team-stack reap --apply, then writes the
+# day's report, ~/.local/state/agent-team/janitor/<local date>.md, a second run of the day
+# replacing it, with these sections:
 #   Alerts                  each alert, and whether it was posted
 #   Disk                    free and used space on the file system Docker keeps its data on (as
 #                           team-stack's admission reads it: docker info's DockerRootDir, and on
@@ -36,8 +38,108 @@
 #
 # Exit 0 done, 1 Docker does not answer, the reaper or a removal failed, or a part of the report
 # could not be read or written, 2 usage error.
+#
+# Usage: team-janitor tmp [--dry-run]
+#        team-janitor tmp status [--json]
+#
+# The sweep of temporary files (bin/lib/tmp.sh), which reads nothing of Docker: it removes the
+# team's stale leftovers from /tmp and /var/tmp, each root resolved once (realpath) and a missing
+# one skipped, and nothing outside them. It reads only the entries directly under a root, and
+# those directly inside a session tmp (agent-team-T<n> or agent-team-gate-<8 characters>, a real
+# directory of this user's directly under the /tmp root, never a link), and removes one only when
+# every rule holds, each checked again on the entry itself (lstat) just before the removal:
+#   type      a real directory or a regular file; never a symbolic link, whatever it points at,
+#             a socket, a device or a pipe
+#   owner     the user running the sweep
+#   name      one of these rules names it whole; inside a session tmp, only the list:
+#               list  a line of bin/lib/tmp-leftovers, read from this checkout: the names only
+#                     the team's test runs make, each with its maker; a line whose expression
+#                     holds a | (an alternation) is refused, and the run with it
+#               task  agent-team-T<n>, a session tmp, or t<n> or T<n> followed by a -, a . or an
+#                     _ and more, a worker's scratch, when the ledger knows task T<n> and it is
+#                     not open; a number the ledger does not know is kept, and so is every such
+#                     entry when the ledger cannot be read, which the run says once on stderr
+#                     and which fails nothing
+#               gate  agent-team-gate-<8 letters, digits or dashes>, a gate session's tmp
+#   age       it was last modified at least 60 minutes ago, or 24 hours for the gate rule
+#   not live  no process of this user names it: its full path, followed by a /, a space, a :, a
+#             line break or the end, is in no process's working directory, open files (a lock,
+#             a pid file), command line or environment (/proc on Linux; lsof and ps on macOS),
+#             this run's own process and its children aside. The processes are read once, and
+#             only when an entry passed the rules above, one variable of an environment per line
+#             (on macOS each ps line is cut at the start of each " <NAME>=" word), keeping only
+#             the lines that name a path under a root, so no environment's other values reach
+#             the run's scratch; when they cannot be read, nothing is removed and the run exits 1
+#             saying why.
+# A directory is made writable first (chmod -R, which changes no link), so a read-only tree goes
+# too, and removed with rm -rf --one-file-system; a file with rm -f. A session tmp removed whole
+# takes its entries with it; one kept, an open task's or a live one, has the list applied inside.
+# Each removal is one line on stdout, with the entry's size (du, in MB below 1024 MB, else in GiB)
+# and its age (in minutes below 120, else in whole hours):
+#   removed /tmp/nm-cli-home-123 (373 MB, untouched 5 h; no-mistakes)
+# whose last part is the list line's maker, "T367 is closed" for the task rule, or "a gate
+# session's tmp" for the gate rule, and the same line, as "- HH:MM <line>" in local time, is
+# appended to the day's file, ~/.local/state/agent-team/janitor/tmp-<local date>.md, made with the
+# title "# Temp files removed on <machine>, <date>" at the day's first removal. A run that removes
+# nothing prints nothing.
+# A removal that fails is said on stderr ("team-janitor: could not remove <path>: <rm's last
+# line>"), and the rest of the run goes on.
+# One run at a time, by a lock on ~/.local/state/agent-team/tmp.lock: a second run prints
+# "another team-janitor tmp is running; skipped" and exits 0. The sweep needs no lease.
+# After the removals, the run reads the /tmp root's file system, its type and mount options
+# (findmnt -T) and its size and use (df -Pk), and judges the warning: one notice of the tmp
+# source in the notice record (bin/lib/notice.jq, ~/.local/state/agent-team/notices.json), wanted
+# when the file system is a tmpfs, never on macOS, and at least 50% full by its own use, or, once
+# the notice stands, at least 45%, so a reading that hovers at 50% posts once. It is posted to
+# #coordinator through discord_api with a 20 s timeout, mentioning no one, cut to 2000
+# characters, as
+#   /tmp on <machine> is 52% full (8.3 GiB of 16.0 GiB), past 50%; systemd holds each user to 80%
+#   of it. Largest of yours: <name> <size>, ... . `team-janitor tmp status` lists them; today's
+#   removals: <the day's file, or none>.
+# the clause about 80% only when the mount options hold usrquota, and ", past 50%" only when it
+# is; reminded 240 minutes after the post or the last reminder, with that run's reading, as the
+# same text beginning "/tmp on <machine> is still 61% full"; and closed with no post once it is no
+# longer wanted. It is judged with the lease record's taken_at, so a notice of an earlier holding
+# is posted afresh. A post that goes through is recorded and printed as
+#   posted to #coordinator (message <id>): /tmp is 52% full
+# or ": /tmp is still 61% full" for a reminder; one Discord refuses is said on stderr ("the post
+# to #coordinator failed (<reason>); it is tried again next run"), fails the run, and is tried
+# again at the next. A notice record that is not team-notices/1 is set aside as notices.json.bad,
+# saying so on stderr, and fails the run. The largest entries are read only when a post is due.
+# A run that removes nothing and has no warning to post prints nothing.
+# --dry-run removes nothing, writes nothing, takes no lock, posts nothing, judges no warning, and
+# prints "would remove" for "removed".
+#
+# status reads only: how full /tmp is, its five largest entries of this user's directly under
+# the root (du), and the day's removals, as
+#   /tmp is 52% full (8.3 GiB of 16.0 GiB), past 50%
+#   largest: <name> <size>
+#   removed today: <n> (<the day's file>)
+# the first line "/tmp is on <type>, not a memory file system, so it is not judged" for any type
+# but tmpfs, and on macOS. --json prints it as team-tmp/1: {schema, root (the /tmp root resolved),
+# type, judged, size and used (bytes), percent (whole, rounded down), quota (whether the mount
+# options hold usrquota), warning (whether the notice stands), largest ([{name, bytes}], largest
+# first), removed_today (the day's file's removals), report (the day's file, null with none)}.
+#
+# Test seams: TEAM_SYSTEM_ROOT stands for / in both roots, TEAM_TMP_UID for the user's uid as the
+# owner rule and the largest entries read it, TEAM_TMP_AGE_MINUTES for the 60 minutes (never the
+# gate rule's 24 hours), and TEAM_TMP_DF for a file whose one line, "<type> <size bytes> <used
+# bytes> <options>", is read in place of findmnt and df.
+#
+# Exit 0 done, nothing to remove included, 1 a removal failed, the processes, a root or the /tmp
+# root's file system could not be read, the day's file or the notice record could not be
+# written, or a post failed, 2 usage error.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+# The sweep of temporary files, before anything of Docker's is read.
+if [[ ${1:-} == tmp ]]; then
+  # shellcheck source=bin/lib/notices.sh
+  source "$TEAM_LIB/notices.sh"
+  # shellcheck source=bin/lib/tmp.sh
+  source "$TEAM_LIB/tmp.sh"
+  tmp_main "${@:2}"
+fi
 
 DRY=''
 for arg in "$@"; do
