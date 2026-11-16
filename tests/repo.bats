@@ -139,6 +139,37 @@ ledger.jsonl: a record
 sops/machine-setup.md: a record"
 }
 
+# The toolchain rustup installs in every checkout: the pinned stable release, with the components
+# rust-analyzer resolves the standard library with and the check runs.
+@test "rust-toolchain.toml pins Rust 1.100.0, the minimal profile, rustfmt, clippy, rust-analyzer and rust-src" {
+  assert_equal "$(grep -v -e '^#' -e '^$' "$REPO_ROOT/rust-toolchain.toml")" '[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
+}
+
+# Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
+# read on home-pc from the pinned releases, rustup's from its source, since its install there was
+# refused (its commit and date are placeholders). Each pattern reads the pin from its line.
+@test "each Rust tool's version pattern in tools.lock reads its pin from the tool's version line" {
+  local name line rust_pattern pin version
+  while IFS=$'\t' read -r name line; do
+    rust_pattern=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+    pin=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")
+    version=''
+    [[ $line =~ $rust_pattern ]] && version=${BASH_REMATCH[1]}
+    assert_equal "$name $version" "$name $pin"
+  done <<'LINES'
+rustup	rustup 1.29.3 (0000000000 2026-11-04)
+cargo-nextest	cargo-nextest 0.9.152 (26ebeda79 2026-11-13)
+sccache	sccache 0.19.0
+cargo-deny	cargo-deny 0.20.2
+LINES
+  # rustup's note on stderr names rustc's version, which is never read as rustup's.
+  rust_pattern=$(jq -r '.tools[] | select(.name == "rustup") | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+  [[ ! 'info: the currently active `rustc` version is `rustc 1.100.0 (1a2b3c4d5 2026-11-12)`' =~ $rust_pattern ]]
+}
+
 @test "each machine's usage and time day files in the team home are records, never code" {
   local copy=$BATS_TEST_TMPDIR/copy
   path_copy "$copy"
