@@ -21,3 +21,8 @@ coordinator.settings.json
 assistant.settings.json
 .gitignore
 .shellcheckrc
+rust-toolchain.toml
+Cargo.toml
+Cargo.lock
+clippy.toml
+deny.toml

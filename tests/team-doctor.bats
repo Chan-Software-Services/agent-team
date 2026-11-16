@@ -706,7 +706,8 @@ ruleset_pin() {
   local whole=$output check read reads own declared
   local -A alone=()
   # Each check alone prints lines of the whole run, in its order: its own (none for the Homebrew
-  # and power checks on Arch, nor the salvage check with nothing to salvage) and those it reads
+  # and power checks on Arch, nor the salvage check with nothing to salvage, nor the Rust check in a
+  # code checkout without rust-toolchain.toml) and those it reads
   # state from. A check that prints nothing without its state (the docker check with no os, say)
   # shows a lost reads line by printing no line of its own, so each other check must print one
   # beyond those its declared checks print alone.
@@ -720,7 +721,7 @@ ruleset_pin() {
       reads+=${alone[$read]}$'\n'
     done
     own=$(printf '%s' "$output" | grep -cvxFf <(printf '%s' "$reads") || true)
-    [[ ${check##*/} == @(020-homebrew|230-salvage|248-power).sh ]] || ((own > 0)) || {
+    [[ ${check##*/} == @(020-homebrew|035-rust|230-salvage|248-power).sh ]] || ((own > 0)) || {
       echo "${check##*/} alone prints no line of its own: $output" >&2
       return 1
     }
