@@ -39,7 +39,14 @@
 #                  ticket-done), and no ticket-gone;
 #                  merged is told to close, and merged-part (a merged naming phases_left, phases
 #                  with a ticket not done) to launch the next phase's first ticket's builder
-#   waiting-input  a live session of an open task, not parked, whose state is blocked
+#   waiting-input  a live session of an open task, not parked, whose state is blocked; never a
+#                  builder with no dialog open (its status idle, no waitingFor) that delivered: a
+#                  pr since its launch, and since the latest one only launches of a reviewer,
+#                  what another session logged of itself, an event that opens a park (held,
+#                  blocked, waiting, paused) and does not name the builder's session, and a
+#                  resumed with no brief after one (no review, ask, answer or builder's launch),
+#                  which Claude Code calls blocked for a last summary that says it waits on the
+#                  merge, and which is idle with a ledger event since its launch
 #   silent         a live, idle session of an open task, not parked, with no ledger event for the
 #                  task after that session's latest launch but denied ones (one waiting for input
 #                  is not also silent); a ticket's builder by its own events: none since its
