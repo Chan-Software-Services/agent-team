@@ -11,11 +11,12 @@ The MCP tools, from the server's own `tools/list` (`evals/mocks/prod-mongo/_tool
 ```text
 mcp__prod-mongo__backup
 mcp__prod-mongo__list-backups
+mcp__prod-mongo__prepare-undo
 mcp__prod-mongo__rehearse-migrations
 mcp__prod-mongo__restore-drill
 ```
 
-Nothing else: no tool writes to the database, restores to production, takes a path or a connection string, or reads a dump back.
+Nothing else: no tool writes to the database, restores to production, or takes a path or a connection string; `prepare-undo` reads production and prepares the `mongoimport` or `mongorestore` Daniel runs, never running it, and writes the document it would import only into the dump's folder.
 The skill is `backing-up-production-data` (`skills/`), the only one this toolkit adds.
 This list is the server's, not yet a live session's: the ops load check's inventory (`team-load-check --role ops --toolkit prod-mongo`), once it has run on Daniel's real credential, replaces it.
 `docs/access.md` says what the toolkit can and cannot reach, and `docs/restoring.md`, for Daniel, where the dumps are, how to drill one by hand, and how to restore one to production or delete it.

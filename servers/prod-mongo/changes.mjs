@@ -9,6 +9,17 @@
 //                            collection of a live database that mongodump would dump, and
 //                            { type: "view" } for a view
 //   await snapshotDump(dir, BSON)           the same Map for a dump's database directory
+//   dumpFiles(dir)           Map of collection name to { type, bson, indexes } for a dump's database
+//                            directory: its type, its .bson.gz file's path (undefined when there is
+//                            none) and its index names, from each .metadata.json.gz
+//   await readBsonGz(path, visit)           calls visit(doc) with each document's BSON bytes of a
+//                            gzipped BSON stream, in order
+//   entryOf(doc, BSON)       { key, id, plain, hash, fields } of one document's BSON bytes: its key
+//                            in a `documents` Map, its printable id, its _id's own printed form
+//                            when it has one (an ObjectId's hex, a UUID, an integer), its hash and
+//                            its fields' hashes
+//   answersTo(entry, given)  whether a document's entry is the one `given` names: its printable id
+//                            or its _id's printed form (an ObjectId's hex in either case)
 //   compareCollections(before, after)       what differs between two of those entries (either may
 //                            be undefined): { before, after, added, removed, changed, fields,
 //                            otherFields, indexesAdded, indexesRemoved, created?, dropped? }; the
@@ -21,6 +32,7 @@
 //   capped(comparison)       the comparison with each id list as { count, ids }, at most idLimit ids
 //   changeLine(comparison)   an answer's line for one collection that changed, capped or not
 //   changeCounts(comparison) the same line's counts alone, with no id and no leading "- "
+//   idList({ count, ids })   a capped id list as an answer prints it: `<ids>` and "and <n> more"
 //   printableId(key, BSON)   the one id any tool prints for a document, from `key`, the BSON bytes
 //                            of a document holding only its _id and its top-level id
 //   fieldName, idLimit       the pattern a field's name is reported by, and 50
@@ -107,7 +119,7 @@ function* elementsOf(doc) {
   }
 }
 
-function add(documents, doc, BSON) {
+export function entryOf(doc, BSON) {
   const fields = new Map();
   const keyParts = [];
   let key;
@@ -123,7 +135,12 @@ function add(documents, doc, BSON) {
   const keyDocument = Buffer.concat([head, ...keyParts, Buffer.from([0])]);
   keyDocument.writeInt32LE(keyDocument.length, 0);
   // A collection's documents each have an _id; a stream's document without one is keyed by itself.
-  documents.set(key ?? `document:${hash}`, { id: printableId(keyDocument, BSON), hash, fields });
+  return { key: key ?? `document:${hash}`, ...idsOf(keyDocument, BSON), hash, fields };
+}
+
+function add(documents, doc, BSON) {
+  const { key, id, hash, fields } = entryOf(doc, BSON);
+  documents.set(key, { id, hash, fields });
 }
 
 function plainId(value, nested = false) {
@@ -154,17 +171,34 @@ function plainId(value, nested = false) {
   }
 }
 
-export function printableId(key, BSON) {
+// The printable id and the _id's own printed form (undefined when it has none) of `key`.
+function idsOf(key, BSON) {
   const { _id, id } = BSON.deserialize(key, { promoteValues: false, promoteLongs: false });
-  if (typeof id === "string" && uuid.test(id)) return id;
   const plain = plainId(_id);
-  if (plain !== undefined) return plain;
+  if (typeof id === "string" && uuid.test(id)) return { id, plain };
+  if (plain !== undefined) return { id: plain, plain };
   const canonical = BSON.EJSON.stringify(_id, { relaxed: false }) ?? "";
-  return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`;
+  return { id: `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`, plain };
+}
+
+export function printableId(key, BSON) {
+  return idsOf(key, BSON).id;
+}
+
+const objectIdHex = /^[0-9a-f]{24}$/i;
+
+export function answersTo({ id, plain }, given) {
+  if (given === id || given === plain) return true;
+  return objectIdHex.test(given) && plain !== undefined && objectIdHex.test(plain) && given.toLowerCase() === plain;
 }
 
 export async function snapshotBsonGz(path, BSON) {
   const documents = new Map();
+  await readBsonGz(path, (doc) => add(documents, doc, BSON));
+  return documents;
+}
+
+export async function readBsonGz(path, visit) {
   let held = [];
   let heldBytes = 0;
   let need = 4;
@@ -181,7 +215,7 @@ export async function snapshotBsonGz(path, BSON) {
           need = length;
           break;
         }
-        add(documents, bytes.subarray(0, length), BSON);
+        visit(bytes.subarray(0, length));
         const rest = bytes.subarray(length);
         held = rest.length ? [rest] : [];
         heldBytes = rest.length;
@@ -190,7 +224,6 @@ export async function snapshotBsonGz(path, BSON) {
     }
   });
   if (heldBytes > 0) throw new Error(`${path} ends inside a document`);
-  return documents;
 }
 
 export async function snapshotCollection(collection, BSON) {
@@ -216,24 +249,31 @@ export async function snapshotDatabase(db, BSON) {
 
 const metadataSuffix = ".metadata.json.gz";
 
-export async function snapshotDump(dir, BSON) {
-  const snapshot = new Map();
-  const files = existsSync(dir) ? readdirSync(dir).sort() : [];
-  for (const file of files.filter((name) => name.endsWith(metadataSuffix))) {
+export function dumpFiles(dir) {
+  const files = new Map();
+  for (const file of (existsSync(dir) ? readdirSync(dir).sort() : []).filter((name) => name.endsWith(metadataSuffix))) {
     const base = file.slice(0, -metadataSuffix.length);
     const metadata = JSON.parse(gunzipSync(readFileSync(join(dir, file))).toString("utf8"));
     // mongodump escapes a name it cannot use as a file name; the metadata holds it as it is.
     const name = metadata.collectionName ?? base;
-    if (metadata.type === "view") {
+    const bson = join(dir, `${base}.bson.gz`);
+    files.set(name, {
+      type: metadata.type === "view" ? "view" : "collection",
+      bson: existsSync(bson) ? bson : undefined,
+      indexes: (metadata.indexes ?? []).map((index) => index.name).sort(),
+    });
+  }
+  return files;
+}
+
+export async function snapshotDump(dir, BSON) {
+  const snapshot = new Map();
+  for (const [name, { type, bson, indexes }] of dumpFiles(dir)) {
+    if (type === "view") {
       snapshot.set(name, { type: "view" });
       continue;
     }
-    const bson = join(dir, `${base}.bson.gz`);
-    snapshot.set(name, {
-      type: "collection",
-      documents: existsSync(bson) ? await snapshotBsonGz(bson, BSON) : new Map(),
-      indexes: (metadata.indexes ?? []).map((index) => index.name).sort(),
-    });
+    snapshot.set(name, { type: "collection", documents: bson ? await snapshotBsonGz(bson, BSON) : new Map(), indexes });
   }
   return snapshot;
 }
@@ -298,7 +338,7 @@ export function capped(comparison) {
   return { ...comparison, added: cap(comparison.added), removed: cap(comparison.removed), changed: cap(comparison.changed) };
 }
 
-function idList({ count: total, ids }) {
+export function idList({ count: total, ids }) {
   const more = total - ids.length;
   return `${ids.join(", ")}${more > 0 ? ` and ${count(more)} more` : ""}`;
 }

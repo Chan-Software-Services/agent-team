@@ -6,6 +6,8 @@
 //   roomRefusal(free, dataSize)   why a file system with `free` bytes has no room for a dump of a
 //                            database of `dataSize` bytes, or nothing
 //   stampOf(date)            the folder name of a backup started at `date`: 2026-11-08T142305Z
+//   driverReason(error, scrubbed)   a driver error as one line of an answer, naming neither the host
+//                            nor the secret
 //
 // The steps: check the root against every rule before any connection (root.mjs's checkRoot,
 // which makes it with mode 0700, or sets a looser one to 0700), read the server's version and
@@ -234,7 +236,7 @@ function answer({ manifest, folder, took }) {
 }
 
 // A driver error as one line: never its text when it may name the host.
-function driverReason(error, scrubbed) {
+export function driverReason(error, scrubbed) {
   if (error?.name === "MongoServerSelectionError" || error?.name === "MongoNetworkError") return "could not reach the database";
   if (error?.code === 18 || /authentication failed/i.test(error?.message ?? "")) return "the database refused the read user's credentials";
   return `the database refused a read: ${scrubbed(error?.message)}`;

@@ -8,7 +8,10 @@
 // rehearsal, which run through team-heavy (at once under tests/run's heavy-run lock), as the tool
 // and by hand. The rehearsal's Conventioner is a fixture git repository the test builds, the
 // server's working directory, whose back-end image (a Python image pinned by digest, with a pinned
-// pymongo) the rehearsal builds for real, so its first build needs the network.
+// pymongo) the rehearsal builds for real, so its first build needs the network. The undo's
+// prepared commands are run with bash, as Daniel would, by the lock's mongoimport and mongorestore
+// against "production" as a user that may write; spies of both first on the server's PATH prove
+// the server never starts either.
 // Every backups folder lives under ~/.cache/agent-team-tests/, since a dump of real data is never
 // kept in a temporary directory, and is removed when the file exits.
 import assert from "node:assert/strict";
@@ -205,10 +208,10 @@ test("no file of the toolkit or its server is executable", () => {
   }
 });
 
-test("the tools are backup and list-backups, taking no input, restore-drill, taking a backup's name or nothing, and rehearse-migrations", async () => {
+test("the tools are backup and list-backups, taking no input, restore-drill, taking a backup's name or nothing, rehearse-migrations and prepare-undo", async () => {
   await withServer(async (server) => {
     const tools = await server.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ["backup", "list-backups", "restore-drill", "rehearse-migrations"]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["backup", "list-backups", "restore-drill", "rehearse-migrations", "prepare-undo"]);
     for (const tool of tools.slice(0, 2)) assert.deepEqual(tool.inputSchema, { type: "object", properties: {}, additionalProperties: false }, tool.name);
     assert.equal(tools[1].annotations.readOnlyHint, true);
     const { inputSchema } = tools[2];
@@ -1847,6 +1850,300 @@ print("reached the throwaway as mongodb", flush=True)
       writeFileSync(junk, gzipSync(Buffer.from([1, 0, 0, 0, 0])));
       await assert.rejects(snapshotBsonGz(junk, BSON), /is not a BSON stream$/);
     });
+  });
+});
+
+// The lock's mongoimport, which only the prepared commands run, as Daniel would.
+const importDir = (process.env.PATH ?? "").split(delimiter).find((dir) => {
+  try {
+    accessSync(join(dir, "mongoimport"), constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+describe("prepare-undo", () => {
+  const { BSON } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
+  const writer = `writer${randomBytes(8).toString("hex")}`;
+  let writerUri;
+  let never;
+  before(async () => {
+    if (!importDir) throw new Error("mongoimport is not on PATH: install the lock's Database Tools (bin/lib/tools.jq's download_sources)");
+    // The user Daniel's prepared command connects as: one that may write, unlike the read user.
+    await production.createUser("ops-write", writer, [{ role: "readWrite", db: "conventioner" }]);
+    writerUri = production.uri("ops-write", writer);
+  });
+  // A mongoimport and a mongorestore first on the server's PATH that record any run: the server
+  // never starts either.
+  beforeEach(() => {
+    const dir = tempDir("never-run");
+    for (const name of ["mongoimport", "mongorestore"]) {
+      writeFileSync(join(dir, name), `#!/bin/sh\necho "$0 $*" >>'${dir}/ran'\nexit 1\n`, { mode: 0o755 });
+    }
+    never = { dir, ran: () => (existsSync(join(dir, "ran")) ? readFileSync(join(dir, "ran"), "utf8") : null) };
+  });
+  const undoServer = (body, options = {}) => withServer(body, { path: [spy.dir, never.dir, toolsDir, testPath()].join(":"), ...options });
+  const live = () => production.client.db("conventioner");
+  const shownBackup = (stamp) => `~/conventioner-backups/${stamp}`;
+  const undosOf = (stamp) => (existsSync(join(root, stamp, "undo")) ? readdirSync(join(root, stamp, "undo")) : []);
+  const hashed = (id) => `sha256:${createHash("sha256").update(JSON.stringify(id)).digest("hex").slice(0, 12)}`;
+  const runIt =
+    "Run it in a terminal of your own, pasting the connection string of a user that may write (the read user cannot) at the read -rs prompt; " +
+    "<(...) is a pipe, so the string is never in an argument list or a file:";
+
+  // Calls prepare-undo, checking it changed no document or index of "production" and ran no
+  // Database Tool, and answers its text and its one undo folder's name (or undefined).
+  async function prepare(stamp, args) {
+    const before = await snapshotDatabase(live(), BSON);
+    const had = undosOf(stamp);
+    let result;
+    await undoServer(async (server) => {
+      result = await server.callTool("prepare-undo", { backup: stamp, ...args });
+    });
+    assert.equal(never.ran(), null, "the server ran a Database Tool");
+    const changed = compareDatabases(before, await snapshotDatabase(live(), BSON)).filter(differs);
+    assert.deepEqual(changed, [], "the tool's call changed production");
+    const made = undosOf(stamp).filter((name) => !had.includes(name));
+    assert.ok(made.length <= 1, made.join(", "));
+    return { ...result, at: made[0] };
+  }
+
+  // The answer's fenced command, its rules checked, run with bash as Daniel would: their writer's
+  // connection string typed at the read -rs prompt.
+  function runPrepared(text) {
+    const blocks = [...text.matchAll(/^```bash\n([\s\S]*?)^```$/gm)].map(([, body]) => body);
+    assert.equal(blocks.length, 1, text);
+    const [block] = blocks;
+    const lines = block.trimEnd().split("\n");
+    assert.equal(lines.length, 3, block);
+    assert.equal(lines[0], "read -rs PROD_URI");
+    assert.equal(lines[2], "unset PROD_URI");
+    assert.ok(lines[1].includes(` --config=<(printf 'uri: %s\\n' "$PROD_URI") `), lines[1]);
+    assert.doesNotMatch(lines[1], /mongodb(\+srv)?:\/\/|ops-read|pwmarker/);
+    assert.ok(!block.includes(home), block);
+    for (const path of lines[1].match(/ --(file|dir) \S+/g)) assert.match(path, / --(file|dir) ~\/conventioner-backups\//);
+    const ran = spawnSync("bash", ["-c", block], {
+      input: `${writerUri}\n`,
+      env: { HOME: home, PATH: [importDir, toolsDir, testPath()].join(":") },
+      encoding: "utf8",
+    });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.ok(!`${ran.stdout}${ran.stderr}`.includes(writer), "the writer's password was printed");
+    return lines[1];
+  }
+
+  // That production's collection is exactly the dump's: every document's hash and every index name.
+  async function matchesDump(stamp, collection) {
+    const dumped = (await snapshotDump(join(root, stamp, "dump", "conventioner"), BSON)).get(collection);
+    const now = (await snapshotDatabase(live(), BSON)).get(collection);
+    const comparison = compareCollections(dumped, now);
+    assert.ok(!differs(comparison), JSON.stringify(capped(comparison)));
+  }
+
+  // Each undo folder 0700, each file in it 0600, and no file under the root holding the read
+  // user's secret.
+  function checkFiles(stamp, at, names) {
+    const dir = join(root, stamp, "undo", at);
+    assert.equal(statSync(join(root, stamp, "undo")).mode & 0o777, 0o700);
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    assert.deepEqual(readdirSync(dir).sort(), names.sort());
+    for (const name of names) assert.equal(statSync(join(dir, name)).mode & 0o777, 0o600, name);
+    for (const { path, stat } of walk(root)) {
+      if (stat.isFile()) assert.ok(!readFileSync(path).includes(marker), `${path} holds the read user's secret`);
+    }
+    return (name) => readFileSync(join(dir, name), "utf8");
+  }
+
+  test("takes a backup's name, a collection and an optional id, each held to its pattern", async () => {
+    await undoServer(async (server) => {
+      const tool = (await server.listTools()).find(({ name }) => name === "prepare-undo");
+      assert.deepEqual(Object.keys(tool.inputSchema.properties), ["backup", "collection", "id"]);
+      assert.deepEqual(tool.inputSchema.required, ["backup", "collection"]);
+      assert.equal(tool.inputSchema.additionalProperties, false);
+      assert.equal(tool.inputSchema.properties.backup.pattern, "^\\d{4}-\\d{2}-\\d{2}T\\d{6}Z$");
+      assert.equal(tool.annotations.readOnlyHint, false);
+      assert.equal(tool.annotations.destructiveHint, false);
+    });
+  });
+
+  test("a changed document: names the fields that differ, writes the dump's version, and its upsert, run as Daniel would, puts it back", async () => {
+    const stamp = await takeBackup();
+    await live().collection("markets").updateOne({ id: marketIds[1] }, { $set: { stalls: 30, city: "Nanaimo" } });
+    const { text, isError, at } = await prepare(stamp, { collection: "markets", id: marketIds[1] });
+    assert.ok(!isError, text);
+    const undo = `${shownBackup(stamp)}/undo/${at}`;
+    const command = `mongoimport --config=<(printf 'uri: %s\\n' "$PROD_URI") --db conventioner --collection markets --mode upsert --file ${undo}/markets.json`;
+    assert.equal(text, [
+      `Undo of one document of markets from ${shownBackup(stamp)}, prepared for you to run; nothing was written to production:`,
+      `${marketIds[1]}: changed in production since the dump, in city, stalls. The command puts the dump's version back in its place (mongoimport --mode upsert).`,
+      `The file it imports: ${undo}/markets.json`,
+      runIt,
+      "```bash",
+      "read -rs PROD_URI",
+      command,
+      "unset PROD_URI",
+      "```",
+    ].join("\n"));
+    const read = checkFiles(stamp, at, ["markets.json", "report.json"]);
+    // Canonical Extended JSON v2 of the dump's document, every number's type spelled out.
+    const written = read("markets.json");
+    assert.match(written, /^\{"_id":\{"\$oid":"[0-9a-f]{24}"\},"id":"[0-9a-f-]{36}","name":"Harbour Craft Fair","city":"Victoria","stalls":\{"\$numberInt":"25"\}\}\n$/);
+    assert.deepEqual(JSON.parse(read("report.json")), {
+      kind: "document", backup: stamp, at, collection: "markets", id: marketIds[1], state: "changed", fields: ["city", "stalls"], otherFields: 0,
+      mode: "upsert", file: `${undo}/markets.json`, command,
+    });
+    assert.equal(runPrepared(text), command);
+    await matchesDump(stamp, "markets");
+
+    // list-backups counts it.
+    await withServer(async (server) => {
+      assert.match((await server.callTool("list-backups", {})).text, new RegExp(`^- ${stamp}: .*; 0 drills, 0 rehearsals, 1 undo, 0 diffs$`, "m"));
+    }, { value: unreachable() });
+  });
+
+  test("a deleted document, named by its ObjectId's hex in capitals: its upsert inserts the dump's version", async () => {
+    const stamp = await takeBackup();
+    const { _id } = await live().collection("applications").findOne({ "vendor.name": "Vendor 2" });
+    await live().collection("applications").deleteOne({ _id });
+    const { text, isError, at } = await prepare(stamp, { collection: "applications", id: _id.toHexString().toUpperCase() });
+    assert.ok(!isError, text);
+    assert.equal(text.split("\n")[1], `${_id.toHexString()}: not in production now, so deleted since the dump. The command inserts the dump's version (mongoimport --mode upsert).`);
+    const read = checkFiles(stamp, at, ["applications.json", "report.json"]);
+    assert.equal(BSON.EJSON.parse(read("applications.json")).vendor.contact.phone, "555-0102");
+    assert.equal(JSON.parse(read("report.json")).state, "deleted");
+    assert.match(runPrepared(text), / --collection applications --mode upsert --file /);
+    await matchesDump(stamp, "applications");
+  });
+
+  test("a document created since the dump: writes its _id alone, and its delete, run as Daniel would, removes it", async () => {
+    const stamp = await takeBackup();
+    const created = randomUUID();
+    const { insertedId } = await live().collection("markets").insertOne({ id: created, name: "Created Since", stalls: 5 });
+    const { text, isError, at } = await prepare(stamp, { collection: "markets", id: created });
+    assert.ok(!isError, text);
+    assert.equal(text.split("\n")[1], `${created}: in production but not in the dump, so created since it. The command deletes it from production (mongoimport --mode delete, matching its _id).`);
+    const read = checkFiles(stamp, at, ["markets.json", "report.json"]);
+    assert.equal(read("markets.json"), `{"_id":{"$oid":"${insertedId.toHexString()}"}}\n`);
+    assert.deepEqual(JSON.parse(read("report.json")).state, "created");
+    assert.match(runPrepared(text), / --collection markets --mode delete --file /);
+    await matchesDump(stamp, "markets");
+  });
+
+  test("a document that already matches the dump, or a collection that does: nothing to undo, and nothing written", async () => {
+    const stamp = await takeBackup();
+    let answer = await prepare(stamp, { collection: "markets", id: marketIds[0] });
+    assert.ok(!answer.isError, answer.text);
+    assert.equal(answer.text, `${marketIds[0]} in markets: production already matches the dump: nothing to undo, and nothing was written.`);
+    answer = await prepare(stamp, { collection: "applications" });
+    assert.equal(answer.text, `Production's applications already matches the dump in ${shownBackup(stamp)}: nothing to undo, and nothing was written.`);
+    assert.deepEqual(undosOf(stamp), []);
+    assert.ok(!existsSync(join(root, stamp, "undo")));
+  });
+
+  test("a collection: the counts, the ids it puts back, reverts and loses, the indexes, what --drop loses; its restore, run as Daniel would, leaves it as the dump", async () => {
+    const stamp = await takeBackup();
+    const markets = live().collection("markets");
+    await markets.updateOne({ id: marketIds[0] }, { $set: { stalls: 41 } });
+    await markets.deleteOne({ id: marketIds[2] });
+    const lost = [randomUUID(), randomUUID()];
+    await markets.insertMany(lost.map((id, n) => ({ id, name: `Since ${n}`, stalls: n })));
+    await markets.dropIndex("name_unique");
+    await markets.createIndex({ city: 1 }, { name: "city_1" });
+    const { text, isError, at } = await prepare(stamp, { collection: "markets" });
+    assert.ok(!isError, text);
+    const command = `mongorestore --config=<(printf 'uri: %s\\n' "$PROD_URI") --nsInclude 'conventioner.markets' --drop --gzip --dir ${shownBackup(stamp)}/dump`;
+    assert.equal(text, [
+      `Undo of the collection markets from ${shownBackup(stamp)}, prepared for you to run; nothing was written to production:`,
+      "Production holds 4 documents now, the dump 3 documents. The restore would:",
+      `- put back (in the dump only): 1: ${marketIds[2]}`,
+      `- revert (changed since the dump): 1 (stalls: 1): ${marketIds[0]}`,
+      `- lose (in production only, written since the dump): 2: ${lost.toSorted().join(", ")}`,
+      "- indexes: adds name_unique; drops city_1",
+      "--drop replaces the whole collection: every write to markets since the dump is lost, the ones above and any made before you run it.",
+      `The full lists: ${shownBackup(stamp)}/undo/${at}/report.json`,
+      runIt,
+      "```bash",
+      "read -rs PROD_URI",
+      command,
+      "unset PROD_URI",
+      "```",
+    ].join("\n"));
+    const read = checkFiles(stamp, at, ["report.json"]);
+    assert.deepEqual(JSON.parse(read("report.json")), {
+      kind: "collection", backup: stamp, at, collection: "markets", production: 4, dump: 3,
+      putBack: [marketIds[2]], reverted: [marketIds[0]], lost: lost.toSorted(), fields: { stalls: 1 }, otherFields: 0,
+      indexesAdded: ["name_unique"], indexesDropped: ["city_1"], command,
+    });
+    assert.equal(runPrepared(text), command);
+    await matchesDump(stamp, "markets");
+    assert.deepEqual(await collectionsOf(production.client).then(({ markets: m }) => m.indexes), ["_id_", "name_unique"]);
+  });
+
+  test("a collection's answer lists at most 50 ids of each kind, its report every one; an email-shaped _id is printed hashed, and names its document", async () => {
+    const stamp = await takeBackup();
+    const archived = live().collection("archived");
+    const { insertedIds } = await archived.insertMany(Array.from({ length: 55 }, (_, n) => ({ n })));
+    const ids = Object.values(insertedIds).map((id) => id.toHexString()).sort();
+    const { text, at } = await prepare(stamp, { collection: "archived" });
+    assert.ok(text.includes(`\n- lose (in production only, written since the dump): 55: ${ids.slice(0, 50).join(", ")} and 5 more\n`), text);
+    assert.deepEqual(JSON.parse(checkFiles(stamp, at, ["report.json"])("report.json")).lost, ids);
+
+    await live().collection("accounts").updateOne({ _id: email }, { $set: { role: "admin" } });
+    const accounts = await prepare(stamp, { collection: "accounts" });
+    assert.ok(accounts.text.includes(`\n- revert (changed since the dump): 1 (role: 1): ${hashed(email)}\n`), accounts.text);
+    const one = await prepare(stamp, { collection: "accounts", id: hashed(email) });
+    assert.equal(one.text.split("\n")[1], `${hashed(email)}: changed in production since the dump, in role. The command puts the dump's version back in its place (mongoimport --mode upsert).`);
+    for (const answer of [text, accounts.text, one.text]) assert.ok(!answer.includes(email), answer);
+    runPrepared(one.text);
+    await matchesDump(stamp, "accounts");
+  });
+
+  test("a call whose second another undo took waits for the next one, and each undo keeps its own folder", async () => {
+    const stamp = await takeBackup();
+    await live().collection("markets").updateOne({ id: marketIds[1] }, { $set: { stalls: 31 } });
+    const taken = [0, 1000].map((ms) => stampOf(new Date(Date.now() + ms)));
+    for (const at of taken) mkdirSync(join(root, stamp, "undo", at), { recursive: true, mode: 0o700 });
+    const { text, isError, at } = await prepare(stamp, { collection: "markets", id: marketIds[1] });
+    assert.ok(!isError, text);
+    assert.ok(at > taken[1], `${at} is not after ${taken[1]}`);
+    for (const dir of taken) assert.deepEqual(readdirSync(join(root, stamp, "undo", dir)), []);
+    checkFiles(stamp, at, ["markets.json", "report.json"]);
+  });
+
+  test("refuses before any connection: no backup, a stamp not under the root, a collection it does not hold or a view, input outside its patterns", async () => {
+    const stamp = await takeBackup();
+    await undoServer(async (server) => {
+      const refusals = [
+        [{ collection: "markets" }, "prepare-undo: failed: backup is required: a backup's name, its UTC start as list-backups gives it (2026-11-08T142305Z)"],
+        [{ backup: "../x", collection: "markets" }, `prepare-undo: failed: "../x" is not a backup's name, which is its UTC start, as 2026-11-08T142305Z`],
+        [{ backup: "2020-01-01T000000Z", collection: "markets" }, "prepare-undo: failed: ~/conventioner-backups holds no backup 2020-01-01T000000Z"],
+        [{ backup: stamp }, "prepare-undo: failed: collection must be one collection's name, of letters, digits and . _ - only, as backup and list-backups name them"],
+        [{ backup: stamp, collection: "../markets" }, "prepare-undo: failed: collection must be one collection's name, of letters, digits and . _ - only, as backup and list-backups name them"],
+        [{ backup: stamp, collection: "vendors" }, `prepare-undo: failed: ${shownBackup(stamp)} holds no collection vendors: its manifest lists accounts, applications, archived, markets, open_markets`],
+        [{ backup: stamp, collection: "open_markets" }, "prepare-undo: failed: open_markets is a view, whose dump is its definition only: there is no document to put back"],
+        [{ backup: stamp, collection: "markets", id: "a\nb" }, "prepare-undo: failed: id must be one document's id as this toolkit prints it, or its _id's hex or UUID"],
+        [{ backup: stamp, collection: "markets", id: 7 }, "prepare-undo: failed: id must be one document's id as this toolkit prints it, or its _id's hex or UUID"],
+        [{ backup: stamp, collection: "markets", path: "/tmp" }, "prepare-undo: takes no path"],
+      ];
+      for (const [args, expected] of refusals) {
+        const result = await server.callTool("prepare-undo", args);
+        assert.ok(result.isError, JSON.stringify(args));
+        assert.equal(result.text, expected, JSON.stringify(args));
+      }
+    }, { value: unreachable(), path: [spy.dir, never.dir, toolsDir, testPath()].join(":") });
+    assert.deepEqual(undosOf(stamp), []);
+    assert.equal(never.ran(), null);
+
+    // With production reachable: an id that names no document, and production unreachable.
+    const none = await prepare(stamp, { collection: "markets", id: randomUUID() });
+    assert.ok(none.isError);
+    assert.match(none.text, /^prepare-undo: failed: [0-9a-f-]{36} names no document of markets, in the dump or in production$/);
+    await undoServer(async (server) => {
+      const result = await server.callTool("prepare-undo", { backup: stamp, collection: "markets" });
+      assert.equal(result.text, "prepare-undo: failed: could not reach the database");
+    }, { value: unreachable() });
+    assert.deepEqual(undosOf(stamp), []);
   });
 });
 

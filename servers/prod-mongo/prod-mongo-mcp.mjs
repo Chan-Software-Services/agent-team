@@ -16,11 +16,13 @@
 // scrubbed, applied where that text enters a Refusal (refusal.mjs), or to the whole message of an
 // error that is not one. The umask is 077, so every file and directory it or a child makes is its user's alone.
 // Its tools: backup (backup.mjs), list-backups (list.mjs), restore-drill (drill.mjs, which runs
-// toolkits/prod-mongo/scripts/restore-drill.mjs through bin/team-heavy) and rehearse-migrations
+// toolkits/prod-mongo/scripts/restore-drill.mjs through bin/team-heavy), rehearse-migrations
 // (rehearse.mjs, which runs scripts/rehearse.mjs the same way, in the server's working directory,
-// the session's worktree), each checking the root against root.mjs's rules before it touches it.
+// the session's worktree) and prepare-undo (undo.mjs, which reads production and prepares a
+// command for Daniel, never running it), each checking the root against root.mjs's rules before
+// it touches it.
 // One long call runs at a time: a backup, a restore-drill or a rehearse-migrations while any of
-// them runs is refused at once; list-backups takes no such lock. A long tool
+// them runs is refused at once; list-backups and prepare-undo take no such lock. A long tool
 // sends a progress notification per step when the call carries a progressToken. A tool's run gives
 // its answer's text, or { text, isError } for an answer that is an error in its own form.
 import { connectionStringRefusal } from "../mongodb-mcp.mjs";
@@ -32,6 +34,7 @@ import { kept, listing } from "./list.mjs";
 import { rehearseInput, rehearseTool } from "./rehearse.mjs";
 import { Refusal } from "./refusal.mjs";
 import { backupsRoot, checkRoot } from "./root.mjs";
+import { prepareUndo, undoInput } from "./undo.mjs";
 
 export async function startProdMongo({ name, reference, database, root: configuredRoot, repositories }) {
   const fail = (reason) => {
@@ -119,6 +122,20 @@ export async function startProdMongo({ name, reference, database, root: configur
       long: true,
       run: ({ input, progress }) => rehearseTool({ input, root, shown, scrubbed, progress, repositories }),
     },
+    {
+      name: "prepare-undo",
+      description:
+        `Prepare, for Daniel to run, the command that puts one document or one collection of ${database} back as a dump under ${shown(root)} holds it, ` +
+        "and say what it would change on production now: for one document, whether production's is the same, changed (naming the top-level fields) " +
+        "or gone, or was created since the dump; for a collection, the counts in production and in the dump, the ids the restore would put back, " +
+        "revert and lose, and the index names it would add or drop. Reads production through the read user and writes nothing there; never runs the " +
+        "command, a mongoimport or mongorestore that takes Daniel's own connection string at a read -rs prompt. Writes the document to import and the " +
+        "full lists in the dump's folder, never into the answer.",
+      inputSchema: undoInput,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      long: false,
+      run: ({ input }) => prepareUndo({ MongoClient: sdk.MongoClient, BSON: sdk.BSON, value, database, root, shown, scrubbed, input }),
+    },
   ];
 
   let running = null;
@@ -162,12 +179,12 @@ export async function startProdMongo({ name, reference, database, root: configur
 }
 
 async function importSdk() {
-  const [{ Server }, { StdioServerTransport }, { ListToolsRequestSchema, CallToolRequestSchema }, { MongoClient }] = await Promise.all([
+  const [{ Server }, { StdioServerTransport }, { ListToolsRequestSchema, CallToolRequestSchema }, { MongoClient, BSON }] = await Promise.all([
     import("@modelcontextprotocol/sdk/server/index.js"),
     import("@modelcontextprotocol/sdk/server/stdio.js"),
     import("@modelcontextprotocol/sdk/types.js"),
     import("mongodb"),
   ]);
-  return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema, MongoClient };
+  return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema, MongoClient, BSON };
 }
 
