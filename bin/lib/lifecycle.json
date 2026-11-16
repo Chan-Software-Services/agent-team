@@ -35,6 +35,8 @@
     "review": {"effect": "review"},
     "history-rewritten": {"effect": "rewrite"},
     "merged": {"effect": "merge"},
+    "queued": {},
+    "dequeued": {},
     "asked": {"effect": "ask"},
     "answered": {"effect": "settle"},
     "merge-approved": {"effect": "settle"},

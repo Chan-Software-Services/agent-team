@@ -67,9 +67,16 @@
 # foreign (<what it is>, not the reviewer App's check)", in place of the agent_review state),
 # merge_approved (a merge-approved event naming this PR's URL), behind_by (the commits of the base
 # the head lacks, from gh api's compare of the two for an open PR; null for a PR not open or when
-# the compare cannot be read, which fails nothing else), and merge_authority. When GitHub cannot be
-# read, pr carries error instead of GitHub's facts, the text says "GitHub unavailable", and the exit
-# is still 0.
+# the compare cannot be read, which fails nothing else), queue (the base's merge queue rule, null
+# with none), queued and merge_authority. When GitHub cannot be read, pr carries error instead of
+# GitHub's facts, the text says "GitHub unavailable", and the exit is still 0.
+# queued is the PR's place in the merge queue, read from the ledger, never GitHub: null unless the
+# task's latest queued, dequeued or merged of the PR is a queued with no other head logged since, by
+# a pr event of the PR or by any review of the task (queue_state in bin/lib/ledger.jq), else {since,
+# head, waited_on}, the queued's time and head, and whether a process holds the task's merge lock,
+# ~/.local/state/agent-team/merge/T<n>.lock, read without taking it (merge_lock_held in
+# bin/lib/team.sh); the text form says, after the checks wait, "in the merge queue since <since>,
+# team-merge is waiting", or ", no team-merge waits on it: run team-merge T<n>".
 # merge_authority is the words the PR may merge on, as merge_authority in bin/lib/ledger.jq
 # derives them for team-merge, team-sweep, team-next and team-inbox alike: null for a PR of no
 # registered project, else {words, word}, words the per-head word and then the default word, each
