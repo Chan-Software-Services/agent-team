@@ -1841,11 +1841,13 @@ def ci_due_finding:
 # the coordinator is woken within the hour (a full Playwright run or tests/run, up to about 33
 # minutes seen, passes); gate, 180 minutes, while a running call runs the gate, whose runs went
 # up to about 115; ci_wait, 110 minutes, while a running call runs team-ci-wait, whose deadline of
-# 180 looks ends it by about 100, each look's reads taking a few seconds on top of its 30, or
-# team-ci-run, which ends in that wait after at most two 2-minute graces; interview, none (null),
+# 90 minutes of sleeps (GitHub's rate limit slept out within it) ends it by about 100, each look's
+# reads taking a few seconds on top of its interval; ci_run, 205 minutes, while a running call
+# runs team-ci-run, which ends in that wait after at most two 2-minute graces and 90 minutes of
+# sleeps through GitHub's rate limit, so by about 194; interview, none (null),
 # while a running call waits on Daniel with team-thread wait. session-activity names each call's limit from its whole command. team-sweep
 # reads the session-activity floor from default too, since no session quieter than it is stalled.
-def stall_limits: {default: 3000, gate: 10800, ci_wait: 6600, interview: null};
+def stall_limits: {default: 3000, gate: 10800, ci_wait: 6600, ci_run: 12300, interview: null};
 
 # A running call's stall limit: the one session-activity names for it (its limit), else default.
 def call_limit:
