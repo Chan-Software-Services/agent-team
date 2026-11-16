@@ -36,7 +36,10 @@
 # Prints the background session id and logs the launch to ledger.jsonl, with the worktree's
 # project and branch, the machine's team name
 # (~/.config/agent-team/machine), and for ops the request's link and message id. T0, the load check, needs no thread and
-# no lease, is asked none of the task's checks, and is not logged. The session is named
+# no lease, is asked none of the task's checks, and is not logged. Its planner, builder and
+# reviewer start with Remote Control off, remoteControlAtStartup false in their generated settings,
+# which outranks the user settings' word, so a load check leaves no row on claude.ai; its ops keeps
+# settings/ops.json's word, and a real task's worker gets no such key. The session is named
 # T<n>-<role>.
 # A ticket worktree (team-open --ticket's, an open worktree whose event names a ticket) takes
 # only its ticket's builder: any other role is refused, "<worktree> is ticket NN's worktree of
@@ -837,7 +840,8 @@ shell_prefix=''
 # and each autoMode list are concatenated, the shared ones first, so a role's hooks add to the
 # shared hooks and its autoMode lines to the team's; an autoMode list keeps "$defaults" (the
 # built-in rules) once, where it first stands. On the worker login, env gains its variables and
-# autoMode.environment its line, after the placeholders are filled.
+# autoMode.environment its line, after the placeholders are filled. T0's planner, builder and
+# reviewer get Remote Control off (see the header).
 settings=$taskdir/settings.$stem.json
 jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
   --arg memory "$memory" --arg shell_prefix "$shell_prefix" --arg git_dir "$common_dir" \
@@ -857,6 +861,7 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
           if $line == "$defaults" and any(.[]; . == "$defaults") then . else . + [$line] end))
     else . end
   | .worktree.bgIsolation = "none"
+  | if $task == "T0" and $role != "ops" then .remoteControlAtStartup = false else . end
   | if $memory != "" then .autoMemoryDirectory = $memory else . end
   | if $shell_prefix != "" then .env += {CLAUDE_CODE_SHELL_PREFIX: $shell_prefix, AGENT_TEAM_WORKTREE: $worktree, AGENT_TEAM_GIT_DIR: $git_dir} else . end
   | '"$substitute"'

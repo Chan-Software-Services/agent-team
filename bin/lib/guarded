@@ -26,8 +26,11 @@
 # settings, the role prompts, the ledger contract and the lifecycle table (lifecycle.json) the
 # ledger holds events to, data-check, the records and code lists, the command guard's readers
 # (command_rules.py, command_text.py, outbound.py, kill_rules.py, delete_rules.py), the lease
-# fence's (fence_rules.py), the kernel layer's wrapper, its roots and its shell prefix (confine.py,
-# confine-roots, confine-shell) and this file.
+# fence's (fence_rules.py), the kernel layer's wrapper, its roots and its shell prefix
+# (confine.py, confine-roots, confine-shell), the Rust build's own guards in any directory, since
+# cargo and rustup read them from the one they run in and every parent (deny.toml, the dependency
+# policy; rust-toolchain.toml or rust-toolchain, the compiler every build runs; .cargo/config.toml
+# or .cargo/config, which can name a wrapper or runner for every build) and this file.
 # team-merge reads this file from its own checkout, so a PR cannot loosen its own check, only the
 # ones after it. A project whose auth code moves to a file of another name has it added here by an
 # agent-team PR.
@@ -55,3 +58,4 @@ guardrails@own (coordinator|assistant)\.settings\.json
 guardrails@own bin/lib/(team\.sh|platform\.sh|launch\.sh|github-login\.sh|ledger\.jq|messages\.jq|review-app|worker-login)
 guardrails@own bin/team-(next|catch-up|review-check|land)
 guardrails@own roles/.*
+guardrails@own (.*/)?(deny\.toml|rust-toolchain(\.toml)?|\.cargo/config(\.toml)?)

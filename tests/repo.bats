@@ -165,6 +165,37 @@ ledger.jsonl: a record
 sops/machine-setup.md: a record"
 }
 
+# The toolchain rustup installs in every checkout: the pinned stable release, with the components
+# rust-analyzer resolves the standard library with and the check runs.
+@test "rust-toolchain.toml pins Rust 1.100.0, the minimal profile, rustfmt, clippy, rust-analyzer and rust-src" {
+  assert_equal "$(grep -v -e '^#' -e '^$' "$REPO_ROOT/rust-toolchain.toml")" '[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
+}
+
+# Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
+# read on home-pc from the pinned releases, rustup's from its source, since its install there was
+# refused (its commit and date are placeholders). Each pattern reads the pin from its line.
+@test "each Rust tool's version pattern in tools.lock reads its pin from the tool's version line" {
+  local name line rust_pattern pin version
+  while IFS=$'\t' read -r name line; do
+    rust_pattern=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+    pin=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")
+    version=''
+    [[ $line =~ $rust_pattern ]] && version=${BASH_REMATCH[1]}
+    assert_equal "$name $version" "$name $pin"
+  done <<'LINES'
+rustup	rustup 1.29.3 (0000000000 2026-11-04)
+cargo-nextest	cargo-nextest 0.9.152 (26ebeda79 2026-11-13)
+sccache	sccache 0.19.0
+cargo-deny	cargo-deny 0.20.2
+LINES
+  # rustup's note on stderr names rustc's version, which is never read as rustup's.
+  rust_pattern=$(jq -r '.tools[] | select(.name == "rustup") | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+  [[ ! 'info: the currently active `rustc` version is `rustc 1.100.0 (1a2b3c4d5 2026-11-12)`' =~ $rust_pattern ]]
+}
+
 @test "each machine's usage and time day files in the team home are records, never code" {
   local copy=$BATS_TEST_TMPDIR/copy
   path_copy "$copy"
@@ -2825,24 +2856,25 @@ bats: 3 tests passed; 1 of 2 files failed"
 ok 2 after it"
 }
 
-# test: copy_run_left <copy> <pid file>: the pids, one per line, still running of what a test
-# started from <copy>'s tests: this user's processes whose command line holds <copy>/tests/, and
-# each pid of <pid file> while it is this user's and runs a command holding that path or the
-# test's own "sleep 120". Bound by owner and path, so a kill of them reaches nothing else.
+# test: copy_run_left <pid file>: the pids, one per line, still running of what a test started
+# from the tests of its copy, $BATS_TEST_TMPDIR/copy: this user's processes whose command line
+# holds $BATS_TEST_TMPDIR/copy/tests/, and each pid of <pid file> while it is this user's and runs
+# a command holding that path or the test's own "sleep 120". Bound by owner and path, as
+# tests/bound-kills holds, so a kill of them reaches nothing else.
 copy_run_left() {
-  local tests=${1:?}/tests/ me pid
+  local me pid
   me=$(id -u)
-  [[ $tests == /*/*/tests/ ]] || { echo "copy_run_left: $tests is no copy's path" >&2 && return 1; }
+  [[ $BATS_TEST_TMPDIR == /*/* ]] || { echo "copy_run_left: $BATS_TEST_TMPDIR is no test's directory" >&2 && return 1; }
   # TESTS goes to awk, not ps: an empty ENVIRON["TESTS"] makes index() match every process, so
   # awk refuses one too.
   ps -U "$me" -o pid=,args= |
-    TESTS=$tests awk 'ENVIRON["TESTS"] == "" { exit 1 } index($0, ENVIRON["TESTS"]) { print $1 }' || return 1
-  [[ -e $2 ]] || return 0
+    TESTS=$BATS_TEST_TMPDIR/copy/tests/ awk 'ENVIRON["TESTS"] == "" { exit 1 } index($0, ENVIRON["TESTS"]) { print $1 }' || return 1
+  [[ -e $1 ]] || return 0
   while read -r pid; do
     [[ $pid =~ ^[0-9]+$ ]] || continue
     ps -o uid=,args= -p "$pid" 2>/dev/null |
-      TESTS=$tests ME=$me awk -v pid="$pid" '$1 == ENVIRON["ME"] && (index($0, ENVIRON["TESTS"]) || (NF == 3 && $2 " " $3 == "sleep 120")) { print pid }'
-  done <"$2"
+      TESTS=$BATS_TEST_TMPDIR/copy/tests/ ME=$me awk -v pid="$pid" '$1 == ENVIRON["ME"] && (index($0, ENVIRON["TESTS"]) || (NF == 3 && $2 " " $3 == "sleep 120")) { print pid }'
+  done <"$1"
 }
 
 @test "team-heavy stop ends a tests/run bats run's files too, though each runs under timeout in a process group of its own" {
@@ -2866,7 +2898,7 @@ copy_run_left() {
   wait "$run" || true
   # What the stop TERMed may take a moment to be reaped.
   for ((i = 0; i < 50; i++)); do
-    left=$(copy_run_left "$copy" "$BATS_TEST_TMPDIR/pids")
+    left=$(copy_run_left "$BATS_TEST_TMPDIR/pids")
     [[ -n $left ]] || break
     sleep 0.1
   done
@@ -2879,6 +2911,204 @@ copy_run_left() {
     kill $left 2>/dev/null || true
   fi
   assert_equal "$left" ""
+}
+
+# A test's cleanup once killed every process of the user's: its awk filter matched every line of
+# ps -A, so kill sent TERM to the whole desktop session, twice. A search whose pids a test may kill
+# is bound by its owner and the test's own temporary directory, or tests/bound-kills names it.
+@test "no test kills the pids of a process search it did not bind by owner and its own temporary directory" {
+  run -0 "$REPO_ROOT/tests/bound-kills"
+  assert_equal "$output" ""
+}
+
+# The first planted test is the cleanup that logged the desktop out, as it stood before its fix,
+# and the second that cleanup as first fixed, its filter given to awk, still unbound by owner.
+# Each planted @test line is written %test, since bats rewrites an @test line even in a heredoc.
+@test "tests/bound-kills names the logout's cleanup before its fix, and each unbound search whose pids may reach a kill, by file, line and the binding it lacks" {
+  local logout=$BATS_TEST_TMPDIR/logout.bats forms=$BATS_TEST_TMPDIR/forms.bats
+  local tmp="the test's own temporary directory (\$BATS_TEST_TMPDIR or \$BATS_FILE_TMPDIR in a word of its pipeline)"
+  local neither="bound by neither its owner (-u or -U) nor $tmp" no_tmp="not bound by $tmp"
+  cat >"$logout" <<'LOGOUT'
+%test "team-heavy stop ends a tests/run bats run's files too, though each runs under timeout in a process group of its own" {
+  local copy=$BATS_TEST_TMPDIR/copy run i pid left=''
+  unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
+  limits_checkout "$copy"
+  printf '%s\n' "@test \"sleeps\" { echo \"\$\$\" >\"$BATS_TEST_TMPDIR/pids\"; sleep 120 & echo \"\$!\" >>\"$BATS_TEST_TMPDIR/pids\"; wait \"\$!\"; }" \
+    >"$copy/tests/sleeps.bats"
+  TEAM_JOBS=1 "$copy/tests/run" bats >"$BATS_TEST_TMPDIR/run.out" 2>&1 3>&- &
+  run=$!
+  for ((i = 0; i < 300; i++)); do
+    [[ ! -e $BATS_TEST_TMPDIR/pids || $(wc -l <"$BATS_TEST_TMPDIR/pids") -lt 2 ]] || break
+    sleep 0.1
+  done
+  [[ $(wc -l <"$BATS_TEST_TMPDIR/pids") -eq 2 ]]
+  run -0 "$copy/bin/team-heavy" stop
+  assert_contains "$output" "stopped tests/run bats in "
+  wait "$run" || true
+  for ((i = 0; i < 50; i++)); do
+    left=$(TESTS="$copy/tests/" ps -A -o pid=,args= | awk 'index($0, ENVIRON["TESTS"])')
+    [[ -n $left ]] || break
+    sleep 0.1
+  done
+  [[ -z $left ]] || kill $left 2>/dev/null || true
+  assert_equal "$left" ""
+}
+
+%test "the same cleanup as first fixed, its TESTS given to awk" {
+  local copy=$BATS_TEST_TMPDIR/copy left
+  left=$(ps -A -o pid=,args= | TESTS="$copy/tests/" awk 'index($0, ENVIRON["TESTS"]) { print $1 }')
+  [[ -z $left ]] || kill $left 2>/dev/null || true
+}
+LOGOUT
+  sed -i 's/^%test /@test /' "$logout"
+  run -1 "$REPO_ROOT/tests/bound-kills" "$logout"
+  assert_equal "$output" "$logout:18: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $logout:22
+$logout:28: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $logout:29"
+
+  cat >"$forms" <<'FORMS'
+%test "pgrep piped to xargs kill, bound by neither" {
+  pgrep -f "$copy/vite" | xargs -r kill
+}
+
+%test "a kill of a substituted pgrep, bound by its owner alone" {
+  kill $(pgrep -u "$(id -u)" -f vite)
+}
+
+%test "pkill, bound by the test's directory alone" {
+  pkill -f "$BATS_TEST_TMPDIR/bin/x" 2>/dev/null || true
+}
+
+%test "pidof, which takes no owner" {
+  kill "$(pidof sleep)"
+}
+
+%test "a loop that kills ps -e's pids, behind command -p" {
+  command -p ps -e -o pid=,args= | awk '$2 == "sleep" { print $1 }' |
+    while read -r pid; do kill -KILL "$pid"; done
+}
+
+# A search in a function whose caller kills what it prints.
+helper_left() {
+  ps -A -o pid=,args= | awk '/x/ { print $1 }'
+}
+
+%test "a helper's search, killed by its caller" {
+  left=$(helper_left)
+  kill $left
+}
+
+# A kill in a function that a block holding a search calls.
+kill_these() { kill "$@"; }
+
+%test "a search whose block calls a function that kills" {
+  kill_these $(pgrep -x sleep)
+}
+
+%test "run kill of a searched pid list" {
+  left=$(ps -A -o pid=,args= | awk '/x/ { print $1 }'); run kill $left
+}
+
+%test "run pkill" {
+  run pkill -f vite
+}
+
+%test "ps -A beside -U, which lists every user's processes" {
+  ps -A -U "$me" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "the test's directory only in a redirect's target" {
+  pkill -U "$(id -u)" -f vite 2>>"$BATS_TEST_TMPDIR/err"
+}
+
+%test "the test's directory only in a comment" {
+  pkill -U "$me" -f vite  # not $BATS_TEST_TMPDIR
+}
+
+%test "the test's directory only in another command of the list" {
+  pkill -U "$me" -f vite || touch "$BATS_TEST_TMPDIR/none"
+}
+
+%test "ps -C beside -U, which adds any user's processes of that name" {
+  ps -U "$me" -C sleep -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "a long selection with its value after =, and a long value option's = that takes no next word" {
+  ps -U "$me" --ppid="$pid" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" --sort=pid -A -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "bound by owner and path, in a word of its pipeline" {
+  pkill -U "$(id -u)" -f "$BATS_TEST_TMPDIR/bin/x"
+  run -0 pkill -U "$me" -f "$BATS_FILE_TMPDIR/bin/x"
+  ps -U "$me" -ww -o pid=,args= e | OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" awk 'index($0, ENVIRON["OWN"])' | xargs -r kill
+  ps -U "$me" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk -v me="$(id -u)" 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" -o pid=,args= |  # filter by the test's directory
+    TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" -o pid=,args= |
+    TESTS=$BATS_FILE_TMPDIR/copy awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "a ps that names its pids, and a probe that sends nothing" {
+  kill $(ps -o pid= -p "$pid")
+  kill -0 "$pid"
+}
+
+%test "a search that reaches no kill" {
+  pgrep -P "$sweep" -x flock >/dev/null
+  root=$(ps -A -o pid=,uid= | awk '$2 == 0 { print $1; exit }')
+  kill -0 $(pgrep x)
+}
+
+%test "text a kill is only in" {
+  refuses "pkill -f vite" 'kill $(pgrep -f x)'
+  bash -c 'pgrep x | xargs kill'
+  # kill $(pgrep x)
+  cat <<'SH'
+kill $(pgrep x)
+SH
+  docker ps --quiet | xargs -r docker kill
+}
+FORMS
+  sed -i 's/^%test /@test /' "$forms"
+  run -1 "$REPO_ROOT/tests/bound-kills" "$forms"
+  assert_equal "$output" "$forms:2: pgrep -f \$copy/vite: $neither, and its pids may reach the kill at $forms:2
+$forms:6: pgrep -u \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:6
+$forms:10: pkill -f \$BATS_TEST_TMPDIR/bin/x: not bound by its owner (-u or -U), and its pids may reach the kill at $forms:10
+$forms:14: pidof sleep: bound by neither its owner (-u or -U; pidof has none: use pgrep) nor $tmp, and its pids may reach the kill at $forms:14
+$forms:18: ps -e -o pid=,args=: $neither, and its pids may reach the kill at $forms:19
+$forms:24: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:29
+$forms:36: pgrep -x sleep: $neither, and its pids may reach the kill at $forms:33
+$forms:40: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:40
+$forms:44: pkill -f vite: $neither, and its pids may reach the kill at $forms:44
+$forms:48: ps -A -U \$me -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:48
+$forms:52: pkill -U \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:52
+$forms:56: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:56
+$forms:60: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:60
+$forms:64: ps -U \$me -C sleep -o pid=,args=: not bound by its owner (-u or -U, which -C undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:64
+$forms:68: ps -U \$me --ppid=\$pid -o pid=,args=: not bound by its owner (-u or -U, which --ppid=\$pid undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:68
+$forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:68"
+  # The forms after the first fifteen, bound or reaching no kill, pass alone.
+  sed -i '1,70d' "$forms"
+  run -0 "$REPO_ROOT/tests/bound-kills" "$forms"
+  assert_equal "$output" ""
+}
+
+# The sleeps leave bats' output (fd 3) closed and are killed before any assertion, so a failing
+# own_pids ends the test at once instead of holding the file's run open for their five minutes.
+@test "own_pids names the processes this test started, but not this shell, another test's or one whose environment was emptied" {
+  local own other bare sleep
+  sleep=$(command -v sleep)
+  "$sleep" 300 3>&- &
+  own=$!
+  BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR-other "$sleep" 300 3>&- &
+  other=$!
+  env -i "$sleep" 300 3>&- &
+  bare=$!
+  run own_pids
+  kill "$own" "$other" "$bare"
+  assert_equal "$status" 0
+  assert_equal "$(grep -cxE "$own|$other|$bare|$$" <<<"$output")" 1
+  grep -qx "$own" <<<"$output"
 }
 
 # bats runs a test's time limit countdown as a background job of the test's own shell, so a bare
@@ -3213,4 +3443,44 @@ briefs_without_gotchas() {
   for path in bin/lib/review-app bin/team-review-check; do
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
+}
+
+# The names team-janitor tmp may remove (bin/lib/tmp-leftovers): each line a maker, a project of
+# the registry fixture or bats, and an expression that begins with at least 6 literal characters
+# and holds no |, so no alternation widens it past that beginning, and none is a name another
+# program makes: mktemp's default, systemd's, Claude Code's or pytest's. Says the first line it
+# refuses on stderr and fails: leftovers_hold <file>
+leftovers_hold() {
+  local file=$1 names line maker expression name count=0
+  names=$(sed -n 's/^\[\([a-z0-9-]*\)\]$/\1/p' "$REPO_ROOT/tests/fixtures/projects.toml")
+  while IFS= read -r line; do
+    [[ -n $line && $line != '#'* ]] || continue
+    count=$((count + 1))
+    [[ $line =~ ^([a-z0-9-]+)\ ([^[:space:]]+)$ ]] || { echo "bin/lib/tmp-leftovers: '$line' is not <maker> <expression>" >&2; return 1; }
+    maker=${BASH_REMATCH[1]} expression=${BASH_REMATCH[2]}
+    [[ $maker == bats ]] || grep -Fxq -- "$maker" <<<"$names" ||
+      { echo "bin/lib/tmp-leftovers: the maker of '$line' is neither bats nor a project of the registry fixture" >&2; return 1; }
+    [[ $expression =~ ^[A-Za-z0-9_-]{6} ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' does not begin with 6 literal characters" >&2; return 1; }
+    [[ $expression != *'|'* ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' holds a |, which would widen the names it removes" >&2; return 1; }
+    for name in tmp.AbCdEfGhIj systemd-private-x claude-1000 pytest-of-user; do
+      if [[ $name =~ ^($expression)$ ]]; then
+        echo "bin/lib/tmp-leftovers: '$expression' matches $name, which is not the team's" >&2
+        return 1
+      fi
+    done
+  done <"$file"
+  ((count >= 12))
+}
+
+@test "every line of bin/lib/tmp-leftovers is a maker and an expression that begins with 6 literal characters, holds no | and matches no other program's name" {
+  leftovers_hold "$REPO_ROOT/bin/lib/tmp-leftovers"
+}
+
+@test "the leftovers' check refuses a line whose expression widens itself with an alternation" {
+  { cat "$REPO_ROOT/bin/lib/tmp-leftovers"; echo 'no-mistakes nm-cli-home-[0-9]+|[a-z]+'; } >"$BATS_TEST_TMPDIR/tmp-leftovers"
+  run leftovers_hold "$BATS_TEST_TMPDIR/tmp-leftovers"
+  assert_equal "$status" 1
+  assert_equal "$output" "bin/lib/tmp-leftovers: 'nm-cli-home-[0-9]+|[a-z]+' holds a |, which would widen the names it removes"
 }

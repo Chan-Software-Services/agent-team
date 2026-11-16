@@ -26,6 +26,12 @@ declare -gA FORMAT=(
   # The real build also names its commit in parentheses after the version, which the pattern
   # skips; a stub at any version leaves it out.
   [no-mistakes]='no-mistakes version v%s 2026-10-31T01:47:41Z'
+  # rustup's line in the form of its source, its commit and date placeholders, then its notes on
+  # stderr; the cargo tools' lines as the pinned releases print them on home-pc.
+  [rustup]=$'rustup %s (0000000000 2026-11-04)\ninfo: This is the version for the rustup toolchain manager, not the rustc compiler.'
+  [cargo-nextest]=$'cargo-nextest %s (26ebeda79 2026-11-13)\nrelease: %s\ncommit-hash: 26ebeda79b9ae1d008cf64ddb01984bcaa6e1239'
+  [sccache]='sccache %s'
+  [cargo-deny]='cargo-deny %s'
   [mongodump]=$'mongodump version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [mongorestore]=$'mongorestore version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [op]='%s'
@@ -56,7 +62,8 @@ declare -gA FORMAT=(
 # cloned as the bootstrap clones them,
 # ~/.config/agent-team/home names the team home, and its core.hooksPath the code's records-git;
 # the user manager delegates cpu and memory and the team's slice is installed (team-capacity);
-# and a reading of the machine's load was just taken, as a good heartbeat run just ended.
+# /tmp is a memory file system a tenth full (tmp_reading); and a reading of the machine's load was
+# just taken, as a good heartbeat run just ended.
 doctor_machine() {
   # The whole doctor, until a test names its checks (only_checks).
   unset TEAM_DOCTOR_CHECKS
@@ -247,6 +254,10 @@ else
 fi
 EOF
   "$REPO_ROOT/bin/team-config" apply >/dev/null
+  # /tmp, under the sandbox's system root: a tmpfs, a tenth full.
+  mkdir -p "$TEAM_SYSTEM_ROOT/tmp"
+  export TEAM_TMP_DF=$BATS_TEST_TMPDIR/tmp-df
+  tmp_reading 10
   # A reading of the machine's load just taken, as its heartbeat takes one.
   capacity_reading 0
   # And a good heartbeat run just ended, with its checkpoint.
@@ -275,6 +286,15 @@ good_heartbeat_run() {
       last_checkpoint: $now, offline: null, login_refused: null}; [{holding: true}, {lease_renewed: $now}, {coordinator_live: true}];
       health_limits)' \
     >"$state/health.json"
+}
+
+# tmp_reading <percent> [<type>]: /tmp's file system, as TEAM_TMP_DF gives team-janitor tmp in
+# place of findmnt and df: 16 GiB, <percent> of it used (rounded up to a whole byte), a tmpfs
+# mounted with usrquota unless <type> names another.
+tmp_reading() {
+  local size=17179869184
+  printf '%s %s %s %s\n' "${2:-tmpfs}" "$size" "$(((size * $1 + 99) / 100))" rw,nosuid,nodev,size=16777216k,usrquota \
+    >"$TEAM_TMP_DF"
 }
 
 # capacity_reading <minutes>: append a reading of the machine's load with the team's use per task,
