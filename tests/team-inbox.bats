@@ -366,6 +366,31 @@ $RANKED"
   assert_equal "$(waiting_items_shown)" "Nothing waits on you."
 }
 
+@test "a PR whose per-head word stands through a passing review of a new head is left out, and a review that found something after the word lists it" {
+  opened T4 "Four" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T4","event":"pr","url":"https://github.com/owner/proj/pull/4","head":"abc1234def"}' \
+    '{"task":"T4","event":"review","head":"abc1234def","verdict":"pass"}' \
+    '{"task":"T4","event":"merge-approved","url":"https://github.com/owner/proj/pull/4/","discord_message":"1564000000000000004","head":"abc1234def"}'
+  opened T6 "Six" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T6","event":"pr","url":"https://github.com/owner/proj/pull/6","head":"6666666aaa"}' \
+    '{"task":"T6","event":"review","head":"6666666aaa","verdict":"pass"}' \
+    '{"task":"T6","event":"merge-approved","url":"https://github.com/owner/proj/pull/6","discord_message":"1564000000000000006","head":"6666666aaa"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "Nothing waits on you."
+
+  # A merge of the base moves each head on: T4's re-review passes, so the word stands; T6's finds
+  # something before it passes, which ends the word, so T6 waits on Daniel's word again.
+  log_events '{"task":"T4","event":"pr","url":"https://github.com/owner/proj/pull/4","head":"4444444bbb"}' \
+    '{"task":"T4","event":"review","head":"4444444bbb","verdict":"pass"}' \
+    '{"task":"T6","event":"pr","url":"https://github.com/owner/proj/pull/6","head":"7777777bbb"}' \
+    '{"task":"T6","event":"review","head":"7777777bbb","verdict":"findings","sent_back":["1"]}' \
+    '{"task":"T6","event":"pr","url":"https://github.com/owner/proj/pull/6","head":"8888888ccc"}' \
+    '{"task":"T6","event":"review","head":"8888888ccc","verdict":"pass"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "- **1** T6 Six: ready to merge <https://github.com/owner/proj/pull/6> - unblocks 2 (1 task, 1 PR)
+$RANKED"
+}
+
 @test "an item keeps its number while it stands, and a new item takes the lowest number no standing item holds" {
   opened T3 "Three" >>"$TEAM_HOME/ledger.jsonl"
   log_events '{"task":"T3","event":"thread","discord_thread":"3333"}' \
