@@ -431,7 +431,8 @@ $dir/tickets.html"
   [[ $(chrome_arg screenshot) == "$dir/."*.png ]]
   assert_equal "$(cat "$STUB_CALLS/chrome.profiles")" "$(chrome_arg user-data-dir)"
   [[ ! -e $(chrome_arg user-data-dir) ]]
-  assert_equal "$(ls -A "$dir")" "tickets
+  assert_equal "$(ls -A "$dir")" "spec.md
+tickets
 tickets.html
 tickets.png"
 }
@@ -499,7 +500,8 @@ chrome_fixture() {
     assert_equal "$output" "$dir/tickets.html"
     assert_equal "$stderr" "team-tickets: no PNG of T172's graph: $reason"
     assert_contains "$(cat "$dir/tickets.html")" "<!doctype html>"
-    assert_equal "$(ls -A "$dir")" "tickets
+    assert_equal "$(ls -A "$dir")" "spec.md
+tickets
 tickets.html"
   done <<'CASES'
 missing|no Chrome found; set TEAM_CHROME or install Google Chrome
@@ -550,7 +552,8 @@ SH
 $dir/tickets.html"
     assert_equal "$stderr" ""
     assert_equal "$(head -c 4 "$dir/tickets.png" | tail -c 3)" "PNG"
-    assert_equal "$(ls -A "$dir")" "tickets
+    assert_equal "$(ls -A "$dir")" "spec.md
+tickets
 tickets.html
 tickets.png"
   done
@@ -562,7 +565,7 @@ tickets.png"
   run_bin -1 --separate-stderr team-tickets T172 --graph
   assert_equal "$output" ""
   assert_equal "$stderr" "team-tickets: T172 has no tickets, so it has no graph"
-  assert_equal "$(ls -A "$wt/.scratch/task")" ""
+  assert_equal "$(ls -A "$wt/.scratch/task")" "spec.md"
   [[ ! -e $STUB_CALLS/chrome.log ]]
 }
 
@@ -574,7 +577,8 @@ tickets.png"
   local reasons=$stderr
   run_bin -1 --separate-stderr team-tickets T172 --graph
   assert_equal "$stderr" "$reasons"
-  assert_equal "$(ls -A "$wt/.scratch/task")" "tickets"
+  assert_equal "$(ls -A "$wt/.scratch/task")" "spec.md
+tickets"
   run_bin -2 team-tickets T172 --graph --check
   run_bin -2 team-tickets T172 --json --graph
   run_bin -2 team-tickets T172 --graph --html "$page"
