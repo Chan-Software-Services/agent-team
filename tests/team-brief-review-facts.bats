@@ -167,8 +167,9 @@ review() {
   put back-end/tests/test_other.py 'def test_stays():' '    pass'
   put back-end/legacy_test.py 'def test_legacy():' '    pass'
   on_base T14 main
-  put back-end/tests/test_auth.py '@pytest.mark.skip' 'async def test_logout():' '    pass' \
-    '@pytest.mark.skipif(True, reason="slow")' 'def test_later():' '    pass'
+  # The markers in double quotes: the data check reads a quote, @ and a dotted name as an address.
+  put back-end/tests/test_auth.py "@pytest.mark.skip" 'async def test_logout():' '    pass' \
+    "@pytest.mark.skipif(True, reason='slow')" 'def test_later():' '    pass'
   put back-end/tests/test_other.py 'def test_stays():' '    pass' '' 'def test_moves():' '    pass'
   rm "$wt/back-end/legacy_test.py"
   head=$(commit_all "test: drop some")
