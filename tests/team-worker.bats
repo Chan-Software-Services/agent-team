@@ -90,7 +90,7 @@ merge_method = "merge"
 required_checks = []
 task_dir = ".scratch/task"
 docs = []
-toolkits = ["prod-read", "prod-write", "vercel-read", "browser", "codegraph", "effect", "spec-review", "kit-a", "kit-b", "kit-c"]
+toolkits = ["prod-read", "prod-write", "vercel-read", "prod-mongo", "browser", "codegraph", "effect", "spec-review", "kit-a", "kit-b", "kit-c"]
 $extra
 pool = { provider = "git", slots = ["slots/$name/1", "slots/$name/2"] }
 
@@ -277,6 +277,30 @@ base_files() {
   git -C "${repo:?}" push -q origin main
 }
 
+# origin_files <repo> <file> <text> [<file> <text>]...: commit each file with its text on main of
+# <repo>'s origin from a clone of its own and push it, as a merge on GitHub lands, so <repo>'s own
+# origin/main stays where it stood until something fetches it; prints the new commit.
+origin_files() {
+  local clone
+  clone=$(mktemp -d "$BATS_TEST_TMPDIR/merge.XXXXXX")
+  git clone -q "$(git -C "${1:?}" remote get-url origin)" "$clone"
+  shift
+  while (($#)); do
+    printf '%s\n' "$2" >"$clone/$1"
+    git -C "${clone:?}" add -- "$1"
+    shift 2
+  done
+  git -C "${clone:?}" commit -q -m "docs: instructions merged on origin"
+  git -C "${clone:?}" push -q origin main
+  git -C "${clone:?}" rev-parse HEAD
+}
+
+# The line a launch of T7's <role> in $wt1 prints when its fetch of origin/main fails, as a regular
+# expression, git's reason any text of one line unless one is given: fetch_failed <role> [<reason>]
+fetch_failed() {
+  echo "^team-worker: could not fetch origin/main in $wt1's repository \\(${2:-[^[:cntrl:]]+}\\), so T7-$1 gets proj's instructions as origin/main last stood here\$"
+}
+
 # A launch's stderr <stderr> but the lines for the earlier sessions it leaves running: notes <stderr>
 notes() {
   grep -v '^team-worker: left T7-' <<<"$1" || true
@@ -454,16 +478,103 @@ base_link() {
   done
 }
 
-@test "an origin/<base> the worktree's repository cannot read refuses the launch, nothing started, stopped or logged" {
+@test "a launch after origin's base moved reads the new instructions under the new commit, with no fetch in the primary checkout" {
   thread T7
   opened T7 proj feat/T7-one "$wt1"
+  base_files "$primary" CLAUDE.md "OLD-CLAUDE-MARKER"
+  local old sha role
+  old=$(git -C "${primary:?}" rev-parse origin/main)
+  for role in planner builder reviewer; do
+    sha=$(origin_files "$primary" CLAUDE.md "NEW-CLAUDE-MARKER-$role")
+    assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$old"
+    : >"$STUB_CALLS/claude.log"
+    run_bin -0 --separate-stderr team-worker T7 "$role" "$wt1" -- go
+    assert_equal "$output" "4f2a9c1e"
+    assert_equal "$(notes "$stderr")" ""
+    grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
+    grep -qxF "NEW-CLAUDE-MARKER-$role" "$(prompt_file)"
+    run -1 grep -F "OLD-CLAUDE-MARKER" "$(prompt_file)"
+    assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$sha"
+    old=$sha
+  done
+}
+
+@test "instruction files a merge added on origin alone are given, and the launch does not say the project has none" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  # The base as the primary checkout last fetched it has neither file.
+  git -C "${primary:?}" rm -q CLAUDE.md
+  git -C "${primary:?}" commit -q -m "docs: drop the instructions"
+  git -C "${primary:?}" push -q origin main
+  assert_equal "$(git -C "${primary:?}" ls-tree --name-only origin/main -- CLAUDE.md AGENTS.md)" ""
+  local sha
+  sha=$(origin_files "$primary" CLAUDE.md "MERGED-CLAUDE-MARKER" AGENTS.md "MERGED-AGENTS-MARKER")
+  run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
+  assert_equal "$output" "4f2a9c1e"
+  assert_equal "$stderr" ""
+  grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
+  grep -qxF "MERGED-CLAUDE-MARKER" "$(prompt_file)"
+  grep -qxF "MERGED-AGENTS-MARKER" "$(prompt_file)"
+}
+
+@test "a fetch that fails is said on stderr, and the launch goes on with origin/<base> as last fetched" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  base_files "$primary" CLAUDE.md "LAST-FETCHED-MARKER"
+  local sha
+  sha=$(git -C "${primary:?}" rev-parse origin/main)
+  origin_files "$primary" CLAUDE.md "UNREACHED-MARKER" >/dev/null
+  git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/no-repository"
+  run_bin -0 --separate-stderr team-worker T7 builder "$wt1" -- go
+  assert_equal "$output" "4f2a9c1e"
+  # Git ends on a hint here ("and the repository exists."), and the reason is its last fatal: line.
+  [[ $stderr =~ $(fetch_failed builder 'fatal: [^[:cntrl:]]+') ]] || assert_equal "$stderr" "the fetch line alone, its reason git's fatal: line"
+  grep -qxF "# Project instructions: proj, from origin/main at $sha" "$(prompt_file)"
+  grep -qxF "LAST-FETCHED-MARKER" "$(prompt_file)"
+  run -1 grep -F "UNREACHED-MARKER" "$(prompt_file)"
+  assert_equal "$(launches | jq -r .role)" builder
+}
+
+@test "an origin/<base> the worktree's repository lacks and cannot fetch refuses the launch after the fetch line, nothing started, stopped or logged" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  # Origin still answers, so the fetch brings a deleted ref back and the launch goes.
   git -C "${primary:?}" update-ref -d refs/remotes/origin/main
+  run_bin -0 --separate-stderr team-worker T7 reviewer "$wt1" -- go
+  assert_equal "$stderr" ""
+  git -C "${primary:?}" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null
+
+  rm -r -- "${TEAM_HOME:?}/tasks/T7" "${HOME:?}/.local/state/agent-team/prompts/T7"
+  sed -i '/"event":"launch"/d' "$TEAM_HOME/ledger.jsonl"
+  : >"$STUB_CALLS/claude.log"
+  git -C "${primary:?}" update-ref -d refs/remotes/origin/main
+  git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/no-repository"
   run_bin -1 team-worker T7 reviewer "$wt1" -- go
-  assert_equal "$output" "team-worker: $wt1's repository has no origin/main, where proj's instructions for T7-reviewer come from: fetch it (git -C $wt1 fetch origin main) and launch again"
+  assert_equal "${#lines[@]}" 2
+  [[ ${lines[0]} =~ $(fetch_failed reviewer) ]] || assert_equal "${lines[0]}" "the fetch line"
+  assert_equal "${lines[1]}" "team-worker: $wt1's repository has no origin/main, where proj's instructions for T7-reviewer come from: fetch it (git -C $wt1 fetch origin main) and launch again"
   assert_equal "$(stub_calls claude)" ""
   assert_equal "$(launches)" ""
   [[ ! -e $TEAM_HOME/tasks/T7/settings.reviewer.proj.json ]]
   [[ ! -e $HOME/.local/state/agent-team/prompts/T7 ]]
+}
+
+@test "an ops launch and a launch with no project fetch nothing" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  ops_stub
+  local old loose
+  old=$(git -C "${primary:?}" rev-parse origin/main)
+  origin_files "$primary" CLAUDE.md "MOVED-MARKER" >/dev/null
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(git -C "${primary:?}" rev-parse origin/main)" "$old"
+
+  loose=$(make_repo loose)
+  git -C "${loose:?}" worktree add -q -b feat/T0-x "$HOME/slots/loose/1"
+  old=$(git -C "${loose:?}" rev-parse origin/main)
+  origin_files "$loose" CLAUDE.md "LOOSE-MOVED-MARKER" >/dev/null
+  run_bin -0 team-worker T0 planner "$HOME/slots/loose/1" -- go
+  assert_equal "$(git -C "${loose:?}" rev-parse origin/main)" "$old"
 }
 
 @test "a launch with no project gets no memory directory and no project instructions, said on stderr" {
@@ -692,7 +803,7 @@ TOML
     "**Trusted repo**: a worker's working directory is a linked git worktree of one of those repositories, on its task's branch, with origin at that repository on GitHub: github.com/owner/proj"
 }
 
-@test "every role's settings run the fence and command guard hooks on Bash; the planner's and reviewer's add the edit hook" {
+@test "every role's settings run the fence and command guard hooks on Bash and the session records guard on Read, Grep and Glob; the planner's and reviewer's add the edit hook" {
   open_task T7
   local role settings
   for role in planner builder reviewer; do
@@ -701,16 +812,22 @@ TOML
     assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$settings")" \
       "$REPO_ROOT/bin/hooks/lease-fence
 $REPO_ROOT/bin/hooks/command-guard"
+    assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Read|Grep|Glob") | .hooks[].command' "$settings")" \
+      "$REPO_ROOT/bin/hooks/session-records-guard"
     if [[ $role == builder ]]; then
-      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 1
+      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 2
     else
       assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit|NotebookEdit|Bash") | .hooks[].command' "$settings")" \
         "$REPO_ROOT/bin/hooks/scratch-only-edits"
-      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 2
+      assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 3
     fi
     assert_equal "$(jq -r '.permissions.deny | index("Bash(gh pr merge*)") != null' "$settings")" true
+    # No role reads the file checkpoints or Claude Code's cache, on Linux or macOS.
+    assert_equal "$(jq -c '.permissions.deny | map(select(test("file-history|claude-cli-nodejs")))' "$settings")" \
+      '["Read(~/.claude/file-history/**)","Read(~/.cache/claude-cli-nodejs/**)","Read(~/Library/Caches/claude-cli-nodejs/**)"]'
   done
-  [[ -x $REPO_ROOT/bin/hooks/scratch-only-edits && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard ]]
+  [[ -x $REPO_ROOT/bin/hooks/scratch-only-edits && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard &&
+    -x $REPO_ROOT/bin/hooks/session-records-guard ]]
 }
 
 @test "every role's generated settings keep onFailure block and the timeout on each PreToolUse hook" {
@@ -725,7 +842,8 @@ $REPO_ROOT/bin/hooks/command-guard"
     fi
     settings=$(generated settings "$role")
     expected="lease-fence block 60
-command-guard block 10"
+command-guard block 10
+session-records-guard block 10"
     case $role in
       planner | reviewer) expected+=$'\nscratch-only-edits block 30' ;;
       ops) expected+=$'\nscratch-only-edits block 30\nops-log block 30' ;;
@@ -1831,12 +1949,12 @@ assert_prod_write_gated() {
     <(jq 'del(.permissions.deny)' "$TEAM_HOME/tasks/T7/settings.ops.json")
 }
 
-@test "the generated ops settings allow only prod-read, vercel-read and the answer file's edits, ask for every prod-write tool, and deny every outbound tool" {
+@test "the generated ops settings allow only prod-read, vercel-read, prod-mongo and the answer file's edits, ask for every prod-write tool, and deny every outbound tool and the backups folder" {
   open_task T7
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
   local s=$TEAM_HOME/tasks/T7/settings.ops.json rule
-  assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","Edit(./.scratch/answer.md)"]'
+  assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","mcp__prod-mongo__*","Edit(./.scratch/answer.md)"]'
   # The write hook holds the session to that one file, and blocks when it fails.
   assert_equal "$(jq -c '[.hooks.PreToolUse[].hooks[] | select(.command | endswith("/scratch-only-edits"))
     | [.command, .args, .onFailure, .timeout]]' "$s")" \
@@ -1853,7 +1971,12 @@ assert_prod_write_gated() {
   # A worktree's .env files (Conventioner's back-end/.env among them) at any depth. Claude Code
   # applies Read rules to Grep and Glob too, and never matches a Grep(path) or Glob(path) rule.
   jq -e '.permissions.deny | index("Read(**/.env*)") != null' "$s" >/dev/null
-  assert_equal "$(jq -r '.permissions.deny[] | select(test("^(Grep|Glob)\\("))' "$s")" ""
+  # Daniel's backups folder holds real data and migration output: the session's file tools never
+  # open it, whichever toolkits it has. A Read rule covers Grep and Glob and an Edit rule Write,
+  # whose own path rules Claude Code accepts but never matches.
+  assert_equal "$(jq -c '[.permissions.deny[] | select(contains("conventioner-backups") and (startswith("Bash(") | not))]' "$s")" \
+    '["Read(~/conventioner-backups/**)","Edit(~/conventioner-backups/**)"]'
+  assert_equal "$(jq -r '.permissions.deny[] | select(test("^(Grep|Glob|Write)\\("))' "$s")" ""
   assert_equal "$(jq -c .env.MCP_TIMEOUT "$s")" '"120000"'
   # --restricted ignores the user settings, and without this the coordinator's replies (the
   # write protocol's answers) never reach the session (T16 ticket 04's live check).
@@ -1872,9 +1995,11 @@ assert_prod_write_gated() {
   # do the built-in easel plugin and its chart tool.
   assert_equal "$(jq -c .enabledPlugins "$s")" \
     '{"discord@claude-plugins-official":false,"mongodb-atlas@claude-plugins-official":false,"cc-plugin-plugin-authoring@builtin":false,"cc-plugin-easel@builtin":false}'
-  # The shared hooks come first (lease-fence on Bash, a tool ops lacks), then the role's own.
-  assert_equal "$(jq -r '.hooks.PreToolUse[] | "\(.matcher) \(.hooks[0].command)"' "$s" | sed -n 1,2p)" \
+  # The shared hooks come first (lease-fence on Bash, a tool ops lacks, and the session records
+  # guard on its reads), then the role's own.
+  assert_equal "$(jq -r '.hooks.PreToolUse[] | "\(.matcher) \(.hooks[0].command)"' "$s" | sed -n 1,3p)" \
     "Bash $REPO_ROOT/bin/hooks/lease-fence
+Read|Grep|Glob $REPO_ROOT/bin/hooks/session-records-guard
 Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
   # The ops log goes to the team home's task directory, which is not this checkout's in a test.
   local event
@@ -1909,10 +2034,10 @@ Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
 
   local s=$t/settings.ops.json
   assert_prod_write_gated "$s"
-  assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","Edit(./.scratch/answer.md)"]'
+  assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","mcp__prod-mongo__*","Edit(./.scratch/answer.md)"]'
   # The ops log's hooks cover both toolkits' tools, and block a write whose line is lost.
   assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.hooks[0].command | endswith("/ops-log"))
-    | "\(.matcher) \(.hooks[0].onFailure)"' "$s")" '^mcp__.*(prod-(read|write)|vercel-read).*__ block'
+    | "\(.matcher) \(.hooks[0].onFailure)"' "$s")" '^mcp__.*(prod-(read|write|mongo)|vercel-read).*__ block'
   run -1 grep -Eq 'mongodb(\+srv)?://|MDB_MCP_CONNECTION|op://|password' <(jq 'del(.permissions.deny)' "$s")
 
   assert_equal "$(launches | jq -c '[.toolkits, .request]')" "$(jq -cn --arg r "$request" '[["prod-read", "prod-write"], $r]')"
@@ -1955,12 +2080,56 @@ matcher_matches() {
     run -1 grep -Eq '@TEAM_CODE@|@TASK@|vcp_|VERCEL|op://|token|mongodb(\+srv)?://|password' "$mcp"
 
     local s=$t/settings.ops.json
-    assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","Edit(./.scratch/answer.md)"]'
+    assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","mcp__prod-mongo__*","Edit(./.scratch/answer.md)"]'
     assert_prod_write_gated "$s"
     matcher_matches "$s" mcp__vercel-read__list-deployments mcp__plugin_vercel-read_vercel-read__runtime-logs \
       mcp__prod-read__find mcp__plugin_prod-write_prod-write__delete-many
     run -1 grep -Eq 'vcp_|op://|password' <(jq 'del(.permissions.deny)' "$s")
     assert_equal "$(launches | tail -n 1 | jq -c .toolkits)" "$(jq -cn --args '$ARGS.positional' "${kits[@]}")"
+  done
+  run_bin -0 team-log --check
+}
+
+@test "a backup launch adds prod-mongo's plugin and server, alone, beside prod-read's or beside prod-read's and prod-write's, its tools allowed, logged and its folder denied the file tools" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  ops_stub
+  local t=$TEAM_HOME/tasks/T7 set
+  for set in prod-mongo 'prod-read prod-mongo' 'prod-read prod-write prod-mongo' 'prod-mongo prod-read'; do
+    : >"$STUB_CALLS/claude.log"
+    local kits args=() plugins=() kit
+    read -ra kits <<<"$set"
+    for kit in "${kits[@]}"; do args+=(--toolkit "$kit"); plugins+=(--plugin-dir "$REPO_ROOT/toolkits/$kit"); done
+    run_bin -0 team-worker T7 ops "$wt1" "${args[@]}" --request "$(ops_request "$OPS_COORDINATOR")" -- Take a backup
+    assert_equal "$(bg_calls)" "$(jq -cn --arg t "$t" --arg code "$REPO_ROOT" \
+      --argjson plugins "$(printf '%s\n' "${plugins[@]}" | jq -R . | jq -sc .)" '["--bg",
+      "--restricted", "--tools", "Read,Glob,Grep,Edit,Write,ToolSearch,SendMessage,ListAgents,Skill",
+      "--strict-mcp-config", "--mcp-config", "\($t)/mcp.ops.json"] + $plugins + [
+      "--settings", "\($t)/settings.ops.json",
+      "--append-system-prompt-file", "\($code)/roles/ops.md",
+      "--permission-mode", "auto", "--name", "T7-ops", "Take a backup"]')"
+
+    # The real launcher, which reads the read user's connection string itself, and the server's
+    # own 90-minute timeout for its long calls: the config holds no secret.
+    local mcp=$t/mcp.ops.json
+    assert_equal "$(jq -c '.mcpServers["prod-mongo"]' "$mcp")" \
+      "$(jq -cn --arg code "$REPO_ROOT" '{command: "node", args: ["\($code)/toolkits/prod-mongo/scripts/start-server.mjs"], timeout: 5400000}')"
+    assert_equal "$(jq -c '.mcpServers | keys' "$mcp")" "$(printf '%s\n' "${kits[@]}" | jq -R . | jq -sc 'sort')"
+    run -1 grep -Eq '@TEAM_CODE@|@TASK@|mongodb(\+srv)?://|MDB_MCP|op://|password' "$mcp"
+
+    local s=$t/settings.ops.json
+    assert_equal "$(jq -c .permissions.allow "$s")" '["mcp__prod-read__*","mcp__vercel-read__*","mcp__prod-mongo__*","Edit(./.scratch/answer.md)"]'
+    assert_prod_write_gated "$s"
+    assert_equal "$(jq -c '[.permissions.deny[] | select(contains("conventioner-backups") and (startswith("Bash(") | not))]' "$s")" \
+      '["Read(~/conventioner-backups/**)","Edit(~/conventioner-backups/**)"]'
+    matcher_matches "$s" mcp__prod-mongo__backup mcp__plugin_prod-mongo_prod-mongo__restore-drill \
+      mcp__prod-mongo__list-backups mcp__prod-read__find mcp__plugin_prod-write_prod-write__delete-many
+    # Every ops-log hook covers prod-mongo, and the one before the call blocks a call it cannot log.
+    assert_equal "$(jq -r '[.hooks[][] | select(.hooks[0].command | endswith("/ops-log")) | .matcher] | unique[]' "$s")" \
+      '^mcp__.*(prod-(read|write|mongo)|vercel-read).*__'
+    assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.hooks[0].command | endswith("/ops-log")) | .hooks[0].onFailure' "$s")" block
+    run -1 grep -Eq 'mongodb(\+srv)?://|MDB_MCP_CONNECTION|op://|password' <(jq 'del(.permissions.deny)' "$s")
+    assert_equal "$(launches | tail -n 1 | jq -c .toolkits)" "$(printf '%s\n' "${kits[@]}" | jq -R . | jq -sc .)"
   done
   run_bin -0 team-log --check
 }
@@ -1985,7 +2154,7 @@ matcher_matches() {
   done
 }
 
-@test "production toolkits, vercel-read among them, are refused for every role but ops, with nothing started or logged" {
+@test "production toolkits, vercel-read and prod-mongo among them, are refused for every role but ops, with nothing started or logged" {
   open_task T7
   ops_stub
   local role
@@ -1996,6 +2165,8 @@ matcher_matches() {
     assert_contains "$output" "toolkit 'prod-write' is for the ops role only"
     run_bin -1 team-worker T7 "$role" "$wt1" --toolkit vercel-read -- go
     assert_contains "$output" "toolkit 'vercel-read' is for the ops role only"
+    run_bin -1 team-worker T7 "$role" "$wt1" --toolkit prod-mongo -- go
+    assert_contains "$output" "toolkit 'prod-mongo' is for the ops role only"
   done
   run_bin -2 team-worker T7 builder "$wt1" --request "$(ops_request "$OPS_COORDINATOR")" -- go
   assert_contains "$output" "--request is for the ops role only"
@@ -2003,18 +2174,18 @@ matcher_matches() {
   assert_equal "$(launches)" ""
 }
 
-@test "an ops launch without prod-read or vercel-read, prod-write without prod-read or beside vercel-read, or a launch without Daniel's request is refused" {
+@test "an ops launch without prod-read, vercel-read or prod-mongo, prod-write without prod-read or beside vercel-read, prod-mongo beside vercel-read, or a launch without Daniel's request is refused" {
   fake_checkout
-  mkdir -p "$code/toolkits/prod-read" "$code/toolkits/prod-write" "$code/toolkits/vercel-read"
+  mkdir -p "$code/toolkits/prod-read" "$code/toolkits/prod-write" "$code/toolkits/vercel-read" "$code/toolkits/prod-mongo"
   cp "$REPO_ROOT/roles/ops.md" "$code/roles/" && cp "$REPO_ROOT/settings/ops.json" "$code/settings/"
   open_task T7
   ops_stub
   run_fake T7 ops "$wt1" --request "$(ops_request "$OPS_COORDINATOR")" -- go
   assert_equal "$status" 1
-  assert_contains "$output" "the ops role needs --toolkit prod-read or --toolkit vercel-read"
+  assert_contains "$output" "the ops role needs --toolkit prod-read, --toolkit vercel-read or --toolkit prod-mongo"
   run_fake T7 ops "$wt1" --toolkit kit-a --request "$(ops_request "$OPS_COORDINATOR")" -- go
   assert_equal "$status" 1
-  assert_contains "$output" "the ops role needs --toolkit prod-read or --toolkit vercel-read"
+  assert_contains "$output" "the ops role needs --toolkit prod-read, --toolkit vercel-read or --toolkit prod-mongo"
   run_fake T7 ops "$wt1" --toolkit prod-write --request "$(ops_request "$OPS_COORDINATOR")" -- go
   assert_equal "$status" 1
   assert_contains "$output" "prod-write needs --toolkit prod-read beside it"
@@ -2025,6 +2196,19 @@ matcher_matches() {
   run_fake T7 ops "$wt1" --toolkit prod-read --toolkit prod-write --toolkit vercel-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
   assert_equal "$status" 1
   assert_contains "$output" "prod-write takes no --toolkit vercel-read beside it"
+  run_fake T7 ops "$wt1" --toolkit prod-mongo --toolkit prod-write --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$status" 1
+  assert_contains "$output" "prod-write needs --toolkit prod-read beside it"
+  # Nor does it prove prod-mongo beside vercel-read, with prod-read or without it.
+  run_fake T7 ops "$wt1" --toolkit prod-mongo --toolkit vercel-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$status" 1
+  assert_contains "$output" "prod-mongo takes no --toolkit vercel-read beside it"
+  run_fake T7 ops "$wt1" --toolkit vercel-read --toolkit prod-read --toolkit prod-mongo --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$status" 1
+  assert_contains "$output" "prod-mongo takes no --toolkit vercel-read beside it"
+  run_fake T7 ops "$wt1" --toolkit prod-mongo -- go
+  assert_equal "$status" 1
+  assert_contains "$output" "the ops role needs --request <the link to Daniel's Discord message>"
   run_fake T7 ops "$wt1" --toolkit vercel-read -- go
   assert_equal "$status" 1
   assert_contains "$output" "the ops role needs --request <the link to Daniel's Discord message>"

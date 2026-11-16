@@ -1,6 +1,6 @@
 # A sibling script's failure as the {error} a view holds in its place, for team-queue's
-# capacity_json, team-snapshot's queue_status and team-sweep's script_view, sourced after the
-# library:
+# capacity_json, team-snapshot's queue_status and team-sweep's script_view and handoffs_view,
+# sourced after the library:
 #
 #   # shellcheck source=bin/lib/error-view.sh
 #   source "$TEAM_LIB/error-view.sh"

@@ -157,6 +157,17 @@
         "bin/team-open",
         "bin/team-close"
       ]
+    },
+    {
+      "name": "assistant",
+      "what": "On the real bot the assistant hears only #assistant and the coordinator only #coordinator, and a hand-off from one is answered by the other.",
+      "by": "daniel",
+      "proves": [
+        "bin/claude-assistant",
+        "assistant.settings.json",
+        "bin/hooks/assistant-discord-guard",
+        "bin/team-assistant"
+      ]
     }
   ]
 }
