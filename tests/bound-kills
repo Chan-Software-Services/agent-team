@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# Names each process search in the tests whose pids may reach a kill and that is not bound by both
+# its owner and the test's own temporary directory, so a test kills only processes it started: a
+# cleanup whose filter matched every line of ps -A once sent TERM to every process of the user's
+# desktop session, which ended it.
+# A search is pgrep, pidof, pkill or killall, or ps but for one naming its processes (-p, --pid,
+# -q or --quick-pid), as the name a command runs, past the reserved words it follows (do, then, {
+# and the rest), its assignments and the wrappers builtin, command, env, exec, nice, nohup,
+# setsid, sudo, time, timeout and xargs. A kill is kill (but for kill -0, -s 0, -n 0, -l and -L,
+# which send nothing), pkill or killall.
+# Its pids may reach a kill when the block it stands in (a function or an @test block opened at
+# the start of a line, or the file's top level, outside them) kills, or names as a word of one of
+# its commands a function that kills, in turn; or when its block is a function that a block whose
+# pids may reach a kill names so: the pids a function prints are its callers'.
+# Bound is both of:
+#   - its owner: the search's own -u or -U (-u<user>, --user, --uid or --euid too); pidof has none;
+#   - the test's own temporary directory: $BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR (or ${...}) on
+#     the search's line or another line of its pipeline or list (each line but the last ending in
+#     |, \, && or ||), as the path its pattern or filter holds (pgrep -f "$BATS_TEST_TMPDIR/...",
+#     an awk filter given it) or the environment it reads; tests/helpers/common.bash's own_pids is
+#     such a search, from which a test reads the processes it started but cannot name by pid.
+# It reads only what the test file's own shell expands, as tests/guard-paths does (its lexer is
+# tests/helpers/shell_source.py): a single-quoted string, a bash -c string among them, a quoted
+# heredoc's body and a comment are left as they are, so a kill there is not seen.
+# The files are every tracked shell file under tests/ but tests/vendor/ and tests/fixtures/, by
+# tests/run's shell_scripts rule (.sh, .bash or .bats, or a sh or bash shebang), or those given,
+# read together, since a helper's function is called from the bats files.
+#
+# Usage: tests/bound-kills [<file>...]   print each unbound search as "<file>:<line>: <its
+#                                        command>: <the binding it lacks>, and its pids may reach
+#                                        the kill at <file>:<line>" and exit 1, or exit 0 with
+#                                        nothing printed
+# tests/repo.bats runs it on the tree.
+
+import os
+import re
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "helpers"))
+from shell_source import Lexer, line_finder, raw, shell_files, usage  # noqa: E402
+
+SEARCHES = {"pgrep", "pidof", "pkill", "killall", "ps"}
+KILLS = {"kill", "pkill", "killall"}
+NAMED = {"-p", "--pid", "-q", "--quick-pid"}
+# The reserved words a command may start with, as the lexer leaves them on its words: do kill x.
+RESERVED = {"!", "{", "}", "do", "done", "elif", "else", "fi", "if", "then", "until", "while"}
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+# Each wrapper with its options that take a value, and how many operands it takes before the
+# command it runs (timeout's duration).
+WRAPPERS = {
+    "builtin": (set(), 0), "command": (set(), 0), "exec": ({"-a"}, 0), "nohup": (set(), 0),
+    "time": (set(), 0), "setsid": (set(), 0), "nice": ({"-n"}, 0),
+    "sudo": ({"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U"}, 0),
+    "env": ({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, 0),
+    "timeout": ({"-k", "-s", "--kill-after", "--signal"}, 1),
+    "xargs": ({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter",
+               "--max-args", "--max-lines", "--max-procs", "--max-chars"}, 0),
+}
+OWNER = re.compile(r"^(-[uU]|--(user|User|uid|euid)(=|$))")
+TMPDIR = re.compile(r"\$\{?BATS_(TEST|FILE)_TMPDIR\b")
+UNIT = re.compile(r"^(?:@test\b|function\s+([A-Za-z_][\w:-]*)|([A-Za-z_][\w:-]*)\s*\(\s*\))")
+CLOSE = re.compile(r"^\}\s*(#.*)?$")
+CONTINUED = re.compile(r"(\||\\|&&|\|\|)\s*$")
+
+
+def unquoted(text):
+    return re.sub(r"[\"'\\]", "", text)
+
+
+def running(words):
+    """The words of what a command runs, its assignments and wrappers passed."""
+    k = 0
+    while k < len(words) and (words[k] in RESERVED or ASSIGNMENT.match(words[k])):
+        k += 1
+    while k < len(words) and os.path.basename(words[k]) in WRAPPERS:
+        values, operands = WRAPPERS[os.path.basename(words[k])]
+        k += 1
+        while k < len(words) and (words[k].startswith("-") or ASSIGNMENT.match(words[k])):
+            k += 2 if words[k] in values else 1
+        k += operands
+    return words[k:]
+
+
+def is_search(run):
+    name = os.path.basename(run[0]) if run else ""
+    named = any(w in NAMED or w.startswith("--pid=") for w in run)
+    return name in SEARCHES and not (name == "ps" and named)
+
+
+def is_kill(run):
+    name = os.path.basename(run[0]) if run else ""
+    if name != "kill":
+        return name in KILLS
+    args = run[1:]
+    return not (args[:1] in (["-0"], ["-l"], ["-L"]) or args[:2] in (["-s", "0"], ["-n", "0"]))
+
+
+class Unit:
+    """A function, an @test block or a file's top level: its file, its name when a function, and
+    its commands, each the words as written and those it runs."""
+
+    def __init__(self, path, name):
+        self.path, self.name, self.commands = path, name, []
+
+
+def units(path, text):
+    """The file's units, its top level first, each command in the unit of its first line."""
+    lines = text.split("\n")
+    of_line = {}
+    found = [Unit(path, None)]
+    n = 0
+    while n < len(lines):
+        m = UNIT.match(lines[n])
+        if not m:
+            n += 1
+            continue
+        unit = Unit(path, m.group(1) or m.group(2))
+        found.append(unit)
+        end = n
+        if lines[n].rstrip().endswith("{"):
+            end = next((k for k in range(n + 1, len(lines)) if CLOSE.match(lines[k])), len(lines) - 1)
+        for k in range(n, end + 1):
+            of_line[k + 1] = unit
+        n = end + 1
+    line_of = line_finder(text)
+    for cmd in Lexer(text, line_of=line_of).run():
+        # A redirection's target, and the file descriptor its operator follows (2>), are no words.
+        words = [w for w in cmd if not w.redirect
+                 and not (raw(text, w).isdigit() and text[w.end:w.end + 1] in "<>")]
+        if not words:
+            continue
+        texts = [unquoted(raw(text, w)) for w in words]
+        unit = of_line.get(words[0].line, found[0])
+        unit.commands.append((words[0].line, texts, running(texts)))
+    return found
+
+
+def statement(lines, line):
+    """The text of the line and of the lines its pipeline or list continues onto, either way."""
+    first = last = line
+    while first > 1 and CONTINUED.search(lines[first - 2]):
+        first -= 1
+    while last < len(lines) and CONTINUED.search(lines[last - 1]):
+        last += 1
+    return "\n".join(lines[first - 1:last])
+
+
+def findings(files):
+    """Each unbound search whose pids may reach a kill: (path, line, text)."""
+    texts, all_units = {}, []
+    for shown, path in files:
+        with open(path, encoding="utf-8") as f:
+            texts[shown] = f.read()
+        all_units.extend(units(shown, texts[shown]))
+    by_name = {}
+    for u in all_units:
+        if u.name:
+            by_name.setdefault(u.name, []).append(u)
+    calls = {u: sorted({w for _, words, _ in u.commands for w in words if w in by_name}) for u in all_units}
+    # kills: each unit that kills, itself or through a function it names, with that kill's place.
+    kills = {}
+    for u in all_units:
+        own = next((line for line, _, run in u.commands if is_kill(run)), None)
+        if own is not None:
+            kills[u] = (u.path, own)
+    changed = True
+    while changed:
+        changed = False
+        for u in all_units:
+            if u in kills:
+                continue
+            hit = next((kills[f] for n in calls[u] for f in by_name[n] if f in kills), None)
+            if hit:
+                kills[u], changed = hit, True
+    # reach: each unit whose pids may reach a kill, a unit that kills or a function one names.
+    reach = dict(kills)
+    changed = True
+    while changed:
+        changed = False
+        for u in list(reach):
+            for f in (f for n in calls[u] for f in by_name[n] if f not in reach):
+                reach[f], changed = reach[u], True
+    where = "the test's own temporary directory ($BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR on its line)"
+    found = set()
+    for u in reach:
+        lines = texts[u.path].split("\n")
+        for line, _, run in u.commands:
+            if not is_search(run):
+                continue
+            pidof = os.path.basename(run[0]) == "pidof"
+            owner = not pidof and any(OWNER.match(w) for w in run[1:])
+            path = bool(TMPDIR.search(statement(lines, line)))
+            if owner and path:
+                continue
+            whose = "its owner (-u or -U" + ("; pidof has none: use pgrep)" if pidof else ")")
+            unbound = f"bound by neither {whose} nor {where}" if not (owner or path) else \
+                f"not bound by {where if owner else whose}"
+            kill_path, kill_line = reach[u]
+            found.add((u.path, line, f"{' '.join(run)}: {unbound}, and its pids may reach the kill at "
+                                     f"{kill_path}:{kill_line}"))
+    return sorted(found)
+
+
+def main(argv):
+    if argv and argv[0] in ("-h", "--help"):
+        print(usage(__file__))
+        return 0
+    for arg in argv:
+        if arg.startswith("-"):
+            print(f"tests/bound-kills: unknown option {arg}\nusage: tests/bound-kills [<file>...]",
+                  file=sys.stderr)
+            return 2
+    root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    files = [(a, a) for a in argv] if argv else shell_files(root)
+    found = findings(files)
+    for path, line, what in found:
+        print(f"{path}:{line}: {what}")
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
