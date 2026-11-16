@@ -97,9 +97,11 @@
 #
 # Every form checks each session it launches for its effective autoMode, as auto mode's classifier
 # reads it: claude auto-mode config with the settings team-worker generated for the session, run in
-# its worktree (the session's own shell gets no --settings, so it cannot print this itself). The
-# config is kept in the team home's tasks/T0/automode-<role>.json, and each line of those settings'
-# autoMode lists but "$defaults" must be in the config's same list:
+# its worktree (the session's own shell gets no --settings, so it cannot print this itself), and
+# with the setting sources team-worker launched it with: --setting-sources user for a planner, a
+# builder and a reviewer, no such flag for ops. The config is kept in the team home's
+# tasks/T0/automode-<role>.json, and each line of those settings' autoMode lists but "$defaults"
+# must be in the config's same list:
 #   load check: planner's effective autoMode holds the <n> lines of its settings' autoMode (...)
 #   FAIL planner: its effective autoMode lacks its settings' environment line: <the line>
 #   FAIL planner: claude auto-mode config under its settings printed no config
@@ -610,21 +612,25 @@ declared_servers() {
 # it for the session just launched: claude auto-mode config with the settings team-worker generated
 # for it (tasks/T0/settings.<role>.<project>.json for a planner, builder or reviewer of a registered
 # project's worktree, else tasks/T0/settings.<role>.json, as team-worker names them), run in its
-# worktree, since a session's own shell gets no --settings. The config is kept in
-# tasks/T0/automode-<role>.json, and every line of those settings' autoMode lists but "$defaults"
-# must be in the same list of it.
+# worktree, since a session's own shell gets no --settings, and with the session's setting sources,
+# as team-worker launches it: --setting-sources user for a planner, a builder and a reviewer, none
+# for ops, whose command has no such flag. The config is kept in tasks/T0/automode-<role>.json, and
+# every line of those settings' autoMode lists but "$defaults" must be in the same list of it. The
+# assistant, in bypass mode, has no effective autoMode, which its line says.
 automode_check() {
   local r=$1 stem=$1 settings kept=$TEAM_HOME/tasks/T0/automode-$1.json missing count line project=''
+  local -a sources=()
   if [[ $r == assistant ]]; then
     echo "load check: the assistant runs in bypass mode, so it has no effective autoMode to check"
     return
   fi
   if [[ $r != ops ]]; then
+    sources=(--setting-sources user)
     project=$(team_project --find path "$(main_checkout "$2")" 2>/dev/null | head -n 1) || project=''
   fi
   stem+=${project:+.$project}
   settings=$TEAM_HOME/tasks/T0/settings.$stem.json
-  if ! (cd "$2" && claude --settings "$settings" auto-mode config) >"$kept" 2>/dev/null ||
+  if ! (cd "$2" && claude "${sources[@]}" --settings "$settings" auto-mode config) >"$kept" 2>/dev/null ||
     ! jq -e 'type == "object"' "$kept" >/dev/null 2>&1; then
     echo "FAIL $r: claude auto-mode config under its settings printed no config"
     fail=1

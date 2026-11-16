@@ -441,6 +441,28 @@ $SITE"
 WARN changes site: changes to tracked files: README.md; untracked files: notes.txt; fix: commit, stash or remove them in ~/projects/site"
 }
 
+@test "a primary checkout with more than 10 paths of a kind names the first 10 and counts the rest" {
+  only_checks 200-projects.sh
+  local n tracked='' untracked='a note.txt'
+  for n in 01 02 03 04 05 06 07 08 09 10 11; do echo one >"$SITE/t$n.txt"; done
+  git -C "${SITE:?}" add .
+  git -C "${SITE:?}" commit -q -m "test: eleven files"
+  git -C "${SITE:?}" update-ref refs/remotes/origin/main main
+  for n in 01 02 03 04 05 06 07 08 09 10 11; do echo two >>"$SITE/t$n.txt"; done
+  # Twelve untracked files, the first in git's order with a blank in its name: one path.
+  echo note >"$SITE/a note.txt"
+  for n in 01 02 03 04 05 06 07 08 09 10 11; do echo note >"$SITE/u$n.txt"; done
+  for n in 01 02 03 04 05 06 07 08 09 10; do tracked+="${tracked:+ }t$n.txt"; done
+  for n in 01 02 03 04 05 06 07 08 09; do untracked+=" u$n.txt"; done
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'changes site')" "WARN changes site: changes to tracked files: $tracked and 1 more; untracked files: $untracked and 2 more; fix: commit, stash or remove them in ~/projects/site"
+  # Exactly 10 of a kind are all named, as before the cap.
+  git -C "${SITE:?}" restore t11.txt
+  rm "$SITE/u10.txt" "$SITE/u11.txt"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'changes site')" "WARN changes site: changes to tracked files: $tracked; untracked files: $untracked; fix: commit, stash or remove them in ~/projects/site"
+}
+
 @test "an open ticket worktree's branch, never pushed, is no unpushed branch; a returned one's still is" {
   only_checks 200-projects.sh
   tools_at arch
