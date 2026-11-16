@@ -31,6 +31,11 @@
 #   owner_gh <arg>...      runs gh with those names unset.
 #   use_owner_login        unsets them in the calling shell, for a script that is the owner's
 #                          throughout (team-merge).
+#   owner_git_helpers <gh> prints the two values of credential.https://github.com.helper that
+#                          put a checkout's git traffic to github.com on the owner login, one per
+#                          line: an empty one, which drops every helper set before it, then gh
+#                          <gh>'s git-credential with those names unset (the team home's, which
+#                          team-bootstrap sets and the doctor's team home login line holds).
 #   WORKER_TOKEN_SCOPES    an array of the scopes the worker login's token may hold.
 #   LOGIN_VARIABLES        an array of the names that choose a session's GitHub login, which
 #                          command-guard's login rows list too.
@@ -123,4 +128,12 @@ use_owner_login() {
   local login_names=()
   mapfile -t login_names < <(owner_login_env)
   unset "${login_names[@]}"
+}
+
+# The team home's credential helpers for github.com, on the owner login: owner_git_helpers <gh>
+owner_git_helpers() {
+  local login_names=() login_words=''
+  mapfile -t login_names < <(owner_login_env)
+  login_words=$(printf ' -u %s' "${login_names[@]}")
+  printf '%s\n' '' "!env$login_words $(printf %q "$1") auth git-credential"
 }

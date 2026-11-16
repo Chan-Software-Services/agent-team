@@ -24,12 +24,16 @@
 #              warns, narrows the team home's fetch to dev and lease (git remote set-branches
 #              origin dev lease) and deletes origin's other remote-tracking branches it keeps
 #              (git branch -r -d), local config and refs only, so its wip/* and salvage/* are
-#              never downloaded; then, while the team home line passes, fetches the team home
-#              (git fetch origin; one that fails is said, and the history read as last fetched)
-#              and asks the doctor for its team home history line alone: a team home that shares
-#              no history with origin's dev, a clone from before a rewrite of the records, stops
-#              the run as Daniel's re-clone (sops/records-rewrite.md step 10), so no later stage
-#              reads the old records.
+#              never downloaded; then, while the team home login line fails, gives the team
+#              home's own credential.https://github.com.helper exactly two values, an empty one
+#              and the gh that command -v gh finds as git-credential with GH_CONFIG_DIR, GH_TOKEN
+#              and GITHUB_TOKEN unset, so its git reaches the records on the owner login from a
+#              session on the worker login; then, while the team home line passes, fetches the
+#              team home (git fetch origin; one that fails is said, and the history read as last
+#              fetched) and asks the doctor for its team home history line alone: a team home
+#              that shares no history with origin's dev, a clone from before a rewrite of the
+#              records, stops the run as Daniel's re-clone (sops/records-rewrite.md step 10), so
+#              no later stage reads the old records.
 #   packages   The failing tool lines whose fix is an OS package: on Arch one
 #              `sudo pacman -S --needed --noconfirm` for them all; on macOS `brew install` for
 #              each formula or cask Homebrew lacks (`brew list --versions`) and `brew upgrade`
@@ -272,6 +276,7 @@ stage_machine() {
   # Every stage after this one reads the team home.
   [[ -n $TEAM_HOME || -n $home ]] || daniel "$(clone_home)"
   stage_home_fetch
+  stage_home_login
   stage_home_history
 }
 
@@ -299,6 +304,26 @@ stage_home_fetch() {
       grep -vxE 'origin/(HEAD|dev|lease)' || true)
     ((${#kept[@]} == 0)) || act "git -C $home_q branch -r -d ${kept[*]}"
   fi
+}
+
+# The team home's own credential helpers for github.com, while the doctor's team home login line
+# fails: exactly the two values owner_git_helpers prints for the gh that command -v gh finds, so
+# the team home's git traffic is the owner login's from any session, the worker login on or off.
+# Nothing is said when the line passes, or when the doctor left it out, the team home line failing.
+stage_home_login() {
+  [[ -n $(lines '^team home login$') ]] || return 0
+  local gh key=credential.https://github.com.helper home_q value command
+  if ! gh=$(command -v gh); then
+    say "gh is not installed, so the team home's git cannot ask it for github.com yet: team-bootstrap again once the packages stage installs it"
+    return 0
+  fi
+  home_q=$(printf %q "$TEAM_HOME")
+  # unset-all exits 5 when there is no value to unset.
+  command="{ git -C $home_q config --local --unset-all $key || [ \$? = 5 ]; }"
+  while IFS= read -r value; do
+    command+=" && git -C $home_q config --local --add $key ${value@Q}"
+  done < <(owner_git_helpers "$gh")
+  act "$command"
 }
 
 # The team home's history, while the doctor's team home line passes: the team home fetched (dev
