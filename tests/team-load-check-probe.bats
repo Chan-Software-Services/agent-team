@@ -655,7 +655,8 @@ total() { local role; for role in planner builder reviewer; do attempts "$role";
 # as $STUB_FIXTURES/repo-read says (an HTTP status, default 200) with GitHub's own spelling of its
 # owner and name, Owner/Agent-Team; the open pull requests into the base as $STUB_FIXTURES/pulls
 # lists them (default PR 7); and each github call as $STUB_FIXTURES/gh-<id> says (push: true or
-# false, default false; the others an HTTP status, defaults 403, 403 and 405). It logs each call's
+# false, default false; the others an HTTP status, defaults 403, 403 and 405, the merge's refusal
+# saying $STUB_FIXTURES/gh-merge-message, default the push restriction's). It logs each call's
 # arguments and its three login variables to $STUB_CALLS/gh.env, and each body it reads on stdin
 # to $STUB_CALLS/gh.bodies, one line each.
 login_on() {
@@ -695,7 +696,10 @@ case "$method $path" in
   'PUT repos/owner/agent-team/pulls/'*/merge) status=$(fixture gh-merge 405) ;;
   *) status=404 ;;
 esac
-((status < 400)) || body='{"message": "refused"}'
+message=refused
+[[ $path != */merge ]] ||
+  message=$(fixture gh-merge-message "You're not authorized to push to this branch. Visit https://docs.github.com/articles/about-protected-branches/ for more information.")
+((status < 400)) || body=$(jq -cn --arg message "$message" '{message: $message}')
 if [[ -n $include ]]; then printf 'HTTP/2.0 %s Status\r\nContent-Type: application/json\r\n\r\n' "$status"; fi
 if [[ -n $query ]]; then jq -r "$query" <<<"$body"; else echo "$body"; fi
 ((status < 400)) || { echo "gh: refused (HTTP $status)" >&2; exit 1; }
@@ -801,6 +805,18 @@ FAIL github merge owner/agent-team: not refused (200)"
   run_bin -0 team-load-check --probe
   assert_contains "$output" "PASS github protection owner/agent-team: refused (404)"
   assert_contains "$output" "PASS github setting owner/agent-team: refused (404)"
+}
+
+@test "a merge GitHub answers 405 for another reason than the push restriction is not shown, and does not fail the probe" {
+  login_on
+  local n
+  n=$(($(total) + 4))
+  echo 'Pull Request is not mergeable' >"$STUB_FIXTURES/gh-merge-message"
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all | sed '$d')
+WARN github merge owner/agent-team: not shown: GitHub refused the merge for another reason than the push restriction (405: Pull Request is not mergeable)"
+  assert_equal "$(drill_lines)" "$(checkout_drill_line pass "$((n - 1)) of $((n - 1)) attempts refused as expected")"
+  assert_equal "${lines[-1]}" PASS
 }
 
 @test "a merge GitHub answers 409 is not shown, and with no open pull request it is not tried; neither fails the probe" {

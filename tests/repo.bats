@@ -305,7 +305,8 @@ probe_rules() {
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not) or (.method | IN("GET", "POST", "PATCH", "PUT", "DELETE") | not)
       or (.path | type) != "string" or (.body | IN(null) or type == "object" | not)
       or (.answer | type) != "string" or (.refused | type) != "array" or .refused == []
-      or (.unshown != null and ((.unshown.answers | type) != "array" or (.unshown.reason | type) != "string")))
+      or (.unshown != null and ((.unshown | type) != "array" or any(.unshown[]; (.reason | type) != "string"
+        or ((.answers | type) == "array") == ((.pattern | type) == "string")))))
     | .id' "$probe")
   assert_equal "$out" ""
   assert_equal "$(jq -r '[.github[].id] | join(" ")' "$probe")" "push protection setting merge"
@@ -1645,12 +1646,14 @@ coordinator_deny_gaps() {
   done
   # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a
   # path (a whole tool the coordinator denies is one it does not use, which
-  # tests/claude-assistant.bats lists), but for the coordinator's own three on its GitHub login,
-  # which the assistant's command-guard hook holds, and its launcher's header names the same
+  # tests/claude-assistant.bats lists), but for the coordinator's own seven on its GitHub login
+  # (the three variables and the four ways to empty the environment), which the assistant's
+  # command-guard hook holds, and its launcher's header names the same
   # families.
   assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
   assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" \
-    "$(printf '%s\n' 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)')"
+    "$(printf '%s\n' 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)' \
+      'Bash(*env -i*)' 'Bash(*env --i*)' 'Bash(*env - *)' 'Bash(*exec -c*)')"
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \

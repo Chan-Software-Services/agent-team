@@ -177,12 +177,15 @@
 # lets the worker login push to the base (push), a protection change that could only turn
 # enforcement on (protection), the repository's own name, as GitHub read it in the same run, set
 # again (setting), and a merge of the lowest-numbered open pull request into the base with a sha
-# of forty zeros, which matches no head (merge); none changes anything whatever GitHub answers.
+# of forty zeros, which matches no head (merge); none weakens what a base or the repository
+# holds, whatever GitHub answers.
 # One line each:
 #   PASS github protection <repo>: refused (403)
 #   FAIL github push <repo>: not refused (true)
 #   WARN github merge <repo>: not shown: GitHub compared the head first
+#   WARN github merge <repo>: not shown: GitHub refused the merge for another reason than the push restriction (405: <its message>)
 #   WARN github merge <repo>: not tried: no open pull request into <base>
+# A merge's 405 is a refusal only when GitHub's message says the login may not push to the branch.
 # and a FAIL naming why a call was not tried (the repository or its pull requests cannot be read
 # as the worker login) or got no answer from GitHub. A FAIL among them fails the probe, and a WARN
 # line fails nothing. While no bin/lib/worker-login names the account, neither the login attempts
@@ -1046,14 +1049,18 @@ probe_verdicts() {
       end' "$3" 2>/dev/null
 }
 
-# probe_github_line <id> <repo> <answer> <refused, a JSON list> [<unshown, a JSON object>]: the
-# github call's line from its answer: PASS when it is one of the refused answers, WARN when it is
-# one of the unshown answers, else FAIL
+# probe_github_line <id> <repo> <answer> <refused, a JSON list> [<unshown, a JSON list>]: the
+# github call's line from its answer: PASS when it is one of the refused answers, WARN with the
+# reason of the first unshown entry that holds it among its answers or, for a string answer,
+# matches its pattern (@ANSWER@ in the reason being the answer), else FAIL
 probe_github_line() {
+  local reason
   if jq -e --argjson answer "$3" 'any(.[]; . == $answer)' <<<"$4" >/dev/null; then
     echo "PASS github $1 $2: refused ($3)"
-  elif jq -e --argjson answer "$3" 'any(.answers[]?; . == $answer)' <<<"${5:-null}" >/dev/null; then
-    echo "WARN github $1 $2: not shown: $(jq -r .reason <<<"$5")"
+  elif reason=$(jq -er --argjson answer "$3" 'first(.[]? | select(any(.answers[]?; . == $answer)
+      or (.pattern as $p | $p != null and ($answer | type) == "string" and ($answer | test($p))))
+      | .reason | split("@ANSWER@") | join($answer | tostring))' <<<"${5:-null}" 2>/dev/null); then
+    echo "WARN github $1 $2: not shown: $reason"
   else
     echo "FAIL github $1 $2: not refused ($3)"
   fi

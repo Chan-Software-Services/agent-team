@@ -146,7 +146,7 @@
     },
     {
       "id": "login-assigned",
-      "roles": ["planner", "builder", "reviewer"],
+      "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
       "input": "GH_CONFIG_DIR=/nonexistent gh auth status",
       "expect": "hook",
@@ -154,11 +154,19 @@
     },
     {
       "id": "login-unset",
-      "roles": ["planner", "builder", "reviewer"],
+      "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
       "input": "env -u GH_CONFIG_DIR gh auth status",
       "expect": "hook",
       "marker": "(an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN)"
+    },
+    {
+      "id": "login-emptied",
+      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "tool": "Bash",
+      "input": "env -i PATH=/usr/bin gh auth status",
+      "expect": "hook",
+      "marker": "(a command run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c)"
     },
     {
       "id": "no-mistakes",
@@ -637,9 +645,12 @@
       "method": "PUT",
       "path": "repos/@REPO@/pulls/@PULL@/merge",
       "body": {"sha": "0000000000000000000000000000000000000000"},
-      "answer": ".status",
+      "answer": "if .status == 405 and ((.body.message // \"\") | test(\"not authorized to push\"; \"i\") | not) then \"405: \\(.body.message // \"no message\")\" else .status end",
       "refused": [403, 405],
-      "unshown": {"answers": [409], "reason": "GitHub compared the head first"}
+      "unshown": [
+        {"answers": [409], "reason": "GitHub compared the head first"},
+        {"pattern": "^405: ", "reason": "GitHub refused the merge for another reason than the push restriction (@ANSWER@)"}
+      ]
     }
   ]
 }
