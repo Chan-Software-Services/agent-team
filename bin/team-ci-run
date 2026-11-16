@@ -12,15 +12,18 @@
 # It pushes nothing itself, and takes no --json: only builders run it, and they read its text.
 # Refused before any call to GitHub: a malformed command line (exit 2), an unregistered project, a
 # project with no branch_ci and a branch that is the project's base or main (exit 1).
-# It looks every 10 s (WAIT_SECONDS), counting time in looks, so a test steps it with a stub sleep,
-# for a grace of 2 minutes from its first look (GRACE_SECONDS; TEAM_CI_RUN_GRACE_SECONDS replaces
-# its seconds, the tests' seam). Before each look, while the team holds offline (offline_hold), it
-# ends at once with exit 75 and the hold's text.
-# Each look reads the workflow's runs of the head (gh api
-# repos/<repo>/actions/workflows/<branch_ci>/runs?head_sha=<sha>&per_page=100) and, while there is
-# none, origin's branch (gh api repos/<repo>/branches/<branch>, a 404 being no such branch) and the
-# branch's open PRs (gh pr list --repo <repo> --head <branch> --state open --json
-# number,headRefOid):
+# It reads GitHub through the reader, bin/lib/github-api.sh, whose cache and ETags make a read of an
+# unchanged answer free against GitHub's rate limit, and which logs each request for <owner>/<name>
+# <branch> (GH_FOR). It looks every 10 s (WAIT_SECONDS), or more seldom as the hour's core budget
+# falls (gh_interval 10: 60, 120 or 300 s under a half, a quarter or a tenth left), counting time in
+# the seconds its look sleeps asked for, so a test steps it with a stub sleep, for a grace of 2
+# minutes from its first look (GRACE_SECONDS; TEAM_CI_RUN_GRACE_SECONDS replaces its seconds, a
+# seam of the tests, as the reader's TEAM_GITHUB_CLOCK and TEAM_GITHUB_FRESH_SECONDS are). Before each look, while the team holds offline (offline_hold), it ends at once with
+# exit 75 and the hold's text.
+# Each look reads the workflow's runs of the head
+# (repos/<repo>/actions/workflows/<branch_ci>/runs?head_sha=<sha>&per_page=100) and, while there is
+# none, origin's branch (repos/<repo>/branches/<branch>, a 404 being no such branch) and the
+# branch's open PRs (repos/<repo>/pulls?head=<owner>:<branch>&state=open&per_page=100):
 #   a run of the head, of any event and on any    it waits on it, the newest by id, and starts none:
 #   branch                                        a run tests a commit, and a rerun keeps its run's
 #                                                 id, so a second call after an exit 75 or a gh run
@@ -37,27 +40,38 @@
 #   no run, origin at <sha>, and no open PR of    it starts one at once
 #   the branch
 # It starts a run with gh workflow run <branch_ci> --repo <repo> --ref <branch>, once: a dispatch gh
-# fails is exit 1 with gh's reason, never tried again by the same call. The run is the one whose URL
-# gh prints (.../actions/runs/<id>), which it reads (gh api repos/<repo>/actions/runs/<id>): one
-# whose head is not <sha> is exit 1, naming the run and both short heads, since the branch moved
-# between the look and the dispatch, and it waits on nothing. When gh prints no URL, the run is the
-# newest workflow_dispatch run of the head that the next looks list, for a new grace from the
-# dispatch, else exit 1: it started a run, but GitHub lists none of <sha>.
-# A look whose gh call fails reads nothing, and gh failing at every look for the grace is exit 75
-# with gh's last reason line.
+# fails is exit 1 with gh's reason, never tried again by the same call, but for one GitHub's rate
+# limit refused, which started nothing and is sent again once the limit is slept out. The run is
+# the one whose URL gh prints (.../actions/runs/<id>), which it reads
+# (repos/<repo>/actions/runs/<id>): one whose head is not <sha> is exit 1, naming the run and both
+# short heads, since the branch moved between the look and the dispatch, and it waits on nothing.
+# When gh prints no URL, the run is the newest workflow_dispatch run of the head that the next looks
+# list, for a new grace from the dispatch, else exit 1: it started a run, but GitHub lists none of
+# <sha>.
+# A look whose read fails reads nothing, and GitHub failing at every look for the grace is exit 75
+# with gh's last reason line. A read or a dispatch that meets GitHub's rate limit (or finds one
+# standing, which another process met) is no failure: it sleeps to a second past the limit's end,
+# printing "team-ci-run: <the limit and its end>; waiting for it, then looking again" on stderr once
+# for each end, and looks again, the grace not counting the sleep; when its limit sleeps would come
+# to more than 90 minutes in all (LIMIT_SECONDS), it ends exit 75 instead, "team-ci-run: <the limit
+# and its end>: run team-ci-run again after it".
 # Then it prints "team-ci-run: waiting on <run url> (<event>, <found|started>) of <short sha>" and
 # becomes team-ci-wait --run <run url> <sha>, whose output and exit code are its own from there:
 # the jobs named, a failure classed as the branch's own or as infrastructure with the rerun to run,
 # and a deadline of 90 minutes. So it always ends.
 # Exit 0 the run of <sha> passed, 1 it did not, or there is no run to wait on (refused, origin not
 # at <sha>, a dispatch that failed or ran another head), 2 a malformed command line, 75 try again
-# later: run it again.
+# later (the offline hold, GitHub unreadable, 90 minutes of the rate limit): run it again.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/github-api.sh
+source "$TEAM_LIB/github-api.sh"
 
-# Seconds between looks, and how long it looks for a push, a PR's run or a started run, and gh may fail.
+# Seconds between looks, before the budget raises them, and how long it looks for a push, a PR's run
+# or a started run, and gh may fail; and how long its sleeps for GitHub's rate limit may take in all.
 WAIT_SECONDS=10
 GRACE_SECONDS=${TEAM_CI_RUN_GRACE_SECONDS:-120}
+LIMIT_SECONDS=5400
 
 [[ $GRACE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_RUN_GRACE_SECONDS must be a number of seconds"
 [[ $# -eq 3 && $1 != -* && $2 =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ && $3 =~ ^[0-9a-f]{40}$ ]] ||
@@ -74,6 +88,8 @@ repo=$(canonical_repo "$(team_project "$project" repo)") || exit 1
 
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
+# The reader's log names what each request was for.
+GH_FOR="$repo $branch"
 
 # end <exit code> <text>: print <text> under the script's name, and exit.
 end() {
@@ -89,9 +105,9 @@ span() {
   echo "$n $unit"
 }
 
-# Read the workflow's runs of the head into $dir/runs; false with gh's reason in $dir/error.
+# Read the workflow's runs of the head into $dir/runs; the reader's code, its reason in $dir/error.
 read_runs() {
-  github "$dir" runs api "repos/$repo/actions/workflows/$workflow/runs?head_sha=$sha&per_page=100"
+  gh_read "$dir" runs "repos/$repo/actions/workflows/$workflow/runs?head_sha=$sha&per_page=100"
 }
 
 # Set run_id and event to the newest by id of the listed runs of the head that the jq <filter>
@@ -103,75 +119,115 @@ newest_run() {
   read -r run_id event <<<"$found"
 }
 
-# Set tip to the commit of origin's branch, empty when origin has no such branch; false with gh's
-# reason in $dir/error when it could not be read.
+# Set tip to the commit of origin's branch, empty when origin has no such branch (a 404); else the
+# reader's code, its reason in $dir/error.
 read_branch() {
-  if github "$dir" branch api "repos/$repo/branches/$branch"; then
+  local rc=0
+  gh_read "$dir" branch "repos/$repo/branches/$branch" || rc=$?
+  if ((rc == 0)); then
     tip=$(jq -r '.commit.sha // ""' "$dir/branch")
-  elif grep -q 'HTTP 404' "$dir/branch.stderr"; then
+  elif ((rc == 1)) && [[ $GH_STATUS == 404 ]]; then
     tip=''
   else
-    return 1
+    return "$rc"
   fi
+}
+
+# Read the branch's open PRs into $dir/prs as [{number, headRefOid}]; the reader's code.
+read_prs() {
+  gh_read "$dir" prs.json "repos/$repo/pulls?head=${repo%%/*}:$branch&state=open&per_page=100" || return
+  jq -c '[.[] | {number, headRefOid: .head.sha}]' "$dir/prs.json" >"$dir/prs"
+}
+
+# sleep_limit: sleep out the limit the last read met (GH_LIMIT_*), to a second past its until,
+# saying so on stderr once for each until; exit 75 instead when the sleep would take the limit's
+# sleeps past LIMIT_SECONDS. Looked is not moved: the grace counts look sleeps only.
+sleep_limit() {
+  local text seconds
+  text=$(gh_limit_text "$GH_LIMIT_UNTIL" "$GH_LIMIT_RESOURCE" "$GH_LIMIT_KIND")
+  seconds=$((GH_LIMIT_UNTIL + 1 - $(gh_now)))
+  ((seconds >= 1)) || seconds=1
+  ((limit_slept + seconds <= LIMIT_SECONDS)) || end 75 "$text: run team-ci-run again after it"
+  if [[ $GH_LIMIT_UNTIL != "$told" ]]; then
+    echo "team-ci-run: $text; waiting for it, then looking again" >&2
+    told=$GH_LIMIT_UNTIL
+  fi
+  sleep "$seconds"
+  limit_slept=$((limit_slept + seconds))
 }
 
 # The looks: finding a run of the head or the moment to start one, then, once one is started, taking
 # it from its URL (started_id) or from the list. Each ends the loop with run_id and event set, or
-# the script; a look whose gh call fails sets nothing.
-look_n=0 failing_since='' started_at='' started_id='' run_id='' event='' how=found tip=''
+# the script; a look whose read fails sets nothing, and one whose read meets the limit sleeps it out
+# and looks again. The clocks, in seconds: looked, every look sleep's; started_at and failing_since
+# what looked was at the dispatch and at the first of a run of failed looks; limit_slept, every
+# limit sleep's; told the until last said on stderr.
+looked=0 failing_since='' started_at='' started_id='' run_id='' event='' how=found tip='' limit_slept=0 told=''
 while :; do
   if hold=$(offline_hold); then end 75 "$hold"; fi
-  read=true
+  rc=0
   if [[ -z $started_at ]]; then
-    if ! read_runs; then
-      read=false
-    elif newest_run true; then
-      break
-    elif ! read_branch || ! github "$dir" prs pr list --repo "$repo" --head "$branch" --state open --json number,headRefOid; then
-      read=false
+    read_runs || rc=$?
+    if ((rc == 0)) && newest_run true; then break; fi
+    ((rc != 0)) || read_branch || rc=$?
+    ((rc != 0)) || read_prs || rc=$?
+    if ((rc != 0)); then
+      :
     elif [[ $tip != "$sha" ]]; then
-      if ((look_n * WAIT_SECONDS >= GRACE_SECONDS)); then
+      if ((looked >= GRACE_SECONDS)); then
         if [[ -n $tip ]]; then at="origin's $branch is at ${tip:0:7}"; else at="origin has no branch $branch"; fi
         end 1 "$at, not $short: push that head, then run team-ci-run again"
       fi
-    elif ((look_n * WAIT_SECONDS >= GRACE_SECONDS)) || ! jq -e 'length > 0' "$dir/prs" >/dev/null; then
+    elif ((looked >= GRACE_SECONDS)) || ! jq -e 'length > 0' "$dir/prs" >/dev/null; then
       # No run is on its way: a PR that conflicts with its base gets none, and a branch with no open
       # PR has no trigger. An open PR at any head holds the start for the grace, since its head may
-      # lag the branch's. Start one, once.
-      if ! out=$(gh workflow run "$workflow" --repo "$repo" --ref "$branch" 2>&1); then
-        end 1 "could not start a run on $branch: $(grep -m1 . <<<"$out" || echo "gh workflow run failed"); run team-ci-run again, and report BLOCKED if it is refused again"
+      # lag the branch's. Start one, once; a dispatch the limit refused started nothing, so it is
+      # sent again once the limit is slept out.
+      gh_call "$dir" dispatch workflow run "$workflow" --repo "$repo" --ref "$branch" || rc=$?
+      out=$(cat -- "$dir/dispatch" "$dir/dispatch.stderr" 2>/dev/null) || out=''
+      if ((rc == 1)); then
+        why=$(grep -m1 . "$dir/dispatch.stderr" || grep -m1 . "$dir/dispatch" || echo "gh workflow run failed")
+        end 1 "could not start a run on $branch: $why; run team-ci-run again, and report BLOCKED if it is refused again"
       fi
-      started_at=$look_n how=started
-      [[ ! $out =~ /actions/runs/([1-9][0-9]*) ]] || started_id=${BASH_REMATCH[1]}
-      # The started run is read at this same look.
-      continue
+      if ((rc == 0)); then
+        started_at=$looked how=started
+        [[ ! $out =~ /actions/runs/([1-9][0-9]*) ]] || started_id=${BASH_REMATCH[1]}
+        # The started run is read at this same look.
+        continue
+      fi
     fi
   elif [[ -n $started_id ]]; then
-    if github "$dir" run api "repos/$repo/actions/runs/$started_id"; then
+    gh_read "$dir" run "repos/$repo/actions/runs/$started_id" || rc=$?
+    if ((rc == 0)); then
       { read -r run_head && read -r event; } < <(jq -r '.head_sha, .event' "$dir/run")
       [[ $run_head == "$sha" ]] ||
         end 1 "the run https://github.com/$repo/actions/runs/$started_id is of ${run_head:0:7}, not $short: $branch moved; push your head and run team-ci-run again"
       run_id=$started_id
       break
     fi
-    read=false
-  elif ! read_runs; then
-    read=false
-  elif newest_run '.event == "workflow_dispatch"'; then
-    break
-  elif (((look_n - started_at) * WAIT_SECONDS >= GRACE_SECONDS)); then
-    end 1 "started a run on $branch, but GitHub lists none of $short after $(span "$GRACE_SECONDS"); run team-ci-run again"
+  else
+    read_runs || rc=$?
+    if ((rc == 0)) && newest_run '.event == "workflow_dispatch"'; then
+      break
+    elif ((rc == 0 && looked - started_at >= GRACE_SECONDS)); then
+      end 1 "started a run on $branch, but GitHub lists none of $short after $(span "$GRACE_SECONDS"); run team-ci-run again"
+    fi
   fi
-  if $read; then
+  if ((rc == 3)); then
+    # The limit is no failure of GitHub's: it neither starts nor ends a run of failed looks.
+    sleep_limit
+    continue
+  elif ((rc == 0)); then
     failing_since=''
   else
-    [[ -n $failing_since ]] || failing_since=$look_n
-    if (((look_n - failing_since) * WAIT_SECONDS >= GRACE_SECONDS)); then
+    [[ -n $failing_since ]] || failing_since=$looked
+    if ((looked - failing_since >= GRACE_SECONDS)); then
       end 75 "GitHub could not be read for $(span "$GRACE_SECONDS") running: $(cat "$dir/error")"
     fi
   fi
-  sleep "$WAIT_SECONDS"
-  look_n=$((look_n + 1))
+  seconds=$(gh_interval "$WAIT_SECONDS")
+  sleep "$seconds"
+  looked=$((looked + seconds))
 done
 
 run_url=https://github.com/$repo/actions/runs/$run_id
