@@ -85,12 +85,11 @@
 #                    a rolling seven days; then the newest quota reading, team-quota status --json's
 #                    (Claude's own reading of the plan's limits, the week it counts included), now's
 #                    whatever --until, --task and --machine say: each window's use and reset (as
-#                    team-quota words it, in the machine's local time) and the reading's age,
-#                    with team-quota's note under the table when the reading holds no model
-#                    window ("model windows: none in this reading, ..."), or that there is no
-#                    reading yet, or that team-quota could not be read (it
-#                    failed, printed no team-quota/1 object or took over 30 seconds), which
-#                    changes nothing else
+#                    team-quota words it, in the machine's local time) and the reading's age, with
+#                    team-quota's note under the table when the reading holds no model window
+#                    ("model windows: none in this reading, ..."), or that there is no reading
+#                    yet, or that team-quota could not be read (it failed, printed no team-quota/1
+#                    object or took over 30 seconds), which changes nothing else
 #   coordinator turns
 #                    from this machine's transcripts of the sessions claude-coordinator named
 #                    coordinator, each turn: from what woke the coordinator (a message from Daniel,
