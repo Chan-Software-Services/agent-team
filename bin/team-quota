@@ -176,8 +176,8 @@ quota_line() {
 
 # The newest valid reading among the lines on stdin, or null: each window and model window held to
 # the rules the line writes them by, one that breaks them left out, and a line left with none
-# skipped, as a line that is no reading is. newest_reading runs it on each day file, on the state
-# file and on the readings they gave.
+# skipped, as a line that is no reading is. newest_reading runs it on each machine's day files,
+# newest first, until one gives a reading, then on the state file and on the readings they gave.
 # shellcheck disable=SC2016 # jq's variables
 READING_JQ=$QUOTA_JQ'
 def utc: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
