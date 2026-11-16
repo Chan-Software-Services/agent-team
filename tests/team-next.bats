@@ -2478,7 +2478,7 @@ launched T7-builder c0000001"
   assert_equal "$(record round-1 | jq -cS .)" "$(jq -cnS --arg url "$url" '{template: "builder-round",
     values: {findings: "3 and 5", findings_file: ".scratch/task/review.md", goal: "Coordinator toil goes to the scripts.", pr: $url}}')"
   assert_equal "$(logged_from $((count + 1)) | jq -c 'select(.event == "launch") | {role, worktree, toolkits, brief}')" \
-    "$(jq -cn --arg wt "$wt" '{role: "builder", worktree: $wt, toolkits: ["browser"], brief: "brief-round-1"}')"
+    "$(jq -cn --arg wt "$wt" '{role: "builder", worktree: $wt, toolkits: ["browser", "spec-review"], brief: "brief-round-1"}')"
   # A second stow after that launch launches nothing.
   run_bin -0 --separate-stderr team-next T7 -- "T7 PAUSED stowed"
   assert_equal "$output" "logged paused reason=stowed cause=stow role=builder session=c0000001
