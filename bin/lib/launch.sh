@@ -91,18 +91,11 @@ launch_singleton() {
 # since gh and git would then answer as the machine's own login.
 launch_settings() {
   local template=$1 mcp_template=$2 connectors=$3 settings=$4 mcp=$5 code listed line first='' empty='' pair subs
-  local kept='[]' login_name login_problem login_env='{}'
-  local -a servers=() named=() login_pairs=() login_args=()
+  local kept='[]' login_name login_env
+  local -a servers=() named=()
   shift 5
   login_name=$(worker_login) || exit 1
-  if [[ -n $login_name ]]; then
-    if login_problem=$(worker_login_problem); then
-      die "the worker login $login_name is not on this machine ($login_problem): Daniel's team-secrets restore brings it (the secret worker-github-login)"
-    fi
-    mapfile -t login_pairs < <(worker_login_env)
-    for pair in "${login_pairs[@]}"; do login_args+=(--arg "${pair%%=*}" "${pair#*=}"); done
-    login_env=$(jq -cn '$ARGS.named' "${login_args[@]}")
-  fi
+  login_env=$(worker_login_settings_env "$login_name") || exit 1
   if [[ -n $connectors ]]; then
     kept=$(jq -ce 'if type == "array" and all(type == "string") then . else empty end' "$connectors" 2>/dev/null) ||
       die "cannot read the connectors to keep, $connectors (a JSON list of names), so the connectors to deny are unknown"

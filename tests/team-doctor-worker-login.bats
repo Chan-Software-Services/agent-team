@@ -63,13 +63,19 @@ case $* in
     printf 'protocol=https\nhost=github.com\nusername=x-access-token\npassword=%s\n' "$token" ;;
   'api -i user')
     if [[ -f $STUB_FIXTURES/user.err ]]; then cat "$STUB_FIXTURES/user.err" >&2; exit 1; fi
-    printf 'HTTP/2.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nX-Oauth-Scopes: %s\r\n\r\n{"login":"%s","id":1}\n' \
-      "$(cat "$STUB_FIXTURES/scopes")" "$as" ;;
+    # A scopes fixture of "none" is a token GitHub names no scopes for, a fine-grained one.
+    if [[ $(cat "$STUB_FIXTURES/scopes") == none ]]; then
+      printf 'HTTP/2.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{"login":"%s","id":1}\n' "$as"
+    else
+      printf 'HTTP/2.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nX-Oauth-Scopes: %s\r\n\r\n{"login":"%s","id":1}\n' \
+        "$(cat "$STUB_FIXTURES/scopes")" "$as"
+    fi ;;
   'api user --jq .login') echo "$as" ;;
   'api repos/Chan-Software-Services/agent-team-records')
     case $(cat "$STUB_FIXTURES/records-status") in
       404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
       403) echo "gh: Forbidden (HTTP 403)" >&2; exit 1 ;;
+      none) echo "error connecting to api.github.com" >&2; exit 1 ;;
       *) echo '{"full_name": "Chan-Software-Services/agent-team-records"}' ;;
     esac ;;
   'api repos/'*)
@@ -194,6 +200,18 @@ fails_with() {
   echo 'repo' >"$STUB_FIXTURES/scopes"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'worker login' | cut -d: -f1)" "PASS worker login"
+}
+
+@test "the worker login line warns on a token GitHub names no scopes for, which is no classic token" {
+  echo none >"$STUB_FIXTURES/scopes"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'worker login')" "WARN worker login: team-worker-bot: pushes to 2 projects and administers none, but GitHub names no scopes for its token, so it is no classic token and its scopes go unchecked; $NEW_TOKEN"
+}
+
+@test "the worker login line says GitHub did not answer when the records repository's call fails with no HTTP status" {
+  echo none >"$STUB_FIXTURES/records-status"
+  fails_with "GitHub did not answer whether the worker login reaches the records repository: error connecting to api.github.com" \
+    "run team-doctor again once GitHub answers"
 }
 
 @test "the worker login line fails when the records repository answers the worker login anything but 404" {

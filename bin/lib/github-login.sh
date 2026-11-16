@@ -26,6 +26,12 @@
 #                          empty, which gh reads as unset, so a token in the launching environment
 #                          never wins over the directory); nothing when off; fails as
 #                          worker_login does.
+#   worker_login_settings_env <login>
+#                          prints the env object of a session's settings for <login>,
+#                          worker_login's output: {} when it is empty (off), else
+#                          worker_login_env's variables; fails, printing nothing, with the
+#                          launchers' one refusal on stderr, naming the reason and the fix, when
+#                          the login is not usable on this machine.
 #   with_worker_login <command>...
 #                          runs <command> with worker_login_env's environment, in a subshell, so
 #                          the caller's own is unchanged; <command> may be a function, as bounded
@@ -43,12 +49,15 @@
 #                          <gh>'s git-credential with those names unset (the team home's, which
 #                          team-bootstrap sets and the doctor's team home login line holds).
 #   WORKER_TOKEN_SCOPES    an array of the scopes the worker login's token may hold.
+#   WORKER_LOGIN_RESTORE   the doctor's worker login fix while the login's file is not usable
+#                          here, by which team-bootstrap puts that line in Daniel's secrets step.
 #   LOGIN_VARIABLES        an array of the names that choose a session's GitHub login, which
 #                          command-guard's login rows list too.
 # shellcheck shell=bash
 
 # shellcheck disable=SC2034 # read by the scripts that source the library
 WORKER_TOKEN_SCOPES=(repo workflow)
+WORKER_LOGIN_RESTORE="Daniel's own terminal: team-secrets restore"
 LOGIN_VARIABLES=(GH_CONFIG_DIR GH_TOKEN GITHUB_TOKEN)
 
 # The worker login's account, from this checkout's bin/lib/worker-login: worker_login
@@ -103,6 +112,20 @@ worker_login_env() {
   login_name=$(worker_login) || return 1
   [[ -n $login_name ]] || return 0
   printf '%s\n' "GH_CONFIG_DIR=$(worker_login_dir)" GH_TOKEN= GITHUB_TOKEN=
+}
+
+# The env object of a session's settings, or the launch's refusal: worker_login_settings_env <login>
+worker_login_settings_env() {
+  local login_problem
+  if [[ -z $1 ]]; then
+    echo '{}'
+    return 0
+  fi
+  if login_problem=$(worker_login_problem); then
+    echo "${0##*/}: the worker login $1 is not on this machine ($login_problem): Daniel's team-secrets restore brings it (the secret worker-github-login)" >&2
+    return 1
+  fi
+  worker_login_env | jq -Rcn '[inputs | capture("^(?<key>[^=]+)=(?<value>.*)$")] | from_entries'
 }
 
 # <command> on the worker login, a function such as bounded too: with_worker_login <command>...

@@ -275,14 +275,9 @@ fi
 login_env='{}' login_line=''
 if [[ $role != ops ]]; then
   login=$(worker_login) || exit 1
-  if [[ -n $login ]]; then
-    if why=$(worker_login_problem); then
-      die "the worker login $login is not on this machine ($why): Daniel's team-secrets restore brings it (the secret worker-github-login)"
-    fi
-    login_env=$(worker_login_env) || exit 1
-    login_env=$(jq -Rn '[inputs | capture("^(?<key>[^=]+)=(?<value>.*)$")] | from_entries' <<<"$login_env")
+  login_env=$(worker_login_settings_env "$login") || exit 1
+  [[ -z $login ]] ||
     login_line="This session's GitHub login is $login, an account that pushes branches and opens pull requests; merging is team-merge's."
-  fi
 fi
 
 # A worker runs only in a linked worktree, so it can never edit a primary checkout.

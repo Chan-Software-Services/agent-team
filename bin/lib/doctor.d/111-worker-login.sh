@@ -7,12 +7,13 @@
 #               git-credential, on GitHub refusing it, on its login being another than the
 #               constant's or the owner login's own, on git answering for github.com with another
 #               login, on its token holding a scope beyond repo and workflow, on the records
-#               repository answering it anything but 404, and, per registered project, on it not
-#               pushing to the repository or administering it, and on a public organisation
-#               repository whose base (or main, when it has one that is not the base) GitHub lets
-#               it push to. Warns, where it would pass, naming each such branch of a private
-#               repository or a personal account's, which GitHub cannot restrict, and on macOS
-#               with a no-mistakes project registered, since the gate's daemon there runs on the
+#               repository answering it anything but 404 (or GitHub giving no answer there), and,
+#               per registered project, on it not pushing to the repository or administering it, and
+#               on a public organisation repository whose base (or main, when it has one that is not
+#               the base) GitHub lets it push to. Warns, where it would pass, on a token GitHub
+#               names no scopes for (no classic token), on each such branch, named, of a private
+#               repository or a personal account's, which GitHub cannot restrict, and on macOS with
+#               a no-mistakes project registered, since the gate's daemon there runs on the
 #               machine's own login. Every GitHub call is bounded to 30 s; the token is never
 #               printed.
 # shellcheck shell=bash
@@ -74,7 +75,7 @@ worker_login_check() {
     return
   fi
   if problem=$(worker_login_problem); then
-    report "worker login" FAIL "$problem" "Daniel's own terminal: team-secrets restore"
+    report "worker login" FAIL "$problem" "$WORKER_LOGIN_RESTORE"
     return
   fi
 
@@ -118,6 +119,11 @@ worker_login_check() {
     return
   fi
   scope=$(grep -i -m1 '^x-oauth-scopes:' <<<"$headers" || true)
+  # A token GitHub names no scopes for is no classic token, so its scopes cannot be read here.
+  if [[ -z $scope ]]; then
+    warn+=("GitHub names no scopes for its token, so it is no classic token and its scopes go unchecked")
+    warn_fix=$fix_new
+  fi
   IFS=', ' read -ra scopes <<<"${scope#*:}"
   for scope in "${scopes[@]}"; do
     for held in "${WORKER_TOKEN_SCOPES[@]}" ''; do [[ $scope != "$held" ]] || break; done
@@ -130,8 +136,14 @@ worker_login_check() {
 
   # The records repository, which the worker login must not see at all.
   records=$(team_home_url) records=${records#https://github.com/} records=${records%.git}
-  if with_worker_login bounded 30 gh api "repos/$records" >/dev/null 2>"$err" </dev/null || ! grep -q '(HTTP 404)' "$err"; then
-    report "worker login" FAIL "the worker login reaches the records repository" "Daniel removes $login's access to $records on GitHub"
+  if with_worker_login bounded 30 gh api "repos/$records" >/dev/null 2>"$err" </dev/null || grep -q '(HTTP [0-9]*)' "$err"; then
+    if ! grep -q '(HTTP 404)' "$err"; then
+      report "worker login" FAIL "the worker login reaches the records repository" "Daniel removes $login's access to $records on GitHub"
+      return
+    fi
+  else
+    report "worker login" FAIL "GitHub did not answer whether the worker login reaches the records repository: $(first_error)" \
+      "run team-doctor again once GitHub answers"
     return
   fi
 

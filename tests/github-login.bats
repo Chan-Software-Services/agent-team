@@ -135,6 +135,21 @@ worker_dir() {
   assert_equal "$output" "$(worker_dir)"
 }
 
+@test "a session's settings env is that environment as an object, {} with no login, and the launchers' refusal when its file is not usable" {
+  worker_login_on team-bot
+  library 'worker_login_settings_env "$(worker_login)"'
+  assert_equal "$status" 0
+  assert_equal "$output" "$(jq -cn --arg dir "$(worker_dir)" '{GH_CONFIG_DIR: $dir, GH_TOKEN: "", GITHUB_TOKEN: ""}')"
+  library 'worker_login_settings_env ""'
+  assert_equal "$output" '{}'
+  rm "$(worker_dir)/hosts.yml"
+  library 'worker_login_settings_env team-bot'
+  assert_equal "$status" 1
+  assert_equal "$output" ""
+  # shellcheck disable=SC2088 # ~ is part of the message as the library prints it
+  assert_equal "$stderr" "library: the worker login team-bot is not on this machine (~/.config/agent-team/gh-worker/hosts.yml is missing): Daniel's team-secrets restore brings it (the secret worker-github-login)"
+}
+
 @test "worker_gh runs gh on the worker login's directory, whatever login the caller has, with its arguments and exit" {
   worker_login_on
   GH_CONFIG_DIR=/elsewhere GH_TOKEN=caller-token GITHUB_TOKEN=caller-token GH_EXIT=3 \
