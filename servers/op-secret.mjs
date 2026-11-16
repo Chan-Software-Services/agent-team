@@ -5,7 +5,11 @@
 //   const [first, second] = readSecrets(name, [reference, ...], (value, reference) => reason)
 //   refuseChildProcesses(name)
 //
-// readSecrets runs `op read --no-newline <reference>` for each reference in turn, then one
+// readSecrets reads only in an ops launch, whose session bin/team-worker gives AGENT_TEAM_ROLE=ops
+// (the role's settings and each server's entry in its MCP config): with any other value, or none,
+// it fails as below before it runs op. A variable is a speed bump, like the settings' deny rules;
+// Daniel's rule of approving a 1Password prompt only right after an announced launch is what holds.
+// It runs `op read --no-newline <reference>` for each reference in turn, then one
 // `op signout` (each execFileSync, no shell, stdin ignored because stdin is the MCP transport,
 // with a 90-second backstop), so 1Password authorizes the reads once. Each value must be
 // non-empty, and `validate` may return a reason to refuse it, or nothing. It returns the values
@@ -44,6 +48,7 @@ export function readSecrets(name, references, validate) {
     }
   };
 
+  if (process.env.AGENT_TEAM_ROLE !== "ops") fail("not an ops launch (AGENT_TEAM_ROLE is not ops), so no secret is read");
   for (const reference of references) values.push(op(["read", "--no-newline", reference], "op read"));
   op(["signout"], "op signout");
   references.forEach((reference, index) => {

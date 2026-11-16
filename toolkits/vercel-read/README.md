@@ -42,7 +42,8 @@ This toolkit holds the references, never the values.
 - The body reads the five references with `op read`, one after the other, then signs `op` out, so 1Password asks once; it keeps the tokens only in its own memory, and refuses to start on a token Vercel refuses or on one that reaches the other project too.
 - Every request it makes is a `GET` to `https://api.vercel.com` on one of five fixed endpoints, for the two project ids it read, and every answer is built from a list of allowed fields, with email addresses, phone numbers, URL credentials, tokens, private keys and credential-named values masked in free text.
 - Only an ops launch starts it: every other session's settings deny a shell command that runs the launcher or the body (with `node`, `bun`, `deno` or `env`, or by its path, though neither file is executable), while reading them stays allowed, or a `claude` given the toolkit by `--plugin-dir` or `--mcp-config`; every worker is denied the `vercel` CLI, and an ops session has no shell at all.
-  These are speed bumps (`tests/repo.bats`): Daniel's rule of approving a 1Password prompt only right after an announced launch is what holds.
+  The 1Password read every server body shares (`servers/op-secret.mjs`) checks that it runs in an ops launch: it exits 1 before it runs `op` unless `AGENT_TEAM_ROLE` is `ops`, which `bin/team-worker` gives an ops launch in its settings and in each server's environment.
+  The deny rules (`tests/repo.bats`) and that check are speed bumps: Daniel's rule of approving a 1Password prompt only right after an announced launch is what holds.
 
 ## Tests and evals
 
