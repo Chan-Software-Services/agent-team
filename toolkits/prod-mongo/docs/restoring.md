@@ -1,7 +1,7 @@
 # Restoring a prod-mongo backup
 
-For Daniel: where the toolkit's dumps are, how to prove one restores, and how to put one back on production yourself.
-No agent restores to production: the toolkit has no tool that writes there, and the commands below are yours to run in your own terminal.
+For Daniel: where the toolkit's dumps are, how to prove one restores, and how to put one, or one document or collection of one, back on production yourself.
+No agent restores to production or runs an undo: the toolkit has no tool that writes there, and the commands below, and the ones `prepare-undo` prepares, are yours to run in your own terminal.
 
 ## Where the dumps are
 
@@ -13,6 +13,8 @@ The folder and everything in it are yours alone: every directory is mode 0700 an
   manifest.json                  the backup's counts before, after and in the dump, its sizes and index names
   dump/conventioner/             mongodump's output: <collection>.bson.gz and <collection>.metadata.json.gz
   drills/<at>.json               each restore drill's verdict (PASS or FAIL) and its counts, named for its own start
+  rehearsals/<at>/               each rehearsal's logs, <n>-<script>.<dry-run|run>.log, and its report.json (rehearsing.md)
+  undo/<at>/                     each prepared undo's report.json, and for one document the file it imports, <collection>.json
 ```
 
 A folder holds a `manifest.json` with `verified: true` only when the dump passed its backup's check, each collection's count in the dump matching the database's or the collection changing during the dump; a dump that failed it was removed by the backup that took it.
@@ -64,6 +66,46 @@ What `--drop` does and does not do:
 - Without `--drop`, `mongorestore` only inserts: a document whose `_id` is already there is not overwritten, so a changed document keeps its change.
 - A dump restores only into the same major version (MongoDB 8.0, as the manifest's `server` says).
 
+## Running a prepared undo
+
+The `prepare-undo` tool takes a dump, a collection and, for one document, its id, and prepares the command that puts that document or that whole collection back as the dump holds it.
+It reads production through the read user to say what the command would change there, and writes nothing to production; the ops session relays its answer, the command in a fenced block, and never runs it.
+The command takes the connection string of a user that may write, at the same `read -rs` prompt as the restore above, and names every file from `~/`, so you paste the block as it is:
+
+```bash
+read -rs PROD_URI
+mongoimport --config=<(printf 'uri: %s\n' "$PROD_URI") --db conventioner --collection markets --mode upsert --file ~/conventioner-backups/<stamp>/undo/<at>/markets.json
+unset PROD_URI
+```
+
+The answer says what production holds as the tool read it: when production may have changed since, ask for the undo again before you run it, rather than running an old one.
+Each undo's `undo/<at>/report.json` holds its whole comparison and its command; `list-backups` counts each dump's undos.
+`mongoimport` is one of the lock's Database Tools, which `team-doctor` names the install of, beside `mongodump` and `mongorestore`.
+
+### One document
+
+The tool finds the document in the dump by its id (the id the toolkit's answers print, or its `_id`'s hex or UUID) and compares it with production's document of the same `_id`:
+
+- **Changed since the dump** (the answer names the top-level fields that differ) or **deleted since**: it writes the dump's document to `undo/<at>/<collection>.json` as canonical Extended JSON, every type spelled out, and prepares `mongoimport --mode upsert` from it, which replaces production's document of that `_id` with the dump's whole document, or inserts it when it is gone.
+- **Created since the dump** (in production, not in the dump): it writes `{"_id": ...}` alone to that file and prepares `mongoimport --mode delete`, which deletes production's document of that `_id`.
+- **The same in both**: it answers that there is nothing to undo, and prepares and writes nothing.
+
+Only that one document changes: a write since the dump to any other document stays.
+
+### A whole collection
+
+Without an id, the tool compares the whole collection in production with the dump's and prepares the restore of that one collection:
+
+```bash
+read -rs PROD_URI
+mongorestore --config=<(printf 'uri: %s\n' "$PROD_URI") --nsInclude 'conventioner.<collection>' --drop --gzip --dir ~/conventioner-backups/<stamp>/dump
+unset PROD_URI
+```
+
+The answer gives the counts in production and in the dump, and the ids the restore would put back (in the dump only), revert (changed since the dump) and lose (in production only, written since the dump), at most 50 of each, with the full lists in its `report.json`, and the index names it would add and drop.
+`--drop` replaces the whole collection, as "What `--drop` does and does not do" says: every write to it since the dump is lost, the ones the answer names and any made before you run it.
+When production's collection already matches the dump, documents and index names, the answer says there is nothing to undo.
+
 ## Deleting a dump
 
 The toolkit never deletes a dump; you do, by hand:
@@ -72,7 +114,7 @@ The toolkit never deletes a dump; you do, by hand:
 rm -r ~/conventioner-backups/<stamp>
 ```
 
-Everything derived from the dump lives in its folder, so this deletes its drills too.
+Everything derived from the dump lives in its folder, so this deletes its drills, rehearsals and undos too.
 
 ## Retention
 

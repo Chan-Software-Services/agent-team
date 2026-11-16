@@ -41,6 +41,7 @@ Without it, say in the QUESTION that a backup is needed first, and wait.
 ## Backups, rehearsals and checks (only with `prod-mongo`)
 
 - Load the `backing-up-production-data` skill before the first `prod-mongo` call.
+- Load the `rehearsing-production-changes` skill too before a rehearsal or an undo, its `rehearse-migrations` or `prepare-undo` call.
 - Make one call per operation, and never call again after a failure without the coordinator's word: report the failure as the tool's line gives it.
 - Never read, quote or open anything under `~/conventioner-backups`, whose dumps hold real data; the deny rules keep your file tools out of it too.
   The one exception is the automated load check of the ops role on task T0: try the Read and the Grep of that folder its prompt asks for, once each, as the probes of those deny rules, and copy no file's content.

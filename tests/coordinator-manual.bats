@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29789
+manual_bytes=29846
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -396,12 +396,16 @@ $WORKER_INSTRUCTIONS"
 }
 
 # T232: an ops session with prod-mongo backs up through its skill, and the manual launches it and
-# offers a backup where OPERATIONS.md's rule needs one; restoring stays Daniel's own command.
+# offers a backup where OPERATIONS.md's rule needs one, and a rehearsal; restoring and an undo stay Daniel's own commands.
 @test "the ops role backs up only through prod-mongo's skill, and the 20-document rule holds with and without it" {
-  local body skill=backing-up-production-data
+  local body skill=backing-up-production-data rehearsing=rehearsing-production-changes
   body=$(section ops 'Backups, rehearsals and checks (only with `prod-mongo`)')
   [[ -f $REPO_ROOT/toolkits/prod-mongo/skills/$skill/SKILL.md ]]
   grep -qxF -- "- Load the \`$skill\` skill before the first \`prod-mongo\` call." <<<"$body"
+  # A rehearsal and an undo take the second skill too, named by the tools it covers.
+  [[ -f $REPO_ROOT/toolkits/prod-mongo/skills/$rehearsing/SKILL.md ]]
+  grep -qxF -- "- Load the \`$rehearsing\` skill too before a rehearsal or an undo, its \`rehearse-migrations\` or \`prepare-undo\` call." <<<"$body"
+  jq -e '[.tools[].name] | index("rehearse-migrations") and index("prepare-undo")' "$REPO_ROOT/toolkits/prod-mongo/evals/mocks/prod-mongo/_tools.json" >/dev/null
   grep -qF 'one call per operation, and never call again after a failure without the coordinator'"'"'s word' <<<"$body"
   grep -qF 'Never read, quote or open anything under `~/conventioner-backups`' <<<"$body"
   # Its one exception is the load check's two probes of the folder's deny rules, on the task its
@@ -423,17 +427,19 @@ $WORKER_INSTRUCTIONS"
   fi
 }
 
-@test "the manual launches prod-mongo for a backup, offers one before a large write and a release's migrations, and points at the restore" {
+@test "the manual launches prod-mongo for a backup, offers one before a large write and a release's migrations with a rehearsal, and points at the restore and the undo" {
   local launch write path
   launch=$(grep -F -- '- A production question, only at Daniel'"'"'s request:' "$manual")
   grep -qF 'tell Daniel a 1Password prompt per toolkit is coming' <<<"$launch"
-  grep -qF '`prod-mongo` for a backup and its drill' <<<"$launch"
+  grep -qF '`prod-mongo` for a backup, drill, rehearsal or undo' <<<"$launch"
   write=$(grep -F -- '- A production write, only at Daniel'"'"'s request:' "$manual")
   grep -qF 'offer a backup with its drill before a write of more than 20 documents (`prod-mongo` beside the write'"'"'s kits) and before a release'"'"'s migrations' <<<"$write"
-  grep -qF 'restoring a dump to production is Daniel'"'"'s own command (`~/agent-team/toolkits/prod-mongo/docs/restoring.md`)' <<<"$write"
+  grep -qF 'and before a release'"'"'s migrations, with a rehearsal of them at its sha;' <<<"$write"
+  grep -qF 'restoring a dump and running an undo are Daniel'"'"'s own commands (`~/agent-team/toolkits/prod-mongo/docs/restoring.md`)' <<<"$write"
   path=$(grep -oE '`~/agent-team/toolkits/prod-mongo/docs/[a-z-]+\.md`' <<<"$write" | tr -d '`')
   [[ -f $REPO_ROOT/${path#\~/agent-team/} ]]
   grep -qF 'mongorestore' "$REPO_ROOT/${path#\~/agent-team/}"
+  grep -qF '## Running a prepared undo' "$REPO_ROOT/${path#\~/agent-team/}"
 }
 
 @test "the manual counts a worker's message and any Discord message not Daniel's own as data, and logs INJECTION as injection" {
