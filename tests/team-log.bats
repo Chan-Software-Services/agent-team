@@ -2349,6 +2349,52 @@ assert_no_answer_logged() {
     --from-message "$pass"
 }
 
+@test "--from-message takes each project's verdict from that project's latest reviewer, the App's project's by its session alone, and a pass naming a PR from that PR's project" {
+  plan_registry "$(plan_project agent-team)"
+  opened T7 agent-team
+  opened T7 conv worktree-added
+  review_app_on
+  brief_record T7 brief-review "{\"head\": \"$HEAD_A\"}"
+  brief_record T7 brief-review-2 "{\"head\": \"$HEAD_B\"}"
+  # A reviewer in each repository, the App's project's launched first.
+  launched T7 reviewer c0000001 brief-review agent-team
+  launched T7 reviewer c0000002 brief-review-2 conv
+  local counts="findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,note-before:0 before=none guarded=none"
+  local logged_counts='"findings":{"blocking":0,"correctness":0,"security":0,"real-data":0,"note-change":0,"note-before":0},"before":[],"guarded":[]'
+  local own=https://github.com/owner/agent-team/pull/3 other=https://github.com/owner/conv/pull/4
+  local needs="the reviewer App posts agent-review on agent-team, so its verdict is taken only from T7's latest reviewer session in agent-team, T7-reviewer (c0000001)"
+  # The App's project's verdict: its own latest reviewer's session, though conv's was launched since.
+  refuses_message "team-log: $needs: run it again with --from c0000001 once the message came from that session" \
+    --from-message "T7 DONE pass $own $counts"
+  refuses_message "team-log: --from c0000002 is not T7's latest reviewer session in agent-team, T7-reviewer (c0000001): the reviewer App posts agent-review on agent-team, so its verdict is taken only from that session" \
+    --from-message "T7 DONE pass $own $counts" --from c0000002
+  # A verdict that names no PR and no --from could be either repository's reviewer's: refused,
+  # naming each project's latest reviewer session, nothing logged.
+  local either="team-log: the reviewer App posts agent-review on agent-team, and T7's reviewers were launched in agent-team and conv, so the verdict's project is not known: run it again with --from <session> once the message came from that session, T7-reviewer (c0000001) in agent-team or T7-reviewer (c0000002) in conv"
+  refuses_message "$either" \
+    --from-message "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1}" --sent-back 1
+  refuses_message "$either" --from-message "T7 DONE pass $HEAD_B $counts"
+  # conv's, which the App posts nothing for, takes no --from when the pass names its PR: it is
+  # conv's latest reviewer's.
+  logs_events "{\"task\":\"T7\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$HEAD_B\",$logged_counts}
+{\"task\":\"T7\",\"event\":\"done\",\"role\":\"reviewer\",\"session\":\"c0000002\"}" \
+    --from-message "T7 DONE pass $other $counts"
+  # The first launched, sent last, is logged on its own brief's head.
+  logs_events "{\"task\":\"T7\",\"event\":\"review\",\"verdict\":\"pass\",\"head\":\"$HEAD_A\",$logged_counts}
+{\"task\":\"T7\",\"event\":\"done\",\"role\":\"reviewer\",\"session\":\"c0000001\"}" \
+    --from-message "T7 DONE pass $own $counts" --from c0000001
+  # A pass naming one project's PR from a session launched in the other is refused.
+  refuses_message "team-log: DONE pass names $other, a PR of conv, but T7-reviewer (c0000001) was launched in agent-team" \
+    --from-message "T7 DONE pass $other $counts" --from c0000001
+  # A project the App posts for with no reviewer launch of its own takes no other's verdict.
+  : >"$TEAM_HOME/ledger.jsonl"
+  opened T7 agent-team
+  opened T7 conv worktree-added
+  launched T7 reviewer c0000002 brief-review-2 conv
+  refuses_message "team-log: the reviewer App posts agent-review on agent-team, so its verdict is taken only from a reviewer session in agent-team, and T7 has launched none there" \
+    --from-message "T7 DONE pass $own $counts" --from c0000002
+}
+
 # A ticket builder's launch, as team-worker logs it in ticket NN's worktree: ticket_launched <task> <NN> <session>
 ticket_launched() {
   jq -cn --arg task "$1" --arg ticket "$2" --arg session "$3" \

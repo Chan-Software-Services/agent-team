@@ -10,8 +10,8 @@
 #   --ci         the checks wait of a pass, with no message and no other option (below)
 #   --from       the sender, as team-log --from-message takes it, when the message cannot tell it;
 #                required with a reviewer's verdict when the reviewer App posts agent-review on the
-#                project of a PR of the task, or of its latest reviewer launch: the session id of
-#                that launch
+#                verdict's project (its PR's, else its sender's launch's): the session id of the
+#                latest reviewer launch in that project
 #   --relay      with an ops session's DONE, the Discord id of the message that relayed its answer,
 #                logged as its done's relay, as team-log --from-message takes it
 #   --sent-back  with a DONE findings message, required, the numbers sent back (none for none), logged
@@ -155,7 +155,10 @@
 # it with no review since ("already handed off"); and for a DONE, when its sha is not the HEAD of
 # the sending builder's worktree. The worktree is the sending builder's, or for a PR the task's
 # worktree in the project whose repo holds the PR (either owner of a moved repo, the URL's and the
-# registry's, bin/lib/repo-moves.json). With no review logged yet, or none since the task's latest
+# registry's, bin/lib/repo-moves.json). The reviews it reads are that worktree's project's
+# (project_reviews in bin/lib/ledger.jq: a review is of the project its reviewer was launched in,
+# and one logged with no reviewer's done counts in every project), so a task's PRs in two
+# repositories are each reviewed beside the other. With no review logged yet, or none since the task's latest
 # merged part (a merged with phases_left, so a later phase's first PR), the brief is
 # team-brief T<n> reviewer --name review (review-<k>, the lowest k from 2, once a launch read the
 # name) with --checks as its checks (refused without one: "T<n> has no review yet", or "no review
@@ -176,9 +179,12 @@
 # when the task has no plan-approved, a DONE findings without --sent-back, a pass that counts a
 # blocking, correctness, security, real-data or note-change finding with no --sent-back list of
 # them (they go back before the merge, so it prints no merge line), and a pass whose PR head on
-# GitHub (team-state T<n> --json) is not the reviewed head, naming both (exit 75 when GitHub
-# cannot be read); on a project whose agent-review the reviewer App posts, a verdict whose --from
-# is not the session id of the task's latest reviewer launch (team-log's refusal, naming it). For
+# GitHub is not the reviewed head, naming both (exit 75 when GitHub cannot be read); on a project
+# whose agent-review the reviewer App posts, a verdict whose --from is not the session id of the
+# latest reviewer launch in the verdict's project (team-log's refusal, naming it). The verdict's
+# project is its sender's launch's: its PR is that project's latest (team-state T<n> --json
+# --project <it>; the task's latest when the launch names none), and the holder of its work that
+# project's latest builder launch, so a verdict in one repository never reads another's PR. For
 # a PR of a project the App posts for (own_bar in bin/lib/team.sh), once the review and its done
 # are logged it runs team-review-check on the reviewed head, success for a pass and failure for
 # findings, its summary "T<n>'s review of <head> passed" or "... found findings", and prints
@@ -221,7 +227,11 @@
 # wait ends (so a hold, an ask, a close or a review logged while it waited stops that end, before
 # any rerun, log or hand-off, and the end takes a new pass's facts): launch_refusal's texts for a
 # launch of no role (closed, Daniel's hold, an ask open), "T<n>'s latest review is not a pass on
-# an open PR, so no checks wait for a merge" when checks_wait in bin/lib/ledger.jq is null, "the
+# an open PR, so no checks wait for a merge" when checks_wait in bin/lib/ledger.jq is null (in a
+# task whose reviews were made in several projects it is, of each project's latest review that is
+# a pass on an open PR, the first that is waiting or pending, else the first that ended blocked
+# (infrastructure), else the latest that passed, else the latest that failed, and the wait's end
+# reads that pass, its project's PR and its project's holder), "the
 # checks of <short> failed and went back as a round on <ts>" when its state is failed (until the
 # round's builder logs a done with no pr of the PR at another head since, a rerun that passed, which
 # waits again), and, once a wait ended, "the checks wait of T<n> moved to <url> at <short> while it
@@ -232,7 +242,9 @@
 #                    line below, nothing logged; exit 75 when GitHub cannot be read; "<url> is
 #                    merged: its checks no longer matter", exit 0, when it shows it merged), logs
 #                    ci outcome=passed of the head (already logged when checks_wait's state is
-#                    passed), then prints the merge line below, exit 0
+#                    passed), then prints the merge line below, and after it the arm line above
+#                    for another PR's wait when checks_wait now names one waiting or pending
+#                    (another repository's pass, which had no wait while this one ran), exit 0
 #   failed           with a failure of class pr (the PR's own): writes the report
 #                    tasks/T<n>/ci-<the head's first 8 characters>.md in the team home (a heading
 #                    naming the PR and head, one line per failure, the PR's, then infrastructure,
@@ -444,10 +456,21 @@ ci_report() {
       else "The PR\($q)s failures, \($own), are this round\($q)s `blocking` findings; the others are not, since an infrastructure failure or a roll-up is no defect of the PR, and the round\($q)s new head runs every check again." end' >"$1"
 }
 
-# read_state: the task's state (team-state T<n> --json) as $state, and what the hand-offs read of
-# it for the review $review, each in a variable of its own.
+# read_state [<project>]: the task's state (team-state T<n> --json) as $state, and what the
+# hand-offs read of it for the review $review, each in a variable of its own. With a project, the
+# review's when it is known, the PR is that project's (team-state --project) and the holder its
+# latest builder launch there (one naming no project counts), the task's latest when it has none,
+# so a task with a PR in each of two repositories hands each review to its own.
 read_state() {
-  state=$(sibling team-state "$task" --json) || exit
+  local in=${1:-} state_opts=() holder_session=''
+  if [[ -n $in ]]; then
+    state_opts=(--project "$in")
+    holder_session=$(jq -r --arg p "$in" '[.[] | select(.event == "launch" and .role == "builder")]
+      | (map(select(.project == null or .project == $p)) | last) // last | .session // empty' <<<"$events")
+  fi
+  state=$(sibling team-state "$task" --json "${state_opts[@]}") || exit
+  state=$(jq -c --arg s "$holder_session" 'if $s == "" then . else .workers |= (map(select(.role != "builder"))
+    + (map(select(.role == "builder")) | map(select(.session != $s)) + map(select(.session == $s)))) end' <<<"$state") || exit
   # In one jq run over the task's state: its PR (null when none); the builder who holds the
   # worktree's context, the task's latest builder launch (holder, false when none), its session,
   # whether it holds it (live and under 250k: holds, else full or gone) and its context as
@@ -487,6 +510,11 @@ round_line() {
     full) echo "send to $who: $stow" ;;
     gone) echo "$gone $stow" ;;
   esac
+}
+
+# arm_line <url> <short head>: the line that arms the checks wait of a pass on that PR and head.
+arm_line() {
+  echo "checks: arm team-next $task --ci with Bash run_in_background unless it is already running: it waits on the checks of $1 at $2, then prints the merge ask or hands a red check back as a round"
 }
 
 # merge_line: what is left once the checks of the reviewed head ($reviewed, in full) passed, from
@@ -602,9 +630,10 @@ if [[ -n $ci ]]; then
     events=$(task_event_array "$task")
     json_vars --ledger refusal='[launch_refusal($task; ""; [])] | join("; ")' -- --arg task "$task" <<<"$events"
     [[ -z $refusal ]] || die "$refusal"
-    wait_url='' wait_head='' wait_state='' wait_since='' wait_from=''
+    wait_url='' wait_head='' wait_state='' wait_since='' wait_from='' wait_project='' wait_review=''
     json_vars --ledger wait_url='checks_wait | .url' wait_head='checks_wait | .head' wait_state='checks_wait | .state' \
-      wait_since='checks_wait | .since' \
+      wait_since='checks_wait | .since' wait_project='checks_wait_of | .project // empty' \
+      wait_review='. as $events | checks_wait_of | select(. != null) | $events[.review] | tojson' \
       wait_from='checks_wait as $w | select($w != null and (same_head($w.head; $w.reviewed) | not))
         | [.[] | select(.event == "caught-up" and same_head(.head; $w.head))] | last | .from' <<<"$events"
     [[ -n $wait_url ]] || die "$task's latest review is not a pass on an open PR, so no checks wait for a merge"
@@ -642,6 +671,17 @@ if [[ -n $ci ]]; then
       sibling team-log "$task" ci "${fields[@]}" || exit
       echo "logged ci ${fields[*]}"
     fi
+  }
+  # next_wait_line: after a passed end's merge line, the arm line of the wait the ledger now names,
+  # when it is another PR's with no wait ended yet (waiting or pending): another repository's pass,
+  # which had no wait while this one ran.
+  next_wait_line() {
+    local next_url='' next_head='' next_state=''
+    json_vars --ledger next_url='checks_wait | .url' next_head='checks_wait | .head' next_state='checks_wait | .state' \
+      <<<"$(task_event_array "$task")"
+    [[ $next_state == waiting || $next_state == pending ]] || return 0
+    [[ ${next_url%/} != "${wait_url%/}" ]] || return 0
+    arm_line "$next_url" "${next_head:0:8}"
   }
   moved_line() {
     echo "the head of $wait_url is ${1:0:8}, not the passed $wait_short: a commit no round made; read it with team-state $task before anything else"
@@ -742,8 +782,9 @@ if [[ -n $ci ]]; then
     if same_commit "$end_head" "$wait_head"; then ci_head=$end_head; fi
     case $outcome in
       passed | none)
-        review=$(jq -c 'map(select(.event == "review")) | last' <<<"$events")
-        read_state
+        # The pass the wait stands on, and its project's PR and holder.
+        review=$wait_review
+        read_state "$wait_project"
         if [[ $pr_error == true ]]; then
           echo "${0##*/}: GitHub cannot be read for $pr_url ($pr_reason); run the same command again" >&2
           exit 75
@@ -757,6 +798,7 @@ if [[ -n $ci ]]; then
         # The facts name the reviewed head: the PR's own, or the one a catch-up made the merge from.
         reviewed=${wait_from:-$live_head}
         merge_line
+        next_wait_line
         exit 0
         ;;
       failed)
@@ -767,8 +809,8 @@ if [[ -n $ci ]]; then
           infrastructure_end
           continue
         fi
-        review=$(jq -c 'map(select(.event == "review")) | last' <<<"$events")
-        read_state
+        review=$wait_review
+        read_state "$wait_project"
         report=$TEAM_HOME/tasks/$task/ci-${wait_head:0:8}.md
         ci_report "$report" "$wait_url" "$ci_head" false <<<"$ended"
         echo "report $report"
@@ -830,7 +872,6 @@ same_def='def same($p): .event == $p.event and
 #   project, the ticket (a ticket worktree's builder's) and the session of the launch of the session
 #   the parsed done names (a launch of null's when it names none).
 # - review: the message's review, or null.
-# - latest: the task's latest review, or null.
 launch_def='def sender_launch: ($parsed | map(select(.event == "done")) | first | .session | tostring) as $session
   | map(select(.event == "launch" and .session == $session)) | last
   | . + {worktree: (.worktree | local_path($home))};'
@@ -846,7 +887,7 @@ kind='' back='' held='' briefs='' builder_kits='' reviewer_kits='' sender_wt='' 
 # phase's, so a later phase's first PR is a first review.
 phase_def='def phase_start: ([to_entries[] | select(.value.event == "merged" and (.value.phases_left | type) == "array"
     and .value.phases_left != []) | .key + 1] | last) // 0;'
-sender_ticket='' sender_session='' review='' latest='' phase_merged=''
+sender_ticket='' sender_session='' review='' phase_merged=''
 json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3]
   | (.[1] // "") as $sub
   | if .[0] == "DONE" and any($parsed[]; .event == "done" and .role == "ops") then "DONE"
@@ -869,7 +910,7 @@ json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3
   sender_wt="$launch_def sender_launch | .worktree | tostring" \
   launch_project="$launch_def sender_launch | .project // empty" \
   sender_ticket="$launch_def sender_launch | .ticket // empty" sender_session="$launch_def sender_launch | .session // empty" \
-  review='$parsed | map(select(.event == "review")) | first | tojson' latest="$phase_def"' .[phase_start:] | map(select(.event == "review")) | last | tojson' \
+  review='$parsed | map(select(.event == "review")) | first | tojson' \
   phase_merged="$phase_def"' phase_start as $k | if $k == 0 then empty else .[$k - 1].ts end' \
   -- --arg message "$message" --argjson parsed "$parsed" <<<"$events"
 
@@ -1326,13 +1367,15 @@ plan_withdrawn_refusal
 ledger_jq 'plan_approval != null' -e <<<"$events" >/dev/null ||
   die "$task has no plan-approved, so no $handoff hand-off; approve the plan first (step 3 of the manual)"
 
-# holder_findings_file: the library's findings_file in the task directory of the task's latest
-# builder launch's worktree, as <task_dir>/<file>, or nothing; team-brief derives a round's from
+# holder_findings_file: the library's findings_file in the task directory of the worktree of the
+# task's latest builder launch in the verdict's project (the task's latest with none there), as
+# <task_dir>/<file>, or nothing; team-brief derives a round's from
 # the same function.
 holder_findings_file() {
   local launch dir newest
-  launch=$(ledger_jq 'map(select(.event == "launch" and .role == "builder")) | last
-    | {worktree: (.worktree | local_path($home)), project}' -c <<<"$events")
+  launch=$(ledger_jq 'map(select(.event == "launch" and .role == "builder"))
+    | (map(select($p == "" or .project == null or .project == $p)) | last) // last
+    | {worktree: (.worktree | local_path($home)), project}' -c --arg p "$launch_project" <<<"$events")
   dir=$(team_project "$(jq -r .project <<<"$launch")" task_dir) || return 0
   newest=$(findings_file "$(jq -r .worktree <<<"$launch")/$dir")
   if [[ -n $newest ]]; then echo "$dir/$newest"; fi
@@ -1383,7 +1426,8 @@ findings_look() {
 }
 
 if [[ $handoff == verdict ]]; then
-  read_state
+  # The verdict's project is its sender's launch's (team-log refuses a pass on another's PR).
+  read_state "$launch_project"
   if [[ $kind == "DONE pass" && $pr != null ]]; then
     # A pass is taken only on the PR's head as GitHub has it now.
     if [[ $pr_error == true ]]; then
@@ -1482,7 +1526,7 @@ if [[ $handoff == verdict ]]; then
     if [[ $holds == gone ]]; then echo "$gone $go_on"; else echo "send to $who: $go_on"; fi
     exit 0
   fi
-  echo "checks: arm team-next $task --ci with Bash run_in_background unless it is already running: it waits on the checks of $pr_url at $short, then prints the merge ask or hands a red check back as a round"
+  arm_line "$pr_url" "$short"
   exit 0
 fi
 
@@ -1554,6 +1598,11 @@ if [[ $handoff == review ]]; then
     [[ $kind == "DONE merged" ]] || sets=(--set "head=$head")
   fi
 
+  # The latest review of this phase made in the hand-off's project (project_reviews in
+  # bin/lib/ledger.jq), or null: another repository's review is no review of this PR.
+  latest=$(ledger_jq "$phase_def"' phase_start as $k | . as $events
+    | [project_reviews($project)[] | select(. >= $k)] | last | if . == null then null else $events[.] end' \
+    -c --arg project "$project" <<<"$events")
   if [[ $latest == null ]]; then
     none="no review yet"
     [[ -z $phase_merged ]] || none="no review since its phase merged at $phase_merged"

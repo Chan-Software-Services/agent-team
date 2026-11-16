@@ -64,7 +64,7 @@ guard_is() {
 @test "the guard hooks line runs each guard on a harmless call and fails naming each one that does not pass" {
   only_checks 092-guard-hooks.sh
   tools_at arch
-  local passes="PASS guard hooks: scratch-only-edits, command-guard, lease-fence, lease-fence --coordinator and lease-fence --assistant each pass a harmless Bash call (ls), and assistant-discord-guard a read of #assistant"
+  local passes="PASS guard hooks: scratch-only-edits, command-guard, lease-fence, lease-fence --coordinator and lease-fence --assistant each pass a harmless Bash call (ls), assistant-discord-guard a read of #assistant, and session-records-guard a Read outside the session records"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'guard hooks')" "$passes"
   # --json gives the line too.
@@ -83,20 +83,28 @@ guard_is() {
   fails_on_call jq '.cwd // empty'
   run_bin -1 team-doctor
   local fix="fix: fix each hook named in $CODE_CHECKOUT/bin/hooks, then run team-doctor again"
-  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, or a read of #assistant), scratch-only-edits exited 2 (\"Blocked by scratch-only-edits: it failed with exit 5 before it could decide, and a guard that cannot decide refuses; report it as BLOCKED and do not reach it another way.\"), so each blocks every call it guards; $fix"
+  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, a read of #assistant, or a Read outside the session records), scratch-only-edits exited 2 (\"Blocked by scratch-only-edits: it failed with exit 5 before it could decide, and a guard that cannot decide refuses; report it as BLOCKED and do not reach it another way.\"), so each blocks every call it guards; $fix"
   rm "$BATS_TEST_TMPDIR/stubs/jq"
   # A guard that dies on its own, with or without a word on stderr, and one past its timeout.
   guard_is scratch-only-edits <<<'echo "line 3: broken" >&2; echo more >&2; exit 1'
   guard_is command-guard <<<'exit 127'
   guard_is lease-fence <<<'[[ $# -eq 0 ]] || exit 124; exit 0'
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, or a read of #assistant), scratch-only-edits exited 1 (\"line 3: broken\"); command-guard exited 127; lease-fence --coordinator did not answer within its 60 s; lease-fence --assistant did not answer within its 60 s, so each blocks every call it guards; $fix"
+  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, a read of #assistant, or a Read outside the session records), scratch-only-edits exited 1 (\"line 3: broken\"); command-guard exited 127; lease-fence --coordinator did not answer within its 60 s; lease-fence --assistant did not answer within its 60 s, so each blocks every call it guards; $fix"
   # The Discord guard fails on its own input: with no #assistant set, it cannot decide.
   guard_is scratch-only-edits <<<'exit 0'
   guard_is command-guard <<<'exit 0'
   guard_is lease-fence <<<'exit 0'
   TEAM_ASSISTANT_CHANNEL='' run_bin -1 team-doctor
-  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, or a read of #assistant), assistant-discord-guard exited 2 (\"Blocked: no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so assistant-discord-guard cannot tell #assistant; a guard that cannot decide refuses, so tell Daniel and do not reach it another way.\"), so each blocks every call it guards; $fix"
+  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, a read of #assistant, or a Read outside the session records), assistant-discord-guard exited 2 (\"Blocked: no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so assistant-discord-guard cannot tell #assistant; a guard that cannot decide refuses, so tell Daniel and do not reach it another way.\"), so each blocks every call it guards; $fix"
+  # The session records guard fails on its own input too: the others pass a Read it cannot read.
+  guard_is session-records-guard <<<'[[ $(jq -r .tool_name) != Read ]] || { echo "Blocked by session-records-guard: broken" >&2; exit 2; }'
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, a read of #assistant, or a Read outside the session records), session-records-guard exited 2 (\"Blocked by session-records-guard: broken\"), so each blocks every call it guards; $fix"
+  # Its real call is a Read of a file in the doctor's scratch directory, by a session that is no UUID.
+  guard_is session-records-guard <<<'jq -e ".tool_name == \"Read\" and .session_id == \"team-doctor\" and (.tool_input.file_path | endswith(\"/session-records-guard-probe\")) and (.cwd as \$cwd | .tool_input.file_path | startswith(\$cwd + \"/\"))" >/dev/null'
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'guard hooks')" "$passes"
 }
 
 @test "the team home line names the team home and what named it: TEAM_HOME or ~/.config/agent-team/home" {
@@ -652,14 +660,23 @@ ruleset_pin() {
   # The code, its comments aside, names none of them, but the Discord plugin's access.json, whose
   # ids the discord access line never prints, and its tools' names, a call the guard hooks line
   # hands assistant-discord-guard.
-  local interview=$REPO_ROOT/bin/lib/doctor.d/167-interview-channel.sh
+  local lib=$REPO_ROOT/bin/lib interview assistant reader
+  interview=$lib/doctor.d/167-interview-channel.sh assistant=$lib/doctor.d/168-assistant-channel.sh
+  reader=$lib/channel-access.sh
   run -1 grep -nE 'credentials|\.claude\.json|channels|hosts\.yml|discord_|[Kk]eychain|security find' \
-    <(for file in "$REPO_ROOT/bin/team-doctor" "$REPO_ROOT"/bin/lib/doctor.d/*.sh; do
-      [[ $file == "$interview" ]] || grep -hv '^[[:space:]]*#' "$file"; done |
+    <(for file in "$REPO_ROOT/bin/team-doctor" "$lib"/doctor.d/*.sh; do
+      [[ $file == "$interview" || $file == "$assistant" ]] || grep -hv '^[[:space:]]*#' "$file"; done |
       sed 's|~/\.claude/channels/discord/access\.json||g; s|\$HOME/\.claude/channels/discord/access\.json||g; s|mcp__plugin_discord_discord__[a-z_]*||g')
-  # The interview channel line alone uses the bot token, only through the library's Discord calls.
-  run -1 grep -nE 'credentials|\.claude\.json|hosts\.yml|[Kk]eychain|security find|DISCORD_BOT_TOKEN=|\.env"' "$interview"
-  assert_equal "$(grep -v '^[[:space:]]*#' "$interview" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_api discord_token"
+  # The two channel lines alone use the bot token, only through their shared reader's Discord
+  # calls, which asks whether there is one and reads Discord with it; neither calls Discord itself.
+  run -1 grep -nE 'credentials|\.claude\.json|hosts\.yml|[Kk]eychain|security find|DISCORD_BOT_TOKEN=|\.env"' \
+    "$interview" "$assistant" "$reader"
+  local file
+  for file in "$interview" "$assistant"; do
+    assert_equal "$(grep -v '^[[:space:]]*#' "$file" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" ""
+    grep -q '^  channel_report ' "$file"
+  done
+  assert_equal "$(grep -v '^[[:space:]]*#' "$reader" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_api discord_token"
 }
 
 @test "each file of bin/lib/doctor.d/ is a check, run in the order of its name, with its lines of --help" {

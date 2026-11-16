@@ -456,6 +456,56 @@ reply_line() {
   assert_equal "$(phase_of T14)" merged
 }
 
+@test "--project gives the PR part of that project's latest pr event, by its project or its URL's repo, null when it has none" {
+  open_task
+  github_down
+  cat >>"$TEAM_HOME/projects.toml" <<'TOML'
+
+[conv]
+repo = "owner/conv"
+path = "projects/conv"
+base = "main"
+delivery = "direct-pr"
+merge_method = "merge"
+required_checks = []
+task_dir = ".scratch/task"
+docs = []
+toolkits = []
+pool = { provider = "git", slots = ["slots/conv/1"] }
+
+[idle]
+repo = "owner/idle"
+path = "projects/idle"
+base = "main"
+delivery = "direct-pr"
+merge_method = "merge"
+required_checks = []
+task_dir = ".scratch/task"
+docs = []
+toolkits = []
+pool = { provider = "git", slots = ["slots/idle/1"] }
+TOML
+  event T14 pr '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}'
+  event T14 pr '{url: "https://github.com/Owner/Conv/pull/7", head: "2222222"}'
+  # The task's latest pr event without it, as before.
+  run_bin -0 --separate-stderr team-state T14 --json
+  assert_equal "$(jq -r .pr.url <<<"$output")" "https://github.com/Owner/Conv/pull/7"
+  run_bin -0 --separate-stderr team-state T14 --json --project proj
+  assert_equal "$(jq -c '.pr | {url, project}' <<<"$output")" '{"url":"https://github.com/owner/proj/pull/5","project":"proj"}'
+  run_bin -0 --separate-stderr team-state T14 --project conv --json
+  assert_equal "$(jq -c '.pr | {url, project}' <<<"$output")" '{"url":"https://github.com/Owner/Conv/pull/7","project":"conv"}'
+  # A pr event that names its project is that project's, whatever its URL's repo.
+  event T14 pr '{url: "https://github.com/elsewhere/fork/pull/2", head: "3333333", project: "proj"}'
+  run_bin -0 --separate-stderr team-state T14 --json --project proj
+  assert_equal "$(jq -r .pr.url <<<"$output")" "https://github.com/elsewhere/fork/pull/2"
+  run_bin -0 --separate-stderr team-state T14 --json --project idle
+  assert_equal "$(jq -c .pr <<<"$output")" null
+  # A project the registry does not know, and an option with no name, are refused.
+  run_bin -1 team-state T14 --json --project nowhere
+  run_bin -2 team-state T14 --project
+  run_bin -2 team-state T14 --project proj --project conv
+}
+
 @test "a merged event naming its PR's URL marks that PR merged, even at a head the ledger never saw" {
   open_task
   github_down

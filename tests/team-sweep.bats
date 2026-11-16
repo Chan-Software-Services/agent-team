@@ -2579,9 +2579,13 @@ current: team-current: the ledger is not JSON: fix what team-current names"
     '{"task":null,"kind":"queue","session":null,"name":null,"next":"fix what team-queue names"}
 {"task":null,"kind":"current","session":null,"name":null,"next":"fix what team-current names"}'
   # Exit 0 with no view, or a view of another shape, is a failure too; and a check that names
-  # problems (exit 1) but no closed task is no finding.
+  # problems (exit 1) but no closed task is no finding, beside a due with none.
   stub_script team-queue <<<'echo "[]"'
-  stub_script team-current <<<'echo "{\"schema\":\"team-current-check/1\",\"problems\":[{\"line\":2,\"id\":null,\"item\":\"x\",\"reasons\":[\"bad\"]}],\"closed\":[]}"; exit 1'
+  stub_script team-current <<'SH'
+if [[ $1 == due ]]; then echo '{"schema":"team-current-due/1","items":[]}'; exit 0; fi
+echo '{"schema":"team-current-check/1","problems":[{"line":2,"id":null,"item":"x","reasons":["bad"]}],"closed":[]}'
+exit 1
+SH
   run_bin -1 team-sweep
   assert_equal "$(sed -n '2,$p' <<<"$output")" "queue: team-queue list printed no team-queue/1 view: fix what team-queue names"
   # Neither runs when there is nothing for it to read.
@@ -2591,4 +2595,122 @@ current: team-current: the ledger is not JSON: fix what team-current names"
   run_bin -1 team-sweep
   assert_equal "$(sed -n '2,$p' <<<"$output")" ""
   assert_equal "$(stub_calls team-queue)$(stub_calls team-current)" ""
+}
+
+@test "assistant-twin: each session named assistant but the one started first, after the coordinator-twin findings" {
+  sessions "$(session 3169fcbd coordinator busy working)" "$(session 5e7b1c04 coordinator idle blocked)" \
+    "$(session a5515700 assistant idle working 1762596000000)" \
+    "$(jq -cn '{pid: 5151, cwd: "/home/x", kind: "interactive", startedAt: 1762682400000,
+      sessionId: "c0ffee00-1111-4222-8333-444455556666", name: "assistant", status: "idle"}')" \
+    "$(session 6e6e6e6e assistant idle "done" | jq -c 'del(.startedAt)')" \
+    "$(session 12345678 T5-assistant-notes idle)"
+  CLAUDE_CODE_SESSION_ID=3169fcbd-1111-4222-8333-444455556666 run_bin -1 team-sweep
+  assert_equal "$(grep -v '^T5 stray' <<<"$output")" "coordinator-twin: coordinator 5e7b1c04 (background, blocked, started 2025-10-22T02:00:00Z) is a second session named coordinator on this machine; next: read claude logs 5e7b1c04 for anything left to log, then stop it with claude stop 5e7b1c04
+assistant-twin: assistant c0ffee00 (interactive, idle, started 2025-11-09T10:00:00Z) is a second session named assistant on this machine, beside a5515700, started first; next: ask Daniel to end it, an interactive session, pid 5151
+assistant-twin: assistant 6e6e6e6e (background, done, started at an unknown time) is a second session named assistant on this machine, beside a5515700, started first; next: read claude logs 6e6e6e6e for anything left to hand off, then stop it with claude stop 6e6e6e6e"
+  CLAUDE_CODE_SESSION_ID=3169fcbd-1111-4222-8333-444455556666 run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map(select(.kind == "assistant-twin") | [.task, .kind, .session, .name])' <<<"$output")" \
+    '[[null,"assistant-twin","c0ffee00","assistant"],[null,"assistant-twin","6e6e6e6e","assistant"]]'
+  # One assistant beside the coordinator is no twin.
+  sessions "$(session 3169fcbd coordinator busy working)" "$(session a5515700 assistant idle working)"
+  run_bin -0 team-sweep
+}
+
+# Log a hand-off <id> of <kind> from <from> to <to>, sent <minutes> before the sweep's now
+# (TEAM_SWEEP_NOW when the test sets it, else the clock's), in assistant/handoffs.jsonl; with
+# answered, answered a minute later.
+handoff_sent() {
+  mkdir -p "$TEAM_HOME/assistant"
+  jq -cn --arg id "$1" --arg kind "$2" --arg from "$3" --arg to "$4" --argjson m "$5" --arg at "${TEAM_SWEEP_NOW:-}" \
+    '{ts: (($at | if . == "" then now else fromdate end) - $m * 60 | floor | todate), id: $id, event: "sent", kind: $kind, from: $from, to: $to}' \
+    >>"$TEAM_HOME/assistant/handoffs.jsonl"
+  [[ ${6:-} != answered ]] ||
+    jq -cn --arg id "$1" --argjson m "$5" --arg at "${TEAM_SWEEP_NOW:-}" \
+      '{ts: (($at | if . == "" then now else fromdate end) - ($m - 1) * 60 | floor | todate), id: $id, event: "answered", by: "coordinator"}' \
+      >>"$TEAM_HOME/assistant/handoffs.jsonl"
+}
+
+@test "current-due and assistant-handoff: each due item of the coordinator's list and each hand-off to it waiting past 30 minutes, after current-stale" {
+  local today past later legacy assistants
+  # One now for the sweep's count of a hand-off's wait and for team-current's due day, so 29 and
+  # 31 minutes and today hold however long the test takes and whatever the clock's day.
+  export TEAM_SWEEP_NOW=2026-11-15T12:00:00Z TEAM_CURRENT_NOW=2026-11-15T12:00:00Z
+  past="- ask - which login for the docs host | 1563000000000000046 | review 2026-11-13 | added 2026-11-10T12:00:00Z"
+  later="- next - the spike report | 1563000000000000047 | review 2026-11-17 | added 2026-11-15T12:00:00Z"
+  legacy="- watch T9 its checks | ledger 2026-11-01T07:08:11Z"
+  today="- owe - the report | 1563000000000000048 | review 2026-11-15 | added 2026-11-12T12:00:00Z"
+  mkdir -p "$TEAM_HOME/tasks" "$TEAM_HOME/assistant"
+  printf '%s\n' '# Current items' "$past" "$later" "$today" "$legacy" >"$TEAM_HOME/tasks/current.md"
+  # The assistant's due items are its Stop hook's, never the coordinator's sweep's.
+  assistants="- owe - the assistant's | 1563000000000000049 | review 2026-11-14 | added 2026-11-12T12:00:00Z"
+  printf '%s\n' '# Assistant items' "$assistants" >"$TEAM_HOME/assistant/current.md"
+  handoff_sent H1 task assistant coordinator 45
+  handoff_sent H2 decision assistant coordinator 29
+  handoff_sent H3 note assistant coordinator 90 answered
+  handoff_sent H4 walkthrough coordinator assistant 120
+  handoff_sent H5 research assistant coordinator 31
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "current item $(printf '%s' "${past#- }" | sha256sum | cut -c1-6) is due for review since 2026-11-13: done it, or renew it with a reason
+current item $(printf '%s' "${today#- }" | sha256sum | cut -c1-6) is due for review since 2026-11-15: done it, or renew it with a reason
+hand-off H1 (task) from the assistant has waited 45 min: read it with team-assistant show H1, act, and answer it
+hand-off H5 (research) from the assistant has waited 31 min: read it with team-assistant show H5, act, and answer it"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c '.[] | del(.text)' <<<"$output")" \
+    "{\"task\":null,\"kind\":\"current-due\",\"session\":\"$(printf '%s' "${past#- }" | sha256sum | cut -c1-6)\",\"name\":null,\"next\":\"done it, or renew it with a reason\"}
+{\"task\":null,\"kind\":\"current-due\",\"session\":\"$(printf '%s' "${today#- }" | sha256sum | cut -c1-6)\",\"name\":null,\"next\":\"done it, or renew it with a reason\"}
+{\"task\":null,\"kind\":\"assistant-handoff\",\"session\":\"H1\",\"name\":null,\"next\":\"read it with team-assistant show H1, act, and answer it\"}
+{\"task\":null,\"kind\":\"assistant-handoff\",\"session\":\"H5\",\"name\":null,\"next\":\"read it with team-assistant show H5, act, and answer it\"}"
+  # Once answered, a hand-off is no finding.
+  jq -cn '{ts: "2026-11-15T12:00:00Z", id: "H1", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
+  jq -cn '{ts: "2026-11-15T12:00:00Z", id: "H5", event: "answered", by: "coordinator"}' >>"$TEAM_HOME/assistant/handoffs.jsonl"
+  printf '%s\n' '# Current items' "$later" >"$TEAM_HOME/tasks/current.md"
+  run_bin -0 team-sweep
+  # The wait is counted to TEAM_SWEEP_NOW: a minute on, the hand-off sent 29 minutes before has
+  # waited 30, not past 30, and two on it has waited 31.
+  TEAM_SWEEP_NOW=2026-11-15T12:01:00Z run_bin -0 team-sweep
+  TEAM_SWEEP_NOW=2026-11-15T12:02:00Z run_bin -1 team-sweep
+  assert_equal "$output" "hand-off H2 (decision) from the assistant has waited 31 min: read it with team-assistant show H2, act, and answer it"
+  TEAM_SWEEP_NOW=noon run_bin -2 team-sweep
+  assert_contains "$output" 'TEAM_SWEEP_NOW "noon" is not a UTC time as 2026-11-15T10:00:00Z'
+}
+
+@test "a team-assistant or team-current due that fails is its one-line finding, and current once when check fails too" {
+  queue_room
+  mkdir -p "$TEAM_HOME/tasks"
+  printf '%s\n' '# Current items' >"$TEAM_HOME/tasks/current.md"
+  handoff_sent H1 task assistant coordinator 45
+  ln -f "$BATS_RUN_TMPDIR/shared/stub" "$CODE_CHECKOUT/bin/team-assistant"
+  ln -f "$BATS_RUN_TMPDIR/shared/stub" "$CODE_CHECKOUT/bin/team-current"
+  stub_script team-assistant <<SH
+echo "team-assistant: cannot read $HOME/handoffs" >&2
+exit 1
+SH
+  # check passes; due fails.
+  stub_script team-current <<'SH'
+if [[ $1 == check ]]; then echo '{"schema":"team-current-check/1","problems":[],"closed":[]}'; exit 0; fi
+echo "team-current: TEAM_CURRENT_NOW is bad" >&2
+exit 2
+SH
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "current: team-current: TEAM_CURRENT_NOW is bad: fix what team-current names
+assistant-handoff: team-assistant: cannot read ~/handoffs: fix what team-assistant names"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c '.[] | del(.text)' <<<"$output")" \
+    '{"task":null,"kind":"current","session":null,"name":null,"next":"fix what team-current names"}
+{"task":null,"kind":"assistant-handoff","session":null,"name":null,"next":"fix what team-assistant names"}'
+  assert_contains "$(stub_calls team-current)" '["due","--json","--list","coordinator"]'
+  assert_contains "$(stub_calls team-assistant)" '["list","--open","--to","coordinator","--json"]'
+  # Both team-current views failing is one current finding; a team-assistant that prints no list is one.
+  stub_script team-current <<<'echo "team-current: the ledger is not JSON" >&2; exit 2'
+  stub_script team-assistant <<<'echo "{}"'
+  run_bin -1 team-sweep
+  assert_equal "$output" "current: team-current: the ledger is not JSON: fix what team-current names
+assistant-handoff: team-assistant list printed no list: fix what team-assistant names"
+  # team-assistant runs only while the hand-off log exists.
+  rm "$TEAM_HOME/assistant/handoffs.jsonl"
+  : >"$STUB_CALLS/team-assistant.log"
+  run_bin -1 team-sweep
+  assert_equal "$(stub_calls team-assistant)" ""
 }
