@@ -5,7 +5,8 @@ include "ledger";
 
 # The forms a message takes after its task, as the role prompts and brief templates write them.
 def message_forms:
-  ["QUESTION <text>", "BLOCKED <what> <why>", "BLOCKED <what> <why>; took its allowed way", "NEED toolkit <name>",
+  ["QUESTION <text>", "BLOCKED <what> <why>", "BLOCKED <what> <why>; took its allowed way [<way>]",
+   "NEED toolkit <name>",
    "PAUSED <why>",
    "PR <full url> [merged <base> conflicts: <files or none>]",
    "DONE <NN> <sha>... <line>", "DONE review-ready <sha>", "DONE merged <base> <sha> conflicts: <files or none>",
@@ -114,16 +115,26 @@ def message_park($task; $events; $from; $kind; $cause; $reason):
     else {events: [message_event($kind; [["reason", $reason], ["cause", $cause]]
       + if $s.sender then [["role", $s.sender.role], ["session", $s.sender.session]] else [] end)]} end;
 
-# A worker's BLOCKED <what> <why>; took its allowed way ($body, the text before the marker): a
-# refusal that named an allowed way, which the worker took and went on by. Its denied carries the
-# sender's role and session (refused when the sender cannot be told, as a QUESTION's), what the
-# body's first word and why the rest; it parks nothing.
-def message_denied($task; $events; $from; $body):
-  ($body | capture("^(?<what>\\S+)\\s+(?<why>\\S.*)$"; "s") // null) as $d
+# A BLOCKED's text read as <body>; took its allowed way [<way>]: {body, way}, way null when the
+# marker ends the text, or null when the text is no such form. The marker follows a semicolon and
+# ends the text or comes before the way: a parenthesis, or a clause after a comma, a colon or a
+# blank and a dash, the separator and the blanks around the way no part of it. The marker
+# mid-sentence, with no semicolon before it or a word after it, is no such form.
+def message_went_past:
+  capture("^(?<body>.*?)\\s*;\\s*took its allowed way(?:(?:\\s*[,:]|\\s+-+(?=\\s)|\\s*(?=\\())\\s*(?<way>.*?))?\\s*$"; "s") // null;
+
+# A worker's BLOCKED <what> <why>; took its allowed way [<way>] ($rest, the text after BLOCKED, and
+# $went, message_went_past's reading of it): a refusal that named an allowed way, which the
+# worker took and went on by. Its denied carries the sender's role and session (refused when
+# the sender cannot be told, as a QUESTION's), what the body's first word, why the rest, and way
+# the text after the marker when there is any; it parks nothing.
+def message_denied($task; $events; $from; $rest; $went):
+  ($went.body | capture("^(?<what>\\S+)\\s+(?<why>\\S.*)$"; "s") // null) as $d
   | if $d == null then
-      message_refused("BLOCKED takes 'BLOCKED <what> <why>; took its allowed way', got 'BLOCKED \($body); took its allowed way'")
+      message_refused("BLOCKED takes 'BLOCKED <what> <why>; took its allowed way [<way>]', got 'BLOCKED \($rest)'")
     else with_sender($task; $events; $from; null;
-      {events: [message_event("denied"; [["role", .role], ["what", $d.what], ["why", $d.why], ["session", .session]])]}) end;
+      {events: [message_event("denied"; [["role", .role], ["what", $d.what], ["why", $d.why], ["session", .session]]
+        + if ($went.way // "") != "" then [["way", $went.way]] else [] end)]}) end;
 
 # The cause of a worker's PAUSED <why>, by its first word (any case): stowed a stow, the answer to
 # STOW; held coordinator-hold, the answer to HOLD; offline offline, GitHub out of reach; any other
@@ -305,8 +316,8 @@ def parse_message($task; $events; $records; $from; $sent_back; $apps; $pr_projec
         if .role == "ops" then message_ops("question"; .; $rest)
         else {events: [message_event("question"; [["role", .role], ["text", $rest]])]} end)
     elif $m.kind == "BLOCKED" then
-      ($rest | capture("^(?<body>.*?)\\s*;\\s*took its allowed way$"; "s") // null) as $went
-      | if $went != null then message_denied($task; $events; $from; $went.body)
+      ($rest | message_went_past) as $went
+      | if $went != null then message_denied($task; $events; $from; $rest; $went)
         else message_park($task; $events; $from; "blocked"; "worker"; $rest) end
     elif $m.kind == "NEED" then
       if ($rest | test("^toolkit\\s+\\S+$")) then message_park($task; $events; $from; "blocked"; "worker"; "needs " + ($rest | sub("\\s+"; " ")))
