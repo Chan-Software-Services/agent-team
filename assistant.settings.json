@@ -450,6 +450,17 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"@TEAM_CODE@/bin/hooks/assistant-stop\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "mcp__plugin_discord_discord__reply|mcp__plugin_discord_discord__react|mcp__plugin_discord_discord__edit_message|mcp__plugin_discord_discord__fetch_messages|mcp__plugin_discord_discord__download_attachment",
