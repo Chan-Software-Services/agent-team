@@ -275,6 +275,8 @@ assert_nothing_written() {
       'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)' \
       "$REPO_ROOT/assistant.settings.json")"
   [[ $(cat "$settings") != *@TEAM_CODE@* && $(cat "$settings") != *@TEAM_HOME@* && $(cat "$settings") != *@DISCORD_STATE_DIR@* ]]
+  # Its Remote Control is the user settings', which its own settings leave alone.
+  assert_equal "$(jq -c 'has("remoteControlAtStartup")' "$settings")" false
   assert_equal "$(jq -c '[.env.AGENT_TEAM_ROLE, .env.DISCORD_STATE_DIR, .env.DISCORD_ACCESS_MODE, .autoMemoryDirectory]' "$settings")" \
     "$(jq -cn --arg d "$discord_state" --arg m "$TEAM_HOME/memory/assistant" '["assistant", $d, "static", $m]')"
   assert_equal "$(find "$state" -name '*.json.*')" ""
@@ -428,7 +430,11 @@ load_check_argv() {
     "$(jq -c --arg code "$REPO_ROOT" --arg home "$TEAM_HOME" --arg discord "$discord_state" \
       'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)
        | .enabledPlugins["discord@claude-plugins-official"] = false
-       | del(.hooks.Stop, .hooks.SessionStart)' "$REPO_ROOT/assistant.settings.json")"
+       | del(.hooks.Stop, .hooks.SessionStart)
+       | .remoteControlAtStartup = false' "$REPO_ROOT/assistant.settings.json")"
+  # Remote Control off, outranking the user settings' true, so the run leaves no row in Daniel's
+  # Remote Control list on claude.ai.
+  assert_equal "$(jq -c '.remoteControlAtStartup' "$settings")" false
   # Neither the Stop hook nor the start digest, which read the live assistant's list and hand-offs
   # and would have this session act on them; the guards on its tool calls stay.
   assert_equal "$(jq -c '.hooks | keys' "$settings")" '["PreToolUse"]'

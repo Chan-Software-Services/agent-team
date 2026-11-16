@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Prove what a worker can and cannot reach, with a throwaway session on task T0, and that each
 # treehouse pool hands out a clean slot.
-# Each T0 planner, builder and reviewer it starts has Remote Control off (team-worker sets
-# remoteControlAtStartup false in the settings it generates for one), so they leave no row in
+# Each T0 planner, builder and reviewer it starts, and the --role assistant form's T0-assistant,
+# has Remote Control off (team-worker, and bin/claude-assistant's --load-check form, set
+# remoteControlAtStartup false in the settings they generate for one), so they leave no row in
 # Daniel's Remote Control list on claude.ai; its ops session keeps settings/ops.json's Remote
-# Control, as a task's ops session does, and the --role assistant form's T0-assistant, launched
-# through bin/claude-assistant, keeps the assistant's settings.
+# Control, as a task's ops session does.
 #
 # It runs team-doctor first (--json, printing each line as the doctor does), and stops there,
 # leasing and launching nothing, on a FAIL that bears on a session it starts: any FAIL but the
@@ -131,8 +131,8 @@
 #
 # --role assistant, in the context and probe forms only, launches the assistant instead, through
 # this checkout's bin/claude-assistant --load-check in the same worktree: its own settings and role
-# prompt, in bypass mode, with the Discord plugin off and no --channels, named T0-assistant, so it
-# is no assistant to the singleton check. It takes no --toolkit, and has no effective autoMode to
+# prompt, in bypass mode, with the Discord plugin off, no --channels and Remote Control off, named
+# T0-assistant, so it is no assistant to the singleton check. It takes no --toolkit, and has no effective autoMode to
 # check, which its line says.
 #
 # The probe form proves, live, what each worker role (or with --role assistant, the assistant) is
