@@ -1093,17 +1093,16 @@ def waits_for_input($delivered):
 # builder's launch delivered with nothing asked of it since (delivered's), which launch_states
 # reads. They are every planner and reviewer, and every builder when the new worker is a builder
 # (team-worker keeps those of its own worktree, one builder holding a worktree's work at a time),
-# or with no new launch every builder that a
-# later logged builder launch of its worktree follows, and every ticket builder (a launch with a
-# ticket) that its ticket's ticket-done follows. Handed on is a launch the ledger follows with a
-# done of its session, or for a builder what else ends it (ends_launch: its ticket's ticket-done
-# for a ticket builder, else a pr or any ticket-done), or with a paused whose cause
-# is stow (park_cause: "stowed", "stowed, handoff written") and then a logged launch of its role
-# and worktree (a stow carries no session, so it
-# hands on only to the fresh worker that resumes the work, and a resumed does not undo it);
-# stowed is whether such a paused follows it, so team-worker can count itself as that fresh
-# worker. Any other paused is a wait the worker comes back from, and a review carries no session,
-# so a reviewer is handed on by the done logged beside its review.
+# or with no new launch every builder that a later logged builder launch of its worktree follows,
+# and every ticket builder (a launch with a ticket) that its ticket's ticket-done follows. Handed
+# on is a launch the ledger follows with a done of its session, or for a builder what else ends it
+# (ends_launch: its ticket's ticket-done for a ticket builder, else a pr or any ticket-done), or
+# with a paused whose cause is stow (park_cause: "stowed", "stowed, handoff written") and then a
+# logged launch of its role and worktree (a stow carries no session, so it hands on only to the
+# fresh worker that resumes the work, and a resumed does not undo it); stowed is whether such a
+# paused follows it, so team-worker can count itself as that fresh worker. Any other paused is a
+# wait the worker comes back from, and a review carries no session, so a reviewer is handed on by
+# the done logged beside its review.
 def handed_on_launches($role; $home):
   . as $events
   | [to_entries[] | .key as $i | .value
