@@ -3,6 +3,7 @@
 1. Bring the branch up to date with the base: `git fetch origin`; if `git merge-base --is-ancestor origin/{{base}} HEAD` fails, merge `origin/{{base}}` with a merge commit (`git merge origin/{{base}}`, never a rebase), resolve any conflict and re-run what the conflicts touched.
    A conflict whose resolution is a judgment call on behaviour goes to `coordinator` as `{{task}} QUESTION <the conflict> | options: ...`.
 2. Find what your branch made false: for each file, command, flag, setting and path it adds, renames or removes (`git diff --stat origin/{{base}}...HEAD`), `git grep` its name in the repository's Markdown, `CLAUDE.md`, `AGENTS.md` and script headers, and fix every line that no longer holds, in the same PR.
+   Then write the intent you will give the gate in step 4 to `{{task_dir}}/intent.md`, run `/claims-check . origin/{{base}} --pr-body {{task_dir}}/intent.md`, since the gate drafts the PR's body from it, and fix or cut each sentence it names, in the same PR.
 3. Before you push: {{tests}}
    Then push the branch (under a Disclosure section, not before the review passes: the reviewer reads your local head) and send `{{task}} DONE review-ready <the full sha of HEAD>` to `coordinator`, then wait: the team reviews that head before the gate runs, so the gate runs once.
    Fix each finding the coordinator sends you on the branch and push; once they are fixed, or the coordinator says the review passed, go on.

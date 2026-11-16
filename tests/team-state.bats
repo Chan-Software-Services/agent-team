@@ -55,12 +55,18 @@ fixture_ledger() {
 
 # gh answers PR #5 of owner/proj: its view, all its checks and its server-required checks, each
 # from the JSON given (or from $view, $checks and $required), and gh api's compare of its base and
-# head from the fourth (or $compare), failing as an unreadable compare when that is empty or unset.
+# head from the fourth (or $compare), failing as an unreadable compare when that is empty or unset;
+# its base under no classic protection, with the rulesets' rules $rules (none when unset) and ruleset 9 by no one
+# bypassed.
 stub_github() {
   export GH_VIEW=${1:-$view} GH_CHECKS=${2:-$checks} GH_REQUIRED=${3:-$required} GH_COMPARE=${4:-${compare:-}}
+  export GH_RULES=${rules:-[]}
   stub_script gh <<'EOF'
 case "$1 $2 $*" in
   "pr view"*) echo "$GH_VIEW" ;;
+  "api repos/owner/proj/branches/"*) echo '{"name": "main", "protected": true}' ;;
+  "api repos/owner/proj/rules/branches/"*) echo "$GH_RULES" ;;
+  "api repos/owner/proj/rulesets/9 "*) echo '{"id": 9, "name": "main", "bypass_actors": []}' ;;
   "api repos/"*/compare/*)
     if [[ -n $GH_COMPARE ]]; then echo "$GH_COMPARE"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
   "pr checks"*--required*) echo "$GH_REQUIRED" ;;
@@ -566,6 +572,7 @@ TOML
   required='[{"name": "shellcheck", "bucket": "pass", "state": "SUCCESS"},
     {"name": "build", "bucket": "pending", "state": "IN_PROGRESS"}]'
   compare=0
+  rules='[{"type": "merge_queue", "ruleset_id": 9, "parameters": {"merge_method": "MERGE", "grouping_strategy": "ALLGREEN"}}]'
   stub_github
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -c '.pr | del(.merge_authority)' <<<"$output")" "$(jq -cn --arg head "$head" '{
@@ -574,7 +581,8 @@ TOML
     caught_up: false, checks: {passed: ["agent-review", "docs", "shellcheck"], failing: ["deploy", "lint"], pending: ["build"]},
     required: ["build", "shellcheck", "test"], required_missing: ["test"],
     agent_review: "success", merge_approved: true, behind_by: 0,
-    review_app: null, review_check: null, review_check_run: null, review_check_by: null}')"
+    queue: {merge_method: "MERGE", grouping_strategy: "ALLGREEN"},
+    review_app: null, review_check: null, review_check_run: null, review_check_by: null, queued: null}')"
   # The words, as merge_authority derives them: a legacy merge-approved, naming no head, holds on
   # the ledger for the PR's latest pr event; no plan is approved.
   assert_equal "$(jq -c '.pr.merge_authority | [.word, [.words[] | .word, .applies, .holds]]' <<<"$output")" \
@@ -583,7 +591,15 @@ TOML
     ["pr", "view", "5", "--repo", "owner/proj", "--json", "number,state,baseRefName,headRefOid,headRefName,changedFiles"],
     ["pr", "checks", "5", "--repo", "owner/proj", "--json", "name,bucket,state"],
     ["pr", "checks", "5", "--repo", "owner/proj", "--required", "--json", "name,bucket,state"],
+    ["api", "repos/owner/proj/branches/main"],
+    ["api", "repos/owner/proj/rules/branches/main", "--paginate"],
+    ["api", "repos/owner/proj/rulesets/9"],
     ["api", "repos/owner/proj/compare/main...\($head)", "--jq", ".behind_by"]')"
+  # Rules that cannot be read leave queue null and the rest of the part as it is.
+  rules='not json'
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.queue, .behind_by, .error]' <<<"$output")" '[null,0,null]'
 }
 
 @test "the head moved when GitHub's head is not the ledger's, and approval is per PR, by its URL" {
@@ -720,7 +736,7 @@ EOF
   assert_equal "$(jq -c '.pr | del(.merge_authority)' <<<"$output")" "$(jq -cn --arg head "$head" '{
     url: "https://github.com/owner/proj/pull/5", number: 5, repo: "owner/proj", project: "proj",
     ledger_head: $head, merge_approved: true,
-    error: "gh pr view: error connecting to api.github.com"}')"
+    error: "gh pr view: error connecting to api.github.com", queued: null}')"
   assert_equal "$(jq -c '[.phase, .title, .thread, .workers[0].live, (.worktrees | length)]' <<<"$output")" \
     '["in-review","The tooling","1563",true,1]'
 
@@ -1142,6 +1158,70 @@ files_read() {
   assert_equal "$(jq -c .checks_wait <<<"$output")" null
   run_bin -0 team-state T14
   assert_equal "$output" "T14 proj feature in-review | no live worker | review 2 findings, sent back 1 | PR #5 a1b2c3d checks 1/1 agent-review missing"
+}
+
+@test "a PR in the merge queue shows since when, and whether a team-merge holds the task's lock, until its dequeued or merged" {
+  local url=https://github.com/owner/proj/pull/5 line pid lock
+  awaiting_merge
+  line="T14 proj feature awaiting-merge | no live worker | review 1 pass | PR #5 a1b2c3d checks 1/1 agent-review missing | checks waiting"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued <<<"$output")" null
+  ledger_line --arg url "$url" --arg head "$head" \
+    '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "queued", url: $url, head: $head, project: "proj"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued <<<"$output")" "{\"since\":\"2026-10-22T03:00:00Z\",\"head\":\"$head\",\"waited_on\":false}"
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, no team-merge waits on it: run team-merge T14"
+  # The lock file a team-merge that ended left, which nobody holds, is no wait.
+  lock=$HOME/.local/state/agent-team/merge/T14.lock
+  mkdir -p "${lock%/*}"
+  echo 4242 >"$lock"
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, no team-merge waits on it: run team-merge T14"
+  # Held, a team-merge is waiting; the read takes no lock, so one more holder could not have it
+  # while the first does, and can the moment it ends.
+  pid=$(hold_merge_lock T14)
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, team-merge is waiting"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.waited_on <<<"$output")" true
+  run ! flock -n "$lock" true
+  release_merge_lock "$pid"
+  flock -n "$lock" true
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line | in the merge queue since 2026-10-22T03:00:00Z, no team-merge waits on it: run team-merge T14"
+  # A URL under the repo's old owner or with a trailing slash is the same PR; dropped, it is in no queue.
+  ledger_line --arg url "$url/" --arg head "$head" \
+    '{ts: "2026-10-22T03:30:00Z", task: "T14", event: "dequeued", url: $url, head: $head, reason: "GitHub gives no reason"}'
+  run_bin -0 team-state T14
+  assert_equal "$output" "$line"
+  # Queued again, then merged: in no queue.
+  ledger_line --arg url "$url" --arg head "$head" \
+    '{ts: "2026-10-22T04:00:00Z", task: "T14", event: "queued", url: $url, head: $head, project: "proj"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.since <<<"$output")" '"2026-10-22T04:00:00Z"'
+  event T14 merged "{pr: 5, merge: \"9999999\", head: \"$head\", by: \"the approved plan\", url: \"$url\"}"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued <<<"$output")" null
+}
+
+@test "on a machine with no /proc, the merge lock is read from lsof, and one lsof cannot read is not held" {
+  local url=https://github.com/owner/proj/pull/5 lock
+  awaiting_merge
+  ledger_line --arg url "$url" --arg head "$head" \
+    '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "queued", url: $url, head: $head, project: "proj"}'
+  lock=$HOME/.local/state/agent-team/merge/T14.lock
+  mkdir -p "${lock%/*}" "$BATS_TEST_TMPDIR/no-proc"
+  echo 4242 >"$lock"
+  export TEAM_PROC=$BATS_TEST_TMPDIR/no-proc
+  stub_command lsof
+  stub_script lsof <<<'echo 4242'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.waited_on <<<"$output")" true
+  assert_equal "$(stub_calls lsof)" "[\"-t\",\"--\",\"$(realpath "$lock")\"]"
+  stub_script lsof <<<'exit 1'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .pr.queued.waited_on <<<"$output")" false
 }
 
 # The task T14 of project proj opened in a worktree that is a real directory, with <n> tickets in

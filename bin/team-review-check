@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Post agent-review as the reviewer App's check run on the head of a PR whose review the ledger
-# holds, so the check comes from the App's key and from no session's token.
+# holds, or on the merge queue's trial commit that merges that head, so the check comes from the
+# App's key and from no session's token.
 #
 # Usage: team-review-check <pr url> <sha> <success|failure> <summary>
+#        team-review-check --merge-group <pr url> <sha>
 #   pr url   https://github.com/<owner>/<name>/pull/<n>, in a registered project's repo
-#   sha      the full 40-hex sha of the PR's head
+#   sha      the full 40-hex sha of the PR's head or, with --merge-group, of the merge queue's
+#            trial commit for the PR
 #   summary  one line of at most 140 characters, the check run's title and summary
+# --merge-group posts success on the queue's trial commit, only once that commit is proved to be
+# the PR's reviewed head merged cleanly onto what is ahead of it in the queue; its summary names
+# the head.
 # Refused, exit 1, posting nothing, each before any later check is read:
 #   a planner, builder, reviewer or ops session (worker_refusal in bin/lib/team.sh), before
 #   anything is read;
@@ -21,6 +27,14 @@
 #   success and findings for failure, or no such review; each head matched in full, never by a
 #   prefix, so a review logged on a short head stands for no sha, and is named as such;
 #   a sha that is not the PR's head, read with gh pr view.
+# With --merge-group, in place of the last two, each refused the same way:
+#   a trial commit queue_commit_problems in bin/lib/team.sh names a problem with: not the head
+#   commit of the PR's queue entry, read from GitHub at the call, an entry that is UNMERGEABLE, a
+#   commit that is not exactly the PR's head merged cleanly onto a commit holding the entry's
+#   base, or a project whose merge_method is not merge; or an entry or commit that cannot be read;
+#   a PR's head whose latest review, read as above, is not a pass;
+#   a PR's head whose latest agent-review check run by the App, read from GitHub, is not a
+#   success, so a trial commit gets the App's check only where the head has it.
 # Then it signs a JWT with the key (review_app_jwt: RS256 by openssl, issued 60 seconds back,
 # expiring 9 minutes on), reads the App's installation on the repo registered_pr gives, the
 # registry's at the end of its moves, so a moved repo's new owner (GET /repos/{repo}/installation),
@@ -34,18 +48,33 @@
 # A call GitHub refuses, or curl cannot make, ends it, exit 1, naming the call and why, and that
 # nothing was posted, but for a post curl could not finish, which may have reached GitHub and is
 # said to be unknown; a redirect is never followed, so a 301 is GitHub's answer, refused as any
-# code but the one expected is. Once the token is minted it is revoked on every exit, a failed post
+# code but the one expected is. An installation read answered 404 or 301 names its two causes: the
+# App is not installed for the repo's owner, or the repo moved and bin/lib/repo-moves.json lacks
+# the move. Once the token is minted it is revoked on every exit, a failed post
 # included, and a revoke that fails is said on stderr (the token expires on its own within the
 # hour), exit 1, after the check run's id when the post was made, so a caller that reads an id on
 # stdout knows the check was posted. A token GitHub answers that is not of a token's characters is
 # never sent.
+# With --merge-group, exit 1 is a refusal that stands while nothing changes (the commit is not the
+# proved merge, the head has no passing review or no success of the App's), on which team-land
+# takes the PR out of the queue, and exit 75 says the check could not be posted now, to try again:
+# an entry, a commit, the ledger or the head's check runs that cannot be read, and any call as
+# the App that fails with no check run posted, whether or not the token's revoke failed after it.
 # Exit 2, posting nothing: any other command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 why=$(worker_refusal "" "posts no agent-review check") && die "$why"
 
-[[ $# -eq 4 ]] || usage_error "usage: team-review-check <pr url> <sha> <success|failure> <summary>"
-url=$1 sha=$2 conclusion=$3 summary=$4
+usage="usage: team-review-check <pr url> <sha> <success|failure> <summary> | --merge-group <pr url> <sha>"
+group=''
+if [[ ${1:-} == --merge-group ]]; then
+  [[ $# -eq 3 ]] || usage_error "$usage"
+  # The summary is a stand-in until the proof names the head.
+  group=1 url=$2 sha=$3 conclusion=success summary="the merge queue's trial commit"
+else
+  [[ $# -eq 4 ]] || usage_error "$usage"
+  url=$1 sha=$2 conclusion=$3 summary=$4
+fi
 [[ $sha =~ ^[0-9a-f]{40}$ ]] || usage_error "the sha is a full 40-hex commit sha, got '$sha'"
 [[ $conclusion == success || $conclusion == failure ]] ||
   usage_error "the conclusion is success or failure, got '$conclusion'"
@@ -68,40 +97,47 @@ mode=$(stat -L -c %a -- "$key")
 [[ $mode == 600 ]] || die "the reviewer App's key ~/.config/agent-team/review-app.pem is mode $mode, not 600: $restore"
 
 pr=$(registered_pr "$url")
-{ read -r _ && read -r repo && read -r number; } <<<"$pr"
+{ read -r project && read -r repo && read -r number; } <<<"$pr"
 
-# The PR's task: the latest pr event naming the URL, both in canonical form (a moved repo under
-# its new owner), so a PR logged under either owner is found by either's URL.
-task=''
-if [[ -s $TEAM_HOME/ledger.jsonl ]]; then
-  task=$(ledger_jq '($url | canonical_url | ascii_downcase) as $url | ledger_events
-    | [.[] | select(.event == "pr" and (.url | strings | rtrimstr("/") | ascii_downcase) == $url) | .task]
-    | last // empty' -rnR --arg url "$url" "$TEAM_HOME/ledger.jsonl")
-fi
+task=$(pr_task "$url")
 [[ -n $task ]] || die "no task's pr event names $url, so no review of it is logged; nothing posted"
-events=$(task_event_array "$task")
-verdict=$([[ $conclusion == success ]] && echo pass || echo findings)
-refusal=$(ledger_jq 'exact_reviewed_head($sha) as $reviewed
-  | "\($reviewed[:7])\(if exact_head($reviewed; $sha) then "" else " (caught up to \($sha[:7]))" end)" as $named
-  | ([.[] | select(.event == "review" and exact_head(.head; $reviewed))] | last) as $review
-  | ([.[] | select(.event == "review" and same_head(.head; $reviewed))] | last) as $prefix
-  | if $review == null and $prefix != null then
-      "\($task)'"'"'s review of \($prefix.head), at \($prefix.ts // "no time"), names its head by a prefix, not in full, so it stands for no full sha"
-    elif $review == null then "\($task) logged no review of \($named), so no reviewer'"'"'s verdict is there to post"
-    elif $review.verdict != $verdict then
-      "\($task)'"'"'s latest review of \($named), at \($review.ts // "no time"), is \($review.verdict), so agent-review on it is \(
-        if $review.verdict == "pass" then "success" else "failure" end), not \($conclusion)"
-    else empty end' -r --arg sha "$sha" --arg task "$task" --arg verdict "$verdict" --arg conclusion "$conclusion" <<<"$events") ||
-  die "the ledger's reviews of $task cannot be read"
+# What could not be read or posted now ends a --merge-group run with exit 75, to try again, and
+# the head's form as die does: later <why>
+later() {
+  echo "${0##*/}: $1" >&2
+  [[ -z $group ]] || exit 75
+  exit 1
+}
+# The head whose review stands for the sha: the sha itself, or the PR's head a trial commit merges.
+reviewed=$sha
+if [[ -n $group ]]; then
+  rc=0
+  reviewed=$(queue_commit_problems "$project" "$repo" "$number" "$sha") || rc=$?
+  ((rc != 2)) || later "$reviewed; nothing posted"
+  ((rc == 0)) || die "$reviewed; nothing posted"
+  summary="the merge queue's clean merge of the reviewed head ${reviewed:0:7}"
+fi
+refusal=$(review_refusal "$task" "$reviewed" "$conclusion") || later "the ledger's reviews of $task cannot be read"
 [[ -z $refusal ]] || die "$refusal; nothing posted"
 
-head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq .headRefOid) || die "gh cannot read the head of $url"
-[[ $head == "$sha" ]] || die "$url moved past $sha: its head is now $head; nothing posted"
+if [[ -n $group ]]; then
+  runs=$(bounded 30 gh api "repos/$repo/commits/$reviewed/check-runs?check_name=agent-review&filter=latest&per_page=100" </dev/null) ||
+    later "gh cannot read the agent-review check runs of $url's head $reviewed; nothing posted"
+  jq -e --argjson app "$app_id" --arg head "$reviewed" '[.check_runs[]?
+    | select(.name == "agent-review" and .app.id == $app and .head_sha == $head)] | max_by(.id)
+    | .status == "completed" and .conclusion == "success"' <<<"$runs" >/dev/null ||
+    die "$url's head $reviewed carries no agent-review success of the reviewer App $app_id, so its trial commit gets none; nothing posted"
+else
+  head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq .headRefOid) || die "gh cannot read the head of $url"
+  [[ $head == "$sha" ]] || die "$url moved past $sha: its head is now $head; nothing posted"
+fi
 
 scratch=$(mktemp -d)
 token='' posted='' answer=''
 # On every exit once a token is minted, it is revoked; a revoke that fails is said and fails the run,
-# after the check run's id when the post was made.
+# after the check run's id when the post was made. A --merge-group run that fails from here on
+# with no check run posted ends with exit 75, a revoke that failed too or not: the commit was not
+# refused, and the post is tried again.
 finish() {
   local status=$? code
   if [[ $token =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -114,6 +150,7 @@ finish() {
       status=1
     fi
   fi
+  [[ -z $group || -n $posted || $status != 1 ]] || status=75
   rm -rf "$scratch"
   exit "$status"
 }
@@ -127,19 +164,27 @@ answered() {
 }
 
 # One call as the App, its answer's body in $answer, held in memory alone (a minted token is in
-# it), or the end of the run naming <what> and why, then <after> (by default "nothing posted"):
-# call <what> <expected code> <method> <path> <bearer> [<body file> [<after>]]
+# it), or the end of the run naming <what> and why, then <after> (by default "nothing posted"); an
+# answer of a code in <causes> (codes between spaces, "" for none) names $cause after GitHub's:
+# call <what> <expected code> <method> <path> <bearer> [<body file> [<after> [<causes>]]]
 call() {
-  local what=$1 expected=$2 after=${7:-nothing posted} code
+  local what=$1 expected=$2 after=${7:-nothing posted} causes=${8:-} code why
   if ! answer=$(review_app_api "$3" "$4" "$5" "${6:-}" 2>"$scratch/curl.err"); then
     die "$what failed: $(grep -m1 . "$scratch/curl.err" || echo "curl failed"); $after"
   fi
   code=${answer##*$'\n'} answer=${answer%$'\n'*}
-  [[ $code == "$expected" ]] || die "$what failed: $(answered "$code"); nothing posted"
+  if [[ $code != "$expected" ]]; then
+    why=$(answered "$code")
+    if [[ " $causes " == *" $code "* ]]; then why+=" ($cause)"; fi
+    die "$what failed: $why; nothing posted"
+  fi
 }
 
 jwt=$(review_app_jwt "$app_id" "$key") || die "the reviewer App's key cannot sign a JWT; nothing posted"
-call "reading the App's installation on $repo" 200 GET "repos/$repo/installation" "$jwt"
+# GitHub answers an installation read 404 where the App is not installed, and 301, which is not
+# followed, or 404 for a repository that moved.
+cause="the reviewer App is not installed for ${repo%%/*}, or $repo moved and bin/lib/repo-moves.json lacks the move"
+call "reading the App's installation on $repo" 200 GET "repos/$repo/installation" "$jwt" "" "" "404 301"
 installation=$(printf '%s' "$answer" | jq -r '.id // empty')
 [[ $installation =~ ^[1-9][0-9]*$ ]] ||
   die "reading the App's installation on $repo failed: GitHub's answer names no installation id; nothing posted"
