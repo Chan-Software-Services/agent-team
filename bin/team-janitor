@@ -53,7 +53,8 @@
 #   owner     the user running the sweep
 #   name      one of these rules names it whole; inside a session tmp, only the list:
 #               list  a line of bin/lib/tmp-leftovers, read from this checkout: the names only
-#                     the team's test runs make, each with its maker
+#                     the team's test runs make, each with its maker; a line whose expression
+#                     holds a | (an alternation) is refused, and the run with it
 #               task  agent-team-T<n>, a session tmp, or t<n> or T<n> followed by a -, a . or an
 #                     _ and more, a worker's scratch, when the ledger knows task T<n> and it is
 #                     not open; a number the ledger does not know is kept, and so is every such
@@ -62,11 +63,12 @@
 #               gate  agent-team-gate-<8 letters, digits or dashes>, a gate session's tmp
 #   age       it was last modified at least 60 minutes ago, or 24 hours for the gate rule
 #   not live  no process of this user names it: its full path, followed by a /, a space, a :, a
-#             line break or the end, is in no process's working directory, command line or
-#             environment (/proc on Linux; lsof and ps on macOS), this run's own process and its
-#             children aside. The processes are read once, and only when an entry passed the
-#             rules above; when they cannot be read, nothing is removed and the run exits 1
-#             saying why.
+#             line break or the end, is in no process's working directory, open files (a lock,
+#             a pid file), command line or environment (/proc on Linux; lsof and ps on macOS),
+#             this run's own process and its children aside. The processes are read once, and
+#             only when an entry passed the rules above, keeping only the lines that name a path
+#             under a root, so no environment's other values reach the run's scratch; when they
+#             cannot be read, nothing is removed and the run exits 1 saying why.
 # A directory is made writable first (chmod -R, which changes no link), so a read-only tree goes
 # too, and removed with rm -rf --one-file-system; a file with rm -f. A session tmp removed whole
 # takes its entries with it; one kept, an open task's or a live one, has the list applied inside.

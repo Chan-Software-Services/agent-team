@@ -5,9 +5,10 @@
 # regular expression matched against the whole name of an entry, case-sensitively. A # line and a
 # blank line are comments.
 # A line may only be a name that the team's test runs alone make: its expression begins with a
-# literal of at least 6 characters, and it never matches mktemp's default (tmp.XXXXXXXXXX), which
-# any program makes, nor what systemd, Claude Code, Chrome, Node or pytest keep there.
-# tests/repo.bats holds each line to that.
+# literal of at least 6 characters, holds no | (an alternation would match past that literal),
+# and never matches mktemp's default (tmp.XXXXXXXXXX), which any program makes, nor what systemd,
+# Claude Code, Chrome, Node or pytest keep there. tests/repo.bats holds each line to that, and
+# team-janitor tmp refuses to run with a line holding a |.
 no-mistakes nm-cli-home-[0-9]+
 no-mistakes nm-cli-test-[0-9]+
 no-mistakes nm-timeout-bin-[0-9]+

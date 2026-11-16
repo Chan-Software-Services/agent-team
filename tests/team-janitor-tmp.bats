@@ -258,6 +258,52 @@ removed $VAR_ROOT/nm-cli-home-4 (0 MB, untouched 2 h; no-mistakes)"
   [[ -d $TMP_ROOT/nm-cli-home-5 && -d $TMP_ROOT/nm-cli-home-6 && -d $TMP_ROOT/nm-cli-home-7 && -d $TMP_ROOT/nm-cli-home-8 ]]
 }
 
+@test "team-janitor tmp leaves an entry a process holds only by an open file in it, a lock or a pid file, and removes it once the process ended" {
+  stale_dir "$TMP_ROOT/bats-run-AbC123"
+  stale_dir "$VAR_ROOT/nm-cli-home-4"
+  # Each process runs from the test's directory, and neither its command line nor its environment
+  # names the entry: it holds a file in it open, a lock for writing and a pid file for reading.
+  (exec sleep 300) 9>"$TMP_ROOT/bats-run-AbC123/lock" >/dev/null 2>&1 3>&- &
+  started
+  echo 1 >"$VAR_ROOT/nm-cli-home-4/pid"
+  (exec sleep 300) 9<"$VAR_ROOT/nm-cli-home-4/pid" >/dev/null 2>&1 3>&- &
+  started
+  touch -d '125 minutes ago' "$TMP_ROOT/bats-run-AbC123" "$VAR_ROOT/nm-cli-home-4"
+  local pid
+  while read -r pid; do running "$pid" "sleep 300"; done <"$BATS_TEST_TMPDIR/background"
+
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  [[ -f $TMP_ROOT/bats-run-AbC123/lock && -f $VAR_ROOT/nm-cli-home-4/pid ]]
+
+  stop_background
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/bats-run-AbC123 (0 MB, untouched 2 h; bats)
+removed $VAR_ROOT/nm-cli-home-4 (0 MB, untouched 2 h; no-mistakes)"
+}
+
+@test "team-janitor tmp keeps no process's environment in its scratch: its process text holds only lines that name a root" {
+  stale_dir "$TMP_ROOT/nm-cli-home-1"
+  # A process whose environment holds a secret and no root, and one whose holds both.
+  TEAM_TMP_TEST_SECRET=hunter2-not-a-root sleep 300 >/dev/null 2>&1 3>&- &
+  started
+  running "$!" "sleep 300"
+  TEAM_TMP_TEST_SECRET=hunter2-not-a-root TEAM_TMP_TEST_DIR=$TMP_ROOT/kept sleep 301 >/dev/null 2>&1 3>&- &
+  started
+  running "$!" "sleep 301"
+  # The run's scratch in a directory of the test's, kept as a killed run would leave it: the EXIT
+  # trap's removal of it fails, whose exit code is then the run's.
+  mkdir "$BATS_TEST_TMPDIR/run-tmp"
+  fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
+  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -5 team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  local text
+  text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)
+  [[ -f $text ]]
+  assert_equal "$(cat "$text")" "TEAM_TMP_TEST_DIR=$TMP_ROOT/kept"
+}
+
 @test "team-janitor tmp removes a read-only tree, and a directory holding a link without what the link points at" {
   stale_dir "$TMP_ROOT/nm-cli-home-1"
   mkdir -p "$TMP_ROOT/nm-cli-home-1/pkg/mod/cache"
@@ -392,6 +438,19 @@ removed $VAR_ROOT/git-template-3 (0 MB, untouched 2 h; no-mistakes)"
   [[ -d $TMP_ROOT/nm-cli-home-1 ]]
 }
 
+@test "team-janitor tmp refuses a list line whose expression holds an alternation, removing nothing" {
+  stale_dir "$TMP_ROOT/nm-cli-home-1"
+  stale_dir "$TMP_ROOT/widened"
+  CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  rm "$CODE_CHECKOUT/bin/lib/tmp-leftovers"
+  { cat "$LIST"; echo 'no-mistakes nm-cli-home-[0-9]+|[a-z]+'; } >"$CODE_CHECKOUT/bin/lib/tmp-leftovers"
+  run_bin -1 team-janitor tmp
+  assert_equal "$output" "team-janitor: $CODE_CHECKOUT/bin/lib/tmp-leftovers: 'no-mistakes nm-cli-home-[0-9]+|[a-z]+' holds a |, which would widen the names it removes"
+  [[ -d $TMP_ROOT/nm-cli-home-1 && -d $TMP_ROOT/widened ]]
+}
+
 @test "team-janitor --help documents the tmp subcommand" {
   run_bin -0 team-janitor --help
   assert_contains "$output" "team-janitor tmp [--dry-run]"
@@ -454,6 +513,21 @@ closed_task() {
   assert_equal "$output" ""
   assert_equal "$stderr" ""
   assert_equal "$(find "$TMP_ROOT" "$VAR_ROOT" -mindepth 1 -maxdepth 1 | wc -l)" 26
+}
+
+@test "team-janitor tmp removes a name with a blank by its exact path, and a name with a blank or a line break widens no removal" {
+  closed_task T367
+  stale_dir "$TMP_ROOT/t367-a b"
+  stale_dir "$TMP_ROOT/nm-cli-home-1 x"
+  stale_dir "$TMP_ROOT/nm-cli-home-2"
+  stale_dir "$TMP_ROOT/nm-cli-home-3"$'\n'"nm-cli-home-2"
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-2 (0 MB, untouched 2 h; no-mistakes)
+removed $TMP_ROOT/t367-a b (0 MB, untouched 2 h; T367 is closed)"
+  [[ ! -e "$TMP_ROOT/t367-a b" && ! -e $TMP_ROOT/nm-cli-home-2 ]]
+  [[ -f "$TMP_ROOT/nm-cli-home-1 x/data" && -f "$TMP_ROOT/nm-cli-home-3"$'\n'"nm-cli-home-2/data" ]]
+  assert_equal "$(find "$TMP_ROOT" -mindepth 1 -maxdepth 1 -printf . | wc -c)" 2
 }
 
 @test "team-janitor tmp leaves every task-named entry when the ledger cannot be read, says so once, and still removes the listed ones" {

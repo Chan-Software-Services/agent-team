@@ -30,6 +30,8 @@ TMP_PATHS=() TMP_ALIASES=() TMP_WHYS=() TMP_PARENTS=()
 # The session tmps directly under the /tmp root, by name, whose entries are read too; and the
 # directories removed (or, on a dry run, that would be), whose entries go with them.
 TMP_SESSIONS=() TMP_GONE=()
+# The roots, each as resolved and as named, the only paths the process text keeps lines of.
+TMP_ROOTS=()
 # The ledger's tasks, each "open" or "closed", read at the first stale entry named for a task:
 # TMP_LEDGER is empty until then, then "read", or "none" when it could not be read.
 declare -gA TMP_TASKS=()
@@ -37,7 +39,8 @@ TMP_LEDGER=''
 # Set when the run ends with exit 1.
 TMP_FAILED=''
 
-# Read the list into TMP_MAKERS and TMP_NAMES, refusing a line that is not <maker> <expression>.
+# Read the list into TMP_MAKERS and TMP_NAMES, refusing a line that is not <maker> <expression>,
+# or whose expression holds a |.
 tmp_read_list() {
   local tmp_list=$TEAM_LIB/tmp-leftovers tmp_line
   [[ -r $tmp_list ]] || die "cannot read the list of leftovers, $tmp_list"
@@ -45,6 +48,8 @@ tmp_read_list() {
     [[ -n $tmp_line && $tmp_line != '#'* ]] || continue
     [[ $tmp_line =~ ^([A-Za-z0-9][A-Za-z0-9_-]*)\ ([^[:space:]]+)$ ]] ||
       die "$tmp_list: '$tmp_line' is not <maker> <expression>"
+    # An alternation would match past the literal the line begins with.
+    [[ $tmp_line != *'|'* ]] || die "$tmp_list: '$tmp_line' holds a |, which would widen the names it removes"
     TMP_MAKERS+=("${BASH_REMATCH[1]}")
     TMP_NAMES+=("${BASH_REMATCH[2]}")
   done <"$tmp_list"
@@ -151,23 +156,32 @@ tmp_last_line() {
   grep . "$1" 2>/dev/null | tail -n 1 | grep . || echo "no reason given"
 }
 
-# Write the process text, what this user's processes name, to $TMP_WORK/processes, one name per
-# line: each process's working directory, command line and environment, but for this run's own
-# process and its children. It fails, saying why on stderr, when they cannot be read.
+# The lines of stdin that name a path under one of TMP_ROOTS, so no other text of a process (an
+# environment's tokens) is kept; exits 97 when stdin held no line at all.
+tmp_rooted() {
+  TMP_ROOTS_TEXT=$(printf '%s\n' "${TMP_ROOTS[@]}") LC_ALL=C awk '
+    BEGIN { n = split(ENVIRON["TMP_ROOTS_TEXT"], roots, "\n") }
+    { read = 1; for (i = 1; i <= n; i++) if (roots[i] != "" && index($0, roots[i] "/")) { print; next } }
+    END { exit read ? 0 : 97 }'
+}
+
+# Write the process text, what this user's processes name under a root, to $TMP_WORK/processes,
+# one name per line: each process's working directory, open files, command line and environment,
+# but for this run's own process and its children, and only the lines that name a path under a
+# root. It fails, saying why on stderr, when they cannot be read.
 tmp_read_processes() {
-  local tmp_out=$TMP_WORK/processes tmp_self=$$
+  local tmp_out=$TMP_WORK/processes tmp_failed=$TMP_WORK/processes.failed tmp_self=$$ tmp_rc=0
   if [[ ${TEAM_KERNEL:-$(uname -s)} == Darwin ]]; then
-    # lsof prints p<pid>, then fcwd and n<directory>, per process; ps one process per line.
-    if ! lsof -a -u "$(id -u)" -d cwd -Fpn 2>"$TMP_WORK/processes.err" |
-      awk -v self="$tmp_self" '/^p/ { skip = ($0 == "p" self) } /^n/ && !skip { print substr($0, 2) }' >"$tmp_out"; then
-      echo "lsof failed: $(tmp_last_line "$TMP_WORK/processes.err")" >&2
-      return 1
-    fi
-    if ! ps -x -E -ww -o pid=,ppid=,command= 2>"$TMP_WORK/processes.err" |
-      awk -v self="$tmp_self" '$1 != self && $2 != self' >>"$tmp_out"; then
-      echo "ps failed: $(tmp_last_line "$TMP_WORK/processes.err")" >&2
-      return 1
-    fi
+    # lsof prints p<pid>, then f<descriptor> and n<name>, per open file, the working directory
+    # among them; ps one process per line.
+    {
+      lsof -u "$(id -u)" -Fpn 2>"$TMP_WORK/processes.err" |
+        awk -v self="$tmp_self" '/^p/ { skip = ($0 == "p" self) } /^n/ && !skip { print substr($0, 2) }' ||
+        echo "lsof failed: $(tmp_last_line "$TMP_WORK/processes.err")" >"$tmp_failed"
+      ps -x -E -ww -o pid=,ppid=,command= 2>"$TMP_WORK/processes.err" |
+        awk -v self="$tmp_self" '$1 != self && $2 != self' ||
+        echo "ps failed: $(tmp_last_line "$TMP_WORK/processes.err")" >"$tmp_failed"
+    } | tmp_rooted >"$tmp_out" || tmp_rc=$?
   else
     local tmp_proc tmp_pid tmp_stat tmp_links=() tmp_files=()
     if [[ ! -r /proc/$tmp_self/cmdline ]]; then
@@ -183,22 +197,30 @@ tmp_read_processes() {
       tmp_stat=${tmp_stat##*) }
       tmp_stat=${tmp_stat#* }
       [[ ${tmp_stat%% *} != "$tmp_self" ]] || continue
-      tmp_links+=("$tmp_proc/cwd")
+      # Its working directory and each file it holds open, a lock or a pid file say.
+      tmp_links+=("$tmp_proc/cwd" "$tmp_proc"/fd/*)
       tmp_files+=("$tmp_proc/cmdline" "$tmp_proc/environ")
     done
-    : >"$tmp_out"
-    if ((${#tmp_links[@]})); then
-      # A process that ended since is a missing file, which fails neither read.
-      readlink -- "${tmp_links[@]}" >>"$tmp_out" 2>/dev/null || true
-      # grep ends each file's text with a line break, so no name runs into the next file's.
-      if ! { grep -ash '' -- "${tmp_files[@]}" || true; } | tr '\0' '\n' >>"$tmp_out"; then
-        echo "the processes' command lines and environments could not be read" >&2
-        return 1
+    {
+      if ((${#tmp_links[@]})); then
+        # A process or file that ended since is a missing link, which fails no read.
+        printf '%s\0' "${tmp_links[@]}" | xargs -0 readlink -- 2>/dev/null || true
+        # grep ends each file's text with a line break, so no name runs into the next file's.
+        { grep -ash '' -- "${tmp_files[@]}" || true; } | tr '\0' '\n' ||
+          echo "the processes' command lines and environments could not be read" >"$tmp_failed"
       fi
-    fi
+    } | tmp_rooted >"$tmp_out" || tmp_rc=$?
   fi
-  if [[ ! -s $tmp_out ]]; then
+  if [[ -s $tmp_failed ]]; then
+    cat "$tmp_failed" >&2
+    return 1
+  fi
+  if ((tmp_rc == 97)); then
     echo "no process of this user could be read" >&2
+    return 1
+  fi
+  if ((tmp_rc)); then
+    echo "the processes could not be read" >&2
     return 1
   fi
 }
@@ -544,6 +566,7 @@ tmp_main() {
   for tmp_named_root in "${TEAM_SYSTEM_ROOT:-}/tmp" "${TEAM_SYSTEM_ROOT:-}/var/tmp"; do
     [[ -d $tmp_named_root ]] || continue
     tmp_root=$(realpath -- "$tmp_named_root") || continue
+    TMP_ROOTS+=("$tmp_root" "$tmp_named_root")
     if [[ $tmp_named_root == */var/tmp ]]; then
       tmp_scan "$tmp_root" "$tmp_named_root"
       continue

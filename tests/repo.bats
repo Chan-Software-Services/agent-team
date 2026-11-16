@@ -3151,10 +3151,12 @@ briefs_without_gotchas() {
 }
 
 # The names team-janitor tmp may remove (bin/lib/tmp-leftovers): each line a maker, a project of
-# the registry fixture or bats, and an expression that begins with at least 6 literal characters,
-# so none is a name another program makes: mktemp's default, systemd's, Claude Code's or pytest's.
-@test "every line of bin/lib/tmp-leftovers is a maker and an expression that begins with 6 literal characters and matches no other program's name" {
-  local file=$REPO_ROOT/bin/lib/tmp-leftovers names line maker expression name count=0
+# the registry fixture or bats, and an expression that begins with at least 6 literal characters
+# and holds no |, so no alternation widens it past that beginning, and none is a name another
+# program makes: mktemp's default, systemd's, Claude Code's or pytest's. Says the first line it
+# refuses on stderr and fails: leftovers_hold <file>
+leftovers_hold() {
+  local file=$1 names line maker expression name count=0
   names=$(sed -n 's/^\[\([a-z0-9-]*\)\]$/\1/p' "$REPO_ROOT/tests/fixtures/projects.toml")
   while IFS= read -r line; do
     [[ -n $line && $line != '#'* ]] || continue
@@ -3165,6 +3167,8 @@ briefs_without_gotchas() {
       { echo "bin/lib/tmp-leftovers: the maker of '$line' is neither bats nor a project of the registry fixture" >&2; return 1; }
     [[ $expression =~ ^[A-Za-z0-9_-]{6} ]] ||
       { echo "bin/lib/tmp-leftovers: '$expression' does not begin with 6 literal characters" >&2; return 1; }
+    [[ $expression != *'|'* ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' holds a |, which would widen the names it removes" >&2; return 1; }
     for name in tmp.AbCdEfGhIj systemd-private-x claude-1000 pytest-of-user; do
       if [[ $name =~ ^($expression)$ ]]; then
         echo "bin/lib/tmp-leftovers: '$expression' matches $name, which is not the team's" >&2
@@ -3173,4 +3177,15 @@ briefs_without_gotchas() {
     done
   done <"$file"
   ((count >= 12))
+}
+
+@test "every line of bin/lib/tmp-leftovers is a maker and an expression that begins with 6 literal characters, holds no | and matches no other program's name" {
+  leftovers_hold "$REPO_ROOT/bin/lib/tmp-leftovers"
+}
+
+@test "the leftovers' check refuses a line whose expression widens itself with an alternation" {
+  { cat "$REPO_ROOT/bin/lib/tmp-leftovers"; echo 'no-mistakes nm-cli-home-[0-9]+|[a-z]+'; } >"$BATS_TEST_TMPDIR/tmp-leftovers"
+  run leftovers_hold "$BATS_TEST_TMPDIR/tmp-leftovers"
+  assert_equal "$status" 1
+  assert_equal "$output" "bin/lib/tmp-leftovers: 'nm-cli-home-[0-9]+|[a-z]+' holds a |, which would widen the names it removes"
 }

@@ -24,8 +24,9 @@ An entry is removed only when every rule holds, each checked again on the entry 
   - The gate rule: `agent-team-gate-<8 letters, digits or dashes>`, a gate session's tmp.
 - **Age**: last modified at least 60 minutes ago, or 24 hours for the gate rule.
   `tests/run` stops a bats file at 40 minutes, and the next rule covers a longer run.
-- **Not live**: no process of this user names it, by its full path followed by `/`, a space, a `:`, a line break or the end, in its working directory, command line or environment (`/proc` on Linux, `lsof` and `ps` on macOS).
+- **Not live**: no process of this user names it, by its full path followed by `/`, a space, a `:`, a line break or the end, in its working directory, its open files (a lock, a pid file), its command line or its environment (`/proc` on Linux, `lsof` and `ps` on macOS).
   The processes are read once, only when an entry passed the rules above; when they cannot be read, nothing is removed and the run exits 1 saying why.
+  Only the lines that name a path under a root are kept in the run's scratch, so no other value of a process's environment is written there.
 
 A directory is made writable first (`chmod -R`, which changes no link), so a read-only tree such as a Go module cache goes too, then removed with `rm -rf --one-file-system`; a file with `rm -f`.
 A removal that fails is said on stderr, the rest of the run goes on, and the run exits 1.
@@ -38,7 +39,7 @@ Mktemp's default names (`tmp.XXXXXXXXXX`) are never removed: any program makes t
 
 To add a source, add one line to that file in a PR on this repository:
 
-- its expression begins with a literal of at least 6 characters;
+- its expression begins with a literal of at least 6 characters and holds no `|`, since an alternation would match past that literal (`team-janitor tmp` refuses to run with such a line);
 - it never matches mktemp's default, nor what systemd, Claude Code, Chrome, Node or pytest keep there (`pytest-of-<user>` keeps three runs by design);
 - `tests/repo.bats` holds every line to both, and `tests/team-janitor-tmp.bats` removes a sample of every line.
 
