@@ -24,16 +24,16 @@
 #              warns, narrows the team home's fetch to dev and lease (git remote set-branches
 #              origin dev lease) and deletes origin's other remote-tracking branches it keeps
 #              (git branch -r -d), local config and refs only, so its wip/* and salvage/* are
-#              never downloaded; then, while the team home login line fails, gives the team
-#              home's own credential.https://github.com.helper exactly two values, an empty one
-#              and the gh that command -v gh finds as git-credential with GH_CONFIG_DIR, GH_TOKEN
-#              and GITHUB_TOKEN unset, so its git reaches the records on the owner login from a
-#              session on the worker login; then, while the team home line passes, fetches the
-#              team home (git fetch origin; one that fails is said, and the history read as last
-#              fetched) and asks the doctor for its team home history line alone: a team home
-#              that shares no history with origin's dev, a clone from before a rewrite of the
-#              records, stops the run as Daniel's re-clone (sops/records-rewrite.md step 10), so
-#              no later stage reads the old records.
+#              never downloaded; then, while the team home login line warns or fails, gives the
+#              team home's own credential.https://github.com.helper exactly two values, an empty
+#              one and the gh that command -v gh finds as git-credential with GH_CONFIG_DIR,
+#              GH_TOKEN and GITHUB_TOKEN unset, so its git reaches the records on the owner
+#              login from a session on the worker login; then, while the team home line passes,
+#              fetches the team home (git fetch origin; one that fails is said, and the history
+#              read as last fetched) and asks the doctor for its team home history line alone: a
+#              team home that shares no history with origin's dev, a clone from before a rewrite
+#              of the records, stops the run as Daniel's re-clone (sops/records-rewrite.md step
+#              10), so no later stage reads the old records.
 #   packages   The failing tool lines whose fix is an OS package: on Arch one
 #              `sudo pacman -S --needed --noconfirm` for them all; on macOS `brew install` for
 #              each formula or cask Homebrew lacks (`brew list --versions`) and `brew upgrade`
@@ -310,11 +310,11 @@ stage_home_fetch() {
 }
 
 # The team home's own credential helpers for github.com, while the doctor's team home login line
-# fails: exactly the two values owner_git_helpers prints for the gh that command -v gh finds, so
+# warns or fails: exactly the two values owner_git_helpers prints for the gh that command -v gh finds, so
 # the team home's git traffic is the owner login's from any session, the worker login on or off.
 # Nothing is said when the line passes, or when the doctor left it out, the team home line failing.
 stage_home_login() {
-  [[ -n $(lines '^team home login$') ]] || return 0
+  [[ -n $(lines '^team home login$' 'WARN FAIL') ]] || return 0
   local gh key=credential.https://github.com.helper home_q value command
   if ! gh=$(command -v gh); then
     say "gh is not installed, so the team home's git cannot ask it for github.com yet: team-bootstrap again once the packages stage installs it"
@@ -701,7 +701,7 @@ stage_check() {
   secrets=$(lines '^secret ' | awk -F'\t' '{ sub(/^secret /, "", $1); print $1 ": " $3 }' | paste -sd ';' - | sed 's/;/; /g')
   mapfile -t -O "${#covered[@]}" covered < <(lines '^secret ' | cut -f1)
   # A worker login whose file is not on this machine is the secrets step's too, named once.
-  if IFS=$'\t' read -r _ _ reason fix < <(lines '^worker login$') && [[ $fix == *"team-secrets restore" ]]; then
+  if IFS=$'\t' read -r _ _ reason fix < <(lines '^worker login$') && [[ $fix == "$WORKER_LOGIN_RESTORE" ]]; then
     covered+=("worker login")
     if passes '^secret worker-github-login$'; then secrets+="${secrets:+; }worker-github-login: $reason"; fi
   fi

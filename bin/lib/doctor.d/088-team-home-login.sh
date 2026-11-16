@@ -5,8 +5,10 @@
 #               config set, then that gh's git-credential with GH_CONFIG_DIR, GH_TOKEN and
 #               GITHUB_TOKEN unset, so the ledger's pushes, the checkpoint and the lease reach the
 #               records repository on the owner login from a session on the worker login, which
-#               has no access to it. Fails otherwise, its fix team-bootstrap, whose machine stage
-#               sets them. Left out while the team home line fails.
+#               has no access to it. Otherwise fails, its fix team-bootstrap, whose machine stage
+#               sets them, while bin/lib/worker-login names the worker login, and only warns while
+#               it names none (or cannot be read), when the machine's own login reaches the
+#               records anyway. Left out while the team home line fails.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # home_ok, from the team home check
 # reads state from: 080-team-home.sh
@@ -18,7 +20,9 @@ if ((home_ok)); then
   if [[ -n $home_login_gh ]] && ((${#home_login_helpers[@]} == 2)) &&
     [[ $(printf '%s\n' "${home_login_helpers[@]}") == "$(owner_git_helpers "$home_login_gh")" ]]; then
     report "team home login" PASS "its git asks $(tilde "$home_login_gh") for github.com on the owner login"
-  else
+  elif home_login_worker=$(worker_login 2>/dev/null) && [[ -n $home_login_worker ]]; then
     report "team home login" FAIL "the team home's git does not name the owner login for github.com" team-bootstrap
+  else
+    report "team home login" WARN "the team home's git does not name the owner login for github.com, which it needs once bin/lib/worker-login names the worker login" team-bootstrap
   fi
 fi

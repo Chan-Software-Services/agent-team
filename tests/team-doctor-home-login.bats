@@ -38,8 +38,23 @@ set_helpers() {
   assert_equal "$(line_of 'team home login')" "PASS team home login: its git asks $TOOL_STUBS/gh for github.com on the owner login"
 }
 
-@test "the team home login line fails with no value, without the empty value first, with another gh, or with a third value" {
+@test "with the worker login off, the team home login line only warns on a team home without the two values, so nothing that stops on a FAIL stops on it" {
+  set_helpers
+  worker_login_off
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'team home login')" "WARN team home login: the team home's git does not name the owner login for github.com, which it needs once bin/lib/worker-login names the worker login; fix: team-bootstrap"
+  set_helpers '' "!env -u GH_CONFIG_DIR -u GH_TOKEN -u GITHUB_TOKEN /opt/other/gh auth git-credential"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'team home login' | cut -d: -f1)" "WARN team home login"
+  # Once the constant names the worker login, the same team home fails.
+  worker_login_on
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'team home login')" "$FAIL_LINE"
+}
+
+@test "with the worker login on, the team home login line fails with no value, without the empty value first, with another gh, or with a third value" {
   local helper="!env -u GH_CONFIG_DIR -u GH_TOKEN -u GITHUB_TOKEN $TOOL_STUBS/gh auth git-credential"
+  worker_login_on
   set_helpers
   run_bin -1 team-doctor
   assert_equal "$(line_of 'team home login')" "$FAIL_LINE"
