@@ -82,6 +82,21 @@ agent_path_override:
   assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $CODE_CHECKOUT/bin/team-secrets restore (discord-bot-env: mode 644; discord-access-json: missing)"
 }
 
+@test "check puts a worker login whose file is not on this machine in the secrets step, beside any failing secret" {
+  tools_at arch
+  worker_login_on team-bot
+  rm "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  run_bin -1 team-bootstrap --stage check
+  # shellcheck disable=SC2088 # ~ is part of the step as the script prints it
+  assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $CODE_CHECKOUT/bin/team-secrets restore (worker-github-login: ~/.config/agent-team/gh-worker/hosts.yml is missing)"
+  assert_equal "$(stage_lines check | tail -n1)" "summary: not set up yet: only Daniel's steps above are left; then team-bootstrap again"
+  # Named once, beside another failing secret.
+  rm "$HOME/$(jq -r '.secrets[1].target' "$TEAM_HOME/machine/secrets.json")"
+  run_bin -1 team-bootstrap --stage check
+  # shellcheck disable=SC2088 # ~ is part of the step as the script prints it
+  assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $CODE_CHECKOUT/bin/team-secrets restore (discord-access-json: missing; worker-github-login: ~/.config/agent-team/gh-worker/hosts.yml is missing)"
+}
+
 @test "check names Daniel's /discord:access step while #coordinator lets in others; a missing access.json is the secrets step's alone" {
   tools_at arch
   access_json "[\"$DANIEL_ID\"]" '[]'
