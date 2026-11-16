@@ -177,14 +177,13 @@
 # finish its attempts within 10 minutes (state '<state>')), and one whose transcript cannot be read
 # fails each of its role's attempts (FAIL <role> <id>: cannot read its session's transcript). Only
 # ids, outcomes and a login attempt's GitHub login leave the transcripts. Every session is stopped
-# and removed, and the worktree
-# with them, on every path, and so are the canary directory, by the path mktemp gave, and
-# /tmp/agent-team-T0, the session tmp confine.py made for the T0 sessions, when it is a directory
-# of this user's (never through a link; TEAM_SYSTEM_ROOT stands for / in it, the tests' seam), as
-# every form that launched a session in that worktree removes it. bin/lib/probe.json also sorts
-# every deny rule of the worker roles' and the assistant's settings into one family and lists
-# their PreToolUse hooks, each with an attempt for each role that holds it or the reason it has
-# none, which tests/repo.bats holds.
+# and removed, and the worktree with them, on every path, and so are the canary directory, by the
+# path mktemp gave, and /tmp/agent-team-T0, the session tmp confine.py made for the T0 sessions,
+# when it is a directory of this user's (never through a link; TEAM_SYSTEM_ROOT stands for / in it,
+# the tests' seam), as every form that launched a session in that worktree removes it.
+# bin/lib/probe.json also sorts every deny rule of the worker roles' and the assistant's settings
+# into one family and lists their PreToolUse hooks, each with an attempt for each role that holds it
+# or the reason it has none, which tests/repo.bats holds.
 # While this checkout's bin/lib/worker-login names the worker login, each role also makes the
 # attempt of the expect kind login, gh api user --jq .login, which its prompt names as the one call
 # expected to run: it passes when the call ran and printed that login, in any case, and fails
@@ -198,13 +197,13 @@
 # again (setting), and a merge of the lowest-numbered open pull request into the base with a sha
 # of forty zeros, which matches no head (merge); none weakens what a base or the repository
 # holds, whatever GitHub answers.
+# A merge's 405 is a refusal only when GitHub's message says the login may not push to the branch.
 # One line each:
 #   PASS github protection <repo>: refused (403)
 #   FAIL github push <repo>: not refused (true)
 #   WARN github merge <repo>: not shown: GitHub compared the head first
 #   WARN github merge <repo>: not shown: GitHub refused the merge for another reason than the push restriction (405: <its message>)
 #   WARN github merge <repo>: not tried: no open pull request into <base>
-# A merge's 405 is a refusal only when GitHub's message says the login may not push to the branch.
 # and a FAIL naming why a call was not tried (the repository or its pull requests cannot be read
 # as the worker login) or got no answer from GitHub. A FAIL among them fails the probe, and a WARN
 # line fails nothing. While no bin/lib/worker-login names the account, neither the login attempts
