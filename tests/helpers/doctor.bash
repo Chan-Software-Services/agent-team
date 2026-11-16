@@ -26,6 +26,8 @@ declare -gA FORMAT=(
   # The real build also names its commit in parentheses after the version, which the pattern
   # skips; a stub at any version leaves it out.
   [no-mistakes]='no-mistakes version v%s 2026-10-31T01:47:41Z'
+  [mongodump]=$'mongodump version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
+  [mongorestore]=$'mongorestore version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [op]='%s'
   [git]='git version %s'
   [jq]='jq-%s'
@@ -180,10 +182,12 @@ EOF
     chmod 600 "$HOME/$target"
   done < <(jq -r '.secrets[] | select(.enabled != false) | .target' "$TEAM_HOME/machine/secrets.json")
   access_json "[\"$DANIEL_ID\"]" "[\"$DANIEL_ID\"]"
-  # The bot token is the one line the Discord API reads; the interview channel lets the bot in.
+  # The bot token is the one line the Discord API reads; the interview channel and #assistant let
+  # the bot in.
   echo "DISCORD_BOT_TOKEN=$FAKE_DISCORD_TOKEN" >"$HOME/.claude/channels/discord/.env"
-  export TEAM_INTERVIEW_CHANNEL=$INTERVIEW_ID
-  interview_server "$(interview_bits 10 15 16 35 38)" '[]'
+  export TEAM_INTERVIEW_CHANNEL=$INTERVIEW_ID TEAM_ASSISTANT_CHANNEL=$ASSISTANT_ID
+  interview_server "$(interview_bits 6 10 11 15 16 35 38)" '[]'
+  assistant_channel '[]'
   export TEAM_1PASSWORD_APP=$BATS_TEST_TMPDIR/1Password
   touch "$TEAM_1PASSWORD_APP"
   # The Docker daemon answers, a new veth gets no IPv6 link-local address, as home-pc's sysctl.d
@@ -376,10 +380,26 @@ lock_of() {
   jq -r --arg name "$1" "first(.tools[] | select(.name == \$name)) | $2" "$LOCK"
 }
 
-# The version <name> is pinned to in bin/lib/tools.lock: its pin, its fork's version, or its
-# release's tag without the v.
+# The version <name> is pinned to in bin/lib/tools.lock: its pin, its fork's or download's
+# version, or its release's tag without the v.
 lock_pin() {
-  lock_of "$1" 'if .from == "fork" then .fork.version elif .from == "release" then .release.tag | ltrimstr("v") else .pin end'
+  lock_of "$1" 'if .from == "fork" then .fork.version elif .from == "download" then .download.version
+    elif .from == "release" then .release.tag | ltrimstr("v") else .pin end'
+}
+
+# The fix of download tool <name> on <platform> (the lock's <os>-<arch> name): its archive of the
+# lock, checked with <check>, unpacked with <unpack> (tar or unzip), the tool's binary installed
+# into ~/.local/bin: download_fix <name> <platform> <check> <unpack>.
+download_fix() {
+  local name=$1 platform=$2 check=$3 url sha root unpack
+  url=$(lock_of "$name" ".download.archives[\"$platform\"].url")
+  sha=$(lock_of "$name" ".download.archives[\"$platform\"].sha256")
+  root=${url##*/} root=${root%.*}
+  case $4 in
+    tar) unpack="tar -xzf \"\$f\" -C \"\$d\" $root/bin/$name" ;;
+    unzip) unpack="unzip -q \"\$f\" $root/bin/$name -d \"\$d\"" ;;
+  esac
+  echo "f=\$(mktemp) && d=\$(mktemp -d) && curl -fsSLo \"\$f\" $url && echo \"$sha  \$f\" | $check && $unpack && mkdir -p ~/.local/bin && install -m 755 \"\$d/$root/bin/$name\" ~/.local/bin/$name && rm -rf \"\$f\" \"\$d\""
 }
 
 # Every tool of <os> answers at <version> (default its pin or min), or is missing (version "-").
@@ -464,9 +484,11 @@ access_json() {
 }
 
 # The interview channel's fixture ids: its own, its server's (also @everyone's role), the bot's
-# and the bot's role.
+# and the bot's role; and #assistant's, in the same server.
 # shellcheck disable=SC2034 # read by the tests
 INTERVIEW_ID=700000000000000040 GUILD_ID=700000000000000041 BOT_ID=700000000000000042 BOT_ROLE=700000000000000043
+# shellcheck disable=SC2034 # read by the tests
+ASSISTANT_ID=700000000000000044
 
 # The permission number with each bit <n> set: interview_bits <n>...
 interview_bits() {
@@ -487,6 +509,15 @@ interview_server() {
   jq -n --arg role "$BOT_ROLE" '{roles: [$role]}' >"$api/guilds/$GUILD_ID/members/$BOT_ID.json"
   jq -n --arg guild "$GUILD_ID" --arg role "$BOT_ROLE" --arg perms "$1" \
     '[{id: $guild, name: "@everyone", permissions: "0"}, {id: $role, name: "team-bot", permissions: $perms}]' >"$api/guilds/$GUILD_ID/roles.json"
+}
+
+# #assistant in interview_server's server, with the channel overwrites <overwrites> (a JSON
+# array), the bot's role keeping the permissions interview_server gave it: assistant_channel
+# <overwrites>
+assistant_channel() {
+  jq -n --arg id "$ASSISTANT_ID" --arg guild "$GUILD_ID" --argjson overwrites "$1" \
+    '{id: $id, type: 0, guild_id: $guild, name: "assistant", permission_overwrites: $overwrites}' \
+    >"$STUB_FIXTURES/discord/channels/$ASSISTANT_ID.json"
 }
 
 # The checks of the output, one name per line.

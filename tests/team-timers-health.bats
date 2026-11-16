@@ -24,8 +24,8 @@ setup() {
   inbox_guild_kept
 }
 
-# The live session list with a coordinator in it, as claude agents --json gives it.
-COORDINATOR='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}]'
+# The live session list with a coordinator and an assistant in it, as claude agents --json gives it.
+COORDINATOR='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
 
 teardown() {
   [[ ! -f $BATS_TEST_TMPDIR/http.pids ]] || xargs kill <"$BATS_TEST_TMPDIR/http.pids" 2>/dev/null || true
@@ -110,8 +110,8 @@ http_origin() {
   local checkpoint renewed
   checkpoint=$(date -u -r "$state/last-checkpoint" +%s)
   renewed=$(lease_json "$origin" | jq '.renewed_at | fromdateiso8601')
-  assert_equal "$(jq -r .line <<<"$view")" "-# Health: ok - last checkpoint <t:$checkpoint:R>, lease renewed <t:$renewed:R>, coordinator live"
-  [[ $(jq -r .text <<<"$view") =~ ^"Health: ok - last checkpoint "[0-9T:-]+"Z (0 minutes ago), lease renewed "[0-9T:-]+"Z (0 minutes ago), coordinator live"$ ]]
+  assert_equal "$(jq -r .line <<<"$view")" "-# Health: ok - last checkpoint <t:$checkpoint:R>, lease renewed <t:$renewed:R>, coordinator live, assistant live"
+  [[ $(jq -r .text <<<"$view") =~ ^"Health: ok - last checkpoint "[0-9T:-]+"Z (0 minutes ago), lease renewed "[0-9T:-]+"Z (0 minutes ago), coordinator live, assistant live"$ ]]
 
   # The text form is the plain line, and the view asks no service manager.
   : >"$STUB_CALLS/systemctl.log"
@@ -168,7 +168,7 @@ http_origin() {
   # The heartbeat took a reading, so the resources line names a budget.
   [[ $(posted_shown | tail -n 3 | head -n 1) == "Resources: manual, full (90%): "*" GiB and "*" cores for the team; 0.0 GiB reserved" ]]
   assert_equal "$(posted_shown | tail -n 2 | head -n 1)" \
-    "-# Health: ok - last checkpoint <t:$checkpoint:R>, lease renewed <t:$renewed:R>, coordinator live"
+    "-# Health: ok - last checkpoint <t:$checkpoint:R>, lease renewed <t:$renewed:R>, coordinator live, assistant live"
   # waiting.md, which the heartbeat writes, holds neither line.
   assert_equal "$(waiting_shown)" "**Waiting on you**
 Nothing waits on you."
@@ -1051,17 +1051,91 @@ coordinator_lines() {
   grep -E '^[^ ]+ coordinator: ' "$log" | cut -d' ' -f2- || true
 }
 
-# The live session list with no coordinator: a worker whose name merely holds the word.
+# The live session list with no coordinator, a worker whose name merely holds the word, and the
+# assistant.
 no_coordinator() {
-  stub_reply claude '[{"id": "a1b2c3d4", "name": "T5-coordinator-notes", "status": "idle"}]'
+  stub_reply claude '[{"id": "a1b2c3d4", "name": "T5-coordinator-notes", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
 }
 
-@test "with a live coordinator the step logs nothing and the view has no coordinator problem; the healthy line ends with it" {
+# The live session list with the coordinator and no assistant, a worker whose name merely holds
+# the word.
+no_assistant() {
+  stub_reply claude '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a1b2c3d4", "name": "T5-assistant-notes", "status": "idle"}]'
+}
+
+@test "with a live coordinator and assistant the step logs nothing and the view has neither problem; the healthy line ends with both" {
   run_bin -0 team-timers run
   assert_equal "$(coordinator_lines)" ""
   view
-  jq -e '.ok and .problems == [] and (.line | endswith(", coordinator live"))
-    and (.text | endswith(", coordinator live"))' <<<"$view"
+  jq -e '.ok and .problems == [] and (.line | endswith(", coordinator live, assistant live"))
+    and (.text | endswith(", coordinator live, assistant live"))' <<<"$view"
+  jq -e '.coordinator == {live: true} and .assistant == {live: true}' "$record"
+}
+
+@test "no assistant session two runs in a row posts one alert with the command that starts one; later runs post nothing; the first run with one resolves it" {
+  run_bin -0 team-timers run
+  no_assistant
+  # One run with none is the assistant problem, not alerting, and posts nothing.
+  run_bin -0 team-timers run
+  assert_equal "$(coordinator_lines)" "coordinator: no session named assistant is live; claude-assistant starts one"
+  assert_contains "$(problems_logged)" "coordinator: no session named assistant is live; claude-assistant starts one"
+  view
+  assert_equal "$view_status" 1
+  local since
+  since=$(jq -r '.assistant.since' "$record")
+  jq -e --arg since "$since" '. == {key: "assistant", since: $since, text: "no assistant session since \($since)",
+    alerting: false, sweep: null}' <<<"$(problem_of assistant)"
+  assert_equal "$(problem_of coordinator)" null
+  assert_equal "$(alerts_shown)" ""
+
+  # The second run in a row posts once, mentioning no one.
+  run_bin -0 team-timers run
+  view
+  jq -e --arg since "$since" '.since == $since and .alerting and .sweep == null' <<<"$(problem_of assistant)"
+  local id
+  id=$(jq -r .id <<<"$(alerts_shown)")
+  jq -e --arg text "No assistant session is live on home-pc since $(clock "$since"): your messages in #assistant go unread until one runs. Start it with claude-assistant." \
+    '. == {id: .id, content: $text, allowed_mentions: {parse: []}}' <<<"$(alerts_shown)"
+  assert_equal "$(alert_lines)" "alert: assistant: posted to #coordinator (message $id)"
+  assert_equal "$(open_alerts)" "assistant $id"
+  # It names no sweep kind, so the sweep raises nothing for it: only the worker, in no task of
+  # the ledger, is a finding.
+  run_bin -1 team-sweep --json
+  jq -e 'map(.kind) == ["stray"]' <<<"$output"
+
+  # Later runs post nothing more, and the line says since when.
+  run_bin -0 team-timers run
+  assert_equal "$(alerts_shown | wc -l)" 1
+  view
+  assert_equal "$(jq -r .line <<<"$view")" "**Health**: no assistant session since <t:$(date -d "$since" +%s):t>"
+
+  # The first run that finds one edits the post resolved and clears the problem.
+  stub_reply claude "$COORDINATOR"
+  run_bin -0 team-timers run
+  [[ $(jq -r .content <<<"$(alerts_shown)") =~ ^"No assistant session is live on home-pc since $(clock "$since"): "[^$'\n']+" Start it with claude-assistant."$'\n'"-# Resolved at "[0-9]{2}:[0-9]{2}"."$ ]]
+  assert_equal "$(alert_lines | tail -n 1)" "alert: assistant: resolved (message $id edited)"
+  assert_equal "$(open_alerts)" ""
+  view
+  jq -e '.ok' <<<"$view"
+  assert_equal "$(coordinator_lines | wc -l)" 3
+}
+
+@test "with neither session live both problems stand, the coordinator's first, and an unreadable list keeps both as they were" {
+  stub_reply claude '[]'
+  run_bin -0 team-timers run
+  assert_equal "$(coordinator_lines)" "coordinator: no session named coordinator is live; claude-coordinator starts one
+coordinator: no session named assistant is live; claude-assistant starts one"
+  view
+  assert_equal "$(jq -c '[.problems[].key]' <<<"$view")" '["coordinator","assistant"]'
+  next_list <<'SH'
+echo "cannot reach the daemon" >&2
+exit 1
+SH
+  run_bin -0 team-timers run
+  jq -e '.coordinator.runs == 1 and .assistant.runs == 1' "$record"
+  run_bin -0 team-timers run
+  jq -e '.coordinator.runs == 2 and .assistant.runs == 2' "$record"
+  assert_equal "$(open_alerts | cut -d' ' -f1 | paste -sd ' ')" "coordinator assistant"
 }
 
 @test "no coordinator session two runs in a row posts one alert with the command that starts one; later runs post nothing; the first run with one resolves it" {
@@ -1209,10 +1283,10 @@ SH
 # The unattended findings: the coordinator step's team-sweep --json, each finding dated from the
 # first run that saw it, and the alert once one has stood an hour with nothing logged since.
 
-# The live session list with the coordinator and a worker of a task the ledger does not hold, which
+# The live session list with the coordinator, the assistant and a worker of a task the ledger does not hold, which
 # the sweep finds stray at every look; STRAYS has two such workers.
-STRAY='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "9a9a9a9a", "name": "T9-builder", "status": "idle"}]'
-STRAYS='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "8a8a8a8a", "name": "T8-builder", "status": "idle"}, {"id": "9a9a9a9a", "name": "T9-builder", "status": "idle"}]'
+STRAY='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}, {"id": "9a9a9a9a", "name": "T9-builder", "status": "idle"}]'
+STRAYS='[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}, {"id": "8a8a8a8a", "name": "T8-builder", "status": "idle"}, {"id": "9a9a9a9a", "name": "T9-builder", "status": "idle"}]'
 
 # Append an event <event> to the ledger, logged <minutes> ago: log_event <minutes> <event>
 log_event() {
@@ -1344,7 +1418,7 @@ fake_sweep() {
   assert_equal "$(problem_of unattended)" null
 
   # With no coordinator live, an hour-old finding is the coordinator problem only.
-  stub_reply claude '[{"id": "9a9a9a9a", "name": "T9-builder", "status": "idle"}]'
+  stub_reply claude '[{"id": "9a9a9a9a", "name": "T9-builder", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   run_bin -0 team-timers run
   date_record '.findings[].since = ago(61)'
   run_bin -0 team-timers run

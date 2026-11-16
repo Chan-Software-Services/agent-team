@@ -33,7 +33,7 @@ The scripts depend on the team home holding:
 | `memory/` | The Claude Code auto memory each project shares across machines, and the coordinator's and the assistant's |
 | `machine/` | What a machine needs beyond the code: the shared Claude user config (`machine/claude/`) and the list of secret files to restore from 1Password (`machine/secrets.json`) |
 | `manual-steps.md` | The steps only the owner can take, which the assistant keeps |
-| `assistant/` | The assistant's hand-offs with the coordinator, its research reports and its stow note |
+| `assistant/` | The assistant's hand-offs with the coordinator, its list of what it asks or owes the owner, its research reports and its stow note |
 
 `CLAUDE.md`, "The team home", says how the scripts find it.
 
