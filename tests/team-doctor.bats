@@ -608,14 +608,23 @@ protected_by() {
   # The code, its comments aside, names none of them, but the Discord plugin's access.json, whose
   # ids the discord access line never prints, and its tools' names, a call the guard hooks line
   # hands assistant-discord-guard.
-  local interview=$REPO_ROOT/bin/lib/doctor.d/167-interview-channel.sh
+  local lib=$REPO_ROOT/bin/lib interview assistant reader
+  interview=$lib/doctor.d/167-interview-channel.sh assistant=$lib/doctor.d/168-assistant-channel.sh
+  reader=$lib/channel-access.sh
   run -1 grep -nE 'credentials|\.claude\.json|channels|hosts\.yml|discord_|[Kk]eychain|security find' \
-    <(for file in "$REPO_ROOT/bin/team-doctor" "$REPO_ROOT"/bin/lib/doctor.d/*.sh; do
-      [[ $file == "$interview" ]] || grep -hv '^[[:space:]]*#' "$file"; done |
+    <(for file in "$REPO_ROOT/bin/team-doctor" "$lib"/doctor.d/*.sh; do
+      [[ $file == "$interview" || $file == "$assistant" ]] || grep -hv '^[[:space:]]*#' "$file"; done |
       sed 's|~/\.claude/channels/discord/access\.json||g; s|\$HOME/\.claude/channels/discord/access\.json||g; s|mcp__plugin_discord_discord__[a-z_]*||g')
-  # The interview channel line alone uses the bot token, only through the library's Discord calls.
-  run -1 grep -nE 'credentials|\.claude\.json|hosts\.yml|[Kk]eychain|security find|DISCORD_BOT_TOKEN=|\.env"' "$interview"
-  assert_equal "$(grep -v '^[[:space:]]*#' "$interview" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_api discord_token"
+  # The two channel lines alone use the bot token, only through their shared reader's Discord
+  # calls, which asks whether there is one and reads Discord with it; neither calls Discord itself.
+  run -1 grep -nE 'credentials|\.claude\.json|hosts\.yml|[Kk]eychain|security find|DISCORD_BOT_TOKEN=|\.env"' \
+    "$interview" "$assistant" "$reader"
+  local file
+  for file in "$interview" "$assistant"; do
+    assert_equal "$(grep -v '^[[:space:]]*#' "$file" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" ""
+    grep -q '^  channel_report ' "$file"
+  done
+  assert_equal "$(grep -v '^[[:space:]]*#' "$reader" | grep -oE 'discord_[a-z_]+' | sort -u | paste -sd ' ')" "discord_api discord_token"
 }
 
 @test "each file of bin/lib/doctor.d/ is a check, run in the order of its name, with its lines of --help" {

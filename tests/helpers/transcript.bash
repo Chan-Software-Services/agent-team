@@ -11,6 +11,8 @@
 #   tool_result <id> <outcome> [<text>]    a user entry with that call's tool_result, shaped as
 #                                          Claude Code records <outcome>:
 #     ran            no toolDenialKind, is_error false (text "ok" by default)
+#     failed         no toolDenialKind, is_error true, as a command that ran and exited 1 (text
+#                    "Exit code 1" by default)
 #     hook           a PreToolUse hook's block: permission-rule, decision source "hook"
 #     rule           a deny rule: permission-rule, source "config", reasonType "rule"
 #     file-rule      a deny rule on a file tool's path, as 2.1.322 records a Read's: no
@@ -19,6 +21,12 @@
 #     automode       auto mode's classifier refused it: automode-blocked
 #     no-verdict     auto mode's classifier gave no verdict: automode-unavailable
 #     <other>        any other toolDenialKind (user-rejected, interrupted), with no decision
+#   script_result <id> <command> <role>    the result entry of a Bash call of one of bin/'s
+#                                          scripts that refused it itself: tool_result's failed
+#                                          outcome, its text "Exit code <n>" then what the real
+#                                          bin/<script> prints when it runs <command>'s words with
+#                                          AGENT_TEAM_ROLE=<role>, so a reworded refusal shows here;
+#                                          it fails when the script exits 0
 #   hook_result <id> <hook> <tool> <input JSON> <cwd>
 #                                          the hook's result entry for the call: tool_result's
 #                                          hook outcome, its text Claude Code's wrapper around
@@ -43,6 +51,7 @@ tool_result() {
   jq -nc --arg id "$id" --arg outcome "$outcome" --arg text "$text" '
     {
       ran: {text: "ok"},
+      failed: {text: "Exit code 1"},
       hook: {kind: "permission-rule", decision: {decision: "reject", source: "hook", reasonType: "hook",
         reasonCode: "hook:PreToolUse"}},
       rule: {kind: "permission-rule", decision: {decision: "reject", source: "config", reasonType: "rule",
@@ -80,6 +89,17 @@ hook_result() {
     return 1
   }
   tool_result "$id" hook "PreToolUse:$tool hook error: [$REPO_ROOT/bin/hooks/$hook]: $message"$'\n'
+}
+
+script_result() {
+  local id=$1 words status=0 message
+  read -ra words <<<"$2"
+  message=$(AGENT_TEAM_ROLE=$3 "$REPO_ROOT/bin/${words[0]}" "${words[@]:1}" 2>&1 </dev/null) || status=$?
+  if ((status == 0)); then
+    echo "script_result: bin/${words[0]} ran $2 for the $3" >&2
+    return 1
+  fi
+  tool_result "$id" failed "Exit code $status"$'\n'"$message"
 }
 
 as_text_list() {

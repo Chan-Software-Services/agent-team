@@ -11,6 +11,9 @@
 #     to delete it once its work is done;
 #   - the hand-offs open to and from it (team-assistant list --open), or a line saying none is;
 #     a list that fails is said, and the digest goes on;
+#   - its list of current items (team-current list --list assistant), each item whose review date
+#     has come (team-current due --list assistant) marked "DUE ", or a line saying it is empty; a
+#     read that fails is said, and the digest goes on;
 #   - the catch-up step: read #assistant and each thread of its still open back to its own last
 #     message with the plugin's fetch_messages, and answer first what Daniel asked unanswered,
 #     with the ids of the thread cache (ASSISTANT_THREADS in bin/lib/team.sh), which the
@@ -59,6 +62,24 @@ elif [[ -n $open ]]; then
   printf '%s\n' "$open"
 else
   echo "No hand-off is open to or from you (team-assistant list --open)."
+fi
+
+# The assistant's list, each due item marked.
+status=0
+items=$(TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-current" list --list assistant </dev/null 2>"$errors") || status=$?
+((status)) ||
+  due=$(TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-current" due --list assistant </dev/null 2>"$errors") || status=$?
+if ((status)); then
+  echo "team-current failed (exit $status), so your list is unknown: run team-current list and team-current due by" \
+    "hand.$([[ -s $errors ]] && printf ' It said: %s' "$(grep -m1 . "$errors")")"
+elif [[ -n $items ]]; then
+  echo "Your list (team-current list), each item whose review date has come marked DUE: done each that is" \
+    "done, and renew one that still stands with team-current renew <id> --review --reason <why>:"
+  while IFS= read -r item; do
+    if grep -qxF -- "$item" <<<"$due"; then echo "DUE $item"; else echo "$item"; fi
+  done <<<"$items"
+else
+  echo "Your list is empty (team-current list)."
 fi
 
 # The catch-up step, with the thread cache's ids, which the assistant's Bash may not read.

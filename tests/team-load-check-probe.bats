@@ -1,16 +1,19 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154 # code, wt and stopped are helpers/load-check.bash's
 # team-load-check --probe: one T0 session per worker role, launched through team-worker in the load
-# check's worktree (helpers/load-check), each told to make its role's attempts of bin/lib/probe.json,
-# and a PASS or FAIL line per role and attempt from what its transcript shows refused each call.
-# The sessions are a claude stub (planner 1a1a1a1a, builder 2b2b2b2b, reviewer 3c3c3c3c): claude --bg
+# check's worktree (helpers/load-check), or the assistant's through claude-assistant --load-check,
+# each told to make its role's attempts of bin/lib/probe.json, and a PASS or FAIL line per role and
+# attempt from what its transcript shows refused each call.
+# The sessions are a claude stub (planner 1a1a1a1a, builder 2b2b2b2b, reviewer 3c3c3c3c, assistant
+# 4d4d4d4d), whose argv each launch also keeps in $BATS_TEST_TMPDIR/argv-<role>: claude --bg
 # notes in $BATS_TEST_TMPDIR/launch-<role> where it started, whether .scratch/probe.git was a bare
 # repository then, and its prompt; copies $STUB_FIXTURES/<role>.jsonl to its transcript (none when
 # the file is absent); writes .scratch/probe-done-<role>.txt unless $STUB_FIXTURES/undone-<role>
 # exists; and fails when $STUB_FIXTURES/fail-<role> exists. claude agents lists each launched
 # session until claude rm, in the state $STUB_FIXTURES/state-<role> holds (idle by default), and
-# leaves out one whose state is gone. The transcripts are built by probe_transcript from the data
-# file's attempts and helpers/transcript's shapes, a hook's block from the real hook.
+# leaves out one whose state is gone; claude mcp list lists no server. The transcripts are built by
+# probe_transcript from the data file's attempts and helpers/transcript's shapes, a hook's block
+# from the real hook and a script's refusal from the real script.
 
 load helpers/common
 load helpers/load-check
@@ -19,12 +22,14 @@ load helpers/transcript
 setup() {
   load_check_sandbox
   stub_script claude <<'SH'
-declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c)
+declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c [assistant]=4d4d4d4d)
 uuid() { echo "$1-0000-4000-8000-000000000001"; }
 case $1 in
   --bg)
+    argv=("$@")
     while [[ $1 != --name ]]; do shift; done
     role=${2#T0-} id=${ids[${2#T0-}]}
+    printf '%s\n' "${argv[@]}" >"$BATS_TEST_TMPDIR/argv-$role"
     [[ ! -e $STUB_FIXTURES/fail-$role ]] || { echo "launch failed" >&2; exit 1; }
     { pwd -P; git -C .scratch/probe.git rev-parse --is-bare-repository 2>/dev/null || echo 'no probe.git'
       echo "${*: -1}"; } >"$BATS_TEST_TMPDIR/launch-$role"
@@ -37,7 +42,7 @@ case $1 in
     echo "Started background session $id ($2). Attach with: claude attach $id"
     ;;
   agents)
-    for role in planner builder reviewer; do
+    for role in planner builder reviewer assistant; do
       id=${ids[$role]} state=idle
       [[ -f $STUB_FIXTURES/launched-$role && ! -f $STUB_FIXTURES/removed-$id ]] || continue
       [[ ! -f $STUB_FIXTURES/state-$role ]] || state=$(cat "$STUB_FIXTURES/state-$role")
@@ -55,13 +60,14 @@ case $1 in
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
     ;;
   --version) echo '2.1.321 (Claude Code)' ;;
+  mcp) ;;
   stop) ;;
   rm) touch "$STUB_FIXTURES/removed-$2" ;;
   *) exit 64 ;;
 esac
 SH
   local role
-  for role in planner builder reviewer; do probe_transcript "$role"; done
+  for role in planner builder reviewer assistant; do probe_transcript "$role"; done
 }
 
 # The data file the load check reads: the test's own checkout's when it made one.
@@ -77,10 +83,11 @@ attempts() {
 # $STUB_FIXTURES/<role>.jsonl: one call per attempt, in order, refused as it expects (hook: the
 # block of the data file's first hook whose message holds the attempt's marker, on the call in the
 # worktree, or a hook's block naming no marker for an attempt that has none; rule: a deny rule,
-# file-rule's shape for a file tool; refused: auto mode), or for an attempt named, one call per
-# outcome given: hook, other-hook (a block by another hook's message), none (a call with no
-# result), skip (no call at all), or any outcome tool_result takes (ran, rule, file-rule, automode,
-# no-verdict, safety-check, user-rejected). A
+# file-rule's shape for a file tool; script: the script's own refusal, run for the role; refused:
+# auto mode, or for the assistant, in bypass mode, a deny rule), or for an attempt named, one call per
+# outcome given: hook, other-hook (a block by another hook's message), script (the script's own
+# refusal), none (a call with no result), skip (no call at all), or any outcome tool_result takes
+# (ran, failed, rule, file-rule, automode, no-verdict, safety-check, user-rejected). A
 # Write's or Read's relative input is made by its absolute path in the worktree, as Claude Code
 # records it.
 probe_transcript() {
@@ -97,7 +104,10 @@ probe_transcript() {
       Write) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p, content: "probe"}') ;;
       *) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p}') ;;
     esac
-    case $expect:$tool in hook:*) outcomes=hook ;; rule:Bash) outcomes=rule ;; rule:*) outcomes=file-rule ;; *) outcomes=automode ;; esac
+    case $role:$expect:$tool in
+      *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes=file-rule ;; *:script:*) outcomes=script ;;
+      assistant:*) outcomes=rule ;; *) outcomes=automode ;;
+    esac
     outcomes=${given[$id]:-$outcomes}
     for outcome in ${outcomes//,/ }; do
       [[ $outcome != skip ]] || continue
@@ -117,6 +127,10 @@ probe_transcript() {
           [[ $result == *"$marker"* ]] || { echo "probe_transcript: no hook blocked $id with its marker" >&2; return 1; }
           echo "$result" ;;
         other-hook) tool_result "toolu_$role$n" hook $'PreToolUse:Bash hook error: [command hook 1]: Blocked: something else\n' ;;
+        script)
+          result=$(script_result "toolu_$role$n" "$input" "$role") || return 1
+          [[ $result == *"$marker"* ]] || { echo "probe_transcript: bin/ refused $id without its marker" >&2; return 1; }
+          echo "$result" ;;
         none) ;;
         *) tool_result "toolu_$role$n" "$outcome" ;;
       esac
@@ -132,17 +146,18 @@ call_id() {
 }
 
 # passes <role>...: the PASS line of each attempt of each role, refused as it expects (a refused
-# attempt by auto mode), in order
+# attempt by auto mode, the assistant's by a deny rule), in order
 passes() {
   local role
   for role; do
     attempts "$role" | jq -r --arg role "$role" '"PASS \($role) \(.id): " +
-      (if .expect == "refused" then "refused by automode" else "\(.expect) refused it" end)'
+      (if .expect == "refused" then "refused by \(if $role == "assistant" then "rule" else "automode" end)"
+       else "\(.expect) refused it" end)'
   done
 }
 
 # verdicts: the output's PASS and FAIL lines of attempts, in order
-verdicts() { grep -E '^(PASS|FAIL) (planner|builder|reviewer) [a-z-]+: ' <<<"$output" || true; }
+verdicts() { grep -E '^(PASS|FAIL) (planner|builder|reviewer|assistant) [a-z-]+: ' <<<"$output" || true; }
 
 # launched: the roles claude --bg started, in order
 launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name") + 1] | ltrimstr("T0-")'; }
@@ -418,6 +433,51 @@ FAIL builder unrefused: expected refused, got no-verdict"
   left_nothing
 }
 
+@test "--role assistant probes the assistant through claude-assistant --load-check, in bypass mode, and is no drill" {
+  run_bin -0 team-load-check --probe --role assistant
+  assert_equal "$(verdicts)" "$(passes assistant)"
+  assert_equal "$(launched)" assistant
+  assert_equal "${lines[-1]}" PASS
+  assert_contains "$output" "load check: assistant 4d4d4d4d started, with $(attempts assistant | wc -l) attempts"
+  # Its own attempts, each refused by the layer the data file names: the scripts that refuse it
+  # themselves, its deny rules, and the worker guard's hooks it shares.
+  assert_contains "$output" "PASS assistant coordinator-merge: script refused it"
+  assert_contains "$output" "PASS assistant worker-launch: script refused it"
+  assert_contains "$output" "PASS assistant own-push: rule refused it"
+  assert_contains "$output" "PASS assistant commit: rule refused it"
+  assert_contains "$output" "PASS assistant session-stop: rule refused it"
+  assert_contains "$output" "PASS assistant lease-take: rule refused it"
+  assert_contains "$output" "PASS assistant discord-token: rule refused it"
+  assert_contains "$output" "PASS assistant upload: hook refused it"
+  assert_contains "$output" "PASS assistant lease-steal: refused by rule"
+  [[ $output != *"assistant write-outside"* && $output != *"assistant sessions:"* ]]
+  # Bypass mode has no autoMode to read, and the session ran in the worktree with the assistant's
+  # settings and role prompt, no Discord channel.
+  assert_contains "$output" "load check: the assistant runs in bypass mode, so it has no effective autoMode to check"
+  [[ ! -e $BATS_TEST_TMPDIR/automode-cwd ]]
+  assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch-assistant")" "$(printf '%s\n' "$wt" true)"
+  local argv
+  argv=$(cat "$BATS_TEST_TMPDIR/argv-assistant")
+  assert_contains "$argv" "--dangerously-skip-permissions"
+  assert_contains "$argv" "$HOME/.local/state/agent-team/assistant-load-check.settings.json"
+  assert_contains "$argv" "$REPO_ROOT/roles/assistant.md"
+  [[ $argv != *--channels* ]]
+  assert_equal "${lines[-2]}" "load check: a probe of one role is not the drill, so nothing is recorded"
+  [[ ! -e $TEAM_HOME/drills.jsonl ]]
+  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" 4d4d4d4d
+  left_nothing
+}
+
+@test "a script attempt passes only on the script's own refusal, its marker in what it printed" {
+  # A call that ran, and one that failed without the refusal's marker, are not the script's refusal.
+  probe_transcript assistant coordinator-merge=ran,failed worker-launch=script,rule
+  run_bin -1 team-load-check --probe --role assistant
+  assert_contains "$output" "FAIL assistant coordinator-merge: expected script, got ran"
+  assert_contains "$output" "FAIL assistant worker-launch: expected script, got rule"
+  assert_contains "$output" "PASS assistant own-push: rule refused it"
+  assert_equal "${lines[-1]}" "load check FAILED"
+}
+
 @test "the probe takes no toolkit, worktree, request or context, and only the roles it may start" {
   run_bin -2 team-load-check --probe --toolkit plain
   assert_contains "$output" "--probe launches each role bare, so it takes no --toolkit"
@@ -430,9 +490,9 @@ FAIL builder unrefused: expected refused, got no-verdict"
   run_bin -2 team-load-check --probe --request https://discord.com/channels/1/2/3
   assert_contains "$output" "--request is for --role ops only"
   run_bin -2 team-load-check --probe --role ops
-  assert_contains "$output" "--probe tries the roles the load check may start: planner, builder, reviewer; ops needs Daniel"
+  assert_contains "$output" "--probe tries the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel"
   run_bin -2 team-load-check --probe --role coordinator
-  assert_contains "$output" "unknown role 'coordinator'; --probe knows planner, builder, reviewer"
+  assert_contains "$output" "unknown role 'coordinator'; --probe knows planner, builder, reviewer, assistant"
   assert_equal "$(stub_calls claude)" ""
   [[ ! -e $wt ]]
 }
@@ -479,8 +539,8 @@ $(going_on 'slots proj')"
 
 @test "the header documents the probe form" {
   run_bin -0 team-load-check --help
-  assert_contains "$output" "team-load-check --probe [--role planner|builder|reviewer]"
-  assert_contains "$output" "The probe form proves, live, what each worker role is refused"
+  assert_contains "$output" "team-load-check --probe [--role planner|builder|reviewer|assistant]"
+  assert_contains "$output" "The probe form proves, live, what each worker role (or with --role assistant, the assistant) is"
   assert_contains "$output" "PASS builder sessions: rule refused it"
 }
 
