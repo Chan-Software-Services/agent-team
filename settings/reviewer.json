@@ -7,6 +7,7 @@
           {
             "type": "command",
             "command": "@TEAM_CODE@/bin/hooks/scratch-only-edits",
+            "args": [],
             "onFailure": "block",
             "timeout": 30
           }
