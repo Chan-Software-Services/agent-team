@@ -21,6 +21,9 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
     - `command_text.py`: a Bash command's code text (heredoc bodies out unless a shell may read one, `-c` strings and what is piped into a shell in) and the walk of each simple command it runs, past wrappers, into tools' strings, for `command_rules.py`; `team-tokens` takes its heredoc rule.
     - `compact-hold.sh`: the record of the coordinator's held auto-compaction, one file per session, written under its lock, and its log of each hold, tell, reminder, stow and release, for `bin/hooks/compact-hold` and `team-stowed`.
+    - `confine-roots`: the roots every confined session has beside its own, one path per line, starting with the team's machine state `~/.local/state/agent-team`; a guarded path, and none may be in the team home, `~/.config/agent-team` or `~/.claude`.
+    - `confine-shell`: the prefix a confined worker's Claude Code runs its shell commands through (`CLAUDE_CODE_SHELL_PREFIX`, which `team-worker` sets where the project's `confine` is `"on"` and for the load check's T0), handing the command line to `confine.py --session`.
+    - `confine.py`: the kernel layer, which enters a Landlock domain and runs its command there, so a remove or a rename of a directory entry succeeds only under its roots (`--root`, and `--session`'s for a worker or gate agent), and runs it unconfined, saying so, with no Landlock.
     - `data-check`: the one scan the CI's `data` job and the records' hook refuse with.
     - `delete_rules.py`: `command_rules.py`'s delete rows, refusing a recursive delete (`rm -r`, `find -delete`, `find -exec rm`) outside the worktree and the job's tmp, of either, its `.scratch/task` or what holds one, of a `.git`, an empty variable or no `find` start path, or of an unread path.
     - `doctor.d/`: `team-doctor`'s checks, one file each, which it sources in the order of their names (a new check is a new file, its number between its neighbours').
@@ -105,7 +108,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
-  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`.
+  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`, and `confine-seams.py`, which runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
   - `tests/merge-queue-drill`: run by hand by the coordinator, since it merges real PRs; it lands two PRs at once through a scratch repository's merge queue with `team-land` in a sandbox team home, checks each trial commit, and records its run.
   - `tests/merge-queue-drill.bats`: dry-runs `tests/merge-queue-drill` on a stub `gh`, a stub `team-land` and a bare repository.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
@@ -197,6 +200,7 @@ It holds:
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.
   The sandbox's `TEAM_CGROUP_ROOT` holds the cgroup tree and `/proc` that `team-capacity place` and `check` read, empty until a test writes them, so no test moves the machine's processes; `team-capacity sample` reads the machine through its seams, which the sandbox sets to an idle one (`TEAM_MEMINFO` 24 GiB available of 32, `TEAM_READING_PROCS` no process, `TEAM_READING_CPUS` 12) and a test may rewrite or unset.
   The sandbox's `TEAM_SYSTEM_ROOT` puts the library's system tool directories (treehouse's `/usr/local/bin` on Arch) inside it, so a PATH a test trims never gets the machine's own tools back on it.
+  It also stands for `/` in the session tmp `team-close` and `team-load-check` remove, `/tmp/agent-team-T<n>`, so no test removes a live task's.
   The sandbox refuses a TMPDIR under `/home` or `/Users` (a job's own tmp under HOME, say), whose paths the ledger reads as a machine's HOME: run the tests with one outside them, as the default is.
   A script run from this checkout has the reviewer App on, since `bin/lib/review-app` names it, while a copy of `bin/` (`copy_bin`) has it off: a test that needs either says so, with `review_app_on` or `review_app_off`.
   `tests/helpers/common.bash` documents the helpers.
@@ -211,6 +215,7 @@ It holds:
   The check reads only what the test file's own shell expands, so a single-quoted `bash -c` body or a quoted heredoc's stub, which expands its variables when it runs, is guarded by hand.
   No test file or helper runs a bare `wait`, which `tests/repo.bats` holds: bats runs a test's time limit countdown as a background job of the test's own shell, so a bare `wait` waits out the whole limit, and a test waits on the processes it started, by their pids.
 - Every PreToolUse hook entry, in `settings/*.json`, `coordinator.settings.json`, `assistant.settings.json`, `bin/lib/gate-claude-settings.json` and a toolkit's `hooks/hooks.json`, sets `"onFailure": "block"` and a whole-number `timeout` from 1 to 120 seconds beside its `command`, which `tests/repo.bats` holds, so a guard hook that fails or hangs blocks the call; `team-doctor`'s `guard hooks` line runs `scratch-only-edits`, `command-guard` and `lease-fence` in each of its modes on a harmless Bash call, `assistant-discord-guard` on a read of `#assistant`, and `session-records-guard` on a Read outside the session records, since a guard that always fails then blocks every call it sees.
+  Every hook entry of `settings/*.json` is in exec form, a `command` with no blank or quote and an `args` array, which `tests/team-worker.bats` holds: Claude Code runs a shell-form hook through a confined session's `CLAUDE_CODE_SHELL_PREFIX`, and the team's hooks must run outside the domain.
 
 ## Script conventions
 

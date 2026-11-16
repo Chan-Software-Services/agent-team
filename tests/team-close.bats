@@ -229,6 +229,53 @@ T2"
   [[ -f $prompts/T2/planner.home.md ]]
 }
 
+# The session tmp confine.py makes for the task's confined sessions, /tmp/agent-team-T<n>, which
+# the sandbox's TEAM_SYSTEM_ROOT holds here, goes with the task once its sessions are stopped.
+@test "the task's session tmp is removed and named, another task's kept, and a missing one is no error" {
+  run_bin -0 team-open home feature feat work "Do the work"
+  local slot=${home_slots[0]} tmp=$TEAM_SYSTEM_ROOT/tmp outside=$BATS_TEST_TMPDIR/outside
+  mkdir -p "$slot/.scratch/task" "$tmp/agent-team-T1/build/deep" "$tmp/agent-team-T2" "$tmp/agent-team-T10" "$outside"
+  echo "spec" >"$slot/.scratch/task/spec.md"
+  : >"$tmp/agent-team-T1/build/deep/file"
+  : >"$outside/kept"
+  ln -s "$outside" "$tmp/agent-team-T1/build/link"
+  work_and_push "$slot" feature.txt
+  run_bin -0 --separate-stderr team-close T1
+  [[ ! -e $tmp/agent-team-T1 ]]
+  assert_contains "$stderr" "team-close: removed $tmp/agent-team-T1/, the session tmp of the task's confined sessions"
+  # Nothing a link inside it names, and no other task's.
+  [[ -f $outside/kept && -d $tmp/agent-team-T2 && -d $tmp/agent-team-T10 ]]
+
+  run_bin -0 team-open home feature feat more "Do more work"
+  work_and_push "${home_slots[0]}" more.txt
+  run_bin -0 --separate-stderr team-close T2
+  [[ ! -e $tmp/agent-team-T2 ]]
+  run_bin -0 team-open home feature feat last "Do the last work"
+  work_and_push "${home_slots[0]}" last.txt
+  run_bin -0 --separate-stderr team-close T3
+  [[ $stderr != *"session tmp"* ]]
+}
+
+@test "a link or a file where the task's session tmp would be is left as it is, and named" {
+  run_bin -0 team-open home feature feat work "Do the work"
+  local slot=${home_slots[0]} tmp=$TEAM_SYSTEM_ROOT/tmp outside=$BATS_TEST_TMPDIR/outside
+  mkdir -p "$slot/.scratch/task" "$tmp" "$outside"
+  echo "spec" >"$slot/.scratch/task/spec.md"
+  : >"$outside/kept"
+  ln -s "$outside" "$tmp/agent-team-T1"
+  work_and_push "$slot" feature.txt
+  run_bin -0 --separate-stderr team-close T1
+  [[ -L $tmp/agent-team-T1 && -f $outside/kept ]]
+  assert_contains "$stderr" "team-close: left $tmp/agent-team-T1, which is no directory of this user's, where the task's session tmp would be"
+
+  run_bin -0 team-open home feature feat more "Do more work"
+  : >"$tmp/agent-team-T2"
+  work_and_push "${home_slots[0]}" more.txt
+  run_bin -0 --separate-stderr team-close T2
+  [[ -f $tmp/agent-team-T2 ]]
+  assert_contains "$stderr" "team-close: left $tmp/agent-team-T2, which is no directory of this user's, where the task's session tmp would be"
+}
+
 # What team-thread wait saves from an interview goes the same way.
 @test "an image team-thread wait saved goes with the task's captures, and into no archive" {
   run_bin -0 team-open home feature feat work "Do the work"

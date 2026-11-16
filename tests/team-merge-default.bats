@@ -584,7 +584,8 @@ file_reasons() {
     bin/team-worker bin/team-lease bin/claude-coordinator bin/claude-assistant bin/lib/launch.sh bin/lib/guarded \
     bin/lib/ledger-contract.json bin/lib/data-check bin/lib/records bin/lib/code bin/lib/command_rules.py \
     bin/lib/command_text.py bin/lib/outbound.py bin/lib/kill_rules.py bin/lib/delete_rules.py \
-    bin/lib/gate-claude-settings.json bin/lib/opencode-gate bin/lib/opencode-guard.js bin/hooks/git/pre-push \
+    bin/lib/gate-claude-settings.json bin/lib/opencode-gate bin/lib/opencode-guard.js bin/lib/confine.py \
+    bin/lib/confine-roots bin/lib/confine-shell bin/hooks/git/pre-push \
     bin/hooks/records-git/pre-commit bin/hooks/lease-fence settings/worker.json settings/reviewer.json coordinator.settings.json \
     assistant.settings.json \
     bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/team-next \

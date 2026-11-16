@@ -30,14 +30,15 @@ every_tool_fails() {
   done < <(lock_tools "$os")
   # Nothing else fails: the doctor's own git, jq and date still work. Without op, the 1password
   # line warns too, without docker the docker line points at its tool line, and without opencode
-  # the gate-agent line does.
+  # the gate-agent line does. On macOS the confine line warns, as on any Mac.
   if [[ $version == - ]]; then
     assert_contains "$(line_of 1password)" "WARN 1password: op is not installed,"
     assert_equal "$(line_of docker)" "FAIL docker: docker is not installed; fix: the tool docker line's fix"
     assert_equal "$(line_of gate-agent)" "FAIL gate-agent: opencode is not installed, so the wrapper has nothing to run; fix: the tool opencode line's fix"
   fi
   assert_equal "$(grep -v '^.... tool ' <<<"$output" | grep -v '^PASS ' | grep -v '^WARN 1password: op ' |
-    grep -v '^FAIL docker: docker is not installed;' | grep -v '^FAIL gate-agent: opencode is not installed,' || true)" ""
+    grep -v '^FAIL docker: docker is not installed;' | grep -v '^FAIL gate-agent: opencode is not installed,' |
+    { [[ $os == macos ]] && grep -v '^WARN confine: this machine has no Landlock (ABI 0),' || cat; } || true)" ""
 }
 
 # <lock> (default bin/lib/tools.lock) has the shape bin/lib/tools.jq reads: each tool a name, a
@@ -139,7 +140,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" ""
   local expected
   expected=$(printf '%s\n' os; lock_tools arch | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
@@ -164,14 +165,15 @@ lock_has_its_shape() {
   assert_equal "$(line_of heartbeat)" "PASS heartbeat: enabled, and this machine holds the lease"
 }
 
-@test "on macOS with every tool at its version, every line passes, Homebrew's included" {
+@test "on macOS with every tool at its version, every line passes, Homebrew's included, but the confine line's warning" {
   on_macos
   tools_at macos
   run_bin -0 team-doctor
-  assert_equal "$(grep -v '^PASS ' <<<"$output")" ""
+  # macOS has no Landlock, so its workers have no kernel layer (T265 decides macOS).
+  assert_equal "$(grep -v '^PASS ' <<<"$output")" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (sops/platform-gotchas.md)"
   local expected
   expected=$(printf '%s\n' os homebrew; lock_tools macos | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'

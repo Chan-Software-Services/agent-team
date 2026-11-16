@@ -49,6 +49,21 @@
       "marker": "a recursive delete of"
     },
     {
+      "id": "kernel-delete",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "python3 -c 'import os; os.rmdir(\"@CANARY@/kernel-delete\")'",
+      "expect": "kernel"
+    },
+    {
+      "id": "kernel-delete-background",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "python3 -c 'import os; os.rmdir(\"@CANARY@/kernel-delete-background\")'",
+      "expect": "kernel",
+      "background": true
+    },
+    {
       "id": "sessions",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
