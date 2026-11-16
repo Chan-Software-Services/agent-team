@@ -1002,6 +1002,29 @@ keeps_named() {
   return "$found"
 }
 
+# hold_merge_lock <task>: a process that holds the task's merge lock as team-merge does, the file
+# open and locked, until the test kills it; prints its pid once the lock is held.
+hold_merge_lock() {
+  local lock=$HOME/.local/state/agent-team/merge/$1.lock pid
+  mkdir -p "${lock%/*}"
+  rm -f "$lock.held"
+  # shellcheck disable=SC2016
+  bash -c 'exec 9>>"$1" && flock -n 9 && : >"$1.held" && exec sleep 600' _ "$lock" >/dev/null 2>&1 3>&- &
+  pid=$!
+  while [[ ! -e $lock.held ]]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.05
+  done
+  echo "$pid"
+}
+
+# release_merge_lock <pid>: ends hold_merge_lock's process <pid>, and returns once it is gone, so
+# the lock is free.
+release_merge_lock() {
+  kill "$1"
+  while kill -0 "$1" 2>/dev/null; do sleep 0.05; done
+}
+
 assert_equal() {
   if [[ $1 != "$2" ]]; then
     printf 'expected: %s\nactual:   %s\n' "$2" "$1" >&2
