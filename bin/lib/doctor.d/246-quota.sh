@@ -35,6 +35,6 @@ else
     report "quota model" PASS "$reason"
   else
     report "quota model" WARN "$reason" \
-      "on the lease holder, run team-quota usage and fix what it names; its heartbeat reads every 10 minutes"
+      "on the lease holder, run team-quota usage and fix what it names; its heartbeat then reads them on its schedule"
   fi
 fi

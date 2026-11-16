@@ -13,7 +13,7 @@ setup() {
   only_checks 246-quota.sh
 }
 
-FIX="on the lease holder, run team-quota usage and fix what it names; its heartbeat reads every 10 minutes"
+FIX="on the lease holder, run team-quota usage and fix what it names; its heartbeat then reads them on its schedule"
 FALLS_BACK="a rule on a model's week falls back to seven_day"
 
 # The doctor's team-quota prints <status> (a JSON text) on status --json: fake_status <status>

@@ -85,7 +85,9 @@ usage_reading() {
 # stub records its arguments in claude.log.
 claude_stub() {
   stub_script claude <<'EOF'
+date -u +%s >"$STUB_CALLS/claude.started"
 pwd >"$STUB_CALLS/claude.cwd"
+if [[ -d /proc/$$/fd ]]; then ls -l "/proc/$$/fd" >"$STUB_CALLS/claude.fds"; fi
 shopt -s nullglob dotglob
 entries=(*)
 echo "${#entries[@]}" >"$STUB_CALLS/claude.entries"
@@ -124,10 +126,11 @@ usage_failed() {
   [[ ! -e $attempt.tmp ]]
 }
 
-# aged_attempt <minutes>: the attempt record's at moved to that many minutes ago.
+# aged_attempt <minutes> [<seconds>]: the attempt record's at moved to that many minutes (and
+# seconds) ago.
 aged_attempt() {
   local attempt=$HOME/.local/state/agent-team/quota-usage.json
-  jq -c --arg at "$(ago "$1")" '.at = $at' "$attempt" >"$attempt.aged"
+  jq -c --arg at "$(date -u -d "@$(($(date +%s) - $1 * 60 - ${2:-0}))" +%FT%TZ)" '.at = $at' "$attempt" >"$attempt.aged"
   mv "$attempt.aged" "$attempt"
 }
 
@@ -229,7 +232,7 @@ path_without() {
   assert_equal "$status" 0
   assert_equal "$(wc -l <"$STUB_CALLS/claude.log")" 1
   assert_equal "$(<"$STUB_CALLS/claude.log")" \
-    '["-p","--input-format","stream-json","--output-format","stream-json","--verbose","--no-session-persistence","--strict-mcp-config","--settings","{\"disableAllHooks\": true}"]'
+    '["-p","--input-format","stream-json","--output-format","stream-json","--verbose","--no-session-persistence","--strict-mcp-config","--settings","{\"disableAllHooks\": true, \"remoteControlAtStartup\": false}"]'
   local cwd
   cwd=$(<"$STUB_CALLS/claude.cwd")
   assert_equal "$(<"$STUB_CALLS/claude.entries")" 0
@@ -238,6 +241,13 @@ path_without() {
   assert_equal "$(jq -c . "$STUB_CALLS/claude.stdin")" \
     "$(printf '%s\n' '{"type":"control_request","request_id":"team-quota-init","request":{"subtype":"initialize"}}' \
       '{"type":"control_request","request_id":"team-quota-usage","request":{"subtype":"get_usage","skip_behaviors":true}}')"
+  # The attempt's at is the time the read began, never after Claude Code started.
+  (($(jq -r '.at | fromdateiso8601' "$HOME/.local/state/agent-team/quota-usage.json") <= $(<"$STUB_CALLS/claude.started")))
+  # Claude Code inherits no descriptor of the usage lock, so nothing it leaves running holds the
+  # lock past the read (read from /proc, where there is one).
+  if [[ -e $STUB_CALLS/claude.fds ]]; then
+    ! grep -F quota-usage.lock "$STUB_CALLS/claude.fds"
+  fi
 }
 
 @test "usage records an answer with model_scoped empty as a reading with no model window, and status says so" {
@@ -457,7 +467,7 @@ EOF
   done
 }
 
-@test "usage --if-due reads at most every 10 minutes and prints its line only when the outcome changes" {
+@test "usage --if-due reads at most every 10 minutes, less the heartbeat's minute of slack, and prints its line only when the outcome changes" {
   local count
   # A first read prints its line.
   usage usage-good --if-due
@@ -472,8 +482,14 @@ EOF
   assert_equal "$stderr" ""
   [[ ! -e $STUB_CALLS/claude.log ]]
   assert_equal "$(readings | wc -l)" 1
-  # At 11 minutes it reads, and a good read after a good one prints nothing, whatever its numbers.
-  aged_attempt 11
+  # 8 minutes 50 seconds after it, still not due.
+  aged_attempt 8 50
+  usage usage-good --if-due
+  assert_equal "$status" 0
+  [[ ! -e $STUB_CALLS/claude.log ]]
+  # At 9 minutes 30 seconds, within the heartbeat's minute of slack, it reads, and a good read
+  # after a good one prints nothing, whatever its numbers.
+  aged_attempt 9 30
   usage usage-no-models --if-due
   assert_equal "$status" 0
   assert_equal "$output" ""
