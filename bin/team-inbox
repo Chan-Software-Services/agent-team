@@ -12,8 +12,9 @@
 # the PR not merged, no merge-approved logged at its head and Daniel's per-head word not standing
 # for it, below), "<task> <title>: ready to merge <its full URL>"; each interview under way (an
 # interview-thread with no planner's done or plan-approved after it) with no walk on in that
-# thread, "<task> <title>: interview under way <its thread>"; each walk under way (team-ui --walk, on), "<task> <title>: walk under way <the thread it
-# runs in>", or no thread with none; and the asks of the team home's two lists, the coordinator's
+# thread, "<task> <title>: interview under way <its thread>"; each walk under way (team-ui --walk,
+# on), "<task> <title>: walk under way <the thread it runs in>", or no thread with none; and the
+# asks of the team home's two lists, the coordinator's
 # tasks/current.md, then the assistant's assistant/current.md (team-current's ask lines, questions
 # to Daniel with no asked, in the form with an end and added or the old one; current_item in
 # bin/lib/ledger.jq), each with "Assistant: " first when it is the assistant's, its task unless -,
