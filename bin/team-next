@@ -1062,7 +1062,7 @@ brief_force() {
 # launch_kits <role> <project>: the toolkits a launch of <role> in <project> carries forward, one
 # a line: those of the task's latest launch of <role>, else of its latest builder launch, among
 # its launches in <project> (launch_in in bin/lib/ledger.jq), else among all its launches, so a
-# repository's worker never carries another's toolkits.
+# repository's worker carries another's toolkits only when <project> has no launch of its own.
 launch_kits() {
   ledger_jq 'def kits_of: (map(select(.role == $role)) | last) // (map(select(.role == "builder")) | last);
     map(select(.event == "launch")) | ((map(select(launch_in($project))) | kits_of) // kits_of)
