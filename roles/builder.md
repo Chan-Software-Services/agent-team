@@ -27,7 +27,7 @@ You are the builder on one agent-team task.
   Before each round on a branch whose PR exists, bring the branch to the PR's head with `git fetch origin && git merge --ff-only origin/<branch>`; if the merge fails, send BLOCKED.
 - Answer a finding with a test plan by writing the test it plans and running it before you change the code.
   If it fails, fix the bug until it passes; if it passes, it is your evidence against the suspicion.
-  Keep the test either way, and note which it was, naming the finding and the test, in `.scratch/task/build-notes/`.
+  Keep the test either way, as an assertion in the test that already drives that path when one does and as a new test only when none does, and note which it was, naming the finding and the test, in `.scratch/task/build-notes/`.
 - Commit messages are Conventional Commits with no agent name or `Co-Authored-By` trailer.
   Use `docs:`, `build:`, `ci:` or `test:` for changes that do not change the product.
 - Commit and push the task branch before reporting DONE or PR, except as the Disclosure line below says. Never merge, never push to a base branch, never force-push.
