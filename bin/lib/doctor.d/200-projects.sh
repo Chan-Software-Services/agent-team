@@ -38,7 +38,8 @@
 #               on the team home's origin is no branch), with their count; an open ticket
 #               worktree's branch is left out, pushed or not (its builder pushes it only for
 #               CI's run, on a project with branch_ci, and no stow or resume reads it on origin).
-#   changes     Warns while the primary checkout has changes to tracked files or untracked files.
+#   changes     Warns while the primary checkout has changes to tracked files or untracked files,
+#               naming at most 10 paths of each kind and counting the rest ("and <n> more").
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
 
@@ -160,6 +161,18 @@ check_leases() {
   done)
   report "leases $project" WARN "$(cut -f1 <<<"$problems" | paste -sd ';' | sed 's/;/; /g')" \
     "once nothing in it is needed, Daniel returns each in their own terminal, which asks before discarding changes: ${fix%; }"
+}
+
+# The paths on stdin, one per line, as one kind of the changes line: "<kind>: <paths>", the
+# first 10 named and the rest counted (" and <n> more"), nothing when there is none:
+# capped_paths <kind>
+capped_paths() {
+  local paths=() IFS=" "
+  mapfile -t paths
+  ((${#paths[@]} > 0)) || return 0
+  printf '%s: %s' "$1" "${paths[*]:0:10}"
+  ((${#paths[@]} <= 10)) || printf ' and %d more' $((${#paths[@]} - 10))
+  echo
 }
 
 # The lines of the registered project <name> (see the header).
@@ -285,8 +298,13 @@ check_project() {
       "push each (git -C $shown push -u origin <branch>) or delete it"
   fi
 
-  # changes
-  mapfile -t found < <(worktree_changes "$path")
+  # changes: worktree_changes' two kinds, in its words and from its two git commands, read here
+  # one path per line so each kind names at most 10 paths and counts the rest, a path with a blank
+  # in it as one.
+  mapfile -t found < <(
+    git -C "$path" diff --name-only HEAD | capped_paths "changes to tracked files"
+    git -C "$path" ls-files --others --exclude-standard | capped_paths "untracked files"
+  )
   if ((${#found[@]} == 0)); then
     report "changes $project" PASS "the primary checkout is clean"
   else
