@@ -41,11 +41,12 @@
 # has crossed, then, when the reading holds no model window, "model windows: none in this reading,
 # since Claude Code's status line gives no model's own week (/usage shows it)". A window's
 # reset_text is "resets <ddd HH:MM>", or "reset at <ddd HH:MM>, since this reading" once that time
-# has passed, in the machine's local time: the words every reader of the status shows. A window crosses a threshold of QUOTA_THRESHOLDS when its use is at least the
-# threshold and it has not reset since the reading. With no reading anywhere it prints "no quota
-# reading yet: no session has shown a status line since team-quota was set up". With --json (schema
-# team-quota/1): {schema, reading (or null), age_minutes (or null), fresh (age_minutes at most 180),
-# windows: [{name, used, resets_at, reset (true once resets_at has passed), reset_text, crossed}],
+# has passed, in the machine's local time: the words every reader of the status shows. A window
+# crosses a threshold of QUOTA_THRESHOLDS when its use is at least the threshold and it has not
+# reset since the reading. With no reading anywhere it prints "no quota reading yet: no session
+# has shown a status line since team-quota was set up". With --json (schema team-quota/1):
+# {schema, reading (or null), age_minutes (or null), fresh (age_minutes at most 180), windows:
+# [{name, used, resets_at, reset (true once resets_at has passed), reset_text, crossed}],
 # model_note: that sentence when a reading holds no model window, else null}.
 # Reads only, and exits 0 whenever the team home reads.
 # Exit 0 done, 1 refused, 2 usage error.
