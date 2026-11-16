@@ -120,7 +120,7 @@ probe_transcript() {
       *) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p}') ;;
     esac
     case $role:$expect:$tool in
-      *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes=file-rule ;; *:script:*) outcomes=script ;;
+      *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes='file-rule' ;; *:script:*) outcomes=script ;;
       *:login:*) outcomes=as-$(login) ;; assistant:*) outcomes=rule ;; *) outcomes=automode ;;
     esac
     outcomes=${given[$id]:-$outcomes}
