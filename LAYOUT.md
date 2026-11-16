@@ -109,11 +109,15 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
   - `tests/bootstrap-drill.bats`: runs `tests/bootstrap-drill` on a stub `team-bootstrap`.
+  - `tests/bound-kills`: names each process search in the tests whose pids a kill may reach and that is not bound by both its owner and the test's own temporary directory.
   - `tests/compaction-drill`: run by hand by the coordinator, since it starts a real Claude session; it compacts a coordinator-shaped session in a sandbox team home built from `tests/fixtures/compaction-drill/`, checks it still knows each task's wait and every current item, and records its run.
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
-  - `tests/helpers/`: the helpers, with `docker.bash`, the opt-in stub `docker`, and `confine-seams.py`, which runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
+  - `tests/helpers/`: the helpers, among them:
+    - `confine-seams.py`: runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
+    - `docker.bash`: the opt-in stub `docker`.
+    - `shell_source.py`: the lexer of the tests' shell source that `tests/guard-paths` and `tests/bound-kills` share.
   - `tests/merge-queue-drill`: run by hand by the coordinator, since it merges real PRs; it lands two PRs at once through a scratch repository's merge queue with `team-land` in a sandbox team home, checks each trial commit, and records its run.
   - `tests/merge-queue-drill.bats`: dry-runs `tests/merge-queue-drill` on a stub `gh`, a stub `team-land` and a bare repository.
   - `tests/README.md`: the reference for writing a test, a test helper or a CI job: how `tests/run` runs, CI's jobs, the toolkit tests and the sandbox's seams, which `CLAUDE.md` points to.

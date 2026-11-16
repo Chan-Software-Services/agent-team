@@ -926,15 +926,16 @@ SH
   assert_equal "$(steps "$output")" "lease checkpoint"
 }
 
-# The ids of the processes whose arguments are exactly "sleep $TEAM_TIMERS_RUN_SECONDS", each
-# killed, so a run that leaves one never holds the file's run open.
+# The ids of the processes this test started (own_pids) whose arguments are exactly
+# "sleep $TEAM_TIMERS_RUN_SECONDS", each killed, so a run that leaves one never holds the file's
+# run open.
 leftover_timers() {
   local pid
-  command -p ps -A -o pid=,args= | awk -v n="$TEAM_TIMERS_RUN_SECONDS" '$2 == "sleep" && $3 == n && NF == 3 { print $1 }' |
-    while read -r pid; do
-      kill -KILL "$pid" 2>/dev/null || true
-      echo "$pid"
-    done
+  own_pids | while read -r pid; do
+    [[ $(command -p ps -o args= -p "$pid" 2>/dev/null) == "sleep $TEAM_TIMERS_RUN_SECONDS" ]] || continue
+    kill -KILL "$pid" 2>/dev/null || true
+    echo "$pid"
+  done
 }
 
 @test "a run leaves no timer behind, even when the process list misses the timer's sleep" {

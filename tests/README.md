@@ -68,6 +68,7 @@ jq 1.8.2, Homebrew's on macOS, loads a module before the ones it includes unless
 
 A test runs `git -C`, `--git-dir`, `--work-tree`, `rm -r` or a git line's `cd` on a variable path only as `${var:?}`, so an empty variable stops its line instead of reaching the code checkout or the team home, which `tests/guard-paths --check` holds through `tests/repo.bats`, and `tests/guard-paths` rewrites.
 The check reads only what the test file's own shell expands, so a single-quoted `bash -c` body or a quoted heredoc's stub, which expands its variables when it runs, is guarded by hand.
+A test kills the pids of a process search (`ps -A`, `pgrep`, `pkill` and the rest) only when the search is bound by its owner (`-U` or `-u`) and by `$BATS_TEST_TMPDIR` or `$BATS_FILE_TMPDIR`, as a path its filter holds or the environment it reads (`own_pids` in `tests/helpers/common.bash`), which `tests/bound-kills` holds through `tests/repo.bats`: the sandbox stubs no `kill`, and a filter that matches every process sends TERM to the whole desktop session.
 No test file or helper runs a bare `wait`, which `tests/repo.bats` holds: bats runs a test's time limit countdown as a background job of the test's own shell, so a bare `wait` waits out the whole limit, and a test waits on the processes it started, by their pids.
 
 ## PreToolUse hook entries
