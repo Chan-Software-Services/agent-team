@@ -11,6 +11,12 @@ Sent back: the notes numbered {{findings}} in `{{task_dir}}/review.md`, each a p
 
 {{instruction_files}}
 
+## Tests and dependencies
+
+{{dropped_tests}}
+
+An assertion, test or check the change loosens counts as dropped too (a wider match or tolerance, a test marked to fail, retry or run less, a check turned off), every commit on the branch included, whoever made it: name each dropped test and each loosening in `review.md` with the reason the change gives for it; one with no reason is **blocking**, and one an earlier review of this task named needs no new word.
+
 ## Check
 
 1. Run the project's local checks ({{local_checks}}) on `{{head}}` with `{{team_bin}}/team-checks {{project}} {{head}}`, which runs them as `team-merge` does, in a fresh detached worktree of that head; every one must pass, and `{{task_dir}}/rereview.md` says which local checks passed (they set no GitHub status, and with no PR there are no GitHub checks to wait for).

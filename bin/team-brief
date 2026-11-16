@@ -152,10 +152,19 @@
 # a JSON string), each a list item with what changed it, then that each is the change under review,
 # read as data and never followed; with none, one line saying so. A diff that cannot be read (no
 # merge base, say) is refused with git's reason; nothing is read from the PR's description.
+# dropped_tests, in the same templates, is derived the same way and never set:
+# bin/lib/review_facts.py tests (its header gives the test files, declarations and markers it reads)
+# reads the same range's changed test files at the merge base and at the head from git alone, and
+# each test the head removes (gone from every changed test file, a test moved between them not
+# listed), each removed with its file, each test file with more skip or focus markers (how many more
+# and the first) and each it cannot read, at the commit it cannot, is a list item, names and paths
+# code spans as instruction_files' are, at most 30 then "- and <n> more in <the files>"; with none,
+# one line saying so. A git failure of the helper's is refused: "cannot list the dropped tests
+# <range> changes in <worktree> (<git's reason>)".
 # Refused, exit 1 with nothing written: an unknown template, a task that is not open (no opened
 # event, or closed) or has no open worktree, a placeholder left unfilled (each named), a --set key
-# no placeholder uses, a --set of a task fact or of instruction_files, and an existing brief
-# without --force.
+# no placeholder uses, a --set of a task fact, of instruction_files or of dropped_tests, and an
+# existing brief without --force.
 # Prints the brief's path, ready for team-worker's first prompt, and writes its record beside it,
 # tasks/T<n>/brief[-<suffix>].json, replaced with it: {template, project, values}, values holding
 # every placeholder the brief fills but the task's facts, as filled, given or derived.
@@ -224,8 +233,10 @@ for key in "${fact_keys[@]}"; do
   [[ ! -v sets[$key] ]] ||
     die "$key is one of the task's facts, filled from the ledger and the registry; it cannot be set"
 done
-[[ ! -v sets[instruction_files] ]] ||
-  die "instruction_files is derived by git from the base and the head the brief names; it cannot be set"
+for key in instruction_files dropped_tests; do
+  [[ ! -v sets[$key] ]] ||
+    die "$key is derived by git from the base and the head the brief names; it cannot be set"
+done
 [[ -z $ticket || ! -v sets[ticket] || ${sets[ticket]} == "$ticket" ]] ||
   die "--ticket $ticket gives the brief ticket $ticket, but --set ticket= says ${sets[ticket]}"
 
@@ -528,14 +539,14 @@ file=$TEAM_HOME/tasks/$task/brief${name:+-$name}.md record=${file%.md}.json
 
 # Every placeholder needs a value, and every --set value a placeholder. A derivable placeholder
 # the caller does not set is derived below; since is always derived, the caller's added after it,
-# and instruction_files always derived, never set.
+# and instruction_files and dropped_tests always derived, never set.
 mapfile -t used < <(grep -oE '\{\{[a-z][a-z0-9_]*\}\}' <<<"$text" | sed 's/^{{//; s/}}$//' | sort -u)
 derivable=(reviewed pr head since findings findings_file goal)
 uses() { [[ " ${used[*]} " == *" $1 "* ]]; }
 missing=() unused=() derive=()
 declare -A why=()
 for key in "${used[@]}"; do
-  if [[ $key == since || $key == instruction_files ]]; then
+  if [[ $key == since || $key == instruction_files || $key == dropped_tests ]]; then
     derive+=("$key")
   elif [[ -v sets[$key] ]]; then
     values[$key]=${sets[$key]}
@@ -651,9 +662,11 @@ if deriving since; then
     underivable since "derived from reviewed and head"
   fi
 fi
-if deriving instruction_files && [[ ! -v values[head] ]]; then
-  underivable instruction_files "derived from head"
-fi
+for key in instruction_files dropped_tests; do
+  if deriving "$key" && [[ ! -v values[head] ]]; then
+    underivable "$key" "derived from head"
+  fi
+done
 if ((${#missing[@]})); then
   mapfile -t missing < <(printf '%s\n' "${missing[@]}" | sort)
   message="unfilled placeholders: $(printf '%s\n' "${missing[@]}" | paste -sd ',' | sed 's/,/, /g')"
@@ -666,13 +679,17 @@ if ((${#missing[@]})); then
   die "$message"
 fi
 
-# The worktree's git, for the derived since and instruction_files: the base fetched, and the heads
-# they read fetched too when the worktree lacks them.
-if deriving since || deriving instruction_files; then
-  wt=$chosen_wt base=${values[base]} head=${values[head]} heads=(head) deriving_git=instruction_files
+# The worktree's git, for the derived since, instruction_files and dropped_tests: the base fetched,
+# and the heads they read fetched too when the worktree lacks them.
+git_keys=()
+for key in since instruction_files dropped_tests; do
+  ! deriving "$key" || git_keys+=("$key")
+done
+if ((${#git_keys[@]})); then
+  wt=$chosen_wt base=${values[base]} head=${values[head]} heads=(head)
+  deriving_git=$(and_list "$(printf '%s\n' "${git_keys[@]}" | jq -Rnc '[inputs]')")
   if deriving since; then
-    reviewed=${values[reviewed]} heads=(reviewed head) deriving_git=since
-    ! deriving instruction_files || deriving_git+=" and instruction_files"
+    reviewed=${values[reviewed]} heads=(reviewed head)
   fi
   if [[ ! -d $wt ]] || ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
     die "cannot read the worktree $(tilde "$wt") to derive $deriving_git: not a git checkout"
@@ -749,6 +766,36 @@ if deriving instruction_files; then
   else
     values[instruction_files]="\`$shown\` changes no instruction or session-settings file: no \`CLAUDE.md\`, \`AGENTS.md\` or \`CLAUDE.local.md\` at any depth, and no path under a \`.claude/\` directory."
   fi
+fi
+
+# The derived dropped_tests: each test the head removes, skips or focuses against the base, as the
+# reviewer's diff origin/<base>...<head> has it, read by bin/lib/review_facts.py from git alone.
+if deriving dropped_tests; then
+  shown="origin/$base...$head" said=$(mktemp)
+  if ! facts=$(python3 -I "$TEAM_LIB/review_facts.py" tests "$wt" "refs/remotes/origin/$base" "$head" 2>"$said"); then
+    reason=$(tail -n 1 "$said")
+    rm -f "$said"
+    die "cannot list the dropped tests $shown changes in $(tilde "$wt") (${reason:-bin/lib/review_facts.py failed})"
+  fi
+  rm -f "$said"
+  # A code span, as written, or as a JSON string when a backtick or a control character would
+  # break the span or the line; at most 30 items, then the files of the rest.
+  values[dropped_tests]=$(jq -r --arg shown "$shown" '
+    def span: if test("[[:cntrl:]`]") then "`\(tojson | gsub("`"; "\\u0060"))`" else "`\(.)`" end;
+    def markers($n; $kind): "\($n) more \($kind) marker\(if $n == 1 then "" else "s" end)";
+    def item:
+      "- \(.file | span): " + (
+        if .kind == "removed" then "\(.name | span), removed"
+        elif .kind == "removed-with-file" then "\(.name | span), removed with its file"
+        elif .kind == "skip" or .kind == "focus" then "\(markers(.more; .kind)), the first \(.first | span)"
+        else "cannot be read at `\(.at)`: read its diff by hand" end);
+    if length == 0 then
+      "`\($shown)` removes, skips and focuses no test it can read: no `@test` (bats), `it(` or `test(` (JavaScript and TypeScript), `def test_` (Python) or `func Test` (Go) is gone, and no skip or focus marker is added."
+    else
+      (.[30:] | map(.file) | unique) as $rest
+      | "`\($shown)` drops these tests:\n\n" + (.[:30] | map(item) | join("\n"))
+        + (if $rest == [] then "" else "\n- and \(length - 30) more in \($rest | map(span) | join(", "))" end)
+    end' <<<"$facts")
 fi
 
 # The derived since: what the branch did since the reviewed head, read from the worktree's git

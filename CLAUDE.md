@@ -50,6 +50,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `records-rewrite/`: `team-records-rewrite`'s drop list, message expression, S02 callback and `verify.py`.
     - `repo-moves.json`: the repositories that moved owner, each old `owner/name` to its new one with the date, a constant `ledger.jq` imports, so a PR URL under either owner is one PR to the ledger's event readers, and `team-project` reads for `--find repo` and `--check`.
     - `review-app`: the reviewer App's id and slug, one `id=<n>` and one `slug=<s>` line, a committed constant; with no such file the App is off and agent-team merges on the per-head word alone.
+    - `review_facts.py`: the facts of a diff a review brief lists for its reviewer, the tests it drops, which `team-brief` derives as `dropped_tests`.
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.

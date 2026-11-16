@@ -14,6 +14,12 @@ Task directory: `{{task_dir}}/` in the worktree: `spec.md`, `tickets/`, and `rev
 
 {{instruction_files}}
 
+## Tests and dependencies
+
+{{dropped_tests}}
+
+An assertion, test or check the change loosens counts as dropped too (a wider match or tolerance, a test marked to fail, retry or run less, a check turned off), every commit on the branch included, whoever made it: name each dropped test and each loosening in `review.md` with the reason the change gives for it; one with no reason is **blocking**, and one an earlier review of this task named needs no new word.
+
 ## Check
 
 1. Every finding in `{{task_dir}}/review.md` that went back to the builder (each `blocking`, `note: correctness`, `note: security` and `note: real-data`, and each plain `note` whose scope is `change`) is fixed at `{{head}}`, or the task records Daniel's decision to keep it; a plain `note` whose scope is `before`, on code the branch did not change, is queued as a follow-up, not for this task.

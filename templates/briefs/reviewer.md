@@ -9,6 +9,12 @@ Task directory: `{{task_dir}}/` in the worktree: `spec.md`, `tickets/`, `build-n
 
 {{instruction_files}}
 
+## Tests and dependencies
+
+{{dropped_tests}}
+
+An assertion, test or check the change loosens counts as dropped too (a wider match or tolerance, a test marked to fail, retry or run less, a check turned off), every commit on the branch included, whoever made it: name each dropped test and each loosening in `review.md` with the reason the change gives for it; one with no reason is **blocking**.
+
 ## GitHub checks
 
 {{> wait}}
