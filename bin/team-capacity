@@ -95,11 +95,15 @@
 #          inactive, speculative and purgeable pages times its page size. The processes are ps
 #          -A -o pid=,ppid=,rss=,time= with each one's working directory, from /proc/<pid>/cwd
 #          on Linux and one lsof -a -d cwd -Fpn on macOS (none when it cannot be read, another
-#          user's), and on Linux its cgroup v2 path; the team's are each process whose directory
-#          is a team path or below one, and every descendant of one by parent pid. The team
+#          user's), and on Linux its cgroup v2 path and its proportional set size
+#          (/proc/<pid>/smaps_rollup's Pss, all read by one grep). A process's memory is that
+#          size on Linux where it can be read, so pages the team's processes share count once,
+#          else its resident memory (macOS, a kernel thread, another user's process, one that
+#          ended between the reads). The team's processes are each one whose directory is a
+#          team path or below one, and every descendant of one by parent pid. The team
 #          paths: the team home, the code checkout, every registered project's slots (a treehouse
 #          pool's numbered ones beside them too), each held worktree, and ~/.no-mistakes (the
-#          gate's). The team's memory is their resident memory and the team and gate stacks'
+#          gate's). The team's memory is its processes' memory and the team and gate stacks'
 #          (team-stack ls --json's memory_bytes, given 30 seconds); the others' is the total less
 #          the available less the team's, never below 0. The CPU is read against the snapshot
 #          ~/.local/state/agent-team/capacity/procs.tsv (each process's pid and cumulative CPU
@@ -122,13 +126,14 @@
 #                      working directory is that task's held worktree or below it, or it descends
 #                      from one that is. A session's use is its scope's
 #                      (agent-team-T<n>-<id>.scope's working set and CPUUsageNSec) on Linux, else
-#                      its process tree's resident memory and CPU seconds, but the team-heavy that
-#                      holds the heavy-run lock (its holder line's pid) and what it runs, whose
-#                      cost is heavy:<kind>'s. A unit's working set is its cgroup's (systemctl
-#                      --user show's ControlGroup) memory.current less the reclaimable page cache,
-#                      memory.stat's file less shmem, never below 0 (bin/lib/working-set.awk), so
-#                      cached reads never count as use; a unit whose cgroup cannot be read counts
-#                      as off Linux.
+#                      its process tree's memory (each process's as above: its proportional
+#                      set size on Linux where readable, else resident) and CPU seconds, but the
+#                      team-heavy that holds the heavy-run lock (its holder line's pid) and what
+#                      it runs, whose cost is heavy:<kind>'s. A unit's working set is its cgroup's
+#                      (systemctl --user show's ControlGroup) memory.current less the reclaimable
+#                      page cache, memory.stat's file less shmem, never below 0
+#                      (bin/lib/working-set.awk), so cached reads never count as use; a unit whose
+#                      cgroup cannot be read counts as off Linux.
 #            stacks    each running team or gate stack: {name, class, task, project (the
 #                      registered project of the held worktree it runs for, null for a gate's),
 #                      worktree and kind (its labels', dev, e2e or gate), memory, cpu (cores),
@@ -137,7 +142,7 @@
 #                      worktree label whether the gate runs a pipeline; null for a team stack)}
 #            heavy     the running heavy run, while a team-heavy holds the heavy-run lock: {pid (its
 #                      team-heavy's), memory (on Linux its scope's, agent-team-heavy-<pid>.scope's,
-#                      working set, else its tree's resident memory)}, else null
+#                      working set, else its tree's memory, each process's as above)}, else null
 #            gate      {running (a process works in a gate worktree, ~/.no-mistakes/worktrees/...),
 #                      memory, cpu_seconds}: on Linux the gate daemon unit's working set and
 #                      CPUUsageNSec, else the processes in ~/.no-mistakes and their descendants
@@ -222,7 +227,8 @@
 # admit    Admits one item of work of <kind>, session:<role> (team-worker), stack:<project>
 #          (team-stack up, which names the stack with --name), heavy:<kind> (team-heavy run) or
 #          gate, for the task --task names, when it fits the level's memory budget beside what is
-#          reserved: under an exclusive flock on ~/.local/state/agent-team/capacity.lock, it takes
+#          reserved: under an exclusive flock on ~/.local/state/agent-team/capacity.lock (a lock
+#          still held after 2 minutes is exit 75, naming it, with no id and no admission), it takes
 #          a reading first when the newest is over 10 minutes old, as status does, then reads what
 #          is reserved as status --json says it (for a heavy run, without the running heavy run,
 #          which is the asker itself, holding the lock), leaving out each session --freed names
@@ -246,7 +252,8 @@
 #          same way, under the same lock and reading, but keeps no admission, makes no id and
 #          writes nothing to admitted.json: with room it exits 0 printing one line, "room for
 #          session:builder at full (90%): a builder needs 0.5 GiB, 6.2 GiB of 20.0 GiB reserved";
-#          with none it exits 75 with admit's reason, and with no budget it exits 1, as admit does
+#          with none, or with the lock still held, it exits 75 with admit's reason, and with no
+#          budget it exits 1, as admit does
 #          (team-open asks it whether a new task fits).
 # release  Ends the admission <admission id> (admit's first line) at once: under the exclusive
 #          flock on capacity.lock (a lock still held after 2 minutes is exit 75, naming it), it
@@ -338,8 +345,11 @@
 # their own; sample reads the machine
 # through its own seams: TEAM_MEMINFO names a file read in place of /proc/meminfo, and on macOS
 # of sysctl and vm_stat; TEAM_READING_PROCS a file of the processes read in place of ps and /proc
-# or lsof, one per line, tab-separated: pid, parent pid, resident KiB, cumulative CPU seconds,
-# working directory (empty when unreadable) and, optionally, its cgroup v2 path;
+# or lsof, one per line, tab-separated: pid, parent pid, its memory in KiB, cumulative CPU
+# seconds, working directory (empty when unreadable) and, optionally, its cgroup v2 path;
+# TEAM_READING_PSS, read only on Linux with no TEAM_READING_PROCS, a file of the processes'
+# proportional set sizes read in place of /proc/<pid>/smaps_rollup, one "<pid><TAB><KiB>" per
+# line, a process it does not list counting by its resident memory;
 # TEAM_READING_CPUS the CPU count in place of nproc's; and TEAM_READING_DOCKER_SECONDS the 30
 # seconds team-stack ls is given.
 set -euo pipefail
@@ -1202,6 +1212,14 @@ costs() {
   fi
 }
 
+# Take capacity.lock, open on descriptor <fd>, for admit and release alike: a lock another admission
+# still holds after 2 minutes is "try again", exit 75 naming it, never a failure.
+take_admit_lock() {
+  flock -w 120 -x "$1" && return 0
+  echo "${0##*/}: another admission still holds $(tilde "$ADMIT_LOCK") after 2 minutes" >&2
+  exit 75
+}
+
 # Admit one item of <kind>, as the header's admit says. One jq program reads the level, the lock
 # and the admissions and whether the newest reading is under 10 minutes old, a reading taken first
 # when it is not, as fresh_reading does; another makes the estimate, the status and the admission.
@@ -1215,7 +1233,7 @@ admit() {
     LIVE_SESSIONS=$(session_list) || LIVE_SESSIONS=''
   fi
   exec {fd}>>"$ADMIT_LOCK"
-  flock -w 120 -x "$fd" || die "another admission still holds $(tilde "$ADMIT_LOCK") after 2 minutes"
+  take_admit_lock "$fd"
   holding_admit_lock=1
   if ! read_level_and_admitted 600; then
     fresh_reading {fd}>&-
@@ -1281,10 +1299,7 @@ release() {
   local fd entry
   mkdir -p "$STATE"
   exec {fd}>>"$ADMIT_LOCK"
-  if ! flock -w 120 -x "$fd"; then
-    echo "${0##*/}: another admission still holds $(tilde "$ADMIT_LOCK") after 2 minutes" >&2
-    exit 75
-  fi
+  take_admit_lock "$fd"
   entry=$(jq -c --arg id "$release_id" 'select(type == "array") | first(.[] | objects | select(.id == $id)) // empty' \
     "$ADMITTED" 2>/dev/null) || entry=''
   if [[ -z $entry ]]; then

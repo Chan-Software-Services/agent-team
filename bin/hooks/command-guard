@@ -18,10 +18,10 @@
 # naming none of team-worker, team-load-check, ui-capture, AGENT_TEAM_, GH_CONFIG_DIR, GH_TOKEN,
 # GITHUB_TOKEN, --steal, team-ask, team-answer, team-inbox, team-thread, team-run-approved, curl,
 # wget, kill (pkill, killall and tmux's kill-server among it), fuser, -delete and rm as a word of
-# its own (git rm among it), nor env or exec before an option together with team- or
-# claude-coordinator, as written or with its quotes and backslashes removed (pk''ill, r\m), and
-# holding no $', no brace list or range ({,} or {..}), and no printf or echo with a > or tee, by
-# which a name may be spelled otherwise, at once, with no Python run.
+# its own (git rm among it), nor env or exec before an option together with team-,
+# claude-coordinator or claude-assistant, as written or with its quotes and backslashes removed
+# (pk''ill, r\m), and holding no $', no brace list or range ({,} or {..}), and no printf or echo
+# with a > or tee, by which a name may be spelled otherwise, at once, with no Python run.
 # Any other is decided by one rule table, bin/lib/command_rules.py, run once on the hook's input:
 # it walks each simple command the call runs (past its wrappers, into the strings its shells,
 # eval, su, script, env -S, flock -c, watch, parallel and find -exec run, and a shell's script or
@@ -89,7 +89,7 @@ text=$command$'\n'${stripped//[\'\"\\]/}
   $text == *curl* || $text == *wget* || $text == *kill* || $text == *fuser* || $text == *-delete* ||
   $text =~ (^|[^[:alnum:]_.-])rm([^[:alnum:]_.-]|$) ||
   (($text == *env*[[:space:]]-* || $text == *exec*[[:space:]]-*) &&
-  ($text == *team-* || $text == *claude-coordinator*)) ||
+  ($text == *team-* || $text == *claude-coordinator* || $text == *claude-assistant*)) ||
   $command == *"\$'"* || $command == *\{*,*\}* || $command == *\{*..*\}* ||
   (($text == *printf* || $text == *echo*) && ($command == *'>'* || $command == *'|'* || $text == *tee*)) ]] ||
   exit 0

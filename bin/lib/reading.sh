@@ -22,13 +22,19 @@
 #                     append, called with $work holding in.json (machine_reading's input),
 #                     held.json (the worktrees held, each resolved) and prior.json (the newest
 #                     stored reading, or null), and $now the time.
+# A process's memory is its proportional set size on Linux where it can be read
+# (/proc/<pid>/smaps_rollup's Pss), so pages the team's processes share count once, else its
+# resident set size, as ps says it; macOS has no PSS.
 # Test seams: TEAM_MEMINFO, TEAM_READING_PROCS (its lines may carry a sixth column, the process's
-# cgroup v2 path), TEAM_READING_CPUS and TEAM_READING_DOCKER_SECONDS, as team-capacity --help
-# says.
+# cgroup v2 path), TEAM_READING_PSS (on Linux with no TEAM_READING_PROCS, a file read in place of
+# /proc's PSS, one "<pid><TAB><KiB>" per line), TEAM_READING_CPUS and TEAM_READING_DOCKER_SECONDS,
+# as team-capacity --help says.
 # shellcheck shell=bash
 
+# Each task is judged open once, never once per event, since is_open folds the task's whole history.
 READING_HELD='include "ledger"; include "capacity"; include "stack"; ledger_events as $events | ($events | by_task) as $tasks
-  | held_worktrees($tasks; [open_worktrees($events[] | select($tasks[.task] | is_open); $home)]; $worktrees)'
+  | ($tasks | with_entries(select(.value | is_open))) as $open
+  | held_worktrees($tasks; [open_worktrees($events[] | select($open[.task] != null); $home)]; $worktrees)'
 
 # The registry, read once, as the header's read_registry says.
 read_registry() {
@@ -84,12 +90,13 @@ said() {
 }
 
 # The processes as TEAM_READING_PROCS gives them, one per line, tab-separated: pid, parent pid,
-# resident KiB, cumulative CPU seconds, working directory (empty when it cannot be read) and
-# cgroup (empty when not read), from ps, the working directories in $work/cwds and the cgroups in
-# $work/cgroups, one "<pid><TAB><value>" per line each.
+# memory in KiB, cumulative CPU seconds, working directory (empty when it cannot be read) and
+# cgroup (empty when not read), from ps, the working directories in $work/cwds, the cgroups in
+# $work/cgroups and the proportional set sizes in $work/pss, one "<pid><TAB><value>" per line
+# each. A process's memory is its line of $work/pss, else its resident set size from ps.
 ps_procs() {
   ps -A -o pid=,ppid=,rss=,time= 2>"$work/err" >"$work/ps" || die "ps -A -o pid=,ppid=,rss=,time= failed: $(said)"
-  awk -F '\t' -v cwds="$work/cwds" -v cgroups="$work/cgroups" '
+  awk -F '\t' -v cwds="$work/cwds" -v cgroups="$work/cgroups" -v pss="$work/pss" '
     # ps time, [[dd-]hh:]mm:ss[.ff] (macOS: mm:ss.ff, its minutes past 59), in whole seconds.
     function seconds(time,   days, n, part, i, total) {
       days = 0
@@ -101,28 +108,38 @@ ps_procs() {
     }
     FILENAME == cwds { cwd[$1] = $2; next }
     FILENAME == cgroups { cgroup[$1] = $2; next }
+    FILENAME == pss { if ($1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/) kib[$1] = $2; next }
     {
       n = split($0, f, " ")
       if (n != 4 || f[1] !~ /^[0-9]+$/ || f[2] !~ /^[0-9]+$/ || f[3] !~ /^[0-9]+$/ || f[4] !~ /^([0-9]+-)?[0-9:.]+$/) {
         line = $0; sub(/^ +/, "", line); print line > "/dev/stderr"; exit 1
       }
-      printf "%s\t%s\t%s\t%s\t%s\t%s\n", f[1], f[2], f[3], seconds(f[4]), cwd[f[1]], cgroup[f[1]]
-    }' "$work/cwds" "$work/cgroups" "$work/ps" 2>"$work/err" ||
+      printf "%s\t%s\t%s\t%s\t%s\t%s\n", f[1], f[2], (f[1] in kib ? kib[f[1]] : f[3]), seconds(f[4]), cwd[f[1]], cgroup[f[1]]
+    }' "$work/cwds" "$work/cgroups" "$work/pss" "$work/ps" 2>"$work/err" ||
     die "ps -A -o pid=,ppid=,rss=,time= printed a line that is no process: $(said)"
 }
 
-# The working directories and cgroups on Linux, from /proc/<pid>/cwd and /proc/<pid>/cgroup's
-# cgroup v2 line (empty when they cannot be read).
+# The working directories, cgroups and proportional set sizes on Linux, from /proc/<pid>/cwd,
+# /proc/<pid>/cgroup's cgroup v2 line and /proc/<pid>/smaps_rollup's Pss line in KiB (each left
+# out when it cannot be read: a kernel thread, another user's process and one that has ended have
+# no Pss line), the last from TEAM_READING_PSS when set.
 linux_cwds() {
   find /proc -mindepth 2 -maxdepth 2 -name cwd -printf '%h\t%l\n' 2>/dev/null | sed 's#^/proc/##' >"$work/cwds" || true
   grep -s -H '^0::' /proc/[0-9]*/cgroup 2>/dev/null | sed -E 's#^/proc/([0-9]+)/cgroup:0::#\1\t#' >"$work/cgroups" || true
+  if [[ -n ${TEAM_READING_PSS:-} ]]; then
+    cp "$TEAM_READING_PSS" "$work/pss"
+  else
+    grep -s -H '^Pss:' /proc/[0-9]*/smaps_rollup 2>/dev/null |
+      sed -nE 's#^/proc/([0-9]+)/smaps_rollup:Pss:[[:space:]]+([0-9]+) kB$#\1\t\2#p' >"$work/pss" || true
+  fi
 }
 
 # The working directories on macOS, from lsof's p (pid) and n (name) fields; a process lsof
 # cannot read is not listed, and a name that is no absolute path is no directory. macOS has no
-# cgroups.
+# cgroups and no proportional set size.
 macos_cwds() {
   : >"$work/cgroups"
+  : >"$work/pss"
   lsof -a -d cwd -Fpn 2>"$work/err" >"$work/lsof" || die "lsof -a -d cwd -Fpn failed: $(said)"
   awk '
     /^p[0-9]+$/ { pid = substr($0, 2); next }
@@ -212,7 +229,7 @@ take_reading() {
     ps_procs >"$work/procs"
   fi
   jq -Rn '[inputs | select(test("\\S")) | split("\t")
-    | {pid: (.[0] | tonumber), ppid: (.[1] | tonumber), rss: (.[2] | tonumber), seconds: (.[3] | tonumber), cwd: (.[4] // ""),
+    | {pid: (.[0] | tonumber), ppid: (.[1] | tonumber), kib: (.[2] | tonumber), seconds: (.[3] | tonumber), cwd: (.[4] // ""),
        cgroup: (.[5] // "")}]' \
     "$work/procs" >"$work/procs.json" 2>"$work/err" ||
     die "the processes are malformed: $(grep -m1 . "$work/err" || echo "jq could not read them")"

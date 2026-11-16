@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# The coordinator's hold of its auto-compaction: an automatic compaction of its conversation waits
+# until the coordinator has stowed, so no decision held only in the conversation is lost.
+# It reads the event's JSON on stdin and decides by its hook_event_name, on the session's record
+# (bin/lib/compact-hold.sh), which it finds by the event's session_id.
+#
+# An event that carries an agent_id is a subagent's, not the coordinator's own: nothing, exit 0,
+# so a subagent's tool call takes no tell and its compaction opens no hold.
+# PreCompact, trigger auto (the auto-compact window and an idle compaction), the first that fits,
+# a hold stowed since its start 10 minutes ago or more counting as none standing, since what the
+# coordinator took on after that stow is not on disk:
+#   1. no hold standing and a stow less than 10 minutes old: the compaction runs, with the stowed
+#      instructions
+#   2. no hold standing otherwise: it holds the compaction, logs "held" and exits 2, saying
+#      "compact-hold: this auto-compaction waits for the coordinator's stow (team-stowed lets it
+#      run)" on stderr, which blocks it; in place of a hold stowed too long ago, it is a new
+#      hold, told anew
+#   3. a hold standing and a stow at or after its start, less than 10 minutes old: it releases
+#      the hold, logs "released" "stowed", and the compaction runs with the stowed instructions
+#   4. a hold standing and the latest main-conversation reply of the event's transcript_path read
+#      300,000 tokens or more: released, "ceiling", with the unstowed instructions
+#   5. a hold standing, told, and the tell 15 minutes old or more: released, "timeout", with the
+#      unstowed instructions
+#   6. else it counts the block and exits 2 as in 2
+# An untold hold never times out: no model call runs between a block and the next tell or
+# reminder, so its conversation does not grow.
+# PreCompact, any other trigger (manual, Daniel's /compact): never held, and the record is left as
+# it is; it runs with the stowed instructions when a stow stands since the session's last release,
+# else the unstowed ones. An event with no usable session_id runs with the unstowed ones too.
+# The instructions, its stdout on exit 0, which Claude Code gives the compaction's summary:
+#   stowed    "The coordinator stowed at <HH:MM> UTC (team-stowed), so the disk holds its decisions
+#             up to then. Keep in this summary, word for word: ..." (Daniel's decisions and answers
+#             after that time, each promise, each open task's wait)
+#   unstowed  "The coordinator did not stow before this compaction (<why>). Keep in this summary,
+#             word for word: ... Begin the next turn by running the stow skill on what this summary
+#             holds.", <why> being "it was held 15 minutes after the tell", "the conversation
+#             reached 300k tokens" or "no stow was recorded"
+# PostToolUse, with a hold standing, not stowed since it began and not yet told: it logs "told" and
+# prints {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": <text>}},
+# the text telling the coordinator to run the stow skill now and end it with team-stowed, and when
+# the compaction runs anyway. Told once per hold; every other PostToolUse prints nothing.
+# UserPromptSubmit and Stop, with a hold standing and not stowed since it began, remind: each logs
+# "reminded" and prints that text, the prompt as its additionalContext (hookEventName
+# "UserPromptSubmit"), the turn's end as {"decision": "block", "reason": <text>}, which keeps the
+# turn open; a Stop event whose stop_hook_active is true (the turn was already kept open once)
+# prints nothing and logs nothing. A reminder of a hold not yet told is its tell, without a "told"
+# line: the 15 minutes run from it. A reminder of a told one ends "Unstowed, it runs anyway from
+# <HH:MM> UTC, 15 minutes after you were first told." in place of "at <HH:MM> UTC, 15 minutes from
+# now."
+# Any other event: nothing, exit 0. On any event but PreCompact, a session with no record exits 0
+# before the library is read, so a tool call of a session never held or stowed costs one jq.
+# Exit 0, or 2 to hold a compaction; a failure of its own never exits 2, so with no onFailure on
+# its PreCompact entry a broken hold lets the compaction run and never wedges the session.
+# Wired only in coordinator.settings.json.
+set -euo pipefail
+
+event='' name='' session='' agent=''
+if (($# == 0)); then
+  event=$(cat)
+  { IFS= read -r name && IFS= read -r session && IFS= read -r agent; } < <(jq -r '(.hook_event_name | strings) // "",
+    (.session_id | strings) // "", (.agent_id | strings) // ""' 2>/dev/null <<<"$event") || true
+  [[ -z $agent ]] || exit 0
+  [[ $session =~ ^[A-Za-z0-9-]+$ ]] || session=''
+  if [[ $name != PreCompact ]]; then
+    [[ -n $session && -e $HOME/.local/state/agent-team/compact-hold/$session.json ]] || exit 0
+  fi
+fi
+
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
+(($# == 0)) || usage_error "it takes no argument: the event's JSON comes on stdin"
+# From here only hold (below) exits 2: a failed command, jq's own exit 2 included, ends as exit 1.
+holding=''
+trap 'status=$?; [[ $status != 2 || -n $holding ]] || exit 1' EXIT
+# shellcheck source=bin/lib/compact-hold.sh
+source "$TEAM_LIB/compact-hold.sh"
+
+keep='every promise made to Daniel; and each open task'"'"'s id with what it waits on.'
+
+# stowed <stowed_at>: the compaction runs after a stow.
+stowed() {
+  echo "The coordinator stowed at $(compact_hold_clock "$1") UTC (team-stowed), so the disk holds its decisions up to then. Keep in this summary, word for word: every decision or answer Daniel gave after that time, with its Discord message id; $keep"
+  exit 0
+}
+
+# unstowed <why>: the compaction runs with no stow before it.
+unstowed() {
+  echo "The coordinator did not stow before this compaction ($1). Keep in this summary, word for word: every decision or answer Daniel gave in this conversation, with its Discord message id; $keep Begin the next turn by running the stow skill on what this summary holds."
+  exit 0
+}
+
+hold() {
+  echo "compact-hold: this auto-compaction waits for the coordinator's stow (team-stowed lets it run)" >&2
+  holding=1
+  exit 2
+}
+
+# tell_text <when it runs anyway> <first, or empty>: what the coordinator is told of a hold, the
+# first time or as a reminder of a hold already told.
+tell_text() {
+  local clock runs
+  clock=$(compact_hold_clock "$1")
+  runs="at $clock UTC, 15 minutes from now."
+  [[ -n $2 ]] || runs="from $clock UTC, 15 minutes after you were first told."
+  echo "compact-hold: an auto-compaction of this conversation is held until you stow. Run the stow skill now, walking the conversation since your last stow, and end it with team-stowed, which lets the compaction run. Unstowed, it runs anyway $runs"
+}
+
+# remind: with a hold standing and unstowed, logs "reminded" and prints its text, else prints
+# nothing. Run in a command substitution, which a failed command does not end on its own.
+remind() {
+  local out runs_at
+  out=$(compact_hold_update "$session" '
+    if .held_at != null and (.stowed_at == null or .stowed_at < .held_at)
+    then {record: (.told_at //= $now), log: [{event: "reminded"}],
+      runs_at: ((.told_at // $now) + 900), first: (.told_at == null)} else {record: .} end') || exit 1
+  runs_at=$(jq -r '.runs_at // ""' <<<"$out")
+  [[ -n $runs_at ]] || exit 0
+  tell_text "$runs_at" "$(jq -r 'select(.first) | 1' <<<"$out")"
+}
+
+case $name in
+  PreCompact)
+    [[ -n $session ]] || unstowed "no stow was recorded"
+    if [[ $(jq -r '.trigger | strings' <<<"$event") != auto ]]; then
+      at=$(compact_hold_read "$session" | jq -r 'select(.stowed_at != null and (.released_at == null or .stowed_at > .released_at)) | .stowed_at')
+      [[ -z $at ]] || stowed "$at"
+      unstowed "no stow was recorded"
+    fi
+    context=$(compact_hold_context "$(jq -r '.transcript_path | strings' <<<"$event")")
+    out=$(compact_hold_update "$session" '
+      def release($why): {record: (.held_at = null | .told_at = null | .released_at = $now),
+        log: [{event: "released", why: $why}], run: $why, stowed_at};
+      def fresh: .stowed_at != null and $now - .stowed_at < 600;
+      if .held_at == null or (.stowed_at != null and .stowed_at >= .held_at and (fresh | not)) then
+        if fresh then {record: ., run: "stowed", stowed_at}
+        else {record: (.held_at = $now | .told_at = null | .blocks = 1), log: [{event: "held"}]} end
+      elif fresh and .stowed_at >= .held_at then release("stowed")
+      elif $context >= 300000 then release("ceiling")
+      elif .told_at != null and $now - .told_at >= 900 then release("timeout")
+      else {record: (.blocks += 1)} end' --argjson context "$context")
+    case $(jq -r '.run // ""' <<<"$out") in
+      stowed) stowed "$(jq -r .stowed_at <<<"$out")" ;;
+      ceiling) unstowed "the conversation reached 300k tokens" ;;
+      timeout) unstowed "it was held 15 minutes after the tell" ;;
+      *) hold ;;
+    esac
+    ;;
+  PostToolUse)
+    out=$(compact_hold_update "$session" '
+      if .held_at != null and (.stowed_at == null or .stowed_at < .held_at) and .told_at == null
+      then {record: (.told_at = $now), log: [{event: "told"}], runs_at: ($now + 900)} else {record: .} end')
+    runs_at=$(jq -r '.runs_at // ""' <<<"$out")
+    [[ -n $runs_at ]] || exit 0
+    jq -cn --arg text "$(tell_text "$runs_at" 1)" \
+      '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $text}}'
+    ;;
+  UserPromptSubmit)
+    text=$(remind)
+    [[ -z $text ]] || jq -cn --arg text "$text" \
+      '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $text}}'
+    ;;
+  Stop)
+    if jq -e '.stop_hook_active == true' >/dev/null <<<"$event"; then exit 0; fi
+    text=$(remind)
+    [[ -z $text ]] || jq -cn --arg text "$text" '{decision: "block", reason: $text}'
+    ;;
+esac

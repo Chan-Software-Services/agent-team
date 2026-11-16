@@ -118,7 +118,7 @@ assert_nothing_written() {
   local args
   for args in "--prompt" "--prompt ''" "$TEAM_HOME" "--other" "--prompt x extra"; do
     eval "run_bin -2 --separate-stderr claude-assistant $args"
-    assert_equal "$stderr" "claude-assistant: usage: claude-assistant [--prompt <text>]"
+    assert_equal "$stderr" "claude-assistant: usage: claude-assistant [--prompt <text>] | claude-assistant --load-check <worktree> [--prompt <text>]"
   done
   assert_equal "$(stub_calls claude)" ""
 }
@@ -475,4 +475,89 @@ login_refusal() {
 @test "its header says the session runs on the worker login when one is named" {
   run_bin -0 claude-assistant --help
   assert_contains "$(tr -s ' \n' '  ' <<<"$output")" "Its session runs on the worker login when bin/lib/worker-login names one"
+}
+
+# The load check's form: claude-assistant --load-check <worktree> [--prompt <text>].
+
+# The load check's launch command line, with the given first prompt or the default one:
+# load_check_argv [<prompt>]
+load_check_argv() {
+  jq -cn --arg state "$state" --arg code "$REPO_ROOT" \
+    --arg prompt "${1:-You are the assistant. Daniel talks to you in #assistant on Discord. Wait for their messages.}" \
+    '["--bg", "--name", "T0-assistant",
+    "--autocompact", "200k",
+    "--mcp-config", "\($state)/assistant-load-check.mcp.json",
+    "--dangerously-skip-permissions",
+    "--append-system-prompt-file", "\($code)/roles/assistant.md",
+    "--settings", "\($state)/assistant-load-check.settings.json",
+    $prompt]'
+}
+
+@test "--load-check launches T0-assistant in the worktree with no Discord, printing its id alone" {
+  local wt=$BATS_TEST_TMPDIR/load-check
+  mkdir -p "$wt"
+  cd "$BATS_TEST_TMPDIR"
+  run_bin -0 claude-assistant --load-check "$wt" --prompt "Reply with OK and nothing else."
+  assert_equal "$output" 4d5e6f70
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n%s' '["mcp","list"]' "$(load_check_argv "Reply with OK and nothing else.")")"
+  assert_equal "$(cat "$STUB_CALLS/claude.cwd")" "$wt"
+  assert_equal "$(cat "$STUB_CALLS/claude.mcp-cwd")" "$wt"
+  # It takes no launch lock, so nothing of its holds the assistant's.
+  assert_equal "$(cat "$STUB_CALLS/claude.lock")" "$(printf 'mcp free\nlaunch free')"
+  # The assistant's settings, with the Discord plugin off and its server denied too.
+  local settings=$state/assistant-load-check.settings.json
+  assert_equal "$(jq -c 'del(.deniedMcpServers)' "$settings")" \
+    "$(jq -c --arg code "$REPO_ROOT" --arg home "$TEAM_HOME" --arg discord "$discord_state" \
+      'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)
+       | .enabledPlugins["discord@claude-plugins-official"] = false
+       | del(.hooks.Stop, .hooks.SessionStart)' "$REPO_ROOT/assistant.settings.json")"
+  # Neither the Stop hook nor the start digest, which read the live assistant's list and hand-offs
+  # and would have this session act on them; the guards on its tool calls stay.
+  assert_equal "$(jq -c '.hooks | keys' "$settings")" '["PreToolUse"]'
+  jq -e '[.. | strings | select(test("assistant-stop|assistant-digest"))] == []' "$settings" >/dev/null
+  assert_equal "$(jq -r '.deniedMcpServers[].serverName' "$settings" | sort)" \
+    "$(printf '%s\n' 'claude.ai Claude Docs' codegraph plugin:discord:discord plugin:mongodb-atlas:mongodb-atlas vercel)"
+  assert_equal "$(jq -c . "$state/assistant-load-check.mcp.json")" '{"mcpServers":{}}'
+  # Nothing of the live assistant's: its settings, its MCP config and its Discord state.
+  [[ ! -e $discord_state && ! -e $state/assistant.settings.json && ! -e $state/assistant.mcp.json ]]
+  assert_equal "$(find "$state" -name '*.json.*' -o -name '*.template*')" ""
+}
+
+@test "--load-check takes the default prompt, and launches beside a live assistant, off the lease and with no Discord state" {
+  local wt=$BATS_TEST_TMPDIR/load-check
+  mkdir -p "$wt"
+  sessions "$(session 9f8e7d6c 9f8e7d6c-1111 assistant working)"
+  run_bin -0 team-lease release
+  rm "$HOME/.claude/channels/discord/access.json"
+  TEAM_ASSISTANT_CHANNEL='' run_bin -0 claude-assistant --load-check "$wt"
+  assert_equal "$output" 4d5e6f70
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(load_check_argv)"
+  # The live assistant's settings stay as they were.
+  [[ ! -e $state/assistant.settings.json ]]
+}
+
+@test "--load-check refuses a worktree that is no directory, and a malformed command line" {
+  run_bin -1 --separate-stderr claude-assistant --load-check "$BATS_TEST_TMPDIR/none"
+  assert_equal "$stderr" "claude-assistant: no worktree at $BATS_TEST_TMPDIR/none for the load check's assistant"
+  local args
+  for args in "--load-check" "--load-check ''" "--load-check $BATS_TEST_TMPDIR --prompt" \
+    "--load-check $BATS_TEST_TMPDIR --load-check $BATS_TEST_TMPDIR" "--load-check $BATS_TEST_TMPDIR extra"; do
+    eval "run_bin -2 --separate-stderr claude-assistant $args"
+    assert_equal "$stderr" "claude-assistant: usage: claude-assistant [--prompt <text>] | claude-assistant --load-check <worktree> [--prompt <text>]"
+  done
+  assert_not_launched
+}
+
+@test "--load-check exits with a failed launch's status, and fails when claude names no session id" {
+  local wt=$BATS_TEST_TMPDIR/load-check
+  mkdir -p "$wt"
+  echo 3 >"$BATS_TEST_TMPDIR/launch.status"
+  run_bin -3 claude-assistant --load-check "$wt"
+  rm "$BATS_TEST_TMPDIR/launch.status"
+  stub_script claude <<'SH'
+[[ $1 == mcp ]] && exit 0
+echo "Started a background session"
+SH
+  run_bin -1 --separate-stderr claude-assistant --load-check "$wt" --prompt x
+  assert_equal "$stderr" "claude-assistant: could not read the session id from: Started a background session"
 }
