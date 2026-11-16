@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # hooks/lease-fence: the PreToolUse hook that keeps a machine that lost the lease quiet. It blocks
-# the coordinator's Discord posts, and its git push, team-merge, team-catch-up, team-open and
-# team-close, when this machine is fenced or the lease on origin names another holder, the
+# the coordinator's Discord posts, and its git push, team-merge, team-land, team-catch-up, team-open
+# and team-close, when this machine is fenced or the lease on origin names another holder, the
 # assistant's git push, team-assistant and team-current then too, a worker's git push when fenced,
 # and a worker's git push, gh and team-thread wait, and the assistant's git push and gh, while the
 # team holds offline. home-pc holds the lease on a bare origin; laptop is the other machine.
