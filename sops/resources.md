@@ -86,8 +86,11 @@ Memory is read as RAM alone, as the kernel's `MemAvailable` and each cgroup's wo
 
 A cgroup's use is its working set (`bin/lib/working-set.awk`): its `memory.current` less the reclaimable page cache, `memory.stat`'s `file` less `shmem`, never below 0.
 `memory.current` and `MemoryPeak` count that cache too, which the kernel drops first and which outlives the work that read it: on home-pc on 2026-11-09 T239's planner, finished and idle, held 4.7 GiB this way, and its slice, once it stopped, still 4.1 GiB, all `file` and no `anon`, so launches were refused at 16.3 GiB of 17.5 GiB reserved while the team's processes used about 1.3 GiB.
-Every cgroup the team reads is read so: each session's scope, each task's slice, each heavy run's scope and the gate's daemon (`team-capacity`), a heavy run's samples (`team-heavy`), and the team's slice (`team-level`); a cgroup `team-capacity` cannot read counts as off Linux, by its processes' resident memory, a heavy run's look that cannot read its scope reads nothing, and a slice `team-level` cannot read has no known use.
-The reading's `team` total is its processes' resident memory and its stacks' (`docker stats`' use, which leaves the inactive page cache out), and `others` the total less `MemAvailable` less that, so neither counts the cache either.
+Every cgroup the team reads is read so: each session's scope, each task's slice, each heavy run's scope and the gate's daemon (`team-capacity`), a heavy run's samples (`team-heavy`), and the team's slice (`team-level`); a cgroup `team-capacity` cannot read counts as off Linux, by its processes' memory as the two next lines say it, a heavy run's look that cannot read its scope reads nothing, and a slice `team-level` cannot read has no known use.
+The reading's `team` total is its processes' memory and its stacks' (`docker stats`' use, which leaves the inactive page cache out), and `others` the total less `MemAvailable` less that, so neither counts the cache either.
+A process's memory in a reading is its proportional set size on Linux where it can be read (the `Pss:` line of `/proc/<pid>/smaps_rollup`), else its resident memory: on macOS, and on Linux for a kernel thread, another user's process and one that ended between the reads.
+Resident memory counts a page that several processes map once for each of them, so the sum over the team's processes ran high and `others` low: on home-pc on 2026-11-15, with 101 team processes, the team's memory was 5.5 GiB by resident memory and 3.7 GiB by proportional set size.
+The test seam `TEAM_READING_PSS` names a file read in place of `/proc`'s, one `<pid><TAB><KiB>` per line, on Linux with no `TEAM_READING_PROCS`.
 A page the slice's limits push to swap frees RAM for Daniel's programs, which is the budget's point, so the slice's swap is not limited.
 
 ## The limits
@@ -225,7 +228,8 @@ Each item that is an admission or stands for one (an `admissions` item, and a st
 
 Every admission has an id, 12 lowercase hex digits `admit` makes from `/dev/urandom` under its lock, printed alone as the first line of its stdout and kept in its `admitted.json` entry, `{id, at, kind, task, name, bytes, pid}`; a refusal or a failure prints none.
 `team-capacity release <id>` ends an admission at once: under the same lock it removes that entry, printing `released admission <id>: <kind> of <task>`, and with no such entry (released, expired, never made) it prints `no admission <id>: nothing to release` and still exits 0, so an exit handler never fails a script that is already ending; it reads no reading, level or session list, so it is fast.
-A malformed id is a usage error (exit 2), and a lock still held after 2 minutes is exit 75.
+A malformed id is a usage error (exit 2).
+A lock still held after 2 minutes is exit 75 for `release` and for `admit` alike, `--dry-run` included, with `team-capacity: another admission still holds ~/.local/state/agent-team/capacity.lock after 2 minutes` on stderr, no id on stdout and nothing written to `admitted.json`.
 An admission nobody releases still ends 10 minutes after it was made, as before (a heavy run's while its `team-heavy` holds the lock).
 
 Who asks:
@@ -237,6 +241,7 @@ Who asks:
 | `team-heavy run` | `heavy:<kind>`, once it holds the heavy-run lock; it releases the admission at every end of the run, success included | lets the lock go, says once why it waits, asks again every 30 seconds within its `--wait`, then exits 75; under a run already (`TEAM_HEAVY_HELD`), and with no team home (CI, a fresh clone), it asks nothing |
 
 An admission that fails for another reason (a malformed `capacity.json`, no reading to size the budget by) fails the caller with its reason.
+A held lock's 75 is "not now" to each caller as no room is; `team-open`'s room check says which it met: `no room to open a task: <reason>` for no room, `cannot tell yet whether a task fits: <reason>` for the lock.
 `team-worker` logs its own 75 as the task's park, `paused cause=room role=<role>` with the admission's line as its reason, and the coordinator launches it again on `team-sweep`'s `level-launch` finding ("Shrinking and growing back"); a worker that gets a stack's 75 reports `PAUSED` with it.
 
 ## Stowing
@@ -249,7 +254,7 @@ It runs on the lease holder, once each task's live workers have answered the coo
 
 1. branches: each task's branches checked against origin's before any of its sessions stops; a diverged branch refuses its task, naming it, and its workers keep running; a ticket worktree's branch is never read on origin nor pushed, and step 5 checks it;
    then stowing: a `stowing` logged for each task left, `{machine, cause, roles}` with its unfinished roles, unless one stands already (`team-stow --begin`'s) or the task is stowed from this machine already (a run again);
-2. sessions: `claude stop` then `claude rm` for each live `T<n>-<role>` session, a ticket builder's `T<n>-builder-NN` among them; an ops session is ended with `team-ops-end`, never carried; one that will not stop refuses its task;
+2. sessions: `claude stop` then `claude rm` for each `T<n>-<role>` session in any state but stopped (`claude agents --json --all`, which also lists one whose turn is done), a ticket builder's `T<n>-builder-NN` among them; an ops session is ended with `team-ops-end`, never carried; one that will not stop refuses its task;
 3. stacks: `team-stack stop --worktree <path>` for each worktree whose project has a stack block, its data kept (`team-stack down`, saving the logs, with `--down`); one that fails is said, and the task still stows;
 4. checkpoint: `team-checkpoint --force`, once per run, none when every task left was stowed already and no session was stopped;
 5. branches: each task branch pushed to its origin when strictly ahead, checked again first; a ticket worktree is kept only when the checkpoint's `wip/<project>/T<n>--NN` holds its head and uncommitted changes, else it refuses its task;
