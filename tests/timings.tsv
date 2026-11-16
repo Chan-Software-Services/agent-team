@@ -13,6 +13,7 @@ tests/harness.bats	1	3
 tests/lease-fence.bats	49	55
 tests/ledger.bats	9	9
 tests/machine.bats	6	7
+tests/merge-queue-drill.bats	12	
 tests/opencode-gate.bats	0	1
 tests/ops-log.bats	3	5
 tests/platform.bats	4	10
