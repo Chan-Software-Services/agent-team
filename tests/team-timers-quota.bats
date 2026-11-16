@@ -7,8 +7,8 @@
 # reading is this machine's quota state file, as team-quota line writes it; its resets are in 2036,
 # so it never rots, and a reset window is one whose resets_at has passed. Before the status, the step
 # runs team-quota usage --if-due, which every test but those of a fake team-quota finds not due:
-# setup writes a usage attempt record of just now, so no test starts the sandbox's stub claude
-# as a headless Claude Code.
+# setup writes a usage attempt record of just now (usage_read_now), so no test starts the
+# sandbox's stub claude as a headless Claude Code.
 
 load helpers/common
 load helpers/inbox
@@ -27,9 +27,7 @@ setup() {
   inbox_guild_kept
   # The posts' times are this machine's local time: a zone off UTC by a half hour shows it.
   export TZ=Asia/Kolkata
-  # A usage read of just now, which read no model window: usage --if-due is not due for 10 minutes.
-  mkdir -p "$state"
-  jq -cn --arg at "$(date -u +%FT%TZ)" '{at: $at, ok: true, why: null, reading: null}' >"$state/quota-usage.json"
+  usage_read_now
 }
 
 WEEK_RESETS=2036-11-17T09:00:00Z
