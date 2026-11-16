@@ -2829,9 +2829,10 @@ copy_run_left() {
 # and the second that cleanup as first fixed, its filter given to awk, still unbound by owner.
 # Each planted @test line is written %test, since bats rewrites an @test line even in a heredoc.
 @test "tests/bound-kills names the logout's cleanup before its fix, and each unbound search whose pids may reach a kill, by file, line and the binding it lacks" {
-  local t313=$BATS_TEST_TMPDIR/t313.bats forms=$BATS_TEST_TMPDIR/forms.bats
-  local neither="bound by neither its owner (-u or -U) nor the test's own temporary directory (\$BATS_TEST_TMPDIR or \$BATS_FILE_TMPDIR on its line)"
-  cat >"$t313" <<'T313'
+  local logout=$BATS_TEST_TMPDIR/logout.bats forms=$BATS_TEST_TMPDIR/forms.bats
+  local tmp="the test's own temporary directory (\$BATS_TEST_TMPDIR or \$BATS_FILE_TMPDIR in a word of its pipeline)"
+  local neither="bound by neither its owner (-u or -U) nor $tmp" no_tmp="not bound by $tmp"
+  cat >"$logout" <<'LOGOUT'
 %test "team-heavy stop ends a tests/run bats run's files too, though each runs under timeout in a process group of its own" {
   local copy=$BATS_TEST_TMPDIR/copy run i pid left=''
   unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
@@ -2862,11 +2863,11 @@ copy_run_left() {
   left=$(ps -A -o pid=,args= | TESTS="$copy/tests/" awk 'index($0, ENVIRON["TESTS"]) { print $1 }')
   [[ -z $left ]] || kill $left 2>/dev/null || true
 }
-T313
-  sed -i 's/^%test /@test /' "$t313"
-  run -1 "$REPO_ROOT/tests/bound-kills" "$t313"
-  assert_equal "$output" "$t313:18: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $t313:22
-$t313:28: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $t313:29"
+LOGOUT
+  sed -i 's/^%test /@test /' "$logout"
+  run -1 "$REPO_ROOT/tests/bound-kills" "$logout"
+  assert_equal "$output" "$logout:18: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $logout:22
+$logout:28: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $logout:29"
 
   cat >"$forms" <<'FORMS'
 %test "pgrep piped to xargs kill, bound by neither" {
@@ -2907,8 +2908,34 @@ kill_these() { kill "$@"; }
   kill_these $(pgrep -x sleep)
 }
 
-%test "bound by owner and path, on its line or its pipeline's" {
+%test "run kill of a searched pid list" {
+  left=$(ps -A -o pid=,args= | awk '/x/ { print $1 }'); run kill $left
+}
+
+%test "run pkill" {
+  run pkill -f vite
+}
+
+%test "ps -A beside -U, which lists every user's processes" {
+  ps -A -U "$me" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "the test's directory only in a redirect's target" {
+  pkill -U "$(id -u)" -f vite 2>>"$BATS_TEST_TMPDIR/err"
+}
+
+%test "the test's directory only in a comment" {
+  pkill -U "$me" -f vite  # not $BATS_TEST_TMPDIR
+}
+
+%test "the test's directory only in another command of the list" {
+  pkill -U "$me" -f vite || touch "$BATS_TEST_TMPDIR/none"
+}
+
+%test "bound by owner and path, in a word of its pipeline" {
   pkill -U "$(id -u)" -f "$BATS_TEST_TMPDIR/bin/x"
+  run -0 pkill -U "$me" -f "$BATS_FILE_TMPDIR/bin/x"
+  ps -U "$me" -ww -o pid=,args= e | OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" awk 'index($0, ENVIRON["OWN"])' | xargs -r kill
   ps -U "$me" -o pid=,args= |
     TESTS=$BATS_FILE_TMPDIR/copy awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
 }
@@ -2937,29 +2964,38 @@ FORMS
   sed -i 's/^%test /@test /' "$forms"
   run -1 "$REPO_ROOT/tests/bound-kills" "$forms"
   assert_equal "$output" "$forms:2: pgrep -f \$copy/vite: $neither, and its pids may reach the kill at $forms:2
-$forms:6: pgrep -u \$(id -u) -f vite: not bound by the test's own temporary directory (\$BATS_TEST_TMPDIR or \$BATS_FILE_TMPDIR on its line), and its pids may reach the kill at $forms:6
+$forms:6: pgrep -u \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:6
 $forms:10: pkill -f \$BATS_TEST_TMPDIR/bin/x: not bound by its owner (-u or -U), and its pids may reach the kill at $forms:10
-$forms:14: pidof sleep: bound by neither its owner (-u or -U; pidof has none: use pgrep) nor the test's own temporary directory (\$BATS_TEST_TMPDIR or \$BATS_FILE_TMPDIR on its line), and its pids may reach the kill at $forms:14
+$forms:14: pidof sleep: bound by neither its owner (-u or -U; pidof has none: use pgrep) nor $tmp, and its pids may reach the kill at $forms:14
 $forms:18: ps -e -o pid=,args=: $neither, and its pids may reach the kill at $forms:19
 $forms:24: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:29
-$forms:36: pgrep -x sleep: $neither, and its pids may reach the kill at $forms:33"
-  # The forms after the first seven, bound or reaching no kill, pass alone.
-  sed -i '1,37d' "$forms"
+$forms:36: pgrep -x sleep: $neither, and its pids may reach the kill at $forms:33
+$forms:40: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:40
+$forms:44: pkill -f vite: $neither, and its pids may reach the kill at $forms:44
+$forms:48: ps -A -U \$me -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps lists every user's processes beside them), and its pids may reach the kill at $forms:48
+$forms:52: pkill -U \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:52
+$forms:56: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:56
+$forms:60: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:60"
+  # The forms after the first thirteen, bound or reaching no kill, pass alone.
+  sed -i '1,61d' "$forms"
   run -0 "$REPO_ROOT/tests/bound-kills" "$forms"
   assert_equal "$output" ""
 }
 
+# The sleeps leave bats' output (fd 3) closed and are killed before any assertion, so a failing
+# own_pids ends the test at once instead of holding the file's run open for their five minutes.
 @test "own_pids names the processes this test started, but not this shell, another test's or one whose environment was emptied" {
   local own other bare sleep
   sleep=$(command -v sleep)
-  "$sleep" 300 &
+  "$sleep" 300 3>&- &
   own=$!
-  BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR-other "$sleep" 300 &
+  BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR-other "$sleep" 300 3>&- &
   other=$!
-  env -i "$sleep" 300 &
+  env -i "$sleep" 300 3>&- &
   bare=$!
-  run -0 own_pids
+  run own_pids
   kill "$own" "$other" "$bare"
+  assert_equal "$status" 0
   assert_equal "$(grep -cxE "$own|$other|$bare|$$" <<<"$output")" 1
   grep -qx "$own" <<<"$output"
 }

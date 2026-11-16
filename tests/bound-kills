@@ -5,23 +5,32 @@
 # desktop session, which ended it.
 # A search is pgrep, pidof, pkill or killall, or ps but for one naming its processes (-p, --pid,
 # -q or --quick-pid), as the name a command runs, past the reserved words it follows (do, then, {
-# and the rest), its assignments and the wrappers builtin, command, env, exec, nice, nohup,
-# setsid, sudo, time, timeout and xargs. A kill is kill (but for kill -0, -s 0, -n 0, -l and -L,
-# which send nothing), pkill or killall.
+# and the rest), its assignments and the wrappers builtin, command, env, exec, nice, nohup, run
+# (bats', its options and ! too), setsid, sudo, time, timeout and xargs. A kill is kill (but for
+# kill -0, -s 0, -n 0, -l and -L, which send nothing), pkill or killall.
 # Its pids may reach a kill when the block it stands in (a function or an @test block opened at
 # the start of a line, or the file's top level, outside them) kills, or names as a word of one of
 # its commands a function that kills, in turn; or when its block is a function that a block whose
-# pids may reach a kill names so: the pids a function prints are its callers'.
+# pids may reach a kill names so: the pids a function prints are its callers'. So once a block
+# kills, every search in it is held, a lookup whose pids it never kills among them.
 # Bound is both of:
-#   - its owner: the search's own -u or -U (-u<user>, --user, --uid or --euid too); pidof has none;
-#   - the test's own temporary directory: $BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR (or ${...}) on
-#     the search's line or another line of its pipeline or list (each line but the last ending in
-#     |, \, && or ||), as the path its pattern or filter holds (pgrep -f "$BATS_TEST_TMPDIR/...",
-#     an awk filter given it) or the environment it reads; tests/helpers/common.bash's own_pids is
-#     such a search, from which a test reads the processes it started but cannot name by pid.
+#   - its owner: the search's own -u or -U (-u<user>, --user, --uid or --euid too), which a ps
+#     selection of every user's processes undoes (-A, -e, -a, -d, -N or --deselect, in a cluster
+#     too, or BSD's a, as in ax), since procps adds those to a -U's; pidof has none;
+#   - the test's own temporary directory: $BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR (or ${...})
+#     expanded in a word of one of its pipeline's commands (not in a redirection's target, a
+#     comment or a command joined to it by ;, && or ||), as the path its pattern or filter holds
+#     (pgrep -f "$BATS_TEST_TMPDIR/...", an awk filter given it) or the environment it reads;
+#     tests/helpers/common.bash's own_pids is such a search, from which a test reads the processes
+#     it started but cannot name by pid.
+# A search bound only to a process the test started, by its parent, group or session (pkill -P
+# "$!", pgrep -g "$pgid"), takes both bindings too.
 # It reads only what the test file's own shell expands, as tests/guard-paths does (its lexer is
-# tests/helpers/shell_source.py): a single-quoted string, a bash -c string among them, a quoted
-# heredoc's body and a comment are left as they are, so a kill there is not seen.
+# tests/helpers/shell_source.py), so it does not see a kill or a search in a single-quoted string
+# (a bash -c '...' string among them), in the one word of a double-quoted bash -c or sh -c string,
+# in a quoted heredoc's body or in a comment, nor a kill that eval runs. Nor does it follow pids
+# carried from one block to another that does not name it (a setup that searches into a variable
+# and a teardown that kills it), or through a file (a pid file a teardown kills).
 # The files are every tracked shell file under tests/ but tests/vendor/ and tests/fixtures/, by
 # tests/run's shell_scripts rule (.sh, .bash or .bats, or a sh or bash shebang), or those given,
 # read together, since a helper's function is called from the bats files.
@@ -50,18 +59,24 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 # command it runs (timeout's duration).
 WRAPPERS = {
     "builtin": (set(), 0), "command": (set(), 0), "exec": ({"-a"}, 0), "nohup": (set(), 0),
-    "time": (set(), 0), "setsid": (set(), 0), "nice": ({"-n"}, 0),
+    "time": (set(), 0), "setsid": (set(), 0), "nice": ({"-n"}, 0), "run": (set(), 0),
     "sudo": ({"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U"}, 0),
     "env": ({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, 0),
     "timeout": ({"-k", "-s", "--kill-after", "--signal"}, 1),
     "xargs": ({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter",
                "--max-args", "--max-lines", "--max-procs", "--max-chars"}, 0),
 }
+# ps's options that take a value, as a word of their own or the rest of a cluster (-o pid=, -Uroot).
+PS_VALUES = set("oOpqUuGgtCsk")
+PS_LONG_VALUES = {"--pid", "--ppid", "--quick-pid", "--sort", "--format", "--user", "--User", "--group",
+                  "--Group", "--sid", "--tty", "--cols", "--columns", "--rows", "--width"}
+# ps's selections of every user's processes, which procps adds to a -U's rather than narrows: -A,
+# -e, -a, -d and -N (--deselect), in a cluster too (-ef), and BSD's a without a dash (ax, aux).
+PS_EVERY = set("AeadN")
 OWNER = re.compile(r"^(-[uU]|--(user|User|uid|euid)(=|$))")
-TMPDIR = re.compile(r"\$\{?BATS_(TEST|FILE)_TMPDIR\b")
+TMPDIR = re.compile(r"^BATS_(TEST|FILE)_TMPDIR\b")
 UNIT = re.compile(r"^(?:@test\b|function\s+([A-Za-z_][\w:-]*)|([A-Za-z_][\w:-]*)\s*\(\s*\))")
 CLOSE = re.compile(r"^\}\s*(#.*)?$")
-CONTINUED = re.compile(r"(\||\\|&&|\|\|)\s*$")
 
 
 def unquoted(text):
@@ -74,9 +89,12 @@ def running(words):
     while k < len(words) and (words[k] in RESERVED or ASSIGNMENT.match(words[k])):
         k += 1
     while k < len(words) and os.path.basename(words[k]) in WRAPPERS:
-        values, operands = WRAPPERS[os.path.basename(words[k])]
+        wrapper = os.path.basename(words[k])
+        values, operands = WRAPPERS[wrapper]
         k += 1
-        while k < len(words) and (words[k].startswith("-") or ASSIGNMENT.match(words[k])):
+        # bats' run takes its options (-<status>, --separate-stderr) and a ! before the command.
+        while k < len(words) and (words[k].startswith("-") or ASSIGNMENT.match(words[k])
+                                  or (wrapper == "run" and words[k] == "!")):
             k += 2 if words[k] in values else 1
         k += operands
     return words[k:]
@@ -86,6 +104,28 @@ def is_search(run):
     name = os.path.basename(run[0]) if run else ""
     named = any(w in NAMED or w.startswith("--pid=") for w in run)
     return name in SEARCHES and not (name == "ps" and named)
+
+
+def every_user(run):
+    """The word of a ps command that selects every user's processes, or None."""
+    k = 1
+    while k < len(run):
+        w = run[k]
+        k += 1
+        if w in PS_LONG_VALUES:
+            k += 1
+        elif w == "--deselect":
+            return w
+        elif re.match(r"^-[A-Za-z]+$", w):
+            for c in w[1:]:
+                if c in PS_EVERY:
+                    return w
+                if c in PS_VALUES:
+                    k += c == w[-1]
+                    break
+        elif re.match(r"^[A-Za-z]+$", w) and "a" in w:
+            return w
+    return None
 
 
 def is_kill(run):
@@ -98,7 +138,8 @@ def is_kill(run):
 
 class Unit:
     """A function, an @test block or a file's top level: its file, its name when a function, and
-    its commands, each the words as written and those it runs."""
+    its commands, each its line, its words as written, those it runs and whether a word of its
+    pipeline expands the test's own temporary directory."""
 
     def __init__(self, path, name):
         self.path, self.name, self.commands = path, name, []
@@ -124,26 +165,28 @@ def units(path, text):
             of_line[k + 1] = unit
         n = end + 1
     line_of = line_finder(text)
+    pipelines, prev = [], None
     for cmd in Lexer(text, line_of=line_of).run():
         # A redirection's target, and the file descriptor its operator follows (2>), are no words.
         words = [w for w in cmd if not w.redirect
                  and not (raw(text, w).isdigit() and text[w.end:w.end + 1] in "<>")]
         if not words:
             continue
+        # The lexer lists a pipeline's commands in turn, each after the one piped into it, with
+        # only the pipe and blanks between them.
+        if not (prev and re.sub(r"\\\n|\s", "", text[prev[-1].end:cmd[0].start]) in ("|", "|&")):
+            pipelines.append([])
+        prev = cmd
         texts = [unquoted(raw(text, w)) for w in words]
         unit = of_line.get(words[0].line, found[0])
-        unit.commands.append((words[0].line, texts, running(texts)))
+        entry = [words[0].line, texts, running(texts), False]
+        unit.commands.append(entry)
+        pipelines[-1].append((entry, words))
+    for pipeline in pipelines:
+        tmp = any(TMPDIR.match(e.text) for _, words in pipeline for w in words for e in w.expansions)
+        for entry, _ in pipeline:
+            entry[3] = tmp
     return found
-
-
-def statement(lines, line):
-    """The text of the line and of the lines its pipeline or list continues onto, either way."""
-    first = last = line
-    while first > 1 and CONTINUED.search(lines[first - 2]):
-        first -= 1
-    while last < len(lines) and CONTINUED.search(lines[last - 1]):
-        last += 1
-    return "\n".join(lines[first - 1:last])
 
 
 def findings(files):
@@ -157,11 +200,11 @@ def findings(files):
     for u in all_units:
         if u.name:
             by_name.setdefault(u.name, []).append(u)
-    calls = {u: sorted({w for _, words, _ in u.commands for w in words if w in by_name}) for u in all_units}
+    calls = {u: sorted({w for _, words, _, _ in u.commands for w in words if w in by_name}) for u in all_units}
     # kills: each unit that kills, itself or through a function it names, with that kill's place.
     kills = {}
     for u in all_units:
-        own = next((line for line, _, run in u.commands if is_kill(run)), None)
+        own = next((line for line, _, run, _ in u.commands if is_kill(run)), None)
         if own is not None:
             kills[u] = (u.path, own)
     changed = True
@@ -181,19 +224,20 @@ def findings(files):
         for u in list(reach):
             for f in (f for n in calls[u] for f in by_name[n] if f not in reach):
                 reach[f], changed = reach[u], True
-    where = "the test's own temporary directory ($BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR on its line)"
+    where = "the test's own temporary directory ($BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR in a word of its pipeline)"
     found = set()
     for u in reach:
-        lines = texts[u.path].split("\n")
-        for line, _, run in u.commands:
+        for line, _, run, path in u.commands:
             if not is_search(run):
                 continue
-            pidof = os.path.basename(run[0]) == "pidof"
-            owner = not pidof and any(OWNER.match(w) for w in run[1:])
-            path = bool(TMPDIR.search(statement(lines, line)))
+            name = os.path.basename(run[0])
+            named = name != "pidof" and any(OWNER.match(w) for w in run[1:])
+            every = every_user(run) if name == "ps" and named else None
+            owner = named and not every
             if owner and path:
                 continue
-            whose = "its owner (-u or -U" + ("; pidof has none: use pgrep)" if pidof else ")")
+            whose = "its owner (-u or -U" + ("; pidof has none: use pgrep" if name == "pidof" else "") + \
+                (f", which {every} undoes: ps lists every user's processes beside them" if every else "") + ")"
             unbound = f"bound by neither {whose} nor {where}" if not (owner or path) else \
                 f"not bound by {where if owner else whose}"
             kill_path, kill_line = reach[u]
