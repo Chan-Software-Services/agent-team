@@ -435,6 +435,22 @@ JSON
   done
 }
 
+@test "its settings deny its own call of team-land, the landing team-merge and the drill run for it" {
+  run_bin -0 claude-coordinator
+  local settings=$HOME/.local/state/agent-team/coordinator.settings.json command
+  for command in "team-land https://github.com/o/p/pull/6 a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" \
+    "team-land --task T7 https://github.com/o/p/pull/6 a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" \
+    "$HOME/agent-team/bin/team-land https://github.com/o/p/pull/6 a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" \
+    "$HOME/agent-team/bin/team-land --help"; do
+    denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
+  done
+  # team-merge and the drill start team-land themselves, with no Bash call of the coordinator's.
+  for command in "team-merge T7" "$HOME/agent-team/bin/team-merge T7 --pr https://github.com/o/p/pull/6" \
+    "tests/merge-queue-drill org/scratch" "team-lander T7" "team-state T7"; do
+    if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
+  done
+}
+
 @test "it launches from the working directory it is given" {
   mkdir -p "$BATS_TEST_TMPDIR/elsewhere"
   run_bin -0 claude-coordinator "$BATS_TEST_TMPDIR/elsewhere"

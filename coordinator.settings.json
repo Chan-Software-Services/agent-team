@@ -42,6 +42,8 @@
       "Bash(*env --i*)",
       "Bash(*env - *)",
       "Bash(*exec -c*)",
+      "Bash(team-land **)",
+      "Bash(*/team-land **)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git push * --force*)",

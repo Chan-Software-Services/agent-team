@@ -15,13 +15,13 @@
 # database's setup), deploy (the hosts' config and the code or config named for the deploy),
 # permissions (the owners file, and each project's server-side auth code by name), secrets (env
 # and key files, and files named for a secret or credential), and guardrails, the team's own
-# guards on its code repository: team-merge with the library and jq it runs, the scripts whose
-# events and checks it reads (team-checks, team-heavy, team-next, team-catch-up,
-# team-review-status, team-review-check, and bin/lib/review-app, which names the reviewer App),
-# bin/lib/worker-login, which names the worker login, and bin/lib/github-login.sh, which says where
-# it and the owner login live,
-# team-ask and team-run-approved, team-log, which logs the reviews, words and approvals team-merge
-# reads, team-project, the registry's one reader, the launchers (team-worker, claude-coordinator,
+# guards on its code repository: team-merge with the library and jq it runs and team-land, which
+# lands a PR for it through a merge queue, the scripts whose events and checks it reads
+# (team-checks, team-heavy, team-next, team-catch-up, team-review-status, team-review-check, and
+# bin/lib/review-app, which names the reviewer App), bin/lib/worker-login, which names the worker
+# login, and bin/lib/github-login.sh, which says where it and the owner login live, team-ask and
+# team-run-approved, team-log, which logs the reviews, words and approvals team-merge reads,
+# team-project, the registry's one reader, the launchers (team-worker, claude-coordinator,
 # claude-assistant and their shared bin/lib/launch.sh), the lease, the hooks, the permission
 # settings, the role prompts, the ledger contract and the lifecycle table (lifecycle.json) the
 # ledger holds events to, data-check, the records and code lists, the command guard's readers
@@ -53,5 +53,5 @@ guardrails@own bin/hooks/.*
 guardrails@own settings/[^/]*\.json
 guardrails@own (coordinator|assistant)\.settings\.json
 guardrails@own bin/lib/(team\.sh|platform\.sh|launch\.sh|github-login\.sh|ledger\.jq|messages\.jq|review-app|worker-login)
-guardrails@own bin/team-(next|catch-up|review-check)
+guardrails@own bin/team-(next|catch-up|review-check|land)
 guardrails@own roles/.*

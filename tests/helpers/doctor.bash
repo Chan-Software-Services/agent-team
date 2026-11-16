@@ -168,6 +168,19 @@ EOF
   stub_script gh <<'EOF'
 case $* in
   'auth status --hostname github.com') echo "  - Token: gho_fakefakefakefake" ;;
+  'api repos/'*)
+    # A base's rules (base_rules), from $STUB_FIXTURES/github/<owner>/<name>/: branch.json,
+    # rules.json and ruleset-<id>.json, or as an unprotected base with no ruleset (queue_on in
+    # tests/team-doctor-projects.bats writes them); branch.err fails the branch read with its text.
+    dir=$STUB_FIXTURES/github/$(cut -d/ -f2,3 <<<"$2")
+    case ${2#repos/*/*/} in
+      branches/*)
+        if [[ -f $dir/branch.err ]]; then cat "$dir/branch.err" >&2; exit 1; fi
+        cat "$dir/branch.json" 2>/dev/null || printf '{"name": "%s", "protected": false}\n' "${2##*/}" ;;
+      rules/branches/*) cat "$dir/rules.json" 2>/dev/null || echo '[]' ;;
+      rulesets/*) cat "$dir/ruleset-${2##*/}.json" ;;
+      *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
+    esac ;;
   *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
 esac
 EOF
