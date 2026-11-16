@@ -507,7 +507,7 @@ describe("the backups root", () => {
 
   test("refuses one inside a shared temporary directory, TMPDIR or XDG_RUNTIME_DIR", async () => {
     root = join(tempDir("root"), "backups");
-    await refused(/the backups folder \/\S+ is inside a shared temporary directory, \/(tmp|var\/folders|private\/\S+)/);
+    await refused(/the backups folder \/\S+ is inside a shared temporary directory, \/(tmp|var\/tmp|var\/folders|private\/\S+)/);
     root = join(dir("scratch"), "backups");
     await refused("the backups folder ~/scratch/backups is inside a shared temporary directory, ~/scratch", { env: { TMPDIR: join(home, "scratch") } });
     await refused("the backups folder ~/scratch/backups is inside a shared temporary directory, ~/scratch", { env: { XDG_RUNTIME_DIR: join(home, "scratch") } });
