@@ -27,8 +27,9 @@
 # and every run removes the project's kept logs older than 30 days; one that cannot be kept is
 # said in the result's line, and neither that nor one that cannot be removed changes an exit.
 # The worktree is removed with git worktree remove --force and its directory by the path mktemp
-# printed, made writable first (chmod -R u+w, failures ignored), so a read-only tree a check left
-# in its TMPDIR, as go's module cache is, goes too; each check's TMPDIR is emptied the same way
+# printed, made readable, writable and searchable first (chmod -R u+rwX, failures ignored), so a
+# read-only tree a check left in its TMPDIR, as go's module cache is, goes too, and so does a
+# directory it may not read or search (mode 000); each check's TMPDIR is emptied the same way
 # before the next.
 # Exit 0 all passed or there are none, 1 any failed, 75 none failed but one could not run yet.
 set -euo pipefail
@@ -68,10 +69,11 @@ head=$(git -C "$checkout" rev-parse -q --verify "$rev^{commit}") || die "$rev is
 base=${TMPDIR:-/tmp}
 case $base in /home/* | /Users/* | "$HOME"/*) base=/tmp ;; esac
 scratch=$(mktemp -d "$base/team-checks.XXXXXX")
-# A check may leave a read-only tree in its TMPDIR, as go's module cache is, which rm -rf cannot
-# empty, so a tree is made writable before it goes.
+# A check may leave a read-only tree in its TMPDIR, as go's module cache is, or a directory it may
+# not read or search, which rm -rf cannot empty, so each directory is made readable, writable and
+# searchable (X) before chmod descends into it, and each file writable, before the tree goes.
 remove_tree() {
-  chmod -R u+w "$1" 2>/dev/null || true
+  chmod -R u+rwX "$1" 2>/dev/null || true
   rm -rf "$1"
 }
 trap 'git -C "$checkout" worktree remove --force "$scratch/head" 2>/dev/null || true; remove_tree "$scratch"' EXIT

@@ -299,14 +299,15 @@ ledger=$TEAM_HOME/ledger.jsonl
 [[ -e $ledger ]] || ledger=/dev/null
 
 # The run's directory, as the header says. The views still running when the run ends are its own
-# background jobs, whose pids it has not yet waited for, so none is another process's: the
+# background jobs that bash has not yet reaped (jobs -r: an ended job bash has reaped is left out,
+# since the kernel may have given its pid to another process), so none is another process's: the
 # command each runs is sent TERM, so it ends by its own traps and removes its own scratch, and each
 # view, which then ends in a moment, is waited for, so none writes into the directory while it is
-# removed.
+# removed. A view that has ended needs neither, and its children are no longer its own.
 run_tmp=$(mktemp -d)
 end_run() {
   local -a views children
-  mapfile -t views < <(jobs -p)
+  mapfile -t views < <(jobs -rp)
   if ((${#views[@]})); then
     mapfile -t children < <(ps -A -o pid=,ppid= | awk -v views=" ${views[*]} " 'index(views, " " $2 " ") { print $1 }')
     ((${#children[@]} == 0)) || kill -TERM "${children[@]}" 2>/dev/null || true
