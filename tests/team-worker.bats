@@ -918,6 +918,25 @@ session-records-guard block 10"
   assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" ""
 }
 
+@test "T0's planner, builder and reviewer start with Remote Control off; T0's ops and a task's builder keep their settings' word" {
+  files() { jq -r --arg flag "$1" '.[index($flag) + 1]' <<<"$2"; }
+  remote_control() { jq -c 'has("remoteControlAtStartup"), .remoteControlAtStartup' "$(files --settings "$(bg_calls | tail -n 1)")" | paste -sd ' '; }
+  local role
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T0 "$role" "$wt1" -- go
+    assert_equal "$(remote_control)" "true false"
+  done
+  # A real task's builder loads the user settings' word, which no worker settings file sets.
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  assert_equal "$(remote_control)" "false null"
+  # Ops keeps settings/ops.json's true, T0's ops too, as a task starts the role.
+  ops_stub
+  run_bin -0 team-worker T0 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(remote_control)" "true true"
+}
+
 @test "the session gets the library's PATH: the tool directories from tools.lock first" {
   # Arch, where uname says Linux; Bun installed under HOME, which the caller's PATH lacks.
   export TEAM_OS_RELEASE=$BATS_TEST_TMPDIR/os-release
