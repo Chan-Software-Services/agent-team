@@ -28,7 +28,7 @@
 # shellcheck shell=bash
 
 READING_HELD='include "ledger"; include "capacity"; include "stack"; ledger_events as $events | ($events | by_task) as $tasks
-  | held_worktrees($tasks; [open_worktrees($events[] | select($tasks[.task] | is_open); $home)]; $worktrees)'
+  | held_worktrees($tasks; [open_worktrees($events | open_task_events | .[]; $home)]; $worktrees)'
 
 # The registry, read once, as the header's read_registry says.
 read_registry() {

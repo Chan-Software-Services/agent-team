@@ -125,8 +125,8 @@ check_leases() {
   count=$(jq -s 'map(select(.holder != "")) | length' <<<"$leases")
   # Each slot that is an open worktree of the project, spelled as the ledger spells it, since the
   # comparison below is by text and the two may spell one directory otherwise (same_path).
-  mapfile -t open < <(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks
-    | open_worktrees($events[] | select($tasks[.task] | is_open); $home) | select(.project == $project) | .worktree' \
+  mapfile -t open < <(ledger_jq 'ledger_events as $events
+    | open_worktrees($events | open_task_events | .[]; $home) | select(.project == $project) | .worktree' \
     -nRr --arg project "$project" "$ledger")
   leases=$(while IFS= read -r entry; do
     for wt in "${open[@]}"; do
@@ -135,7 +135,7 @@ check_leases() {
     echo "$entry"
   done <<<"$leases")
   problems=$(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks
-    | [open_worktrees($events[] | select($tasks[.task] | is_open); $home) | select(.project == $project)] as $open
+    | [open_worktrees($events | open_task_events | .[]; $home) | select(.project == $project)] as $open
     | $leases[] | select(.holder != "") | . as $slot
     | (.holder | capture("^(?<task>T[1-9][0-9]*)(--(?<ticket>[0-9]{2}))?$") // {task: ., ticket: null}) as $by
     | ($tasks[$by.task] // null) as $held
@@ -269,8 +269,8 @@ check_project() {
   # run, on a project with branch_ci), and its checkpoint keeps it as wip/<project>/T<n>--NN.
   ledger=$TEAM_HOME/ledger.jsonl
   [[ -f $ledger ]] || ledger=/dev/null
-  ticket_branches=$(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks
-    | open_worktrees($events[] | select($tasks[.task] | is_open); $home)
+  ticket_branches=$(ledger_jq 'ledger_events as $events
+    | open_worktrees($events | open_task_events | .[]; $home)
     | select(.project == $project and .ticket != null) | .branch' \
     -nRr --arg project "$project" "$ledger")
   while IFS= read -r branch; do
