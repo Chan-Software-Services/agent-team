@@ -58,10 +58,11 @@ settings_of() {
   esac
 }
 
-# What a <role>'s session has in its environment when a hook runs: session <role>
+# What a <role>'s session has in its environment when a hook runs, with no CLAUDE_CODE_TMPDIR, so
+# session-records-guard and @CLAUDE_TMP@ read the same temporary directory: session <role>
 session() {
   export CLAUDE_PROJECT_DIR=$WT CLAUDE_JOB_DIR=$JOB AGENT_TEAM_TASK=T12
-  unset AGENT_TEAM_ROLE
+  unset AGENT_TEAM_ROLE CLAUDE_CODE_TMPDIR
   case $1 in
     builder | planner | reviewer | ops) export AGENT_TEAM_ROLE=$1 ;;
     coordinator | assistant) export CLAUDE_PROJECT_DIR=$TEAM_HOME ;;&
@@ -150,6 +151,13 @@ allowed_for() {
   return "$failed"
 }
 
+# Point the test's corpus at a copy of it whose line <n> holds another session's id in place of
+# @SESSION@: another_session_on <n>
+another_session_on() {
+  sed "${1}s/@SESSION@/11111111-2222-4333-8444-555555555555/" "$CORPUS" >"$BATS_TEST_TMPDIR/allowed.jsonl"
+  CORPUS=$BATS_TEST_TMPDIR/allowed.jsonl
+}
+
 @test "every line of the corpus is a call: roles the test knows, a tool, its input, and at most a cwd and local" {
   run jq -r '
     def bad: type != "object" or (keys - ["cwd", "input", "local", "roles", "tool"]) != []
@@ -198,6 +206,19 @@ allowed_for() {
   assert_equal "$output" ""
   assert_equal "$status" 0
   [[ $(plan builder | wc -l) -eq $(jq -c 'select(.roles | index("builder"))' "$CORPUS" | wc -l) ]]
+}
+
+@test "a session's read of another session's background output fails, whatever CLAUDE_CODE_TMPDIR the shell set" {
+  # The corpus's background-output line, given another session's id: the guard and the test read
+  # one temporary directory, so the line now reads another session's records and must be named.
+  local n
+  n=$(grep -n '"@CLAUDE_TMP@/' "$CORPUS" | cut -d: -f1)
+  [[ $n =~ ^[0-9]+$ ]]
+  another_session_on "$n"
+  export CLAUDE_CODE_TMPDIR=$BATS_TEST_TMPDIR/elsewhere
+  run allowed_for builder
+  assert_equal "$status" 1
+  [[ $output == *"allowed.jsonl:$n: @TEAM_CODE@/bin/hooks/session-records-guard (settings/worker.json) did not pass"* ]]
 }
 
 @test "every PreToolUse hook entry of every settings file is run on a call of the corpus" {
