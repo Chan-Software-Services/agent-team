@@ -33,7 +33,7 @@
 // (`git config --get remote.origin.url`, the URL as the checkout holds it, never printed, since one
 // may carry a token) must name one of `repositories`; `git fetch --quiet origin`, whose failure is
 // a line in the answer, not a refusal; the ref resolved as origin has it (resolveRef), never as a
-// local branch; and each script must be a file at <sha>:back-end/migrations/<script>. git gets childEnv() with
+// local branch or tag; and each script must be a file at <sha>:back-end/migrations/<script>. git gets childEnv() with
 // GIT_TERMINAL_PROMPT=0, and the fetch and resolveRef's ls-remote SSH_AUTH_SOCK when set, for an
 // ssh origin.
 //
@@ -150,7 +150,8 @@ export function checkoutRefusal(cwd, repositories) {
 // The commit a ref names, as origin has it: a branch of origin's (`<ref>` or `origin/<ref>`), else
 // origin's tag, else a commit's hex; never a local branch or tag, so a stale or moved one cannot
 // stand in for origin's. Git keeps no remote-tracking tags, so origin's tag is read with
-// `git ls-remote` (its peeled commit for an annotated tag), and that commit must be in the checkout.
+// `git ls-remote` (its peeled commit for an annotated tag), and that commit must be in the checkout;
+// when origin's tags cannot be listed, no tag resolves, and the refusal says so.
 // The commit must be on a branch of origin's, so one never pushed is not rehearsed.
 // { sha }, or { refusal }.
 export function resolveRef(cwd, ref, repository) {
@@ -158,10 +159,15 @@ export function resolveRef(cwd, ref, repository) {
     const resolved = git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${name}^{commit}`]);
     return resolved.ok && shaPattern.test(resolved.stdout) ? resolved.stdout : undefined;
   };
+  // Whether origin's tags could be listed, so a refusal can say a tag was not read.
+  let unlisted = false;
   const originTag = () => {
     const tag = `refs/tags/${ref}`;
     const listed = git(cwd, ["ls-remote", "--tags", "origin", tag], sshAgent());
-    if (!listed.ok) return undefined;
+    if (!listed.ok) {
+      unlisted = true;
+      return undefined;
+    }
     const lines = new Map(listed.stdout.split("\n").map((line) => line.split("\t").reverse()));
     const sha = lines.get(`${tag}^{}`) ?? lines.get(tag);
     return sha && shaPattern.test(sha) ? commit(sha) : undefined;
@@ -171,6 +177,9 @@ export function resolveRef(cwd, ref, repository) {
     (ref.startsWith("origin/") ? commit(`refs/remotes/${ref}`) : undefined) ??
     originTag() ??
     (hexPattern.test(ref) ? commit(ref) : undefined);
+  if (!sha && unlisted) {
+    return { refusal: `${ref} names no branch of ${repository}'s origin, nor a commit on one of its branches, in this checkout, and origin's tags could not be listed (git ls-remote origin failed), so it was not read as a tag` };
+  }
   if (!sha) return { refusal: `${ref} names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` };
   const held = git(cwd, ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/remotes/origin/"]);
   if (!held.ok || !held.stdout) return { refusal: `${ref} names ${sha.slice(0, 8)}, which no branch of ${repository}'s origin holds in this checkout: only a pushed commit is rehearsed` };

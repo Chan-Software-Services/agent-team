@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, constants, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -1566,6 +1566,15 @@ describe("rehearse-migrations", () => {
     assert.deepEqual(resolved(local.slice(0, 12)), unpushed(local.slice(0, 12)));
     for (const ref of ["local-only", "no-such-branch"]) {
       assert.deepEqual(resolved(ref), { refusal: `${ref} names no branch or tag of ${repository}'s origin, nor a commit on one of its branches, in this checkout` }, ref);
+    }
+    // Origin out of reach: a branch is still read as the checkout last fetched it, but a tag, read
+    // from origin at the call, is not, nor is the local tag of its name, and the refusal says why.
+    renameSync(join(dir, "origin.git"), join(dir, "gone.git"));
+    assert.deepEqual(resolved("release"), { sha: repo.release });
+    for (const ref of ["v1", "local-only"]) {
+      assert.deepEqual(resolved(ref), {
+        refusal: `${ref} names no branch of ${repository}'s origin, nor a commit on one of its branches, in this checkout, and origin's tags could not be listed (git ls-remote origin failed), so it was not read as a tag`,
+      }, ref);
     }
   });
 
