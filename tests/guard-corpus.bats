@@ -18,7 +18,9 @@
 # fixture: no real path, name, address, id, task text, token or host. A string holds these
 # placeholders, which the test fills: @WORKTREE@ (the session's worktree), @JOB@ (its
 # CLAUDE_JOB_DIR), @TEAM_HOME@, @TEAM_CODE@ (the code checkout), @ASSISTANT_CHANNEL@ and
-# @ASSISTANT_THREAD@ (the assistant's channel and a thread of it).
+# @ASSISTANT_THREAD@ (the assistant's channel and a thread of it), @SESSION@ (the session's id,
+# which each hook's input carries as its session_id) and @CLAUDE_TMP@ (Claude Code's temporary
+# directory, which holds the output of a session's background Bash calls).
 #
 # To add a case: append a line to allowed.jsonl with the roles that really make the call, and
 # local when it holds; each role must have a hook that sees it, and the last test holds the line
@@ -30,6 +32,7 @@ CORPUS=$BATS_TEST_DIRNAME/fixtures/guard-corpus/allowed.jsonl
 ROLES=(builder planner reviewer ops coordinator assistant gate)
 ASSISTANT=1570000000000000100
 THREAD=1570000000000000201
+SESSION=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
 
 # The sessions' world: this machine holds the lease, a worktree with a task directory, the
 # session's job directory, a task's directory in the team home, and the assistant's channel, a
@@ -76,7 +79,8 @@ plan() {
   local files
   mapfile -t files < <(settings_of "$1")
   jq -rn --arg role "$1" --arg only "${2:-}" --rawfile corpus "$CORPUS" --arg root "$REPO_ROOT" --arg wt "$WT" --arg job "$JOB" \
-    --arg home "$TEAM_HOME" --arg task "$TASK_DIR" --arg channel "$ASSISTANT" --arg thread "$THREAD" '
+    --arg home "$TEAM_HOME" --arg task "$TASK_DIR" --arg channel "$ASSISTANT" --arg thread "$THREAD" \
+    --arg session "$SESSION" --arg claude_tmp "${TMPDIR:-/tmp}/claude-$(id -u)" '
     def fill($map): reduce ($map | to_entries[]) as $e (.; split($e.key) | join($e.value));
     # A matcher of names and bars is a list of exact names; any other is a regular expression.
     def takes($tool): . as $m
@@ -84,7 +88,8 @@ plan() {
         elif ($m | test("^[A-Za-z0-9_|]+$")) then ($m | split("|") | index($tool)) != null
         else ($tool | test($m)) end;
     {"@WORKTREE@": $wt, "@JOB@": $job, "@TEAM_HOME@": $home, "@TEAM_CODE@": $root,
-      "@ASSISTANT_CHANNEL@": $channel, "@ASSISTANT_THREAD@": $thread} as $values
+      "@ASSISTANT_CHANNEL@": $channel, "@ASSISTANT_THREAD@": $thread, "@SESSION@": $session,
+      "@CLAUDE_TMP@": $claude_tmp} as $values
     | {"@TEAM_CODE@": $root, "$HOME/agent-team": $root, "@TASK_DIR@": $task, "@WORKTREE@": $wt} as $paths
     | [inputs as $s | input_filename as $file | $s.hooks.PreToolUse // [] | .[]
         | .matcher as $matcher | .hooks[] | {$file, $matcher, command, args: (.args // [])}] as $entries
@@ -95,7 +100,7 @@ plan() {
     | if ($seen | length) == 0 then [$n, "-", "", "", "", ""] | map(tostring) | join("\u001f")
       else $seen[] | [($n | tostring), (.file | ltrimstr($root + "/")), (.matcher // ""), .command,
         ([.command | fill($paths)] + [.args[] | fill($paths) | @sh] | join(" ")),
-        ({hook_event_name: "PreToolUse", cwd: ($case.cwd // $wt), tool_name: $case.tool, tool_input: $case.input} | tojson)]
+        ({hook_event_name: "PreToolUse", session_id: $session, cwd: ($case.cwd // $wt), tool_name: $case.tool, tool_input: $case.input} | tojson)]
         | join("\u001f") end' "${files[@]}"
 }
 

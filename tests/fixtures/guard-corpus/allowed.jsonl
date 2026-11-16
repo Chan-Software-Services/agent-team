@@ -110,6 +110,16 @@
 {"roles": ["planner", "reviewer"], "tool": "Write", "input": {"file_path": ".scratch/task/work/check.sh", "content": "#!/usr/bin/env bash\n"}, "local": true}
 {"roles": ["ops"], "tool": "Write", "input": {"file_path": "@WORKTREE@/.scratch/answer.md", "content": "# Answer\n"}, "local": true}
 {"roles": ["ops"], "tool": "Edit", "input": {"file_path": ".scratch/answer.md", "old_string": "3 boxes", "new_string": "4 boxes"}, "local": true}
+{"roles": ["builder", "planner", "reviewer", "ops"], "tool": "Read", "input": {"file_path": "@WORKTREE@/bin/team-widgets"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Read", "input": {"file_path": ".scratch/task/spec.md"}, "local": true}
+{"roles": ["builder", "planner", "reviewer", "ops"], "tool": "Read", "input": {"file_path": "@TEAM_CODE@/sops/platform-gotchas.md", "offset": 40, "limit": 80}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Read", "input": {"file_path": "@TEAM_HOME@/tasks/T12/brief.md"}, "local": true}
+{"roles": ["builder", "reviewer"], "tool": "Read", "input": {"file_path": "~/.claude/projects/-code/@SESSION@/tool-results/toolu_01.txt"}, "local": true}
+{"roles": ["builder", "reviewer"], "tool": "Read", "input": {"file_path": "@CLAUDE_TMP@/-code/@SESSION@/tasks/b1c2d3e4.output"}, "local": true}
+{"roles": ["builder", "planner", "reviewer", "ops"], "tool": "Grep", "input": {"pattern": "count_widgets", "path": "@WORKTREE@/bin", "output_mode": "content", "-n": true}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Grep", "input": {"pattern": "widget_count\\(", "glob": "*.bats", "output_mode": "files_with_matches"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Glob", "input": {"pattern": "tests/*widget*.bats"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Glob", "input": {"pattern": "@WORKTREE@/.scratch/task/tickets/*.md"}, "local": true}
 {"roles": ["ops"], "tool": "mcp__prod-read__find", "input": {"database": "app", "collection": "boxes", "filter": {"status": "open"}, "limit": 5}, "local": true}
 {"roles": ["ops"], "tool": "mcp__prod-read__aggregate", "input": {"database": "app", "collection": "labels", "pipeline": [{"$group": {"_id": "$status", "n": {"$sum": 1}}}]}, "local": true}
 {"roles": ["ops"], "tool": "mcp__prod-write__update-one", "input": {"database": "app", "collection": "boxes", "filter": {"slug": "box-12"}, "update": {"$set": {"status": "closed"}}}, "local": true}
