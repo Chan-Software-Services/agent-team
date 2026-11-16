@@ -20,7 +20,7 @@ Each step says who takes it, and each rule why it holds.
 - A task on the project gives it a workflow that runs the whole suite on every PR to its base.
   Why: the registry can require only checks that run on every PR's head.
 - It runs on Linux runners only, with no macOS or Windows job until Daniel says otherwise.
-  Why: Daniel's standing call is no macOS CI, and other-OS runners are slower and cost more where minutes are metered.
+  Why: Daniel's standing call is no macOS CI, and other-OS runners are slower.
 - Each job has a time limit (`timeout-minutes`).
   Why: a hung job with no limit holds the merge until GitHub's six hours run out.
 - It has a `workflow_dispatch` trigger when the project's builders are to run CI on their branch.
@@ -32,7 +32,7 @@ Each step says who takes it, and each rule why it holds.
 
 ## Daniel's steps at github.com
 
-These steps are Daniel's, since only they can change the repository's settings, and the assistant walks them through each one and keeps them in the team home's `manual-steps.md` until they are done.
+These steps are Daniel's, since only they can change the repository's settings, and the assistant walks them through each one and keeps the steps in the team home's `manual-steps.md` until they are done.
 The coordinator first says when no merge to the project's base is in flight, since a push to the base starts every enabled workflow, and the ones the task listed run until they are disabled.
 
 1. Open `https://github.com/<owner>/<repo>/actions`.
