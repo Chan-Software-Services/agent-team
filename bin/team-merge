@@ -36,47 +36,48 @@
 #   (base_rules in bin/lib/team.sh: its classic protection and its rulesets) require agent-review
 #   from the App's id, with classic protection enforcing its required checks for everyone and no
 #   ruleset read with a bypass actor, each refused naming what is missing, and the rest holds as
-#   for any project; then the default is not withdrawn for the PR: the latest merge-default-withdrawn or
-#   merge-default-restored of the whole ledger whose scope covers it (task, logged under the PR's
-#   task; the PR's project; or all) is not a withdrawal, which is refused naming its scope, time and
-#   message, never read, and one that is a giving back holds only when Discord shows its message
-#   from an allowFrom author in #coordinator or the thread of the task it was logged under, else it
-#   is refused naming why; the plan's files now (plan_files in bin/lib/team.sh: tasks/T<n>/plan.md,
-#   and spec.md and scope.txt in the task directory of its first project's worktree) hash as the
-#   approval recorded, each one that differs, is new or is gone named, to approve it again, and
-#   files that cannot be read are refused (a legacy approval, logged before T276 with no plan, has
-#   none to compare and no scope, and reads as the coordinator's); an approval of Daniel's has its
-#   discord_message sent no earlier than the latest asked of the id it answers logged before it, and
-#   read back from Discord as a merge-approved's is; the PR's head branch is the task's branch for
-#   the project (its latest opened, worktree-added or branch-renamed event's, so a branch the gate
-#   made the builder move to counts once the coordinator logs it); the latest review of the head (by
-#   the shorter prefix) has verdict pass and logged guarded as an empty list (one that left it out,
-#   or named one of the six areas, is refused, naming them; a retired area a review logged before
-#   names is not one), where a head team-catch-up made (a caught-up event names it) and no review
-#   names stands on the latest review of the head it was made from, followed back through each such
-#   event to a head with a review of its own, once git (after fetching the branch and the base into
-#   the primary checkout) shows it adds only clean merges of the base to that head, else it is
-#   refused naming the first merge that is not; no review of the task counted a security or
-#   real-data finding, fixed or not, or left out its findings, each such review named by its head
-#   and time; the PR's changed files, read from GitHub's paged list of its files (each filename, and
-#   each rename's previous filename), number the PR's changedFiles, else the list is refused as not
-#   read in full; each changed path is within the approval's scope when it has one (an entry ending
-#   in / covers every path under it, any other that path only), each one outside named; and no
-#   changed path matches a guarded pattern of bin/lib/guarded that applies to the PR's project (CI,
-#   migrations, the deploy, permissions and secrets), as it is or with its camelCase humps split off
-#   by underscores, each one named with its areas; a per-head word that holds never reads it; a
-#   refusal on it lists the per-head word's reasons too when a merge-approved names the PR (or the
-#   task logged no plan approval either), each reason once, and ends with a line saying to ask
-#   Daniel for the per-head word on the head; and every check every merge gets: the PR is open, not
-#   a draft, does not conflict, and targets the project's base; every required check (the base's
-#   rules, its protection's and its rulesets' required checks, gh pr checks --required and the
-#   project's required_checks; rules that cannot be read are refused as GitHub unreadable) is present on the head and passed (a skipped one passes); no
-#   check on the head is failing or pending; agent-review is success on the head: on the team's own
-#   project with the reviewer App on, the App's latest agent-review check run whose head_sha is the
-#   head (review_check in pr_part, bin/lib/team.sh), a commit status or another App's check run of
-#   that name refused as not the App's check, on every word, else the check or status gh pr checks
-#   shows; no commit of the PR carries an agent attribution line, and the list read ends at the
-#   head.
+#   for any project; then the default is not withdrawn for the PR: the latest
+#   merge-default-withdrawn or merge-default-restored of the whole ledger whose scope covers it
+#   (task, logged under the PR's task; the PR's project; or all) is not a withdrawal, which is
+#   refused naming its scope, time and message, never read, and one that is a giving back holds only
+#   when Discord shows its message from an allowFrom author in #coordinator or the thread of the
+#   task it was logged under, else it is refused naming why; the plan's files now (plan_files in
+#   bin/lib/team.sh: tasks/T<n>/plan.md, and spec.md and scope.txt in the task directory of its
+#   first project's worktree) hash as the approval recorded, each one that differs, is new or is
+#   gone named, to approve it again, and files that cannot be read are refused (a legacy approval,
+#   logged before T276 with no plan, has none to compare and no scope, and reads as the
+#   coordinator's); an approval of Daniel's has its discord_message sent no earlier than the latest
+#   asked of the id it answers logged before it, and read back from Discord as a merge-approved's
+#   is; the PR's head branch is the task's branch for the project (its latest opened, worktree-added
+#   or branch-renamed event's, so a branch the gate made the builder move to counts once the
+#   coordinator logs it); the latest review of the head (by the shorter prefix) has verdict pass and
+#   logged guarded as an empty list (one that left it out, or named one of the six areas, is
+#   refused, naming them; a retired area a review logged before names is not one), where a head
+#   team-catch-up made (a caught-up event names it) and no review names stands on the latest review
+#   of the head it was made from, followed back through each such event to a head with a review of
+#   its own, once git (after fetching the branch and the base into the primary checkout) shows it
+#   adds only clean merges of the base to that head, else it is refused naming the first merge that
+#   is not; no review of the task counted a security or real-data finding, fixed or not, or left out
+#   its findings, each such review named by its head and time; the PR's changed files, read from
+#   GitHub's paged list of its files (each filename, and each rename's previous filename), number
+#   the PR's changedFiles, else the list is refused as not read in full; each changed path is within
+#   the approval's scope when it has one (an entry ending in / covers every path under it, any other
+#   that path only), each one outside named; and no changed path matches a guarded pattern of
+#   bin/lib/guarded that applies to the PR's project (CI, migrations, the deploy, permissions and
+#   secrets), as it is or with its camelCase humps split off by underscores, each one named with its
+#   areas; a per-head word that holds never reads it; a refusal on it lists the per-head word's
+#   reasons too when a merge-approved names the PR (or the task logged no plan approval either),
+#   each reason once, and ends with a line saying to ask Daniel for the per-head word on the head;
+#   and every check every merge gets: the PR is open, not a draft, does not conflict, and targets
+#   the project's base; every required check (the base's rules, its protection's and its rulesets'
+#   required checks, gh pr checks --required and the project's required_checks; rules that cannot be
+#   read are refused as GitHub unreadable) is present on the head and passed (a skipped one passes);
+#   no check on the head is failing or pending; agent-review is success on the head: on the team's
+#   own project with the reviewer App on, the App's latest agent-review check run whose head_sha is
+#   the head (review_check in pr_part, bin/lib/team.sh), a commit status or another App's check run
+#   of that name refused as not the App's check, on every word, else the check or status gh pr
+#   checks shows; no commit of the PR carries an agent attribution line, and the list read ends at
+#   the head.
 # Then, for a project with local_checks, team-checks runs them on the PR's head (fetched from
 # origin) from the primary checkout, labelled "team-merge T<n>" under the heavy-run lock, and each
 # must pass (exit 75: the lock stayed held, try again later), a refusal giving each other one's
@@ -84,35 +85,35 @@
 # and its last lines; the head read again after must not have moved.
 # Any failure is exit 1 with every reason, and gh pr merge is never called.
 # On a base with a merge queue (base_rules' queue), run it with Bash run_in_background, since it
-# ends only when the queue does. The checks above are the same, a PR behind its base still no
-# reason to refuse, with two more: the project's merge_method is merge, the only one the team
-# proves a trial commit for, and the PR's queue entry can be read. A refusal there reaches the
-# queue: a PR in the queue is taken out of it (GraphQL's dequeuePullRequest; dequeue_pr in
-# bin/lib/team.sh) and dequeued logged with the reasons, since a trial commit that carries
-# agent-review lands whatever this run says, unless every reason is one that cannot be told now,
-# which leaves it queued and says so: GitHub unread, a conflict GitHub has not worked out yet,
-# the plan's files unread, the head not fetched for the local checks, and local checks that could
-# not run (team-checks exit 75), each classed where it is made; every other reason is a refusal
-# that stands, a Discord message that cannot be read back and a head not fetched to check a word
-# among them, which fails closed at the cost of a second enqueue. A PR GitHub does not let out is
-# said, nothing logged; and a queued that stands for a PR read in no queue, or merged at another
-# head than it names, is ended by a dequeued of the head it names, since it left the queue while
-# no team-merge waited. The task's lock, ~/.local/state/agent-team/merge/T<n>.lock, whose file holds the pid of
-# the run that took it, is taken after the local checks, so no process one of them leaves behind
-# holds it, and let go once merged or dequeued is logged: while another team-merge holds it, read
-# before the local checks and again where it is taken, this one prints "team-merge is already
-# landing <url> (pid <n>)" and exits 0, changing nothing; and when the task's events, read again
-# under it, show a merged of the PR another run logged meanwhile, it says so and exits 0, with no
-# second merged, and a queued stands only when it is still the latest of them. It logs queued (url, head, project) and runs team-land --task T<n> <url> <head>,
-# never gh pr merge, showing team-land's lines on stderr; team-land enqueues the PR, holds the
-# word and the checks again before each trial commit's agent-review (--holds below), posts it and
-# waits, and on its outcome:
+# ends only when the queue does. The checks above are the same, a PR behind its base still no reason
+# to refuse, with two more: the project's merge_method is merge, the only one the team proves a
+# trial commit for, and the PR's queue entry can be read. A refusal there reaches the queue: a PR in
+# the queue is taken out of it (GraphQL's dequeuePullRequest; dequeue_pr in bin/lib/team.sh) and
+# dequeued logged with the reasons, since a trial commit that carries agent-review lands whatever
+# this run says, unless every reason is one that cannot be told now, which leaves it queued and says
+# so: GitHub unread, a conflict GitHub has not worked out yet, the plan's files unread, the head not
+# fetched for the local checks, and local checks that could not run (team-checks exit 75), each
+# classed where it is made; every other reason is a refusal that stands, a Discord message that
+# cannot be read back and a head not fetched to check a word among them, which fails closed at the
+# cost of a second enqueue. A PR GitHub does not let out is said, nothing logged; and a queued that
+# stands for a PR read in no queue, or merged at another head than it names, is ended by a dequeued
+# of the head it names, since it left the queue while no team-merge waited. The task's lock,
+# ~/.local/state/agent-team/merge/T<n>.lock, whose file holds the pid of the run that took it, is
+# taken after the local checks, so no process one of them leaves behind holds it, and let go once
+# merged or dequeued is logged: while another team-merge holds it, read before the local checks and
+# again where it is taken, this one prints "team-merge is already landing <url> (pid <n>)" and exits
+# 0, changing nothing; and when the task's events, read again under it, show a merged of the PR
+# another run logged meanwhile, it says so and exits 0, with no second merged, and a queued stands
+# only when it is still the latest of them. It logs queued (url, head, project) and runs team-land
+# --task T<n> <url> <head>, never gh pr merge, showing team-land's lines on stderr; team-land
+# enqueues the PR, holds the word and the checks again before each trial commit's agent-review
+# (--holds below), posts it and waits, and on its outcome:
 #   merged    the PR's merge commit is the one team-land names, and everything below follows as
 #             after gh pr merge;
 #   dequeued  the queue dropped it, or team-land took it out: dequeued is logged (url, head,
 #             reason, and failed, the failures on the trial commit, when there are any), unless
-#             a team-merge that refused the merge meanwhile took the PR out and logged it, and
-#             it is exit 1 naming the reason, each failure and the next step: with a failure of the
+#             another team-merge logged one meanwhile and team-land names no failures, and it is
+#             exit 1 naming the reason, each failure and the next step: with a failure of the
 #             PR's own, the builder-merge-base brief, since the trial merge failed what the head
 #             passed, else to run team-merge again once what dropped it is fixed;
 #   waiting   team-land's deadline came, or the team holds offline: it is exit 75, saying to run
@@ -123,47 +124,46 @@
 #             run logged is ended by a dequeued with why, as is one that stood before it once
 #             the PR, read again, is in no queue and not merged, or merged at another head than
 #             this run lands, and it is exit 1.
-# A team-land that ends with no result is exit 1, the queued left standing while the PR, read
-# again, is in the queue, merged or unread, and ended by a dequeued when it is in no queue. Run
-# again on a PR already in the queue, it holds the word and the checks again, logs no second
-# queued while the task's latest queued, with no dequeued or merged of the PR since, names the
-# head (else it logs one), and goes on waiting. Run on a PR GitHub shows merged at the
-# head such a standing queued names, which the queue landed while no team-merge waited, it refuses
-# nothing: it says what does not hold now and logs merged, with no local checks run; when the word
-# does not hold now, merged carries no approval or Discord message, its by names the queued event
-# it stood on, and nothing is posted.
-# On a base with no queue: gh pr merge <number> --repo <repo> --<merge_method> --match-head-commit <head>, never
-# --auto or --admin; the PR is read again and must be merged (if gh left it open with auto-merge
-# on, auto-merge is turned off and it is exit 1); then merged is appended with pr, merge, head,
-# by (naming the Discord message and its author, or "the plan the coordinator approved at <ts>"),
-# project, branch, discord_message and discord_channel (Daniel's message, left out on a plan the
-# coordinator approved), url (the PR's), approval (head for the per-head word, default for the
-# default one), local_checks (the commands that passed on head) when there were any, check_run
-# (the reviewer App's agent-review check run's id, on the team's own project with the App on), and
-# phases_left, the phases of the task with a ticket not done, as team-tickets T<n> --json read
-# them just before gh pr merge ([] when every ticket is done, so the task reads merged, else
-# merged-part); a task with no tickets logs none, and a team-tickets that fails logs
-# none and says so on stderr, the merge going on. Prints {task, pr, merge, head, by}, then commits
-# the ledger and pushes it to the team home's origin at once, before any later step (ledger_push
-# in bin/lib/team.sh, which says on stderr when it is not on origin yet, the exit staying 0).
-# Then, when the task's opened event names a story (team-open --story) and the PR is of the project
-# it opened in, that story's backlog file in the team home (story_file in bin/lib/team.sh) is
-# marked: its front matter's status becomes done and the PR's number joins its pr: list (in the
-# list's style, #5 beside #-numbers, else 5), and a line on stderr names the file, which the next
-# checkpoint commits with the records; a story that reads so already is said and left. A story
-# that cannot be marked (no such file, no front matter, a pr: line that is no [...] list) is said
-# on stderr with why; the merge stands and the exit stays 0.
-# Then, on the default word only, team-post posts one message to the task's thread and one to
-# #coordinator: the task, the PR's URL, the approval it merged on ("on the plan you approved,"
-# Daniel's message as a link, its guild the one team-inbox keeps in inbox.json, else
-# #coordinator's channel's, its channel the one the message was read in, with none the message
-# named and a line on stderr saying why; or "on the plan the coordinator approved at <ts>"), the
-# merge commit, and how to revert: the PR page's Revert button, or on the base
-# git revert -m 1 <merge> for a merge, git revert <merge> for a squash, and for a rebase
-# git revert <merge>~<n>..<merge>, the PR's n commits less its merges; with no thread, it posts to
-# #coordinator alone, saying so on stderr. A post that fails (Discord refuses it, or team-post
-# refuses on a fenced machine) is said on stderr, naming where, with its full text, for the
-# coordinator to post with team-post; the merge stands and the exit stays 0. A per-head merge
+# A team-land that ends with no result is exit 1, the queued left standing while the PR, read again,
+# is in the queue, merged or unread, and ended by a dequeued when it is in no queue. Run again on a
+# PR already in the queue, it holds the word and the checks again, logs no second queued while the
+# task's latest queued, with no dequeued or merged of the PR since, names the head (else it logs
+# one), and goes on waiting. Run on a PR GitHub shows merged at the head such a standing queued
+# names, which the queue landed while no team-merge waited, it refuses nothing: it says what does
+# not hold now and logs merged, with no local checks run; when the word does not hold now, merged
+# carries no approval or Discord message, its by names the queued event it stood on, and nothing is
+# posted.
+# On a base with no queue: gh pr merge <number> --repo <repo> --<merge_method> --match-head-commit
+# <head>, never --auto or --admin; the PR is read again and must be merged (if gh left it open with
+# auto-merge on, auto-merge is turned off and it is exit 1); then merged is appended with pr, merge,
+# head, by (naming the Discord message and its author, or "the plan the coordinator approved at
+# <ts>"), project, branch, discord_message and discord_channel (Daniel's message, left out on a plan
+# the coordinator approved), url (the PR's), approval (head for the per-head word, default for the
+# default one), local_checks (the commands that passed on head) when there were any, check_run (the
+# reviewer App's agent-review check run's id, on the team's own project with the App on), and
+# phases_left, the phases of the task with a ticket not done, as team-tickets T<n> --json read them
+# just before gh pr merge ([] when every ticket is done, so the task reads merged, else
+# merged-part); a task with no tickets logs none, and a team-tickets that fails logs none and says
+# so on stderr, the merge going on. Prints {task, pr, merge, head, by}, then commits the ledger and
+# pushes it to the team home's origin at once, before any later step (ledger_push in
+# bin/lib/team.sh, which says on stderr when it is not on origin yet, the exit staying 0). Then,
+# when the task's opened event names a story (team-open --story) and the PR is of the project it
+# opened in, that story's backlog file in the team home (story_file in bin/lib/team.sh) is marked:
+# its front matter's status becomes done and the PR's number joins its pr: list (in the list's
+# style, #5 beside #-numbers, else 5), and a line on stderr names the file, which the next
+# checkpoint commits with the records; a story that reads so already is said and left. A story that
+# cannot be marked (no such file, no front matter, a pr: line that is no [...] list) is said on
+# stderr with why; the merge stands and the exit stays 0. Then, on the default word
+# only, team-post posts one message to the task's thread and one to #coordinator: the task, the PR's
+# URL, the approval it merged on ("on the plan you approved," Daniel's message as a link, its guild
+# the one team-inbox keeps in inbox.json, else #coordinator's channel's, its channel the one the
+# message was read in, with none the message named and a line on stderr saying why; or "on the plan
+# the coordinator approved at <ts>"), the merge commit, and how to revert: the PR page's Revert
+# button, or on the base git revert -m 1 <merge> for a merge, git revert <merge> for a squash, and
+# for a rebase git revert <merge>~<n>..<merge>, the PR's n commits less its merges; with no thread,
+# it posts to #coordinator alone, saying so on stderr. A post that fails (Discord refuses it, or
+# team-post refuses on a fenced machine) is said on stderr, naming where, with its full text, for
+# the coordinator to post with team-post; the merge stands and the exit stays 0. A per-head merge
 # posts nothing.
 # Then, when the project's primary checkout is the code checkout this runs from, that checkout
 # follows the base, so merged code reaches the scripts: on the base branch and clean (untracked
@@ -244,11 +244,11 @@ method=$(team_project "$project" merge_method)
 # none is recorded); default_reasons, why the default word, the approved plan, does not;
 # merge_reasons, the checks every merge gets, whatever the word.
 head_reasons=() default_reasons=() merge_reasons=()
-# The reasons that cannot be told now, each classed where it is made (later), by its text: GitHub
-# unread, a conflict GitHub has not worked out, the plan's files unread, a head that cannot be
-# fetched for the local checks, and local checks that could not start (team-checks exit 75). A run
-# again may find each gone, so a refusal on these alone leaves a queued PR in the queue; every
-# other reason is a refusal that stands.
+# The reasons that cannot be told now, a set keyed by each such reason, which later puts it in
+# where it is made, never by reading its text: GitHub unread, a conflict GitHub has not worked out,
+# the plan's files unread, a head that cannot be fetched for the local checks, and local checks
+# that could not start (team-checks exit 75). A run again may find each gone, so a refusal on these
+# alone leaves a queued PR in the queue; every other reason is a refusal that stands.
 declare -A untold_reasons=()
 # One reason more of the list <name> that cannot be told now: later <name> <reason>
 later() {
@@ -800,11 +800,13 @@ if [[ -n $landing ]]; then
       [[ -n $merge ]] || die "PR #$number is merged but GitHub names no merge commit; log it by hand with what GitHub shows"
       ;;
     dequeued)
-      # A team-merge that refused the merge meanwhile took the PR out, with no lock, and logged its
-      # dequeued: that one stands for this leaving of the queue, and no second is logged.
+      # Another team-merge logged a dequeued meanwhile, with no lock: the one that refused the merge
+      # and took the PR out, or one that found it out of the queue. That one stands for this
+      # leaving of the queue, and no second is logged, unless team-land's result has failures,
+      # which the readers need on the latest dequeued to send the PR back to the builder.
       latest=$(latest_queue_event) || jq_failed $?
-      if [[ $(jq -r '.event // empty' <<<"$latest") == dequeued ]]; then
-        echo "team-merge: PR #$number's dequeued is logged already, by the team-merge that took it out of the queue" >&2
+      if [[ $(jq -r '.event // empty' <<<"$latest") == dequeued ]] && jq -e '(.failed // []) == []' <<<"$landed_as" >/dev/null; then
+        echo "team-merge: PR #$number's dequeued is logged already, by another team-merge" >&2
       else
         log_dequeued "$reason" "$(jq -c '.failed // []' <<<"$landed_as")"
       fi

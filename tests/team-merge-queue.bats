@@ -285,8 +285,23 @@ no_land_call() {
   run_bin -1 --separate-stderr team-merge T14
   assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
   assert_equal "$(queue_events | tail -n 1 | jq -r .reason)" "team-merge refused the merge and took PR #5 out of the merge queue: PR #5 is a draft"
-  assert_contains "$stderr" "team-merge: PR #5's dequeued is logged already, by the team-merge that took it out of the queue"
+  assert_contains "$stderr" "team-merge: PR #5's dequeued is logged already, by another team-merge"
   assert_contains "$stderr" "team-merge: the merge queue dropped PR #5, which is not merged: GitHub gives no reason"
+}
+
+@test "a dequeued another team-merge logged while team-land waited, the queue having dropped the PR for a failure of its own, is followed by team-land's with its failures" {
+  with_queue
+  land dequeued "the checks failed on the merge group" \
+    '[{"name": "test", "class": "pr", "kind": "test", "link": "https://github.com/owner/proj/actions/runs/1/job/2", "step": "Run tests"}]'
+  # A second team-merge, refused before it read the lock, found the PR's entry empty once the queue
+  # dropped it, and logged its dequeued with no failures.
+  sed -i '1i jq -cn --arg h "$2" '"'"'{ts: "2026-10-22T04:00:00Z", task: "T14", event: "dequeued", url: "https://github.com/owner/proj/pull/5", head: $h, reason: "PR #5 left the merge queue while no team-merge waited on it"}'"'"' >>"$TEAM_HOME/ledger.jsonl"' "$gh_dir/land.sh"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued dequeued"
+  assert_equal "$(queue_events | tail -n 1 | jq -c '{reason, failed: [.failed[].name]}')" \
+    '{"reason":"the checks failed on the merge group","failed":["test"]}'
+  [[ $stderr != *"logged already"* ]]
+  assert_contains "$stderr" "  the trial merge failed what the head ${head:0:7} passed: render team-brief T14 builder-merge-base for the builder, then a rereview"
 }
 
 @test "--holds says whether the merge still holds at the head, changing nothing: 0 it holds, 1 it does not, 75 it cannot be told now" {
