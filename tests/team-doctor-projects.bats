@@ -604,3 +604,125 @@ SCRIPT
   run_bin -1 team-doctor
   assert_equal "$(line_of 'checkout site')" "FAIL checkout site: ~/projects/${site##*/} is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then git clone https://github.com/owner/site.git ~/projects/${site##*/}"
 }
+
+# queue_on <repo> [method=<MERGE|SQUASH|REBASE>] [strict=true] [classic=true] [pin=<app id>]: main
+# of <repo> on GitHub with ruleset 9 (main), a merge queue of that method (MERGE) beside the
+# required check test from GitHub Actions and, with pin, agent-review from that App; strict turns
+# the ruleset's strict rule on, and classic leaves classic protection, requiring test, beside it.
+queue_on() {
+  local dir=$STUB_FIXTURES/github/$1 method=MERGE strict=false classic=false pin='' setting
+  for setting in "${@:2}"; do
+    case $setting in
+      method=*) method=${setting#*=} ;;
+      strict=*) strict=${setting#*=} ;;
+      classic=*) classic=${setting#*=} ;;
+      pin=*) pin=${setting#*=} ;;
+    esac
+  done
+  mkdir -p "$dir"
+  jq -n --arg method "$method" --argjson strict "$strict" --arg pin "$pin" '[
+    {type: "required_status_checks", ruleset_id: 9, parameters: {strict_required_status_checks_policy: $strict,
+      required_status_checks: ([{context: "test", integration_id: 15368}]
+        + if $pin == "" then [] else [{context: "agent-review", integration_id: ($pin | tonumber)}] end)}},
+    {type: "merge_queue", ruleset_id: 9, parameters: {merge_method: $method, grouping_strategy: "ALLGREEN"}}]' >"$dir/rules.json"
+  echo '{"id": 9, "name": "main", "enforcement": "active", "bypass_actors": []}' >"$dir/ruleset-9.json"
+  jq -n --argjson classic "$classic" '{name: "main", protected: true, protection: {enabled: $classic,
+    required_status_checks: {enforcement_level: (if $classic then "everyone" else "off" end),
+      contexts: (if $classic then ["test"] else [] end), checks: (if $classic then [{context: "test", app_id: 15368}] else [] end)}}}' \
+    >"$dir/branch.json"
+}
+
+@test "the merge queue line passes saying no base has a queue, and names nothing of an unprotected base or a protected one with none" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: no registered project's base has a merge queue"
+  # An unprotected base has no rules to read: only its branch is asked for.
+  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/Conventioner/branches/main"]
+["api","repos/owner/site/branches/main"]'
+  # Classic protection with its strict rule on, and no queue: none of the line's business.
+  mkdir -p "$STUB_FIXTURES/github/owner/site"
+  echo '{"name": "main", "protected": true, "protection": {"enabled": true, "required_status_checks":
+    {"enforcement_level": "everyone", "strict": true, "contexts": ["test"], "checks": [{"context": "test", "app_id": 15368}]}}}' \
+    >"$STUB_FIXTURES/github/owner/site/branch.json"
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: no registered project's base has a merge queue"
+}
+
+@test "the merge queue line passes naming each project whose base has a queue, the team's own with the App's pin" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  queue_on owner/site
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  # The team's own project with the App off needs no pin; with it on, the pin is named.
+  register agent-team Chan-Software-Services/agent-team direct-pr git
+  queue_on Chan-Software-Services/agent-team
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site), agent-team (main on Chan-Software-Services/agent-team): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  review_app_on
+  queue_on Chan-Software-Services/agent-team pin=123456
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site), agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  # A registry still naming a moved repo's old owner reads the repo where it is now, never
+  # through GitHub's redirect of the old name.
+  sed -i 's#^repo = "Chan-Software-Services/agent-team"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
+  : >"$STUB_CALLS/gh.log"
+  run_bin -0 team-doctor
+  assert_contains "$output" "agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456)"
+  assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c chanjdaniel || true)" 0
+}
+
+@test "the merge queue line fails on a queue whose merge method is not the registry's, a strict rule, or classic protection beside it, the first of them" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  local step="Daniel takes step 6 of sops/merging.md on owner/site,"
+  queue_on owner/site method=SQUASH strict=true classic=true
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on owner/site merges with squash, not merge, the registry's merge_method; fix: $step the queue's merge method MERGE in main's ruleset"
+  # A registry that squashes takes the same queue, whose next problem is the strict rule.
+  sed -i '/^\[site\]$/,/^\[site.pool\]$/s/^merge_method = "merge"$/merge_method = "squash"/' "$TEAM_HOME/projects.toml"
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on owner/site stands beside a strict rule, which holds each PR until its branch is up to date with main; fix: $step the strict rule off in main's ruleset, and its classic protection removed"
+  queue_on owner/site method=SQUASH classic=true
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on owner/site stands beside main's classic protection, which the ruleset replaces; fix: $step main's classic protection removed"
+  queue_on owner/site method=SQUASH
+  run_bin -0 team-doctor
+}
+
+@test "the merge queue line fails for the team's own project with the App on and no agent-review pinned to it, and names each project's problem" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  register agent-team Chan-Software-Services/agent-team direct-pr git
+  review_app_on
+  local reason="main's merge queue on Chan-Software-Services/agent-team stands beside required checks without agent-review from the reviewer App 123456, so GitHub does not hold its check"
+  local fix="Daniel takes step 6 of sops/merging.md on Chan-Software-Services/agent-team, agent-review pinned to App 123456 in main's required checks"
+  queue_on Chan-Software-Services/agent-team
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: $reason; fix: $fix"
+  # agent-review from another App is no pin, and another project needs none.
+  queue_on Chan-Software-Services/agent-team pin=999
+  queue_on Chan-Software-Services/Conventioner
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: $reason; fix: $fix"
+  # Each project's first problem, in the registry's order.
+  queue_on Chan-Software-Services/Conventioner strict=true
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on Chan-Software-Services/Conventioner stands beside a strict rule, which holds each PR until its branch is up to date with main; $reason; fix: Daniel takes step 6 of sops/merging.md on Chan-Software-Services/Conventioner, the strict rule off in main's ruleset, and its classic protection removed; $fix"
+}
+
+@test "the merge queue line fails on a base GitHub cannot read, and reads nothing while the registry is refused" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  mkdir -p "$STUB_FIXTURES/github/owner/site"
+  echo "HTTP 404: Branch not found" >"$STUB_FIXTURES/github/owner/site/branch.err"
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's rules on owner/site cannot be read from GitHub: gh api repos/owner/site/branches/main: HTTP 404: Branch not found; fix: the github login line's fix, then run team-doctor again"
+  local calls
+  calls=$(wc -l <"$STUB_CALLS/gh.log")
+  echo 'nonsense = [' >>"$TEAM_HOME/projects.toml"
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: not read, since the registry or bin/lib/review-app cannot be read, which the projects and review app lines say"
+  assert_equal "$(wc -l <"$STUB_CALLS/gh.log")" "$calls"
+}

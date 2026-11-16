@@ -18,7 +18,7 @@
 #     the team holds offline, one that runs git push, gh, gh-axi, team-ci-wait, team-ci-run or
 #     team-thread wait is blocked with the hold (offline_hold: "GitHub is unreachable (since
 #     13:05); the team is holding: ..."), so no worker retries or waits on.
-#   Bash (the coordinator, --coordinator): a command that runs git push, team-merge,
+#   Bash (the coordinator, --coordinator): a command that runs git push, team-merge, team-land,
 #     team-catch-up, team-open or team-close is blocked as a Discord post is, so a coordinator
 #     left running on a machine that lost the lease merges, opens, closes and pushes nothing while
 #     the holder's does.
