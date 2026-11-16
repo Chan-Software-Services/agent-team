@@ -158,20 +158,21 @@
 # dropped_tests, in the same templates, is derived the same way and never set:
 # bin/lib/review_facts.py tests (its header gives the test files, declarations and markers it reads)
 # reads the same range's changed test files at the merge base and at the head from git alone, and
-# each test the head removes (gone from every changed test file, a test moved between them not
-# listed), each removed with its file, each test file with more skip or focus markers (how many more
-# and the first) and each it cannot read, at the commit it cannot, is a list item, names and paths
-# code spans as instruction_files' are, at most 30 then "- and <n> more in <the files>"; with none,
-# one line saying so. A git failure of the helper's is refused: "cannot list the dropped tests
+# each test the head removes (declared fewer times over the changed test files, so a test moved
+# between them is not listed and one removed while another of its name stays is), each removed with
+# its file, each test file with more skip or focus markers (how many more and the first) and each it
+# cannot read, at the commit it cannot, is a list item, names and paths code spans as
+# instruction_files' are, at most 30 then "- and <n> more in <the files>"; with none, one line
+# saying so. A git failure of the helper's is refused: "cannot list the dropped tests
 # <range> changes in <worktree> (<git's reason>)".
 # dependencies, in the same templates, is derived the same way and never set:
 # bin/lib/review_facts.py dependencies (its header gives the manifests and the lines it reads) reads
-# the same range's changed package.json, requirements*.txt and go.mod files at the merge base and at
-# the head, and each direct dependency the head adds or changes (package.json's four dependency
-# sections, a move between them with the same spec not listed; requirements lines by PEP 503 name,
-# an -e or URL line whole; go.mod's require lines but // indirect ones) is a list item with its
-# version, its section and whether the worktree's <task_dir>/spec.md names it (or that there is no
-# spec.md), and each manifest it cannot read, at the commit it cannot; at most 30 then "- and <n>
+# the same range's changed package.json, requirements*.in, requirements*.txt (a lock file aside) and
+# go.mod files at the merge base and at the head, and each direct dependency the head adds or
+# changes (package.json's four dependency sections, a move between them with the same spec not
+# listed; requirements lines by PEP 503 name, an -e or URL line whole; go.mod's require lines but
+# // indirect ones) is a list item with its version, its section and whether the worktree's
+# <task_dir>/spec.md names it (or that there is no spec.md), and each manifest it cannot read, at the commit it cannot; at most 30 then "- and <n>
 # more in <the manifests>"; with none, one line saying so. A git failure is refused: "cannot list
 # the dependencies <range> changes in <worktree> (<git's reason>)".
 # Refused, exit 1 with nothing written: an unknown template, a task that is not open (no opened
@@ -848,7 +849,7 @@ if deriving dependencies; then
           "\(.name | span) added \(if .version == "" then "with no version" else "at \(.version | span)" end)\(section), \(named)"
         else "\(.name | span) \(.from | version) to \(.version | version)\(section), \(named)" end);
     if length == 0 then
-      "`\($shown)` adds and changes no direct dependency in a `package.json`, `requirements*.txt` or `go.mod`."
+      "`\($shown)` adds and changes no direct dependency in a `package.json`, `requirements*.in`, `requirements*.txt` or `go.mod`, lock files aside."
     else
       (.[30:] | map(.file) | unique) as $rest
       | "`\($shown)` adds or changes these direct dependencies:\n\n" + (.[:30] | map(item) | join("\n"))

@@ -690,7 +690,7 @@ launched T7-reviewer c0000001"
     "$(jq -cnS --arg url "$url" --arg h "$sha" '{template: "reviewer", values: {checks: "1. team-next launches the reviewer.", head: $h, pr: $url,
       instruction_files: "`origin/main...\($h)` changes no instruction or session-settings file: no `CLAUDE.md`, `AGENTS.md` or `CLAUDE.local.md` at any depth, and no path under a `.claude/` directory.",
       dropped_tests: "`origin/main...\($h)` removes, skips and focuses no test it can read: no `@test` (bats), `it(` or `test(` (JavaScript and TypeScript), `def test_` (Python) or `func Test` (Go) is gone, and no skip or focus marker is added.",
-      dependencies: "`origin/main...\($h)` adds and changes no direct dependency in a `package.json`, `requirements*.txt` or `go.mod`."}}')"
+      dependencies: "`origin/main...\($h)` adds and changes no direct dependency in a `package.json`, `requirements*.in`, `requirements*.txt` or `go.mod`, lock files aside."}}')"
   grep -qF "review \`origin/main...$sha\`" "$TEAM_HOME/tasks/T7/brief-review.md"
   grep -qxF "1. team-next launches the reviewer." "$TEAM_HOME/tasks/T7/brief-review.md"
   assert_equal "$(bg_calls | jq -r 'last')" "Read your brief at $TEAM_HOME/tasks/T7/brief-review.md"

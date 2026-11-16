@@ -19,9 +19,11 @@ declarations or markers to read. A test is declared by a line matching, by langu
               the name the quoted text;
   Python      ^\s*(async\s+)?def\s+(test\w*)\s*\(, the name the function's;
   Go          ^func\s+((Test|Fuzz)\w*)\s*\(, the name the function's.
-A test is removed when its name, declared in a changed test file's base text, is declared in no
-changed test file's head text, so a test moved between files is not listed and a renamed one is;
-one whose file the diff deletes is removed with its file. Skip and focus markers are counted in
+A test is removed when the changed test files' head texts declare its name fewer times than their
+base texts do, listed once in each file whose head declares it fewer times than its base, in the
+order of the paths, until that shortfall is spent; so a test moved between files is not listed, a
+renamed one is, and so is one removed while another of its name stays; one whose file the diff
+deletes is removed with its file. Skip and focus markers are counted in
 each changed test file, head against base, by its language:
   skip   JavaScript \b(it|test|describe)\.(skip|todo)\s*\( and \bx(it|test|describe)\s*\(;
          Python @pytest\.mark\.(skip|skipif|xfail)\b and
@@ -31,7 +33,7 @@ each changed test file, head against base, by its language:
 Each item is an object with the file's path (a rename's new one, a deletion's old one) and its
 kind, in the order of the paths, then within a file its removed tests in their base order, its
 skip markers, its focus markers:
-  {"file", "kind": "removed", "name"}            a test gone from every changed test file
+  {"file", "kind": "removed", "name"}            a test the changed test files declare fewer times
   {"file", "kind": "removed-with-file", "name"}  a test of a file the diff deletes
   {"file", "kind": "skip" | "focus", "more", "first"}
                                                  more such markers at the head than at the base,
@@ -43,15 +45,18 @@ skip markers, its focus markers:
 
 dependencies: the direct dependencies the diff adds or changes. A manifest is a changed path
 (a rename's base text at its old name, an added or copied file's base empty, a deleted one not
-read) whose name is package.json, requirements*.txt or go.mod, in any directory; lock files and
-other formats are not read. Each is read at the merge base and at the head:
+read) whose name is package.json, requirements*.in, requirements*.txt or go.mod, in any
+directory; lock files and other formats are not read, a requirements*.txt being a lock file when
+the head holds a requirements*.in of its name beside it (pip-compile's or uv pip compile's input)
+or its head text holds a --hash option. Each is read at the merge base and at the head:
   package.json      the names and version specs of dependencies, devDependencies,
                     peerDependencies and optionalDependencies, in that order; a name in none of
                     them at the base is added, one whose spec is none of its base specs changed
                     (from its base spec in the same section, else its first), so a move between
                     sections with the same spec is not listed;
-  requirements*.txt each line less its comment (a # at its start or after a blank), blank lines
-                    and option lines (one starting with -, but -e and --editable) skipped; an -e,
+  requirements*.in  each line less its comment (a # at its start or after a blank) and a trailing
+  and .txt          backslash, blank lines and option lines (one starting with -, but -e and
+                    --editable) skipped; an -e,
                     --editable or URL (holding ://) line is listed whole, keyed by its name when it
                     is "<name> @ <url>", else by the line; any other line is the name its leading
                     [A-Za-z0-9][A-Za-z0-9._-]*, extras dropped, normalized as PEP 503 says
@@ -184,13 +189,13 @@ MARKERS = {
 
 
 def declared(lang, text):
-    """The names of the tests text declares, in order, each once."""
+    """How many tests text declares by each name, the names in their first one's order."""
     pattern, group = DECLARATIONS[lang]
-    names = []
+    names = collections.Counter()
     for line in text.splitlines():
         match = pattern.match(line)
-        if match and match.group(group) not in names:
-            names.append(match.group(group))
+        if match:
+            names[match.group(group)] += 1
     return names
 
 
@@ -220,10 +225,14 @@ def dropped_tests(worktree, base_ref, head):
         after = text_at(worktree, head_sha, new) if status != "D" else ""
         files.append({"status": status, "path": old if status == "D" else new, "lang": lang,
                       "base": base, "head": after})
-    still = set()
+    # Each name's count over the changed test files, so a move between files lists nothing and a
+    # test removed while another of its name stays lists its file.
+    lost = collections.Counter()
     for file in files:
+        if file["base"] is not None:
+            lost.update(declared(file["lang"], file["base"]))
         if file["head"] is not None:
-            still.update(declared(file["lang"], file["head"]))
+            lost.subtract(declared(file["lang"], file["head"]))
     items = []
     for file in files:
         path = file["path"]
@@ -232,9 +241,12 @@ def dropped_tests(worktree, base_ref, head):
             items.append({"file": path, "kind": "unreadable", "at": at[:8]})
             continue
         kind = "removed-with-file" if file["status"] == "D" else "removed"
-        for name in declared(file["lang"], file["base"]):
-            if name not in still:
+        now = declared(file["lang"], file["head"])
+        for name, count in declared(file["lang"], file["base"]).items():
+            gone = min(count - now[name], lost[name])
+            if gone > 0:
                 items.append({"file": path, "kind": kind, "name": name})
+                lost[name] -= gone
         for marker in ("skip", "focus"):
             before = collections.Counter(markers(marker, file["lang"], file["base"]))
             now = markers(marker, file["lang"], file["head"])
@@ -286,10 +298,10 @@ def pep503(name):
 
 
 def requirement_entries(text):
-    """requirements*.txt's lines, as (key, spec, None, written name, whole), in order."""
+    """requirements*.in's or requirements*.txt's lines, as (key, spec, None, written name, whole), in order."""
     entries = []
     for raw in text.splitlines():
-        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
+        line = re.sub(r"\\$", "", re.sub(r"(^|\s)#.*$", "", raw).strip()).strip()
         if not line:
             continue
         editable = re.match(r"(-e|--editable)\b", line)
@@ -338,11 +350,29 @@ def manifest_reader(path):
     name = path.rsplit("/", 1)[-1]
     if name == "package.json":
         return package_entries
-    if fnmatch.fnmatchcase(name, "requirements*.txt"):
+    if fnmatch.fnmatchcase(name, "requirements*.txt") or fnmatch.fnmatchcase(name, "requirements*.in"):
         return requirement_entries
     if name == "go.mod":
         return go_entries
     return None
+
+
+HASH_OPTION = re.compile(r"(^|\s)--hash[=\s]", re.MULTILINE)
+
+
+def requirements_lock(worktree, head_sha, path, text):
+    """Whether the requirements*.txt at path is a lock file at the head: one compiled from the
+    requirements*.in beside it (pip-compile, uv pip compile), or one holding --hash options."""
+    name = path.rsplit("/", 1)[-1]
+    if not fnmatch.fnmatchcase(name, "requirements*.txt"):
+        return False
+    if text is not None and HASH_OPTION.search(text):
+        return True
+    try:
+        git(worktree, "cat-file", "-e", f"{head_sha}:{path[:-len('.txt')]}.in")
+    except GitError:
+        return False
+    return True
 
 
 def named_in(spec_text, names):
@@ -372,6 +402,8 @@ def dependencies(worktree, base_ref, head, spec_path):
             continue
         base = text_at(worktree, merge_base, old) if status not in "AC" else ""
         after = text_at(worktree, head_sha, new)
+        if requirements_lock(worktree, head_sha, new, after):
+            continue
         sides = {}
         for side, text, sha in (("base", base, merge_base), ("head", after, head_sha)):
             try:
