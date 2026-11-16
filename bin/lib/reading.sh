@@ -31,8 +31,10 @@
 # as team-capacity --help says.
 # shellcheck shell=bash
 
+# Each task is judged open once, never once per event, since is_open folds the task's whole history.
 READING_HELD='include "ledger"; include "capacity"; include "stack"; ledger_events as $events | ($events | by_task) as $tasks
-  | held_worktrees($tasks; [open_worktrees($events[] | select($tasks[.task] | is_open); $home)]; $worktrees)'
+  | ($tasks | with_entries(select(.value | is_open))) as $open
+  | held_worktrees($tasks; [open_worktrees($events[] | select($open[.task] != null); $home)]; $worktrees)'
 
 # The registry, read once, as the header's read_registry says.
 read_registry() {

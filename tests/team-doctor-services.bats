@@ -3,7 +3,7 @@
 # team-doctor: one PASS, WARN or FAIL line per thing this machine needs, on the machine
 # tests/helpers/doctor.bash builds: every tool a version stub, the OS a stubbed uname.
 # This file: the docker, docker veth, chrome, power, 1password, secret, discord access, interview channel,
-# gate-agent and records lines.
+# assistant channel, gate-agent and records lines.
 
 load helpers/common
 load helpers/doctor
@@ -189,10 +189,11 @@ FAIL secret conventioner-env: mode 644; fix: Daniel runs team-secrets restore in
 PASS secret conventioner-front-end-env: in place
 FAIL secret conventioner-back-end-env: not a file; fix: move aside what is at its target in machine/secrets.json, then Daniel runs team-secrets restore in their own terminal"
   # Nothing else fails but the discord access line, which reads the emptied access.json, and the
-  # interview channel line, which needs the missing bot token.
+  # interview and assistant channel lines, which need the missing bot token.
   assert_equal "$(grep -v '^PASS ' <<<"$output" | grep -v '^FAIL secret ' || true)" \
     "FAIL discord access: ~/.claude/channels/discord/access.json is empty, so the plugin delivers nothing from #coordinator; fix: the secret discord-access-json line's fix
-FAIL interview channel: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, so the bot's access to the interview channel cannot be checked; fix: the secret discord-bot-env line's fix"
+FAIL interview channel: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, so the bot's access to the interview channel cannot be checked; fix: the secret discord-bot-env line's fix
+FAIL assistant channel: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, so the bot's access to #assistant cannot be checked; fix: the secret discord-bot-env line's fix"
   echo '[]' >"$TEAM_HOME/machine/secrets.json"
   run_bin -1 team-doctor
   assert_equal "$(grep -E '^.... secret' <<<"$output")" "FAIL secrets: machine/secrets.json: it has no secrets array; fix: fix what team-secrets names, then run team-doctor again"
@@ -341,6 +342,70 @@ exit 6
 EOF
   run_bin -0 team-doctor
   assert_equal "$(line_of "$line")" "WARN interview channel: Discord did not answer (curl: (6) Could not resolve host: discord.com), so the bot's access to the interview channel is unchecked; fix: check the network, then run team-doctor again"
+}
+
+@test "the assistant channel line fails unless #assistant is set, unheard by the coordinator, and lets the bot read, post, open threads, attach files and react" {
+  only_checks 168-assistant-channel.sh
+  local line="assistant channel" give="fix: Daniel gives the bot's role"
+  local all="View Channel, Send Messages, Read Message History, Create Public Threads, Send Messages in Threads, Attach Files, Add Reactions"
+  tools_at arch
+  run_bin -0 team-doctor
+  assert_equal "$(line_of "$line")" "PASS assistant channel: $ASSISTANT_ID has no group in the coordinator's access.json, so only the assistant hears #assistant, and the bot may read it, post, open threads, post in them, attach files and react there"
+  # Its reads, each with the token on stdin.
+  assert_equal "$(stub_calls curl | jq -r '.[-1] | select(startswith("https://discord.com/")) | ltrimstr("https://discord.com/api/v10/")')" "channels/$ASSISTANT_ID
+users/@me
+guilds/$GUILD_ID/members/$BOT_ID
+guilds/$GUILD_ID/roles"
+  [[ $(stub_calls curl) != *"$FAKE_DISCORD_TOKEN"* ]]
+
+  TEAM_ASSISTANT_CHANNEL='' run_bin -1 team-doctor
+  assert_equal "$(line_of "$line")" "FAIL assistant channel: no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so the assistant would hear nothing; fix: unset TEAM_ASSISTANT_CHANNEL, so ASSISTANT_CHANNEL in bin/lib/team.sh names #assistant"
+
+  # The coordinator's group for #assistant, whatever it lets in.
+  jq --arg c "$ASSISTANT_ID" '.groups[$c] = {requireMention: true, allowFrom: []}' "$HOME/.claude/channels/discord/access.json" >"$BATS_TEST_TMPDIR/access.json"
+  cp "$BATS_TEST_TMPDIR/access.json" "$HOME/.claude/channels/discord/access.json"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of "$line")" "FAIL assistant channel: the coordinator would hear #assistant: access.json has a group for it ($ASSISTANT_ID); fix: Daniel runs /discord:access group rm $ASSISTANT_ID in the coordinator"
+  access_json "[\"$DANIEL_ID\"]" "[\"$DANIEL_ID\"]"
+
+  echo "TOKEN=dummy-secret-value" >"$HOME/.claude/channels/discord/.env"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of "$line")" "FAIL assistant channel: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, so the bot's access to #assistant cannot be checked; fix: the secret discord-bot-env line's fix"
+  echo "DISCORD_BOT_TOKEN=$FAKE_DISCORD_TOKEN" >"$HOME/.claude/channels/discord/.env"
+
+  TEAM_ASSISTANT_CHANNEL=1 run_bin -1 team-doctor
+  assert_equal "$(line_of "$line")" "FAIL assistant channel: Discord refused the bot's read of channels/1 (curl: (22) The requested URL returned error: 404), so the bot cannot reach #assistant 1; $give $all in #assistant's permissions"
+
+  jq '.type = 2' "$STUB_FIXTURES/discord/channels/$ASSISTANT_ID.json" >"$BATS_TEST_TMPDIR/channel.json"
+  cp "$BATS_TEST_TMPDIR/channel.json" "$STUB_FIXTURES/discord/channels/$ASSISTANT_ID.json"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of "$line")" "FAIL assistant channel: $ASSISTANT_ID is not a text channel (type 2), so no thread opens under it; fix: Daniel makes #assistant a text channel, and a PR sets its id as ASSISTANT_CHANNEL in bin/lib/team.sh"
+
+  # Each permission the bot lacks, by the bot's own deny there, fails alone, naming it.
+  local -A bits=([View Channel]=10 [Send Messages]=11 [Read Message History]=16 [Create Public Threads]=35
+    [Send Messages in Threads]=38 [Attach Files]=15 [Add Reactions]=6)
+  local name
+  for name in "${!bits[@]}"; do
+    assistant_channel "[{\"id\": \"$BOT_ID\", \"type\": 1, \"allow\": \"0\", \"deny\": \"$(interview_bits "${bits[$name]}")\"}]"
+    run_bin -1 team-doctor
+    assert_equal "$(line_of "$line")" "FAIL assistant channel: the bot lacks $name in #assistant $ASSISTANT_ID, so the assistant cannot answer Daniel there in full; $give $name in #assistant's permissions"
+  done
+  # The role's own permissions, read as the interview channel's are, and the channel's allow.
+  interview_server "$(interview_bits 10 16 35 38)" '[]'
+  assistant_channel '[]'
+  run_bin -1 team-doctor
+  assert_equal "$(line_of "$line")" "FAIL assistant channel: the bot lacks Send Messages, Attach Files, Add Reactions in #assistant $ASSISTANT_ID, so the assistant cannot answer Daniel there in full; $give Send Messages, Attach Files, Add Reactions in #assistant's permissions"
+  assistant_channel "[{\"id\": \"$BOT_ROLE\", \"type\": 0, \"allow\": \"$(interview_bits 6 11 15)\", \"deny\": \"0\"}]"
+  run_bin -0 team-doctor
+  assert_contains "$(line_of "$line")" "PASS assistant channel: "
+
+  # Discord not answering warns.
+  stub_script curl <<'EOF'
+echo "curl: (6) Could not resolve host: discord.com" >&2
+exit 6
+EOF
+  run_bin -0 team-doctor
+  assert_equal "$(line_of "$line")" "WARN assistant channel: Discord did not answer (curl: (6) Could not resolve host: discord.com), so the bot's access to #assistant is unchecked; fix: check the network, then run team-doctor again"
 }
 
 @test "on an opencode gate the gate-agent line fails while its wrapper is missing, stale or not executable, opencode is missing, or config.yaml does not run the gate on it" {

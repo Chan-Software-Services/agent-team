@@ -671,6 +671,18 @@ team_reading() {
   assert_equal "$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c .heavy)" null
 }
 
+@test "sample: a long task history is read in seconds, each task judged open once, never once per event" {
+  sample_machine
+  # 1500 launches of T7 and an open worktree to find among them: judged per event, the task's
+  # history is folded 1500 times, about 40 seconds; judged once, well under a second.
+  jq -cn 'range(1500) | {ts: "2026-11-01T10:01:00Z", task: "T7", event: "launch", role: "builder", session: "a1b2c3d4"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  proc 100 1 512 60 "$T7_WT"
+  run -0 timeout 20 "$REPO_ROOT/bin/team-capacity" sample
+  assert_equal "$(jq -c --argjson mib "$MIB" '.tasks | map([.task, ((.memory - ([.stacks[].memory] | add // 0)) / $mib)])' \
+    "$STATE_DIR/readings.jsonl")" '[["T7",512],["T9",0]]'
+}
+
 @test "sample: a ticket worktree is its task's, logged or half open on its ticket branch" {
   sample_machine
   # agent-team's primary checkout, with T9's ticket worktrees of tickets 02 (logged) and 03 (on

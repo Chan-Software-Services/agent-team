@@ -44,7 +44,8 @@ def task_branch_task:
 # open worktree of that project and ticket (null for a task's branch), as half open, by task
 # number, then project. The program reads the ledger as bin/lib/reading.sh does (READING_HELD):
 #   include "ledger"; include "capacity"; include "stack"; ledger_events as $events | ($events | by_task) as $tasks
-#   | held_worktrees($tasks; [open_worktrees($events[] | select($tasks[.task] | is_open); $home)]; $worktrees)
+#   | ($tasks | with_entries(select(.value | is_open))) as $open
+#   | held_worktrees($tasks; [open_worktrees($events[] | select($open[.task] != null); $home)]; $worktrees)
 def held_worktrees($tasks; $open; $worktrees):
   [$open[] | {task, project, worktree, ticket}] as $open
   | [$open[] | {task, project, worktree, half_open: false}]

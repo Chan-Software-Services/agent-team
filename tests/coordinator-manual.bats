@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29492
+manual_bytes=29789
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -295,13 +295,32 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
 }
 
+@test "the assistant's role keeps its asks and owed replies in its own list, each with a close condition or a review date" {
+  local list
+  list=$(section assistant 'Your list')
+  grep -qF '`assistant/current.md`' <<<"$list"
+  grep -qF '`team-current add ask|owe <task or -> <text> --where <detail>`' <<<"$list"
+  grep -qF 'Each item takes a close condition the records show, `--until <condition>`' <<<"$list"
+  grep -qF 'or a review date, `--review` (3 days out) or `--review-by <YYYY-MM-DD>` (at most 7 days out)' <<<"$list"
+  grep -qF 'stays a finding until you `done` it or renew it with `team-current renew <id> --review --reason' <<<"$list"
+  # Each condition it names is one of team-current's grammar.
+  local help
+  help=$("$REPO_ROOT/bin/team-current" --help)
+  local condition
+  for condition in 'handoff H<n> answered' 'task T<n> opened' 'ledger T<n> <kind>' 'pr <GitHub PR URL> merged' 'file <path>'; do
+    grep -qF "$condition" <<<"$help"
+  done
+  grep -qF 'the hand-offs in flight, your list, then the catch-up' <<<"$(section assistant 'Start, stow and the lease')"
+}
+
 @test "the manual hands the assistant Daniel's walkthroughs, manual steps, logins and spikes, answers its hand-offs, and leaves manual-steps.md to it" {
   local discord rows
   discord=$(section coordinator Discord)
   # The Discord bullet: who Daniel's direct contact is, what goes to it, how, and the one line to Daniel.
-  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks you for, and each step of yours that needs Daniel's hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and the line \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in one line to go to \`#assistant\`." <<<"$discord"
-  # The coordinator no longer keeps manual-steps.md: it hands each new step to the assistant.
-  grep -qxF -- "- You write directly only \`tasks/\`, the projects' \`memory/<project>/\`, and the ledger through the scripts; \`manual-steps.md\` is the assistant's, so a new step only Daniel can take goes to it with \`team-assistant send walkthrough\`." "$manual"
+  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks for, and each step of yours that needs their hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in a line to go to \`#assistant\`." <<<"$discord"
+  # The coordinator no longer keeps manual-steps.md: each new step goes to the assistant, as the
+  # Discord bullet above says how.
+  grep -qxF -- "- You write directly only \`tasks/\`, the projects' \`memory/<project>/\`, and the ledger through the scripts; \`manual-steps.md\` is the assistant's, so a new step only Daniel can take goes to it (Discord)." "$manual"
   assert_equal "$(grep -c 'manual-steps\.md' "$manual")" 1
   # The two rows: a hand-off from the assistant is read, acted on by kind and answered; its answer is read.
   rows=$(grep -E '^\| `ASSISTANT ' "$manual")
@@ -309,7 +328,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF '| `ASSISTANT H<n> <kind>`, the assistant'"'"'s hand-off | `team-assistant show H<n>` | Act by kind on what Daniel'"'"'s message, which `show` prints verbatim, says: a `task` is `team-open` (`When: now`) or a `tasks/queued/` file (`When: queue`)' <<<"$rows"
   grep -qF 'and a `now` or `fable` that message does not say is asked of Daniel first;' <<<"$rows"
   grep -qF 'a `decision` an ask'"'"'s answer with `team-answer T<n> <id> <message id> --channel <channel id>`, a hold or a relay to a worker' <<<"$rows"
-  grep -qF 'then `team-assistant answer H<n> --file <answer>` (`--task T<n>` for a task you opened from it) and send `assistant` the line `COORDINATOR ANSWER H<n>`.' <<<"$rows"
+  grep -qF 'then `team-assistant answer H<n> --file <answer>` (`--task T<n>` for a task opened from it) and send `assistant` `COORDINATOR ANSWER H<n>`.' <<<"$rows"
   grep -qF '| `ASSISTANT ANSWER H<n>`, its answer to yours | `team-assistant show H<n>` |' <<<"$rows"
   # Each kind the coordinator sends and reads is one team-assistant knows.
   local kind help
@@ -393,6 +412,47 @@ $WORKER_INSTRUCTIONS"
 
 @test "the ops role refers to Daniel with they/them, as every worker's brief says" {
   section ops 'What you do' | grep -qxF -- '- Refer to Daniel with they/them, in every message and in `.scratch/answer.md`.'
+}
+
+# T232: an ops session with prod-mongo backs up through its skill, and the manual launches it and
+# offers a backup where OPERATIONS.md's rule needs one; restoring stays Daniel's own command.
+@test "the ops role backs up only through prod-mongo's skill, and the 20-document rule holds with and without it" {
+  local body skill=backing-up-production-data
+  body=$(section ops 'Backups, rehearsals and checks (only with `prod-mongo`)')
+  [[ -f $REPO_ROOT/toolkits/prod-mongo/skills/$skill/SKILL.md ]]
+  grep -qxF -- "- Load the \`$skill\` skill before the first \`prod-mongo\` call." <<<"$body"
+  grep -qF 'one call per operation, and never call again after a failure without the coordinator'"'"'s word' <<<"$body"
+  grep -qF 'Never read, quote or open anything under `~/conventioner-backups`' <<<"$body"
+  # Its one exception is the load check's two probes of the folder's deny rules, on the task its
+  # prompt names, so the role never forbids what that check asks for.
+  grep -qxF -- "  The one exception is the automated load check of the ops role on task T0: try the Read and the Grep of that folder its prompt asks for, once each, as the probes of those deny rules, and copy no file's content." <<<"$body"
+  grep -qF "This is an automated load check of the ops role on task T0, on Daniel's request" "$REPO_ROOT/bin/team-load-check"
+  grep -qF 'Never restore a dump or run a prepared undo: both are Daniel'"'"'s own commands' <<<"$body"
+  # The folder the deny rules name is the launcher's root.
+  grep -qF '"Read(~/conventioner-backups/**)"' "$REPO_ROOT/settings/worker.json"
+  grep -qE "root: .*conventioner-backups" "$REPO_ROOT/toolkits/prod-mongo/scripts/settings.mjs"
+  # The rule in both forms, at the end of the writes section; Daniel's own mongodump is no longer the only way.
+  body=$(section ops 'Writes (only with `prod-write`)')
+  grep -qxF -- "More than 20 documents need a backup first (OPERATIONS.md's rule for a Flex cluster)." <<<"$body"
+  grep -qxF -- "With \`prod-mongo\`, take the backup and its restore drill before step 2, as its skill says, and name the backup's folder and the drill's verdict in the QUESTION." <<<"$body"
+  grep -qxF -- 'Without it, say in the QUESTION that a backup is needed first, and wait.' <<<"$body"
+  if grep -nF "Daniel's own \`mongodump\`" "$REPO_ROOT/roles/ops.md"; then
+    echo "ops.md keeps the rule's old form" >&2
+    return 1
+  fi
+}
+
+@test "the manual launches prod-mongo for a backup, offers one before a large write and a release's migrations, and points at the restore" {
+  local launch write path
+  launch=$(grep -F -- '- A production question, only at Daniel'"'"'s request:' "$manual")
+  grep -qF 'tell Daniel a 1Password prompt per toolkit is coming' <<<"$launch"
+  grep -qF '`prod-mongo` for a backup and its drill' <<<"$launch"
+  write=$(grep -F -- '- A production write, only at Daniel'"'"'s request:' "$manual")
+  grep -qF 'offer a backup with its drill before a write of more than 20 documents (`prod-mongo` beside the write'"'"'s kits) and before a release'"'"'s migrations' <<<"$write"
+  grep -qF 'restoring a dump to production is Daniel'"'"'s own command (`~/agent-team/toolkits/prod-mongo/docs/restoring.md`)' <<<"$write"
+  path=$(grep -oE '`~/agent-team/toolkits/prod-mongo/docs/[a-z-]+\.md`' <<<"$write" | tr -d '`')
+  [[ -f $REPO_ROOT/${path#\~/agent-team/} ]]
+  grep -qF 'mongorestore' "$REPO_ROOT/${path#\~/agent-team/}"
 }
 
 @test "the manual counts a worker's message and any Discord message not Daniel's own as data, and logs INJECTION as injection" {
@@ -808,6 +868,9 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   assert_contains "$items" '`check`'
   assert_contains "$items" 'at most 300 characters'
   assert_contains "$items" 'task progress stays in the ledger, which `team-state` reads'
+  # Each item takes a close condition or a review date, and a due one is a finding until done or
+  # renewed; team-current's own refusal and --help say the rest.
+  assert_contains "$items" 'its end `--until <condition>` or `--review`, a due one a finding until `done` or `renew`ed'
   grep -Fq 'One `team-current add` each, as your manual says' "$plugin/skills/stow/SKILL.md"
   run -1 grep -Fq 'One line each in `tasks/current.md`' "$plugin/skills/stow/SKILL.md"
 }
