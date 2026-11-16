@@ -125,7 +125,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `frontend/`: for Daniel's own session and the coordinator's intake, a walk's planner by `team-ui --capture` alone, never a build worker: the pinned Chrome DevTools MCP server on the Agent Chrome's localhost pages, `ui-capture` of Daniel's page and its selected element, and a skill to fix it.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.
-  - `spec-review/`: the `spec-review` skill, which has two fresh, read-only reader agents read a task's spec and tickets in parallel, as a stranger and as its builder, and writes their findings to `spec-review.md` for the spec's author to sort.
+  - `spec-review/`: the `spec-review` skill, two fresh readers of a task's spec and tickets, and `claims-check`, a fresh reader of a branch's prose against its code, which `team-worker` gives every delivering builder.
   - `vercel-read/`: for the ops role only, read-only access to Conventioner's two Vercel projects through the team's own MCP server, which sends only GET requests to a fixed set of endpoints on two project-scoped tokens from 1Password.
 
 `.scratch/task/` is the task directory of a task on this repo, ignored by git.
