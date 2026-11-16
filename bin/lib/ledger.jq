@@ -1994,6 +1994,17 @@ def activity_finding:
   | {task: null, kind: "activity", session: null, name: null, next: "fix what session-activity names",
      text: "activity: \(.error), so no busy worker is found stalled: fix what session-activity names"};
 
+# A session of the list's short id: its id, or an interactive one's first 8 characters of its
+# session id.
+def twin_short: .id // ((.sessionId // "")[:8]);
+
+# A session of the list as a twin finding names it: "<short id> (<kind>, <state or status>,
+# started <time>)", "started at an unknown time" when its startedAt is not a number.
+def twin_label:
+  "\(twin_short) (\(.kind), \(.state // .status // "no state"), \(
+    if (.startedAt | type) == "number" then "started \(.startedAt / 1000 | floor | todate)"
+    else "started at an unknown time" end))";
+
 # team-sweep's coordinator-twin findings, from the session list (this machine's, as claude agents
 # --json lists it) and the full session id of the session the sweep runs in ($self, "" when it is
 # not known): when more than one session is named coordinator, one finding for each of them but
@@ -2008,28 +2019,55 @@ def coordinator_twin_findings($self):
   | select(($coordinators | length) > 1)
   | any($coordinators[]; $self != "" and .sessionId == $self) as $known
   | $coordinators[] | select(($known | not) or .sessionId != $self)
-  | (.id // ((.sessionId // "")[:8])) as $short
+  | twin_short as $short
   | (if .kind == "interactive" then "ask Daniel to end it, an interactive session, pid \(.pid)"
      else "read claude logs \($short) for anything left to log, then stop it with claude stop \($short)" end
      | if $known then . else "if it is not you, " + . end) as $next
   | {task: null, kind: "coordinator-twin", session: $short, name: "coordinator", next: $next,
-     text: "coordinator-twin: coordinator \($short) (\(.kind), \(.state // .status // "no state"), \(
-       if (.startedAt | type) == "number" then "started \(.startedAt / 1000 | floor | todate)"
-       else "started at an unknown time" end)) is \(
+     text: "coordinator-twin: coordinator \(twin_label) is \(
        if $known then "a second session" else "one of \($coordinators | length) sessions" end
        ) named coordinator on this machine; next: \($next)"};
+
+# team-sweep's assistant-twin findings, from the session list as coordinator_twin_findings takes
+# it: when more than one session is named assistant, one finding for each but the one started
+# first (a startedAt that is not a number counting as last), session being its short id. The
+# sweep runs in the coordinator, never in an assistant, so no session is its own.
+def assistant_twin_findings:
+  [.[] | select(.name == "assistant")]
+  | select(length > 1)
+  | sort_by(if (.startedAt | type) == "number" then .startedAt else infinite end) as $assistants
+  | ($assistants[0] | twin_short) as $first
+  | $assistants[1:][]
+  | twin_short as $short
+  | (if .kind == "interactive" then "ask Daniel to end it, an interactive session, pid \(.pid)"
+     else "read claude logs \($short) for anything left to hand off, then stop it with claude stop \($short)" end) as $next
+  | {task: null, kind: "assistant-twin", session: $short, name: "assistant", next: $next,
+     text: "assistant-twin: assistant \(twin_label) is a second session named assistant on this machine, beside \($first), started first; next: \($next)"};
+
+# The assistant's Stop hook's twin lines (bin/hooks/assistant-stop), from the session list and the
+# full session id of the assistant it runs in ($self, "" when it is not known): when more than one
+# session is named assistant, one line for each but $self's, "a second session" when $self is
+# among them, else "one of <n> sessions" and "if it is not you".
+def assistant_twin_lines($self):
+  [.[] | select(.name == "assistant")] as $assistants
+  | select(($assistants | length) > 1)
+  | any($assistants[]; $self != "" and .sessionId == $self) as $known
+  | $assistants[] | select(($known | not) or .sessionId != $self)
+  | "assistant \(twin_label) is \(
+      if $known then "a second session" else "one of \($assistants | length) sessions" end
+      ) named assistant on this machine\(if $known then "" else ", if it is not you" end)";
 
 # team-sweep's findings, over every ledger event as one array, the session list, the stow plan
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
 # every task's withdrawals), else its findings unless it is parked, then its walk-stale, parked or
-# not, since a parked task's walk still needs asking about, then its ci-due, then the stray sessions (named
-# like a team worker whose task is closed or not in the ledger, never the load check's T0, whose
-# session the coordinator waits on for up to 30 minutes), in task number order; then the
-# coordinator-twin, activity, level, retro-due and health findings. $own is the registered projects
-# that are the team's own, or null, as merge_due_finding takes it, $health the health view, as
-# health_findings takes it, and $self the sweep's own session id, as coordinator_twin_findings takes
-# it.
+# not, since a parked task's walk still needs asking about, then its ci-due, then the stray sessions
+# (named like a team worker whose task is closed or not in the ledger, never the load check's T0,
+# whose session the coordinator waits on for up to 30 minutes), in task number order; then the
+# coordinator-twin, assistant-twin, activity, level, retro-due and health findings. $own is the
+# registered projects that are the team's own, or null, as merge_due_finding takes it, $health the
+# health view, as health_findings takes it, and $self the sweep's own session id, as
+# coordinator_twin_findings takes it.
 def sweep($sessions; $plan; $activity; $own; $health; $self):
   . as $events
   | by_task as $tasks
@@ -2046,6 +2084,7 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
             "read claude logs \(.session) for anything left to log, then stop it with claude stop \(.session)"))]
      | by_task_number)
     + [$sessions | coordinator_twin_findings($self)]
+    + [$sessions | assistant_twin_findings]
     + [$activity | activity_finding]
     + [$plan | level_findings]
     + [$events | retro_status | retro_due_finding]
@@ -2054,10 +2093,15 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
 # The findings team-sweep adds after sweep's, from the views it reads beside the ledger: team-queue
 # list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
 # team-current check --json's ($current), one current-stale finding naming each item whose task
-# closed; each view null when there is nothing to read, and {error} when its script failed, which
-# is one finding of kind queue or current naming the error and "fix what <script> names". Each
-# finding has task, session and name null.
-def sweep_views($queue; $current):
+# closed, then team-current due --json's for the coordinator's list ($due), one current-due finding
+# for each item whose review date has come, then team-assistant list --open --to coordinator
+# --json's list ($handoffs), one assistant-handoff finding for each sent more than 30 minutes
+# before $now (seconds); each view null when there is nothing to read, and {error} when its
+# script failed, which is one finding of kind queue, current or assistant-handoff naming the error
+# and "fix what <script> names" (one current finding when both team-current views failed). Each
+# finding has task and name null, and session null but a current-due's, its item id, and an
+# assistant-handoff's, its hand-off id, so each item and hand-off is a finding of its own.
+def sweep_views($queue; $current; $due; $handoffs; $now):
   def failed($kind; $script):
     "fix what \($script) names" as $next
     | {task: null, kind: $kind, session: null, name: null, next: $next, text: "\($kind): \(.error): \($next)"};
@@ -2071,6 +2115,24 @@ def sweep_views($queue; $current):
          | [{task: null, kind: "current-stale", session: null, name: null, next: $next,
              text: "current: \($n) item\(if $n == 1 then " names" else "s name" end) a closed task: \(
                [.closed[] | "\(.id) (\(.task), closed \(.closed_at[:10]))"] | join(", ")); next: \($next)"}]
+       end)
+  + ($due
+     | if . == null then []
+       elif .error != null then (if $current.error != null then [] else [failed("current"; "team-current")] end)
+       else [.items // [] | .[] | "done it, or renew it with a reason" as $next
+         | {task: null, kind: "current-due", session: .id, name: null, next: $next,
+            text: "current item \(.id) is due for review since \(.review): \($next)"}]
+       end)
+  + ($handoffs
+     | if . == null then []
+       elif type == "object" and .error != null then [failed("assistant-handoff"; "team-assistant")]
+       else [.[] | select(.answered == null and .to == "coordinator")
+         | ($now - (.sent | try fromdateiso8601 catch $now)) as $seconds
+         | select($seconds > 1800)
+         | ($seconds / 60 | floor) as $waited
+         | "read it with team-assistant show \(.id), act, and answer it" as $next
+         | {task: null, kind: "assistant-handoff", session: .id, name: null, next: $next,
+            text: "hand-off \(.id) (\(.kind)) from the assistant has waited \($waited) min: \($next)"}]
        end);
 
 # What team-capacity plan reads of the ledger, over every ledger event as one array, with the
@@ -2158,6 +2220,22 @@ def snapshot($tasks; $states; $level; $withdrawn; $sessions; $prs; $items; $prod
 
 # The current items of tasks/current.md, over its lines (-R): each line starting "- ", without it.
 def current_items: [inputs | rtrimstr("\r") | select(startswith("- ")) | .[2:]];
+
+# An item line of tasks/current.md or assistant/current.md, without its "- ", as team-current
+# writes it, "<kind> <task> <text> | <where> | <end> | added <UTC time>", <end> "until
+# <condition>" or "review <YYYY-MM-DD>", or in the old form, "<kind> <task> <text> | <where>":
+# {kind, task, text, where, end, added}, end and added null in the old form (added the time
+# alone); null for a line of neither form.
+def current_item:
+  split(" | ") as $parts
+  | if ($parts | length) == 2
+      or (($parts | length) == 4 and ($parts[2] | test("^(until .|review [0-9]{4}-[0-9]{2}-[0-9]{2}$)"))
+          and ($parts[3] | test("^added [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")))
+    then ([$parts[0] | capture("^(?<kind>\\S+) (?<task>\\S+) (?<text>.+)$")] | first) as $head
+      | if $head == null then null
+        else $head + {where: $parts[1], end: $parts[2], added: ($parts[3] // null | if . == null then null else ltrimstr("added ") end)}
+        end
+    else null end;
 
 # Cut a line to $n characters, showing the cut.
 def clip($n): if length > $n then .[:$n - 3] + "..." else . end;
@@ -2294,19 +2372,20 @@ def blocked_on_counts:
 # then the interviews under way ({key: "interview <task> <thread>", kind: "interview", task, title,
 # thread}), none whose walk is on in that thread, which the walks list, then the walks under way
 # ({key: "walk <task> <its start's ts>", kind: "walk", task, title, thread (the thread it runs in,
-# or null)}), then the asks of tasks/current.md, $notes' of kind ask ({key: "note <id>", kind:
-# "note", task (T<n> or -), title: null, id (team-current's), text, where}), in its order; each also
-# with since, when it began (the asked's ts, the PR's first pr event's, the latest
-# interview-thread's, the walk's start's; null for a note, which the ledger does not date), and
-# unblocks, what its answer unblocks, {tasks, tickets, prs}: while the item holds its task (an ask
-# no launch went past, a PR ready to merge, an interview or a walk under way), tasks is 1 for it
-# and 1 for each other open task blocked on it (blocked_on_counts) and tickets its ready tickets,
-# $tickets' count for it ({"T<n>": n}, 0 when it has none), else both are 0, as for a note, which
-# holds no task; prs is 1 for a PR ready to merge and for an ask whose text names one of its task's
-# PRs not merged, else 0. withdrawn: the withdrawals of the default merge word that stand
-# (default_withdrawals), in ledger order; owed: the replies owed to Daniel, $notes' of kind owe, as
-# {task, text, where}. $notes is current.md's ask and owe lines as team-inbox reads them, [{kind,
-# task, text, where, id}].
+# or null)}), then the asks of both lists of current items, $notes' of kind ask ({key: "note <id>",
+# kind: "note", task (T<n> or -), title: null, id (team-current's), text, where, list (coordinator
+# or assistant, the list's)}), in their order; each also with since, when it began (the asked's ts,
+# the PR's first pr event's, the latest interview-thread's, the walk's start's; null for a note,
+# which the ledger does not date), and unblocks, what its answer unblocks, {tasks, tickets, prs}:
+# while the item holds its task (an ask no launch went past, a PR ready to merge, an interview or a
+# walk under way), tasks is 1 for it and 1 for each other open task blocked on it
+# (blocked_on_counts) and tickets its ready tickets, $tickets' count for it ({"T<n>": n}, 0 when it
+# has none), else both are 0, as for a note, which holds no task; prs is 1 for a PR ready to merge
+# and for an ask whose text names one of its task's PRs not merged, else 0. withdrawn: the
+# withdrawals of the default merge word that stand (default_withdrawals), in ledger order; owed: the
+# replies owed to Daniel, $notes' of kind owe, as {task, text, where, list}. $notes is both lists'
+# ask and owe lines as team-inbox reads them (current_item), [{kind, task, text, where, id, list}],
+# list coordinator when it is missing.
 def inbox_items($own; $notes; $tickets):
   default_events as $withdrawals
   | ($withdrawals | default_withdrawals(task_projects)) as $withdrawn
@@ -2346,10 +2425,10 @@ def inbox_items($own; $notes; $tickets):
            thread: (.events | map(select(.event == $kind) | .discord_thread | strings) | last), since: $walk.since,
            unblocks: unblocks(.task; true; 0)}]
       + [$notes[] | select(.kind == "ask")
-        | {key: "note \(.id)", kind: "note", task, title: null, id, text, where, since: null,
-           unblocks: {tasks: 0, tickets: 0, prs: 0}}]),
+        | {key: "note \(.id)", kind: "note", task, title: null, id, text, where, list: (.list // "coordinator"),
+           since: null, unblocks: {tasks: 0, tickets: 0, prs: 0}}]),
      withdrawn: [$withdrawn[] | {task, scope, ts, discord_message, discord_channel}],
-     owed: [$notes[] | select(.kind == "owe") | {task, text, where}]};
+     owed: [$notes[] | select(.kind == "owe") | {task, text, where, list: (.list // "coordinator")}]};
 
 # The items of inbox_items, in the order given, each given its number n, from the previous
 # waiting.json $previous (null when there is none or it cannot be read): an item whose key
@@ -2379,12 +2458,13 @@ def waiting_rank: [.unblocks // {} | .[] | numbers] | add // 0;
 # preview card for it: an ask linked to the question's message in guild $guild (null when unknown),
 # to the task's thread when either is unknown, and to nothing with no thread; a PR, "ready to
 # merge", with its URL; an interview, "interview under way", with its thread; a walk, "walk under
-# way", with the thread it runs in, or nothing with none; an ask of current.md with its task unless
-# -, and its where when that is a URL (note_text); then what its answer unblocks, " - unblocks
-# <n>", n being its unblocks' sum, and when it is more than 0 each part that is, as "(1 task, 2
-# tickets, 1 PR)".
+# way", with the thread it runs in, or nothing with none; an ask of a list of current items with
+# "Assistant: " first when it is the assistant's, its task unless -, and its where when that is a
+# URL (note_text); then what its answer unblocks, " - unblocks <n>", n being its unblocks' sum, and
+# when it is more than 0 each part that is, as "(1 task, 2 tickets, 1 PR)".
 def note_text:
-  (if .task == "-" then "" else "\(.task) " end) + (.text | clip(150))
+  (if .list == "assistant" then "Assistant: " else "" end)
+  + (if .task == "-" then "" else "\(.task) " end) + (.text | clip(150))
   + if (.where // "") | test("^https?://\\S+$") then " <\(.where)>" else "" end;
 def waiting_line($guild):
   def named: .task + if .title == null then "" else " \(.title | clip(80))" end;
@@ -2463,7 +2543,8 @@ def waiting_item($n):
         {item: (if $item.kind == "ask" then "ask \($item.task) \($item.id)"
           elif $item.kind == "pr" then "pr \($item.task) \($item.url)"
           elif $item.kind == "walk" then "walk \($item.task)" + if $item.thread == null then "" else " \($item.thread)" end
-          elif $item.kind == "note" then "note \($item.task) \($item.id)"
+          elif $item.kind == "note" then
+            "note \($item.task) \($item.id)" + (if $item.list == "assistant" then " assistant" else "" end)
           else "\($item.kind) \($item.task) \($item.thread)" end)}
       elif $shown != null then {refusal: "item \($n) no longer waits: the list posted \(.posted.at) showed it as \($shown.line)"}
       else {refusal: ("no item \($n) waits; "
