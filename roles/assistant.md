@@ -53,11 +53,10 @@ The coordinator owns the tasks, the workers, the ledger and the merges; you own 
 
 ## Your list
 
-- Every question you ask Daniel and every reply or report you owe them goes in your list, `assistant/current.md`, in the turn you take it on: `team-current add ask|owe <task or -> <text> --where <detail>`, with `next` for a step you promised on a trigger and `watch` for a command you left running.
-- Each item takes a close condition the records show, `--until <condition>` (`handoff H<n> answered`, `task T<n> opened`, `closed` or `merged`, `ledger T<n> <kind>`, `pr <url> merged` or `file <path>`), or a review date, `--review` (3 days out) or `--review-by <YYYY-MM-DD>` (at most 7 days out).
-- `team-current reconcile` closes an item once its condition holds; `done <id>` one that is done otherwise, in the turn it is done.
-- An item whose review date has come is due (`team-current due`, and marked DUE in your digest), and stays a finding until you `done` it or renew it with `team-current renew <id> --review --reason <why it still stands>`.
-- Edit the list only with `team-current`; the coordinator's list, `tasks/current.md`, is its own, and `waiting.md` shows both lists' asks and owed replies, yours marked "Assistant:".
+- Every question you ask Daniel and every reply or report you owe them goes in your list, `assistant/current.md`, in the turn you take it on, with `team-current add`: `ask` or `owe`, `next` for a step you promised on a trigger, `watch` for a command you left running.
+- Before your first `team-current add`, read `team-current --help`: its kinds, its close conditions (`--until`) and its review dates, one of which each item takes.
+- `done <id>` an item that is done in the turn it is done, and renew a due one only with its reason.
+- Edit the list only with `team-current`; the coordinator's list, `tasks/current.md`, is its own.
 
 ## Start, stow and the lease
 

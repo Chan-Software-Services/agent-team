@@ -29,9 +29,9 @@ section() {
 # bytes. The list is held to the roles/ directory, so a new role prompt fails until it has a cap.
 # The helper over_cap (tests/helpers/common.bash) words the failure, and tests/repo.bats tests its
 # message.
-ROLE_CAPS="assistant 6900
+ROLE_CAPS="assistant 8097
 builder 8000
-ops 4900
+ops 5649
 planner 6300
 reviewer 7200"
 
@@ -315,17 +315,22 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
 }
 
-@test "the assistant's role keeps its asks and owed replies in its own list, each with a close condition or a review date" {
+@test "the assistant's role keeps its asks and owed replies in its own list, pointing to team-current's help for each item's end" {
   local list
   list=$(section assistant 'Your list')
   grep -qF '`assistant/current.md`' <<<"$list"
-  grep -qF '`team-current add ask|owe <task or -> <text> --where <detail>`' <<<"$list"
-  grep -qF 'Each item takes a close condition the records show, `--until <condition>`' <<<"$list"
-  grep -qF 'or a review date, `--review` (3 days out) or `--review-by <YYYY-MM-DD>` (at most 7 days out)' <<<"$list"
-  grep -qF 'stays a finding until you `done` it or renew it with `team-current renew <id> --review --reason' <<<"$list"
-  # Each condition it names is one of team-current's grammar.
+  grep -qF 'with `team-current add`: `ask` or `owe`, `next` for a step you promised on a trigger, `watch` for a command you left running' <<<"$list"
+  grep -qxF -- '- Before your first `team-current add`, read `team-current --help`: its kinds, its close conditions (`--until`) and its review dates, one of which each item takes.' <<<"$list"
+  grep -qF 'renew a due one only with its reason' <<<"$list"
+  # The grammar the role points to is in team-current's help: the kinds, each close condition,
+  # both review dates and the renewal's reason.
   local help
   help=$("$REPO_ROOT/bin/team-current" --help)
+  grep -qF 'team-current add <kind> <task or -> <text> --where <detail>' <<<"$help"
+  grep -qF '(--until <condition> | --review | --review-by <YYYY-MM-DD>)' <<<"$help"
+  grep -qF 'a kind other than ask, owe, next or watch' <<<"$help"
+  grep -qF -- '--review, 3 days out, or --review-by, at most 7' <<<"$help"
+  grep -qF 'team-current renew <id> (--review | --review-by <YYYY-MM-DD>) --reason <text>' <<<"$help"
   local condition
   for condition in 'handoff H<n> answered' 'task T<n> opened' 'ledger T<n> <kind>' 'pr <GitHub PR URL> merged' 'file <path>'; do
     grep -qF "$condition" <<<"$help"
@@ -454,8 +459,10 @@ $WORKER_INSTRUCTIONS"
   # The rule in both forms, at the end of the writes section; Daniel's own mongodump is no longer the only way.
   body=$(section ops 'Writes (only with `prod-write`)')
   grep -qxF -- "More than 20 documents need a backup first (OPERATIONS.md's rule for a Flex cluster)." <<<"$body"
-  grep -qxF -- "With \`prod-mongo\`, take the backup and its restore drill before step 2, as its skill says, and name the backup's folder and the drill's verdict in the QUESTION." <<<"$body"
-  grep -qxF -- 'Without it, say in the QUESTION that a backup is needed first, and wait.' <<<"$body"
+  grep -qxF -- "With \`prod-mongo\`, take it before step 2, as its skill says; without it, say in the QUESTION that a backup is needed first, and wait." <<<"$body"
+  # The skill the role points to holds the order: the backup before the QUESTION, which names its
+  # folder and its drill's verdict.
+  grep -qF "the backup comes first, before the QUESTION that asks Daniel to approve the write, and that QUESTION names the backup's folder and its drill's verdict" "$REPO_ROOT/toolkits/prod-mongo/skills/$skill/SKILL.md"
   if grep -nF "Daniel's own \`mongodump\`" "$REPO_ROOT/roles/ops.md"; then
     echo "ops.md keeps the rule's old form" >&2
     return 1
