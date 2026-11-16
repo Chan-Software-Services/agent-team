@@ -2932,10 +2932,17 @@ kill_these() { kill "$@"; }
   pkill -U "$me" -f vite || touch "$BATS_TEST_TMPDIR/none"
 }
 
+%test "ps -C beside -U, which adds any user's processes of that name" {
+  ps -U "$me" -C sleep -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
 %test "bound by owner and path, in a word of its pipeline" {
   pkill -U "$(id -u)" -f "$BATS_TEST_TMPDIR/bin/x"
   run -0 pkill -U "$me" -f "$BATS_FILE_TMPDIR/bin/x"
   ps -U "$me" -ww -o pid=,args= e | OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" awk 'index($0, ENVIRON["OWN"])' | xargs -r kill
+  ps -U "$me" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk -v me="$(id -u)" 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" -o pid=,args= |  # filter by the test's directory
+    TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
   ps -U "$me" -o pid=,args= |
     TESTS=$BATS_FILE_TMPDIR/copy awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
 }
@@ -2972,12 +2979,13 @@ $forms:24: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $fo
 $forms:36: pgrep -x sleep: $neither, and its pids may reach the kill at $forms:33
 $forms:40: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:40
 $forms:44: pkill -f vite: $neither, and its pids may reach the kill at $forms:44
-$forms:48: ps -A -U \$me -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps lists every user's processes beside them), and its pids may reach the kill at $forms:48
+$forms:48: ps -A -U \$me -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:48
 $forms:52: pkill -U \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:52
 $forms:56: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:56
-$forms:60: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:60"
-  # The forms after the first thirteen, bound or reaching no kill, pass alone.
-  sed -i '1,61d' "$forms"
+$forms:60: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:60
+$forms:64: ps -U \$me -C sleep -o pid=,args=: not bound by its owner (-u or -U, which -C undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:64"
+  # The forms after the first fourteen, bound or reaching no kill, pass alone.
+  sed -i '1,65d' "$forms"
   run -0 "$REPO_ROOT/tests/bound-kills" "$forms"
   assert_equal "$output" ""
 }

@@ -1,12 +1,13 @@
 """The shell source of the tests, read far enough for the checks of it: tests/guard-paths and
 tests/bound-kills import it.
 
-Lexer(text, line_of=...).run() reads a shell file into its commands, each a list of Words (its
-span, its line, its $ expansions and whether it is a redirection's target), as the file's own shell
-expands it: a single-quoted string, a quoted heredoc's body, a comment and an escaped \\$x are left
-as they are; an unquoted heredoc's body is read as code, its quotes as text; a $(...) or a
-backtick's commands are commands of their own, listed before the command they stand in. A newline
-or an operator (a pipe, ;, &, a parenthesis) ends a command.
+Lexer(text, line_of=...).run() reads a shell file into its commands, each a Command: a list of
+Words (its span, its line, its $ expansions and whether it is a redirection's target), with the
+operator that ended it and the group it was read in. It reads them as the file's own shell expands
+it: a single-quoted string, a quoted heredoc's body, a comment and an escaped \\$x are left as they
+are; an unquoted heredoc's body is read as code, its quotes as text; a $(...) or a backtick's
+commands are commands of their own, a group of their own, listed before the command they stand
+in. A newline or an operator (a pipe, ;, &, &&, ||, a parenthesis) ends a command.
 line_finder(text) gives the line_of function the Lexer takes; raw(text, w) a word as written;
 shell_files(root) every tracked shell file under tests/ but tests/vendor/ and tests/fixtures/, by
 tests/run's shell_scripts rule (.sh, .bash or .bats, or a sh or bash shebang); usage(path) a
@@ -40,6 +41,16 @@ class Word:
         self.redirect = False
 
 
+class Command(list):
+    """A command's Words, with the operator that ended it (|, |&, ||, &&, ;, &, ( or ), a newline,
+    or None at the end of its group's text) and its group: the text, $(...) or backtick it was
+    read in, the same object for each command of one."""
+
+    def __init__(self, group):
+        super().__init__()
+        self.group, self.ended = group, None
+
+
 class Lexer:
     """Reads shell text into commands, each a list of words, far enough for the forms above."""
 
@@ -60,13 +71,15 @@ class Lexer:
 
     def code(self, stop):
         """Reads commands until the stop character (")" or "`") at depth 0, or the text's end."""
-        words, depth, redirect = [], 0, False
+        group = object()
+        words, depth, redirect = Command(group), 0, False
 
-        def end():
+        def end(operator=None):
             nonlocal words
             if words:
+                words.ended = operator
                 self.commands.append(words)
-            words = []
+            words = Command(group)
 
         while self.i < len(self.text):
             c = self.at()
@@ -76,7 +89,7 @@ class Lexer:
                 self.i += 2
             elif c == "\n":
                 self.i += 1
-                end()
+                end("\n")
                 self.bodies()
             elif c == "#":
                 while self.i < len(self.text) and self.at() != "\n":
@@ -109,9 +122,11 @@ class Lexer:
                     while self.at() in ("<", ">", "&", "|") and self.at():
                         self.i += 1
                     continue
-                self.i += 1
+                operator = self.text[self.i:self.i + 2]
+                operator = operator if operator in ("|&", "||", "&&") else c
+                self.i += len(operator)
                 redirect = False
-                end()
+                end(operator)
             else:
                 w = self.word()
                 w.redirect = redirect

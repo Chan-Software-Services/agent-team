@@ -14,9 +14,9 @@
 # pids may reach a kill names so: the pids a function prints are its callers'. So once a block
 # kills, every search in it is held, a lookup whose pids it never kills among them.
 # Bound is both of:
-#   - its owner: the search's own -u or -U (-u<user>, --user, --uid or --euid too), which a ps
-#     selection of every user's processes undoes (-A, -e, -a, -d, -N or --deselect, in a cluster
-#     too, or BSD's a, as in ax), since procps adds those to a -U's; pidof has none;
+#   - its owner: the search's own -u or -U (-u<user>, --user, --uid or --euid too), and for ps no
+#     other selection beside it (-A, -e, -C, -t, BSD's ax and the rest, PS_SELECTS below), each of
+#     which procps adds to a -U's, any user's processes among them; pidof has none;
 #   - the test's own temporary directory: $BATS_TEST_TMPDIR or $BATS_FILE_TMPDIR (or ${...})
 #     expanded in a word of one of its pipeline's commands (not in a redirection's target, a
 #     comment or a command joined to it by ;, && or ||), as the path its pattern or filter holds
@@ -70,9 +70,12 @@ WRAPPERS = {
 PS_VALUES = set("oOpqUuGgtCsk")
 PS_LONG_VALUES = {"--pid", "--ppid", "--quick-pid", "--sort", "--format", "--user", "--User", "--group",
                   "--Group", "--sid", "--tty", "--cols", "--columns", "--rows", "--width"}
-# ps's selections of every user's processes, which procps adds to a -U's rather than narrows: -A,
-# -e, -a, -d and -N (--deselect), in a cluster too (-ef), and BSD's a without a dash (ax, aux).
-PS_EVERY = set("AeadN")
+# ps's selections other than its owner's, each of which procps adds to a -U's rather than narrows
+# it with, so a -U beside one binds nothing: -A, -e, -a, -d, -N, -C, -G, -g, -s and -t, in a
+# cluster too (-ef), --deselect, --ppid, --sid, --tty, --group and --Group, and BSD's a, T and t
+# without a dash (ax). -p, -q, --pid and --quick-pid make no search at all.
+PS_SELECTS = set("AeadNCGgst")
+PS_LONG_SELECTS = {"--deselect", "--ppid", "--sid", "--tty", "--group", "--Group"}
 OWNER = re.compile(r"^(-[uU]|--(user|User|uid|euid)(=|$))")
 TMPDIR = re.compile(r"^BATS_(TEST|FILE)_TMPDIR\b")
 UNIT = re.compile(r"^(?:@test\b|function\s+([A-Za-z_][\w:-]*)|([A-Za-z_][\w:-]*)\s*\(\s*\))")
@@ -106,24 +109,24 @@ def is_search(run):
     return name in SEARCHES and not (name == "ps" and named)
 
 
-def every_user(run):
-    """The word of a ps command that selects every user's processes, or None."""
+def other_selection(run):
+    """The word of a ps command that selects processes beside its owner's, or None."""
     k = 1
     while k < len(run):
         w = run[k]
         k += 1
+        if w in PS_LONG_SELECTS:
+            return w
         if w in PS_LONG_VALUES:
             k += 1
-        elif w == "--deselect":
-            return w
         elif re.match(r"^-[A-Za-z]+$", w):
             for c in w[1:]:
-                if c in PS_EVERY:
+                if c in PS_SELECTS:
                     return w
                 if c in PS_VALUES:
                     k += c == w[-1]
                     break
-        elif re.match(r"^[A-Za-z]+$", w) and "a" in w:
+        elif re.match(r"^[A-Za-z]+$", w) and set(w) & set("aTt"):
             return w
     return None
 
@@ -165,23 +168,27 @@ def units(path, text):
             of_line[k + 1] = unit
         n = end + 1
     line_of = line_finder(text)
-    pipelines, prev = [], None
+    # A command joins the pipeline of the one before it in its own group (the text, a $(...) or a
+    # backtick it was read in) when a pipe ended that one.
+    pipelines, last = [], {}
     for cmd in Lexer(text, line_of=line_of).run():
+        before = last.get(cmd.group)
+        if before and before[0] in ("|", "|&"):
+            pipeline = before[1]
+        else:
+            pipeline = len(pipelines)
+            pipelines.append([])
+        last[cmd.group] = (cmd.ended, pipeline)
         # A redirection's target, and the file descriptor its operator follows (2>), are no words.
         words = [w for w in cmd if not w.redirect
                  and not (raw(text, w).isdigit() and text[w.end:w.end + 1] in "<>")]
         if not words:
             continue
-        # The lexer lists a pipeline's commands in turn, each after the one piped into it, with
-        # only the pipe and blanks between them.
-        if not (prev and re.sub(r"\\\n|\s", "", text[prev[-1].end:cmd[0].start]) in ("|", "|&")):
-            pipelines.append([])
-        prev = cmd
         texts = [unquoted(raw(text, w)) for w in words]
         unit = of_line.get(words[0].line, found[0])
         entry = [words[0].line, texts, running(texts), False]
         unit.commands.append(entry)
-        pipelines[-1].append((entry, words))
+        pipelines[pipeline].append((entry, words))
     for pipeline in pipelines:
         tmp = any(TMPDIR.match(e.text) for _, words in pipeline for w in words for e in w.expansions)
         for entry, _ in pipeline:
@@ -232,12 +239,13 @@ def findings(files):
                 continue
             name = os.path.basename(run[0])
             named = name != "pidof" and any(OWNER.match(w) for w in run[1:])
-            every = every_user(run) if name == "ps" and named else None
-            owner = named and not every
+            other = other_selection(run) if name == "ps" and named else None
+            owner = named and not other
             if owner and path:
                 continue
             whose = "its owner (-u or -U" + ("; pidof has none: use pgrep" if name == "pidof" else "") + \
-                (f", which {every} undoes: ps lists every user's processes beside them" if every else "") + ")"
+                (f", which {other} undoes: ps adds the processes it selects, any user's, to the owner's"
+                 if other else "") + ")"
             unbound = f"bound by neither {whose} nor {where}" if not (owner or path) else \
                 f"not bound by {where if owner else whose}"
             kill_path, kill_line = reach[u]
