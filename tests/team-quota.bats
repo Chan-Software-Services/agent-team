@@ -105,10 +105,50 @@ done
 EOF
 }
 
-# usage <fixture>: team-quota usage, with the stub claude answering the fixture <fixture>.
+# usage <fixture> [<arg>...]: team-quota usage <arg>..., with the stub claude answering the fixture
+# <fixture>.
 usage() {
   claude_stub
-  QUOTA_ANSWER=$fixtures/$1.json run_bin --separate-stderr team-quota usage
+  QUOTA_ANSWER=$fixtures/$1.json run_bin --separate-stderr team-quota usage "${@:2}"
+}
+
+# usage_failed <why>: the last usage call failed as the spec words <why>: exit 1, its line, nothing
+# on stderr, and the attempt record ok false with that why.
+usage_failed() {
+  local attempt=$HOME/.local/state/agent-team/quota-usage.json
+  assert_equal "$status" 1
+  assert_equal "$output" "model windows not read: $1"
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c '{ok, why}' "$attempt")" "$(jq -cn --arg why "$1" '{ok: false, why: $why}')"
+  [[ $(jq -r .at "$attempt") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+  [[ ! -e $attempt.tmp ]]
+}
+
+# aged_attempt <minutes>: the attempt record's at moved to that many minutes ago.
+aged_attempt() {
+  local attempt=$HOME/.local/state/agent-team/quota-usage.json
+  jq -c --arg at "$(ago "$1")" '.at = $at' "$attempt" >"$attempt.aged"
+  mv "$attempt.aged" "$attempt"
+}
+
+# path_without <cmd>: PATH with each of its directories that holds <cmd> replaced by a directory
+# of this test's own linking every other entry of it, so <cmd> is on it nowhere.
+path_without() {
+  local dir out='' i=0 entry
+  local -a dirs
+  IFS=: read -r -a dirs <<<"$PATH"
+  for dir in "${dirs[@]}"; do
+    if [[ -e $dir/$1 ]]; then
+      i=$((i + 1))
+      mkdir -p "$BATS_TEST_TMPDIR/path-without/$i"
+      for entry in "$dir"/*; do
+        [[ ${entry##*/} == "$1" ]] || ln -s "$entry" "$BATS_TEST_TMPDIR/path-without/$i/"
+      done
+      dir=$BATS_TEST_TMPDIR/path-without/$i
+    fi
+    out+=:$dir
+  done
+  printf '%s\n' "${out#:}"
 }
 
 @test "--help prints the header" {
@@ -116,6 +156,15 @@ usage() {
   assert_contains "$output" "Usage: team-quota line"
   assert_contains "$output" "team-quota usage"
   assert_contains "$output" "model_reading"
+  # The failures' whys, the attempt record, --if-due, the exit codes and the test seam.
+  local part
+  for part in "team-quota usage [--if-due]" "claude is not on the PATH" "Claude Code gave no get_usage answer" \
+    "Claude Code exited <rc> before its get_usage answer" "refused get_usage: <its error text>" "[redacted]" \
+    "holds no rate limits" "holds no model_scoped" "know (<field>)" "quota-usage.json" \
+    "ok false with why" "QUOTA_USAGE_EVERY_MINUTES" "another usage read is running" "75 another usage read" \
+    "TEAM_QUOTA_USAGE_SECONDS, a test seam"; do
+    assert_contains "$output" "$part"
+  done
   # The status line gives no model window, so the header no longer waits for it to.
   [[ $output != *"models stays empty until"* ]]
 }
@@ -125,6 +174,8 @@ usage() {
   run_bin -2 team-quota sideways
   run_bin -2 team-quota status --yaml
   run_bin -2 team-quota usage --sideways
+  run_bin -2 team-quota usage --if-due --if-due
+  run_bin -2 team-quota usage --if-due now
   [[ ! -e $STUB_CALLS/claude.log ]]
 }
 
@@ -273,6 +324,209 @@ usage() {
   run_bin -0 team-quota status --json
   assert_equal "$(jq -c '{windows: (.windows | map({name, used})), model_age_minutes}' <<<"$output")" \
     '{"windows":[{"name":"seven_day","used":61},{"name":"model:Fable","used":96}],"model_age_minutes":20}'
+}
+
+@test "each answer usage cannot take records no reading, keeps the last good one and gives the spec's why" {
+  local attempt=$HOME/.local/state/agent-team/quota-usage.json
+  usage usage-good
+  assert_equal "$status" 0
+  local good before
+  good=$(jq -c .reading "$attempt") before=$(readings)
+  local -A whys=(
+    [usage-no-model-scoped]="Claude Code's answer holds no model_scoped, so it could not tell the model windows"
+    [usage-changed]="Claude Code's answer is in a shape team-quota does not know (model_scoped entry)"
+    [usage-null-limits]="Claude Code's answer holds no rate limits (its usage fetch failed, or this login has no claude.ai plan)"
+    [usage-error]="Claude Code refused get_usage: Unknown control request subtype: get_usage (an older Claude Code)"
+  )
+  local fixture
+  for fixture in "${!whys[@]}"; do
+    usage "$fixture"
+    usage_failed "${whys[$fixture]}"
+    assert_equal "$(readings)" "$before"
+    assert_equal "$(jq -c .reading "$attempt")" "$good"
+    # The earlier reading is still fresh, so its model window shows with no note, and the why is
+    # the status's model_problem.
+    run_bin -0 team-quota status --json
+    assert_equal "$(jq -c '{windows: (.windows | map(.name)), model_fresh, model_note}' <<<"$output")" \
+      '{"windows":["five_hour","seven_day","model:Fable"],"model_fresh":true,"model_note":null}'
+    assert_equal "$(jq -r .model_problem <<<"$output")" "${whys[$fixture]}"
+  done
+  # A good read clears the problem.
+  usage usage-good
+  assert_equal "$status" 0
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c .model_problem <<<"$output")" null
+}
+
+@test "a Claude Code that never answers is killed after the timeout and its kill, leaving no process behind" {
+  # A Claude Code that ignores TERM and never answers: only the kill after the timeout ends it.
+  stub_script claude <<'EOF'
+echo "$$" >"$STUB_CALLS/claude.pid"
+pwd >"$STUB_CALLS/claude.cwd"
+trap '' TERM
+exec sleep 60
+EOF
+  local start pid stat
+  start=$EPOCHREALTIME
+  TEAM_QUOTA_USAGE_SECONDS=1 run_bin --separate-stderr team-quota usage
+  under_seconds 9 "$start"
+  usage_failed "Claude Code gave no get_usage answer within 1 s"
+  assert_equal "$(readings)" ""
+  assert_equal "$(jq -c .reading "$HOME/.local/state/agent-team/quota-usage.json")" null
+  pid=$(<"$STUB_CALLS/claude.pid")
+  # Gone, or at most a zombie its new parent has yet to reap.
+  stat=$(ps -o stat= -p "$pid" || true)
+  [[ -z $stat || $stat == Z* ]] || { echo "the stub $pid is still running: $stat" >&2; return 1; }
+  # The directory it ran in is removed all the same.
+  [[ ! -e $(<"$STUB_CALLS/claude.cwd") ]]
+}
+
+@test "a Claude Code that exits before its answer, or no claude on the PATH, records no reading and says why" {
+  stub_script claude <<'EOF'
+exit 3
+EOF
+  run_bin --separate-stderr team-quota usage
+  usage_failed "Claude Code exited 3 before its get_usage answer"
+  assert_equal "$(readings)" ""
+  rm "$STUB_CALLS/claude.log"
+  local path
+  path=$(path_without claude)
+  PATH=$path run_bin --separate-stderr team-quota usage
+  usage_failed "claude is not on the PATH"
+  [[ ! -e $STUB_CALLS/claude.log ]]
+  assert_equal "$(readings)" ""
+}
+
+@test "after a failed read, status ends the note with it when no fresh model window is shown" {
+  local why="Claude Code refused get_usage: Unknown control request subtype: get_usage (an older Claude Code)"
+  local fallback="a rule on a model's week falls back to seven_day; the last read here failed: $why"
+  # No reading anywhere: the problem is still given, with the note.
+  usage usage-error
+  usage_failed "$why"
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c '{reading, model_reading, model_fresh, model_problem}' <<<"$output")" \
+    "$(jq -cn --arg why "$why" '{reading: null, model_reading: null, model_fresh: false, model_problem: $why}')"
+  assert_equal "$(jq -r .model_note <<<"$output")" \
+    "model windows: none read yet (team-quota usage reads them from Claude Code, every 10 minutes on the heartbeat); $fallback"
+  run_bin -0 team-quota status
+  assert_equal "${lines[-1]}" \
+    "model windows: none read yet (team-quota usage reads them from Claude Code, every 10 minutes on the heartbeat); $fallback"
+  # A stale model reading: the note says how old, then the failure.
+  usage_reading home-pc "$(ago 40)"
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c '{windows: (.windows | map(.name)), model_fresh}' <<<"$output")" \
+    '{"windows":["five_hour","seven_day"],"model_fresh":false}'
+  assert_equal "$(jq -r .model_note <<<"$output")" "model windows: none fresh, the last read 40 min ago on home-pc; $fallback"
+  run_bin -0 team-quota status
+  assert_equal "${lines[-1]}" "model windows: none fresh, the last read 40 min ago on home-pc; $fallback"
+}
+
+@test "no token in an answer reaches a reading, a record or any output" {
+  local attempt=$HOME/.local/state/agent-team/quota-usage.json
+  # Token-shaped strings, built here so no file holds one: Claude Code's own prefix, and a long run.
+  local token long
+  token="sk-""ant-oat01-$(printf '%s' {A..Z} {0..9} {a..z})"
+  long=$(printf '%s' {a..z} {0..9} {A..F})
+  jq --arg t "$token" '.response.rate_limits.token = $t | .response.session.token = $t
+    | .response.rate_limits.model_scoped[0].token = $t' "$fixtures/usage-good.json" >"$BATS_TEST_TMPDIR/good-token.json"
+  jq -n --arg t "$token" --arg l "$long" '{subtype: "error", error: ("refused for \($t) and \($l):" + (" x" * 150))}' \
+    >"$BATS_TEST_TMPDIR/error-token.json"
+  claude_stub
+  local outputs=''
+  QUOTA_ANSWER=$BATS_TEST_TMPDIR/good-token.json run_bin -0 --separate-stderr team-quota usage
+  outputs+=$output$stderr
+  assert_equal "$output" "model windows read: Fable 96% (resets Mon 14:00)"
+  QUOTA_ANSWER=$BATS_TEST_TMPDIR/error-token.json run_bin -1 --separate-stderr team-quota usage
+  outputs+=$output$stderr
+  local why prefix="Claude Code refused get_usage: "
+  why=$(jq -r .why "$attempt")
+  [[ $why == "${prefix}refused for [redacted] and [redacted]: x x"* ]] || { echo "the why is $why" >&2; return 1; }
+  # The error's text is cut at 200 characters, after the redaction.
+  assert_equal "${#why}" $((${#prefix} + 200))
+  run_bin -0 --separate-stderr team-quota status
+  outputs+=$output$stderr
+  run_bin -0 --separate-stderr team-quota status --json
+  outputs+=$output$stderr
+  assert_contains "$output" "[redacted]"
+  local secret files
+  files=$(find "$TEAM_HOME/usage" "$HOME/.local/state/agent-team" -type f)
+  [[ -n $files ]]
+  for secret in "$token" "$long" "oat01"; do
+    [[ $outputs != *"$secret"* ]] || { echo "an output holds $secret" >&2; return 1; }
+    ! grep -rlF -- "$secret" "$TEAM_HOME/usage" "$HOME/.local/state/agent-team" || { echo "a file holds $secret" >&2; return 1; }
+  done
+}
+
+@test "usage --if-due reads at most every 10 minutes and prints its line only when the outcome changes" {
+  local count
+  # A first read prints its line.
+  usage usage-good --if-due
+  assert_equal "$status" 0
+  assert_equal "$output" "model windows read: Fable 96% (resets Mon 14:00)"
+  # 5 minutes after it, not due: no Claude Code, no output.
+  rm "$STUB_CALLS/claude.log"
+  aged_attempt 5
+  usage usage-good --if-due
+  assert_equal "$status" 0
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  [[ ! -e $STUB_CALLS/claude.log ]]
+  assert_equal "$(readings | wc -l)" 1
+  # At 11 minutes it reads, and a good read after a good one prints nothing, whatever its numbers.
+  aged_attempt 11
+  usage usage-no-models --if-due
+  assert_equal "$status" 0
+  assert_equal "$output" ""
+  [[ -e $STUB_CALLS/claude.log ]]
+  assert_equal "$(readings | wc -l)" 2
+  # Good to failed prints.
+  aged_attempt 11
+  usage usage-error --if-due
+  usage_failed "Claude Code refused get_usage: Unknown control request subtype: get_usage (an older Claude Code)"
+  # The same failure again prints nothing, still exit 1.
+  aged_attempt 11
+  usage usage-error --if-due
+  assert_equal "$status" 1
+  assert_equal "$output" ""
+  # One why to another prints.
+  aged_attempt 11
+  usage usage-null-limits --if-due
+  usage_failed "Claude Code's answer holds no rate limits (its usage fetch failed, or this login has no claude.ai plan)"
+  # Failed to good prints.
+  aged_attempt 11
+  usage usage-good --if-due
+  assert_equal "$status" 0
+  assert_equal "$output" "model windows read: Fable 96% (resets Mon 14:00)"
+  count=$(wc -l <"$STUB_CALLS/claude.log")
+  assert_equal "$count" 5
+  # An attempt record that is no JSON object is no attempt: due, and the line printed.
+  echo 'not json' >"$HOME/.local/state/agent-team/quota-usage.json"
+  usage usage-good --if-due
+  assert_equal "$status" 0
+  assert_equal "$output" "model windows read: Fable 96% (resets Mon 14:00)"
+}
+
+@test "while another usage read holds the lock, usage exits 75 and changes nothing" {
+  usage usage-good
+  aged_attempt 11
+  rm "$STUB_CALLS/claude.log"
+  local dir=$HOME/.local/state/agent-team fd before
+  exec {fd}>"$dir/quota-usage.lock"
+  flock -n "$fd"
+  before=$(files_state)
+  usage usage-error
+  assert_equal "$status" 75
+  assert_equal "$output" ""
+  assert_equal "$stderr" "another usage read is running"
+  usage usage-error --if-due
+  assert_equal "$status" 75
+  assert_equal "$stderr" "another usage read is running"
+  exec {fd}>&-
+  assert_equal "$(files_state)" "$before"
+  [[ ! -e $STUB_CALLS/claude.log ]]
+  # Once it is free, the read runs.
+  usage usage-error
+  assert_equal "$status" 1
 }
 
 @test "the line gives the model, the context, the 5-hour and weekly use, each model's week and the weekly reset, in that order" {

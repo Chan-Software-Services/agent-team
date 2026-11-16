@@ -4,7 +4,7 @@
 #
 # Usage: team-quota line
 #        team-quota status [--json]
-#        team-quota usage
+#        team-quota usage [--if-due]
 # A reading is what Claude Code says of the Claude plan's rate limits, as its status line input's
 # rate_limits gives them: {at, machine, windows: {<name>: {used, resets_at}}, models: [{name, used,
 # resets_at}]}, at the UTC time it was read, machine this machine's team name
@@ -42,24 +42,41 @@
 # by timeout (QUOTA_USAGE_SECONDS, then a kill QUOTA_USAGE_KILL_SECONDS later). It sends the
 # control request initialize, as the SDK does first, then get_usage with skip_behaviors (the SDK's
 # experimental usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET, whose shape may change),
-# reads lines until that answer, every other line ignored, then closes Claude Code's input and waits
-# for it. Claude Code fetches the usage with its own login, reusing its own answer for a minute: no
-# team code reads a credential file or ~/.claude.json, or sees a token, and the answer as it came is
-# never printed, logged or recorded. A good answer's rate_limits holds model_scoped as a list:
-# usage keeps its five_hour and seven_day windows ({used: utilization, resets_at}) and each
-# model_scoped entry ({name: display_name, used: utilization, resets_at}), utilization a number
-# from 0 to 1000 and resets_at an ISO time, each one whose utilization or resets_at is null left
-# out, as /usage leaves it out; every other key of rate_limits (Sonnet's, Opus's and the OAuth
-# apps' weeks, spend and overage) is dropped unread. Its reading is {at, machine, source: "usage",
-# windows, models}, source telling it from a status line reading, which has none; it is appended to
-# the same day file as the line's, with a team home and a machine name, every read, since its at is
-# what says the model window is fresh, and never to quota.json. After each attempt it writes the
-# attempt record ~/.local/state/agent-team/quota-usage.json, {at, ok, why, reading: the last good
-# reading, or null}, the reading's only home with no team home or no machine name. It prints
-# "model windows read: <name> <n>% (resets <ddd HH:MM>)" for each model window, joined by ", ", or
-# "model windows read: none, Claude Code's answer gives no model's own week" for an empty
-# model_scoped, and exits 0; an answer it cannot take records no reading, prints "model windows not
-# read: <why>" and exits 1.
+# reads lines until that answer, every other line ignored, then closes Claude Code's input and
+# waits for it; TEAM_QUOTA_USAGE_SECONDS, a test seam, sets QUOTA_USAGE_SECONDS. Claude Code
+# fetches the usage with its own login, reusing its own answer for a minute: no team code reads a
+# credential file or ~/.claude.json, or sees a token, and the answer as it came is never printed,
+# logged or recorded. A good answer's rate_limits holds model_scoped as a list: usage keeps its
+# five_hour and seven_day windows ({used: utilization, resets_at}) and each model_scoped entry
+# ({name: display_name, used: utilization, resets_at}), utilization a number from 0 to 1000 and
+# resets_at an ISO time, each one whose utilization or resets_at is null left out, as /usage leaves
+# it out; every other key of rate_limits (Sonnet's, Opus's and the OAuth apps' weeks, spend and
+# overage) is dropped unread. Its reading is {at, machine, source: "usage", windows, models},
+# source telling it from a status line reading, which has none; it is appended to the same day file
+# as the line's, with a team home and a machine name, every read, since its at is what says the
+# model window is fresh, and never to quota.json. After each attempt it writes the attempt record
+# ~/.local/state/agent-team/quota-usage.json, {at, ok, why, reading: the last good reading, or
+# null}, ok false with why on a failure, the reading's only home with no team home or no machine
+# name; the attempt holds the lock quota-usage.lock beside it, taken without waiting, so two reads
+# never run at once: while another holds it, usage prints "another usage read is running" on
+# stderr, changes nothing and exits 75. It prints "model windows read: <name> <n>% (resets <ddd
+# HH:MM>)" for each model window, joined by ", ", or "model windows read: none, Claude Code's
+# answer gives no model's own week" for an empty model_scoped, and exits 0. A failure records no
+# reading, keeps the last good one in the attempt record, prints "model windows not read: <why>"
+# and exits 1, the why one of: "claude is not on the PATH"; "Claude Code gave no get_usage answer
+# within <QUOTA_USAGE_SECONDS> s"; "Claude Code exited <rc> before its get_usage answer"; "Claude
+# Code refused get_usage: <its error text>" (control characters as spaces, sk-ant- and every
+# character of [A-Za-z0-9_-] after it, and every run of 32 or more of those, as [redacted], cut at
+# 200 characters; "an error with no text" with none); "Claude Code's answer holds no rate limits
+# (its usage fetch failed, or this login has no claude.ai plan)" (rate_limits null or absent, or no
+# window and no model once the nulls are left out); "Claude Code's answer holds no model_scoped, so
+# it could not tell the model windows"; or "Claude Code's answer is in a shape team-quota does not
+# know (<field>)", <field> rate_limits, model_scoped (not a list), model_scoped entry, five_hour or
+# seven_day (not an object or null, or a field of the wrong type or out of range), one wrong window
+# or entry refusing the whole answer. With --if-due it reads only when due, with no attempt record
+# or its at at least QUOTA_USAGE_EVERY_MINUTES ago, printing nothing and exiting 0 when not, and
+# prints its line only when the outcome differs from the last attempt's (none, ok changed, or
+# another why), so the heartbeat logs each change once; the models' numbers are no part of it.
 # status: the windows reading, the newest reading with a window across every machine's
 # usage/*/quota/ (each machine's latest day file), this machine's state file and its usage attempt
 # record's reading, by its at; a stored window or model window that breaks the rules above is left
@@ -90,7 +107,7 @@
 # null unless model_problem is set.
 # status reads only, and like line and usage it needs no team home: with none it reads this
 # machine's state files alone.
-# Exit 0 done, 1 refused (usage: the read failed), 2 usage error.
+# Exit 0 done, 1 refused (usage: the read failed), 2 usage error, 75 another usage read is running.
 set -euo pipefail
 
 # Whatever happens, the status line exits 0 and prints what it can: Claude Code shows the line of
@@ -114,7 +131,7 @@ elif [[ ${1:-} == usage || ${1:-} == status ]]; then
 fi
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
-USAGE="usage: team-quota line | status [--json] | usage"
+USAGE="usage: team-quota line | status [--json] | usage [--if-due]"
 
 # How long the line waits for its input to end: Claude Code writes the whole JSON at once and
 # closes it, so input still open is a caller's mistake, and the line must answer within 200 ms.
@@ -131,8 +148,11 @@ QUOTA_MODEL_FRESH_MINUTES=30
 # How long usage waits for Claude Code's get_usage answer, then how long after for it to end once
 # told to: Claude Code waits at most 1.5 s for its flags and fetches in about a second, so this is
 # room for a slow start.
-QUOTA_USAGE_SECONDS=45
+QUOTA_USAGE_SECONDS=${TEAM_QUOTA_USAGE_SECONDS:-45}
 QUOTA_USAGE_KILL_SECONDS=5
+# usage --if-due reads at most this often: Fable's week moves about a percent in that time, and
+# Claude Code's endpoint is asked no more than by /usage opened by hand.
+QUOTA_USAGE_EVERY_MINUTES=10
 
 STATE_DIR=$HOME/.local/state/agent-team
 STATE=$STATE_DIR/quota.json
@@ -285,7 +305,7 @@ def use_ok: is_number and . >= 0 and . <= 1000;
 def broken($field): error({broken: $field});
 def shape($field): "Claude Code'"'"'s answer is in a shape team-quota does not know (\($field))";
 def no_limits: "Claude Code'"'"'s answer holds no rate limits (its usage fetch failed, or this login has no claude.ai plan)";
-def redact: gsub("[[:cntrl:]]"; " ") | gsub("sk-ant-\\w*"; "[redacted]")
+def redact: gsub("[[:cntrl:]]"; " ") | gsub("sk-ant-[A-Za-z0-9_-]*"; "[redacted]")
   | gsub("[A-Za-z0-9_-]{32,}"; "[redacted]") | .[:200];
 def window($name): .[$name] as $w
   | if $w == null then empty
@@ -331,27 +351,69 @@ usage_attempt() {
   mv -f "$USAGE_STATE.tmp" "$USAGE_STATE"
 }
 
-# team-quota usage: read Claude Code's get_usage answer, and record a good one.
+# The last attempt record as {at, ok, why, reading}, each field null where it is missing or of
+# another type, or null with no record or one that is not one JSON object.
+# shellcheck disable=SC2016 # jq's variables
+LAST_ATTEMPT_JQ='if length == 1 and (.[0] | type) == "object" then .[0]
+  | {at: ([.at | strings] | .[0]), ok: ([.ok | booleans] | .[0]), why: ([.why | strings] | .[0]),
+     reading: ([.reading | objects] | .[0])} else null end'
+
+# Whether usage --if-due reads now, from the last attempt $last: none, or its at unreadable or at
+# least $every minutes ago.
+# shellcheck disable=SC2016 # jq's variables
+DUE_JQ='if $last == null then true
+  else ([$last.at | strings | try fromdateiso8601 catch empty] | .[0]) as $t | $t == null or now - $t >= $every * 60 end'
+
+# team-quota usage [--if-due]: read Claude Code's get_usage answer, record a good one, and write
+# the attempt record, under the lock.
 quota_usage() {
-  (($# == 0)) || usage_error "$USAGE"
-  local result at machine reading file
+  local if_due='' lock last result at machine reading file line ok why kept rc=0
+  while (($#)); do
+    case $1 in
+      --if-due) [[ -z $if_due ]] || usage_error "$USAGE"; if_due=1 ;;
+      *) usage_error "$USAGE" ;;
+    esac
+    shift
+  done
+  [[ $QUOTA_USAGE_SECONDS =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+    die "TEAM_QUOTA_USAGE_SECONDS is not a number of seconds: $QUOTA_USAGE_SECONDS"
+  mkdir -p "$STATE_DIR"
+  exec {lock}>"$STATE_DIR/quota-usage.lock"
+  if ! flock -n "$lock"; then
+    echo "another usage read is running" >&2
+    exit 75
+  fi
+  last=null
+  [[ ! -f $USAGE_STATE ]] || last=$(jq -cs "$LAST_ATTEMPT_JQ" "$USAGE_STATE" 2>/dev/null) || last=null
+  if [[ -n $if_due ]] && [[ $(jq -n --argjson last "$last" --argjson every "$QUOTA_USAGE_EVERY_MINUTES" "$DUE_JQ") != true ]]; then
+    exit 0
+  fi
   result=$(usage_exchange | LC_ALL=C jq -c "$USAGE_JQ")
-  if [[ $(jq -r 'has("reading")' <<<"$result") != true ]]; then
-    printf 'model windows not read: %s\n' "$(jq -r .why <<<"$result")"
-    exit 1
-  fi
   at=$(date -u +%FT%TZ)
-  machine=$(machine_name 2>/dev/null) || machine=''
-  reading=$(jq -c --arg at "$at" --arg machine "$machine" \
-    '{at: $at, machine: (if $machine == "" then null else $machine end), source: "usage"} + .reading' <<<"$result")
-  usage_attempt "$at" true null "$reading"
-  if [[ -n $machine && -z $TEAM_HOME_PROBLEM && -n $TEAM_HOME && -d $TEAM_HOME ]]; then
-    file=$TEAM_HOME/usage/$machine/quota/${at%%T*}.jsonl
-    if ! mkdir -p "${file%/*}" 2>/dev/null || ! printf '%s\n' "$reading" 2>/dev/null >>"$file"; then
-      echo "team-quota: the reading could not be appended to $file; the attempt record keeps it" >&2
+  if [[ $(jq -r 'has("reading")' <<<"$result") == true ]]; then
+    machine=$(machine_name 2>/dev/null) || machine=''
+    reading=$(jq -c --arg at "$at" --arg machine "$machine" \
+      '{at: $at, machine: (if $machine == "" then null else $machine end), source: "usage"} + .reading' <<<"$result")
+    ok=true why=null
+    usage_attempt "$at" true null "$reading"
+    if [[ -n $machine && -z $TEAM_HOME_PROBLEM && -n $TEAM_HOME && -d $TEAM_HOME ]]; then
+      file=$TEAM_HOME/usage/$machine/quota/${at%%T*}.jsonl
+      if ! mkdir -p "${file%/*}" 2>/dev/null || ! printf '%s\n' "$reading" 2>/dev/null >>"$file"; then
+        echo "team-quota: the reading could not be appended to $file; the attempt record keeps it" >&2
+      fi
     fi
+    line=$(LC_ALL=C jq -r "$USAGE_LINE_JQ" <<<"$reading")
+  else
+    ok=false why=$(jq -c .why <<<"$result") rc=1
+    kept=$(jq -c '.reading // null' <<<"$last")
+    usage_attempt "$at" false "$why" "$kept"
+    line="model windows not read: $(jq -r . <<<"$why")"
   fi
-  LC_ALL=C jq -r "$USAGE_LINE_JQ" <<<"$reading"
+  if [[ -z $if_due ]] || [[ $(jq -n --argjson last "$last" --argjson ok "$ok" --argjson why "$why" \
+    '$last == null or $last.ok != $ok or $last.why != $why') == true ]]; then
+    printf '%s\n' "$line"
+  fi
+  exit "$rc"
 }
 
 # Each machine's latest <n> day files, one path per line; none with no team home.
@@ -443,7 +505,7 @@ quota_status() {
   mapfile -t recent < <(latest_day_files 2)
   windows=$(newest_reading '.windows != {}' "${latest[@]}")
   model=$(newest_reading '.source == "usage" or .models != []' "${recent[@]}")
-  # The why of this machine's last usage read, when it failed: set by ticket 02's failed attempts.
+  # The why of this machine's last usage read, when it failed.
   problem=null
   if [[ -f $USAGE_STATE ]]; then
     problem=$(jq -c 'if .ok == false and (.why | type) == "string" then .why else null end' "$USAGE_STATE" 2>/dev/null) || problem=null
