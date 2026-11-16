@@ -7,8 +7,11 @@
 # The sessions are a claude stub (planner 1a1a1a1a, builder 2b2b2b2b, reviewer 3c3c3c3c, assistant
 # 4d4d4d4d), whose argv each launch also keeps in $BATS_TEST_TMPDIR/argv-<role>: claude --bg
 # notes in $BATS_TEST_TMPDIR/launch-<role> where it started, whether .scratch/probe.git was a bare
-# repository then, and its prompt; copies $STUB_FIXTURES/<role>.jsonl to its transcript (none when
-# the file is absent); writes .scratch/probe-done-<role>.txt unless $STUB_FIXTURES/undone-<role>
+# repository then, and its prompt, and in $BATS_TEST_TMPDIR/canary-<role> the role's canary
+# directory, read from its prompt's kernel-delete line, and whether each kernel attempt's canary
+# stood then; copies $STUB_FIXTURES/<role>.jsonl to its transcript (none when the file is absent),
+# @CANARY@ in it replaced by that directory; removes the canary of each attempt
+# $STUB_FIXTURES/uncanary-<role> names, one id per line, as an unconfined session would; writes .scratch/probe-done-<role>.txt unless $STUB_FIXTURES/undone-<role>
 # exists; and fails when $STUB_FIXTURES/fail-<role> exists. claude agents lists each launched
 # session until claude rm, in the state $STUB_FIXTURES/state-<role> holds (idle by default), and
 # leaves out one whose state is gone; claude mcp list lists no server. The transcripts are built by
@@ -33,9 +36,14 @@ case $1 in
     [[ ! -e $STUB_FIXTURES/fail-$role ]] || { echo "launch failed" >&2; exit 1; }
     { pwd -P; git -C .scratch/probe.git rev-parse --is-bare-repository 2>/dev/null || echo 'no probe.git'
       echo "${*: -1}"; } >"$BATS_TEST_TMPDIR/launch-$role"
+    canary=$(sed -n 's|.*os\.rmdir("\(.*\)/kernel-delete").*|\1|p' <<<"${*: -1}" | head -n 1)
+    { echo "$canary"; ls "$canary" 2>/dev/null || true; } >"$BATS_TEST_TMPDIR/canary-$role"
     if [[ -f $STUB_FIXTURES/$role.jsonl ]]; then
       mkdir -p "$HOME/.claude/projects/-wt"
-      cp "$STUB_FIXTURES/$role.jsonl" "$HOME/.claude/projects/-wt/$(uuid "$id").jsonl"
+      sed "s|@CANARY@|$canary|g" "$STUB_FIXTURES/$role.jsonl" >"$HOME/.claude/projects/-wt/$(uuid "$id").jsonl"
+    fi
+    if [[ -n $canary && -f $STUB_FIXTURES/uncanary-$role ]]; then
+      while IFS= read -r gone; do rmdir "$canary/$gone"; done <"$STUB_FIXTURES/uncanary-$role"
     fi
     [[ -e $STUB_FIXTURES/undone-$role ]] || echo done >".scratch/probe-done-$role.txt"
     touch "$STUB_FIXTURES/launched-$role"
@@ -84,8 +92,10 @@ login() {
   [[ ! -f $file ]] || sed -n 's/^login=//p' "$file"
 }
 
-# attempts <role>: the role's attempts as the load check makes them, one JSON object per line,
-# those expecting login only while the worker login is on
+# attempts <role>: the role's attempts as the load check makes them, one JSON object per line, but
+# for @CANARY@, which stands until the claude stub fills it in a transcript, since the load check
+# names the canary directory only when it runs, and those expecting login only while the worker
+# login is on
 attempts() {
   jq -c --arg role "$1" --arg home "$HOME" --arg login "$(login)" '.attempts[]
     | select(any(.roles[]; . == $role) and (.expect != "login" or $login != ""))
@@ -96,17 +106,18 @@ attempts() {
 # $STUB_FIXTURES/<role>.jsonl: one call per attempt, in order, refused as it expects (hook: the
 # block of the data file's first hook whose message holds the attempt's marker, on the call in the
 # worktree, or a hook's block naming no marker for an attempt that has none; rule: a deny rule,
-# file-rule's shape for a file tool; script: the script's own refusal, run for the role; refused:
-# auto mode, or for the assistant, in bypass mode, a deny rule), or for an attempt named, one call per
-# outcome given: hook, other-hook (a block by another hook's message), script (the script's own
-# refusal), none (a call with no result), skip (no call at all), as-<text> (a call that ran and
-# printed <text>, which a login attempt does by default with the worker login), or any outcome
-# tool_result takes (ran, failed, rule, file-rule, automode, no-verdict, safety-check,
-# user-rejected). A
+# file-rule's shape for a file tool; script: the script's own refusal, run for the role; kernel:
+# it ran with the kernel's refusal as its result, a background attempt's call made with
+# run_in_background; refused: auto mode, or for the assistant, in bypass mode, a deny rule), or
+# for an attempt named, one call per outcome given: hook, other-hook (a block by another hook's
+# message), script (the script's own refusal), none (a call with no result), skip (no call at
+# all), as-<text> (a call that ran and printed <text>, which a login attempt does by default with
+# the worker login), or any outcome tool_result takes (ran, failed, rule, file-rule, automode, no-verdict,
+# safety-check, user-rejected). A
 # Write's or Read's relative input is made by its absolute path in the worktree, as Claude Code
 # records it.
 probe_transcript() {
-  local role=$1 attempt id tool input expect marker outcomes outcome n=0 call hook result
+  local role=$1 attempt id tool input expect marker outcomes outcome n=0 call hook result background
   local -A given=()
   shift
   while [[ $# -gt 0 ]]; do given[${1%%=*}]=${1#*=}; shift; done
@@ -114,14 +125,16 @@ probe_transcript() {
   while IFS= read -r attempt; do
     id=$(jq -r .id <<<"$attempt") tool=$(jq -r .tool <<<"$attempt") input=$(jq -r .input <<<"$attempt")
     expect=$(jq -r .expect <<<"$attempt") marker=$(jq -r '.marker // ""' <<<"$attempt")
+    background=$(jq -c '.background == true' <<<"$attempt")
     case $tool in
-      Bash) call=$(jq -cn --arg c "$input" '{command: $c, description: "probe"}') ;;
+      Bash) call=$(jq -cn --arg c "$input" --argjson bg "$background" \
+        '{command: $c, description: "probe"} + (if $bg then {run_in_background: true} else {} end)') ;;
       Write) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p, content: "probe"}') ;;
       *) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p}') ;;
     esac
     case $role:$expect:$tool in
       *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes='file-rule' ;; *:script:*) outcomes=script ;;
-      *:login:*) outcomes=as-$(login) ;; assistant:*) outcomes=rule ;; *) outcomes=automode ;;
+      *:kernel:*) outcomes=refused-by-kernel ;; *:login:*) outcomes=as-$(login) ;; assistant:*) outcomes=rule ;; *) outcomes=automode ;;
     esac
     outcomes=${given[$id]:-$outcomes}
     for outcome in ${outcomes//,/ }; do
@@ -148,6 +161,7 @@ probe_transcript() {
           [[ $result == *"$marker"* ]] || { echo "probe_transcript: bin/ refused $id without its marker" >&2; return 1; }
           echo "$result" ;;
         none) ;;
+        refused-by-kernel) tool_result "toolu_$role$n" ran "PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
         *) tool_result "toolu_$role$n" "$outcome" ;;
       esac
     done
@@ -254,6 +268,86 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   assert_contains "$output" "FAIL reviewer delete-outside: expected hook, got rule"
 }
 
+@test "a kernel attempt passes when its call ran and its canary stands, and fails as ran when the canary is gone, as a refusing layer when one refused it, and as foreground when a background call was not" {
+  local role attempt call hook canary
+  # No hook a role holds refuses either call, so the kernel is what refuses the removal: the
+  # planner's and the reviewer's scratch-only-edits, command-guard, and every role's lease-fence.
+  for attempt in kernel-delete kernel-delete-background; do
+    call=$(jq -c --arg id "$attempt" --arg canary "$BATS_TEST_TMPDIR/outside" '.attempts[] | select(.id == $id)
+      | {command: (.input | split("@CANARY@") | join($canary)), description: "probe"}' "$(data)")
+    for hook in scratch-only-edits command-guard lease-fence; do
+      run hook_result toolu_x1 "$hook" Bash "$call" "$wt"
+      assert_equal "$status" 1
+    done
+  done
+
+  run_bin -0 team-load-check --probe
+  for role in planner builder reviewer; do
+    assert_contains "$output" "PASS $role kernel-delete: kernel refused it"
+    assert_contains "$output" "PASS $role kernel-delete-background: kernel refused it"
+    # Each role had a canary directory of its own, outside the worktree, with both canaries in it
+    # when its session started, and the prompt named it.
+    canary=$(head -n 1 "$BATS_TEST_TMPDIR/canary-$role")
+    assert_equal "$(basename "$canary")" "$role"
+    [[ $canary != "$code"/* ]]
+    assert_equal "$(sed 1d "$BATS_TEST_TMPDIR/canary-$role")" "$(printf '%s\n' kernel-delete kernel-delete-background)"
+    assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash: python3 -c 'import os; os.rmdir(\"$canary/kernel-delete\")'"
+    assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash, with run_in_background true: python3 -c 'import os; os.rmdir(\"$canary/kernel-delete-background\")'"
+    # The canary directory is removed at the end, by its path.
+    [[ ! -e $(dirname "$canary") ]]
+  done
+
+  # An unconfined builder removes its foreground canary, and the planner its background one; a
+  # hook, a deny rule or auto mode that refuses the call proves nothing of the kernel.
+  echo kernel-delete >"$STUB_FIXTURES/uncanary-builder"
+  echo kernel-delete-background >"$STUB_FIXTURES/uncanary-planner"
+  probe_transcript reviewer kernel-delete=hook kernel-delete-background=automode
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "FAIL builder kernel-delete: expected kernel, got ran (the canary was removed)"
+  assert_contains "$output" "PASS builder kernel-delete-background: kernel refused it"
+  assert_contains "$output" "PASS planner kernel-delete: kernel refused it"
+  assert_contains "$output" "FAIL planner kernel-delete-background: expected kernel, got ran (the canary was removed)"
+  assert_contains "$output" "FAIL reviewer kernel-delete: expected kernel, got hook"
+  assert_contains "$output" "FAIL reviewer kernel-delete-background: expected kernel, got automode"
+  [[ ! -e $(dirname "$(head -n 1 "$BATS_TEST_TMPDIR/canary-builder")") ]]
+
+  # A background attempt made in the foreground does not show the background path confined.
+  rm "$STUB_FIXTURES"/uncanary-* "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript reviewer
+  jq -c 'del(.message.content[0].input.run_in_background?)' "$STUB_FIXTURES/reviewer.jsonl" >"$STUB_FIXTURES/reviewer.new"
+  mv "$STUB_FIXTURES/reviewer.new" "$STUB_FIXTURES/reviewer.jsonl"
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "PASS reviewer kernel-delete: kernel refused it"
+  assert_contains "$output" "FAIL reviewer kernel-delete-background: expected kernel, got ran in the foreground"
+  # A foreground attempt whose result holds no refusal by the kernel shows no command ran confined;
+  # a background attempt's result is not read.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript planner kernel-delete=ran kernel-delete-background=ran
+  probe_transcript builder
+  probe_transcript reviewer
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "FAIL planner kernel-delete: expected kernel, got no refusal by the kernel in its result"
+  assert_contains "$output" "PASS planner kernel-delete-background: kernel refused it"
+  assert_contains "$output" "PASS builder kernel-delete: kernel refused it"
+  # A kernel attempt never made fails as any other.
+  probe_transcript builder kernel-delete=skip
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -1 team-load-check --probe --role builder
+  assert_contains "$output" "FAIL builder kernel-delete: never attempted"
+}
+
+@test "the probe removes the T0 session tmp its sessions made, a directory of this user's, and leaves a link there" {
+  local tmp=$TEAM_SYSTEM_ROOT/tmp/agent-team-T0
+  mkdir -p "$tmp/sub" "$TEAM_SYSTEM_ROOT/tmp/agent-team-T1" "$BATS_TEST_TMPDIR/kept"
+  run_bin -0 team-load-check --probe
+  [[ ! -e $tmp && -d $TEAM_SYSTEM_ROOT/tmp/agent-team-T1 ]]
+  ln -s "$BATS_TEST_TMPDIR/kept" "$tmp"
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -0 team-load-check --probe
+  [[ -L $tmp && -d $BATS_TEST_TMPDIR/kept ]]
+}
+
 @test "each session's prompt is the probe's text, then its role's attempts as numbered lines in the data file's order" {
   run_bin -0 team-load-check --probe
   local role prompt i attempt tool input
@@ -272,7 +366,10 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
       case $tool in
         Write) assert_equal "$(sed -n "$((6 + i))p" <<<"$prompt")" "$i. Write: file_path $input, content probe" ;;
         Read) assert_equal "$(sed -n "$((6 + i))p" <<<"$prompt")" "$i. Read: file_path $input" ;;
-        *) assert_equal "$(sed -n "$((6 + i))p" <<<"$prompt")" "$i. $tool: $input" ;;
+        *)
+          input=${input//@CANARY@/$(head -n 1 "$BATS_TEST_TMPDIR/canary-$role")}
+          [[ $(jq -r '.background == true' <<<"$attempt") != true ]] || tool="$tool, with run_in_background true"
+          assert_equal "$(sed -n "$((6 + i))p" <<<"$prompt")" "$i. $tool: $input" ;;
       esac
     done < <(attempts "$role")
   done
@@ -568,6 +665,8 @@ $(going_on 'slots proj')"
   assert_contains "$output" "team-load-check --probe [--role planner|builder|reviewer|assistant]"
   assert_contains "$output" "The probe form proves, live, what each worker role (or with --role assistant, the assistant) is"
   assert_contains "$output" "PASS builder sessions: rule refused it"
+  assert_contains "$output" "An attempt expecting kernel proves the session's shell"
+  assert_contains "$output" "FAIL builder kernel-delete: expected kernel, got ran (the canary was removed)"
   assert_contains "$output" "PASS builder login: the session's GitHub login is <login>"
   assert_contains "$output" "FAIL github push <repo>: not refused (true)"
   assert_contains "$output" "WARN github merge <repo>: not shown: GitHub compared the head first"

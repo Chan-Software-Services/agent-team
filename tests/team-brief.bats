@@ -247,6 +247,7 @@ Task directory: `.scratch/task/` in the worktree (excluded from git), for your s
 1. Bring the branch up to date with the base: `git fetch origin`; if `git merge-base --is-ancestor origin/dev HEAD` fails, merge `origin/dev` with a merge commit (`git merge origin/dev`, never a rebase), resolve any conflict and re-run what the conflicts touched.
    A conflict whose resolution is a judgment call on behaviour goes to `coordinator` as `T12 QUESTION <the conflict> | options: ...`.
 2. Find what your branch made false: for each file, command, flag, setting and path it adds, renames or removes (`git diff --stat origin/dev...HEAD`), `git grep` its name in the repository's Markdown, `CLAUDE.md`, `AGENTS.md` and script headers, and fix every line that no longer holds, in the same PR.
+   Then write the intent you will give the gate in step 4 to `.scratch/task/intent.md`, run `/claims-check . origin/dev --pr-body .scratch/task/intent.md`, since the gate drafts the PR's body from it, and fix or cut each sentence it names, in the same PR.
 3. Before you push: Nothing but you runs conv's whole suite, so run it once at your end, as the project's docs say, beside the tests your change reaches as you go.
    Then push the branch (under a Disclosure section, not before the review passes: the reviewer reads your local head) and send `T12 DONE review-ready <the full sha of HEAD>` to `coordinator`, then wait: the team reviews that head before the gate runs, so the gate runs once.
    Fix each finding the coordinator sends you on the branch and push; once they are fixed, or the coordinator says the review passed, go on.
@@ -887,6 +888,32 @@ EOF
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
   run_bin -0 team-brief T14 builder-deliver --set "goal=the goal"
   refute_grep -e 'gh pr view' -e 'the gate drafted' -e 'gate' "$output"
+}
+
+@test "each delivery's step 2 ends with the claims check, a direct-PR one's on its PR body and a gated one's on its intent, in a round's and a small fix's brief too" {
+  open_t12
+  open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
+  local pr=https://github.com/Chan-Software-Services/agent-team/pull/9 name task sentence grep_line check next
+  local direct="   Then write the PR body you will send to \`.work/task/pr-body.md\`, run \`/claims-check . origin/main --pr-body .work/task/pr-body.md\`, and fix or cut each sentence it names, in the same PR."
+  local gated="   Then write the intent you will give the gate in step 4 to \`.scratch/task/intent.md\`, run \`/claims-check . origin/dev --pr-body .scratch/task/intent.md\`, since the gate drafts the PR's body from it, and fix or cut each sentence it names, in the same PR."
+  for name in T14:deliver T12:deliver T14:round T12:round T14:fix T12:fix; do
+    task=${name%%:*}
+    case ${name#*:} in
+      deliver) run_bin -0 team-brief "$task" builder-deliver --set "goal=the goal" ;;
+      round) run_bin -0 team-brief "$task" builder-round --name round-1 --set pr=$pr --set findings=5 \
+        --set findings_file=.work/task/review.md --set goal=g ;;
+      fix) run_bin -0 team-brief "$task" builder-fix --name fix --set read=r --set commits=c --set goal=g ;;
+    esac
+    # A direct-PR project's check reads the body the builder will send; a gated one's reads the
+    # intent, since no PR body exists until the gate drafts one from it.
+    if [[ $task == T14 ]]; then sentence=$direct; else sentence=$gated; fi
+    [[ $(grep -c -F '/claims-check' "$output") -eq 1 ]] || { cat "$output" >&2; return 1; }
+    # The sentence is step 2's last line: right under its git grep line, right above step 3.
+    grep_line=$(grep -n '^2\. Find what your branch made false: .*`git grep` its name' "$output" | cut -d: -f1)
+    check=$(grep -n -x -F "$sentence" "$output" | cut -d: -f1)
+    next=$(sed -n "$((check + 1))p" "$output")
+    [[ -n $grep_line && -n $check && $check -eq $((grep_line + 1)) && $next == "3. "* ]] || { cat "$output" >&2; return 1; }
+  done
 }
 
 @test "a gated project's re-review of its PR, as a direct-PR one's, starts no wait on its checks and runs its local checks before it reads" {
