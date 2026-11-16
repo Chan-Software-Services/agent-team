@@ -82,10 +82,15 @@ case $1 in
     if [[ ${3:-} == --all ]]; then echo '[{"id": "4f2a9c1e", "state": "done", "sessionId": "4f2a9c1e-0000-4000-8000-000000000001"}]'
     else echo '[]'; fi
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
@@ -133,7 +138,7 @@ hook_passed="load check: the planner's edit hook blocked its write of outside.tx
   assert_contains "$output" "PASS"
   assert_equal "$(cat "$TEAM_HOME/tasks/T0/inventory.txt")" "$(printf '%s\n' --- tdd implement)"
   assert_equal "$(stub_calls claude | jq -c 'select(.[0] != "--bg" and .[0] != "--version")')" \
-    "$(printf '%s\n' "[\"--settings\",\"$TEAM_HOME/tasks/T0/settings.planner.code.json\",\"auto-mode\",\"config\"]" \
+    "$(printf '%s\n' "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.planner.code.json\",\"auto-mode\",\"config\"]" \
       '["agents","--json"]' '["agents","--json","--all"]' '["stop","4f2a9c1e"]' '["rm","4f2a9c1e"]')"
   assert_contains "$output" "$hook_passed"
 }
@@ -690,10 +695,15 @@ case $1 in
       echo '[]'
     fi
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
@@ -742,6 +752,9 @@ oplog_lines() {
   assert_contains "$output" "load check: Daniel, a 1Password prompt is coming on the PC: approve it"
   assert_contains "$output" "load check: ops's effective autoMode holds the $(team_lines ops | wc -l) lines of its settings' autoMode"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(realpath "$wt")"
+  # Read as team-worker launches ops, with no --setting-sources.
+  assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
+    "[\"--settings\",\"$TEAM_HOME/tasks/T0/settings.ops.json\",\"auto-mode\",\"config\"]"
   assert_contains "$output" "load check: 11 MCP tools, 10 built-in tools"
   assert_equal "${lines[-1]}" "PASS"
   # Launched through team-worker as the T0 ops session, in the given worktree.
@@ -1494,6 +1507,8 @@ blobbed() {
   assert_contains "$output" "--worktree is for --role ops only"
   run_bin -2 team-load-check --role builder
   assert_contains "$output" "unknown role 'builder'"
+  run_bin -2 team-load-check --role assistant
+  assert_contains "$output" "unknown role 'assistant'; known: planner, ops (and builder, reviewer and assistant with --context or --probe)"
   run_bin -2 team-load-check --toolkit
   assert_equal "$(stub_calls claude)" ""
 }
@@ -1548,23 +1563,26 @@ SH
 }
 
 # The context form. The claude stub plays one session per role, its id from the role
-# (1a1a1a1a planner, 2b2b2b2b builder, 3c3c3c3c reviewer): claude --bg notes in
+# (1a1a1a1a planner, 2b2b2b2b builder, 3c3c3c3c reviewer, 4d4d4d4d assistant): claude --bg notes in
 # $BATS_TEST_TMPDIR/launch-<role> where it started and with what prompt, and writes its transcript
 # from tests/fixtures/load-check-context/<role>.jsonl (or '{}' when $STUB_FIXTURES/silent-<role>
 # exists), and fails when $STUB_FIXTURES/fail-<role> exists; claude agents lists each until claude rm,
-# 'idle', or 'gone' with $STUB_FIXTURES/gone-<role>.
+# 'idle', or 'gone' with $STUB_FIXTURES/gone-<role>; claude mcp list, which claude-assistant runs,
+# lists no server.
 
 # context_setup: the stub for the context form
 context_setup() {
   export CONTEXT_FIXTURES=$BATS_TEST_DIRNAME/fixtures/load-check-context
   stub_script claude <<'SH'
-declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c)
+declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c [assistant]=4d4d4d4d)
 uuid() { echo "$1-0000-4000-8000-000000000001"; }
 case $1 in
   --bg)
+    printf '%s\n' "$@" >"$BATS_TEST_TMPDIR/argv"
     while [[ $1 != --name ]]; do shift; done
     role=${2#T0-} id=${ids[${2#T0-}]}
     [[ ! -e $STUB_FIXTURES/fail-$role ]] || { echo "launch failed" >&2; exit 1; }
+    mv "$BATS_TEST_TMPDIR/argv" "$BATS_TEST_TMPDIR/argv-$role"
     { pwd -P; echo "${*: -1}"; } >"$BATS_TEST_TMPDIR/launch-$role"
     transcript=$HOME/.claude/projects/-wt/$(uuid "$id").jsonl
     mkdir -p "$(dirname "$transcript")"
@@ -1573,20 +1591,26 @@ case $1 in
     echo "Started background session $id ($2). Attach with: claude attach $id"
     ;;
   agents)
-    for role in planner builder reviewer; do
+    for role in planner builder reviewer assistant; do
       id=${ids[$role]}
       [[ -f $STUB_FIXTURES/launched-$role && ! -f $STUB_FIXTURES/removed-$id && ! -f $STUB_FIXTURES/gone-$role ]] || continue
       jq -cn --arg id "$id" --arg name "T0-$role" --arg uuid "$(uuid "$id")" '{id: $id, name: $name, state: "idle", sessionId: $uuid}'
     done | jq -s .
     ;;
-  --settings)
-    # claude --settings <file> auto-mode config: the file's autoMode lists, "$defaults" read as one
-    # built-in line, or $STUB_FIXTURES/automode.json when the test writes one
-    [[ ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
+  --setting-sources | --settings)
+    # claude [--setting-sources user] --settings <file> auto-mode config, the first form a
+    # planner's, builder's or reviewer's and the second ops's: the file's autoMode lists,
+    # "$defaults" read as one built-in line, or $STUB_FIXTURES/automode.json when the test writes one
+    if [[ $1 == --setting-sources ]]; then
+      [[ ${2:-} == user ]] || exit 64
+      shift 2
+    fi
+    [[ ${1:-} == --settings && ${3:-} == auto-mode && ${4:-} == config ]] || exit 64
     pwd -P >>"$BATS_TEST_TMPDIR/automode-cwd"
     if [[ -f $STUB_FIXTURES/automode.json ]]; then cat "$STUB_FIXTURES/automode.json"
     else jq '(.autoMode // {}) | map_values(map(if . == "$defaults" then "a built-in line" else . end))' "$2"; fi
     ;;
+  mcp) ;;
   stop) ;;
   rm) touch "$STUB_FIXTURES/removed-$2" ;;
   *) exit 64 ;;
@@ -1611,6 +1635,11 @@ reviewer    45003       2               2            0"
     assert_equal "$(jq -r '.environment[]' "$TEAM_HOME/tasks/T0/automode-$role.json")" "$(echo 'a built-in line'; team_lines "$role")"
   done
   assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(printf '%s\n' "$wt" "$wt" "$wt")"
+  # Each read with the sources team-worker launches the role with, --setting-sources user.
+  assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
+    "$(for role in planner builder reviewer; do
+      echo "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.$role.code.json\",\"auto-mode\",\"config\"]"
+    done)"
   # Only figures leave the transcripts.
   [[ $output != *"never leaves the transcript"* ]]
   assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c)"
@@ -1627,12 +1656,42 @@ reviewer    45003       2               2            0"
   [[ ! -e $BATS_TEST_TMPDIR/launch-planner ]]
 
   run_bin -2 team-load-check --context --role ops
-  assert_contains "$output" "--context measures the roles the load check may start: planner, builder, reviewer; ops needs Daniel"
+  assert_contains "$output" "--context measures the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel"
   run_bin -2 team-load-check --context --role coordinator
   assert_contains "$output" "unknown role 'coordinator'"
   run_bin -2 team-load-check --context --worktree "$HOME"
   assert_contains "$output" "--worktree is for --role ops only"
   assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg")' | wc -l)" 1
+}
+
+@test "the context form measures the assistant with --role assistant, launched by claude-assistant --load-check, and takes no toolkit for it" {
+  context_setup
+  run_bin -0 team-load-check --context --role assistant
+  assert_contains "$output" "load check: assistant 4d4d4d4d started"
+  assert_contains "$output" "role       context  skills  deferred tools  MCP servers
+assistant    39005       4               5            0"
+  # Bypass mode has no autoMode to read.
+  assert_contains "$output" "load check: the assistant runs in bypass mode, so it has no effective autoMode to check"
+  [[ ! -e $BATS_TEST_TMPDIR/automode-cwd ]]
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch-assistant")" "$(printf '%s\n' "$wt" 'Reply with OK and nothing else.')"
+  # The assistant's settings and role, with no Discord channel.
+  local argv
+  argv=$(cat "$BATS_TEST_TMPDIR/argv-assistant")
+  assert_contains "$argv" "--dangerously-skip-permissions"
+  assert_contains "$argv" "$HOME/.local/state/agent-team/assistant-load-check.settings.json"
+  assert_contains "$argv" "$REPO_ROOT/roles/assistant.md"
+  [[ $argv != *--channels* ]]
+  [[ $output != *planner* && $output != *builder* ]]
+  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" 4d4d4d4d
+  assert_equal "${lines[-1]}" PASS
+  left_nothing
+
+  # The assistant loads its own settings alone, so no toolkit; nor does the default form launch it.
+  run_bin -2 team-load-check --context --role assistant --toolkit plain
+  assert_contains "$output" "--role assistant launches the assistant's own settings, so it takes no --toolkit"
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -0 team-load-check --context
+  [[ ! -e $STUB_FIXTURES/launched-assistant ]]
 }
 
 @test "in the context form, a role whose given toolkit's MCP server listed no tool before its first reply fails, naming the toolkit and server" {

@@ -295,13 +295,32 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
 }
 
+@test "the assistant's role keeps its asks and owed replies in its own list, each with a close condition or a review date" {
+  local list
+  list=$(section assistant 'Your list')
+  grep -qF '`assistant/current.md`' <<<"$list"
+  grep -qF '`team-current add ask|owe <task or -> <text> --where <detail>`' <<<"$list"
+  grep -qF 'Each item takes a close condition the records show, `--until <condition>`' <<<"$list"
+  grep -qF 'or a review date, `--review` (3 days out) or `--review-by <YYYY-MM-DD>` (at most 7 days out)' <<<"$list"
+  grep -qF 'stays a finding until you `done` it or renew it with `team-current renew <id> --review --reason' <<<"$list"
+  # Each condition it names is one of team-current's grammar.
+  local help
+  help=$("$REPO_ROOT/bin/team-current" --help)
+  local condition
+  for condition in 'handoff H<n> answered' 'task T<n> opened' 'ledger T<n> <kind>' 'pr <GitHub PR URL> merged' 'file <path>'; do
+    grep -qF "$condition" <<<"$help"
+  done
+  grep -qF 'the hand-offs in flight, your list, then the catch-up' <<<"$(section assistant 'Start, stow and the lease')"
+}
+
 @test "the manual hands the assistant Daniel's walkthroughs, manual steps, logins and spikes, answers its hand-offs, and leaves manual-steps.md to it" {
   local discord rows
   discord=$(section coordinator Discord)
   # The Discord bullet: who Daniel's direct contact is, what goes to it, how, and the one line to Daniel.
-  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks you for, and each step of yours that needs Daniel's hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and the line \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in one line to go to \`#assistant\`." <<<"$discord"
-  # The coordinator no longer keeps manual-steps.md: it hands each new step to the assistant.
-  grep -qxF -- "- You write directly only \`tasks/\`, the projects' \`memory/<project>/\`, and the ledger through the scripts; \`manual-steps.md\` is the assistant's, so a new step only Daniel can take goes to it with \`team-assistant send walkthrough\`." "$manual"
+  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks for, and each step of yours that needs their hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in a line to go to \`#assistant\`." <<<"$discord"
+  # The coordinator no longer keeps manual-steps.md: each new step goes to the assistant, as the
+  # Discord bullet above says how.
+  grep -qxF -- "- You write directly only \`tasks/\`, the projects' \`memory/<project>/\`, and the ledger through the scripts; \`manual-steps.md\` is the assistant's, so a new step only Daniel can take goes to it (Discord)." "$manual"
   assert_equal "$(grep -c 'manual-steps\.md' "$manual")" 1
   # The two rows: a hand-off from the assistant is read, acted on by kind and answered; its answer is read.
   rows=$(grep -E '^\| `ASSISTANT ' "$manual")
@@ -309,7 +328,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF '| `ASSISTANT H<n> <kind>`, the assistant'"'"'s hand-off | `team-assistant show H<n>` | Act by kind on what Daniel'"'"'s message, which `show` prints verbatim, says: a `task` is `team-open` (`When: now`) or a `tasks/queued/` file (`When: queue`)' <<<"$rows"
   grep -qF 'and a `now` or `fable` that message does not say is asked of Daniel first;' <<<"$rows"
   grep -qF 'a `decision` an ask'"'"'s answer with `team-answer T<n> <id> <message id> --channel <channel id>`, a hold or a relay to a worker' <<<"$rows"
-  grep -qF 'then `team-assistant answer H<n> --file <answer>` (`--task T<n>` for a task you opened from it) and send `assistant` the line `COORDINATOR ANSWER H<n>`.' <<<"$rows"
+  grep -qF 'then `team-assistant answer H<n> --file <answer>` (`--task T<n>` for a task opened from it) and send `assistant` `COORDINATOR ANSWER H<n>`.' <<<"$rows"
   grep -qF '| `ASSISTANT ANSWER H<n>`, its answer to yours | `team-assistant show H<n>` |' <<<"$rows"
   # Each kind the coordinator sends and reads is one team-assistant knows.
   local kind help
@@ -855,6 +874,9 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   assert_contains "$items" '`check`'
   assert_contains "$items" 'at most 300 characters'
   assert_contains "$items" 'task progress stays in the ledger, which `team-state` reads'
+  # Each item takes a close condition or a review date, and a due one is a finding until done or
+  # renewed; team-current's own refusal and --help say the rest.
+  assert_contains "$items" 'its end `--until <condition>` or `--review`, a due one a finding until `done` or `renew`ed'
   grep -Fq 'One `team-current add` each, as your manual says' "$plugin/skills/stow/SKILL.md"
   run -1 grep -Fq 'One line each in `tasks/current.md`' "$plugin/skills/stow/SKILL.md"
 }

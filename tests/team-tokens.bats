@@ -194,6 +194,32 @@ read 3 of 3 transcripts; wrote 2 day files"
   assert_equal "$(jq -s 'all(.[]; (to_entries | map(.value | type) | unique) - ["number", "string"] == [])' "$usage"/*.jsonl)" true
 }
 
+@test "the export keeps the name of a session named assistant on its replies, and no other name" {
+  # The assistant's session in the team home's directory, as claude-assistant names it, and a
+  # worker's under another name.
+  local assistant=a5a5a5a5-5555-4555-8555-555555555555 dir=$HOME/.claude/projects/-home-dan-agent-team-records
+  mkdir -p "$dir"
+  {
+    printf '{"type":"agent-name","agentName":"assistant","sessionId":"%s"}\n' "$assistant"
+    grep req_A2 "$HOME/.claude/projects/-home-dan-agent-team/$aaaa.jsonl" | jq -c --arg s "$assistant" '.sessionId = $s | .requestId = "req_AS1"'
+  } >"$dir/$assistant.jsonl"
+  sed -i "1i {\"type\":\"agent-name\",\"agentName\":\"CONTENT-T1-builder\",\"sessionId\":\"$bbbb\"}" \
+    "$HOME/.claude/projects/-home-dan-agent-team--claude-worktrees-1/$bbbb.jsonl"
+  run_bin -0 team-tokens export
+  assert_equal "$(grep req_AS1 "$usage/2026-10-21.jsonl")" \
+    '{"ts":"2026-10-21T00:00:10.000Z","machine":"home-pc","session":"'"$assistant"'","name":"assistant","project_dir":"-home-dan-agent-team-records","model":"claude-opus-5-5","request":"req_AS1","input":1,"cache_write_1h":300,"cache_write_5m":0,"cache_read":21000,"output":40}'
+  assert_equal "$(cat "$usage"/*.jsonl | jq -c 'select(.name) | [.request, .name]')" '["req_AS1","assistant"]'
+  run grep -r CONTENT "$TEAM_HOME/usage" "$scan"
+  assert_equal "$status" 1
+  # A line an older export wrote without the name gains it at the next full read, and nothing else.
+  jq -c 'del(.name)' "$usage/2026-10-21.jsonl" >"$BATS_TEST_TMPDIR/day" && mv "$BATS_TEST_TMPDIR/day" "$usage/2026-10-21.jsonl"
+  jq ".version = 4" "$scan" >"$BATS_TEST_TMPDIR/scan" && mv "$BATS_TEST_TMPDIR/scan" "$scan"
+  run_bin -0 team-tokens export
+  assert_equal "$output" "usage/home-pc/2026-10-21.jsonl: 4 replies, 0 new
+read 4 of 4 transcripts; wrote 1 day file"
+  assert_equal "$(cat "$usage"/*.jsonl | jq -c 'select(.name) | [.request, .name]')" '["req_AS1","assistant"]'
+}
+
 @test "a rerun with nothing new changes no file, the scan state included" {
   run_bin -0 team-tokens export
   local before
@@ -367,7 +393,40 @@ read 3 of 3 transcripts; wrote 1 day file"
   assert_equal "$(q '.tasks[]' | paste -sd ' ')" \
     '{"task":"T1","project":"agent-team","tokens":545000,"w":3.36,"plan_w":0.69,"build_w":1.92,"review_w":0.75,"launches":{"home-pc":6},"merged":1,"tickets_done":1,"reviews":2,"closed":true} {"task":"T2","project":"conventioner","tokens":160000,"w":0.62,"plan_w":0,"build_w":0.62,"review_w":0,"launches":{"laptop":2},"merged":0,"tickets_done":1,"reviews":0,"closed":false}'
   assert_equal "$(q '.days[] | [.day, .w, .roles]' | paste -sd ' ')" \
-    '["2026-10-20",5.895,{"coordinator":2.19,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0}] ["2026-10-21",0.96,{"coordinator":0.34,"planner":0,"builder":0.62,"reviewer":0,"ops":0}]'
+    '["2026-10-20",5.895,{"coordinator":2.19,"assistant":0,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0}] ["2026-10-21",0.96,{"coordinator":0.34,"assistant":0,"planner":0,"builder":0.62,"reviewer":0,"ops":0}]'
+}
+
+# Append to home-pc's day file of the report fixture a reply of 0.08 $w at 09:<minute>, request
+# req_<request>, of <session> in <directory>, with <more> fields (JSON): usage_row <minute>
+# <request> <session> <directory> <more>
+usage_row() {
+  jq -nc --arg ts "2026-10-20T09:$1:00.000Z" --arg request "req_$2" --arg session "$3" --arg dir "$4" --argjson more "$5" \
+    '{ts: $ts, machine: "home-pc", session: $session, project_dir: $dir, model: "claude-opus-5-5", request: $request,
+      input: 0, cache_write_1h: 10000, cache_write_5m: 0, cache_read: 0, output: 0} + $more' >>"$TEAM_HOME/usage/home-pc/2026-10-20.jsonl"
+}
+
+@test "a session named assistant is classed assistant, in the team home or not, after a launch and before its directory" {
+  report_fixture
+  local home_one=a5a5a5a5-0000-4000-8000-000000000000 other=a6a6a6a6-0000-4000-8000-000000000000
+  # In the team home, where its directory alone would class it coordinator, with a subagent.
+  usage_row 01 as_1 "$home_one" -home-dan-agent-team-records '{"name":"assistant"}'
+  usage_row 02 as_2 "$home_one" -home-dan-agent-team-records '{"agent":"sub1","cache_write_1h":0,"cache_write_5m":16000}'
+  # Anywhere else, where its directory would class it daniel.
+  usage_row 03 as_3 "$other" -home-dan-elsewhere '{"name":"assistant"}'
+  # A launched session keeps its launch's role, whatever it is named.
+  sed -i '/"request":"req_b3_1"/s/"project_dir"/"name":"assistant","project_dir"/' "$TEAM_HOME/usage/home-pc/2026-10-20.jsonl"
+  assert_equal "$(grep -c '"name":"assistant".*"request":"req_b3_1"' "$TEAM_HOME/usage/home-pc/2026-10-20.jsonl")" 1
+  report_json
+  assert_equal "$(q '.roles[] | [.role, .sessions, .replies, .w, .subagent_w]' | paste -sd ' ')" \
+    '["coordinator",2,6,2.53,0.14] ["assistant",2,3,0.24,0.08] ["planner",1,2,0.69,0] ["builder",4,7,2.54,0.3] ["reviewer",2,2,0.75,0] ["unlaunched",1,1,0.08,0] ["team-test",2,2,0.16,0] ["daniel",1,1,0.105,0]'
+  assert_equal "$(q '.projects[] | select(.project | test("assistant")) | [.project, .w]')" '["(none: assistant)",0.24]'
+  assert_equal "$(q '.days[0] | [.day, .roles]')" \
+    '["2026-10-20",{"coordinator":2.19,"assistant":0.24,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0}]'
+  assert_equal "$(q '.sessions[] | select(.role == "assistant") | [.sessions, .max_replies, .max_context]')" '[2,1,10000]'
+  assert_equal "$(q '.rebuilds.roles[] | select(.role == "assistant") | [.rebuilds, .role_w, .compactions]')" '[0,0.16,0]'
+  run_bin -0 team-tokens --until 2026-10-21T16:00Z
+  assert_contains "$output" "| assistant | 2 | 3 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.24 | 3.4% | 33.3% |"
+  assert_contains "$output" "| Day | Tokens (M) | \$w | Coordinator | Assistant | Planner | Builder | Reviewer | Ops |"
 }
 
 @test "the report gives each role's sessions, starting context, context buckets and cache rebuilds" {
@@ -711,6 +770,22 @@ coordinator_fixture() {
   assert_equal "$(q '.coordinator | [.sessions, .unread_replies, .all.turns]')" '[1,24,13]'
   run_bin -0 team-tokens --since 2026-10-20T00:00Z --until 2026-10-23T12:00Z
   assert_contains "$output" "24 of the coordinator's replies in the window are in sessions these tables do not read"
+}
+
+@test "the coordinator tables leave out a session named assistant in the team home, which the roles table shows" {
+  coordinator_fixture
+  report_json --since 2026-10-22T00:00Z --until 2026-10-23T12:00Z
+  local before
+  before=$(q .coordinator)
+  # The coordinator's transcript again as the assistant's, beside it in the team home's directory.
+  local dir=$HOME/.claude/projects/-home-dan-agent-team-records
+  jq -c '.sessionId = "a5a5a5a5-5555-4555-8555-555555555555" | if .type == "agent-name" then .agentName = "assistant" else . end
+    | if .requestId then .requestId += "-as" else . end' \
+    "$dir/cccccccc-3333-4333-8333-333333333333.jsonl" >"$dir/a5a5a5a5-5555-4555-8555-555555555555.jsonl"
+  report_json --since 2026-10-22T00:00Z --until 2026-10-23T12:00Z
+  assert_equal "$(q .coordinator)" "$before"
+  assert_equal "$(q '[.roles[] | [.role, .sessions]]')" '[["coordinator",1],["assistant",1]]'
+  assert_equal "$(q '.roles | map(.replies) | .[0] == .[1]')" true
 }
 
 @test "the coordinator tables print as text, never a message's text, and --task leaves them out" {
@@ -1140,7 +1215,7 @@ read 1 of 4 transcripts; wrote 1 time file"
   mv "$BATS_TEST_TMPDIR/ledger.jsonl" "$TEAM_HOME/ledger.jsonl"
   local version usage_before
   version=$(jq .version "$scan")
-  assert_equal "$version" 4
+  assert_equal "$version" 5
   # Version 3's scan state, written before a heredoc's body was left out of a command's name.
   jq ".version = 3" "$scan" >"$BATS_TEST_TMPDIR/scan" && mv "$BATS_TEST_TMPDIR/scan" "$scan"
   usage_before=$(fingerprint "$usage"/*.jsonl)

@@ -1241,6 +1241,27 @@ def scope_reasons($scope):
   | select(any($scope[]; . as $entry | if endswith("/") then $p | startswith($entry) else $p == $entry end) | not)
   | "\(name) is outside the approved plan's scope: \($scope | join(", "))";
 
+# The project the review at index $i of the task's events was made in, or null: the project of the
+# launch of the session of the reviewer's done logged after it with no other review between, as
+# team-log --from-message logs a verdict (its review, then its reviewer's done). Null for a review
+# logged by hand, with no such done, or whose reviewer's launch names no project.
+def review_project($i):
+  . as $events
+  | (first(range($i + 1; length) | select($events[.] | .event == "review" or (.event == "done" and .role == "reviewer")))
+     // null) as $d
+  | if $d == null or $events[$d].event != "done" then null
+    else $events[$d].session as $session
+      | ([$events[:$d][] | select(.event == "launch" and .session == $session)] | last | .project?) // null end;
+
+# The indexes of the task's reviews made in $project, in ledger order: every review when $project
+# is "" or null, else each whose review_project is $project or null, so a review whose project is
+# not known counts for every project, and a task with one project reads every review, as it did
+# before reviews ran beside each other in two repositories.
+def project_reviews($project):
+  . as $events
+  | [range(length) | select($events[.].event == "review")
+      | select(($project // "") == "" or (. as $i | $events | review_project($i) | . == null or . == $project))];
+
 # The head whose review stands for $head: $head itself when a review of it is logged, or, when a
 # caught-up event of the task names $head (by the shorter prefix) as the merge team-catch-up made,
 # the head it was made from, followed back the same way, the latest such event first, until a head
@@ -1268,10 +1289,22 @@ def review_app_pin_problems($app):
   | (select(any((. // {}).checks[]?; .context == "agent-review" and .app_id == $app) | not) | {kind: "pin"}),
     (select(. != null and .enforcement_level != "everyone") | {kind: "admins", level: (.enforcement_level // "no one")});
 
-# What waits on the checks of a pass, over the task's events, or null: null unless the task's
-# latest review is a pass on one of its PRs not merged, the PR whose head the pass names (by the
+# The project a PR (one of lifecycle.prs, the input) is of, as the task's reviews show it ($events),
+# or null: the project (review_project) of the latest review that names a head one of the PR's pr
+# events logged, by the shorter prefix.
+def pr_review_project($events):
+  (.url // "" | tostring | rtrimstr("/")) as $url
+  | [$events[] | select(.event == "pr" and ((.url // "" | tostring | rtrimstr("/")) == $url)) | .head] as $heads
+  | [range($events | length) | select($events[.] | .event == "review" and (.head as $h | any($heads[]; same_head(.; $h))))
+      | . as $i | $events | review_project($i) | strings] | last;
+
+# What waits on the checks of a pass in $project, over the task's events, or null: null unless the
+# latest review made in $project (project_reviews; the task's latest when $project is null or "")
+# is a pass on one of its PRs not merged, the PR whose head the pass names (by the
 # shorter prefix), else the latest PR whose first pr event came before the pass (a fix's head, which
-# no pr event logs). Else {url, reviewed, head, since, state, reruns}: url the PR's; reviewed the
+# no pr event logs), a PR the reviews show as another project's (pr_review_project) left out. Else
+# {project, review, url, reviewed, head, since, state, reruns}: project $project, null when it is
+# null or ""; review the index of the pass in the events; url the PR's; reviewed the
 # passed head; head the latest caught-up since the pass made from the passed head or from the
 # head followed so far (team-catch-up logs from as the reviewed head, so a second catch-up names
 # the passed head again; reviewed_head's rule, forward), else reviewed; state the outcome of the
@@ -1283,14 +1316,15 @@ def review_app_pin_problems($app):
 # them (a rerun starts the wait again) and that done; reruns the names of the checks with a
 # ci-rerun of head on the PR, whenever logged, each once, in the order first rerun. URLs compare
 # with a trailing slash aside.
-def checks_wait:
+def project_checks_wait($project):
   . as $events
   | def url_of: .url // "" | tostring | rtrimstr("/");
-    ([range(length) | select($events[.].event == "review")] | last) as $r
+    (project_reviews($project) | last) as $r
   | if $r == null or $events[$r].verdict != "pass" then null
     else $events[$r] as $pass
     | [$events[:$r][] | select(.event == "pr") | url_of] as $before
-    | [lifecycle.prs[] | select(url_of as $u | any($before[]; . == $u))] as $prs
+    | [lifecycle.prs[] | select(url_of as $u | any($before[]; . == $u))
+        | select(pr_review_project($events) as $p | ($project // "") == "" or $p == null or $p == $project)] as $prs
     | (first($prs[] | select(same_head(.head; $pass.head))) // ($prs | last)) as $pr
     | if $pr == null or $pr.merged then null
       else ($pr | url_of) as $url
@@ -1308,13 +1342,40 @@ def checks_wait:
             // length) as $moved
            | [range($c + 1; $moved) | select($events[.] | .event == "done" and .role == "builder")] | last
          else null end) as $answer
-      | {url: $pr.url, reviewed: $pass.head, head: $up.head,
+      | {project: (if ($project // "") == "" then null else $project end), review: $r,
+         url: $pr.url, reviewed: $pass.head, head: $up.head,
          since: ([$ends[], $answer | values] | max | if . == null then $events[$up.at].ts else $events[.].ts end),
          state: (if $answer != null then "waiting" else $ci.outcome // "waiting" end),
          reruns: (reduce ($events[] | select(.event == "ci-rerun" and url_of == $url and same_head(.head; $up.head)) | .check) as $c
            ([]; if any(.[]; . == $c) then . else . + [$c] end))}
       end
     end;
+
+# The projects the task's reviews were made in (review_project), each once, in the order first
+# reviewed; none while no review's project is known.
+def review_projects:
+  . as $events
+  | reduce (range(length) | select($events[.].event == "review") | . as $i | $events | review_project($i) | strings) as $p
+      ([]; if any(.[]; . == $p) then . else . + [$p] end);
+
+# The task's checks wait with the project and the review it stands on, or null: of each project
+# its reviews were made in (review_projects; of every review when none is known), that project's
+# wait (project_checks_wait); the first, in the order of their passes, with no wait ended yet (its
+# state waiting or pending), else the first that ended blocked (infrastructure, armed again on
+# Daniel's word), else the latest that passed, else the latest that failed. So a pass in one
+# repository keeps its wait while another repository's review is logged after it, or while
+# another's wait is blocked or its failed checks are out as a round. project is null when no
+# review's project is known, and review is the index of the pass in the task's events.
+def checks_wait_of:
+  [(review_projects | if . == [] then [null] else . end)[] as $p | project_checks_wait($p) | values]
+  | sort_by(.review)
+  | first(.[] | select(.state | IN("waiting", "pending")))
+    // first(.[] | select(.state == "infrastructure"))
+    // (map(select(.state == "passed")) | last)
+    // last;
+
+# checks_wait_of without its project and review, as team-state prints it.
+def checks_wait: checks_wait_of | if . == null then null else del(.project, .review) end;
 
 # Why the task's reviews do not let the default word, given on no head, merge the PR's
 # head $head unasked, one string per reason, none when they do, judged on the latest review of
@@ -1695,12 +1756,36 @@ def waiting_on:
       + (if length > 1 then ", and \(length - 1) more running" else "" end)
   end;
 
+# Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
+# task's events after that launch: a pr follows it, and after the latest one come only launches of
+# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
+# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
+# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
+# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
+# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
+# work again.
+def delivered($launch):
+  def effect: lifecycle_table.kinds[.event // ""].effect // null;
+  $launch.role == "builder" and ($launch.ticket | type) != "string"
+  and ((map(.event == "pr") | rindex(true)) as $pr
+    | $pr != null
+      and (.[$pr + 1:] as $after
+        | all(range($after | length); . as $k | $after[$k]
+            | if .event == "launch" then .role == "reviewer"
+              elif effect == "park" then .session != $launch.session
+              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
+              else (.session | type) == "string" and .session != $launch.session end)));
+
 # The no-worker, waiting-input, silent, stalled, ticket-gone and ticket-worktree-left findings of
 # an open task that is not parked, the stalled one from session-activity's object as team-sweep
 # passes it ($activity: {sessions}, its object keyed by full session id, or {error} when it
 # failed, where none is stalled). A live session is judged by its latest launch, and one waiting
 # for input is not also called silent; stalled is a busy session, not waiting for input, whose
 # transcripts have gone unwritten past its limit (stall_limits).
+# A session waits for input when its state is blocked, but for a builder that delivered
+# (delivered) with no dialog open (its status idle, no waitingFor): Claude Code also calls a
+# session blocked when its last turn's summary says it waits on someone, as a builder's does
+# after its PR ("awaiting the merge word"), and that one is idle with an event since its launch.
 # A live session is at work while it is busy, waiting for input, or idle with no ledger event
 # since its launch (silent); idle with an event since, it has handed the next step back to the
 # coordinator, so a task with no session at work is no-worker however many are live. A ticket
@@ -1728,9 +1813,11 @@ def task_findings($sessions; $activity):
       | .launch as $l | $events[.i + 1:] as $since
       | . + if ($l.ticket | type) == "string" then
           {ended: any($since[]; ends_launch($l)), quiet: (any($since[]; .session == $l.session or .ticket == $l.ticket) | not)}
-        else {ended: false, quiet: (.i == $count - 1)} end]
+        else {ended: false, quiet: (.i == $count - 1)} end
+      | . + {prompted: (.live.state == "blocked"
+          and ((.live.status == "idle" and .live.waitingFor == null and ($since | delivered($l))) | not))}]
      | unique_by(.short) | sort_by(.i)) as $live
-  | ($live | map(select(.live.state == "blocked" or .live.status != "idle" or .quiet
+  | ($live | map(select(.prompted or .live.status != "idle" or .quiet
       or ((.launch.ticket | type) == "string" and (.ended | not))))) as $at_work
   | [$events | running_ticket_launches[]
      | select(live_session(.session; $sessions) == null and (stowed_after(.i) | not) and (IN(.ticket; $parked_tickets[]) | not))
@@ -1767,7 +1854,7 @@ def task_findings($sessions; $activity):
       end
     else empty end,
     ($live[]
-      | if .live.state == "blocked" then
+      | if .prompted then
           finding($task; "waiting-input"; .short; .name; "\(.name) \(.short) is waiting for input";
             "read claude logs \(.short), then answer it in one line or put the question to Daniel with team-log \($task) asked")
         elif .live.status == "idle" and .quiet and (IN(.launch.ticket; $parked_tickets[]) | not) then
@@ -1933,6 +2020,17 @@ def activity_finding:
   | {task: null, kind: "activity", session: null, name: null, next: "fix what session-activity names",
      text: "activity: \(.error), so no busy worker is found stalled: fix what session-activity names"};
 
+# A session of the list's short id: its id, or an interactive one's first 8 characters of its
+# session id.
+def twin_short: .id // ((.sessionId // "")[:8]);
+
+# A session of the list as a twin finding names it: "<short id> (<kind>, <state or status>,
+# started <time>)", "started at an unknown time" when its startedAt is not a number.
+def twin_label:
+  "\(twin_short) (\(.kind), \(.state // .status // "no state"), \(
+    if (.startedAt | type) == "number" then "started \(.startedAt / 1000 | floor | todate)"
+    else "started at an unknown time" end))";
+
 # team-sweep's coordinator-twin findings, from the session list (this machine's, as claude agents
 # --json lists it) and the full session id of the session the sweep runs in ($self, "" when it is
 # not known): when more than one session is named coordinator, one finding for each of them but
@@ -1947,28 +2045,55 @@ def coordinator_twin_findings($self):
   | select(($coordinators | length) > 1)
   | any($coordinators[]; $self != "" and .sessionId == $self) as $known
   | $coordinators[] | select(($known | not) or .sessionId != $self)
-  | (.id // ((.sessionId // "")[:8])) as $short
+  | twin_short as $short
   | (if .kind == "interactive" then "ask Daniel to end it, an interactive session, pid \(.pid)"
      else "read claude logs \($short) for anything left to log, then stop it with claude stop \($short)" end
      | if $known then . else "if it is not you, " + . end) as $next
   | {task: null, kind: "coordinator-twin", session: $short, name: "coordinator", next: $next,
-     text: "coordinator-twin: coordinator \($short) (\(.kind), \(.state // .status // "no state"), \(
-       if (.startedAt | type) == "number" then "started \(.startedAt / 1000 | floor | todate)"
-       else "started at an unknown time" end)) is \(
+     text: "coordinator-twin: coordinator \(twin_label) is \(
        if $known then "a second session" else "one of \($coordinators | length) sessions" end
        ) named coordinator on this machine; next: \($next)"};
+
+# team-sweep's assistant-twin findings, from the session list as coordinator_twin_findings takes
+# it: when more than one session is named assistant, one finding for each but the one started
+# first (a startedAt that is not a number counting as last), session being its short id. The
+# sweep runs in the coordinator, never in an assistant, so no session is its own.
+def assistant_twin_findings:
+  [.[] | select(.name == "assistant")]
+  | select(length > 1)
+  | sort_by(if (.startedAt | type) == "number" then .startedAt else infinite end) as $assistants
+  | ($assistants[0] | twin_short) as $first
+  | $assistants[1:][]
+  | twin_short as $short
+  | (if .kind == "interactive" then "ask Daniel to end it, an interactive session, pid \(.pid)"
+     else "read claude logs \($short) for anything left to hand off, then stop it with claude stop \($short)" end) as $next
+  | {task: null, kind: "assistant-twin", session: $short, name: "assistant", next: $next,
+     text: "assistant-twin: assistant \(twin_label) is a second session named assistant on this machine, beside \($first), started first; next: \($next)"};
+
+# The assistant's Stop hook's twin lines (bin/hooks/assistant-stop), from the session list and the
+# full session id of the assistant it runs in ($self, "" when it is not known): when more than one
+# session is named assistant, one line for each but $self's, "a second session" when $self is
+# among them, else "one of <n> sessions" and "if it is not you".
+def assistant_twin_lines($self):
+  [.[] | select(.name == "assistant")] as $assistants
+  | select(($assistants | length) > 1)
+  | any($assistants[]; $self != "" and .sessionId == $self) as $known
+  | $assistants[] | select(($known | not) or .sessionId != $self)
+  | "assistant \(twin_label) is \(
+      if $known then "a second session" else "one of \($assistants | length) sessions" end
+      ) named assistant on this machine\(if $known then "" else ", if it is not you" end)";
 
 # team-sweep's findings, over every ledger event as one array, the session list, the stow plan
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
 # every task's withdrawals), else its findings unless it is parked, then its walk-stale, parked or
-# not, since a parked task's walk still needs asking about, then its ci-due, then the stray sessions (named
-# like a team worker whose task is closed or not in the ledger, never the load check's T0, whose
-# session the coordinator waits on for up to 30 minutes), in task number order; then the
-# coordinator-twin, activity, level, retro-due and health findings. $own is the registered projects
-# that are the team's own, or null, as merge_due_finding takes it, $health the health view, as
-# health_findings takes it, and $self the sweep's own session id, as coordinator_twin_findings takes
-# it.
+# not, since a parked task's walk still needs asking about, then its ci-due, then the stray sessions
+# (named like a team worker whose task is closed or not in the ledger, never the load check's T0,
+# whose session the coordinator waits on for up to 30 minutes), in task number order; then the
+# coordinator-twin, assistant-twin, activity, level, retro-due and health findings. $own is the
+# registered projects that are the team's own, or null, as merge_due_finding takes it, $health the
+# health view, as health_findings takes it, and $self the sweep's own session id, as
+# coordinator_twin_findings takes it.
 def sweep($sessions; $plan; $activity; $own; $health; $self):
   . as $events
   | by_task as $tasks
@@ -1985,6 +2110,7 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
             "read claude logs \(.session) for anything left to log, then stop it with claude stop \(.session)"))]
      | by_task_number)
     + [$sessions | coordinator_twin_findings($self)]
+    + [$sessions | assistant_twin_findings]
     + [$activity | activity_finding]
     + [$plan | level_findings]
     + [$events | retro_status | retro_due_finding]
@@ -1993,10 +2119,15 @@ def sweep($sessions; $plan; $activity; $own; $health; $self):
 # The findings team-sweep adds after sweep's, from the views it reads beside the ledger: team-queue
 # list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
 # team-current check --json's ($current), one current-stale finding naming each item whose task
-# closed; each view null when there is nothing to read, and {error} when its script failed, which
-# is one finding of kind queue or current naming the error and "fix what <script> names". Each
-# finding has task, session and name null.
-def sweep_views($queue; $current):
+# closed, then team-current due --json's for the coordinator's list ($due), one current-due finding
+# for each item whose review date has come, then team-assistant list --open --to coordinator
+# --json's list ($handoffs), one assistant-handoff finding for each sent more than 30 minutes
+# before $now (seconds); each view null when there is nothing to read, and {error} when its
+# script failed, which is one finding of kind queue, current or assistant-handoff naming the error
+# and "fix what <script> names" (one current finding when both team-current views failed). Each
+# finding has task and name null, and session null but a current-due's, its item id, and an
+# assistant-handoff's, its hand-off id, so each item and hand-off is a finding of its own.
+def sweep_views($queue; $current; $due; $handoffs; $now):
   def failed($kind; $script):
     "fix what \($script) names" as $next
     | {task: null, kind: $kind, session: null, name: null, next: $next, text: "\($kind): \(.error): \($next)"};
@@ -2010,6 +2141,24 @@ def sweep_views($queue; $current):
          | [{task: null, kind: "current-stale", session: null, name: null, next: $next,
              text: "current: \($n) item\(if $n == 1 then " names" else "s name" end) a closed task: \(
                [.closed[] | "\(.id) (\(.task), closed \(.closed_at[:10]))"] | join(", ")); next: \($next)"}]
+       end)
+  + ($due
+     | if . == null then []
+       elif .error != null then (if $current.error != null then [] else [failed("current"; "team-current")] end)
+       else [.items // [] | .[] | "done it, or renew it with a reason" as $next
+         | {task: null, kind: "current-due", session: .id, name: null, next: $next,
+            text: "current item \(.id) is due for review since \(.review): \($next)"}]
+       end)
+  + ($handoffs
+     | if . == null then []
+       elif type == "object" and .error != null then [failed("assistant-handoff"; "team-assistant")]
+       else [.[] | select(.answered == null and .to == "coordinator")
+         | ($now - (.sent | try fromdateiso8601 catch $now)) as $seconds
+         | select($seconds > 1800)
+         | ($seconds / 60 | floor) as $waited
+         | "read it with team-assistant show \(.id), act, and answer it" as $next
+         | {task: null, kind: "assistant-handoff", session: .id, name: null, next: $next,
+            text: "hand-off \(.id) (\(.kind)) from the assistant has waited \($waited) min: \($next)"}]
        end);
 
 # What team-capacity plan reads of the ledger, over every ledger event as one array, with the
@@ -2097,6 +2246,22 @@ def snapshot($tasks; $states; $level; $withdrawn; $sessions; $prs; $items; $prod
 
 # The current items of tasks/current.md, over its lines (-R): each line starting "- ", without it.
 def current_items: [inputs | rtrimstr("\r") | select(startswith("- ")) | .[2:]];
+
+# An item line of tasks/current.md or assistant/current.md, without its "- ", as team-current
+# writes it, "<kind> <task> <text> | <where> | <end> | added <UTC time>", <end> "until
+# <condition>" or "review <YYYY-MM-DD>", or in the old form, "<kind> <task> <text> | <where>":
+# {kind, task, text, where, end, added}, end and added null in the old form (added the time
+# alone); null for a line of neither form.
+def current_item:
+  split(" | ") as $parts
+  | if ($parts | length) == 2
+      or (($parts | length) == 4 and ($parts[2] | test("^(until .|review [0-9]{4}-[0-9]{2}-[0-9]{2}$)"))
+          and ($parts[3] | test("^added [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")))
+    then ([$parts[0] | capture("^(?<kind>\\S+) (?<task>\\S+) (?<text>.+)$")] | first) as $head
+      | if $head == null then null
+        else $head + {where: $parts[1], end: $parts[2], added: ($parts[3] // null | if . == null then null else ltrimstr("added ") end)}
+        end
+    else null end;
 
 # Cut a line to $n characters, showing the cut.
 def clip($n): if length > $n then .[:$n - 3] + "..." else . end;
@@ -2233,19 +2398,20 @@ def blocked_on_counts:
 # then the interviews under way ({key: "interview <task> <thread>", kind: "interview", task, title,
 # thread}), none whose walk is on in that thread, which the walks list, then the walks under way
 # ({key: "walk <task> <its start's ts>", kind: "walk", task, title, thread (the thread it runs in,
-# or null)}), then the asks of tasks/current.md, $notes' of kind ask ({key: "note <id>", kind:
-# "note", task (T<n> or -), title: null, id (team-current's), text, where}), in its order; each also
-# with since, when it began (the asked's ts, the PR's first pr event's, the latest
-# interview-thread's, the walk's start's; null for a note, which the ledger does not date), and
-# unblocks, what its answer unblocks, {tasks, tickets, prs}: while the item holds its task (an ask
-# no launch went past, a PR ready to merge, an interview or a walk under way), tasks is 1 for it
-# and 1 for each other open task blocked on it (blocked_on_counts) and tickets its ready tickets,
-# $tickets' count for it ({"T<n>": n}, 0 when it has none), else both are 0, as for a note, which
-# holds no task; prs is 1 for a PR ready to merge and for an ask whose text names one of its task's
-# PRs not merged, else 0. withdrawn: the withdrawals of the default merge word that stand
-# (default_withdrawals), in ledger order; owed: the replies owed to Daniel, $notes' of kind owe, as
-# {task, text, where}. $notes is current.md's ask and owe lines as team-inbox reads them, [{kind,
-# task, text, where, id}].
+# or null)}), then the asks of both lists of current items, $notes' of kind ask ({key: "note <id>",
+# kind: "note", task (T<n> or -), title: null, id (team-current's), text, where, list (coordinator
+# or assistant, the list's)}), in their order; each also with since, when it began (the asked's ts,
+# the PR's first pr event's, the latest interview-thread's, the walk's start's; null for a note,
+# which the ledger does not date), and unblocks, what its answer unblocks, {tasks, tickets, prs}:
+# while the item holds its task (an ask no launch went past, a PR ready to merge, an interview or a
+# walk under way), tasks is 1 for it and 1 for each other open task blocked on it
+# (blocked_on_counts) and tickets its ready tickets, $tickets' count for it ({"T<n>": n}, 0 when it
+# has none), else both are 0, as for a note, which holds no task; prs is 1 for a PR ready to merge
+# and for an ask whose text names one of its task's PRs not merged, else 0. withdrawn: the
+# withdrawals of the default merge word that stand (default_withdrawals), in ledger order; owed: the
+# replies owed to Daniel, $notes' of kind owe, as {task, text, where, list}. $notes is both lists'
+# ask and owe lines as team-inbox reads them (current_item), [{kind, task, text, where, id, list}],
+# list coordinator when it is missing.
 def inbox_items($own; $notes; $tickets):
   default_events as $withdrawals
   | ($withdrawals | default_withdrawals(task_projects)) as $withdrawn
@@ -2285,10 +2451,10 @@ def inbox_items($own; $notes; $tickets):
            thread: (.events | map(select(.event == $kind) | .discord_thread | strings) | last), since: $walk.since,
            unblocks: unblocks(.task; true; 0)}]
       + [$notes[] | select(.kind == "ask")
-        | {key: "note \(.id)", kind: "note", task, title: null, id, text, where, since: null,
-           unblocks: {tasks: 0, tickets: 0, prs: 0}}]),
+        | {key: "note \(.id)", kind: "note", task, title: null, id, text, where, list: (.list // "coordinator"),
+           since: null, unblocks: {tasks: 0, tickets: 0, prs: 0}}]),
      withdrawn: [$withdrawn[] | {task, scope, ts, discord_message, discord_channel}],
-     owed: [$notes[] | select(.kind == "owe") | {task, text, where}]};
+     owed: [$notes[] | select(.kind == "owe") | {task, text, where, list: (.list // "coordinator")}]};
 
 # The items of inbox_items, in the order given, each given its number n, from the previous
 # waiting.json $previous (null when there is none or it cannot be read): an item whose key
@@ -2318,12 +2484,13 @@ def waiting_rank: [.unblocks // {} | .[] | numbers] | add // 0;
 # preview card for it: an ask linked to the question's message in guild $guild (null when unknown),
 # to the task's thread when either is unknown, and to nothing with no thread; a PR, "ready to
 # merge", with its URL; an interview, "interview under way", with its thread; a walk, "walk under
-# way", with the thread it runs in, or nothing with none; an ask of current.md with its task unless
-# -, and its where when that is a URL (note_text); then what its answer unblocks, " - unblocks
-# <n>", n being its unblocks' sum, and when it is more than 0 each part that is, as "(1 task, 2
-# tickets, 1 PR)".
+# way", with the thread it runs in, or nothing with none; an ask of a list of current items with
+# "Assistant: " first when it is the assistant's, its task unless -, and its where when that is a
+# URL (note_text); then what its answer unblocks, " - unblocks <n>", n being its unblocks' sum, and
+# when it is more than 0 each part that is, as "(1 task, 2 tickets, 1 PR)".
 def note_text:
-  (if .task == "-" then "" else "\(.task) " end) + (.text | clip(150))
+  (if .list == "assistant" then "Assistant: " else "" end)
+  + (if .task == "-" then "" else "\(.task) " end) + (.text | clip(150))
   + if (.where // "") | test("^https?://\\S+$") then " <\(.where)>" else "" end;
 def waiting_line($guild):
   def named: .task + if .title == null then "" else " \(.title | clip(80))" end;
@@ -2402,7 +2569,8 @@ def waiting_item($n):
         {item: (if $item.kind == "ask" then "ask \($item.task) \($item.id)"
           elif $item.kind == "pr" then "pr \($item.task) \($item.url)"
           elif $item.kind == "walk" then "walk \($item.task)" + if $item.thread == null then "" else " \($item.thread)" end
-          elif $item.kind == "note" then "note \($item.task) \($item.id)"
+          elif $item.kind == "note" then
+            "note \($item.task) \($item.id)" + (if $item.list == "assistant" then " assistant" else "" end)
           else "\($item.kind) \($item.task) \($item.thread)" end)}
       elif $shown != null then {refusal: "item \($n) no longer waits: the list posted \(.posted.at) showed it as \($shown.line)"}
       else {refusal: ("no item \($n) waits; "

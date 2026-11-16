@@ -38,7 +38,8 @@
 #               on the team home's origin is no branch), with their count; an open ticket
 #               worktree's branch is left out, pushed or not (its builder pushes it only for
 #               CI's run, on a project with branch_ci, and no stow or resume reads it on origin).
-#   changes     Warns while the primary checkout has changes to tracked files or untracked files.
+#   changes     Warns while the primary checkout has changes to tracked files or untracked files,
+#               naming at most 10 paths of each kind and counting the rest ("and <n> more").
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
 
@@ -126,7 +127,8 @@ check_leases() {
   # Each slot that is an open worktree of the project, spelled as the ledger spells it, since the
   # comparison below is by text and the two may spell one directory otherwise (same_path).
   mapfile -t open < <(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks
-    | open_worktrees($events[] | select($tasks[.task] | is_open); $home) | select(.project == $project) | .worktree' \
+    | ($tasks | with_entries(select(.value | is_open))) as $open_tasks
+    | open_worktrees($events[] | select($open_tasks[.task] != null); $home) | select(.project == $project) | .worktree' \
     -nRr --arg project "$project" "$ledger")
   leases=$(while IFS= read -r entry; do
     for wt in "${open[@]}"; do
@@ -135,7 +137,8 @@ check_leases() {
     echo "$entry"
   done <<<"$leases")
   problems=$(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks
-    | [open_worktrees($events[] | select($tasks[.task] | is_open); $home) | select(.project == $project)] as $open
+    | ($tasks | with_entries(select(.value | is_open))) as $open_tasks
+    | [open_worktrees($events[] | select($open_tasks[.task] != null); $home) | select(.project == $project)] as $open
     | $leases[] | select(.holder != "") | . as $slot
     | (.holder | capture("^(?<task>T[1-9][0-9]*)(--(?<ticket>[0-9]{2}))?$") // {task: ., ticket: null}) as $by
     | ($tasks[$by.task] // null) as $held
@@ -160,6 +163,18 @@ check_leases() {
   done)
   report "leases $project" WARN "$(cut -f1 <<<"$problems" | paste -sd ';' | sed 's/;/; /g')" \
     "once nothing in it is needed, Daniel returns each in their own terminal, which asks before discarding changes: ${fix%; }"
+}
+
+# The paths on stdin, one per line, as one kind of the changes line: "<kind>: <paths>", the
+# first 10 named and the rest counted (" and <n> more"), nothing when there is none:
+# capped_paths <kind>
+capped_paths() {
+  local paths=() IFS=" "
+  mapfile -t paths
+  ((${#paths[@]} > 0)) || return 0
+  printf '%s: %s' "$1" "${paths[*]:0:10}"
+  ((${#paths[@]} <= 10)) || printf ' and %d more' $((${#paths[@]} - 10))
+  echo
 }
 
 # The lines of the registered project <name> (see the header).
@@ -270,7 +285,8 @@ check_project() {
   ledger=$TEAM_HOME/ledger.jsonl
   [[ -f $ledger ]] || ledger=/dev/null
   ticket_branches=$(ledger_jq 'ledger_events as $events | ($events | by_task) as $tasks
-    | open_worktrees($events[] | select($tasks[.task] | is_open); $home)
+    | ($tasks | with_entries(select(.value | is_open))) as $open_tasks
+    | open_worktrees($events[] | select($open_tasks[.task] != null); $home)
     | select(.project == $project and .ticket != null) | .branch' \
     -nRr --arg project "$project" "$ledger")
   while IFS= read -r branch; do
@@ -285,8 +301,13 @@ check_project() {
       "push each (git -C $shown push -u origin <branch>) or delete it"
   fi
 
-  # changes
-  mapfile -t found < <(worktree_changes "$path")
+  # changes: worktree_changes' two kinds, in its words and from its two git commands, read here
+  # one path per line so each kind names at most 10 paths and counts the rest, a path with a blank
+  # in it as one.
+  mapfile -t found < <(
+    git -C "$path" diff --name-only HEAD | capped_paths "changes to tracked files"
+    git -C "$path" ls-files --others --exclude-standard | capped_paths "untracked files"
+  )
   if ((${#found[@]} == 0)); then
     report "changes $project" PASS "the primary checkout is clean"
   else

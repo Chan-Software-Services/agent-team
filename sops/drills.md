@@ -1,6 +1,6 @@
 # SOP: the drills
 
-A drill runs, for real, a path the team rests on and seldom takes: a move between machines, a stolen lease, a production prompt, a fresh machine, a compaction, a phase's tickets built at once.
+A drill runs, for real, a path the team rests on and seldom takes: a move between machines, a stolen lease, a production prompt, a fresh machine, a compaction, a phase's tickets built at once, two sessions on one bot.
 `tests/drill.bats` and the rest of the suite run the same scripts in a sandbox on stubs; a drill is the run on the real machines, the real Claude Code and the real GitHub.
 `bin/lib/drills.json` registers each drill: its name, what it is, who runs it and the code it proves.
 
@@ -99,6 +99,26 @@ A drill runs, for real, a path the team rests on and seldom takes: a move betwee
   6. Read the numbers from the team home's `ledger.jsonl`: a ticket's minutes run from its first `launch` of `brief-build-NN` to its `ticket-done`; the phase's wall time from the first such launch to the last `ticket-done`; its serial sum adds its tickets' minutes; its critical path is the longest chain of `blocked_by` (`team-tickets T<n> --json`) by those minutes.
 - Passes when every ticket of the phase landed by fast-forward, its `ticket-done` carrying the `head` it landed as, which the task branch holds, and the phase's wall time is below its serial sum.
 - Record: `team-drill record parallel-tickets --verdict pass --detail "T<n> phase <p> at parallel=2: built in <w> min, serial sum <s> min, critical path <c> min"`, or `--verdict fail --detail "<the step that failed and why>"`; each thing that broke becomes a task.
+
+## `assistant`: the two channels stay apart, and a hand-off crosses
+
+- Who: Daniel, the assistant and the coordinator, on the lease holder.
+  Duration: 15 minutes.
+- When: after a change to `bin/claude-assistant`, `assistant.settings.json`, `bin/hooks/assistant-discord-guard`, `bin/team-assistant` or the Claude Code pin, and when the doctor's line names it.
+- No test logs in to Discord, so this run is the only proof that each session hears its own channel alone.
+- Neither session is ever told the id of a message in the other's channel, in Discord, in a hand-off or in a command it runs, since any of those would put the id in its transcript.
+- Steps:
+  1. Daniel starts the assistant with `claude-assistant` when none is live; a second one is refused, naming the live one.
+  2. Daniel posts a message in `#assistant`.
+  3. The assistant answers it in a new thread (`team-assistant thread`), and its answer gives the id of Daniel's message.
+  4. Daniel posts a message in `#coordinator`.
+  5. The coordinator answers it there, and its answer gives the id of Daniel's message.
+  6. Daniel runs, in their own terminal and once for each of the two ids, `grep -l <id> ~/.claude/projects/*/*.jsonl | xargs -r grep -ho -m1 '"agentName":"[^"]*"'`, which prints the name of each session whose transcript holds the id.
+  7. The assistant sends a `note` hand-off, its body the one line "assistant drill" (`team-assistant send note --file <body>`, then `ASSISTANT H<n> note` to `coordinator`).
+  8. The coordinator reads it and answers it (`team-assistant show H<n>`, `team-assistant answer H<n> --file <answer>`, then `COORDINATOR ANSWER H<n>` to `assistant`).
+  9. The coordinator runs `team-assistant list` and reads the hand-off's line.
+- Passes when the assistant answered in a thread under `#assistant` and the coordinator in `#coordinator`; step 6 printed `"agentName":"assistant"` alone for the `#assistant` message's id and `"agentName":"coordinator"` alone for the `#coordinator` message's; and step 9's line for the hand-off ends in `answered`.
+- Record, by the coordinator: `team-drill record assistant --verdict pass --detail "each channel heard by its own session only, H<n> note answered"`, or `--verdict fail --detail "<the step that failed and why>"`; each thing that broke becomes a task.
 
 ## The second machine
 
