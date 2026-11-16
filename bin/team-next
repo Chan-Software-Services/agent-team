@@ -1284,17 +1284,17 @@ changed_files() {
   } | paste -sd, | sed 's/,/, /g'
 }
 
-# base_due <project> <phase>: before the project's first launch of <phase>, when the project's
-# latest merged names it among its phases_left and no phase before it there has a ticket of the
-# project ($tickets; the project's next phase after a merged part), fetches origin's base, through
-# origin_git, into the task worktree in <project> and, when the task branch is its ancestor and not
-# at it, adds "<worktree> <branch> <base> <head> <base's tip>", tab-separated, to moves, for
+# base_due <project> <phase> <the tickets as JSON>: before the project's first launch of <phase>,
+# when the project's latest merged names it among its phases_left and no phase before it there has a
+# ticket of the project (the project's next phase after a merged part), fetches origin's base,
+# through origin_git, into the task worktree in <project> and, when the task branch is its ancestor
+# and not at it, adds "<worktree> <branch> <base> <head> <base's tip>", tab-separated, to moves, for
 # move_to_base; a branch that holds the base already adds nothing. Refused, having moved no branch,
 # when the worktree is off its branch or has uncommitted changes, or the branch has commits the base
 # does not hold (exit 1), or the base cannot be fetched (exit 75).
 base_due() {
-  local project=$1 p=$2 line wt branch base on dirty head onto why stop mine rc=0 NET_ERR
-  mine=$(jq -c --arg proj "$project" '[.[] | select(.project == $proj) | .phase // 1] | unique' <<<"$tickets")
+  local project=$1 p=$2 ticket_list=$3 line wt branch base on dirty head onto why stop mine rc=0 NET_ERR
+  mine=$(jq -c --arg proj "$project" '[.[] | select(.project == $proj) | .phase // 1] | unique' <<<"$ticket_list")
   ledger_jq '[.[] | select(.event == "merged" and (.project // $proj) == $proj)] | last
       | . != null and (.phases_left | type) == "array" and any(.phases_left[]; . == $p)
         and all(.phases_left[] | select(. < $p); IN($mine[]) | not)' \
@@ -1377,7 +1377,7 @@ fill() {
     mapfile -t starts < <(printf '%s\n' "${todo_projects[@]}" | awk 'NR == FNR { if ($0 != "") s[$0] = 1; next } !($0 in s) && !seen[$0]++' \
       <(printf '%s\n' "$started") -)
     moves=()
-    for project in "${starts[@]}"; do base_due "$project" "$phase"; done
+    for project in "${starts[@]}"; do base_due "$project" "$phase" "$tickets"; done
     move_to_base "$phase"
   fi
   return_done_tickets
