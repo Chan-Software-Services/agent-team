@@ -26,8 +26,14 @@
 #                          empty, which gh reads as unset, so a token in the launching environment
 #                          never wins over the directory); nothing when off; fails as
 #                          worker_login does.
+#   with_worker_login <command>...
+#                          runs <command> with worker_login_env's environment, in a subshell, so
+#                          the caller's own is unchanged; <command> may be a function, as bounded
+#                          is, which timeout alone could not run.
 #   worker_gh <arg>...     runs gh with worker_login_env's environment.
 #   owner_login_env        prints the names to unset for the owner login, one per line.
+#   with_owner_login <command>...
+#                          runs <command> with those names unset, in a subshell.
 #   owner_gh <arg>...      runs gh with those names unset.
 #   use_owner_login        unsets them in the calling shell, for a script that is the owner's
 #                          throughout (team-merge).
@@ -99,15 +105,20 @@ worker_login_env() {
   printf '%s\n' "GH_CONFIG_DIR=$(worker_login_dir)" GH_TOKEN= GITHUB_TOKEN=
 }
 
-# gh on the worker login: worker_gh <arg>...
-worker_gh() {
+# <command> on the worker login, a function such as bounded too: with_worker_login <command>...
+with_worker_login() {
   local login_pairs=() login_env
   login_env=$(worker_login_env) || return 1
   [[ -z $login_env ]] || mapfile -t login_pairs <<<"$login_env"
   (
     ((${#login_pairs[@]} == 0)) || export "${login_pairs[@]}"
-    gh "$@"
+    "$@"
   )
+}
+
+# gh on the worker login: worker_gh <arg>...
+worker_gh() {
+  with_worker_login gh "$@"
 }
 
 # The names that, unset, leave gh and git on the owner login, the machine's own: owner_login_env
@@ -115,12 +126,17 @@ owner_login_env() {
   printf '%s\n' "${LOGIN_VARIABLES[@]}"
 }
 
-# gh on the owner login: owner_gh <arg>...
-owner_gh() {
+# <command> on the owner login, a function such as bounded too: with_owner_login <command>...
+with_owner_login() {
   (
     use_owner_login
-    gh "$@"
+    "$@"
   )
+}
+
+# gh on the owner login: owner_gh <arg>...
+owner_gh() {
+  with_owner_login gh "$@"
 }
 
 # The calling shell on the owner login from here on: use_owner_login

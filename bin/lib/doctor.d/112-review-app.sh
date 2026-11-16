@@ -3,8 +3,9 @@
 #               bin/lib/review-app; else fails on the first of a malformed bin/lib/review-app, its
 #               key ~/.config/agent-team/review-app.pem missing, not a file or off mode 600 (no
 #               byte of it read), no registered project the team's own, or such a project's base,
-#               read from GitHub, whose protection does not require agent-review from the App's
-#               id or enforces its required checks for anyone but everyone.
+#               read from GitHub on the owner login, whose protection does not require
+#               agent-review from the App's id or enforces its required checks for anyone but
+#               everyone.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
 
@@ -52,7 +53,7 @@ review_app_check() {
       return
     fi
     repo=$(jq -r .repo <<<"$registry_reply") base=$(jq -r .base <<<"$registry_reply")
-    if ! branch=$(bounded 30 gh api "repos/$repo/branches/$base" 2>"$err" </dev/null); then
+    if ! branch=$(with_owner_login bounded 30 gh api "repos/$repo/branches/$base" 2>"$err" </dev/null); then
       report "review app" FAIL "$base on $repo cannot be read from GitHub: $(first_error)" \
         "the github login line's fix, then run team-doctor again"
       return
