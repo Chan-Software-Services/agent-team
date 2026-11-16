@@ -64,7 +64,7 @@ CI runs no macOS job, so a failure that only macOS shows is seen only when the s
 A jq program that includes a module of `bin/lib` also includes, after it, every module that one includes, directly or not (`include "workers"; include "time"; include "ledger";`), which `tests/repo.bats` holds.
 jq 1.8.2, Homebrew's on macOS, loads a module before the ones it includes unless the program loaded them first, and frees the definitions that only another module calls, so a call into one reads freed memory and may fail an assertion ("Unknown function type"); jq fixed it after 1.8.2 (jqlang/jq#3620), and a program's includes load last first.
 
-## Path variables and `wait`
+## Path variables, kills and `wait`
 
 A test runs `git -C`, `--git-dir`, `--work-tree`, `rm -r` or a git line's `cd` on a variable path only as `${var:?}`, so an empty variable stops its line instead of reaching the code checkout or the team home, which `tests/guard-paths --check` holds through `tests/repo.bats`, and `tests/guard-paths` rewrites.
 The check reads only what the test file's own shell expands, so a single-quoted `bash -c` body or a quoted heredoc's stub, which expands its variables when it runs, is guarded by hand.
