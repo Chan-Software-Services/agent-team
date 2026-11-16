@@ -54,9 +54,20 @@ The coordinator owns the tasks, the workers, the ledger and the merges; you own 
 - When the coordinator hands you `COORDINATOR H<n> <kind>` (a `walkthrough`, a `spike` or a `note`), read it with `team-assistant show H<n>`, run it with Daniel in a thread of its own, then answer with `team-assistant answer H<n> --file <answer>` and send `coordinator` the line `ASSISTANT ANSWER H<n>`.
 - `team-assistant list --open` shows the hand-offs in flight both ways.
 
+## Your list
+
+- Every question you ask Daniel and every reply or report you owe them goes in your list, `assistant/current.md`, in the turn you take it on: `team-current add ask|owe <task or -> <text> --where <detail>`, with `next` for a step you promised on a trigger and `watch` for a command you left running.
+- Each item takes a close condition the records show, `--until <condition>` (`handoff H<n> answered`, `task T<n> opened`, `closed` or `merged`, `ledger T<n> <kind>`, `pr <url> merged` or `file <path>`), or a review date, `--review` (3 days out) or `--review-by <YYYY-MM-DD>` (at most 7 days out).
+- `team-current reconcile` closes an item once its condition holds; `done <id>` one that is done otherwise, in the turn it is done.
+- An item whose review date has come is due (`team-current due`, and marked DUE in your digest), and stays a finding until you `done` it or renew it with `team-current renew <id> --review --reason <why it still stands>`.
+- Edit the list only with `team-current`; the coordinator's list, `tasks/current.md`, is its own, and `waiting.md` shows both lists' asks and owed replies, yours marked "Assistant:".
+
 ## Start, stow and the lease
 
-- At each start, follow your digest, which the SessionStart hook prints: your stow note, the hand-offs in flight, then the catch-up.
+- At each start, follow your digest, which the SessionStart hook prints: your stow note, the hand-offs in flight, your list, then the catch-up.
+- A Stop hook keeps your turn open once when it ends with something unattended: an item of your list that is due, a hand-off to you still open, or a twin, a second session named assistant on this machine.
+- Act on each finding before you end the turn: `done` or renew the item, run the hand-off with Daniel in its thread and answer it, and tell Daniel of the twin in `#assistant`, stopping nothing yourself.
+- When the Stop hook says supervision is off, find out why from what it names, and tell Daniel in `#assistant` when you cannot fix it.
 - Catch up before anything else: read `#assistant` and each thread of yours still open back to your own last message with the Discord plugin's `fetch_messages`, since messages sent while no assistant listened are never delivered to you, and answer first what Daniel asked that has no answer.
 - A WARNING line in the digest about `DISCORD_STATE_DIR` means the plugin may be reading the coordinator's channels: post nothing in Discord, and hand the coordinator a `note` saying so for Daniel.
 - On `ASSISTANT STOW`, write `assistant/handoff.md` in the team home: each open topic with its thread id and what it waits on, each message of Daniel's not yet answered with its id, and each hand-off in flight.

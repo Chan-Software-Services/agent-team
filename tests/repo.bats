@@ -234,25 +234,35 @@ B/X: its moves end in a cycle'
   assert_equal "${missing[*]}" ""
 }
 
-# The refusal probe's data, bin/lib/probe.json, held to the worker roles' settings, so a deny rule
-# or a PreToolUse hook added to them is either probed live by `team-load-check --probe` or says why
-# it is not.
-PROBE_ROLES=(planner builder reviewer)
+# The refusal probe's data, bin/lib/probe.json, held to the probed roles' settings (the worker
+# roles' and the assistant's), so a deny rule or a PreToolUse hook added to them is either probed
+# live by `team-load-check --probe` or says why it is not.
+PROBE_ROLES=(planner builder reviewer assistant)
+# Every settings file a probed role loads.
+PROBE_SETTINGS=(settings/worker.json settings/planner.json settings/builder.json settings/reviewer.json assistant.settings.json)
 
-# probe_rules <role>: the deny rules a <role> session holds, settings/worker.json's and its own, as
-# one JSON array
+# probe_settings <role>: the settings files a <role> session loads, one per line: a worker's
+# settings/worker.json and its own, the assistant's assistant.settings.json alone
+probe_settings() {
+  if [[ $1 == assistant ]]; then echo "$REPO_ROOT/assistant.settings.json"
+  else printf '%s\n' "$REPO_ROOT/settings/worker.json" "$REPO_ROOT/settings/$1.json"; fi
+}
+
+# probe_rules <role>: the deny rules a <role> session holds, as one JSON array
 probe_rules() {
-  jq -s '[.[].permissions.deny // [] | .[]]' "$REPO_ROOT/settings/worker.json" "$REPO_ROOT/settings/$1.json"
+  local files
+  mapfile -t files < <(probe_settings "$1")
+  jq -s '[.[].permissions.deny // [] | .[]]' "${files[@]}"
 }
 
 @test "every attempt of the refusal probe is well formed, and names a family the data file has" {
   local out
   out=$(jq -r '(.families | map(.family)) as $families | .attempts[]
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
-      or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer") | not)
+      or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "assistant") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused") | not)
-      or ((.expect == "hook") != (.marker | type == "string"))
+      or (.expect | IN("rule", "hook", "refused", "script") | not)
+      or ((.expect | IN("hook", "script")) != (.marker | type == "string"))
       or ((.expect == "rule") != (.family | type == "string"))
       or (.family != null and (.family | IN($families[]) | not)))
     | .id' "$REPO_ROOT/bin/lib/probe.json")
@@ -261,13 +271,13 @@ probe_rules() {
   assert_equal "$out" ""
 }
 
-@test "every deny rule of the worker roles' settings belongs to exactly one family of the refusal probe" {
+@test "every deny rule of the probed roles' settings belongs to exactly one family of the refusal probe" {
   local out
-  out=$(jq -rn --slurpfile probe "$REPO_ROOT/bin/lib/probe.json" '
+  out=$(cd "$REPO_ROOT" && jq -rn --slurpfile probe bin/lib/probe.json '
     [inputs | .permissions.deny // [] | .[]] | unique[] as $rule
     | [$probe[0].families[] | select(.rules as $re | $rule | test($re)) | .family]
     | select(length != 1) | "\($rule): \(if length == 0 then "no family" else join(", ") end)"' \
-    "$REPO_ROOT"/settings/{worker,planner,builder,reviewer}.json)
+    "${PROBE_SETTINGS[@]}")
   assert_equal "$out" ""
 }
 
@@ -284,10 +294,10 @@ probe_rules() {
     assert_equal "$out" ""
   done
   # A family that matches no rule of any role is stale.
-  out=$(jq -rn --slurpfile probe "$REPO_ROOT/bin/lib/probe.json" '
+  out=$(cd "$REPO_ROOT" && jq -rn --slurpfile probe bin/lib/probe.json '
     [inputs | .permissions.deny // [] | .[]] as $rules | $probe[0].families[]
     | .rules as $re | select(any($rules[]; test($re)) | not) | "\(.family) matches no deny rule"' \
-    "$REPO_ROOT"/settings/{worker,planner,builder,reviewer}.json)
+    "${PROBE_SETTINGS[@]}")
   assert_equal "$out" ""
 }
 
@@ -335,12 +345,16 @@ probe_denies() {
 }
 
 # A hook attempt stands for the hook under bin/hooks/ whose file holds its marker.
-@test "every PreToolUse hook of the worker roles' settings has an attempt for each role that loads it, or a reason it has none" {
+@test "every PreToolUse hook of the probed roles' settings has an attempt for each role that loads it, or a reason it has none" {
   local file role hook hooks roles markers marker found probe=$REPO_ROOT/bin/lib/probe.json missing=() listed=()
-  for file in worker "${PROBE_ROLES[@]}"; do
-    roles=("$file")
-    [[ $file != worker ]] || roles=("${PROBE_ROLES[@]}")
-    hooks=$(jq -r '.hooks.PreToolUse // [] | .[].hooks[].command | split(" ")[0]' "$REPO_ROOT/settings/$file.json")
+  for file in "${PROBE_SETTINGS[@]}"; do
+    case $file in
+      settings/worker.json) roles=(planner builder reviewer) ;;
+      assistant.settings.json) roles=(assistant) ;;
+      *) roles=("$(basename "$file" .json)") ;;
+    esac
+    # A command's first word, the quotes around a path dropped.
+    hooks=$(jq -r '.hooks.PreToolUse // [] | .[].hooks[].command | ltrimstr("\"") | split(" ")[0] | rtrimstr("\"")' "$REPO_ROOT/$file")
     while IFS= read -r hook; do
       [[ -n $hook ]] || continue
       [[ $hook == @TEAM_CODE@/bin/hooks/* ]] || { missing+=("$file: $hook is not a hook of bin/hooks/"); continue; }
@@ -1011,7 +1025,8 @@ lease-fence --assistant 60
 lease-fence --coordinator 60
 lease-fence 60
 ops-log 30
-scratch-only-edits 30"
+scratch-only-edits 30
+session-records-guard 10"
   # The check names the file and the hook of each entry left open.
   jq -n '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [
       {type: "command", command: "a-guard", timeout: 10},

@@ -352,15 +352,15 @@ FAIL salvage T1 site--02: ~/site-wt/2 has 1 commit on no origin branch; fix: git
 @test "the health line: PASS with the plain healthy line on the holder, FAIL on a heartbeat or checkpoint problem, WARN on any other, PASS off the lease" {
   only_checks 245-health.sh
   tools_at arch
-  # The heartbeat's runs below read the guild for waiting.md from a fake Discord, and list one
-  # session, the coordinator.
+  # The heartbeat's runs below read the guild for waiting.md from a fake Discord, and list the two
+  # sessions it supervises, the coordinator and the assistant.
   stub_script curl <<'EOF'
 source "$STUB_FIXTURES/inbox.sh"
 echo "curl: (22) The requested URL returned error: 404" >&2
 exit 22
 EOF
   inbox_discord
-  echo '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}]' >"$STUB_FIXTURES/agents.json"
+  echo '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]' >"$STUB_FIXTURES/agents.json"
   local state=$HOME/.local/state/agent-team fix
   fix="read ~/.local/state/agent-team/heartbeat-failures.log for each failed step's reason, fix what it names, then run team-checkpoint --force"
 
@@ -376,7 +376,7 @@ EOF
   # After a good run, the plain healthy line.
   run -0 "$CODE_CHECKOUT/bin/team-timers" run
   run_bin -0 team-doctor
-  [[ $(line_of health) =~ ^"PASS health: ok - last checkpoint "[0-9T:-]+"Z (0 minutes ago), lease renewed "[0-9T:-]+"Z (0 minutes ago), coordinator live"$ ]]
+  [[ $(line_of health) =~ ^"PASS health: ok - last checkpoint "[0-9T:-]+"Z (0 minutes ago), lease renewed "[0-9T:-]+"Z (0 minutes ago), coordinator live, assistant live"$ ]]
 
   # A failing checkpoint fails, naming it, with the failures log and a forced checkpoint as the fix.
   git -C "${TEAM_HOME:?}" checkout -q --detach

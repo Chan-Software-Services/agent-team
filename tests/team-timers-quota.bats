@@ -2,8 +2,8 @@
 # team-timers' quota step: on the holder after the uptime step, team-quota status --json, each
 # window past a threshold a notice of the quota source (bin/lib/notice.jq), posted once to
 # #coordinator and closed with no post once its window resets. The heartbeat suite's setup:
-# home-pc holds the lease on a bare origin, the stub claude lists the coordinator, the service
-# managers are fakes, and Discord is the inbox helper's fake, which keeps each alert's body. A
+# home-pc holds the lease on a bare origin, the stub claude lists the coordinator and the assistant,
+# the service managers are fakes, and Discord is the inbox helper's fake, which keeps each alert's body. A
 # reading is this machine's quota state file, as team-quota line writes it; its resets are in 2036,
 # so it never rots, and a reset window is one whose resets_at has passed.
 
@@ -13,7 +13,7 @@ load helpers/inbox
 setup() {
   sandbox
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
-  stub_reply claude '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}]'
+  stub_reply claude '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   hold_lease home-pc >/dev/null
   fake_service_managers
   stub_command uname
