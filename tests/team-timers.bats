@@ -496,7 +496,7 @@ EOF
   [[ $output =~ ^[0-9T:Z-]+" lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), T5-builder (81f08540); the heartbeat is disabled: agent-team.caffeinate stopped and both removed; agent-team.heartbeat unloads itself when its run in progress ends; team-lease take clears the fence"$ ]]
   assert_equal "$output" "$(tail -n 1 "$log")"
   [[ -e $HOME/.local/state/agent-team/fenced ]]
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]')"
   [[ ! -e $agents/agent-team.heartbeat.plist && ! -e $agents/agent-team.caffeinate.plist ]]
   [[ ! -e $HOME/.fake-launchd/agent-team.caffeinate && ! -e $HOME/.fake-launchd/agent-team.heartbeat ]]
   jq -e '.last_run.ended == "fenced"' "$HOME/.local/state/agent-team/health.json"
@@ -1952,7 +1952,7 @@ EOF
   [[ $output =~ ^[0-9T:Z-]+" lease: home-pc no longer holds the lease: laptop holds it (epoch 2); fenced home-pc: stopped coordinator (3169fcbd), T5-builder (81f08540), T12-reviewer (a3586a81); the heartbeat is disabled: agent-team-heartbeat.timer stopped and removed; team-lease take clears the fence"$ ]]
   assert_equal "$output" "$(tail -n 1 "$log")"
   jq -e '.holder == "laptop" and .epoch == 2 and ((.since | fromdateiso8601) > now - 120)' "$HOME/.local/state/agent-team/fenced"
-  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json"]' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]' '["stop","a3586a81"]')"
+  assert_equal "$(stub_calls claude)" "$(printf '%s\n' '["agents","--json","--all"]' '["stop","3169fcbd"]' '["stop","81f08540"]' '["stop","a3586a81"]')"
   [[ ! -e $units/agent-team-heartbeat.timer && ! -e $HOME/.fake-systemd/agent-team-heartbeat.timer.enabled ]]
   assert_equal "$(stub_calls curl)" ""
   assert_equal "$(lease_tip)" "$tip"
