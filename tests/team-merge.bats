@@ -691,17 +691,22 @@ EOF
   exec {held}<>"$HOME/.local/state/agent-team/heavy.lock"
   echo "first (pid 1) since 2026-10-25 10:00:00 +0000" >"$HOME/.local/state/agent-team/heavy.lock"
   flock -x "$held"
-  TEAM_HEAVY_WAIT_MINUTES=0 refused "local check './check.sh' could not run on the head ${head:0:7} yet (exit 75, try again later); its last lines:"
+  TEAM_HEAVY_WAIT_MINUTES=0 refused "local check './check.sh' could not run on the head ${head:0:7} yet (exit 75, try again later); its whole log is ~/.cache/agent-team/checks/proj/$head/1-check-sh.log"
   assert_contains "$stderr" "team-heavy: the heavy-run lock is held by first (pid 1) since 2026-10-25 10:00:00 +0000"
   exec {held}<&-
   [[ ! -e $GH_DIR/ran ]]
 }
 
-@test "a local check that fails is refused with its last lines, and nothing merges" {
+@test "a local check that fails is refused with its log's path, its failure lines and its last lines, and nothing merges" {
   with_local_checks
   echo 3 >"$GH_DIR/check.status"
-  refused "local check './check.sh' failed on the head ${head:0:7} (exit 3); its last lines:"
-  assert_contains "$stderr" "      checking the head"
+  { echo 'echo "--- FAIL: TestKept (0.00s)"' && echo 'seq 30'; } >"$GH_DIR/check.extra"
+  refused "local check './check.sh' failed on the head ${head:0:7} (exit 3); its whole log is ~/.cache/agent-team/checks/proj/$head/1-check-sh.log"
+  assert_contains "$stderr" "        its earlier lines that name a failure:
+          --- FAIL: TestKept (0.00s)
+        its last lines:
+          1"
+  assert_equal "$(grep -c '^[0-9]' "$HOME/.cache/agent-team/checks/proj/$head/1-check-sh.log")" 30
   assert_equal "$(proj_worktrees)" "$HOME/projects/proj"
 }
 
