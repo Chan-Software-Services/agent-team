@@ -53,6 +53,11 @@ PASS changes site: the primary checkout is clean"
   assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then $clone"
   # Nothing else fails; team-config sees the worktree as site's checkout, with no memory set up.
   assert_equal "$(grep -v '^PASS ' <<<"$output" | grep -v ' site: ' || true)" "WARN memory: memory site setting missing; fix: team-config apply"
+  # A worktree shows its checkout's origin, so a moved one there is Conventioner's line alone.
+  git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
+  TEAM_DOCTOR_CHECKS='084-moved-origins.sh 200-projects.sh' run_bin -1 team-doctor
+  assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then $clone"
+  assert_contains "$(line_of 'moved origin conventioner')" "FAIL moved origin conventioner: "
 }
 
 @test "an origin other than https://github.com/<repo>.git fails, and so does a treehouse pool named from it" {

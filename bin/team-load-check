@@ -14,8 +14,8 @@
 # which it goes on, naming each on stderr; the planner form also stops on a checkout, task dir,
 # slots or leases FAIL of a treehouse project, whose lease it rehearses, and the ops form on any
 # per-project FAIL of the project its worktree is in. The doctor's moved origins line, of the code
-# checkout and the team home, stops every form. TEAM_DOCTOR names the doctor to run instead (the tests'
-# seam), which answers --json.
+# checkout and the team home, stops every form. TEAM_DOCTOR names the doctor to run instead (the
+# tests' seam), which answers --json.
 #
 # Usage: team-load-check [--toolkit <name>]...
 #        team-load-check --context [--role planner|builder|reviewer|assistant] [--toolkit <name>]...
