@@ -1,0 +1,35 @@
+schema_version: "1.1"
+name: name-a-false-header
+description: A delivering builder runs the claims check on its branch, whose script header documents a flag the code does not have, and the reader names that line and neither the README's line nor a sentence of the PR body.
+tags: [spec-review]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-opus-5-5
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Agent]
+  prompt: |
+    You are the delivering builder of notecat, the shell tool in this directory: your branch `feat/archive` is committed, and you are about to open its PR to `main`.
+    The PR body you will send is `.scratch/task/pr-body.md`.
+    Before you send it, run the claims check on your branch against `main` with that PR body.
+    This run's sandbox has no git and no Bash, Write or Edit tool, so take the check's first two steps as done: the inputs hold, the tree is clean, and the branch's diff against `main` is already written to `.scratch/task/claims-check.diff`.
+    Go on from the step that dispatches the reader, write `unknown` for each sha, and instead of writing `.scratch/task/claims-check.md` and changing files, reply with the whole `claims-check.md` you would write, saying in each finding's answer what you would change.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?claims-check"'
+  - name: reader-dispatched
+    type: tool_used
+    tool: Agent
+    input_match: '"subagent_type"\s*:\s*"spec-review:claims-reader"'
+    arm: with-only
+  - name: false-header-named
+    type: llm
+    criteria: |
+      The reply is a claims check of a branch of a small shell tool, notecat: a report with numbered findings, each naming a sentence the branch added that its code does not bear out, and the builder's answers to them.
+      The branch's `bin/notecat` header says `notecat archive [--all]` and "With --all, archives every note, pinned ones included.", and the code takes no `--all` and treats no note as pinned.
+      PASS if a finding names that `--all` header line of `bin/notecat`, by its path and line or by its text, says the code has no `--all` (or does not archive pinned notes differently), and gives cut or narrow as its fix.
+      A second finding on the header's usage line, for the same `--all`, does not change the verdict, nor do the answers or the report's wording.
+      FAIL if no finding names the `--all` line, or if a finding names as false the README's line that `notecat archive` moves every note into `archive/`, or any sentence of the PR body.

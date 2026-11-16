@@ -1,6 +1,6 @@
 schema_version: "1.1"
 name: review-a-code-diff
-description: A reviewer asked to review a shell diff, with no spec in sight, leaves the skill alone.
+description: A reviewer asked to review a shell diff, with no spec in sight and no branch of its own to send, leaves both skills alone.
 tags: [spec-review]
 context:
   scaffold_script: scaffold.sh
@@ -31,6 +31,13 @@ graders:
     type: tool_used
     tool: Skill
     input_match: '"skill"\s*:\s*"(?:[\w-]+:)?spec-review"'
+    min: 0
+    max: 0
+    arm: both
+  - name: claims-check-not-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?claims-check"'
     min: 0
     max: 0
     arm: both
