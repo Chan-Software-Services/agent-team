@@ -228,7 +228,7 @@ The **owner login** is the machine's own `gh` login, the repositories' owner, wh
 
 `bin/lib/worker-login` names the account in one `login=<the account's login>` line, a committed constant that changes only through a PR to `dev`, never a registry key, since the registry is a record.
 With no such file the worker login is off: every session runs on the machine's own GitHub login, as before, and nothing in this section changes a machine.
-A file that is anything but that one line refuses every launch, naming the file.
+A file that is anything but that one line makes `team-worker` (but for an ops session), `claude-coordinator` and `claude-assistant` refuse, naming the file, and fails the doctor's `worker login` line.
 
 On a machine the worker login is `gh`'s own login file, `~/.config/agent-team/gh-worker/hosts.yml`, mode 600 in a directory of mode 700, the secret `worker-github-login`, which `team-secrets restore` brings, as it brings every secret.
 `bin/lib/github-login.sh` is the one place that knows where either login lives.
