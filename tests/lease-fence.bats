@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # hooks/lease-fence: the PreToolUse hook that keeps a machine that lost the lease quiet. It blocks
-# the coordinator's Discord posts, and its git push, team-merge, team-catch-up, team-open and
-# team-close, when this machine is fenced or the lease on origin names another holder, the
+# the coordinator's Discord posts, and its git push, team-merge, team-land, team-catch-up, team-open
+# and team-close, when this machine is fenced or the lease on origin names another holder, the
 # assistant's git push, team-assistant and team-current then too, a worker's git push when fenced,
 # and a worker's git push, gh and team-thread wait, and the assistant's git push and gh, while the
 # team holds offline. home-pc holds the lease on a bare origin; laptop is the other machine.
@@ -294,13 +294,16 @@ age_probe() {
   assert_equal "$(probes)" 0
 }
 
-@test "the coordinator's push, team-merge, team-catch-up, team-open and team-close are blocked when fenced or when origin names another holder" {
+@test "the coordinator's push, team-merge, team-land, team-catch-up, team-open and team-close are blocked when fenced or when origin names another holder" {
   local command writes=("git push origin dev" "git -C ~/agent-team push" "team-merge T7" "team-catch-up T7"
+    "team-land https://github.com/o/p/pull/6 a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+    "/home/x/agent-team/bin/team-land --task T7 https://github.com/o/p/pull/6 a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
     "/home/x/agent-team/bin/team-catch-up T7 --pr https://github.com/o/p/pull/6"
     "/home/x/agent-team/bin/team-merge T7 --method merge" "TEAM_HOME=x team-open conv feature feat x 'X'"
     "cd ~/agent-team && team-close T7" $'team-log T7 merged\nteam-close T7 --force')
   local others=("git status" "team-log T7 note" "team-snapshot" "gh pr view 6" "echo team-merge"
-    "grep -rn 'team-open' bin" "team-opener" "git log --grep push" "team-catch-upper T7" "echo team-catch-up")
+    "grep -rn 'team-open' bin" "team-opener" "git log --grep push" "team-catch-upper T7" "echo team-catch-up"
+    "echo team-land" "team-lander T7" "tests/merge-queue-drill org/scratch")
   # Held here: everything passes, origin asked once in the minute.
   for command in "${writes[@]}" "${others[@]}"; do
     coordinator_call -0 "$command"

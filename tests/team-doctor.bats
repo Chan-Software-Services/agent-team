@@ -383,8 +383,10 @@ EOF
 
 # review_app_machine: the reviewer App on (review_app_on: id 123456, slug team-reviewer), agent-team
 # registered with its base dev, the App's key in place with mode 600, and dev's protection on
-# GitHub requiring agent-review from the App, enforced for everyone (protected_by). gh answers its
-# login and the branch, from $STUB_FIXTURES/branch.json, or fails as $STUB_FIXTURES/branch.err says.
+# GitHub requiring agent-review from the App, enforced for everyone (protected_by), with no ruleset.
+# gh answers its login, the branch, from $STUB_FIXTURES/branch.json, or fails as
+# $STUB_FIXTURES/branch.err says, its rulesets' rules from $STUB_FIXTURES/rules.json and ruleset
+# <id> from $STUB_FIXTURES/ruleset-<id>.json (ruleset_pin writes both).
 review_app_machine() {
   review_app_on
   register agent-team Chan-Software-Services/agent-team direct-pr git
@@ -395,12 +397,15 @@ review_app_machine() {
   echo "not a real key" >"$HOME/.config/agent-team/review-app.pem"
   chmod 600 "$HOME/.config/agent-team/review-app.pem"
   protected_by 123456 everyone
+  echo '[]' >"$STUB_FIXTURES/rules.json"
   stub_script gh <<'EOF'
 case $* in
   'auth status --hostname github.com') echo "  - Token: gho_fakefakefakefake" ;;
   'api repos/Chan-Software-Services/agent-team/branches/dev')
     if [[ -f $STUB_FIXTURES/branch.err ]]; then cat "$STUB_FIXTURES/branch.err" >&2; exit 1; fi
     cat "$STUB_FIXTURES/branch.json" ;;
+  'api repos/Chan-Software-Services/agent-team/rules/branches/dev --paginate') cat "$STUB_FIXTURES/rules.json" ;;
+  'api repos/Chan-Software-Services/agent-team/rulesets/'*) cat "$STUB_FIXTURES/ruleset-${2##*/}.json" ;;
   *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
 esac
 EOF
@@ -416,6 +421,20 @@ protected_by() {
     >"$STUB_FIXTURES/branch.json"
 }
 
+# ruleset_pin <app id|none> [<actor type>...]: ruleset 7 (dev) on GitHub, requiring test from GitHub
+# Actions and agent-review from App <app id> (none: from any source), each <actor type> a bypass
+# actor of it with id 1, and classic protection off.
+ruleset_pin() {
+  jq -n --arg app "$1" '[{type: "required_status_checks", ruleset_id: 7, parameters: {strict_required_status_checks_policy: false,
+    required_status_checks: [{context: "test", integration_id: 15368},
+      ({context: "agent-review"} + if $app == "none" then {} else {integration_id: ($app | tonumber)} end)]}}]' \
+    >"$STUB_FIXTURES/rules.json"
+  printf '%s\n' "${@:2}" | jq -R 'select(. != "") | {actor_id: 1, actor_type: ., bypass_mode: "always"}' |
+    jq -s '{id: 7, name: "dev", enforcement: "active", bypass_actors: .}' >"$STUB_FIXTURES/ruleset-7.json"
+  echo '{"name": "dev", "protected": true, "protection": {"enabled": false,
+    "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}}' >"$STUB_FIXTURES/branch.json"
+}
+
 @test "with no bin/lib/review-app the review app line passes, saying the App is off, and reads nothing from GitHub" {
   only_checks 112-review-app.sh
   run_bin -0 team-doctor
@@ -427,8 +446,41 @@ protected_by() {
   only_checks 112-review-app.sh
   review_app_machine
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection on Chan-Software-Services/agent-team requires agent-review from it, enforced for everyone"
-  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/agent-team/branches/dev"]'
+  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection and rulesets on Chan-Software-Services/agent-team require agent-review from it, enforced for everyone"
+  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/agent-team/branches/dev"]'$'\n''["api","repos/Chan-Software-Services/agent-team/rules/branches/dev","--paginate"]'
+  # A registry still naming the repo's old owner reads its rules where the repo is now, never
+  # through GitHub's redirect of the old name.
+  sed -i 's#^repo = "Chan-Software-Services/agent-team"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
+  : >"$STUB_CALLS/gh.log"
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection and rulesets on Chan-Software-Services/agent-team require agent-review from it, enforced for everyone"
+  assert_equal "$(stub_calls gh | jq -c .)" '["api","repos/Chan-Software-Services/agent-team/branches/dev"]'$'\n''["api","repos/Chan-Software-Services/agent-team/rules/branches/dev","--paginate"]'
+}
+
+@test "the review app line reads agent-review's pin in a ruleset of dev, and fails on a bypass actor of it or the pin missing from it" {
+  only_checks 112-review-app.sh
+  review_app_machine
+  ruleset_pin 123456
+  run_bin -0 team-doctor
+  assert_equal "$(line_of 'review app')" "PASS review app: the reviewer App team-reviewer (123456) is on: its key ~/.config/agent-team/review-app.pem is in place with mode 600, and dev's protection and rulesets on Chan-Software-Services/agent-team require agent-review from it, enforced for everyone"
+  assert_equal "$(stub_calls gh | jq -c 'select(.[1] | test("/rulesets/"))')" '["api","repos/Chan-Software-Services/agent-team/rulesets/7"]'
+  ruleset_pin 123456 RepositoryRole
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's ruleset dev (7) on Chan-Software-Services/agent-team lets RepositoryRole 1 (always) merge past its required checks; fix: Daniel removes the bypass actors of ruleset dev (7) on Chan-Software-Services/agent-team"
+  ruleset_pin none
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection and rulesets on Chan-Software-Services/agent-team do not require agent-review from the reviewer App 123456, so GitHub does not hold its check; fix: Daniel takes step 6 of sops/merging.md, agent-review pinned to App 123456 in dev's required checks"
+  # Classic protection beside the ruleset pins it as well, and its admins rule still holds.
+  ruleset_pin 123456
+  protected_by 123456 non_admins
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team enforces its required checks for non_admins, not everyone, so an administrator could merge past them; fix: Daniel turns on enforce_admins in dev's protection on Chan-Software-Services/agent-team"
+  ruleset_pin none
+  protected_by 123456 everyone
+  run_bin -0 team-doctor
+  rm "$STUB_FIXTURES/ruleset-7.json"
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's rules on Chan-Software-Services/agent-team cannot be read from GitHub: gh api repos/Chan-Software-Services/agent-team/rulesets/7: cat: $STUB_FIXTURES/ruleset-7.json: No such file or directory; fix: the github login line's fix, then run team-doctor again"
 }
 
 @test "the review app line fails on a malformed bin/lib/review-app, naming it" {
@@ -461,21 +513,21 @@ protected_by() {
   local pin_fix="fix: Daniel takes step 6 of sops/merging.md, agent-review pinned to App 123456 in dev's required checks"
   protected_by none everyone
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection and rulesets on Chan-Software-Services/agent-team do not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
   protected_by 15368 everyone
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection and rulesets on Chan-Software-Services/agent-team do not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
   # A commit status's context alone, with no check pinned to an App, holds nothing.
   jq '.protection.required_status_checks.checks |= map(select(.context != "agent-review"))' "$STUB_FIXTURES/branch.json" >"$BATS_TEST_TMPDIR/branch.json"
   mv "$BATS_TEST_TMPDIR/branch.json" "$STUB_FIXTURES/branch.json"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection and rulesets on Chan-Software-Services/agent-team do not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
   protected_by 123456 non_admins
   run_bin -1 team-doctor
   assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team enforces its required checks for non_admins, not everyone, so an administrator could merge past them; fix: Daniel turns on enforce_admins in dev's protection on Chan-Software-Services/agent-team"
   echo '{"name": "dev", "protected": false}' >"$STUB_FIXTURES/branch.json"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection on Chan-Software-Services/agent-team does not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's protection and rulesets on Chan-Software-Services/agent-team do not require agent-review from the reviewer App 123456, so GitHub does not hold its check; $pin_fix"
 }
 
 @test "the review app line fails when GitHub cannot be read or no registered project is the team's own" {
@@ -483,11 +535,11 @@ protected_by() {
   review_app_machine
   echo "HTTP 404: Branch not found (https://api.github.com/repos/Chan-Software-Services/agent-team/branches/dev)" >"$STUB_FIXTURES/branch.err"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: dev on Chan-Software-Services/agent-team cannot be read from GitHub: HTTP 404: Branch not found (https://api.github.com/repos/Chan-Software-Services/agent-team/branches/dev); fix: the github login line's fix, then run team-doctor again"
+  assert_equal "$(line_of 'review app')" "FAIL review app: dev's rules on Chan-Software-Services/agent-team cannot be read from GitHub: gh api repos/Chan-Software-Services/agent-team/branches/dev: HTTP 404: Branch not found (https://api.github.com/repos/Chan-Software-Services/agent-team/branches/dev); fix: the github login line's fix, then run team-doctor again"
   # The registry without agent-team: conventioner and site, neither the team's own.
   sed -i '/^\[agent-team/,$d' "$TEAM_HOME/projects.toml"
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'review app')" "FAIL review app: the reviewer App team-reviewer (123456) is on, but no registered project is the team's own, so no base's protection is read; fix: register agent-team in projects.toml (team-project --help)"
+  assert_equal "$(line_of 'review app')" "FAIL review app: the reviewer App team-reviewer (123456) is on, but no registered project is the team's own, so no base's rules are read; fix: register agent-team in projects.toml (team-project --help)"
 }
 
 @test "the config line warns on each difference but the plugins, with team-config's commands" {
