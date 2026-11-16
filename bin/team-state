@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tell where a task stands, from its ledger events, the live session list and GitHub.
 #
-# Usage: team-state T<n> [--json]
+# Usage: team-state T<n> [--json] [--project <name>]
 # Prints one line: the task, its project and path, its phase, its live workers, its progress and
 # its PR, as
 #   T14 agent-team feature building | T14-builder idle 302k on build-04 | tickets 3/7, graph stale | review 4 findings, sent back 5, 6 | PR #5 a1b2c3d 16 behind dev checks 2/2 agent-review missing
@@ -48,6 +48,9 @@
 # later history-rewritten from it (or from a head no PR has); a PR is merged by a merged event
 # naming its URL (legacy: its number). Heads compare by the shorter one's prefix, at least 7
 # characters.
+# With --project, the PR is the latest pr event in that registered project, by the event's project,
+# else by its URL's repo (either owner of a moved repo), and null when the project has none, so a
+# task with a PR in each of two repositories is read for one of them; nothing else changes.
 # pr is null without a pr event; otherwise it joins the latest pr event with GitHub (gh pr view,
 # gh pr checks, gh pr checks --required): number, repo and project (from the event's project in
 # projects.toml, else from the URL), state, base, branch (the PR's head branch), the live head, the
@@ -105,6 +108,9 @@
 # rehomed or worktree-returned of that project and ticket; the text form says "not re-homed:
 # <project> on <machine>: <reason>" (<project>--NN for a ticket worktree), before the parks.
 # checks_wait is what the task's latest pass waits on, as checks_wait in bin/lib/ledger.jq reads it
+# (with reviews made in several projects, each project's latest pass has a wait, and it is the
+# first that is waiting or pending, else the first that ended blocked, infrastructure, else the
+# latest that passed, else the latest that failed)
 # from the ledger alone: null unless the latest review is a pass on a PR not merged, else {url,
 # reviewed, head, since, state, reruns}, state the outcome of the latest ci team-next T<n> --ci
 # logged of head (passed, failed, infrastructure or pending), or waiting with none; the text form
@@ -113,24 +119,30 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
-usage="usage: team-state T<n> [--json]"
+usage="usage: team-state T<n> [--json] [--project <name>]"
 
-task='' json=''
-for arg in "$@"; do
-  case $arg in
+task='' json='' project=''
+while (($#)); do
+  case $1 in
     --json) json=1 ;;
+    --project)
+      [[ $# -ge 2 && -n $2 && -z $project ]] || usage_error "$usage"
+      project=$2
+      shift
+      ;;
     -*) usage_error "$usage" ;;
     *)
       [[ -z $task ]] || usage_error "$usage"
-      task=$arg
+      task=$1
       ;;
   esac
+  shift
 done
 [[ -n $task ]] || usage_error "$usage"
 [[ $task =~ ^T[1-9][0-9]*$ ]] || usage_error "task must look like T<n>, got '$task'"
 
 events=$(known_task_events "$task")
-state=$(task_state_json "$events") || exit 1
+state=$(task_state_json "$events" "$project") || exit 1
 
 if [[ -n $json ]]; then
   jq . <<<"$state"
