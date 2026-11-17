@@ -6,8 +6,9 @@
 //   scrubber(value)          scrubbed(line): `line` with every mongodb:// or mongodb+srv:// token,
 //                            `value`, its password and each of its hosts removed, cut at its first
 //                            "{" and to at most 200 characters
-//   run(command, args, { timeoutMs, onSpawn, env, killSignal })
-//                            runs a child with childEnv() (or `env`), stdin ignored, its output
+//   run(command, args, { timeoutMs, onSpawn, env, killSignal, cwd, detached })
+//                            runs a child with childEnv() (or `env`), in `cwd` when given (and
+//                            with `detached`, as the leader of a process group of its own), stdin ignored, its output
 //                            captured, sent `killSignal` (SIGKILL) at `timeoutMs`; resolves
 //                            { code, signal, timedOut, stdout, stderr }, or rejects when the
 //                            command is not on PATH (code ENOENT)
@@ -81,9 +82,9 @@ function parseConnectionString(value) {
   return { password, hosts };
 }
 
-export function run(command, args, { timeoutMs, onSpawn, env = childEnv(), killSignal = "SIGKILL" } = {}) {
+export function run(command, args, { timeoutMs, onSpawn, env = childEnv(), killSignal = "SIGKILL", cwd, detached = false } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { env, cwd, detached, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let timedOut = false;

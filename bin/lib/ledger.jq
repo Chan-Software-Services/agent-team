@@ -1057,21 +1057,52 @@ def live_session($session; $sessions):
     $sessions | map(select(.id == $session or ((.sessionId // "") | startswith($session)))) | first
   else null end;
 
+# Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
+# task's events after that launch: a pr follows it, and after the latest one come only launches of
+# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
+# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
+# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
+# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
+# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
+# work again; a denied (the worker went past the denial) and a walk-note (Daniel spoke, the worker
+# did not) are neither, and are read as if not there.
+def delivered($launch):
+  def effect: lifecycle_table.kinds[.event // ""].effect // null;
+  $launch.role == "builder" and ($launch.ticket | type) != "string"
+  and (map(select(.event | IN("denied", "walk-note") | not)) | (map(.event == "pr") | rindex(true)) as $pr
+    | $pr != null
+      and (.[$pr + 1:] as $after
+        | all(range($after | length); . as $k | $after[$k]
+            | if .event == "launch" then .role == "reviewer"
+              elif effect == "park" then .session != $launch.session
+              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
+              else (.session | type) == "string" and .session != $launch.session end)));
+
+# Whether a live session (an entry of claude agents --json) waits for input, given whether its
+# launch's builder delivered ($delivered, delivered's): its state is blocked, but for a builder
+# that delivered with no dialog open (its status idle, no waitingFor), since Claude Code also
+# calls a session blocked when its last turn's summary says it waits on someone, as a builder's
+# does after its PR ("awaiting the merge word"). The sweep's waiting-input (task_findings) and
+# the launcher's stop of finished sessions (launch_states) both read it, so they cannot differ.
+def waits_for_input($delivered):
+  .state == "blocked" and ((.status == "idle" and .waitingFor == null and $delivered) | not);
+
 # The task's launches whose sessions a new launch of <role> may stop, over its events as an array,
-# each {session, role, worktree (local_path's), stowed, handed_on}; <role> "" stands for no new
-# launch (the heartbeat's stow plan, over every open task). They are every planner and reviewer,
-# and every builder when the new worker is a builder (team-worker keeps those of its own worktree,
-# one builder holding a worktree's work at a time), or with no new launch every builder that a
-# later logged builder launch of its worktree follows, and every ticket builder (a launch with a
-# ticket) that its ticket's ticket-done follows. Handed on is a launch the ledger follows with a
-# done of its session, or for a builder what else ends it (ends_launch: its ticket's ticket-done
-# for a ticket builder, else a pr or any ticket-done), or with a paused whose cause
-# is stow (park_cause: "stowed", "stowed, handoff written") and then a logged launch of its role
-# and worktree (a stow carries no session, so it
-# hands on only to the fresh worker that resumes the work, and a resumed does not undo it);
-# stowed is whether such a paused follows it, so team-worker can count itself as that fresh
-# worker. Any other paused is a wait the worker comes back from, and a review carries no session,
-# so a reviewer is handed on by the done logged beside its review.
+# each {session, role, worktree (local_path's), stowed, delivered, handed_on}; <role> "" stands
+# for no new launch (the heartbeat's stow plan, over every open task). delivered is whether a
+# builder's launch delivered with nothing asked of it since (delivered's), which launch_states
+# reads. They are every planner and reviewer, and every builder when the new worker is a builder
+# (team-worker keeps those of its own worktree, one builder holding a worktree's work at a time),
+# or with no new launch every builder that a later logged builder launch of its worktree follows,
+# and every ticket builder (a launch with a ticket) that its ticket's ticket-done follows. Handed
+# on is a launch the ledger follows with a done of its session, or for a builder what else ends it
+# (ends_launch: its ticket's ticket-done for a ticket builder, else a pr or any ticket-done), or
+# with a paused whose cause is stow (park_cause: "stowed", "stowed, handoff written") and then a
+# logged launch of its role and worktree (a stow carries no session, so it hands on only to the
+# fresh worker that resumes the work, and a resumed does not undo it); stowed is whether such a
+# paused follows it, so team-worker can count itself as that fresh worker. Any other paused is a
+# wait the worker comes back from, and a review carries no session, so a reviewer is handed on by
+# the done logged beside its review.
 def handed_on_launches($role; $home):
   . as $events
   | [to_entries[] | .key as $i | .value
@@ -1084,23 +1115,25 @@ def handed_on_launches($role; $home):
                    or ($l.ticket != null and .event == "ticket-done" and .ticket == $l.ticket))
                  else $role == "builder" end))
      | [range($i + 1; $events | length) | select($events[.] | .event == "paused" and park_cause == "stow")] as $stows
-     | {session, role, worktree: $wt, stowed: ($stows != []),
+     | {session, role, worktree: $wt, stowed: ($stows != []), delivered: ($events[$i + 1:] | delivered($l)),
         handed_on: (any($events[$i + 1:][]; (.event == "done" and .session == $l.session)
             or ($l.role == "builder" and .event != "done" and ends_launch($l)))
           or any($stows[] as $k | $events[$k + 1:][]; .event == "launch" and .role == $l.role
             and (.worktree | local_path($home)) == $wt))}];
 
 # The live sessions of handed_on_launches' launches, given the session list <sessions>, each
-# {session, role, worktree, state, handed_on}: state "busy", "waiting for input", "no status",
+# {session, role, worktree, state, handed_on}: state "busy", "waiting for input" (waits_for_input,
+# as the sweep reads it, so a builder idle after the pr it delivered is not), "no status",
 # "status <its status>" for one that is not idle, "handed-on" for an idle one whose work is handed
 # on (the one to stop), "stowed" for an idle one a stow followed, else "idle with no event of its
 # own since its launch"; handed_on is the launch's, whatever its state, so team-worker can wait
 # for a busy one whose work is handed on.
 def launch_states($sessions):
   [.[] | live_session(.session; $sessions) as $live | select($live != null)
+   | .delivered as $delivered
    | {session, role, worktree, handed_on,
       state: (if $live.status == "busy" then "busy"
-              elif $live.state == "blocked" then "waiting for input"
+              elif $live | waits_for_input($delivered) then "waiting for input"
               elif $live.status == null then "no status"
               elif $live.status != "idle" then "status \($live.status)"
               elif .handed_on then "handed-on"
@@ -1459,6 +1492,38 @@ def checks_wait_of:
 
 # checks_wait_of without its project and review, as team-state prints it.
 def checks_wait: checks_wait_of | if . == null then null else del(.project, .review) end;
+
+# Whether the launch (the input) may be one of $project's: any launch when $project is "" or
+# null, else one in $project or naming no project, as project_reviews counts a review whose
+# project is not known for every project.
+def launch_in($project): ($project // "") == "" or .project == null or .project == $project;
+
+# The index of the latest ci of outcome failed logged after index $r of the task's events on a PR
+# in the repo $repo (owner/name, either owner of a moved one, in any case), or naming no PR, or
+# null: a pass's failed checks that went back as a round (team-next T<n> --ci's), or a findings
+# round's look. A ci of any PR counts when $repo is "" or null.
+def failed_ci_after($r; $repo):
+  . as $events
+  | ($repo // "") as $repo
+  | "https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/" as $prs
+  | [range($r + 1; length) | select($events[.] | .event == "ci" and .outcome == "failed"
+      and ($repo == "" or .url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))]
+  | last;
+
+# What waits on a fix round in $project, whose repo is $repo, over the task's events, or null: the
+# latest review made in $project (project_reviews) when it sent findings back and no launch in
+# $project (launch_in; an ops session's aside) followed it, {review: <its index>, ci: null}; else
+# the latest ci of outcome failed after that review on a PR of $repo (failed_ci_after) when no
+# such launch followed the ci, {review, ci: <its index>}. So a review, a ci or a launch of one
+# repository never starts or takes another's round; with $project "" or null, every review, ci
+# and launch counts, as it did before reviews ran beside each other in two repositories.
+def round_wait($project; $repo):
+  . as $events
+  | def untaken($at): any($events[$at + 1:][]; .event == "launch" and .role != "ops" and launch_in($project)) | not;
+    (project_reviews($project) | last) as $r
+  | if $r == null then null
+    elif ($events[$r].sent_back // []) != [] and untaken($r) then {review: $r, ci: null}
+    else failed_ci_after($r; $repo) as $c | if $c != null and untaken($c) then {review: $r, ci: $c} else null end end;
 
 # Why the task's reviews do not let the default word, given on no head, merge the PR's
 # head $head unasked, one string per reason, none when they do, judged on the latest review of
@@ -1877,36 +1942,15 @@ def waiting_on:
       + (if length > 1 then ", and \(length - 1) more running" else "" end)
   end;
 
-# Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
-# task's events after that launch: a pr follows it, and after the latest one come only launches of
-# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
-# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
-# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
-# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
-# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
-# work again.
-def delivered($launch):
-  def effect: lifecycle_table.kinds[.event // ""].effect // null;
-  $launch.role == "builder" and ($launch.ticket | type) != "string"
-  and ((map(.event == "pr") | rindex(true)) as $pr
-    | $pr != null
-      and (.[$pr + 1:] as $after
-        | all(range($after | length); . as $k | $after[$k]
-            | if .event == "launch" then .role == "reviewer"
-              elif effect == "park" then .session != $launch.session
-              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
-              else (.session | type) == "string" and .session != $launch.session end)));
-
 # The no-worker, waiting-input, silent, stalled, ticket-gone and ticket-worktree-left findings of
 # an open task that is not parked, the stalled one from session-activity's object as team-sweep
 # passes it ($activity: {sessions}, its object keyed by full session id, or {error} when it
 # failed, where none is stalled). A live session is judged by its latest launch, and one waiting
 # for input is not also called silent; stalled is a busy session, not waiting for input, whose
 # transcripts have gone unwritten past its limit (stall_limits).
-# A session waits for input when its state is blocked, but for a builder that delivered
-# (delivered) with no dialog open (its status idle, no waitingFor): Claude Code also calls a
-# session blocked when its last turn's summary says it waits on someone, as a builder's does
-# after its PR ("awaiting the merge word"), and that one is idle with an event since its launch.
+# A session waits for input as waits_for_input says, which the launcher's launch_states reads
+# too: a builder that delivered with no dialog open does not, and it is idle with an event since
+# its launch.
 # A live session is at work while it is busy, waiting for input, or idle with no ledger event
 # since its launch (silent); idle with an event since, it has handed the next step back to the
 # coordinator, so a task with no session at work is no-worker however many are live. A ticket
@@ -1935,8 +1979,7 @@ def task_findings($sessions; $activity):
       | . + if ($l.ticket | type) == "string" then
           {ended: any($since[]; ends_launch($l)), quiet: (any($since[]; .session == $l.session or .ticket == $l.ticket) | not)}
         else {ended: false, quiet: (.i == $count - 1)} end
-      | . + {prompted: (.live.state == "blocked"
-          and ((.live.status == "idle" and .live.waitingFor == null and ($since | delivered($l))) | not))}]
+      | . + {prompted: (.live | waits_for_input($since | delivered($l)))}]
      | unique_by(.short) | sort_by(.i)) as $live
   | ($live | map(select(.prompted or .live.status != "idle" or .quiet
       or ((.launch.ticket | type) == "string" and (.ended | not))))) as $at_work
@@ -2015,6 +2058,12 @@ def by_task: group_by(.task) | map({key: .[0].task, value: .}) | from_entries;
 # Whether a task's events (an array, or null for a task not in the ledger) are an open task's,
 # opened by team-open or legacy: it has events and no closed.
 def is_open: . != null and (task_status | IN("open", "legacy"));
+
+# The events of the open tasks (is_open), from every ledger event as one array (ledger_events'),
+# as one array in ledger order, each task's status worked out once: a select of is_open per event
+# folds a task's lifecycle once for each of its events, a time that grows with the square of an
+# open task's events.
+def open_task_events: (by_task | map_values(is_open)) as $open | map(select($open[.task]));
 
 # The live sessions named like team workers (T<n>-<role>, or T<n>-<role>-NN for ticket NN's, a
 # builder in a ticket worktree), from the session list and every task's events by id: {task, role,
