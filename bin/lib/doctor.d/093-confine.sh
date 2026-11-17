@@ -23,7 +23,7 @@ if ((confine_rc != 0)) || [[ ! $confine_abi =~ ^[0-9]+$ ]]; then
   report confine FAIL "confine.py --abi exited $confine_rc${confine_line:+: $confine_line}" \
     "bin/lib/confine-shell's and bin/lib/confine.py's own --help say what each needs"
 elif ((confine_abi < 2)); then
-  report confine WARN "this machine has no Landlock (ABI $confine_abi), so its workers run on the text guard alone (sops/platform-gotchas.md)"
+  report confine WARN "this machine has no Landlock (ABI $confine_abi), so its workers run on the text guard alone (bin/lib/confine.py)"
 else
   # A session's roots on a worktree of the doctor's own, through the prefix a session's commands
   # run through, so its interpreter is the one they get: with no task and no session id there is

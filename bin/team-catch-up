@@ -9,8 +9,10 @@
 # repo must be a project in projects.toml. Checks first, changing nothing, each failure a reason,
 # every one given at once (exit 1):
 #   the PR is open and targets the project's base;
-#   the task's latest review event has verdict pass and names the PR's head now (by the shorter
-#   prefix), or the head an earlier team-catch-up made it from (reviewed_head in bin/lib/ledger.jq,
+#   the task's latest review event made in the PR's project (project_reviews in
+#   bin/lib/ledger.jq: a review is of the project its reviewer was launched in, and one logged with
+#   no reviewer's done counts in every project) has verdict pass and names the PR's head now (by
+#   the shorter prefix), or the head an earlier team-catch-up made it from (reviewed_head in bin/lib/ledger.jq,
 #   when no review names the head itself);
 #   every required check (the base's rules, its protection's and its rulesets' required checks,
 #   base_rules in bin/lib/team.sh, gh pr checks --required and the project's required_checks) is
@@ -118,14 +120,16 @@ reasons=()
 state=$(jq -r .state <<<"$facts")
 [[ $state == open ]] || reasons+=("PR #$number is $state, not open")
 [[ $(jq -r .base <<<"$facts") == "$base" ]] || reasons+=("PR #$number targets $(jq -r .base <<<"$facts"), not $project's base $base")
+# The latest review made in the PR's project (project_reviews in bin/lib/ledger.jq), so another
+# repository's review of the task stands for none of this PR's.
 while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(ledger_jq '
-  map(select(.event == "review")) | last
+  . as $events | project_reviews($project) | last | if . == null then null else $events[.] end
   | if . == null then "no review of \($task) is logged: review the head first"
     elif .verdict != "pass" then "the latest review of \($task) (of \(.head[:7])) found something, not a pass: fix and review it first"
     elif same_head(.head; $reviewed) | not then
       "the latest review of \($task) passed on \(.head[:7]), not on the head \($head[:7])\(
         if same_head($reviewed; $head) then "" else " or \($reviewed[:7]), which team-catch-up made it from" end): review the head first"
-    else empty end' -r --arg task "$task" --arg head "$head" --arg reviewed "$reviewed" <<<"$events")
+    else empty end' -r --arg task "$task" --arg head "$head" --arg reviewed "$reviewed" --arg project "$project" <<<"$events")
 # The rules' required checks, its protection's and its rulesets', read as team-merge reads them.
 while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(jq -r --slurpfile rules "$scratch/rules" '
   ((.required + [$rules[0].required[].context]) | unique) as $required

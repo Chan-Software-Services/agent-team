@@ -310,18 +310,16 @@ json_vars repo='.repo | tostring' base='.base | tostring' task_dir='.task_dir | 
 # (project_reviews in bin/lib/ledger.jq: another repository's review is none of this one's; null
 # when none), with that review's head (empty when none) and the findings it sent back as a list
 # ("3, 5 and 6"; empty when none), and the checks that went back as a round: the latest ci of
-# outcome failed logged after that review on a PR of the project's repo, or naming no PR (team-next
-# T<n> --ci's on a pass, or the findings round's look), as its head and the names of its failures
-# of the PR's own (empty when none).
+# outcome failed logged after that review on a PR of the project's repo, or naming no PR
+# (failed_ci_after: team-next T<n> --ci's on a pass, or the findings round's look), as its head
+# and the names of its failures of the PR's own (empty when none).
 review='' review_head='' sent_list='' ci_round=''
 json_vars --ledger review='. as $events | project_reviews($project) | last | if . == null then null else $events[.] end | tojson' \
   review_head='. as $events | project_reviews($project) | last | select(. != null) | $events[.].head // empty' \
   sent_list='. as $events | project_reviews($project) | last | select(. != null) | $events[.].sent_back // [] | map(tostring)
     | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' \
   ci_round='(project_reviews($project) | last) as $r | select($r != null)
-    | "https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/" as $prs
-    | [.[$r + 1:][] | select(.event == "ci" and .outcome == "failed"
-        and (.url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))] | last | select(. != null)
+    | failed_ci_after($r; $repo) as $c | select($c != null) | .[$c]
     | {head, names: [(.failed // [])[] | select(.class == "pr") | .name]} | tojson' \
   -- --arg project "$project" --arg repo "$repo" <<<"$events"
 # The task worktree's branch and path; with --ticket, the brief's own are the ticket worktree's.

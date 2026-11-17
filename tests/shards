@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The bats suite's shards, which tests/run bats --shard runs and CI's test-shards jobs each run
 # one of.
-# Each tests/*.bats file weighs its seconds in tests/timings.tsv on this platform (macos on
+# Each tests/*.bats file weighs its seconds in the timings (TESTS_TIMINGS when set, else
+# tests/timings.tsv; a row for a file the checkout lacks weighs nothing) on this platform (macos on
 # macOS, linux elsewhere); a file the timings lack weighs its bytes at the timed files' seconds
 # per byte, so a new file needs no timing yet. The files, the heaviest first (ties by name), each
 # go to the shard with the least weight so far (ties to the lowest number), so one tree splits the
@@ -9,12 +10,19 @@
 #
 # Usage: tests/shards <n>                 print every file, the heaviest first, as
 #                                         "<shard>\t<weight>\ttests/<name>.bats", its shard 1 to n
-#        tests/shards update [<run id>]   rewrite tests/timings.tsv from the per-file seconds
-#                                         that a CI run's shard jobs printed (default: the latest
-#                                         successful CI run), through gh, as the Linux seconds;
-#                                         CI runs no macOS job, so each file keeps the macOS
-#                                         seconds the timings had, and a file they lack has none
-# Refresh the timings when files are added or the suite's times move, so the shards stay even.
+#        tests/shards update [--to <file>] [<run id>]
+#                                         rewrite tests/timings.tsv, or write <file>, from the
+#                                         per-file seconds that a CI run's shard jobs printed
+#                                         (default: the latest successful CI run), through gh, as
+#                                         the Linux seconds; CI runs no macOS job, so each file
+#                                         keeps the macOS seconds tests/timings.tsv had, and a
+#                                         file it lacks has none; a run whose shard jobs printed
+#                                         fewer than half of tests/*.bats is refused, writing
+#                                         nothing, so a partial run cannot skew the split
+# CI's shard-plan job runs update --to on every run and its shards name that file by TESTS_TIMINGS,
+# so they split by the latest successful run's seconds; the committed tests/timings.tsv is what
+# they split by when that job cannot read a run, and what a local tests/run bats --shard splits
+# by, so refresh it when files are added or the suite's times move.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -24,14 +32,14 @@ team_home_report=1
 # shellcheck source=bin/lib/team.sh
 source "$root/bin/lib/team.sh" "$@"
 
-usage="usage: tests/shards <n> | tests/shards update [<run id>]"
+usage="usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
 timings=$root/tests/timings.tsv
 
-# tests/timings.tsv from the CI run <run id>: each test-shards job's
+# The timings from the CI run <run id> into <to>: each test-shards job's
 # "ok|not ok tests/<name>.bats (<n>s)" lines as linux, and each of those files' macos seconds as
-# the timings had them.
+# tests/timings.tsv had them.
 update() {
-  local run=$1 jobs id name sha created
+  local run=$1 to=$2 jobs id name sha created printed suite
   if [[ -z $run ]]; then
     run=$(cd "$root" && gh run list --workflow ci.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
     [[ -n $run ]] || die "no successful CI run to read"
@@ -49,6 +57,9 @@ update() {
       die "cannot read the log of $name in CI run $run"
   done < <(jq -r '.jobs[] | [.databaseId, .name] | @tsv' <<<"$jobs")
   [[ -s $scratch/seconds ]] || die "CI run $run printed no per-file seconds in a shard job"
+  printed=$(cut -f1 "$scratch/seconds" | sort -u | wc -l)
+  suite=$(cd "$root" && find tests -maxdepth 1 -name '*.bats' | wc -l)
+  ((2 * printed >= suite)) || die "CI run $run printed $printed of $suite files; keeping the timings"
   if [[ -f $timings ]]; then cp "$timings" "$scratch/before"; else : >"$scratch/before"; fi
   {
     echo "# The seconds each bats file took on Linux in CI run $run (head ${sha:0:7}, $created),"
@@ -64,13 +75,15 @@ update() {
       { linux[$1] = $2 }
       END { for (x in linux) printf "%s\t%s\t%s\n", x, linux[x], (x in macos ? macos[x] : "") }' \
       "$scratch/before" - <"$scratch/seconds" | LC_ALL=C sort
-  } >"$timings"
-  echo "tests/shards: wrote tests/timings.tsv from CI run $run"
+  } >"$scratch/after"
+  mv "$scratch/after" "$to"
+  [[ $to != "$timings" ]] || to=tests/timings.tsv
+  echo "tests/shards: wrote $to from CI run $run"
 }
 
 # Every file's shard of <n>, as the header says.
 shards() {
-  local n=$1 column=linux given=$timings
+  local n=$1 column=linux given=${TESTS_TIMINGS:-$timings}
   [[ $(uname -s) != Darwin ]] || column=macos
   [[ -f $given ]] || given=/dev/null
   # Weights: the timed seconds, else the bytes at the timed files' seconds per byte (at least 1).
@@ -99,8 +112,15 @@ shards() {
 
 case ${1:-} in
   update)
-    [[ $# -le 2 && ${2:-} =~ ^[0-9]*$ ]] || usage_error "$usage"
-    update "${2:-}"
+    shift
+    to=$timings run=''
+    while (($#)); do
+      case $1 in
+        --to) [[ $# -ge 2 && -n $2 ]] || usage_error "$usage"; to=$2; shift 2 ;;
+        *) [[ -z $run && $1 =~ ^[0-9]+$ ]] || usage_error "$usage"; run=$1; shift ;;
+      esac
+    done
+    update "$run" "$to"
     ;;
   *)
     [[ $# -eq 1 && $1 =~ ^[1-9][0-9]*$ ]] || usage_error "$usage"
