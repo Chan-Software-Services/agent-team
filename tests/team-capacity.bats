@@ -389,7 +389,7 @@ left T8-reviewer 4f2a9c1e: already in agent-team-T8-4f2a9c1e.scope"
   # The scope unloads once it ends, failed or not, so one the kernel kills for memory leaves no
   # failed unit behind.
   assert_equal "$(stub_calls busctl | jq -c .)" \
-    '["--user","call","org.freedesktop.systemd1","/org/freedesktop/systemd1","org.freedesktop.systemd1.Manager","StartTransientUnit","ssa(sv)a(sa(sv))","agent-team-T7-a1b2c3d4.scope","fail","4","PIDs","au","4","100","99","101","102","Slice","s","agent-team-T7.slice","Description","s","agent-team session T7-a1b2c3d4.scope","CollectMode","s","inactive-or-failed","0"]'
+    '["--user","call","org.freedesktop.systemd1","/org/freedesktop/systemd1","org.freedesktop.systemd1.Manager","StartTransientUnit","ssa(sv)a(sa(sv))","agent-team-T7-a1b2c3d4.scope","fail","4","PIDs","au","4","100","99","101","102","Slice","s","agent-team-T7.slice","Description","s","agent-team session T7-a1b2c3d4","CollectMode","s","inactive-or-failed","0"]'
 
   # Placed now, so a second run moves nothing.
   : >"$STUB_CALLS/busctl.log"
