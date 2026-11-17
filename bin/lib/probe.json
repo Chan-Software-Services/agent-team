@@ -267,22 +267,134 @@
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Read",
       "input": "@HOME@/.claude/file-history/load-check-probe-absent/probe",
-      "expect": "rule",
-      "family": "session-records"
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
     },
     {
       "id": "mcp-logs",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Read",
       "input": "@HOME@/.cache/claude-cli-nodejs/load-check-probe-absent/probe.jsonl",
-      "expect": "rule",
-      "family": "session-records"
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
     },
     {
       "id": "transcripts",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Read",
       "input": "@HOME@/.claude/projects/load-check-probe-absent/load-check-probe-absent.jsonl",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "job-directory",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/jobs/load-check-probe-absent/state.json",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "transcripts-directory",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/transcripts/load-check-probe-absent.jsonl",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "prompt-history",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/history.jsonl/load-check-probe-absent",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "paste-cache",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/paste-cache/load-check-probe-absent.txt",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "task-lists",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/tasks/load-check-probe-absent/1.json",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "session-env",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/session-env/load-check-probe-absent/probe",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "live-sessions",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/sessions/load-check-probe-absent.json",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "daemon",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/daemon/load-check-probe-absent",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "daemon-log",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.claude/daemon.log/load-check-probe-absent",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "job-directory-bash",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "cat ~/.claude/jobs/load-check-probe-absent/state.json",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "transcripts-directory-bash",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "cat ~/.claude/transcripts/load-check-probe-absent.jsonl",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "prompt-history-bash",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "cat ~/.claude/history.jsonl/load-check-probe-absent",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "paste-cache-bash",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "cat ~/.claude/paste-cache/load-check-probe-absent.txt",
+      "expect": "hook",
+      "marker": "Blocked by session-records-guard"
+    },
+    {
+      "id": "projects-bash",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "cat ~/.claude/projects/load-check-probe-absent/load-check-probe-absent.jsonl",
       "expect": "hook",
       "marker": "Blocked by session-records-guard"
     },
@@ -581,10 +693,6 @@
     {
       "family": "review-app-key",
       "rules": "^(Read|Bash)\\(.*(agent-team/review-app|\\.config/agent-team)"
-    },
-    {
-      "family": "session-records",
-      "rules": "^Read\\(~/(\\.claude/file-history|\\.cache/claude-cli-nodejs|Library/Caches/claude-cli-nodejs)/"
     },
     {
       "family": "sessions",

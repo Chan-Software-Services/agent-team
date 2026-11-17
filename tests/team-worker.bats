@@ -933,9 +933,9 @@ $REPO_ROOT/bin/hooks/command-guard"
       assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 3
     fi
     assert_equal "$(jq -r '.permissions.deny | index("Bash(gh pr merge*)") != null' "$settings")" true
-    # No role reads the file checkpoints or Claude Code's cache, on Linux or macOS.
-    assert_equal "$(jq -c '.permissions.deny | map(select(test("file-history|claude-cli-nodejs")))' "$settings")" \
-      '["Read(~/.claude/file-history/**)","Read(~/.cache/claude-cli-nodejs/**)","Read(~/Library/Caches/claude-cli-nodejs/**)"]'
+    # The file checkpoints and Claude Code's cache are the session records guard's, with no deny
+    # rule beside it.
+    assert_equal "$(jq -c '.permissions.deny | map(select(test("file-history|claude-cli-nodejs")))' "$settings")" '[]'
   done
   [[ -x $REPO_ROOT/bin/hooks/scratch-only-edits && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard &&
     -x $REPO_ROOT/bin/hooks/session-records-guard ]]
