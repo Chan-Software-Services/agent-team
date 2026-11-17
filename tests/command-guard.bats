@@ -3,7 +3,9 @@
 # frontend toolkit's capture script, a change of the session's role or task, a lease steal and the
 # coordinator's commands where a command starts, in place of the deny rules that matched their
 # names anywhere in a call's text, a change of the session's GitHub login, and a curl or wget upload
-# of a file or body to a host outside the team's own. Every command those rules refused when run is still refused (a test per rule),
+# of a file or body to a host outside the team's own, and a worker's or the assistant's force push
+# or cd into the team's keys' directories, naming the line a refusal of a call of several lines
+# stands on. Every command those rules refused when run is still refused (a test per rule),
 # and the reads, searches, diffs, commits and file writes that only name them pass, the hook and
 # the worker deny list both.
 
@@ -49,6 +51,29 @@ refuses() {
       { printf 'not refused with the rule %s: %s\nstderr: %s\n' "$rule" "$command" "$stderr" >&2; return 1; }
   done
 }
+
+# A worker's or the assistant's refusal, with its allowed way when it names one: refuses_as <role> <reason> <allowed or ""> <command>...
+refuses_as() {
+  local role=$1 reason=$2 allowed=$3 command expected
+  shift 3
+  if [[ -z $allowed ]]; then
+    expected="Blocked by command-guard: $reason; a guardrail, so report it as BLOCKED and do not reach it another way."
+  elif [[ $role == assistant ]]; then
+    expected="Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: do not reach it another way."
+  else
+    expected="Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
+  fi
+  for command; do
+    AGENT_TEAM_ROLE=$role guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "$expected" ]] ||
+      { printf 'not refused as %s with: %s\ncommand: %s\nstderr: %s\n' "$role" "$reason" "$command" "$stderr" >&2; return 1; }
+  done
+}
+
+FORCE="a force push (git push with --force, --force-with-lease, --force-if-includes, -f or a +refspec), which rewrites what others pushed"
+FORCE_WAY="push without forcing; when the remote branch moved under you, start a fresh local branch from it under a new name and carry your commits over"
+CD_SECRETS="a cd into ~/.config/agent-team or ~/.claude/channels, which hold the team's keys and the Discord bot's files"
+CD_ASSISTANT="a cd into ~/.config/agent-team or the Discord bot's directories, which hold the team's keys and the bot's files"
 
 # Neither the hook nor the worker deny list refuses each <command>: passes <command>...
 passes() {
@@ -798,8 +823,8 @@ passes() {
 }
 
 # A call of more than one line: the refusal's second line names the line its refused command
-# stands on, and a heredoc that ended before it (T407's builder took a test's own text for the
-# problem, where its heredoc had ended at an inner heredoc's closing line).
+# stands on, and a heredoc that ended before it (a builder took a test's own text for the problem,
+# where its heredoc had ended at an inner heredoc's closing line).
 @test "a refusal of a call of more than one line names the line it stands on, and a heredoc that ended before it" {
   guard -2 $'ls\nteam-inbox | tail -1\necho done'
   assert_equal "$stderr" "Blocked by command-guard: $COORDINATOR; a guardrail, so report it as BLOCKED and do not reach it another way."$'\n'"It stands on line 2 of the call: team-inbox | tail -1."
@@ -813,4 +838,39 @@ passes() {
   # A one-line call is its own line.
   guard -2 "team-inbox"
   assert_equal "$stderr" "Blocked by command-guard: $COORDINATOR; a guardrail, so report it as BLOCKED and do not reach it another way."
+}
+
+# The report's "a rule's * reaching another command of the same call": the force-push rule matched
+# a bats -f four commands after an ordinary push, and the cd rule a cat after a cd elsewhere.
+@test "a force push and a cd into the keys' directories are refused for a worker and the assistant, never another command of the call" {
+  local role command
+  for role in builder planner reviewer ops assistant; do
+    refuses_as "$role" "$FORCE" "$FORCE_WAY" "git push --force origin feat/T1-x" "git push -f origin feat/T1-x" \
+      "git push --force-with-lease origin feat/T1-x" "git push -u origin feat/T1-x --force" "git push origin +feat/T1-x" \
+      "git -C ~/wt push --force-with-lease=feat/T1-x:abc1234 origin feat/T1-x" "git -C ~/wt push -f origin feat/T1-x" \
+      "git -C ~/wt push origin +feat/T1-x" "git push -uf origin feat/T1-x" "git push --forc origin feat/T1-x" \
+      "git --no-pager -c x.y=1 push -- origin +feat/T1-x" "bash -c 'git push -f origin feat/T1-x'" \
+      "git push --force-if-includes origin feat/T1-x" "ls; git push -vf origin x"
+  done
+  for role in builder planner reviewer ops; do
+    refuses_as "$role" "$CD_SECRETS" "" "cd ~/.config/agent-team && cd -" "pushd ~/.config/agent-team && popd" \
+      "cd ~/.claude/channels/discord" 'cd "$HOME/.claude/channels"' "ls; cd /home/x/.config/agent-team/"
+  done
+  refuses_as assistant "$CD_ASSISTANT" "" "cd ~/.config/agent-team && cd -" "pushd ~/.config/agent-team" \
+    "cd ~/.claude/channels/discord" "cd ~/.claude/channels/discord-assistant/" "pushd ~/.claude/channels/discord-assistant"
+  # The calls of the report, each an ordinary push or a read after a cd elsewhere.
+  for command in "git push -q origin fix/T1-x 2>&1 | tail -2; git log -1 --oneline; bats tests/team-load-check.bats -f 'the probe'" \
+    "cd ~/agent-team/.claude/worktrees/3; cat ~/.config/agent-team/machine; git status -sb" \
+    "git push --follow-tags origin feat/T1-x" "git push -o ci.skip origin feat/T1-x" "git push -u origin feat/T1-x" \
+    "git log --format=%f -1 | grep -c +" "echo 'git push --force' > notes.md" "cd ~/.claude && ls" \
+    "grep -rn 'cd ~/.config/agent-team' sops"; do
+    for role in builder assistant; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+    if denied_in "$REPO_ROOT/settings/worker.json" "$command"; then echo "settings/worker.json denies: $command" >&2; return 1; fi
+  done
+  # A gate agent never had those deny rules, so the rows leave it as it was.
+  guard -0 "git push --force-with-lease origin feat/T1-x"
+  guard -0 "cd ~/.config/agent-team"
 }

@@ -129,11 +129,11 @@
     },
     {
       "id": "force-push",
-      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
       "input": "git push --force --dry-run .scratch/probe.git HEAD:refs/heads/probe",
-      "expect": "rule",
-      "family": "push"
+      "expect": "hook",
+      "marker": "a force push"
     },
     {
       "id": "protected-push",
@@ -307,16 +307,16 @@
       "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
       "input": "cd ~/.config/agent-team && cd -",
-      "expect": "rule",
-      "family": "review-app-key"
+      "expect": "hook",
+      "marker": "a cd into ~/.config/agent-team"
     },
     {
       "id": "review-app-key-pushd",
       "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
       "input": "pushd ~/.config/agent-team && popd",
-      "expect": "rule",
-      "family": "review-app-key"
+      "expect": "hook",
+      "marker": "a cd into ~/.config/agent-team"
     },
     {
       "id": "devtools-port",

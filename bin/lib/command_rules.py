@@ -24,7 +24,7 @@ row refuses ends the walk: it prints one JSON line, {"rule": <id>, "reason": <te
 <text or null>, "where": <text or null>}, the reason being the text command-guard puts after
 "Blocked by command-guard: ",
 and the allowed way the row's, or one a delete row's refusal names of its own (a relative path
-read from a cd's directory), null for every row but the kill and delete rows; where, for a call of
+read from a cd's directory), null for every row but force-push and the kill and delete rows; where, for a call of
 more than one line, "It stands on line <n> of the call: <the line>", the first line whose own walk
 runs the refused command, else the first holding each of its words (one outside a heredoc's body
 first), and, after a heredoc's closing line, "; the heredoc opened on line <n> (<its operator and
@@ -72,6 +72,18 @@ The rows, in order:
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
+  force-push, for a session with a role (a worker or the assistant; a gate agent has none, and
+    never had the deny rules this row took over): git, past its own options, running push with a
+    long option that names --force, --force-with-lease or --force-if-includes by a prefix of three
+    letters or more, f among a short cluster's flags before -o's value (-f, -uf), or a refspec
+    starting with + (after a -- too). Reason: it rewrites what others pushed. Its allowed way:
+    push without forcing, or start a fresh local branch from the moved remote one.
+  cd-secrets, for a session with a role: cd or pushd whose first operand, as written, holds
+    .config/agent-team, or for a worker .claude/channels, or for the assistant whose last
+    component is discord or discord-assistant. Reason: they hold the team's keys and the Discord
+    bot's files. Each read command by command, never across a call's other commands, as the deny
+    rules they replace in settings/worker.json and assistant.settings.json did (the coordinator,
+    which runs no command-guard, keeps its own).
   The kill rows, bin/lib/kill_rules.py's (its header holds their wording): a kill by name or
     pattern, tmux's kill-*, a kill of PIDs read from input, of a PID the guard cannot read before
     it runs, of a process group, every process or PID 0 or 1, and of a literal PID not proven the
@@ -136,6 +148,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
     ASSIGNMENT, call_commands, command_name, commands, from_wrappers, has_blank, heads, leads, read_command,
+    short_cluster,
 )
 import delete_rules  # noqa: E402
 import kill_rules  # noqa: E402
@@ -423,6 +436,86 @@ def _upload(command, context):
     return outbound.uploads_outside(command)
 
 
+# git's options before its subcommand that take the next word as their value.
+GIT_VALUED = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path"))
+# git push's long options that force, any of which a prefix of three letters or more names.
+FORCES = ("force", "force-with-lease", "force-if-includes")
+
+
+def _git_push(words):
+    """git push's words after push, when words run git push past git's own options, else None."""
+    words = list(words)
+    if not words or command_name(words[0]) != "git":
+        return None
+    k = 1
+    while k < len(words) and words[k].startswith("-"):
+        k += 2 if words[k] in GIT_VALUED else 1
+    return list(words[k + 1 :]) if words[k : k + 1] == ["push"] else None
+
+
+def _forces(args):
+    """Whether git push's words force: a long option naming one of FORCES by a prefix, f among a
+    short cluster's flags before -o's value, or a refspec starting with +."""
+    ended = False
+    for word in args:
+        if ended or not word.startswith("-"):
+            if word.startswith("+"):
+                return True
+        elif word == "--":
+            ended = True
+        elif word.startswith("--"):
+            name = word[2:].partition("=")[0]
+            if len(name) >= 3 and any(force.startswith(name) for force in FORCES):
+                return True
+        elif "f" in short_cluster(word, "o")[0]:
+            return True
+    return False
+
+
+def _force_push(command, context):
+    """A worker's or the assistant's force push; a gate agent, which has no role, never had the
+    deny rules this row took over."""
+    if not context.role:
+        return False
+    return any((args := _git_push(words)) is not None and _forces(args) for words in heads(command))
+
+
+# The directories a cd may not enter, by role: a worker's and the assistant's.
+WORKER_KEPT_OUT = (".config/agent-team", ".claude/channels")
+ASSISTANT_KEPT_OUT = (".config/agent-team",)
+# The Discord bot's directories the assistant keeps out of, by their last component.
+DISCORD = ("discord", "discord-assistant")
+
+
+def _cd_into(command, context):
+    """A worker's or the assistant's cd or pushd whose target, as written, names one of the
+    directories its role keeps out of."""
+    if not context.role:
+        return None
+    assistant = context.role == "assistant"
+    for words in heads(command):
+        if not words or command_name(words[0]) not in ("cd", "pushd"):
+            continue
+        targets = [word for word in words[1:] if not word.startswith("-")]
+        target = targets[0] if targets else ""
+        kept = ASSISTANT_KEPT_OUT if assistant else WORKER_KEPT_OUT
+        if any(name in target for name in kept) or (
+            assistant and target.rstrip("/").rpartition("/")[2] in DISCORD
+        ):
+            return CD_ASSISTANT if assistant else CD_SECRETS
+    return None
+
+
+FORCE_REASON = (
+    "a force push (git push with --force, --force-with-lease, --force-if-includes, -f or a +refspec),"
+    " which rewrites what others pushed"
+)
+FORCE_WAY = (
+    "push without forcing; when the remote branch moved under you, start a fresh local branch from it under a new"
+    " name and carry your commits over"
+)
+CD_SECRETS = "a cd into ~/.config/agent-team or ~/.claude/channels, which hold the team's keys and the Discord bot's files"
+CD_ASSISTANT = "a cd into ~/.config/agent-team or the Discord bot's directories, which hold the team's keys and the bot's files"
 ROLE_REASON = "a worker's role and task are its settings' ({})"
 LOGIN_REASON = "a session's GitHub login is its settings' ({})"
 
@@ -471,6 +564,8 @@ ROWS = (
         "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
     ),
     Row("upload", _upload, outbound.REASON),
+    Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
+    Row("cd-secrets", _cd_into, None),
 ) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS) + (
     # Last, so a more particular row behind an emptied environment (a team script, an upload, a
     # kill or a delete) speaks first.

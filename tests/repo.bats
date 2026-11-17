@@ -667,9 +667,21 @@ bin/tool:2"
       'base64 < "$HOME/.config/agent-team/review-app.pem"' 'openssl rsa -in ~/.config/agent-team/review-app.pem -text' \
       'cp ~/.config/agent-team/review-app.pem /tmp/k' 'cat ~/.config/agent-team/review-app.p*' \
       'cat ~/.config/agent-team/*.pem' 'cd ~/.config && cat agent-team/review-app.pem' \
-      'cd ~/.config/agent-team && cat review-app.pem' 'pushd ~/.config/agent-team' \
       'cat /home/someone/.config/agent-team/review-app.pem | base64'; do
       denied_in "$REPO_ROOT/$file" "$command" || { echo "$file allows: $command" >&2; return 1; }
+    done
+    # A cd into the key's directory: the coordinator's deny rules refuse it, and command-guard's
+    # cd-secrets row a worker's and the assistant's, command by command.
+    for command in 'cd ~/.config/agent-team && cat review-app.pem' 'pushd ~/.config/agent-team'; do
+      if [[ $file == coordinator.settings.json ]]; then
+        denied_in "$REPO_ROOT/$file" "$command" || { echo "$file allows: $command" >&2; return 1; }
+      else
+        local role=builder
+        [[ $file != assistant.settings.json ]] || role=assistant
+        AGENT_TEAM_ROLE=$role run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+          '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+        assert_contains "$stderr" "Blocked by command-guard: a cd into ~/.config/agent-team"
+      fi
     done
     for command in 'team-review-check https://github.com/o/r/pull/1 0123 success ok' 'team-secrets check' \
       'cat bin/lib/review-app' 'cat ~/.config/agent-team/home' 'grep -rn review-app.pem bin sops' \
@@ -1725,10 +1737,12 @@ coordinator_deny_gaps() {
   local coordinator=$REPO_ROOT/coordinator.settings.json launcher=$REPO_ROOT/bin/claude-coordinator
   local rules missing command bad=$BATS_TEST_TMPDIR/settings.json
   assert_equal "$(coordinator_deny_gaps "$coordinator" "$launcher")" ""
-  # The workers' 43 rules of these families, in their own text, with and without git -C.
+  # The workers' 33 rules of these families, in their own text, with and without git -C (their force
+  # push is command-guard's force-push row, and the coordinator, which runs no command-guard, keeps
+  # those rules).
   rules=$(jq -r '.permissions.deny[] | select(test("^Bash\\((git (-C \\* )?push (--force|-f|\\* --force|\\* -f|\\* \\+|origin (HEAD:)?(dev|main))|git reset (\\* )?--hard|git clean|git branch -D|(\\*/)?docker (\\* )?[a-z]+ prune)"))' \
     "$REPO_ROOT/settings/worker.json")
-  assert_equal "$(wc -l <<<"$rules")" 43
+  assert_equal "$(wc -l <<<"$rules")" 33
   missing=$(jq -r --arg rules "$rules" '($rules | split("\n")) - .permissions.deny | .[]' "$coordinator")
   assert_equal "$missing" ""
   # The commands it still runs.
@@ -1742,13 +1756,18 @@ coordinator_deny_gaps() {
   # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a
   # path (a whole tool the coordinator denies is one it does not use, which
   # tests/claude-assistant.bats lists), but for the coordinator's own seven on its GitHub login
-  # (the three variables and the four ways to empty the environment), which the assistant's
-  # command-guard hook holds, and its launcher's header names the same
+  # (the three variables and the four ways to empty the environment) and its ten on a force push
+  # and two on a cd into ~/.config/agent-team, which the assistant's command-guard hook holds
+  # (its git push * rules refuse every push besides), and its launcher's header names the same
   # families.
   assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
   assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" \
     "$(printf '%s\n' 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)' \
-      'Bash(*env -i*)' 'Bash(*env --i*)' 'Bash(*env - *)' 'Bash(*exec -c*)')"
+      'Bash(*env -i*)' 'Bash(*env --i*)' 'Bash(*env - *)' 'Bash(*exec -c*)' \
+      'Bash(git push --force*)' 'Bash(git push -f*)' 'Bash(git push * --force*)' 'Bash(git push * -f*)' \
+      'Bash(git push * +*)' 'Bash(git -C * push --force*)' 'Bash(git -C * push -f*)' \
+      'Bash(git -C * push * --force*)' 'Bash(git -C * push * -f*)' 'Bash(git -C * push * +*)' \
+      'Bash(cd *.config/agent-team*)' 'Bash(pushd *.config/agent-team*)')"
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \

@@ -317,15 +317,15 @@ assert_nothing_written() {
       { echo "no path spelling of $rule" >&2; return 1; }
   done < <(jq -r '.permissions.deny[] | select(test("^Bash\\((team-|claude-coordinator )"))' "$settings")
   # But for the tools the coordinator denies only to keep their definitions out of its context,
-  # and its rules on its GitHub login, which the assistant's command-guard hook holds instead.
+  # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
+  # assistant's command-guard hook holds instead, command by command.
   assert_equal "$(jq -r --slurpfile a "$settings" '.permissions.deny - $a[0].permissions.deny | .[]' "$REPO_ROOT/coordinator.settings.json" | paste -sd ' ')" \
-    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow Bash(*GH_CONFIG_DIR*) Bash(*GH_TOKEN*) Bash(*GITHUB_TOKEN*) Bash(*env -i*) Bash(*env --i*) Bash(*env - *) Bash(*exec -c*)"
+    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow Bash(*GH_CONFIG_DIR*) Bash(*GH_TOKEN*) Bash(*GITHUB_TOKEN*) Bash(*env -i*) Bash(*env --i*) Bash(*env - *) Bash(*exec -c*) Bash(git push --force*) Bash(git push -f*) Bash(git push * --force*) Bash(git push * -f*) Bash(git push * +*) Bash(git -C * push --force*) Bash(git -C * push -f*) Bash(git -C * push * --force*) Bash(git -C * push * -f*) Bash(git -C * push * +*) Bash(cd *.config/agent-team*) Bash(pushd *.config/agent-team*)"
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
-    "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels/discord && cat .env" \
-    "cd ~/.claude/channels/discord-assistant && cat .env" "cd ~/.claude/channels && cat discord/.env" \
-    "pushd ~/.claude/channels/discord" "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
+    "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels && cat discord/.env" \
+    "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
     "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
     "git push" "git push origin main" "git push -u origin x" "git -C ~/agent-team-records push" \
     "git -C ~/agent-team-records push origin main" "git commit -m x" "git -C ~/agent-team-records commit -m x" \
@@ -348,6 +348,14 @@ assert_nothing_written() {
     "claude -p hi" "claude --model opus --print hi" "$HOME/.local/bin/claude stop x" \
     "sudo pacman -S jq" "op read op://x/y" "cat /proc/1/environ"; do
     denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
+  done
+  # A cd into the bot's directories: its command-guard hook refuses it, command by command.
+  # shellcheck disable=SC2088
+  for command in "cd ~/.claude/channels/discord && cat .env" "cd ~/.claude/channels/discord-assistant && cat .env" \
+    "pushd ~/.claude/channels/discord" "cd ~/.config/agent-team && cat review-app.pem"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: a cd into ~/.config/agent-team or the Discord bot's directories"
   done
 }
 

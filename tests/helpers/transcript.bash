@@ -27,7 +27,7 @@
 #                                          bin/<script> prints when it runs <command>'s words with
 #                                          AGENT_TEAM_ROLE=<role>, so a reworded refusal shows here;
 #                                          it fails when the script exits 0
-#   hook_result <id> <hook> <tool> <input JSON> <cwd>
+#   hook_result <id> <hook> <tool> <input JSON> <cwd> [<role>]
 #                                          the hook's result entry for the call: tool_result's
 #                                          hook outcome, its text Claude Code's wrapper around
 #                                          what the real bin/hooks/<hook> prints on stderr when
@@ -37,7 +37,8 @@
 #                                          CLAUDE_JOB_DIR, since the scratch hook lets a shell
 #                                          write under either, and the sandbox is under TMPDIR;
 #                                          the call is a session's of its own, HOOK_SESSION, as
-#                                          the session records guard reads one
+#                                          the session records guard reads one, and its
+#                                          AGENT_TEAM_ROLE is <role>, none when none is given
 #   as_text_list                           a filter turning a result's string content into the
 #                                          list form
 
@@ -83,7 +84,7 @@ hook_result() {
   message=$(jq -cn --arg tool "$tool" --argjson input "$input" --arg cwd "$cwd" \
     --arg session "$HOOK_SESSION" \
     '{session_id: $session, hook_event_name: "PreToolUse", cwd: $cwd, tool_name: $tool, tool_input: $input}' |
-    TMPDIR=$BATS_TEST_TMPDIR/hook-tmp CLAUDE_JOB_DIR='' CLAUDE_PROJECT_DIR=$cwd \
+    TMPDIR=$BATS_TEST_TMPDIR/hook-tmp CLAUDE_JOB_DIR='' CLAUDE_PROJECT_DIR=$cwd AGENT_TEAM_ROLE=${6:-} \
       "$REPO_ROOT/bin/hooks/$hook" 2>&1 >/dev/null) && {
     echo "hook_result: bin/hooks/$hook let the $tool call through" >&2
     return 1
