@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # team-tokens: the last seven days end with the newest quota reading, team-quota status's, in its
-# text and its JSON, and a team-quota that fails leaves the rest of the report whole; and the
-# status-report skill sends the coordinator to both for usage.
+# text and its JSON, with team-quota's note under the table when the reading holds no model window,
+# and a team-quota that fails leaves the rest of the report whole; and the status-report skill
+# sends the coordinator to both for usage.
 
 load helpers/common
 
@@ -47,6 +48,25 @@ seven_days() {
   assert_contains "$section" "| seven_day | 72% | resets Mon 09:00 |"
   assert_contains "$section" "| model:Fable | 91% | resets Mon 09:00 |"
   [[ $output != *"in no data"* ]]
+}
+
+@test "a reading with no model window has team-quota's note under the table, in its words, and one with a model window none" {
+  local note="model windows: none in this reading, since Claude Code's status line gives no model's own week (/usage shows it)"
+  reading 12
+  run_bin -0 team-tokens
+  [[ $(seven_days <<<"$output") != *"model windows:"* ]]
+  run_bin -0 team-tokens --json
+  assert_equal "$(jq -c '.quota.model_note' <<<"$output")" null
+  # The week alone, as Claude Code's status line gives it.
+  jq -c '.models = [] | del(.windows.five_hour)' "$TEAM_HOME"/usage/laptop/quota/*.jsonl >"$BATS_TEST_TMPDIR/r"
+  cat "$BATS_TEST_TMPDIR/r" >"$(echo "$TEAM_HOME"/usage/laptop/quota/*.jsonl)"
+  run_bin -0 team-tokens
+  local section
+  section=$(seven_days <<<"$output")
+  assert_contains "$section" "| seven_day | 72% | resets Mon 09:00 |"$'\n\n'"$note."
+  [[ $section != *"model:"* ]]
+  run_bin -0 team-tokens --json
+  assert_equal "$(jq -r '.quota.model_note' <<<"$output")" "$note"
 }
 
 @test "a stale reading says so, and a window that reset since it says that" {

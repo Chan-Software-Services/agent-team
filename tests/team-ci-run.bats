@@ -4,6 +4,7 @@
 # that steps the looks.
 
 load helpers/common
+load helpers/github-api
 
 setup() {
   sandbox
@@ -21,6 +22,9 @@ setup() {
   export GH_DIR=$BATS_TEST_TMPDIR/gh HEAD_SHA=$head BRANCH_NAME=$branch
   mkdir -p "$GH_DIR"
   echo 0 >"$GH_DIR/look"
+  github_stub_setup
+  # team-ci-wait reads GitHub again at each look, with no time passing but the stub sleep's.
+  export TEAM_GITHUB_FRESH_SECONDS=0
   stub_gh
   stub_sleep
   # Origin's branch at the head, no open PR of it, no run of the head, an idle repository, and a gh
@@ -33,9 +37,11 @@ setup() {
 }
 
 # answer <look> <what> <answer>: from look <look> on, gh answers <what> (list, branch, prs, dispatch,
-# running, run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, or "fail" (gh cannot
-# reach GitHub); for branch also "missing" (a 404), and for dispatch "url <run id>" (gh prints the
-# run's URL), "quiet" (gh prints none) or "refused" (GitHub refuses the dispatch).
+# running, run-<run id>, jobs-<run id> or job-<job id>) with <answer>: for a read, JSON, "fail" (gh
+# cannot reach GitHub) or "limited:<github_limited's arguments>" (GitHub refuses it for the rate
+# limit); for branch also "missing" (a 404), and for dispatch "url <run id>" (gh prints the
+# run's URL), "quiet" (gh prints none), "refused" (GitHub refuses the dispatch) or "limited" (the
+# rate limit refuses it, as gh workflow run says so).
 answer() {
   printf '%s\n' "$3" >"$GH_DIR/$2.$1"
 }
@@ -79,11 +85,12 @@ branch_at() {
   esac
 }
 
-# prs <look> [<number>:<head>]...: the branch's open PRs, from <look> on.
+# prs <look> [<number>:<head>]...: the branch's open PRs as the REST list shows them, from <look> on.
 prs() {
   local look=$1
   shift
-  answer "$look" prs "$(jq -cn '[$ARGS.positional[] | split(":") | {number: (.[0] | tonumber), headRefOid: .[1]}]' --args "$@")"
+  answer "$look" prs "$(jq -cn '[$ARGS.positional[] | split(":") | {number: (.[0] | tonumber), state: "open",
+    head: {sha: .[1], ref: env.BRANCH_NAME}}]' --args "$@")"
 }
 
 # dispatch <look> <how>: what gh workflow run does, from <look> on.
@@ -97,15 +104,31 @@ green() {
   run_jobs "$1" 7001 lint:completed:success:70
 }
 
-# gh answers each read and the dispatch from the latest answer at or before the current look.
-# Anything unplanned fails, a dispatch of another workflow, repo or branch among them.
+# gh answers each read and the dispatch from the latest answer at or before the current look: every
+# read, team-ci-run's and team-ci-wait's, comes through the reader (gh api -i), answered in gh api
+# -i's form through tests/helpers/github-api.bash, a 304 when the read sends the answer's ETag; gh
+# api rate_limit answers the planned budgets. Anything unplanned fails, a dispatch of another
+# workflow, repo or branch among them.
 stub_gh() {
   stub_script gh <<'EOF'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
 n=$(cat "$GH_DIR/look")
+args=() raw=false
+while (($#)); do
+  case $1 in
+    -i) raw=true ;;
+    -H) shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+set -- "${args[@]}"
+[[ "$*" != "api rate_limit" ]] || github_rate_limit
 case "$*" in
   "api repos/owner/proj/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&per_page=100") what=list ;;
   "api repos/owner/proj/branches/$BRANCH_NAME") what=branch ;;
-  "pr list --repo owner/proj --head $BRANCH_NAME --state open --json number,headRefOid") what=prs ;;
+  "api repos/owner/proj/pulls?head=owner:$BRANCH_NAME&state=open&per_page=100") what=prs ;;
   "workflow run ci.yml --repo owner/proj --ref $BRANCH_NAME") what=dispatch ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") what=running ;;
   "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${2%/jobs*} what=jobs-${what##*/} ;;
@@ -117,10 +140,17 @@ m=$n
 while ((m >= 0)) && [[ ! -e $GH_DIR/$what.$m ]]; do m=$((m - 1)); done
 if ((m < 0)); then echo "no answer planned for $what at look $n" >&2; exit 1; fi
 body=$(cat "$GH_DIR/$what.$m")
+if $raw; then
+  case $body in
+    fail) github_offline ;;
+    missing) github_answer 404 '{"message": "Branch not found"}' ;;
+    limited:*) read -ra how <<<"${body#limited:}"; github_limited "${how[@]}" ;;
+  esac
+  github_answer 200 "$body"
+fi
 case $body in
-  fail) echo "error connecting to api.github.com" >&2; echo "check your internet connection" >&2; exit 1 ;;
-  missing) echo '{"message": "Branch not found", "status": "404"}'; echo "gh: Branch not found (HTTP 404)" >&2; exit 1 ;;
   refused) echo "could not create workflow dispatch event: HTTP 422: Workflow does not have 'workflow_dispatch' trigger" >&2; exit 1 ;;
+  limited) echo "could not create workflow dispatch event: HTTP 403: API rate limit exceeded for user ID 1. (https://api.github.com/repos/owner/proj/actions/workflows/ci.yml/dispatches)" >&2; exit 1 ;;
   quiet) echo "✓ Created workflow_dispatch event for ci.yml at $BRANCH_NAME" ;;
   "url "*)
     echo "✓ Created workflow_dispatch event for ci.yml at $BRANCH_NAME"
@@ -131,9 +161,9 @@ esac
 EOF
 }
 
-# The stub sleep moves on to the next look and, after LOOK_LIMIT looks (default 200), stops the wait
-# with exit 99, so a wait that never ends shows as that exit. The uname stub keeps it ahead of
-# Homebrew's GNU sleep on macOS.
+# The stub sleep moves on to the next look, and the reader's clock on by its seconds, and, after
+# LOOK_LIMIT looks (default 200), stops the wait with exit 99, so a wait that never ends shows as
+# that exit. The uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
 stub_sleep() {
   stub_command sleep uname
   stub_reply uname Linux
@@ -141,7 +171,25 @@ stub_sleep() {
 n=\$(cat "$GH_DIR/look")
 ((n < \${LOOK_LIMIT:-200})) || exit 99
 echo \$((n + 1)) >"$GH_DIR/look"
+echo "\$1" >>"$GH_DIR/sleeps"
+echo \$((\$(cat "\$TEAM_GITHUB_CLOCK") + \$1)) >"\$TEAM_GITHUB_CLOCK"
 EOF
+}
+
+# The seconds of each sleep, team-ci-run's and team-ci-wait's, on one line.
+sleeps() {
+  if [[ -e $GH_DIR/sleeps ]]; then paste -sd' ' "$GH_DIR/sleeps"; fi
+}
+
+# limit_text <until> <resource> <kind>: the reader's wording of a limit, its end in local time.
+limit_text() {
+  local at
+  at=$(date -d "@$1" +%H:%M)
+  if [[ $3 == secondary ]]; then
+    echo "GitHub's secondary rate limit holds the team's requests until $at; this is no outage"
+  else
+    echo "GitHub's API rate limit for core requests is used up until $at, when it resets; this is no outage"
+  fi
 }
 
 # The look the command ended at.
@@ -149,9 +197,10 @@ ended_at() {
   cat "$GH_DIR/look"
 }
 
-# Each gh call made, its arguments on one line.
+# Each gh call made, its arguments on one line, with the reader's -i and its -H header left out.
 gh_calls() {
-  stub_calls gh | jq -r 'join(" ")'
+  stub_calls gh | jq -r '. as $a | [range(length) | select($a[.] != "-i" and $a[.] != "-H" and (. == 0 or $a[. - 1] != "-H"))
+    | $a[.]] | join(" ")'
 }
 
 # The runs gh was asked to start, one line each.
@@ -173,7 +222,7 @@ team-ci-wait: every check passed on a1b2c3d: lint passed"
   # Before it starts the run it reads the head's runs, origin's branch and the branch's open PRs, once each.
   assert_equal "$(gh_calls | sed -n '1,4p')" "api repos/owner/proj/actions/workflows/ci.yml/runs?head_sha=$head&per_page=100
 api repos/owner/proj/branches/$branch
-pr list --repo owner/proj --head $branch --state open --json number,headRefOid
+api repos/owner/proj/pulls?head=owner:$branch&state=open&per_page=100
 workflow run ci.yml --repo owner/proj --ref $branch"
 }
 
@@ -199,7 +248,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_contains "$output" "team-ci-wait: every check passed on a1b2c3d: lint passed"
   assert_equal "$(dispatches)" ""
   # A found run ends the looking: nothing of origin's branch or its PRs is read.
-  if gh_calls | grep -e branches -e '^pr list'; then return 1; fi
+  if gh_calls | grep -e branches -e '/pulls?'; then return 1; fi
   # A PR's run of the same commit on another branch is a run of the head too.
   listed 0 "$(a_run 7001 pull_request completed success "$head" feat/T1-work)"
   green 0 pull_request
@@ -344,6 +393,79 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 1
   assert_equal "$output" "team-ci-run: the run $run_url is of 9999999, not a1b2c3d: $branch moved; push your head and run team-ci-run again"
   if gh_calls | grep -e '/jobs' -e in_progress; then return 1; fi
+}
+
+@test "a limit its own look meets is slept out to a second past its reset, said once on stderr, and the run then found is waited on" {
+  now=$(github_now)
+  github_budget core 5000 1000 $((now + 600))
+  answer 0 list limited:primary
+  listed 1 "$(a_run 7001 workflow_dispatch completed success)"
+  green 1
+  run_bin --separate-stderr team-ci-run proj "$branch" "$head"
+  assert_equal "$status" 0
+  assert_equal "${lines[0]}" "team-ci-run: waiting on $run_url (workflow_dispatch, found) of a1b2c3d"
+  assert_contains "$output" "team-ci-wait: every check passed on a1b2c3d: lint passed"
+  assert_equal "$stderr" "team-ci-run: $(limit_text $((now + 600)) core primary); waiting for it, then looking again"
+  # The one sleep before the run is found is the limit's, to a second past its reset.
+  assert_equal "$(sleeps | cut -d' ' -f1)" 601
+  assert_equal "$(github_requests | head -1)" "repos/owner/proj/actions/workflows/ci.yml/runs?head_sha=$head&per_page=100 403"
+  assert_equal "$(dispatches)" ""
+  # A limit is no outage: nothing holds the team for it.
+  [[ ! -e $HOME/.local/state/agent-team/offline ]]
+}
+
+@test "a limit another process met is slept out with no request, and the grace counts only the look sleeps" {
+  now=$(github_now)
+  mkdir -p "$HOME/.local/state/agent-team/github"
+  jq -cn --argjson until $((now + 300)) '{resource: "core", kind: "primary", until: $until, seen: 1, by: "team-ci-wait", endpoint: "x"}' \
+    >"$HOME/.local/state/agent-team/github/limit.json"
+  branch_at 0 "$other"
+  run_bin --separate-stderr team-ci-run proj "$branch" "$head"
+  assert_equal "$status" 1
+  assert_equal "$output" "team-ci-run: origin's $branch is at 9999999, not a1b2c3d: push that head, then run team-ci-run again"
+  assert_equal "$stderr" "team-ci-run: $(limit_text $((now + 300)) core primary); waiting for it, then looking again"
+  # 301 s of the limit, then the 2 minutes of looks, one every 10 seconds.
+  assert_equal "$(sleeps)" "301 10 10 10 10 10 10 10 10 10 10 10 10"
+  assert_equal "$(github_requests | head -1)" "repos/owner/proj/actions/workflows/ci.yml/runs?head_sha=$head&per_page=100 200"
+}
+
+@test "a dispatch the limit refused started nothing, and is sent again once the limit is slept out" {
+  now=$(github_now)
+  dispatch 0 limited
+  dispatch 1 "url 7001"
+  green 0
+  run_bin --separate-stderr team-ci-run proj "$branch" "$head"
+  assert_equal "$status" 0
+  assert_equal "${lines[0]}" "team-ci-run: waiting on $run_url (workflow_dispatch, started) of a1b2c3d"
+  # gh api rate_limit shows no resource used up, so the limit is a secondary one, of 60 s.
+  assert_equal "$stderr" "team-ci-run: $(limit_text $((now + 60)) all secondary); waiting for it, then looking again"
+  assert_equal "$(sleeps | cut -d' ' -f1)" 61
+  assert_equal "$(dispatches)" "workflow run ci.yml --repo owner/proj --ref $branch
+workflow run ci.yml --repo owner/proj --ref $branch"
+}
+
+@test "its limit sleeps never come to more than 90 minutes: then it ends exit 75 with the limit's text" {
+  now=$(github_now)
+  answer 0 list "limited:retry-after 1800"
+  run_bin --separate-stderr team-ci-run proj "$branch" "$head"
+  assert_equal "$status" 75
+  # Two sleeps of 1801 s; a third would come to 5403 s, past the 5400.
+  assert_equal "$(sleeps)" "1801 1801"
+  assert_equal "$(ended_at)" 2
+  assert_equal "$output" "team-ci-run: $(limit_text $((now + 3602 + 1800)) all secondary): run team-ci-run again after it"
+  assert_equal "$stderr" "team-ci-run: $(limit_text $((now + 1800)) all secondary); waiting for it, then looking again
+team-ci-run: $(limit_text $((now + 1801 + 1800)) all secondary); waiting for it, then looking again"
+  assert_equal "$(dispatches)" ""
+}
+
+@test "its looks come more seldom as the hour's core budget falls" {
+  now=$(github_now)
+  # A quarter of the hour's budget left: 120 s a look, so the 2 minutes' grace is one look.
+  github_budget core 5000 3800 $((now + 3600))
+  branch_at 0 "$other"
+  run_bin team-ci-run proj "$branch" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(sleeps)" 120
 }
 
 @test "a dispatch GitHub refuses ends exit 1 with gh's reason, and is not tried again" {

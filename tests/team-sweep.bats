@@ -649,16 +649,20 @@ T9 stalled: T9-builder 9a8b7c6d has written nothing for 55m, waiting on \"tests/
   assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 1h55m, waiting on \"$wait\" (Bash, in the background, running 1h56m); next:"
 }
 
-@test "stalled: a team-ci-run wait on a branch's CI run passes past 50 minutes, and is named at 1 hour 55 minutes" {
+@test "stalled: a team-ci-run wait on a branch's CI run, which may sleep 90 minutes through GitHub's rate limit before its wait, passes at 3 hours 20 minutes, and is named at 3 hours 30 minutes" {
   opened T8
   launch T8 builder 4f2a9c1e
   sessions "$(session 4f2a9c1e T8-builder busy working)"
   local wait='/home/x/agent-team/bin/team-ci-run proj feat/T8-x 5413b8ce777cea7ed3f1ebb0fdf6802072f1d7a3'
-  { call toolu_01 106 Bash "$wait" background; result toolu_01 106 background; } | transcript - 4f2a9c1e 105
+  { call toolu_01 201 Bash "$wait" background; result toolu_01 201 background; } | transcript - 4f2a9c1e 200
   run_bin -0 team-sweep
-  { call toolu_01 116 Bash "$wait" background; result toolu_01 116 background; } | transcript - 4f2a9c1e 115
+  { call toolu_01 211 Bash "$wait" background; result toolu_01 211 background; } | transcript - 4f2a9c1e 210
   run_bin -1 team-sweep
-  assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 1h55m, waiting on \"$wait\" (Bash, in the background, running 1h56m); next:"
+  assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 3h30m, waiting on \"$wait\" (Bash, in the background, running 3h31m); next:"
+  # Beside a team-ci-wait, the longer limit holds it.
+  { call toolu_01 201 Bash "team-ci-wait --run 7 proj && $wait" background; result toolu_01 201 background; } |
+    transcript - 4f2a9c1e 200
+  run_bin -0 team-sweep
   # A name that only contains it is no wait on CI: the default limit holds it.
   { call toolu_01 56 Bash "team-ci-runner proj feat/T8-x" background; result toolu_01 56 background; } |
     transcript - 4f2a9c1e 55

@@ -7,6 +7,7 @@
 load helpers/common
 load helpers/doctor
 load helpers/inbox
+load helpers/github-api
 
 setup() {
   sandbox
@@ -361,6 +362,8 @@ exit 22
 EOF
   inbox_discord
   echo '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]' >"$STUB_FIXTURES/agents.json"
+  # GitHub answers the heartbeat's github step with an idle hour, so its runs below are good.
+  github_heartbeat_stub
   local state=$HOME/.local/state/agent-team fix
   fix="read ~/.local/state/agent-team/heartbeat-failures.log for each failed step's reason, fix what it names, then run team-checkpoint --force"
 

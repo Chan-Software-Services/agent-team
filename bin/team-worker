@@ -98,9 +98,13 @@
 # keep a launch within the 2 minutes Claude Code gives a foreground Bash call by default, as the
 # coordinator's team-next runs it. It leaves at once a busy one whose work is not handed on, one
 # waiting for input, one whose status is not idle, one with no such event and an ops session;
-# team-close still removes every session at the close. Each stop and each session left is said
-# on stderr; a stop that fails, or a session list that cannot be read, is a warning, and the
-# launch goes on. T0 stops nothing.
+# waiting for input is as team-sweep's waiting-input reads it: a session whose state is blocked,
+# but never a builder idle with no dialog open (no waitingFor) after the pr it delivered, with
+# nothing asked of it since, which Claude Code calls blocked for a last summary that says it
+# waits on the merge, and which its pr hands on, so it is stopped. team-close still removes
+# every session at the close. Each stop and each session left is said on stderr; a stop that
+# fails, or a session list that cannot be read, is a warning, and the launch goes on. T0 stops
+# nothing.
 # When the worktree's project names a model for the role in the registry (team-project's models),
 # or --model names one, the session launches on it (claude --model) and the launch logs it as
 # model; otherwise it runs on the user settings' model, and logs none. Ops never takes one, and
@@ -122,9 +126,11 @@
 # after the project for ticket NN's builder (settings.builder.<project>--NN.json), and
 # settings.<role>.json and mcp.<role>.json otherwise; @TEAM_CODE@ in either names this checkout,
 # @TASK@ the task, @TASK_DIR@ the team home's tasks/<task>/, @WORKTREE@ the worktree by its real
-# path (the effect toolkit's Foldkit DevTools server's project root), and @ROLE@ the role (the
+# path (the effect toolkit's Foldkit DevTools server's project root), @ROLE@ the role (the
 # settings' AGENT_TEAM_ROLE, the signal a hook sees in a team session, and with AGENT_TEAM_TASK,
-# the task, what worker_refusal in bin/lib/team.sh reads). The registry's
+# the task, what worker_refusal in bin/lib/team.sh reads), and @SESSION@ the session's name,
+# T<n>-<role> or a ticket builder's T<n>-builder-NN (the settings' CHROME_DEVTOOLS_AXI_SESSION,
+# so each session drives a chrome-devtools-axi browser of its own). The registry's
 # projects, in its order, fill four more, for the autoMode lines: @PROJECT_REPOS@ each one's
 # repo and primary checkout ("owner/a (primary checkout ~/a) and owner/b (...)"),
 # @PROJECT_ORIGINS@ each one's origin, its own owner's ("github.com/owner/a or github.com/c/d"),
@@ -174,7 +180,8 @@
 # (a YAML explicit key), so a file this cannot read with certainty is a doubt; evals/, which no
 # session loads, may hold anything. No skill file holds an exclamation mark anywhere, since Claude
 # Code runs a command a skill's text writes with one, and looks for it after filling the skill's
-# arguments in. The toolkit's name, each skill directory's and each agent file's before its .md
+# arguments in; settings/worker.json's disableSkillShellExecution turns that off, so this is a
+# second layer. The toolkit's name, each skill directory's and each agent file's before its .md
 # hold only lowercase letters, digits and dashes, since Claude Code's text of a skill opens with
 # the skill directory's path, where a name could write such a command. A toolkit
 # that fails any of these is checked against the project's list like every other, so one that
@@ -657,8 +664,9 @@ fi
 # waited on, all of them under one deadline of IDLE_SECONDS, the list read again every 2 seconds:
 # one that goes idle is stopped, one that leaves the list ended on its own, and one that turns to
 # any other state, or is still busy at the deadline, is left and named.
-# A session that is busy with its work not handed on, waiting for input, not idle by its status, or
-# idle with no such event is left and named at once, and so is an ops session.
+# A session that is busy with its work not handed on, waiting for input (waits_for_input, the
+# sweep's reading too), not idle by its status, or idle with no such event is left and named at
+# once, and so is an ops session.
 # The session list is read only when such a launch exists, and a list that cannot be read or a
 # stop that fails never stops the launch. They are stopped before the launch asks for room,
 # whatever becomes of it, so their use is not counted against it; so is one that ended while
@@ -814,9 +822,12 @@ facts=$(while IFS= read -r name; do team_project "$name" || exit 1; done <<<"$re
 
 # @TEAM_CODE@ names this checkout, where the hooks and toolkits live; @TASK@ names the task, and
 # @TASK_DIR@ its directory in the team home, where its records live (the ops log); @WORKTREE@ the
-# worktree; @ROLE@ the role; the @PROJECT_*@ four the registry's projects.
+# worktree; @ROLE@ the role; @SESSION@ the session's name; the @PROJECT_*@ four the registry's
+# projects.
+name=$task-$role${ticket:+-$ticket}
 substitute='walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TASK@"; $task)
-  | gsub("@TASK_DIR@"; $taskdir) | gsub("@WORKTREE@"; $worktree) | gsub("@ROLE@"; $role) | gsub("@PROJECT_REPOS@"; $facts.repos)
+  | gsub("@TASK_DIR@"; $taskdir) | gsub("@WORKTREE@"; $worktree) | gsub("@ROLE@"; $role) | gsub("@SESSION@"; $session)
+  | gsub("@PROJECT_REPOS@"; $facts.repos)
   | gsub("@PROJECT_VISIBILITY@"; $facts.visibility) | gsub("@PROJECT_BASES@"; $facts.bases)
   | gsub("@PROJECT_ORIGINS@"; $facts.origins) else . end)'
 
@@ -843,7 +854,7 @@ shell_prefix=''
 # autoMode.environment its line, after the placeholders are filled. T0's planner, builder and
 # reviewer get Remote Control off (see the header).
 settings=$taskdir/settings.$stem.json
-jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
+jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --arg session "$name" --argjson facts "$facts" \
   --arg memory "$memory" --arg shell_prefix "$shell_prefix" --arg git_dir "$common_dir" \
   --argjson login_env "$login_env" --arg login_line "$login_line" '.[0] as $base | .[1] as $own
   | ($base * $own)
@@ -884,7 +895,7 @@ for kit in "${toolkits[@]}"; do
 done
 if [[ ${#mcp_files[@]} -gt 0 ]]; then
   server_roles=$(jq -s 'add // {}' "${roles_files[@]}" </dev/null) || exit 1
-  jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --argjson facts "$facts" \
+  jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --arg session "$name" --argjson facts "$facts" \
     --argjson roles "$server_roles" '{mcpServers: (map(.mcpServers // {}) | add
       | with_entries(select($roles[.key] == null or any($roles[.key][]; . == $role)))
       | if $role == "ops" then map_values(.env = (.env // {}) + {AGENT_TEAM_ROLE: "ops"}) else . end)} | '"$substitute" \
@@ -1003,7 +1014,6 @@ else
   mv -f -- "$tmp" "$system_prompt"
 fi
 
-name=$task-$role${ticket:+-$ticket}
 # --mcp-config and --tools take several values, so neither may come right before the prompt.
 out=$(cd "$worktree" && claude --bg "${restricted[@]}" "${sources[@]}" \
   --strict-mcp-config --mcp-config "$mcp" \
