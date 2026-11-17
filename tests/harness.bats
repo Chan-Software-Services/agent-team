@@ -46,6 +46,16 @@ setup() {
   [[ -x $stub && -x $BATS_TEST_TMPDIR/stubs/curl ]]
 }
 
+@test "a sandboxed test's mktemp, and a script's it runs, make their paths inside the test's own directory" {
+  local tmp=$BATS_TEST_TMPDIR/tmp mine
+  assert_equal "$TMPDIR" "$tmp"
+  mine=$(mktemp)
+  [[ $mine == "$tmp"/* ]]
+  run -0 bash -c 'mktemp && mktemp -d'
+  assert_equal "${#lines[@]}" 2
+  [[ ${lines[0]} == "$tmp"/* && -f ${lines[0]} && ${lines[1]} == "$tmp"/* && -d ${lines[1]} ]]
+}
+
 @test "the sandbox's git config is the file git config --global writes" {
   assert_equal "$(cat "$HOME/.gitconfig")" "$(printf '[user]\n\tname = Team Test\n\temail = team-test@example.invalid\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false')"
   assert_equal "$(git config --global --list)" "$(printf '%s\n' user.name='Team Test' user.email=team-test@example.invalid init.defaultbranch=main advice.detachedhead=false)"
