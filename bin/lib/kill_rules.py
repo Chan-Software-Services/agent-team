@@ -11,7 +11,11 @@ The rows, in order:
   kill-by-name: a command named pkill, killall, killall5 or skill, or fuser with k in a short
     option cluster or --kill.
   tmux-kill: tmux with a word starting kill- (kill-server, kill-session, kill-window, kill-pane),
-    or killp or killw, their aliases, with or without -L or -S.
+    or killp or killw, their aliases, on the default socket or a -L name, which says nothing of
+    whose server it is; it passes when the last -S among tmux's options before its command names
+    a socket path that resolves strictly inside a root (the worktree or the job's tmp), read as a
+    delete's operand is (bin/lib/delete_rules.py's inside_roots), and its allowed way names
+    tmux -S "$CLAUDE_JOB_DIR/tmp/<name>.sock".
   kill-from-input: kill behind xargs or parallel, or run by find's -exec, -execdir, -ok or
     -okdir, a string they run included, whatever its own signal, since what they read may add
     options (-s 9); only a listing (-l, -L) passes.
@@ -47,7 +51,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from command_text import command_name, heads_behind  # noqa: E402
+from command_text import command_name, heads_behind, short_cluster  # noqa: E402
+import delete_rules  # noqa: E402
 
 BY_NAME = frozenset(("pkill", "killall", "killall5", "skill"))
 # What runs a kill on PIDs read from its input.
@@ -66,6 +71,12 @@ ALLOWED_KILL = (
     " literal PID in a call of its own, which passes when the process is yours and its working directory is"
     " inside your worktree or your job's tmp"
 )
+ALLOWED_TMUX = (
+    "run a tmux server of your own on a socket inside your job's tmp, and kill only that one, by its socket:"
+    ' tmux -S "$CLAUDE_JOB_DIR/tmp/<name>.sock" kill-server'
+)
+# tmux's options that take a value, as its getopt string has them.
+TMUX_VALUED = "cfLST"
 ALLOWED_LITERAL = (
     "kill only a process you started whose working directory is inside your worktree or your job's tmp, and"
     " leave the rest to their owner"
@@ -133,10 +144,28 @@ def _by_name(command, context):
     return None
 
 
+def _tmux_socket(args):
+    """The last -S socket path among tmux's options before its command, or None."""
+    socket, k = None, 0
+    while k < len(args) and args[k].startswith("-") and args[k] not in ("-", "--"):
+        _, flag, value = short_cluster(args[k], TMUX_VALUED)
+        k += 1
+        if flag and not value:
+            if k >= len(args):
+                break
+            value, k = args[k], k + 1
+        if flag == "S":
+            socket = value
+    return socket
+
+
 def _tmux(command, context):
     for words, _ in _named(command, {"tmux"}):
         for word in words[1:]:
             if word.startswith("kill-") or word in ("killp", "killw"):
+                socket = _tmux_socket(words[1:])
+                if socket is not None and delete_rules.inside_roots(socket, context, command):
+                    break
                 return f"tmux {word}, which reaches other sessions' terminals and the team's own"
     return None
 
@@ -312,7 +341,7 @@ def _literal(command, context):
 # The rows, in order: each its id, its test and its allowed way.
 ROWS = (
     ("kill-by-name", _by_name, ALLOWED_KILL),
-    ("tmux-kill", _tmux, ALLOWED_KILL),
+    ("tmux-kill", _tmux, ALLOWED_TMUX),
     ("kill-from-input", _from_input, ALLOWED_READ),
     ("kill-unread-pid", _unread, ALLOWED_READ),
     ("kill-group", _group, ALLOWED_KILL),
