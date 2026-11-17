@@ -161,6 +161,7 @@ Taking the PC down for a while (an update, a restart, a night off) is a handoff 
 GitHub redirects a moved repository's old URL, but only until someone makes a repository at the old name, so each machine follows a move.
 `bin/lib/repo-moves.json` is the table of the moves, old `owner/name` to new; every reader of the ledger and every script that takes a PR URL reads a URL under either owner as the same repository, and logs it under the new one.
 Its moves of 2026-11-14 took agent-team, agent-team-records, Conventioner and intone_app from Daniel's own account to the organization `Chan-Software-Services`.
+Its move of 2026-11-16 took the no-mistakes fork, which `bin/lib/tools.lock` builds the gate from, to the same organization.
 
 The coordinator's steps, in order, once the code that adds a move has merged:
 

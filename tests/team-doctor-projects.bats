@@ -145,7 +145,7 @@ PASS moved origin site: site's checkout ~/projects/site has origin https://githu
   assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 2 origins (the code checkout's and the team home's), and none names a moved repository of bin/lib/repo-moves.json"
   # Nor is an SSH remote of the new owner, or of the old owner's repository that never moved.
   git -C "${CONVENTIONER:?}" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
-  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/no-mistakes.git/
+  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/site.git/
   run_bin -0 team-doctor
   # shellcheck disable=SC2088
   assert_equal "$(grep '^PASS moved origin ' <<<"$output")" "PASS moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin git@github.com:Chan-Software-Services/Conventioner.git, which names no moved repository of bin/lib/repo-moves.json
@@ -687,6 +687,20 @@ queue_on() {
   run_bin -0 team-doctor
   assert_contains "$output" "agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456)"
   assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c chanjdaniel || true)" 0
+}
+
+@test "the merge queue line reads each base's rules on the owner login, whatever GitHub login the doctor's session names" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  queue_on owner/site
+  # The stub gh logs the three login variables of each call before it answers.
+  { printf '%s\n' 'printf "GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n" "${GH_CONFIG_DIR-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"'
+    cat "$STUB_FIXTURES/gh.sh"; } >"$STUB_FIXTURES/gh.sh.new"
+  mv "$STUB_FIXTURES/gh.sh.new" "$STUB_FIXTURES/gh.sh"
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN=fixture-session-token GITHUB_TOKEN=fixture-session-token \
+    run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$(sort -u "$STUB_CALLS/gh.env")" "GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>"
 }
 
 @test "the merge queue line fails on a queue whose merge method is not the registry's, a strict rule, or classic protection beside it, the first of them" {

@@ -173,6 +173,8 @@
 # stays 0.
 # Last, team-inbox takes the PR out of the team home's waiting.md; when that fails, a line on
 # stderr says so, and the exit stays 0.
+# It runs on the owner login throughout, every gh and git call and the scripts it runs, whatever
+# GitHub login its session names (use_owner_login in bin/lib/github-login.sh).
 # Refused, exit 1, before it reads or changes anything: a worker session (an AGENT_TEAM_ROLE but
 # coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers.
 # --holds <head> merges nothing and changes nothing: it says whether the word and the checks every
@@ -187,6 +189,7 @@
 # queue, or in none with nothing merged: run it again.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+use_owner_login
 why=$(worker_refusal "" "merges no PR") && die "$why"
 
 usage="usage: team-merge T<n> [--pr <url>] [--holds <head>]"

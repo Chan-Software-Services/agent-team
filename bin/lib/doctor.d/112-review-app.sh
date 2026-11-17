@@ -3,9 +3,9 @@
 #               bin/lib/review-app; else fails on the first of a malformed bin/lib/review-app, its
 #               key ~/.config/agent-team/review-app.pem missing, not a file or off mode 600 (no
 #               byte of it read), no registered project the team's own, or such a project's base
-#               whose rules, read from GitHub (base_rules in bin/lib/team.sh: its classic
-#               protection and its rulesets), do not require agent-review from the App's id, or
-#               that classic protection enforces its required checks for anyone but everyone, or
+#               whose rules, read from GitHub on the owner login (base_rules in bin/lib/team.sh: its
+#               classic protection and its rulesets), do not require agent-review from the App's id,
+#               or that classic protection enforces its required checks for anyone but everyone, or
 #               a ruleset of them has a bypass actor.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
@@ -55,7 +55,7 @@ review_app_check() {
     fi
     # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
     repo=$(canonical_repo "$(jq -r .repo <<<"$registry_reply")") base=$(jq -r .base <<<"$registry_reply")
-    if ! rules=$(base_rules "$repo" "$base" 2>"$err"); then
+    if ! rules=$(with_owner_login base_rules "$repo" "$base" 2>"$err"); then
       report "review app" FAIL "$base's rules on $repo cannot be read from GitHub: $(first_error)" \
         "the github login line's fix, then run team-doctor again"
       return
