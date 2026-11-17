@@ -265,7 +265,31 @@
 #                     status timed out after 60 s"), a notice record it cannot write and a post
 #                     Discord refuses (tried again next run) each fail the step, so 12 runs in a row
 #                     are the step-quota alert.
-#              tmp    On the holder, after the quota step, every run, with no setting: team-janitor
+#              github  On the holder, after the quota step: gh api rate_limit (GitHub's own reading
+#                     of the user's API budget, which it does not count against it), stopped after
+#                     20 s and killed 10 s later, whose core and graphql it writes to
+#                     bin/lib/github-api.sh's budget.json. Each of them at or past 70% or 90% of its
+#                     hour's limit is, at its highest threshold crossed, a notice of the github
+#                     source (bin/lib/notice.jq), keyed "<resource>/<threshold>/<reset as a UTC
+#                     time>" and posted once to #coordinator, mentioning no one: "GitHub's API: core
+#                     requests at 72% of 5,000 for the hour, past 70%; it resets at 07:27. Most:
+#                     team-ci-wait 1,830 (9), team-ci-run 240 (3), team-next 40 (2); 1,100 not
+#                     logged (workers' own gh and other scripts)." ("GraphQL points" for graphql;
+#                     the reset in this machine's local time; the top three of the reader's call
+#                     log's counted requests of the hour by the command that sent them, each with
+#                     its subjects counted in brackets, as gh_spenders gives them; and the use no
+#                     log accounts for, left out when 0). As the quota's, a notice stays until its
+#                     reset passes, so a crossing is posted once per window and no lower threshold
+#                     after a higher one; one not yet posted closes with no post once a higher one
+#                     of its window is wanted; then it closes with no post. Each post, failed post
+#                     and close is a log line as the quota step's ("github:
+#                     core/70/2026-11-16T07:27:14Z: posted to #coordinator (message <id>)"). A read
+#                     that fails, prints no reading or is stopped ("github: failed: gh api
+#                     rate_limit timed out after 20 s"), a notice record it cannot write and a post
+#                     Discord refuses (tried again next run) each fail the step, never the run, so
+#                     12 runs in a row are the step-github alert. Like every step on the holder, it
+#                     makes no read on a run that is offline, fenced or off the lease.
+#              tmp    On the holder, after the github step, every run, with no setting: team-janitor
 #                     tmp, which removes the team's stale leftovers from /tmp and /var/tmp and posts
 #                     in #coordinator once a memory /tmp passes half full, reminding every 4 hours
 #                     while it stands (bin/team-janitor's header says how). Each line it prints is
@@ -331,10 +355,11 @@
 #            or Docker never holds the run's lock for good: the checkpoint is stopped after 300 s,
 #            the current step (whose pr conditions ask GitHub) after 120 s, the queue step (whose
 #            commit pushes) after 60 s, the uptime step after 180 s, the quota step after 60 s, the
-#            tmp step after 120 s, each reading and the place after 60 s, the level step, the sweep
-#            and the pack after 300 s and the janitor after 1200 s, each logged as "<step>: failed:
-#            timed out after <n> s" (the quota step's as "quota: failed: team-quota status timed out
-#            after 60 s"; a janitor stopped so wrote no report, so the next run starts it again),
+#            github step's read after 20 s, the tmp step after 120 s, each reading and the place
+#            after 60 s, the level step, the sweep and the pack after 300 s and the janitor after
+#            1200 s, each logged as "<step>: failed: timed out after <n> s" (the quota step's as
+#            "quota: failed: team-quota status timed out after 60 s"; a janitor stopped so wrote no
+#            report, so the next run starts it again),
 #            and a whole run, on Linux and macOS alike, after 70 minutes, with everything it
 #            started, logged as "run: failed: timed out after 4200 s" (exit 1), so the next run
 #            takes the lock; the systemd service's TimeoutStartSec=4500 stands behind that. The
@@ -372,37 +397,38 @@
 # saw a session named coordinator, and one named assistant, and since which run each has not; the
 # sweep findings it last saw, each with the time of the first look that saw it, and the time of the
 # run's look, none when the run made none), notices.json (the notice record, team-notices/1,
-# bin/lib/notice.jq's: the open alerts, the offline notice, the login-refused notice and the quota's
-# crossings, each with since when, its text, the holding of the lease it opened in, when it was
-# posted and its message, the login refusal's reason in its detail; written whole under
-# notices.lock, through bin/lib/notices.sh; its first write moves health.json's open alerts, the
-# offline flag's posted, the login-refused file and uptime.json's outages from before it there once,
-# and a run strips an alerts key in health.json, a posted in the offline flag and a login-refused
-# file it finds, uptime.json's alerts being team-uptime run's to strip), notices.lock (one writer of
-# the notice record at a time), heartbeat.log ("<UTC time> <step>: <what happened>", kept to its
-# last 1000 lines once it passes 2000), heartbeat-failures.log (each of its lines that reports a
-# problem, the same line: a failed step, a warning, a failed or refused probe and each run's line of
-# an outage, a lease not checked or not renewed, a failed post, a skipped or timed-out run; kept 30
-# days, the older lines dropped once a run), heartbeat.lock (one run at a time), offline ({since}:
-# GitHub unreachable since the UTC time, the hold; read by team-lease status, the fence hook, the
-# doctor and the session digest; whether #coordinator was told is the offline notice's), and on
-# macOS heartbeat.err, the job's stderr (systemd keeps it in the journal).
+# bin/lib/notice.jq's: the open alerts, the offline notice, the login-refused notice, the quota's
+# crossings and GitHub's API budget's, each with since when, its text, the holding of the lease it
+# opened in, when it was posted and its message, the login refusal's reason in its detail; written
+# whole under notices.lock, through bin/lib/notices.sh; its first write moves health.json's open
+# alerts, the offline flag's posted, the login-refused file and uptime.json's outages from before it
+# there once, and a run strips an alerts key in health.json, a posted in the offline flag and a
+# login-refused file it finds, uptime.json's alerts being team-uptime run's to strip), notices.lock
+# (one writer of the notice record at a time), heartbeat.log ("<UTC time> <step>: <what happened>",
+# kept to its last 1000 lines once it passes 2000), heartbeat-failures.log (each of its lines that
+# reports a problem, the same line: a failed step, a warning, a failed or refused probe and each
+# run's line of an outage, a lease not checked or not renewed, a failed post, a skipped or timed-out
+# run; kept 30 days, the older lines dropped once a run), heartbeat.lock (one run at a time),
+# offline ({since}: GitHub unreachable since the UTC time, the hold; read by team-lease status, the
+# fence hook, the doctor and the session digest; whether #coordinator was told is the offline
+# notice's), and on macOS heartbeat.err, the job's stderr (systemd keeps it in the journal).
 # TEAM_TIMERS_CHECKPOINT_SECONDS, TEAM_TIMERS_QUEUE_SECONDS, TEAM_TIMERS_CURRENT_SECONDS,
 # TEAM_TIMERS_FINISHED_SECONDS, TEAM_TIMERS_FINISHED_CALL_SECONDS,
 # TEAM_TIMERS_COORDINATOR_SWEEP_SECONDS, TEAM_TIMERS_UPTIME_SECONDS, TEAM_TIMERS_QUOTA_SECONDS,
-# TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS, TEAM_TIMERS_LEVEL_SECONDS,
-# TEAM_TIMERS_SWEEP_SECONDS, TEAM_TIMERS_JANITOR_SECONDS, TEAM_TIMERS_RUN_SECONDS,
-# TEAM_TIMERS_LOCK_SECONDS and TEAM_TIMERS_KILL_SECONDS replace the checkpoint step's 300 s, the
-# queue step's 60 s, the current step's 120 s, the finished step's 90 s after which no stop starts,
-# its 30 s for each call (the back step's and the coordinator step's session lists' too), the
-# coordinator step's 60 s for its sweep, the uptime step's 180 s, the quota step's 60 s, the tmp
-# step's 120 s, the capacity step's 60 s for each of its commands, the level step's 300 s, the
-# sweep's 300 s, the janitor's 1200 s, the run's 4200 s, enable's 60 s wait for the run's lock and
-# the 10 s after a time limit at which a command still running is killed, TEAM_TIMERS_FAILURES_DAYS
-# the failures log's 30 days, and TEAM_TIMERS_HEALTH_RUNS, TEAM_TIMERS_HEALTH_STALE_MINUTES,
-# TEAM_TIMERS_HEALTH_STEP_RUNS and TEAM_TIMERS_HEALTH_UNATTENDED_MINUTES the health view's and the
-# alerts' 2 runs, 15 minutes, 12 runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write
-# of the notice record waits for its lock (the tests' seams).
+# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS,
+# TEAM_TIMERS_LEVEL_SECONDS, TEAM_TIMERS_SWEEP_SECONDS, TEAM_TIMERS_JANITOR_SECONDS,
+# TEAM_TIMERS_RUN_SECONDS, TEAM_TIMERS_LOCK_SECONDS and TEAM_TIMERS_KILL_SECONDS replace the
+# checkpoint step's 300 s, the queue step's 60 s, the current step's 120 s, the finished step's 90 s
+# after which no stop starts, its 30 s for each call (the back step's and the coordinator step's
+# session lists' too), the coordinator step's 60 s for its sweep, the uptime step's 180 s, the quota
+# step's 60 s, the github step's 20 s, the tmp step's 120 s, the capacity step's 60 s for each of
+# its commands, the level step's 300 s, the sweep's 300 s, the janitor's 1200 s, the run's 4200 s,
+# enable's 60 s wait for the run's lock and the 10 s after a time limit at which a command still
+# running is killed, TEAM_TIMERS_FAILURES_DAYS the failures log's 30 days, and
+# TEAM_TIMERS_HEALTH_RUNS, TEAM_TIMERS_HEALTH_STALE_MINUTES, TEAM_TIMERS_HEALTH_STEP_RUNS and
+# TEAM_TIMERS_HEALTH_UNATTENDED_MINUTES the health view's and the alerts' 2 runs, 15 minutes, 12
+# runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write of the notice record waits for
+# its lock (the tests' seams).
 # Exit 0 done, 1 refused or a step failed, 2 usage error, 75 GitHub unreachable.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -410,6 +436,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 source "$TEAM_LIB/notices.sh"
 # shellcheck source=bin/lib/quota.sh
 source "$TEAM_LIB/quota.sh"
+# shellcheck source=bin/lib/github-api.sh
+source "$TEAM_LIB/github-api.sh"
 
 # The one definition: every INTERVAL minutes, run this checkout's team-timers run.
 INTERVAL=5
@@ -427,20 +455,21 @@ INBOX_TIMEOUT=120
 # and killed KILL_SECONDS later: the checkpoint 300 (CHECKPOINT_TIMEOUT), the current step 120
 # (CURRENT_TIMEOUT), the queue step 60 (QUEUE_TIMEOUT), the coordinator step's session list 30
 # (FINISHED_CALL_TIMEOUT) and sweep 60 (COORDINATOR_SWEEP_TIMEOUT), the uptime step 180
-# (UPTIME_TIMEOUT), the quota step 60 (QUOTA_TIMEOUT), the tmp step 120 (TMP_TIMEOUT), the inbox
-# step 120 (INBOX_TIMEOUT above), the finished step 120 (its session list and each stop 30 s,
-# FINISHED_CALL_TIMEOUT, and no stop started once FINISHED_TIMEOUT has passed, so at most 90 s and
-# one last stop's 30), the capacity step's sample and place 60 each, the level step 300, the sweep
-# 300, the pack 300 and the janitor 1200. That is 3390 s in all, 3550 s with the kills (10 s each
-# for the other steps' fifteen commands and the finished step's last stop), about 59 minutes. The
-# lease step leaves a lease unrenewed only under 14 minutes old, so a run that hits every limit ends
-# with it about 73 minutes old, past the lease's hour (team-lease's TTL_MINUTES), and the next run
-# starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS later, and renews behind its
-# read of origin. A lease past its ttl is stale, which changes only what team-lease take says on
-# another machine (stale, not fresh): the holder still holds it, and the renewal makes it fresh
-# again. RUN_TIMEOUT, 70 minutes, stops a run that outlasts all of that (a hang before the steps, or
-# in a command no step's limit reaches), so one hang never ends the renewals and checkpoints for
-# good; the systemd service's START_TIMEOUT, 75 minutes, is the backstop behind it.
+# (UPTIME_TIMEOUT), the quota step 60 (QUOTA_TIMEOUT), the github step 20 (GITHUB_TIMEOUT), the tmp
+# step 120 (TMP_TIMEOUT), the inbox step 120 (INBOX_TIMEOUT above), the finished step 120 (its
+# session list and each stop 30 s, FINISHED_CALL_TIMEOUT, and no stop started once FINISHED_TIMEOUT
+# has passed, so at most 90 s and one last stop's 30), the capacity step's sample and place 60 each,
+# the level step 300, the sweep 300, the pack 300 and the janitor 1200. That is 3410 s in all, 3580
+# s with the kills (10 s each for the other steps' sixteen commands and the finished step's last
+# stop), about 60 minutes. The lease step leaves a lease unrenewed only under 14 minutes old, so a
+# run that hits every limit ends with it about 74 minutes old, past the lease's hour (team-lease's
+# TTL_MINUTES), and the next run starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS
+# later, and renews behind its read of origin. A lease past its ttl is stale, which changes only
+# what team-lease take says on another machine (stale, not fresh): the holder still holds it, and
+# the renewal makes it fresh again. RUN_TIMEOUT, 70 minutes, stops a run that outlasts all of that
+# (a hang before the steps, or in a command no step's limit reaches), so one hang never ends the
+# renewals and checkpoints for good; the systemd service's START_TIMEOUT, 75 minutes, is the
+# backstop behind it.
 CHECKPOINT_TIMEOUT=${TEAM_TIMERS_CHECKPOINT_SECONDS:-300}
 # Seconds past which the checkpoint begins no worktree, two fifths of its limit (120 of 300): one
 # begun by then makes at most two origin calls of 60 s, so its records commit begins in the limit.
@@ -452,6 +481,7 @@ FINISHED_CALL_TIMEOUT=${TEAM_TIMERS_FINISHED_CALL_SECONDS:-30}
 COORDINATOR_SWEEP_TIMEOUT=${TEAM_TIMERS_COORDINATOR_SWEEP_SECONDS:-60}
 UPTIME_TIMEOUT=${TEAM_TIMERS_UPTIME_SECONDS:-180}
 QUOTA_TIMEOUT=${TEAM_TIMERS_QUOTA_SECONDS:-60}
+GITHUB_TIMEOUT=${TEAM_TIMERS_GITHUB_SECONDS:-20}
 TMP_TIMEOUT=${TEAM_TIMERS_TMP_SECONDS:-120}
 CAPACITY_TIMEOUT=${TEAM_TIMERS_CAPACITY_SECONDS:-60}
 LEVEL_TIMEOUT=${TEAM_TIMERS_LEVEL_SECONDS:-300}
@@ -1370,7 +1400,7 @@ now as $now
 # posted once as an alert, and closed with no post when its window resets. A team-quota that fails
 # or is stopped, a notice record it cannot write and a post Discord refuses fail the step.
 quota_step() {
-  local entry id key why=''
+  local why=''
   quota_read "$QUOTA_TIMEOUT" "$KILL_SECONDS" {run_fd}>&-
   why=$QUOTA_ERROR
   [[ -n $why ]] || notices_judge quota notice "$QUOTA_PLAN" --argjson status "$QUOTA_STATUS" ||
@@ -1379,29 +1409,123 @@ quota_step() {
     step_failed quota "$why"
     return 0
   fi
-  # A closed notice's reason is its key's reset: one whose reset has not come was passed by a higher
-  # threshold before it was posted, and any other, posted or not, closed as its window reset.
+  crossing_actions quota "$(date +%s)"
+  if [[ -n $CROSSING_WHY ]]; then step_failed quota "$CROSSING_WHY"; else step_ok quota; fi
+}
+
+# The actions of a judging of crossings (the quota's and GitHub's notices) in NOTICE_PLAN, at <now>
+# in epoch seconds: each silent close logged as a line of <step>, its reason its key's reset (one
+# whose reset has not come was passed by a higher threshold before it was posted, and any other,
+# posted or not, closed as its window reset); then each post sent as an alert, logged, and noted in
+# the notice record. The reason of a post Discord refused or a record it could not write is in
+# CROSSING_WHY, empty when none: crossing_actions <step> <now>
+crossing_actions() {
+  local entry id key
+  CROSSING_WHY=''
   while IFS= read -r entry; do
     [[ -n $entry ]] || continue
-    log quota "$entry"
-  done < <(jq -r '.closed[] | .notice.key as $k
+    log "$1" "$entry"
+  done < <(jq -r --argjson now "$2" '.closed[] | .notice.key as $k
     | "\($k): closed with no post ("
-      + (if ([$k | capture("/(?<r>[^/]+)$").r][0] // "" | try fromdateiso8601 catch 0) > now
+      + (if ([$k | capture("/(?<r>[^/]+)$").r][0] // "" | try fromdateiso8601 catch 0) > $now
          then "a higher threshold of its window was crossed before it was posted" else "its window reset" end)
       + ")"' <<<"$NOTICE_PLAN")
   while IFS= read -r entry; do
     [[ -n $entry ]] || continue
     id=$(jq -r .id <<<"$entry") key=$(jq -r .notice.key <<<"$entry")
     if alert_post "$(jq -r .notice.text <<<"$entry")"; then
-      note_notice "$id" post true "$ALERT_ID" || why="cannot write the notice record $NOTICES: $(first_error)"
-      log quota "$key: posted to #coordinator (message ${ALERT_ID:-none})"
+      note_notice "$id" post true "$ALERT_ID" || CROSSING_WHY="cannot write the notice record $NOTICES: $(first_error)"
+      log "$1" "$key: posted to #coordinator (message ${ALERT_ID:-none})"
     else
       note_notice "$id" post false || true
-      problem quota "$key: the post to #coordinator failed ($POST_ERROR); it is tried again next run"
-      why="the post of $key to #coordinator failed ($POST_ERROR)"
+      problem "$1" "$key: the post to #coordinator failed ($POST_ERROR); it is tried again next run"
+      CROSSING_WHY="the post of $key to #coordinator failed ($POST_ERROR)"
     fi
   done < <(jq -c '.actions[] | select(.do == "post")' <<<"$NOTICE_PLAN")
-  if [[ -n $why ]]; then step_failed quota "$why"; else step_ok quota; fi
+}
+
+# The GitHub notices, from gh api rate_limit's core and graphql ($readings, each {resource, limit,
+# used, reset (epoch seconds), reset_text (the reset in this machine's local time), spenders
+# (bin/lib/github-api.sh's gh_spenders of its hour)}), the notice record (the input) and now
+# ($clock, epoch seconds), judged as the quota notices are: each resource at or past 70% or 90% of
+# its limit wants a notice of its highest threshold crossed, keyed "<resource>/<threshold>/<reset as
+# a UTC time>", unless a notice of its resource and reset at that threshold or above is already
+# kept; each kept notice whose reset has not come stays wanted, so a crossing posts once per window
+# and closes with no post when its reset passes; a kept notice not yet posted is dropped, with no
+# post, once a higher threshold of its window is wanted. The text names the top three spenders of
+# the hour, each with its subjects counted, and the use no log accounts for, left out when 0.
+# shellcheck disable=SC2016 # jq's variables
+GITHUB_PLAN='
+def github_n: floor | if . >= 1000 then "\(. / 1000 | floor | github_n)," + ("00" + (. % 1000 | tostring))[-3:] else tostring end;
+def github_text($t):
+  (.spenders[:3] | map("\(.by) \(.calls | github_n) (\(.subjects | length))")) as $most
+  | ([0, .used - ([.spenders[].calls] | add // 0)] | max) as $rest
+  | "GitHub\u0027s API: "
+    + (if .resource == "core" then "core requests" elif .resource == "graphql" then "GraphQL points"
+       else "\(.resource) requests" end)
+    + " at \(.used * 100 / .limit | floor)% of \(.limit | github_n) for the hour, past \($t)%; it resets at \(.reset_text)."
+    + ([if $most != [] then "Most: " + ($most | join(", ")) else empty end,
+        if $rest > 0 then "\($rest | github_n) not logged (workers\u0027 own gh and other scripts)" else empty end]
+       | if . == [] then "" else " " + join("; ") + "." end);
+[(.notices // {})[] | select(.source == "github") | . as $n
+   | .key | capture("^(?<resource>[^/]+)/(?<threshold>[0-9]+)/(?<reset>[^/]+)$")
+   | select((try (.reset | fromdateiso8601) catch 0) > $clock)
+   | {key: $n.key, state: $n.state, text: $n.text, resource, threshold: (.threshold | tonumber), reset}] as $kept
+| [$readings[] | select(.limit > 0) | . as $r | [70, 90 | select($r.used * 100 >= . * $r.limit)] as $crossed
+   | select($crossed != []) | ($crossed | max) as $t | (.reset | todate) as $reset
+   | select(all($kept[]; .resource != $r.resource or .reset != $reset or .threshold < $t))
+   | {key: "\(.resource)/\($t)/\($reset)", resource, reset: $reset, text: github_text($t)}] as $new
+| ($new | map({key, since: null, detail: null, text})
+   + [$kept[] | . as $k | select(.state != "open" or all($new[]; .resource != $k.resource or .reset != $k.reset))
+      | {key, since: null, detail: null, text}]) as $wanted
+| notice_plan("github"; $wanted; null; $clock; null)
+'
+
+# The github step, on the holder after the quota step, as the header's github says: gh api
+# rate_limit, which GitHub does not count (GITHUB_TIMEOUT, killed KILL_SECONDS later), its core and
+# graphql written to bin/lib/github-api.sh's budget.json, and each crossing of 70% or 90% of an
+# hour's limit a notice of the github source, judged with no holding as the quota's are, posted once
+# as an alert and closed with no post when its reset passes. A read that fails or is stopped, a
+# notice record it cannot write and a post Discord refuses fail the step alone, never the run.
+github_step() {
+  local rc=0 out why='' clock readings='[]' resource limit remaining used reset spenders
+  out=$(timeout --kill-after="$KILL_SECONDS" "$GITHUB_TIMEOUT" gh api rate_limit 2>"$err" </dev/null {run_fd}>&-) || rc=$?
+  case $rc in
+    0)
+      jq -e '[.resources.core, .resources.graphql]
+        | all(type == "object" and ([.limit, .remaining, .used, .reset] | all(type == "number" and . >= 0 and . == floor)))' \
+        <<<"$out" >/dev/null 2>&1 || why="gh api rate_limit printed no rate limit reading"
+      ;;
+    124 | 137) why="gh api rate_limit timed out after $GITHUB_TIMEOUT s" ;;
+    *) why="gh api rate_limit: $(grep -q . "$err" && first_error || echo "exited $rc")" ;;
+  esac
+  [[ -n $why ]] || clock=$(gh_now 2>"$err") || why=$(first_error)
+  if [[ -z $why ]]; then
+    mkdir -p "$GITHUB_API_DIR" 2>/dev/null || true
+    for resource in core graphql; do
+      read -r limit remaining used reset < <(jq -r --arg r "$resource" '.resources[$r] | "\(.limit) \(.remaining) \(.used) \(.reset)"' <<<"$out")
+      gh_note_budget "$resource" "$limit" "$remaining" "$used" "$reset"
+      spenders='[]'
+      if ((limit > 0 && used * 100 >= 70 * limit)); then
+        spenders=$(gh_spenders "$resource" $((reset - 3600)) 2>/dev/null) || spenders='[]'
+      fi
+      readings=$(jq -c --arg r "$resource" --argjson limit "$limit" --argjson used "$used" --argjson reset "$reset" \
+        --arg at "$(date -d "@$reset" +%H:%M)" --argjson spenders "$spenders" \
+        '. + [{resource: $r, limit: $limit, used: $used, reset: $reset, reset_text: $at, spenders: $spenders}]' <<<"$readings")
+    done
+    notices_judge github notice "$GITHUB_PLAN" --argjson readings "$readings" --argjson clock "$clock" ||
+      why="cannot judge the github notices in $NOTICES: $(first_error)"
+  fi
+  if [[ -z $why ]]; then
+    crossing_actions github "$clock"
+    why=$CROSSING_WHY
+  fi
+  if [[ -n $why ]]; then
+    problem github "failed: $why"
+    step_fail github "$why"
+  else
+    step_ok github
+  fi
 }
 
 # The inbox step, on the holder after the tmp step: team-inbox, logged only when it retired the
@@ -1830,6 +1954,7 @@ run_heartbeat() {
     alerts_step
     run_step uptime "$UPTIME_TIMEOUT" team-uptime run
     quota_step
+    github_step
     run_step tmp "$TMP_TIMEOUT" team-janitor tmp
     inbox_step
     finished_step
