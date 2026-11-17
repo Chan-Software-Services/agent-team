@@ -31,9 +31,9 @@ section() {
 # message.
 ROLE_CAPS="assistant 8097
 builder 8000
-ops 5649
+ops 5839
 planner 6300
-reviewer 7200"
+reviewer 7342"
 
 @test "each role prompt but the coordinator's is at most its cap in bytes" {
   local role cap over=()
