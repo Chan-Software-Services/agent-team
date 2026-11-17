@@ -26,8 +26,15 @@ declare -gA FORMAT=(
   # The real build also names its commit in parentheses after the version, which the pattern
   # skips; a stub at any version leaves it out.
   [no-mistakes]='no-mistakes version v%s 2026-10-31T01:47:41Z'
+  # rustup's line in the form of its source, its commit and date placeholders, then its notes on
+  # stderr; the cargo tools' lines as the pinned releases print them on home-pc.
+  [rustup]=$'rustup %s (0000000000 2026-11-04)\ninfo: This is the version for the rustup toolchain manager, not the rustc compiler.'
+  [cargo-nextest]=$'cargo-nextest %s (26ebeda79 2026-11-13)\nrelease: %s\ncommit-hash: 26ebeda79b9ae1d008cf64ddb01984bcaa6e1239'
+  [sccache]='sccache %s'
+  [cargo-deny]='cargo-deny %s'
   [mongodump]=$'mongodump version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [mongorestore]=$'mongorestore version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
+  [mongoimport]=$'mongoimport version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [op]='%s'
   [git]='git version %s'
   [jq]='jq-%s'
@@ -56,7 +63,8 @@ declare -gA FORMAT=(
 # cloned as the bootstrap clones them,
 # ~/.config/agent-team/home names the team home, and its core.hooksPath the code's records-git;
 # the user manager delegates cpu and memory and the team's slice is installed (team-capacity);
-# and a reading of the machine's load was just taken, as a good heartbeat run just ended.
+# /tmp is a memory file system a tenth full (tmp_reading); and a reading of the machine's load was
+# just taken, as a good heartbeat run just ended.
 doctor_machine() {
   # The whole doctor, until a test names its checks (only_checks).
   unset TEAM_DOCTOR_CHECKS
@@ -168,6 +176,19 @@ EOF
   stub_script gh <<'EOF'
 case $* in
   'auth status --hostname github.com') echo "  - Token: gho_fakefakefakefake" ;;
+  'api repos/'*)
+    # A base's rules (base_rules), from $STUB_FIXTURES/github/<owner>/<name>/: branch.json,
+    # rules.json and ruleset-<id>.json, or as an unprotected base with no ruleset (queue_on in
+    # tests/team-doctor-projects.bats writes them); branch.err fails the branch read with its text.
+    dir=$STUB_FIXTURES/github/$(cut -d/ -f2,3 <<<"$2")
+    case ${2#repos/*/*/} in
+      branches/*)
+        if [[ -f $dir/branch.err ]]; then cat "$dir/branch.err" >&2; exit 1; fi
+        cat "$dir/branch.json" 2>/dev/null || printf '{"name": "%s", "protected": false}\n' "${2##*/}" ;;
+      rules/branches/*) cat "$dir/rules.json" 2>/dev/null || echo '[]' ;;
+      rulesets/*) cat "$dir/ruleset-${2##*/}.json" ;;
+      *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
+    esac ;;
   *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
 esac
 EOF
@@ -221,6 +242,10 @@ EOF
   tool_stub treehouse
   echo 'cat "$STUB_FIXTURES/pool.json"' >"$TOOL_ANSWERS/treehouse/status_--json.sh"
   tool_stub no-mistakes
+  # The team home's git asks gh for github.com on the owner login, as team-bootstrap sets it, with
+  # the gh version stub the doctor's command -v gh finds.
+  tool_stub gh
+  team_home_login "$TOOL_STUBS/gh"
   cat >"$TOOL_ANSWERS/no-mistakes/status.sh" <<'EOF'
 if grep -qxF "$PWD" "$STUB_FIXTURES/gates"; then
   printf '    repo:  %s\n  remote:  %s\n    gate:  %s\n  daemon:  ● running\n\n  no active run\n' \
@@ -230,10 +255,24 @@ else
 fi
 EOF
   "$REPO_ROOT/bin/team-config" apply >/dev/null
+  # /tmp, under the sandbox's system root: a tmpfs, a tenth full.
+  mkdir -p "$TEAM_SYSTEM_ROOT/tmp"
+  export TEAM_TMP_DF=$BATS_TEST_TMPDIR/tmp-df
+  tmp_reading 10
   # A reading of the machine's load just taken, as its heartbeat takes one.
   capacity_reading 0
   # And a good heartbeat run just ended, with its checkpoint.
   good_heartbeat_run
+}
+
+# The team home's credential.https://github.com.helper values, the owner login's for <gh>, as
+# team-bootstrap's machine stage sets them: team_home_login <gh>
+team_home_login() {
+  local key=credential.https://github.com.helper value
+  git -C "${TEAM_HOME:?}" config --local --unset-all "$key" || true
+  while IFS= read -r value; do
+    git -C "${TEAM_HOME:?}" config --local --add "$key" "$value"
+  done < <(bash -c 'source "$1/bin/lib/team.sh"; owner_git_helpers "$2"' bash "$REPO_ROOT" "$1")
 }
 
 # The health record a good heartbeat run on the holder home-pc leaves, just now, with its
@@ -248,6 +287,15 @@ good_heartbeat_run() {
       last_checkpoint: $now, offline: null, login_refused: null}; [{holding: true}, {lease_renewed: $now}, {coordinator_live: true}];
       health_limits)' \
     >"$state/health.json"
+}
+
+# tmp_reading <percent> [<type>]: /tmp's file system, as TEAM_TMP_DF gives team-janitor tmp in
+# place of findmnt and df: 16 GiB, <percent> of it used (rounded up to a whole byte), a tmpfs
+# mounted with usrquota unless <type> names another.
+tmp_reading() {
+  local size=17179869184
+  printf '%s %s %s %s\n' "${2:-tmpfs}" "$size" "$(((size * $1 + 99) / 100))" rw,nosuid,nodev,size=16777216k,usrquota \
+    >"$TEAM_TMP_DF"
 }
 
 # capacity_reading <minutes>: append a reading of the machine's load with the team's use per task,

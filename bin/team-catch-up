@@ -9,19 +9,25 @@
 # repo must be a project in projects.toml. Checks first, changing nothing, each failure a reason,
 # every one given at once (exit 1):
 #   the PR is open and targets the project's base;
-#   the task's latest review event has verdict pass and names the PR's head now (by the shorter
-#   prefix), or the head an earlier team-catch-up made it from (reviewed_head in bin/lib/ledger.jq,
+#   the task's latest review event made in the PR's project (project_reviews in
+#   bin/lib/ledger.jq: a review is of the project its reviewer was launched in, and one logged with
+#   no reviewer's done counts in every project) has verdict pass and names the PR's head now (by
+#   the shorter prefix), or the head an earlier team-catch-up made it from (reviewed_head in bin/lib/ledger.jq,
 #   when no review names the head itself);
-#   every required check (the base branch's protection, its contexts and the checks it pins to an
-#   App, gh pr checks --required and the project's required_checks) is present on the head and
-#   passed (a skipped one passes), and no check on the head is failing or pending.
+#   every required check (the base's rules, its protection's and its rulesets' required checks,
+#   base_rules in bin/lib/team.sh, gh pr checks --required and the project's required_checks) is
+#   present on the head and passed (a skipped one passes), and no check on the head is failing or
+#   pending; rules that cannot be read end it as GitHub unreadable.
 # Then it fetches the PR's branch and the base into the project's primary checkout, as team-merge
 # does, and refuses a fetched tip that is not the head GitHub showed (the head moved: run it
 # again). A head an earlier team-catch-up made must add only clean merges of the base to the
 # reviewed head (clean_base_merges in bin/lib/team.sh), else it is refused naming the first that is
 # not. A head that holds the base already prints "nothing to merge", exit 0, logging nothing.
 # A merge that conflicts (git merge-tree, base_merge in bin/lib/team.sh) makes nothing and names
-# the conflicted files and the holder's builder-merge-base step, exit 1. A clean one is made with
+# the conflicted files and the holder's builder-merge-base step, exit 1. A clean one on a base
+# with a merge queue (the queue of its rules, base_rules in bin/lib/team.sh) makes nothing either,
+# exit 1: "<base> merges through its queue, which needs no catch-up: run team-merge T<n>", since
+# the queue tests the PR merged onto what is ahead of it. Else a clean one is made with
 # git commit-tree in the primary checkout, under its git identity, with the head and origin's base
 # as parents and git's own message, "Merge remote-tracking branch 'origin/<base>' into
 # <branch>", touching no worktree, index or branch, and pushed to origin's branch, never forced
@@ -100,7 +106,12 @@ poster=team-review-status
 bar=$(own_bar "$project") || exit 1
 if [[ $(jq -r '.app? // empty' <<<"$bar") ]]; then poster=team-review-check; fi
 jq -e 'has("error") | not' <<<"$facts" >/dev/null || die "GitHub cannot be read: $(jq -r .error <<<"$facts")"
-github "$scratch" branch api "repos/$repo/branches/$base" || die "GitHub cannot be read: $(<"$scratch/error")"
+# The base's rules, which pr_part read for an open PR; a PR not open is refused below as not open.
+if [[ -f $scratch/rules.error ]]; then
+  die "GitHub cannot be read: $(grep -m1 . "$scratch/rules.error" || echo "the base's rules failed")"
+elif [[ ! -f $scratch/rules ]]; then
+  echo '{"required": []}' >"$scratch/rules"
+fi
 head=$(jq -r .head <<<"$facts") branch=$(jq -r .headRefName "$scratch/view")
 # The head whose review stands for the PR's: the head, or the one an earlier catch-up made it from.
 reviewed=$(ledger_jq 'reviewed_head($head)' -r --arg head "$head" <<<"$events") || exit 1
@@ -109,19 +120,19 @@ reasons=()
 state=$(jq -r .state <<<"$facts")
 [[ $state == open ]] || reasons+=("PR #$number is $state, not open")
 [[ $(jq -r .base <<<"$facts") == "$base" ]] || reasons+=("PR #$number targets $(jq -r .base <<<"$facts"), not $project's base $base")
+# The latest review made in the PR's project (project_reviews in bin/lib/ledger.jq), so another
+# repository's review of the task stands for none of this PR's.
 while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(ledger_jq '
-  map(select(.event == "review")) | last
+  . as $events | project_reviews($project) | last | if . == null then null else $events[.] end
   | if . == null then "no review of \($task) is logged: review the head first"
     elif .verdict != "pass" then "the latest review of \($task) (of \(.head[:7])) found something, not a pass: fix and review it first"
     elif same_head(.head; $reviewed) | not then
       "the latest review of \($task) passed on \(.head[:7]), not on the head \($head[:7])\(
         if same_head($reviewed; $head) then "" else " or \($reviewed[:7]), which team-catch-up made it from" end): review the head first"
-    else empty end' -r --arg task "$task" --arg head "$head" --arg reviewed "$reviewed" <<<"$events")
-# The protection's required checks are its contexts and the checks it pins to an App (agent-review
-# to the reviewer App's id, once Daniel pins it), read as team-merge reads them.
-while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(jq -r --slurpfile branch "$scratch/branch" '
-  ($branch[0].protection.required_status_checks // {}) as $protected
-  | ((.required + ($protected.contexts // []) + [($protected.checks // [])[] | .context]) | unique) as $required
+    else empty end' -r --arg task "$task" --arg head "$head" --arg reviewed "$reviewed" --arg project "$project" <<<"$events")
+# The rules' required checks, its protection's and its rulesets', read as team-merge reads them.
+while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(jq -r --slurpfile rules "$scratch/rules" '
+  ((.required + [$rules[0].required[].context]) | unique) as $required
   | (.checks.passed + .checks.failing + .checks.pending) as $present
   | ($required[] | select(IN($present[]) | not) | "required check \(.) is missing on the head"),
     ([$required[] | select(IN($present[]))] - .checks.passed | .[] | "required check \(.) has not passed on the head"),
@@ -159,6 +170,8 @@ if ((rc == 1)); then
   die "$url conflicts with $base on $(paste -sd, <<<"$tree" | sed 's/,/, /g'): the holder merges it (builder-merge-base), then a rereview"
 elif ((rc)); then
   die "$url cannot be merged with $base in $primary: $tree"
+elif jq -e '.queue != null' <<<"$facts" >/dev/null; then
+  die "$base merges through its queue, which needs no catch-up: run team-merge $task"
 fi
 merge=$(git -C "$primary" commit-tree "$tree" -p "$head" -p "$onto" \
   -m "Merge remote-tracking branch 'origin/$base' into $branch")

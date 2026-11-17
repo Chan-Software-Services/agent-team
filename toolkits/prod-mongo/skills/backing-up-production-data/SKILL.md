@@ -28,6 +28,7 @@ One runs at a time: call one, wait for its answer, then call the next, never two
 
 - The request asks for a backup, a dump or a snapshot of production.
 - The request is a production write of more than 20 documents, or a release's migrations, and this session has `prod-mongo`: the backup comes first, before the QUESTION that asks Daniel to approve the write, and that QUESTION names the backup's folder and its drill's verdict.
+- The request asks for a rehearsal of migrations and names no dump: the backup and its drill come first, then the rehearsal, as `rehearsing-production-changes` says.
 
 A request only to see the backups kept, or to drill one already taken, is `list-backups` or `restore-drill` alone, with no new backup.
 
@@ -35,7 +36,7 @@ A request only to see the backups kept, or to drill one already taken, is `list-
 
 1. `backup`, once.
 2. `restore-drill` with `backup: <the stamp backup answered>`, once, unless the request says not to drill.
-3. Report, then stop: a backup never leads on to any other call.
+3. Report, then stop: a backup never leads on to any other call but the rehearsal it was taken for, as `rehearsing-production-changes` says.
 
 ## Reporting
 

@@ -17,7 +17,9 @@
 #   launch_settings <template> <mcp template or ""> <connectors or ""> <out settings> <out mcp>
 #                   [@<KEY>@=<value>...]
 #                                writes the session's MCP config and settings, the servers its
-#                                list names but its own denied.
+#                                list names but its own denied, and the worker login's
+#                                environment when bin/lib/worker-login names one; refuses, before
+#                                writing anything, while that login is not on this machine.
 #   launch_skills_off <settings> <plugin directory>
 #                                turns off, in the written settings, each of the user's personal
 #                                skills but one named as a skill of the plugin.
@@ -82,11 +84,18 @@ launch_singleton() {
 # format, naming its first line, since a changed format would deny nothing; an empty list, or
 # Claude Code's "No MCP servers configured." line, denies none. The list's health check starts
 # the servers, so they get no lock.
+# With the worker login on (bin/lib/github-login.sh), the settings' env gains worker_login_env's
+# pairs, so gh and git in the session answer as that login; with it off, the settings are the
+# template's alone. Before writing anything it refuses, with the reader's message, a malformed
+# bin/lib/worker-login, and, naming the reason and the fix, a login whose file is not usable here,
+# since gh and git would then answer as the machine's own login.
 launch_settings() {
   local template=$1 mcp_template=$2 connectors=$3 settings=$4 mcp=$5 code listed line first='' empty='' pair subs
-  local kept='[]'
+  local kept='[]' login_name login_env
   local -a servers=() named=()
   shift 5
+  login_name=$(worker_login) || exit 1
+  login_env=$(worker_login_settings_env "$login_name") || exit 1
   if [[ -n $connectors ]]; then
     kept=$(jq -ce 'if type == "array" and all(type == "string") then . else empty end' "$connectors" 2>/dev/null) ||
       die "cannot read the connectors to keep, $connectors (a JSON list of names), so the connectors to deny are unknown"
@@ -119,14 +128,15 @@ launch_settings() {
   [[ ${#servers[@]} -gt 0 || -z $first || -n $empty ]] ||
     die "claude mcp list printed lines but named no server in its format (\"<name>: <what it runs> - <health>\"), so the servers to deny are unknown; its first line: $first"
 
-  jq --argjson subs "$subs" --slurpfile mcp "$mcp" --argjson connectors "$kept" \
+  jq --argjson subs "$subs" --slurpfile mcp "$mcp" --argjson connectors "$kept" --argjson login "$login_env" \
     "$substitute"' as $settings
     | (($mcp[0].mcpServers // {} | keys) + $connectors) as $own
     | [$settings.enabledPlugins // {} | to_entries[] | select(.value == true) | "plugin:\(.key | split("@")[0]):"] as $plugins
     | $settings
     | .deniedMcpServers = [$ARGS.positional | unique[]
         | select(. as $name | (IN($own[]) | not) and all($plugins[]; . as $p | $name | startswith($p) | not))
-        | {serverName: .}]' "$template" --args "${servers[@]}" >"$settings.$$"
+        | {serverName: .}]
+    | if $login == {} then . else .env = (.env // {}) + $login end' "$template" --args "${servers[@]}" >"$settings.$$"
   mv -f "$settings.$$" "$settings"
 }
 

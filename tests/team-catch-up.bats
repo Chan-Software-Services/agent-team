@@ -80,12 +80,14 @@ green_pr() {
   ]' >"$GH_DIR/checks.json"
   echo '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}]' >"$GH_DIR/required.json"
   echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint"]}}}' >"$GH_DIR/branch.json"
+  echo '[]' >"$GH_DIR/rules.json"
 }
 
 # gh answers from $GH_DIR, PR #5's head origin's tip of its branch; a read of the head alone shows
 # the PR's first head while $GH_DIR/lag counts down, as GitHub may for a moment after a push. A
 # status POST is kept in $GH_DIR/statuses, or refused once $GH_DIR/refuse exists. The head's
-# agent-review check runs and commit statuses, read only with the reviewer App on, are none.
+# agent-review check runs and commit statuses, read only with the reviewer App on, are none. dev's
+# rulesets' rules are $GH_DIR/rules.json, ruleset <id> $GH_DIR/ruleset-<id>.json.
 stub_gh() {
   echo "$head" >"$GH_DIR/first-head"
   stub_script gh <<'EOF'
@@ -104,6 +106,8 @@ case "$*" in
   "pr checks 5 --repo owner/proj "*) cat "$GH_DIR/checks.json" ;;
   "api repos/owner/proj/compare/"*) echo 1 ;;
   "api repos/owner/proj/branches/dev") cat "$GH_DIR/branch.json" ;;
+  "api repos/owner/proj/rules/branches/dev --paginate") cat "$GH_DIR/rules.json" ;;
+  "api repos/owner/proj/rulesets/"*) cat "$GH_DIR/ruleset-${2##*/}.json" ;;
   "api --method POST repos/owner/proj/statuses/"*)
     if [[ -e $GH_DIR/refuse ]]; then echo "HTTP 422: Unprocessable Entity" >&2; exit 1; fi
     jq -cn '$ARGS.positional' --args -- "$@" >>"$GH_DIR/statuses"
@@ -260,6 +264,29 @@ library() {
 
   jq -c 'select(.event != "review")' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
   refused "  no review of T14 is logged: review the head first"
+}
+
+@test "a pass in the PR's project stands for its catch-up though another repository's review found something after it" {
+  local merge
+  base_moves >/dev/null
+  # The pass is proj's, its reviewer's done naming a launch in proj; other's reviewer then found
+  # something in its own repository.
+  event T14 launch '{role: "reviewer", session: "r0000001", project: "proj"}'
+  event T14 'done' '{role: "reviewer", session: "r0000001"}'
+  event T14 launch '{role: "reviewer", session: "r0000002", project: "other"}'
+  review 1234567 findings
+  event T14 'done' '{role: "reviewer", session: "r0000002"}'
+  run_bin -0 --separate-stderr team-catch-up T14
+  merge=$(git --git-dir="${PROJ_ORIGIN:?}" rev-parse "refs/heads/$branch")
+  assert_equal "$(jq -c 'select(.event == "caught-up") | {from, head}' "$TEAM_HOME/ledger.jsonl")" \
+    "$(jq -cn --arg from "$head" --arg m "$merge" '{from: $from, head: $m}')"
+  # proj's own findings, logged after its pass, are refused as before.
+  event T14 launch '{role: "reviewer", session: "r0000003", project: "proj"}'
+  review "$merge" findings
+  event T14 'done' '{role: "reviewer", session: "r0000003"}'
+  base_moves src/third.py >/dev/null
+  rm -- "$GH_DIR/statuses"
+  refused "  the latest review of T14 (of ${merge:0:7}) found something, not a pass: fix and review it first"
 }
 
 @test "a head an earlier catch-up made is caught up again on the same review, which team-state shows" {
@@ -564,4 +591,30 @@ SH
     >"$GH_DIR/checks.json"
   refused "team-catch-up: T14 cannot catch up PR #5, so nothing changed:" \
     "  required check agent-review is missing on the head"
+}
+
+@test "a check a ruleset of the base requires is required as the protection's are, and rules that cannot be read change nothing" {
+  base_moves >/dev/null
+  echo '{"name": "dev", "protected": true, "protection": {"enabled": false, "required_status_checks": {"contexts": []}}}' \
+    >"$GH_DIR/branch.json"
+  echo '[{"type": "required_status_checks", "ruleset_id": 42, "parameters": {"required_status_checks": [
+    {"context": "lint", "integration_id": 15368}, {"context": "agent-review", "integration_id": 123456}]}}]' >"$GH_DIR/rules.json"
+  echo '{"id": 42, "name": "dev", "bypass_actors": []}' >"$GH_DIR/ruleset-42.json"
+  echo '[{"name": "test", "bucket": "pass", "state": "SUCCESS"}, {"name": "lint", "bucket": "pass", "state": "SUCCESS"}]' \
+    >"$GH_DIR/checks.json"
+  refused "team-catch-up: T14 cannot catch up PR #5, so nothing changed:" \
+    "  required check agent-review is missing on the head"
+  rm "$GH_DIR/ruleset-42.json"
+  refused "team-catch-up: GitHub cannot be read: gh api repos/owner/proj/rulesets/42: cat: "
+}
+
+@test "on a base with a merge queue a clean catch-up is refused naming team-merge, a conflict as on any base, and a head that holds the base is nothing to merge" {
+  echo '[{"type": "merge_queue", "ruleset_id": 42, "parameters": {"merge_method": "MERGE"}}]' >"$GH_DIR/rules.json"
+  echo '{"id": 42, "name": "dev", "bypass_actors": []}' >"$GH_DIR/ruleset-42.json"
+  run_bin -0 --separate-stderr team-catch-up T14
+  assert_equal "$output" "team-catch-up: $url holds dev already; nothing to merge"
+  base_moves >/dev/null
+  refused "team-catch-up: dev merges through its queue, which needs no catch-up: run team-merge T14"
+  base_moves src/tool.py >/dev/null
+  refused "team-catch-up: $url conflicts with dev on src/tool.py: the holder merges it (builder-merge-base), then a rereview"
 }
