@@ -832,9 +832,10 @@ hold_lease() {
 }
 
 # A usage read of just now in this machine's attempt record, which read no model window, so the
-# heartbeat's quota step finds team-quota usage --if-due not due for 10 minutes and starts no
-# headless Claude Code from the sandbox's stub claude: for a test of the heartbeat on the holder
-# that is not about the usage read (tests/team-timers-quota.bats tests the read with a fake).
+# heartbeat's quota step finds team-quota usage --if-due not due for 9 minutes (10 less the
+# heartbeat's minute of slack) and starts no headless Claude Code from the sandbox's stub claude:
+# for a test of the heartbeat on the holder that is not about the usage read
+# (tests/team-timers-quota.bats tests the read with a fake).
 usage_read_now() {
   mkdir -p "$HOME/.local/state/agent-team"
   jq -cn --arg at "$(date -u +%FT%TZ)" '{at: $at, ok: true, why: null, reading: null}' \
