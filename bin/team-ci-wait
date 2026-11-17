@@ -87,9 +87,10 @@
 # sleeps it out, to a second past its until (at most to the deadline), then looks: the first sleep
 # for each until prints one line on stderr, "team-ci-wait: <the limit's text>; waiting for it, then
 # looking again", the text naming the limit, primary or secondary, its reset in local time, and
-# that it is no outage. A limit's sleep counts toward the grace and the deadline alone, and a read the limit
-# refuses ends its look as a failed read does, but neither starts nor advances the failing clock:
-# a limit never ends the wait but at its deadline, which, with GitHub not read yet, names it.
+# that it is no outage. A limit's sleep counts toward the grace and the deadline alone, and a read
+# the limit refuses ends its look as a failed read does, but neither starts nor advances the
+# failing clock: a limit never ends the wait but at its deadline, which, with GitHub not read yet,
+# names it.
 # Nothing here writes the team's offline flag for a limit, since GitHub is up.
 # Without --json or --look, it prints one line when it starts, naming the PR and the short head of
 # the first look, and its result when it ends, nothing in between; it ends at the earliest look

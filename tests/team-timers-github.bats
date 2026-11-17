@@ -224,10 +224,44 @@ github_request "$@"
 [[ -z $(github_account) ]] || github_offline
 github_rate_limit
 STUB
+  github_budget core 5000 4600 "$reset"
   run_bin -0 team-timers run
   grep -E "github: failed: gh api rate_limit on the worker login team-worker-bot: error connecting to api.github.com$" "$log"
   [[ ! -e $state/github-worker/budget.json ]]
   jq -e '.steps.github.runs == 2' "$state/health.json"
+  # The owner's reading of that run is written and judged all the same.
+  jq -e '.core.used == 4600' "$github/budget.json"
+  assert_equal "$(github_keys)" "[\"core/70/$(utc "$reset")\",\"core/90/$(utc "$reset")\"]"
+}
+
+@test "an owner read that fails fails the step, the worker login's reading still written and judged" {
+  worker_login_on
+  github_budget --worker core 5000 3600 "$reset"
+  stub_script gh <<'STUB'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
+[[ -n $(github_account) ]] || github_offline
+github_rate_limit
+STUB
+  run_bin -0 team-timers run
+  grep -E "^[0-9T:-]+Z github: failed: gh api rate_limit: error connecting to api.github.com$" "$log"
+  [[ ! -e $github/budget.json ]]
+  jq -e '.core.used == 3600' "$state/github-worker/budget.json"
+  assert_equal "$(github_keys)" "[\"worker/core/70/$(utc "$reset")\"]"
+  grep -E "github: worker/core/70/$(utc "$reset"): posted to #coordinator \(message [0-9]+\)$" "$log"
+  jq -e '.steps.github.runs == 1' "$state/health.json"
+}
+
+@test "a malformed worker-login constant fails the step with its refusal, the owner's reading still written" {
+  worker_login_on
+  printf '%s\n' login=team-worker-bot login=another-bot >"$CODE_CHECKOUT/bin/lib/worker-login"
+  github_budget core 5000 1000 "$reset"
+  run_bin -0 team-timers run
+  assert_equal "$(gh_calls)" "api rate_limit"
+  grep -F "github: failed: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line" "$log"
+  jq -e '.core.used == 1000' "$github/budget.json"
+  [[ ! -e $state/github-worker/budget.json ]]
+  jq -e '.steps.github.runs == 1' "$state/health.json"
 }
 
 @test "a post Discord refuses fails the step alone, never the run, and is tried again at the next run" {

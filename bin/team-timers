@@ -291,11 +291,12 @@
 #                     core/70/2026-11-16T07:27:14Z: posted to #coordinator (message <id>)"). A read
 #                     that fails, prints no reading or is stopped ("github: failed: gh api
 #                     rate_limit timed out after 20 s", "gh api rate_limit on the worker login
-#                     <name>: ..." for the worker login's), a worker login named but not on this
-#                     machine, a notice record it cannot write and a post Discord refuses (tried
-#                     again next run) each fail the step, never the run, the other login's reading
-#                     still written and judged, so 12 runs in a row are the step-github alert. Like every step on the holder, it
-#                     makes no read on a run that is offline, fenced or off the lease.
+#                     <name>: ..." for the worker login's), a bin/lib/worker-login that is not one
+#                     login=<name> line, a worker login named but not on this machine, a notice
+#                     record it cannot write and a post Discord refuses (tried again next run) each
+#                     fail the step, never the run, the other login's reading still written and
+#                     judged, so 12 runs in a row are the step-github alert. Like every step on the
+#                     holder, it makes no read on a run that is offline, fenced or off the lease.
 #              tmp    On the holder, after the github step, every run, with no setting: team-janitor
 #                     tmp, which removes the team's stale leftovers from /tmp and /var/tmp and posts
 #                     in #coordinator once a memory /tmp passes half full, reminding every 4 hours
@@ -1501,9 +1502,9 @@ def github_text($t):
 # that login's budget.json (bin/lib/github-api.sh's gh_use_login), and each crossing of 70% or 90% of
 # an hour's limit a notice of the github source, judged with no holding as the quota's are, posted
 # once as an alert and closed with no post when its reset passes. A read that fails or is stopped,
-# a worker login named but not on this machine, a notice record it cannot write and a post Discord
-# refuses fail the step alone, never the run; the other login's reading is still written and
-# judged.
+# a bin/lib/worker-login that is not one login=<name> line, a worker login named but not on this
+# machine, a notice record it cannot write and a post Discord refuses fail the step alone, never
+# the run; the other login's reading is still written and judged.
 github_step() {
   local why='' clock readings='[]' on_login account='' problem out unlogged session_dir=$GITHUB_API_DIR
   local resource limit remaining used reset spenders
