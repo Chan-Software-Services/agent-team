@@ -687,12 +687,11 @@ session_pids() {
 # The scope unloads once it ends, failed too (CollectMode), since a scope the kernel kills for
 # memory ends failed (OOMPolicy=stop) and would stay loaded until a reset-failed.
 start_scope() {
-  local scope=$1 slice=$2 name
+  local scope=$1 slice=$2
   shift 2
-  name=${scope%.scope}
   busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager \
     StartTransientUnit 'ssa(sv)a(sa(sv))' "$scope" fail 4 \
-    PIDs au $# "$@" Slice s "$slice" Description s "agent-team session ${name#agent-team-}" \
+    PIDs au $# "$@" Slice s "$slice" Description s "agent-team session ${scope#agent-team-}" \
     CollectMode s inactive-or-failed 0
 }
 
