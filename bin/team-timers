@@ -306,7 +306,7 @@
 #                     waiting.json it could not read and numbered afresh ("numbers the list afresh,
 #                     since waiting.json cannot be read: <why>", on a failure too, which the
 #                     line after it names), and a failure, and a failure never fails the run.
-#              threads  On the holder, after the inbox step, so it reads the waiting.md just
+#              threads  On the holder, after the inbox step, so it reads the waiting.json just
 #                     written: team-thread archive, which archives each Discord thread of a task
 #                     closed under the rule (team-close names its threads on closed) and of each
 #                     topic the assistant closed, once waiting.json names nothing of it and its
@@ -1574,7 +1574,7 @@ inbox_step() {
   esac
 }
 
-# The threads step, on the holder after the inbox step, so it reads the waiting.md just written:
+# The threads step, on the holder after the inbox step, so it reads the waiting.json just written:
 # team-thread archive (THREADS_TIMEOUT, killed KILL_SECONDS later), each line it prints logged; a
 # pass that fails or is stopped fails this step alone, never the run, since Discord may be down.
 threads_step() {
