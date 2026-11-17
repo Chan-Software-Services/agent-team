@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # team-thread archive: the pass that archives the team's Discord threads whose work is done, under
 # bin/lib/threads.sh's rule (waiting.json names nothing of the thread, and its last message is a
-# day old), on a fake Discord (helpers/discord-threads).
+# day old), on a fake Discord (helpers/discord-threads). Each test writes waiting.json after the
+# ledger, as team-inbox does, since one older than the ledger or a list archives nothing.
 
 load helpers/common
 load helpers/discord-threads
@@ -11,7 +12,6 @@ DAY=86400
 setup() {
   sandbox
   threads_discord
-  waiting '[]'
 }
 
 # A ledger line: event <task> <kind> [<field json>]
@@ -120,7 +120,6 @@ archived 1563000000000001002 T10's interview thread: T10 · agent-team · Old"
 @test "a waiting.json that is missing or cannot be read archives nothing" {
   task_threads T7 rule 1563000000000000701
   thread 1563000000000000701 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
-  rm "$TEAM_HOME/waiting.json"
   run_bin -1 --separate-stderr team-thread archive
   assert_equal "$stderr" "team-thread: archives no thread: there is no waiting.json, so what waits on Daniel is not known: team-inbox writes it"
   echo '{"schema": "team-waiting/0", "items": []}' >"$TEAM_HOME/waiting.json"
@@ -132,11 +131,36 @@ archived 1563000000000001002 T10's interview thread: T10 · agent-team · Old"
   assert_equal "$(stub_calls curl)" ""
 }
 
+@test "a waiting.json older than the ledger or either list team-inbox reads archives nothing, and one as new does" {
+  task_threads T7 rule 1563000000000000701
+  thread 1563000000000000701 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
+  mkdir -p "$TEAM_HOME/tasks" "$TEAM_HOME/assistant"
+  touch "$TEAM_HOME/tasks/current.md" "$TEAM_HOME/assistant/current.md"
+  waiting '[]'
+  touch -d '-1 minute' "$TEAM_HOME/waiting.json"
+  touch -d '-2 minutes' "$TEAM_HOME/tasks/current.md" "$TEAM_HOME/assistant/current.md"
+  run_bin -1 --separate-stderr team-thread archive
+  assert_equal "$stderr" "team-thread: archives no thread: waiting.json is older than ledger.jsonl, so what waits on Daniel may have changed since it was written: team-inbox writes it afresh"
+  touch -d '-2 minutes' "$TEAM_HOME/ledger.jsonl"
+  for list in tasks/current.md assistant/current.md; do
+    touch "$TEAM_HOME/$list"
+    run_bin -1 --separate-stderr team-thread archive
+    assert_equal "$stderr" "team-thread: archives no thread: waiting.json is older than $list, so what waits on Daniel may have changed since it was written: team-inbox writes it afresh"
+    touch -d '-2 minutes' "$TEAM_HOME/$list"
+  done
+  assert_equal "$(archived_threads)" ""
+  # A list written in the same clock tick as waiting.json is taken as read by it.
+  touch -r "$TEAM_HOME/waiting.json" "$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-thread archive
+  assert_equal "$(archived_threads)" "1563000000000000701"
+}
+
 @test "a refused archive fails the pass after the rest, and a 429 is waited out" {
   task_threads T7 rule 1563000000000000701
   thread 1563000000000000701 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
   task_threads T8 rule 1563000000000000801
   thread 1563000000000000801 "$COORDINATOR" "T8 · agent-team · Done" $((2 * DAY))
+  waiting '[]'
   touch "$DISCORD_DIR/refuse-1563000000000000701" "$DISCORD_DIR/limit-1563000000000000801"
   run_bin -1 --separate-stderr team-thread archive
   assert_equal "$output" "archived 1563000000000000801 T8's thread: T8 · agent-team · Done"
@@ -147,6 +171,7 @@ archived 1563000000000001002 T10's interview thread: T10 · agent-team · Old"
 @test "a Discord that cannot be read archives nothing, saying why" {
   task_threads T7 rule 1563000000000000701
   thread 1563000000000000701 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
+  waiting '[]'
   rm "$DISCORD_DIR/channel-$COORDINATOR.json"
   run_bin -1 --separate-stderr team-thread archive
   assert_equal "$stderr" "team-thread: cannot read #coordinator's guild from Discord: curl: (22) The requested URL returned error: 404"
@@ -181,7 +206,6 @@ archived 1563000000000001002 T10's interview thread: T10 · agent-team · Old"
 @test "with no thread whose work is done, a pass asks Discord nothing and needs no waiting.json" {
   task_threads T11 open 1563000000000001101
   thread 1563000000000001101 "$COORDINATOR" "T11 · agent-team · Open" $((30 * DAY))
-  rm "$TEAM_HOME/waiting.json"
   run_bin -0 team-thread archive
   assert_equal "$output" ""
   run_bin -0 team-thread archive --all --dry-run

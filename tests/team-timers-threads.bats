@@ -79,3 +79,17 @@ LEDGER
   assert_equal "$(threads_lines "$output")" ""
   assert_equal "$(archived_threads)" ""
 }
+
+@test "after an inbox step that failed, a waiting.json older than a list it reads archives nothing, and the step says why" {
+  closed_task 172800
+  waiting '[]'
+  # A reply owed in T7's thread, added since waiting.json was written; the inbox step cannot take it in.
+  mkdir -p "$TEAM_HOME/tasks"
+  printf '%s\n' "# Current items" "- owe T7 the closing summary, mine to send | 1563000000000000999" >"$TEAM_HOME/tasks/current.md"
+  touch -d '+1 second' "$TEAM_HOME/tasks/current.md"
+  mkdir -p "$state/inbox.lock"
+  run_bin -0 team-timers run
+  assert_contains "$output" " inbox: failed: "
+  assert_equal "$(threads_lines "$output")" "failed: archives no thread: waiting.json is older than tasks/current.md, so what waits on Daniel may have changed since it was written: team-inbox writes it afresh"
+  assert_equal "$(archived_threads)" ""
+}

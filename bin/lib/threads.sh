@@ -1,5 +1,5 @@
 # The archiving of the Discord threads the team makes, sourced after team.sh by team-thread,
-# team-close and team-assistant:
+# team-close, team-assistant and the lease-fence hook (for THREAD_FENCE):
 #
 #   # shellcheck source=bin/lib/threads.sh
 #   source "$TEAM_LIB/threads.sh"
@@ -13,10 +13,18 @@
 #   THREAD_ARCHIVE_MINUTES  the auto_archive_duration of each thread the team opens: 1 day (Discord
 #                           allows 60, 1440, 4320 or 10080).
 #   THREAD_QUIET_SECONDS    how old a thread's last message must be before it is archived: a day.
+#   THREAD_FENCE            what a machine that is fenced or lost the lease does not do here, for
+#                           lease_refusal: "archives no thread; the coordinator on the holder does."
+#   THREAD_LATER            what becomes of a thread kept in view: "the heartbeat archives it once
+#                           the rule allows (team-thread archive)".
 #   thread_waiting          reads waiting.json's items and owed replies into THREAD_WAITING, one
 #                           JSON list; fails, saying why on stderr, when the file is missing, is no
-#                           team-waiting/1 record or cannot be read, so nothing is archived on a
-#                           list that cannot be known.
+#                           team-waiting/1 record or cannot be read, or is older than a file
+#                           team-inbox writes it from (the ledger, tasks/current.md,
+#                           assistant/current.md), as it is when team-inbox failed after that file
+#                           changed: "waiting.json is older than <file>, so what waits on Daniel may
+#                           have changed since it was written: team-inbox writes it afresh". So
+#                           nothing is archived on a list that cannot be known, or may be stale.
 #   thread_hold <thread> <task or ""> <last message id or "">
 #                           prints why the thread stays in view, or fails when the rule archives
 #                           it: "item <n> of waiting.md waits on Daniel in it" for an item of its
@@ -26,20 +34,33 @@
 #                           a day", the age read from the message's id (the thread's own, the time
 #                           it was made, with none). Reads THREAD_WAITING.
 #   thread_read <thread>    prints Discord's channel object of the thread.
+#   thread_bot              prints the bot's user id (GET users/@me), the owner_id of each thread
+#                           the team opens; fails with the reason on stderr.
 #   thread_archive <thread> sets the thread archived (PATCH channels/<thread>, archived true),
 #                           waiting Discord's Retry-After on a 429, at most 3 tries; fails with
 #                           the reason on stderr.
+#   thread_settle <thread> <task or ""> [<channel JSON>]
+#                           archives one thread whose work is done when the rule allows it now:
+#                           prints "archived", or "archived already" when Discord has it so, and
+#                           succeeds; else prints why it stays in view and fails: the fence's
+#                           refusal (lease_refusal, THREAD_FENCE), or, each followed by
+#                           "; THREAD_LATER", no token, a thread Discord could not read
+#                           ("Discord could not be read: <why>"), a waiting.json thread_waiting
+#                           refuses, thread_hold's why, or "Discord refused archiving it: <why>".
+#                           Reads the thread from Discord unless <channel JSON> is given.
 # Each Discord call goes through discord_api with a 20 s limit; the callers check the fence
-# (lease_refusal) before any of them.
+# (lease_refusal) before any of them, as thread_settle does itself.
 
 # shellcheck shell=bash
 # shellcheck disable=SC2034 # read by the scripts that source this file
 THREAD_ARCHIVE_MINUTES=1440
 THREAD_QUIET_SECONDS=86400
 THREAD_CALL_SECONDS=20
+THREAD_FENCE="archives no thread; the coordinator on the holder does."
+THREAD_LATER="the heartbeat archives it once the rule allows (team-thread archive)"
 
 thread_waiting() {
-  local file=$TEAM_HOME/waiting.json read
+  local file=$TEAM_HOME/waiting.json read source
   [[ -e $file ]] || {
     echo "there is no waiting.json, so what waits on Daniel is not known: team-inbox writes it" >&2
     return 1
@@ -53,6 +74,15 @@ thread_waiting() {
     echo "waiting.json cannot be read, so what waits on Daniel is not known: $(jq -r 'strings // .' <<<"$read" 2>/dev/null || echo "$read")" >&2
     return 1
   fi
+  # team-inbox writes waiting.json on every run, so one older than a file it reads may miss what
+  # that file added since. A file's time is only as fine as the kernel's clock tick, so a file of
+  # the same time as waiting.json is taken as read by it.
+  for source in ledger.jsonl tasks/current.md assistant/current.md; do
+    if [[ $TEAM_HOME/$source -nt $file ]]; then
+      echo "waiting.json is older than $source, so what waits on Daniel may have changed since it was written: team-inbox writes it afresh" >&2
+      return 1
+    fi
+  done
   THREAD_WAITING=$read
 }
 
@@ -82,6 +112,16 @@ thread_read() {
   discord_api "channels/$1" --max-time "$THREAD_CALL_SECONDS"
 }
 
+thread_bot() {
+  local id
+  id=$(discord_api users/@me --max-time "$THREAD_CALL_SECONDS" | jq -r 'objects | .id | strings | select(test("^[0-9]+$"))') &&
+    [[ -n $id ]] || {
+    echo "Discord named no user for the bot" >&2
+    return 1
+  }
+  echo "$id"
+}
+
 thread_archive() {
   local tries=0 headers status retry
   headers=$(mktemp)
@@ -102,4 +142,40 @@ thread_archive() {
     rm -f "$headers" "$headers.error"
     return 1
   done
+}
+
+thread_settle() {
+  local id=$1 task=$2 channel=${3:-} why error
+  if why=$(lease_refusal "$THREAD_FENCE"); then
+    echo "$why"
+    return 1
+  fi
+  if ! discord_token >/dev/null; then
+    echo "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env; $THREAD_LATER"
+    return 1
+  fi
+  error=$(mktemp)
+  if [[ -z $channel ]] && ! channel=$(thread_read "$id" 2>"$error"); then
+    channel=''
+  fi
+  if ! jq -e '.thread_metadata | type == "object"' <<<"$channel" >/dev/null 2>&1; then
+    why="Discord could not be read: $(grep -m 1 . "$error" || echo "its answer is no thread"); $THREAD_LATER"
+  elif jq -e '.thread_metadata.archived == true' <<<"$channel" >/dev/null; then
+    rm -f "$error"
+    echo "archived already"
+    return 0
+  elif ! thread_waiting 2>"$error"; then
+    why="$(<"$error"); $THREAD_LATER"
+  elif why=$(thread_hold "$id" "$task" "$(jq -r '.last_message_id // empty | tostring' <<<"$channel")"); then
+    why="$why; $THREAD_LATER"
+  elif thread_archive "$id" 2>"$error"; then
+    rm -f "$error"
+    echo "archived"
+    return 0
+  else
+    why="Discord refused archiving it: $(grep -m 1 . "$error" || echo "no reason given"); $THREAD_LATER"
+  fi
+  rm -f "$error"
+  echo "$why"
+  return 1
 }

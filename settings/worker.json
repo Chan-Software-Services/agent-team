@@ -461,6 +461,7 @@
       "Bash(team-inbox)",
       "Bash(team-inbox *)",
       "Bash(team-thread T*)",
+      "Bash(team-thread archive*)",
       "Bash(team-run-approved *)",
       "Read(~/.claude/channels/**)",
       "Edit(~/.claude/channels/**)",

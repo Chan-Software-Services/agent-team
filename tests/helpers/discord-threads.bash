@@ -2,6 +2,8 @@
 # by their files, once sandbox has run: threads_discord makes it, as the curl stub.
 #   GET channels/<id>             answers $DISCORD_DIR/channel-<id>.json (404 without one);
 #                                 #coordinator's names the guild, GUILD.
+#   GET users/@me                 the bot's user, BOT, which owns each thread the thread helper makes
+#                                 unless told another owner.
 #   GET guilds/GUILD/threads/active
 #                                 {threads: [...]}, each channel file of a thread (type 11) not
 #                                 archived, as Discord lists them, in no order.
@@ -15,12 +17,16 @@
 COORDINATOR=1562486564871995482
 INTERVIEW=1565336720998928556
 ASSISTANT=1570965039278596199
-GUILD=1561884494120620152
+# Fixture ids, padded: the guild and the bot's user.
+GUILD=1561000000000000001
+BOT=1561000000000000002
 
 threads_discord() {
   export DISCORD_DIR=$BATS_TEST_TMPDIR/discord
   mkdir -p "$DISCORD_DIR"
   export TEAM_ASSISTANT_CHANNEL=$ASSISTANT TEAM_INTERVIEW_CHANNEL=$INTERVIEW
+  # The stub's quoted heredoc expands nothing of this file, so it reads the ids from its environment.
+  export THREADS_GUILD=$GUILD THREADS_BOT=$BOT
   jq -n --arg id "$COORDINATOR" --arg g "$GUILD" '{id: $id, type: 0, guild_id: $g}' >"$DISCORD_DIR/channel-$COORDINATOR.json"
   stub_script curl <<'EOF'
 url=${*: -1} method=GET headers='' data='' args=("$@")
@@ -40,7 +46,9 @@ fail() {
 api=https://discord.com/api/v10
 if [[ $method == GET && $url =~ ^$api/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.json ]]; then
   cat "$DISCORD_DIR/channel-${BASH_REMATCH[1]}.json"
-elif [[ $method == GET && $url == "$api/guilds/1561884494120620152/threads/active" ]]; then
+elif [[ $method == GET && $url == "$api/users/@me" ]]; then
+  jq -n --arg id "$THREADS_BOT" '{id: $id, bot: true}'
+elif [[ $method == GET && $url == "$api/guilds/$THREADS_GUILD/threads/active" ]]; then
   jq -s '{threads: map(select(.type == 11 and .thread_metadata.archived != true)), members: []}' "$DISCORD_DIR"/channel-*.json
 elif [[ $method == PATCH && $url =~ ^$api/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.json &&
   $data == '{"archived":true}' ]]; then
@@ -67,12 +75,13 @@ snowflake() {
 }
 
 # A public thread <id> under <parent>, named <name>, whose last message was sent <seconds> ago, or
-# with none when <seconds> is -: thread <id> <parent> <name> <seconds ago>
+# with none when <seconds> is -, opened by the user <owner> (the bot, BOT, when not given):
+# thread <id> <parent> <name> <seconds ago> [<owner>]
 thread() {
   local last=null
   [[ $4 == - ]] || last="\"$(snowflake "$4" 7)\""
-  jq -n --arg id "$1" --arg p "$2" --arg name "$3" --argjson last "$last" --arg g "$GUILD" \
-    '{id: $id, type: 11, guild_id: $g, parent_id: $p, name: $name, last_message_id: $last,
+  jq -n --arg id "$1" --arg p "$2" --arg name "$3" --argjson last "$last" --arg g "$GUILD" --arg owner "${5:-$BOT}" \
+    '{id: $id, type: 11, guild_id: $g, parent_id: $p, owner_id: $owner, name: $name, last_message_id: $last,
       thread_metadata: {archived: false, auto_archive_duration: 1440, locked: false}}' >"$DISCORD_DIR/channel-$1.json"
 }
 
@@ -81,8 +90,9 @@ archived_threads() {
   cat "$DISCORD_DIR/archived" 2>/dev/null || true
 }
 
-# The team home's waiting.json, holding <items> and <owed> (JSON lists, empty when not given):
-# waiting <items> [<owed>]
+# The team home's waiting.json, holding <items> and <owed> (JSON lists, empty when not given),
+# written now, so a test writes it after the ledger and the lists, as team-inbox does (one older
+# than them archives nothing): waiting <items> [<owed>]
 waiting() {
   jq -n --argjson items "${1:-[]}" --argjson owed "${2:-[]}" \
     '{schema: "team-waiting/1", items: $items, owed: $owed, posted: null, withdrawn: []}' >"$TEAM_HOME/waiting.json"

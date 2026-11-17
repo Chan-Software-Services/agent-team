@@ -67,8 +67,9 @@
 #             "its last message is 5 h old, under a day"), and last "would archive <n> threads,
 #             keeps <n>". With no thread whose work is done it asks Discord nothing. The
 #             heartbeat's threads step runs it with neither option. A waiting.json
-#             that is missing or cannot be read archives nothing (exit 1), as does a Discord that
-#             cannot be read; in a worker session it is refused (worker_refusal), and on a
+#             that is missing, cannot be read or is older than the ledger or a list team-inbox
+#             reads (thread_waiting) archives nothing (exit 1), as does a Discord that cannot be
+#             read; in a worker session it is refused (worker_refusal), and on a
 #             machine that is fenced or that lost the lease (lease_refusal), as a post is.
 # --interview and wait refuse on a machine that is fenced or that lost the lease (lease_refusal,
 # checked before each read), and with no interview channel set; wait ends with the hold's
@@ -305,7 +306,7 @@ if [[ ${1:-} == archive ]]; then
     shift
   done
   if why=$(worker_refusal "" "archives no Discord thread"); then die "$why"; fi
-  fenced "archives no thread; the coordinator on the holder does."
+  fenced "$THREAD_FENCE"
   scratch=$(mktemp -d)
   trap 'rm -rf "$scratch"' EXIT
 

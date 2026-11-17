@@ -59,8 +59,8 @@ The rows, in order:
   lease-steal: team-lease or team-resume with --steal among its words before its --. Reason: a
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
-    none, or team-thread with a task id (T and digits) as its first word (team-thread wait T<n>
-    passes, which each role's settings allow or deny).
+    none, or team-thread with a task id (T and digits) or archive as its first word (team-thread
+    wait T<n> passes, which each role's settings allow or deny).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -404,7 +404,7 @@ def _steal(args):
 
 
 def _thread(args):
-    return bool(args) and TASK_ID.fullmatch(args[0]) is not None
+    return bool(args) and (TASK_ID.fullmatch(args[0]) is not None or args[0] == "archive")
 
 
 def _coordinator(command, context):
@@ -460,7 +460,7 @@ ROWS = (
     Row(
         "coordinator-commands",
         _coordinator,
-        "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
+        "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved)",
     ),
     Row("upload", _upload, outbound.REASON),
 ) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS) + (

@@ -1983,6 +1983,18 @@ threaded_task() {
   assert_contains "$stderr" "team-close: keeps T1's interview thread 1563000000000000702 in view: Discord could not be read: curl: (22) The requested URL returned error: 404; the heartbeat archives it once the rule allows (team-thread archive)"
 }
 
+@test "a close whose inbox refresh failed archives no thread on the waiting.json from before it" {
+  threaded_task 172800 172800
+  # The list as it stood before the close, current until the close logs closed.
+  waiting '[]'
+  mkdir -p "$HOME/.local/state/agent-team/inbox.lock"
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-close: waiting.md is not updated: "
+  assert_contains "$stderr" "team-close: keeps T1's thread 1563000000000000001 in view: waiting.json is older than ledger.jsonl, so what waits on Daniel may have changed since it was written: team-inbox writes it afresh; the heartbeat archives it once the rule allows (team-thread archive)"
+  assert_equal "$(events closed | jq -r .event)" "closed"
+  assert_equal "$(archived_threads)" ""
+}
+
 @test "a fenced machine's close archives no thread" {
   threaded_task 172800 172800
   mkdir -p "$HOME/.local/state/agent-team"

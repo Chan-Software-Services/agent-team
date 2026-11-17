@@ -62,6 +62,15 @@ topics() {
   assert_equal "$(archived_threads)" ""
 }
 
+@test "a thread under #assistant that the bot did not open is no topic: refused, recording nothing and archiving nothing" {
+  thread "$TOPIC" "$ASSISTANT" "Daniel's own thread" $((2 * DAY)) 1561000000000000009
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant thread --close "$TOPIC"
+  assert_equal "$stderr" "team-assistant: $TOPIC was opened by user 1561000000000000009, not by the bot ($BOT), so it is no topic of the assistant's"
+  [[ ! -e $TEAM_HOME/assistant/topics.jsonl ]]
+  assert_equal "$(archived_threads)" ""
+  assert_equal "$(stub_calls curl | grep -c PATCH || true)" "0"
+}
+
 @test "closing is the assistant's alone, refused on a fenced machine, and takes one thread id" {
   thread "$TOPIC" "$ASSISTANT" "Release" $((2 * DAY))
   run_bin -1 --separate-stderr team-assistant thread --close "$TOPIC"

@@ -306,16 +306,18 @@
 #                     waiting.json it could not read and numbered afresh ("numbers the list afresh,
 #                     since waiting.json cannot be read: <why>", on a failure too, which the
 #                     line after it names), and a failure, and a failure never fails the run.
-#              threads  On the holder, after the inbox step, so it reads the waiting.json just
-#                     written: team-thread archive, which archives each Discord thread of a task
-#                     closed under the rule (team-close names its threads on closed) and of each
-#                     topic the assistant closed, once waiting.json names nothing of it and its
-#                     last message is a day old (bin/lib/threads.sh), and asks Discord nothing when
-#                     there is none (bin/team-thread's header says how). Each line it prints is
-#                     logged ("threads: archived 1563... T7's thread: T7 · agent-team · <title>"),
-#                     and a quiet run logs nothing. It is stopped after 120 s, killed 10 s later
-#                     ("threads: failed: timed out after 120 s"), and a pass that fails (Discord
-#                     unreadable, an archive it refused, a waiting.json it cannot read) fails its
+#              threads  On the holder, after the inbox step, so it reads the waiting.json that
+#                     step wrote: team-thread archive, which archives each Discord thread of a
+#                     task closed under the rule (team-close names its threads on closed) and of
+#                     each topic the assistant closed, once waiting.json names nothing of it and
+#                     its last message is a day old (bin/lib/threads.sh), and asks Discord nothing
+#                     when there is none (bin/team-thread's header says how). Each line it prints
+#                     is logged ("threads: archived 1563... T7's thread: T7 · agent-team ·
+#                     <title>"), and a quiet run logs nothing. It is stopped after 120 s, killed
+#                     10 s later ("threads: failed: timed out after 120 s"), and a pass that fails
+#                     (Discord unreadable, an archive it refused, a waiting.json it cannot read or
+#                     that is older than the ledger or a list team-inbox reads, as after an inbox
+#                     step that failed once one of them changed) fails its
 #                     own step alone, never the run, so 12 runs in a row are the step-threads alert.
 #              finished  On the holder, after the threads step, every run, whatever the level and
 #                     budget: claude stop (30 s, killed 10 s later) of each finished session of
@@ -1574,9 +1576,11 @@ inbox_step() {
   esac
 }
 
-# The threads step, on the holder after the inbox step, so it reads the waiting.json just written:
-# team-thread archive (THREADS_TIMEOUT, killed KILL_SECONDS later), each line it prints logged; a
-# pass that fails or is stopped fails this step alone, never the run, since Discord may be down.
+# The threads step, on the holder after the inbox step, so it reads the waiting.json that step
+# wrote, and archives nothing on one older than what it reads (thread_waiting in
+# bin/lib/threads.sh), as after an inbox step that failed: team-thread archive (THREADS_TIMEOUT,
+# killed KILL_SECONDS later), each line it prints logged; a pass that fails or is stopped fails
+# this step alone, never the run, since Discord may be down.
 threads_step() {
   run_step --fails-no-run threads "$THREADS_TIMEOUT" team-thread archive
 }

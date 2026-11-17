@@ -183,7 +183,7 @@ refuses_wrapped() {
   AGENT_TEAM_ROLE=assistant guard -2 "pkill -f vite"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
   # A row with no allowed way keeps its suffix, with a role or without.
-  local today="Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
+  local today="Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
   AGENT_TEAM_ROLE=builder guard -2 "team-inbox"
   assert_equal "$stderr" "$today"
   guard -2 "team-inbox"
@@ -192,7 +192,7 @@ refuses_wrapped() {
 
 @test "a kill comes after the existing rows, so a call with both names the earlier row" {
   guard -2 "pkill -f x; team-inbox"
-  assert_equal "$stderr" "Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
+  assert_equal "$stderr" "Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
   guard -2 "kill \$P; pkill x"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
 }

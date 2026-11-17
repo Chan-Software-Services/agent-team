@@ -60,7 +60,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
-    - `threads.sh`: the archive of the team's Discord threads, sourced by `team-thread`, `team-close` and `team-assistant`: the 1-day idle time new threads open with, and the rule, a thread archived only once `waiting.json` names nothing of it and its last message is a day old.
+    - `threads.sh`: the archive of the team's Discord threads, sourced by `team-thread`, `team-close`, `team-assistant` and `lease-fence`: the 1-day idle time, the rule (archived only once a current `waiting.json` names nothing of it and its last message is a day old) and its one-thread pass.
     - `ticket_graph.py`: draws a task's ticket list, as `team-tickets --json` prints it, as the self-contained HTML page of its dependency graph that `team-tickets --html` writes.
     - `time.jq`: `team-time`'s split of each task's time into phases, and its counts.
     - `tmp-leftovers`: the names of what the team's test runs leave in `/tmp` and `/var/tmp`, one `<maker> <expression>` per line, the only names `team-janitor tmp` removes by, read from its own checkout.
@@ -123,7 +123,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, among them:
     - `confine-seams.py`: runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
-    - `discord-threads.bash`: the fake Discord of the thread archive's tests, its threads, their archiving and the team home's `waiting.json`.
+    - `discord-threads.bash`: the fake Discord of the thread archive's tests, its threads, the bot's user, their archiving and the team home's `waiting.json`.
     - `docker.bash`: the opt-in stub `docker`.
     - `shell_source.py`: the lexer of the tests' shell source that `tests/guard-paths` and `tests/bound-kills` share.
   - `tests/merge-queue-drill`: run by hand by the coordinator, since it merges real PRs; it lands two PRs at once through a scratch repository's merge queue with `team-land` in a sandbox team home, checks each trial commit, and records its run.

@@ -65,6 +65,8 @@ set -euo pipefail
 # shellcheck disable=SC2034 # read by bin/lib/team.sh
 team_guard=lease-fence team_home_report=1
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
+# shellcheck source=bin/lib/threads.sh
+source "$TEAM_LIB/threads.sh"
 
 role=worker
 case $#:${1:-} in
@@ -98,8 +100,8 @@ POSTS="posts nothing to Discord; the coordinator on the holder answers there."
 ANSWERS="logs no answer; the coordinator on the holder takes Daniel's answers."
 # What one that may not wait on an interview does not do, as team-thread wait says it.
 WAITS="waits on no interview; stop, since the coordinator on the holder takes the task on."
-# What one that may not archive threads does not do, as team-thread archive says it.
-ARCHIVES="archives no thread; the coordinator on the holder does."
+# What one that may not archive threads does not do: bin/lib/threads.sh's, as team-thread archive says it.
+ARCHIVES=$THREAD_FENCE
 
 # Block when this machine may not <does> (lease_refusal), or when it cannot tell, with no team
 # home: lease_block <does>
