@@ -35,6 +35,8 @@ EMPTY_WAY='name each path to delete, spelled out or in a variable the same comma
 # shellcheck disable=SC2016
 GIT_WAY='leave a repository'"'"'s .git in place; to drop a scratch repository, delete its whole directory inside your worktree or $CLAUDE_JOB_DIR/tmp'
 # shellcheck disable=SC2016
+CD_WAY="write the delete's path absolute, or run the delete in a call of its own with no cd before it; $DELETE_WAY"
+# shellcheck disable=SC2016
 UNREAD_WAY='spell the path out, or set the variable in the same command (T=$(mktemp -d "$CLAUDE_JOB_DIR/tmp/<name>.XXXXXX")), inside your worktree or your job'"'"'s tmp'
 
 # The hook on a Bash call of <command> run in CWD, as Claude Code sends it: guard <status> <command>
@@ -50,7 +52,7 @@ refuses() {
   shift 2
   for command; do
     guard -2 "$command"
-    [[ $stderr == "Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: do not reach it another way." ]] ||
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: do not reach it another way." ]] ||
       { printf 'not refused with: %s\ncommand: %s\nstderr: %s\n' "$reason" "$command" "$stderr" >&2; return 1; }
   done
 }
@@ -128,19 +130,90 @@ refuses_wrapped() {
 
 @test "a link out of the worktree is followed before the check" {
   refuses_wrapped "a recursive delete of $OUT, $OUTSIDE" "$DELETE_WAY" "rm -rf link"
-  refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "rm -rf link/x" "rm -rf $WT/link/x" \
-    "cd link && rm -rf x"
+  refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "rm -rf link/x" "rm -rf $WT/link/x"
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd link leaves the call" \
+    "$CD_WAY" "cd link && rm -rf x"
   refuses "a recursive delete of $BATS_TEST_TMPDIR/x, $OUTSIDE" "$DELETE_WAY" "rm -rf link/../x"
   refuses "a recursive delete of $OUT/*, $OUTSIDE" "$DELETE_WAY" "rm -rf link/*"
 }
 
 @test "a relative delete is checked against every directory the command may be in" {
-  refuses "a recursive delete of $BATS_TEST_TMPDIR/x, $OUTSIDE" "$DELETE_WAY" "(cd ..); rm -rf x" "cd .. && rm -rf x" \
-    "cd src/../.. && rm -rf x"
-  refuses "a recursive delete of $(dirname "$BATS_TEST_TMPDIR")/x, $OUTSIDE" "$DELETE_WAY" "(cd src); rm -rf ../../x"
-  refuses "a recursive delete of $TMP/x, $OUTSIDE" "$DELETE_WAY" "(cd /tmp); rm -rf x" "cd /tmp; cd ..; cd tmp; rm -rf x"
-  refuses "a recursive delete of $HOME/x, $OUTSIDE" "$DELETE_WAY" "cd; rm -rf x" "cd -- && rm -rf x"
-  refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "bash -c 'cd $OUT' && rm -rf x"
+  local up=$BATS_TEST_TMPDIR
+  refuses "a recursive delete of $up/x, $OUTSIDE: x is relative, read from $up, where cd .. may leave the call" \
+    "$CD_WAY" "(cd ..); rm -rf x"
+  refuses "a recursive delete of $up/x, $OUTSIDE: x is relative, read from $up, where cd .. leaves the call" \
+    "$CD_WAY" "cd .. && rm -rf x"
+  refuses "a recursive delete of $up/x, $OUTSIDE: x is relative, read from $up, where cd src/../.. leaves the call" \
+    "$CD_WAY" "cd src/../.. && rm -rf x"
+  # The cwd's own reading is outside first, so no cd is named.
+  refuses "a recursive delete of $(dirname "$up")/x, $OUTSIDE" "$DELETE_WAY" "(cd src); rm -rf ../../x"
+  refuses "a recursive delete of $TMP/x, $OUTSIDE: x is relative, read from $TMP, where cd /tmp may leave the call" \
+    "$CD_WAY" "(cd /tmp); rm -rf x"
+  refuses "a recursive delete of $TMP/x, $OUTSIDE: x is relative, read from $TMP, where cd tmp leaves the call" \
+    "$CD_WAY" "cd /tmp; cd ..; cd tmp; rm -rf x"
+  # A cd with no operand beginning its list is never taken as run, so the call may still be in the cwd.
+  refuses "a recursive delete of $HOME/x, $OUTSIDE: x is relative, read from $HOME, where cd may leave the call" \
+    "$CD_WAY" "cd; rm -rf x"
+  refuses "a recursive delete of $HOME/x, $OUTSIDE: x is relative, read from $HOME, where cd -- leaves the call" \
+    "$CD_WAY" "cd -- && rm -rf x"
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "bash -c 'cd $OUT' && rm -rf x"
+}
+
+# The report's section A: a relative delete in the worktree with a cd elsewhere in the call, which
+# the guard read against every cd target whatever their order.
+@test "in a plain sequence a relative delete is read against the cds before it alone" {
+  local up=$BATS_TEST_TMPDIR
+  # The delete stands before the closing cd .. (a cleanup after a Playwright run).
+  passes "cd $WT/src && rm -rf sub && cd .." "cd src && rm -rf sub && cd .." "rm -rf build; cd .." \
+    $'cd src\nrm -rf sub\ncd ..'
+  # A cd to a directory that is there, beginning its list, is taken as run: the cd .. ends in the worktree.
+  passes "cd $WT/src; ls; cd ..; rm -rf build" "cd src || exit 1; cd ..; rm -rf build" "cd src && ls; cd ..; rm -rf build"
+  CWD=$up passes "cd worktree && rm -rf build && cd .." "cd worktree; rm -rf build" "cd worktree || exit 1; rm -rf build"
+  # A cd that may not run (after && or || in its list), may fail (no such directory now), runs
+  # after a delete or a move that may take its directory, or whose failure runs the delete (||),
+  # adds its directory to those the call may be in.
+  CWD=$up refuses "a recursive delete of $up/x, $OUTSIDE" "$DELETE_WAY" "true && cd worktree; rm -rf x" \
+    "cd worktree/none; rm -rf x" "rm -rf worktree/build; cd worktree; rm -rf x" "mv worktree/build b; cd worktree; rm -rf x" \
+    "cd worktree || rm -rf x"
+  refuses "a recursive delete of $up/x, $OUTSIDE: x is relative, read from $up, where cd .. leaves the call" \
+    "$CD_WAY" "true && cd src; cd ..; rm -rf x"
+  # A cd after || is skipped when what stands before it succeeds, && after it or not: (a || cd) && rm.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; true || cd $JOB/tmp && rm -rf x" "cd $OUT; true && false || cd $JOB/tmp && rm -rf x"
+  passes "cd $OUT; true || true && cd $JOB/tmp && rm -rf x"
+  # A cd beginning its list fails on a directory that is there with a second operand or an option it
+  # does not take, and pushd -n moves nothing: each adds its directory, and the option and pushd -n
+  # forms with && after them too, where a second operand's failure runs no delete.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; cd $JOB/tmp extra; rm -rf x" "cd $OUT; cd -Z $JOB/tmp; rm -rf x" \
+    "cd $OUT; cd -@ $JOB/tmp; rm -rf x" "cd $OUT; pushd -n $JOB/tmp && rm -rf x" "cd $OUT; pushd -n $JOB/tmp; rm -rf x"
+  passes "cd $OUT; cd -LPe -- $JOB/tmp; rm -rf x" "cd $OUT; pushd -- $JOB/tmp; rm -rf x" "cd $OUT; cd $JOB/tmp extra && rm -rf x"
+  # A cd behind an external wrapper, or by a path, runs a cd program in a child and never moves
+  # the shell, and command -v only prints, so each adds its directory; a bare command or builtin
+  # runs the builtin in the shell. time is the keyword only unquoted at a pipeline's start, else the
+  # time program, so a timed cd adds its directory too.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; env cd $JOB/tmp; rm -rf x" "cd $OUT; nice cd $JOB/tmp; rm -rf x" \
+    "cd $OUT; /usr/bin/cd $JOB/tmp; rm -rf x" "cd $OUT; env cd $JOB/tmp && rm -rf x" \
+    "cd $OUT; timeout 5 cd $JOB/tmp && rm -rf x" "cd $OUT; nohup pushd $JOB/tmp && rm -rf x" \
+    "cd $OUT; command -v cd $JOB/tmp && rm -rf x" "cd $OUT; X=1 time cd $JOB/tmp; rm -rf x" \
+    "cd $OUT; \"time\" cd $JOB/tmp; rm -rf x" "cd $OUT; command time cd $JOB/tmp; rm -rf x" \
+    "cd $OUT; time cd $JOB/tmp; rm -rf x"
+  passes "cd $OUT; command cd $JOB/tmp; rm -rf x" "cd $OUT; builtin cd $JOB/tmp && rm -rf x"
+  # A relative cd after a link is read from the link's path too, as Bash's logical PWD holds it.
+  mkdir "$JOB/tmp/d"
+  ln -s "$JOB/tmp/d" "$OUT/link"
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd .. leaves the call" \
+    "$CD_WAY" "cd $OUT/link && cd .. && rm -rf x" "cd $OUT/link; cd ..; rm -rf x"
+  passes "cd $OUT/link && rm -rf x" "cd -P $OUT/link && rm -rf x"
+  # A call that is no plain sequence keeps every cd target anywhere in it.
+  refuses "a recursive delete of $up/sub, $OUTSIDE: sub is relative, read from $up, where cd .. may leave the call" \
+    "$CD_WAY" "{ cd src && rm -rf sub; }; cd .." "cd src && rm -rf sub & cd .." "cd src && rm -rf sub; cd .. | cat" \
+    "for d in x; do cd src && rm -rf sub; done; cd .." "f() { cd ..; }; cd src && rm -rf sub" \
+    "cd src && rm -rf sub; echo \$(cd ..)" "! cd src && rm -rf sub; cd .."
+  # An absolute path passes with any cd beside it.
+  passes "cd ..; rm -rf $WT/build; cd /tmp"
 }
 
 @test "the worktree, its .scratch/task, the job's tmp and a directory holding one are refused" {

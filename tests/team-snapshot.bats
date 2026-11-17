@@ -633,6 +633,17 @@ Live team sessions: none"
     { echo "line: $line" >&2; return 1; }
 }
 
+@test "a denied command of several lines stays on the denials line" {
+  open_prs owner/proj '[]'
+  open_prs owner/conv '[]'
+  opened T3
+  denied T3 "$(date -u -d '-1 minute' +%FT%TZ)" builder $'cd src\nrm -rf /tmp/x' $'command-guard:\na recursive delete'
+  run_bin -0 team-snapshot
+  assert_equal "$(grep -A 1 '^Denials' <<<"$output" | head -1)" \
+    "Denials gone past in the last day: 1: T3 builder cd src rm -rf /tmp/x: command-guard: a recursive delete"
+  [[ $output != *$'\nrm -rf'* && $output != *$'\na recursive'* ]] || { echo "$output" >&2; return 1; }
+}
+
 @test "a team-uptime that fails gives production its error, the text says production is unreadable, and the rest is as before" {
   open_prs owner/proj '[]'
   open_prs owner/conv '[]'

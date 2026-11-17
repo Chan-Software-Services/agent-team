@@ -17,8 +17,9 @@
 # tool_input.command is missing or not a string. Another tool's call passes, and so does a command
 # naming none of team-worker, team-load-check, ui-capture, AGENT_TEAM_, GH_CONFIG_DIR, GH_TOKEN,
 # GITHUB_TOKEN, --steal, team-ask, team-answer, team-inbox, team-thread, team-run-approved, curl,
-# wget, kill (pkill, killall and tmux's kill-server among it), fuser, -delete and rm as a word of
-# its own (git rm among it), nor env or exec before an option, as written or with its quotes and
+# wget, kill (pkill, killall and tmux's kill-server among it), fuser, -delete, push with an f after
+# a dash or a +, .config/agent-team, .claude/channels, discord and rm as a word of its own (git rm
+# among it), nor env or exec before an option, as written or with its quotes and
 # backslashes removed (pk''ill, r\m), and holding no $', no brace list or range ({,} or {..}), and
 # no printf or echo with a > or tee, by which a name may be spelled otherwise, at once, with no
 # Python run.
@@ -30,14 +31,18 @@
 # or AGENT_TEAM_TASK, an assignment or an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN (the
 # session's GitHub login), a team script run with its environment emptied, a lease steal, the
 # coordinator's commands, an upload of a file or body to a host outside the team's own (as
-# bin/lib/outbound.py reads it), a kill that reaches what is not the session's own (by name or
+# bin/lib/outbound.py reads it), a worker's or the assistant's force push or cd into the team's
+# keys' or the Discord bot's directories, a kill that reaches what is not the session's own (by name or
 # pattern, tmux's kill-*, of PIDs read from input, of a PID it cannot read, of a process group, of
 # a literal PID whose process is not proven its own; bin/lib/kill_rules.py), and a recursive delete
 # that reaches what is not the worker's own (outside the worktree and the job's tmp, either of
 # them or its .scratch/task, a repository's .git, a variable left empty, a find with no start
 # path, or a path it cannot read before it runs; bin/lib/delete_rules.py), and last any other
 # command run with its environment emptied, which drops the session's GitHub login.
-# The hook refuses with that row's reason, and its allowed way when it names one;
+# The hook refuses with that row's reason, and its allowed way when it names one, and for a call of
+# more than one line a second line naming the line the refused command stands on when one holds
+# it, and a heredoc that ended before it ("It stands on line <n> of the call: <the line>...", command_rules.py's
+# where);
 # command_rules.py's header holds each row's wording, what the guard does not see, and in its
 # Contract paragraph what the kill and delete rows promise and what they leave to a kernel layer.
 # It fails closed: when command_rules.py exits non-zero, the call is refused with "it could not
@@ -58,7 +63,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
 # A wrong argument in the settings blocks every call the hook sees, the fail-closed side.
 [[ $# -eq 0 ]] || usage_error "usage: command-guard   (the hook's input on stdin)"
 
-# Refuse with <reason>, and the allowed way when one is given: block <reason> [<allowed>]
+# Refuse with <reason>, and the allowed way when one is given, and where the refused command
+# stands on a second line when given: block <reason> [<allowed> [<where>]]
 block() {
   if [[ -z ${2:-} ]]; then
     echo "Blocked by command-guard: $1; a guardrail, so report it as BLOCKED and do not reach it another way." >&2
@@ -67,6 +73,7 @@ block() {
   else
     echo "Blocked by command-guard: $1; the allowed way: $2. A guardrail: do not reach it another way." >&2
   fi
+  [[ -z ${3:-} ]] || echo "$3" >&2
   exit 2
 }
 
@@ -88,6 +95,8 @@ text=$command$'\n'${stripped//[\'\"\\]/}
   $text == *--steal* || $text == *team-ask* || $text == *team-answer* ||
   $text == *team-inbox* || $text == *team-thread* || $text == *team-run-approved* ||
   $text == *curl* || $text == *wget* || $text == *kill* || $text == *fuser* || $text == *-delete* ||
+  ($text == *push* && ($text == *-*f* || $text == *+*)) ||
+  $text == *.config/agent-team* || $text == *.claude/channels* || $text == *discord* ||
   $text =~ (^|[^[:alnum:]_.-])rm([^[:alnum:]_.-]|$) ||
   $text == *env*[[:space:]]-* || $text == *exec*[[:space:]]-* ||
   $command == *"\$'"* || $command == *\{*,*\}* || $command == *\{*..*\}* ||
@@ -107,4 +116,6 @@ reason=$(jq -er '.reason | strings' <<<"$rules" 2>/dev/null) ||
   block "it could not read the command (bin/lib/command_rules.py: ${rules##*$'\n'})"
 allowed=$(jq -r '.allowed // empty | strings' <<<"$rules" 2>/dev/null) ||
   block "it could not read the command (bin/lib/command_rules.py: ${rules##*$'\n'})"
-block "$reason" "$allowed"
+where=$(jq -r '.where // empty | strings' <<<"$rules" 2>/dev/null) ||
+  block "it could not read the command (bin/lib/command_rules.py: ${rules##*$'\n'})"
+block "$reason" "$allowed" "$where"
