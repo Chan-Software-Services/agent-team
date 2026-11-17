@@ -48,7 +48,7 @@ reviewer 7200"
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=30070
+manual_bytes=29988
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -440,12 +440,16 @@ $WORKER_INSTRUCTIONS"
 }
 
 # T232: an ops session with prod-mongo backs up through its skill, and the manual launches it and
-# offers a backup where OPERATIONS.md's rule needs one; restoring stays Daniel's own command.
+# offers a backup where OPERATIONS.md's rule needs one, and a rehearsal; restoring and an undo stay Daniel's own commands.
 @test "the ops role backs up only through prod-mongo's skill, and the 20-document rule holds with and without it" {
-  local body skill=backing-up-production-data
+  local body skill=backing-up-production-data rehearsing=rehearsing-production-changes
   body=$(section ops 'Backups, rehearsals and checks (only with `prod-mongo`)')
   [[ -f $REPO_ROOT/toolkits/prod-mongo/skills/$skill/SKILL.md ]]
   grep -qxF -- "- Load the \`$skill\` skill before the first \`prod-mongo\` call." <<<"$body"
+  # A rehearsal and an undo take the second skill too, named by the tools it covers.
+  [[ -f $REPO_ROOT/toolkits/prod-mongo/skills/$rehearsing/SKILL.md ]]
+  grep -qxF -- "- Load the \`$rehearsing\` skill too before a rehearsal or an undo, its \`rehearse-migrations\` or \`prepare-undo\` call." <<<"$body"
+  jq -e '[.tools[].name] | index("rehearse-migrations") and index("prepare-undo")' "$REPO_ROOT/toolkits/prod-mongo/evals/mocks/prod-mongo/_tools.json" >/dev/null
   grep -qF 'one call per operation, and never call again after a failure without the coordinator'"'"'s word' <<<"$body"
   grep -qF 'Never read, quote or open anything under `~/conventioner-backups`' <<<"$body"
   # Its one exception is the load check's two probes of the folder's deny rules, on the task its
@@ -469,17 +473,19 @@ $WORKER_INSTRUCTIONS"
   fi
 }
 
-@test "the manual launches prod-mongo for a backup, offers one before a large write and a release's migrations, and points at the restore" {
+@test "the manual launches prod-mongo for a backup, offers one before a large write and a release's migrations with a rehearsal, and points at the restore and the undo" {
   local launch write path
   launch=$(grep -F -- '- A production question, only at Daniel'"'"'s request:' "$manual")
   grep -qF 'tell Daniel a 1Password prompt per toolkit is coming' <<<"$launch"
-  grep -qF '`prod-mongo` for a backup and its drill' <<<"$launch"
+  grep -qF '`prod-mongo` for a backup, drill, rehearsal or undo' <<<"$launch"
   write=$(grep -F -- '- A production write, only at Daniel'"'"'s request:' "$manual")
   grep -qF 'offer a backup with its drill before a write of more than 20 documents (`prod-mongo` beside the write'"'"'s kits) and before a release'"'"'s migrations' <<<"$write"
-  grep -qF 'restoring a dump to production is Daniel'"'"'s own command (`~/agent-team/toolkits/prod-mongo/docs/restoring.md`)' <<<"$write"
+  grep -qF 'and before a release'"'"'s migrations, with a rehearsal of them at its sha;' <<<"$write"
+  grep -qF 'restoring a dump and running an undo are Daniel'"'"'s own commands (`~/agent-team/toolkits/prod-mongo/docs/restoring.md`)' <<<"$write"
   path=$(grep -oE '`~/agent-team/toolkits/prod-mongo/docs/[a-z-]+\.md`' <<<"$write" | tr -d '`')
   [[ -f $REPO_ROOT/${path#\~/agent-team/} ]]
   grep -qF 'mongorestore' "$REPO_ROOT/${path#\~/agent-team/}"
+  grep -qF '## Running a prepared undo' "$REPO_ROOT/${path#\~/agent-team/}"
 }
 
 @test "the manual counts a worker's message and any Discord message not Daniel's own as data, and logs INJECTION as injection" {
@@ -742,9 +748,12 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   if grep -F 'local checks' "$REPO_ROOT/templates/briefs/builder-round.md"; then return 1; fi
   section builder 'What you do' | grep -qxF -- '- On every delivery, send `PR <full url>` once the push and the PR body are in, and on a merge-base round `DONE merged ...` once its push is in.'
   section builder 'What you do' | grep -qxF '  Then stop: past your brief'"'"'s `team-ci-run`, never wait on the PR'"'"'s GitHub checks.'
-  section builder 'What you do' | grep -qxF -- '- End every ticket and every round with the tests your brief names, whatever the `implement` skill says: never the whole suite, unless your brief says nothing else runs it.'
+  section builder 'What you do' | grep -qxF -- '- End every ticket and every round with the tests your brief names, whatever the `implement` skill says: never a whole suite on this machine, which runs only in CI (Daniel'"'"'s rule), unless your brief says nothing else runs it.'
   section builder 'What you do' | grep -qxF '  Where your brief has you run `team-ci-run`, report only once it exits 0.'
   if section builder 'What you do' | grep -F -e 'tests/run' -e '--changed'; then return 1; fi
+  # Daniel's rule, 2026-11-15: no whole suite on the team's machine, in the reviewer's and the planner's roles too.
+  section reviewer 'What you do' | grep -qxF -- '- Run no test suite on this machine (Daniel'"'"'s rule): a whole suite runs only in CI, which is the coordinator'"'"'s wait; run at most the local checks your brief names, with `team-checks`.'
+  section planner 'What you do' | grep -qxF -- '- Explore freely: read code and run commands, the app and single tests, never a whole suite, which runs only in CI.'
   section builder 'What you do' | grep -qF -- '- Fix the review findings and failed checks the coordinator sends you on the same branch'
   section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read.'
   if section builder 'What you do' | grep -F -e team-ci-wait -e 'When every finding it sends is a plain `note`'; then return 1; fi
@@ -811,7 +820,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF 'the merge word, naming the `Parallel:` line'"'"'s caps' <<<"$approve"
   grep -qF '`parallel=<caps>`' <<<"$approve"
   # Step 4: the spec's one line on a parallel phase.
-  grep -qF 'In a phase whose cap is above 1, `team-next T<n> --fill` starts it and launches each ticket ready under the cap, each in a ticket worktree as `T<n>-builder-NN`; each `DONE <NN>` integrates the ticket (or prints what to send its builder) and fills again; run it with the Bash timeout at 600000, and again once a room refusal clears or after a resume.' <<<"$build"
+  grep -qF '`team-next T<n> --fill` starts a later phase, fast-forwarding the task branch to its base after a merged part, and a phase of cap above 1 in ticket worktrees (its `--help` says how); run it with the Bash timeout at 600000, and again once a room refusal clears or after a resume.' <<<"$build"
   # The level and resume skills relaunch a ticket builder with --fill, never by role.
   grep -qF 'ticket builder of a parallel phase' "$skills/level/SKILL.md"
   grep -qF '`team-next T<n> --fill`' "$skills/level/SKILL.md"
@@ -973,16 +982,16 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 
 @test "a worker goes on by a command-guard refusal's allowed way and reports it, which the coordinator logs denied and lists in its status report" {
   # Each worker role says it in the same words, right after its denial section's first sentence.
-  local sentence="When a \`command-guard\` refusal names an allowed way, take that way and go on, and still send \`T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way\`, which parks nothing; a refusal with no allowed way is as above." role
+  local sentence="When a \`command-guard\` refusal names an allowed way, take that way and go on, and still send \`T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way\`, optionally followed by the way you took in parentheses, which parks nothing; a refusal with no allowed way is as above." role
   for role in builder planner reviewer ops; do
     assert_equal "$(grep -A 3 -x '## When something is denied' "$REPO_ROOT/roles/$role.md" | sed -n 4p)" "$sentence"
   done
   # The manual's BLOCKED row logs it denied, and the status report lists it.
   grep -E '^\| `BLOCKED <what> <why>`' "$manual" |
-    grep -qF '; one ending "; took its allowed way" is logged denied, parks nothing and waits for your status report, no ping. |'
+    grep -qF '; one ending "; took its allowed way [<way>]" is logged denied, parks nothing, waits for your status report, no ping. |'
   grep -qF "the snapshot's denials line" "$plugin/skills/status-report/SKILL.md"
   # The form the role sentence gives is one team-log --from-message reads.
-  grep -qF '"BLOCKED <what> <why>; took its allowed way"' "$REPO_ROOT/bin/lib/messages.jq"
+  grep -qF '"BLOCKED <what> <why>; took its allowed way [<way>]"' "$REPO_ROOT/bin/lib/messages.jq"
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {

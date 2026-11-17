@@ -13,7 +13,7 @@ You are the reviewer on one agent-team task, a fresh session that has not seen t
   - the tests prove that behaviour, at the agreed seams;
   - nothing obsolete is left: dead code, stale docs or comments, unused flags, copied docs, speculative code;
   - docs and the knowledge graph changed with the code.
-- When your brief's local checks are `none`, run no test suite: CI is the coordinator's wait.
+- Run no test suite on this machine (Daniel's rule): a whole suite runs only in CI, which is the coordinator's wait; run at most the local checks your brief names, with `team-checks`.
 - Number your findings in `review.md`, each with one kind and one scope:
   - `blocking` stops the merge; `note: correctness`, `note: security` and `note: real-data` are a wrong result, a security hole and a risk to real data; a plain `note` is anything else;
   - `change` is on a line the PR adds or changes, `before` on code it did not change.
@@ -66,5 +66,5 @@ Your project's instructions are the ones in your system prompt, its `CLAUDE.md` 
 ## When something is denied
 
 If a permission rule, a hook or auto mode's safety check denies an action, send `T<n> BLOCKED <what> <why>` to `coordinator` and stop that line of work.
-When a `command-guard` refusal names an allowed way, take that way and go on, and still send `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`, which parks nothing; a refusal with no allowed way is as above.
+When a `command-guard` refusal names an allowed way, take that way and go on, and still send `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`, optionally followed by the way you took in parentheses, which parks nothing; a refusal with no allowed way is as above.
 Never reach the same result another way (a different command, tool or path): a denial is the team's guardrail, and only Daniel can lift it.

@@ -248,10 +248,10 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   launch T7 builder 22222222
   event T7 merged '{pr: 5, merge: "abcdef0", head: "1234567", by: "daniel", phases_left: [2, 3]}'
   run_bin -1 team-sweep
-  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with no live worker (latest T7-builder 22222222); next: launch the next phase's first ticket's builder (team-tickets T7 names it)"
+  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with no live worker (latest T7-builder 22222222); next: start the next phase with team-next T7 --fill"
   sessions "$(session 22222222 T7-builder idle working)"
   run_bin -1 team-sweep
-  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with every live worker idle (latest T7-builder 22222222); next: launch the next phase's first ticket's builder (team-tickets T7 names it)"
+  assert_equal "$output" "T7 no-worker: a part merged, with phase 2, 3 still to build, with every live worker idle (latest T7-builder 22222222); next: start the next phase with team-next T7 --fill"
   # The next phase's builder at work is enough.
   launch T7 builder 33333333
   sessions "$(session 33333333 T7-builder busy working)"
@@ -649,16 +649,20 @@ T9 stalled: T9-builder 9a8b7c6d has written nothing for 55m, waiting on \"tests/
   assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 1h55m, waiting on \"$wait\" (Bash, in the background, running 1h56m); next:"
 }
 
-@test "stalled: a team-ci-run wait on a branch's CI run passes past 50 minutes, and is named at 1 hour 55 minutes" {
+@test "stalled: a team-ci-run wait on a branch's CI run, which may sleep 90 minutes through GitHub's rate limit before its wait, passes at 3 hours 20 minutes, and is named at 3 hours 30 minutes" {
   opened T8
   launch T8 builder 4f2a9c1e
   sessions "$(session 4f2a9c1e T8-builder busy working)"
   local wait='/home/x/agent-team/bin/team-ci-run proj feat/T8-x 5413b8ce777cea7ed3f1ebb0fdf6802072f1d7a3'
-  { call toolu_01 106 Bash "$wait" background; result toolu_01 106 background; } | transcript - 4f2a9c1e 105
+  { call toolu_01 201 Bash "$wait" background; result toolu_01 201 background; } | transcript - 4f2a9c1e 200
   run_bin -0 team-sweep
-  { call toolu_01 116 Bash "$wait" background; result toolu_01 116 background; } | transcript - 4f2a9c1e 115
+  { call toolu_01 211 Bash "$wait" background; result toolu_01 211 background; } | transcript - 4f2a9c1e 210
   run_bin -1 team-sweep
-  assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 1h55m, waiting on \"$wait\" (Bash, in the background, running 1h56m); next:"
+  assert_contains "$output" "T8-builder 4f2a9c1e has written nothing for 3h30m, waiting on \"$wait\" (Bash, in the background, running 3h31m); next:"
+  # Beside a team-ci-wait, the longer limit holds it.
+  { call toolu_01 201 Bash "team-ci-wait --run 7 proj && $wait" background; result toolu_01 201 background; } |
+    transcript - 4f2a9c1e 200
+  run_bin -0 team-sweep
   # A name that only contains it is no wait on CI: the default limit holds it.
   { call toolu_01 56 Bash "team-ci-runner proj feat/T8-x" background; result toolu_01 56 background; } |
     transcript - 4f2a9c1e 55
@@ -2793,4 +2797,119 @@ assistant-handoff: team-assistant list printed no list: fix what team-assistant 
   : >"$STUB_CALLS/team-assistant.log"
   run_bin -1 team-sweep
   assert_equal "$(stub_calls team-assistant)" ""
+}
+
+# A code checkout whose team-assistant hangs on its list, its pid in $STUB_FIXTURES/assistant.pid,
+# so a look stands waiting on its hand-offs' view, every other file of the look made; the hand-off
+# log is there, so the look starts that view. Before it hangs it makes a directory in its TMPDIR
+# with no trap to remove it, as a script that TERM ends before its trap is set leaves its mktemp,
+# and starts a writer, its pid in $STUB_FIXTURES/writer.pid, that makes a file in its TMPDIR a
+# second later, as a script's own background read goes on once TERM has ended the script.
+hanging_handoffs() {
+  queue_room
+  handoff_sent H1 task assistant coordinator 45
+  ln -f "$BATS_RUN_TMPDIR/shared/stub" "$CODE_CHECKOUT/bin/team-assistant"
+  stub_script team-assistant <<'SH'
+mktemp -d >/dev/null
+("$(command -pv sleep)" 1; : >"${TMPDIR:-/tmp}/late") &
+echo "$!" >"$STUB_FIXTURES/writer.pid"
+echo "$$" >"$STUB_FIXTURES/assistant.pid.new"
+mv "$STUB_FIXTURES/assistant.pid.new" "$STUB_FIXTURES/assistant.pid"
+exec "$(command -pv sleep)" 30
+SH
+}
+
+# A python3 that runs session-activity as a reader that hangs, its pid in
+# $STUB_FIXTURES/activity.pid, and every other script as itself, so a look stands waiting on its
+# activity.
+hanging_activity() {
+  local python
+  python=$(command -v python3)
+  stub_command python3
+  stub_script python3 <<EOF
+if [[ \${2:-} == */session-activity ]]; then
+  echo "\$\$" >"\$STUB_FIXTURES/activity.pid.new"
+  mv "\$STUB_FIXTURES/activity.pid.new" "\$STUB_FIXTURES/activity.pid"
+  exec "\$(command -pv sleep)" 30
+fi
+exec "$python" "\$@"
+EOF
+}
+
+# sweep_ended_by_term <pid file> <args>...: run team-sweep <args> in the background until its look
+# waits on the hanging command whose pid is in <pid file>, end it with TERM, and check it ended by
+# the signal, that its end ended the hung command and the writer that command started
+# ($STUB_FIXTURES/writer.pid, when there is one) too, so nothing of the run still writes, and that
+# it left nothing under its TMPDIR.
+sweep_ended_by_term() {
+  local pid_file=$1 sweep tries=0 code=0 hung writer
+  shift
+  rm -f "$pid_file" "$STUB_FIXTURES/writer.pid"
+  guard_sandbox
+  "$CODE_CHECKOUT/bin/team-sweep" "$@" >"$BATS_TEST_TMPDIR/sweep.out" 2>&1 3>&- &
+  sweep=$!
+  until [[ -e $pid_file ]]; do
+    if ((++tries == 100)); then
+      kill "$sweep" 2>/dev/null || true
+      echo "team-sweep${*:+ $*} never started the command that writes ${pid_file##*/}" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  kill -TERM "$sweep"
+  wait "$sweep" || code=$?
+  hung=$(cat "$pid_file")
+  if kill -0 "$hung" 2>/dev/null; then
+    kill "$hung" 2>/dev/null || true
+    echo "team-sweep${*:+ $*} ended by TERM and left the command that wrote ${pid_file##*/} running" >&2
+    return 1
+  fi
+  if [[ -e $STUB_FIXTURES/writer.pid ]]; then
+    writer=$(cat "$STUB_FIXTURES/writer.pid")
+    if kill -0 "$writer" 2>/dev/null; then
+      kill "$writer" 2>/dev/null || true
+      echo "team-sweep${*:+ $*} ended by TERM and left the writer below the hung command running" >&2
+      return 1
+    fi
+  fi
+  assert_equal "$code" 143
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+}
+
+@test "a text look, a --json look and a --wait ended by TERM leave no file under their TMPDIR" {
+  hanging_handoffs
+  sweep_ended_by_term "$STUB_FIXTURES/assistant.pid"
+  sweep_ended_by_term "$STUB_FIXTURES/assistant.pid" --json
+  sweep_ended_by_term "$STUB_FIXTURES/assistant.pid" --wait
+}
+
+# The look's own reads, the activity and the registry's, run beside its views, so its end by TERM
+# ends them as it does the views, before it removes the files they write.
+@test "a look ended by TERM while session-activity reads the transcripts ends it and leaves no file under its TMPDIR, in each mode" {
+  queue_room
+  hanging_activity
+  sweep_ended_by_term "$STUB_FIXTURES/activity.pid"
+  sweep_ended_by_term "$STUB_FIXTURES/activity.pid" --json
+  sweep_ended_by_term "$STUB_FIXTURES/activity.pid" --wait
+}
+
+@test "a look that ends normally leaves no file under its TMPDIR, in each mode" {
+  queue_room
+  handoff_sent H1 task assistant coordinator 45
+  opened T3
+  launch T3 builder 4f2a9c1e
+  sessions "$(session 4f2a9c1e T3-builder idle)"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "T3 silent: T3-builder 4f2a9c1e is idle with no ledger event since its launch at 2026-10-22T02:10:00Z; next: read claude logs 4f2a9c1e, then send it one line or log what is known with team-log
+hand-off H1 (task) from the assistant has waited 45 min: read it with team-assistant show H1, act, and answer it"
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -r '.[].kind' <<<"$output")" $'silent\nassistant-handoff'
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
+  # The watch ends on T3's no-worker, new at its second look, once it has stood three minutes.
+  looks "[$(session 4f2a9c1e T3-builder busy working)]" '[]'
+  run_bin -0 team-sweep --wait
+  assert_contains "$output" "T3 no-worker: "
+  assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
 }

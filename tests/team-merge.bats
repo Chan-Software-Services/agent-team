@@ -49,6 +49,23 @@ load helpers/merge
   assert_equal "$status" 0
 }
 
+@test "team-merge runs every gh call on the owner login, whatever login its session names" {
+  # The stub gh logs, beside each call, the login variables it ran with, "unset" for one it did not
+  # have, then answers as stub_gh does.
+  cat - "$STUB_FIXTURES/gh.sh" >"$STUB_FIXTURES/gh.next" <<'EOF'
+printf '%s GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n' "$1 $2" "${GH_CONFIG_DIR-unset}" \
+  "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"
+EOF
+  mv "$STUB_FIXTURES/gh.next" "$STUB_FIXTURES/gh.sh"
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN=session-token GITHUB_TOKEN=session-token \
+    run_bin -0 team-merge T14
+  assert_equal "$(merged_events | wc -l)" 1
+  # Each gh call, the merge among them, ran with all three unset.
+  assert_equal "$(grep -c '^pr merge ' "$STUB_CALLS/gh.env")" 1
+  assert_equal "$(wc -l <"$STUB_CALLS/gh.env")" "$(stub_calls gh | wc -l)"
+  assert_equal "$(grep -v ' GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>$' "$STUB_CALLS/gh.env")" ""
+}
+
 # The task's opened event names the story <id>, as team-open --story logs it: story_of <id>
 story_of() {
   jq -c --arg s "$1" 'if .event == "opened" then .story = $s else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l"
@@ -398,6 +415,15 @@ proj_moved() {
   [[ $stderr != *"not clean"* ]]
   # A pass after it holds, as before.
   review "$head" pass
+  run_bin -0 team-merge T14
+  assert_equal "$(merged_events | jq -r .head)" "$head"
+}
+
+@test "a clean merge of the base after Daniel's word holds though another repository's review logged after the word found something" {
+  moved_head base
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "launch", role: "reviewer", session: "r0000009", project: "other"}'
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "review", verdict: "findings", head: "1234567"}'
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "done", role: "reviewer", session: "r0000009"}'
   run_bin -0 team-merge T14
   assert_equal "$(merged_events | jq -r .head)" "$head"
 }

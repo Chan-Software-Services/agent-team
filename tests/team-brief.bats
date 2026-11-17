@@ -1656,7 +1656,10 @@ odd_names_branch() {
   # The ci fact of a project with branch_ci, its tests and parallel variants, and where it goes.
   assert_contains "$output" "ci is empty unless the project has branch_ci"
   assert_contains "$output" "team-ci-run <project> <branch> <the full sha it pushed>"
-  assert_contains "$output" "\"Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch's"
+  assert_contains "$output" "\"Run only the tests you wrote or changed, never the whole"
+  assert_contains "$output" "suite, which CI runs on your branch's head: \" and its changed_tests"
+  assert_contains "$output" "when the project lists local_checks and no required_checks"
+  assert_contains "$output" "which the project's local checks run at each review and merge: \""
   assert_contains "$output" "pushed to origin only"
   assert_contains "$output" "builder-ticket places it after its tests, the direct-PR"
 }
@@ -2382,6 +2385,24 @@ after"
   grep -qxF '3. Before your DONE: Run only the tests your change reaches, never the whole suite, which CI runs on every head you push: back end `cd back-end && python -m pytest <the test files of the modules you changed>` (and `scripts/real-mongo-test.sh` when you changed what its suite covers); front end `cd front-end && npx vitest run --changed origin/dev` and `npm run type-check`; E2E on your worktree'"'"'s stack (`team-stack up`, then `team-stack seed`), `cd front-end && npx playwright test --only-changed=origin/dev` plus the spec files of each page and flow you changed; `python scripts/knowledge_graph.py check` when you changed `docs/`' "$output"
 }
 
+# A project with changed_tests and local checks, whose CI is not on, has its whole suite run by
+# those checks at each review and merge, so its builders' briefs name them, never CI.
+@test "a no-mistakes builder brief from the registry shaped like the team home's names its local checks as what runs the whole suite" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  open_task T32 no-mistakes small fix/T32-gate-step Documents/projects/personal/no-mistakes/.claude/worktrees/1 "a gate step"
+  local tests='Run only the tests your change reaches, never the whole suite, which the project'"'"'s local checks run at each review and merge: `go test -race` on the packages you changed (`go test -race ./internal/<pkg>/...`), `gofmt -l` on the files you changed and `go vet` on those packages; `bash scripts/e2e.sh` only when you changed the daemon, the pipeline or `internal/e2e/`'
+  run_bin -0 team-brief T32 builder-ticket --set ticket=02 --name build-02
+  grep -qxF "3. Before your DONE: $tests" "$output"
+  run_bin -0 team-brief T32 builder-deliver --set "goal=the goal"
+  grep -qxF "4. On the head you push: $tests" "$output"
+  refute_grep -rF -e 'CI runs' -e team-ci-run "$TEAM_HOME/tasks/T32"
+  # Once its move to CI lists required checks and leaves only a lint in its local checks, CI runs it.
+  sed -i '/^\[no-mistakes\]$/,/^\[no-mistakes.pool\]$/{s|^required_checks = \[\]$|required_checks = ["test"]|; s|^local_checks = .*|local_checks = ["make lint"]|}' \
+    "$TEAM_HOME/projects.toml"
+  run_bin -0 team-brief T32 builder-ticket --set ticket=02 --name build-03
+  grep -qxF "3. Before your DONE: ${tests/the project\'s local checks run at each review and merge/CI runs on every head you push}" "$output"
+}
+
 # home with changed_tests and branch_ci: its builders run CI on their branch.
 branch_ci_home() {
   sed -i '/^\[home\]$/,/^\[home.pool\]$/s|^toolkits = \[\]$|toolkits = []\nchanged_tests = "`make test-changed` on the packages you changed"\nbranch_ci = "ci.yml"|' \
@@ -2573,7 +2594,7 @@ There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$
   done
   # The roles say the same, in one sentence each, with nothing of the old wait left.
   grep -qxF -- "- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read." "$REPO_ROOT/roles/reviewer.md"
-  grep -qF "run no test suite: CI is the coordinator's wait." "$REPO_ROOT/roles/reviewer.md"
+  grep -qF "a whole suite runs only in CI, which is the coordinator's wait;" "$REPO_ROOT/roles/reviewer.md"
   grep -qxF "  Then stop: past your brief's \`team-ci-run\`, never wait on the PR's GitHub checks." "$REPO_ROOT/roles/builder.md"
   refute_grep -F -e team-ci-wait -e 'roll-up:' -e 'infrastructure:' -e 'verify` reviewer waits' "$REPO_ROOT/roles/reviewer.md" "$REPO_ROOT/roles/builder.md"
 }

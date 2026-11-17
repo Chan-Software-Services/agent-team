@@ -45,8 +45,10 @@ setup() {
   # numbers the pull requests from 8 and keeps each one's branch; pr view, by the files the
   # team-land stub leaves (pr-<n>.merge once merged, pr-<n>.closed once closed) and the branch's
   # tip; pr close; the deletion of a branch; the queue entry of a pull request not merged
-  # (entry-<n>, its trial commit); and a commit's check runs (runs-<sha>.json, else the check job,
-  # CodeQL and the App's agent-review, each a success).
+  # (entry-<n>, its trial commit); a commit's check runs (runs-pr-<n>.json when it is PR <n>'s trial
+  # commit, else runs.json: the check job, Analyze (actions) and the App's agent-review, each a
+  # success) and its commit statuses (statuses-pr-<n>.json the same way, else none); and CodeQL's
+  # default setup (default-setup.json, else not configured, or default-setup.error's text, exit 1).
   stub_script gh <<'SH'
 jq_out() { # <json> <the call's arguments>: the json through the call's --jq
   local json=$1 filter=.
@@ -56,6 +58,15 @@ jq_out() { # <json> <the call's arguments>: the json through the call's --jq
     shift
   done
   jq -r "$filter" <<<"$json"
+}
+for_trial() { # <runs or statuses> <sha>: <kind>-pr-<n>.json of the PR whose trial commit it is, if any
+  local f n
+  for f in "$GH_DIR"/pr-*.merge "$GH_DIR"/entry-*; do
+    [[ -e $f && $(<"$f") == "$2" ]] || continue
+    n=${f##*/} n=${n#pr-} n=${n#entry-} n=${n%.merge}
+    if [[ -e $GH_DIR/$1-pr-$n.json ]]; then echo "$GH_DIR/$1-pr-$n.json"; fi
+    return 0
+  done
 }
 pr_json() { # <n>
   local state=OPEN
@@ -93,13 +104,21 @@ case "$1 $2" in
     jq_out "$(jq -cn --arg trial "$trial" '{data: {repository: {pullRequest: {mergeQueueEntry:
       (if $trial == "" then null else {headCommit: {oid: $trial}} end)}}}}')" "$@"
     ;;
+  "api repos/org/scratch/code-scanning/default-setup")
+    [[ ! -e $GH_DIR/default-setup.error ]] || { cat "$GH_DIR/default-setup.error" >&2; exit 1; }
+    json='{"state": "not-configured", "languages": []}'
+    [[ ! -e $GH_DIR/default-setup.json ]] || json=$(<"$GH_DIR/default-setup.json")
+    jq_out "$json" "$@"
+    ;;
+  "api repos/org/scratch/commits/"*"/status?per_page=100")
+    sha=${2#repos/org/scratch/commits/} sha=${sha%%/*}
+    file=$(for_trial statuses "$sha")
+    if [[ -n $file ]]; then cat "$file"; else echo '{"state": "pending", "statuses": []}'; fi
+    ;;
   "api repos/org/scratch/commits/"*"/check-runs?filter=latest&per_page=100")
     sha=${2#repos/org/scratch/commits/} sha=${sha%%/*}
-    if [[ -e $GH_DIR/runs-$sha.json ]]; then
-      cat "$GH_DIR/runs-$sha.json"
-    else
-      cat "$GH_DIR/runs.json"
-    fi
+    file=$(for_trial runs "$sha")
+    cat "${file:-$GH_DIR/runs.json}"
     ;;
   *) echo "gh stub: no answer for $*" >&2; exit 99 ;;
 esac
@@ -183,25 +202,28 @@ esac
 SH
 }
 
-# queue_rules <merge method or ''> <the App id agent-review is pinned to, or ''>: dev's rules as
-# GitHub lists them, a ruleset requiring check, CodeQL and agent-review, with the merge queue
-# unless the method is empty.
+# queue_rules <merge method or ''> <the App id agent-review is pinned to, or ''> [<context>...]:
+# dev's rules as GitHub lists them, a ruleset requiring check and Analyze (actions) from GitHub
+# Actions, agent-review and each context named after, pinned to no App, with the merge queue unless
+# the method is empty.
 queue_rules() {
-  jq -n --arg method "$1" --arg app "$2" '
-    [{type: "deletion", ruleset_id: 42},
+  jq -n --arg method "$1" --arg app "$2" '$ARGS.positional as $more
+    | [{type: "deletion", ruleset_id: 42},
      {type: "required_status_checks", ruleset_id: 42, parameters: {strict_required_status_checks_policy: false,
-       required_status_checks: [{context: "check", integration_id: 15368}, {context: "CodeQL", integration_id: 57789},
-         ({context: "agent-review"} + (if $app == "" then {} else {integration_id: ($app | tonumber)} end))]}}]
+       required_status_checks: ([{context: "check", integration_id: 15368}, {context: "Analyze (actions)", integration_id: 15368},
+         ({context: "agent-review"} + (if $app == "" then {} else {integration_id: ($app | tonumber)} end))]
+         + [$more[] | {context: .}])}}]
     + (if $method == "" then [] else [{type: "merge_queue", ruleset_id: 42, parameters: {merge_method: $method,
-        grouping_strategy: "ALLGREEN", check_response_timeout_minutes: 180}}] end)' >"$GH_DIR/rules.json"
+        grouping_strategy: "ALLGREEN", check_response_timeout_minutes: 120}}] end)' --args "${@:3}" >"$GH_DIR/rules.json"
 }
 
 # check_runs <the App id of agent-review> [CodeQL] [<file>]: a commit's check runs as GitHub lists
-# them, the check job and agent-review by that App, each a success, with CodeQL when named; every
-# commit's unless <file>, runs-<sha>.json, gives one commit's.
+# them, the check job, Analyze (actions) and agent-review by that App, each a success, with the
+# roll-up CodeQL when named; every commit's unless <file>, runs-pr-<n>.json, gives one PR's trial commit's.
 check_runs() {
   jq -n --argjson app "$1" --arg codeql "${2:-}" '{check_runs: ([
     {name: "check", status: "completed", conclusion: "success", app: {id: 15368, slug: "github-actions"}},
+    {name: "Analyze (actions)", status: "completed", conclusion: "success", app: {id: 15368, slug: "github-actions"}},
     {name: "agent-review", status: "completed", conclusion: "success", app: {id: $app, slug: "an-app"}}]
     + (if $codeql == "" then [] else [{name: "CodeQL", status: "completed", conclusion: "success",
         app: {id: 57789, slug: "github-advanced-security"}}] end))}' >"$GH_DIR/${3:-runs.json}"
@@ -210,6 +232,19 @@ check_runs() {
 # The scratch repository's dev holds the drill's base commit, as --setup pushes it.
 set_up() {
   "$drill" --setup org/scratch >/dev/null
+}
+
+# old_base: the scratch repository's dev as --setup made it before the drill had a CodeQL
+# workflow, the marker, the README and ci.yml, with a README of its own that --setup must keep.
+old_base() {
+  set_up
+  local clone
+  clone=$(mktemp -d "$BATS_TEST_TMPDIR/old-base.XXXXXX")
+  git clone -q "$ORIGIN" "$clone" 2>/dev/null
+  git -C "${clone:?}" rm -q .github/workflows/codeql.yml
+  echo "A README Daniel edited." >"$clone/README.md"
+  git -C "${clone:?}" commit -q -am "ci: the merge queue drill's base commit"
+  git -C "${clone:?}" push -q origin HEAD:dev
 }
 
 # The team home's drill record, each line's fields but at.
@@ -267,13 +302,14 @@ short() {
   assert_equal "$(find "$sandboxes" -mindepth 1)" ""
 }
 
-@test "--setup pushes the base commit to an empty dev, a CI of one job on pull_request and merge_group, once" {
+@test "--setup pushes the base commit to an empty dev, a CI of one job and a CodeQL workflow, once" {
   run -0 "$drill" --setup org/scratch
   local base
   base=$(git --git-dir="${ORIGIN:?}" rev-parse dev)
   assert_equal "$output" "merge-queue-drill: pushed the base commit ${base:0:7} to org/scratch's dev"
   assert_equal "$(branches)" "dev"
   assert_equal "$(git --git-dir="${ORIGIN:?}" ls-tree -r --name-only dev)" ".github/workflows/ci.yml
+.github/workflows/codeql.yml
 .merge-queue-drill
 README.md"
   assert_equal "$(git --git-dir="${ORIGIN:?}" log --format=%s dev)" "ci: the merge queue drill's base commit"
@@ -288,13 +324,95 @@ permissions: {}
 jobs:
   check:
     runs-on: ubuntu-latest"
+  # CodeQL's advanced setup: one job per language, actions alone, on each pull request and push to
+  # dev and each trial commit, read-only but its uploads, its actions pinned by full sha.
+  workflow=$(git --git-dir="${ORIGIN:?}" show dev:.github/workflows/codeql.yml)
+  assert_contains "$workflow" "name: CodeQL
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  merge_group:
+    types: [checks_requested]
+permissions: {}"
+  assert_contains "$workflow" "jobs:
+  analyze:
+    name: Analyze (\${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@"
+  assert_contains "$workflow" "        with:
+          persist-credentials: false"
+  [[ $workflow != *schedule* ]]
+  local uses
+  uses=$(grep -o 'uses: .*' <<<"$workflow" | sed -E 's/@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$/@<sha>/')
+  assert_equal "$uses" "uses: actions/checkout@<sha>
+uses: github/codeql-action/init@<sha>
+uses: github/codeql-action/analyze@<sha>"
   # A second setup changes nothing.
   run -0 "$drill" --setup org/scratch
-  assert_equal "$output" "merge-queue-drill: org/scratch's dev already holds the drill's base commit, ${base:0:7}"
+  assert_equal "$output" "merge-queue-drill: org/scratch's dev already holds the drill's base files, at ${base:0:7}"
   assert_equal "$(git --git-dir="${ORIGIN:?}" rev-parse dev)" "$base"
   # Neither reads GitHub's API or records a run, and the sandbox is gone.
   assert_equal "$(stub_calls gh)" ""
   [[ ! -e $TEAM_HOME/drills.jsonl ]]
+  assert_equal "$(find "$sandboxes" -mindepth 1)" ""
+}
+
+@test "--setup on the drill's older dev adds only the base files it lacks, in one commit, once" {
+  old_base
+  local before
+  before=$(git --git-dir="${ORIGIN:?}" rev-parse dev)
+  run -0 "$drill" --setup org/scratch
+  local after
+  after=$(git --git-dir="${ORIGIN:?}" rev-parse dev)
+  assert_equal "$output" "merge-queue-drill: pushed ${after:0:7} to org/scratch's dev, adding the base files it lacked: .github/workflows/codeql.yml"
+  assert_equal "$(git --git-dir="${ORIGIN:?}" rev-parse "$after^")" "$before"
+  assert_equal "$(git --git-dir="${ORIGIN:?}" log -1 --format=%s dev)" "ci: the merge queue drill's base files"
+  assert_equal "$(git --git-dir="${ORIGIN:?}" diff --name-status "$before" "$after")" "A	.github/workflows/codeql.yml"
+  # The file is the one an empty repository gets, and the README dev had is kept.
+  assert_contains "$(git --git-dir="${ORIGIN:?}" show dev:.github/workflows/codeql.yml)" "    name: Analyze (\${{ matrix.language }})"
+  assert_equal "$(git --git-dir="${ORIGIN:?}" show dev:README.md)" "A README Daniel edited."
+  # Run again, it pushes nothing.
+  run -0 "$drill" --setup org/scratch
+  assert_equal "$output" "merge-queue-drill: org/scratch's dev already holds the drill's base files, at ${after:0:7}"
+  assert_equal "$(git --git-dir="${ORIGIN:?}" rev-parse dev)" "$after"
+  assert_equal "$(stub_calls gh)" ""
+  assert_equal "$(find "$sandboxes" -mindepth 1)" ""
+}
+
+@test "--setup whose push of the lacking base files dev refuses says so, naming them and Daniel's step" {
+  old_base
+  # Two files lacking this time, and dev's ruleset refuses every push.
+  local clone
+  clone=$(mktemp -d "$BATS_TEST_TMPDIR/clone.XXXXXX")
+  git clone -q "$ORIGIN" "$clone" 2>/dev/null
+  git -C "${clone:?}" rm -q .github/workflows/ci.yml
+  git -C "${clone:?}" commit -q -m "ci: no CI"
+  git -C "${clone:?}" push -q origin HEAD:dev
+  local before
+  before=$(git --git-dir="${ORIGIN:?}" rev-parse dev)
+  printf '#!/bin/sh\necho "error: GH013: Repository rule violations found for refs/heads/dev." >&2\nexit 1\n' >"$ORIGIN/hooks/pre-receive"
+  chmod +x "$ORIGIN/hooks/pre-receive"
+  run -1 --separate-stderr "$drill" --setup org/scratch
+  # shellcheck disable=SC2154 # stderr is bats' run's
+  assert_equal "${stderr_lines[-1]}" "merge-queue-drill: org/scratch's dev refused the push of .github/workflows/ci.yml .github/workflows/codeql.yml: its ruleset must be disabled for it, Daniel's step in sops/drills.md, then run --setup again"
+  assert_equal "$output" ""
+  assert_equal "$(git --git-dir="${ORIGIN:?}" rev-parse dev)" "$before"
+  assert_equal "$(branches)" "dev"
+  assert_equal "$(stub_calls gh)" ""
   assert_equal "$(find "$sandboxes" -mindepth 1)" ""
 }
 
@@ -347,6 +465,32 @@ jobs:
   assert_equal "$(find "$sandboxes" -mindepth 1)" ""
 }
 
+@test "the drill stops, with nothing opened or recorded, on a dev with no CodeQL workflow or while CodeQL's default setup is on" {
+  old_base
+  run -1 "$drill" org/scratch
+  assert_equal "${lines[-1]}" "merge-queue-drill: org/scratch's dev has no .github/workflows/codeql.yml: run tests/merge-queue-drill --setup org/scratch"
+  set_up
+  echo '{"state": "configured", "languages": ["actions"]}' >"$GH_DIR/default-setup.json"
+  run -1 "$drill" org/scratch
+  assert_equal "${lines[-1]}" "merge-queue-drill: org/scratch: CodeQL's default setup is on, which refuses the drill's workflow's uploads and runs nothing on a trial commit: Daniel turns it off, sops/drills.md"
+  assert_equal "$(branches)" "dev"
+  [[ $(stub_calls gh) != *'"pr"'* ]]
+  assert_equal "$(stub_calls team-review-check)" ""
+  assert_equal "$(stub_calls team-land)" ""
+  [[ ! -e $TEAM_HOME/drills.jsonl ]]
+  assert_equal "$(find "$sandboxes" -mindepth 1)" ""
+}
+
+@test "a default setup that cannot be read is said on one line and the drill goes on" {
+  set_up
+  echo "gh: Resource not accessible by integration (HTTP 403)" >"$GH_DIR/default-setup.error"
+  run -0 --separate-stderr "$drill" org/scratch
+  # shellcheck disable=SC2154 # stderr is bats' run's
+  assert_equal "$stderr" "merge-queue-drill: org/scratch's CodeQL default setup could not be read, so the drill goes on: gh: Resource not accessible by integration (HTTP 403)"
+  assert_contains "$output" "PASS one pull request landed on top of the other, behind dev's tip"
+  assert_equal "$(jq -r '.verdict' "$TEAM_HOME/drills.jsonl")" "pass"
+}
+
 @test "a passing run: two pull requests land at once through the stub queue, every check passes, and the run is recorded" {
   set_up
   local base
@@ -372,20 +516,22 @@ PASS PR #8 is merged at the head the drill pushed, ${a:0:7}, with no catch-up
 PASS PR #8's merge commit ${ma:0:7} is on dev, that head merged cleanly onto a commit holding dev at ${base:0:7}
 PASS PR #8's merge commit was the trial commit of a branch under gh-readonly-queue/dev/
 PASS PR #8's trial commit ${ma:0:7} carries the reviewer App's agent-review success
+PASS PR #8's trial commit ${ma:0:7} reported success for every check dev requires (check, Analyze (actions), agent-review)
 PASS PR #9 landed through the queue (team-land ended merged)
 PASS PR #9 is merged at the head the drill pushed, ${b:0:7}, with no catch-up
 PASS PR #9's merge commit ${mb:0:7} is on dev, that head merged cleanly onto a commit holding dev at ${base:0:7}
 PASS PR #9's merge commit was the trial commit of a branch under gh-readonly-queue/dev/
 PASS PR #9's trial commit ${mb:0:7} carries the reviewer App's agent-review success
+PASS PR #9's trial commit ${mb:0:7} reported success for every check dev requires (check, Analyze (actions), agent-review)
 PASS one pull request landed on top of the other, behind dev's tip
-== CodeQL on the trial commits (no check)
-PR #8: CodeQL reported on the trial commit ${ma:0:7}; its check runs: CodeQL (success), agent-review (success), check (success)
-PR #9: CodeQL reported on the trial commit ${mb:0:7}; its check runs: CodeQL (success), agent-review (success), check (success)
-== 11 of 11 checks passed on org/scratch PRs #8 and #9; CodeQL reported on 2 of 2 trial commits
+== the roll-up CodeQL on the trial commits (no check)
+PR #8: the roll-up CodeQL posted on the trial commit ${ma:0:7}; its check runs: Analyze (actions) (success), CodeQL (success), agent-review (success), check (success)
+PR #9: the roll-up CodeQL posted on the trial commit ${mb:0:7}; its check runs: Analyze (actions) (success), CodeQL (success), agent-review (success), check (success)
+== 13 of 13 checks passed on org/scratch PRs #8 and #9; every required check reported on 2 of 2 trial commits; the roll-up CodeQL on 2
 team-drill: recorded merge-queue pass on home-pc at $(git -C "${CODE_CHECKOUT:?}" rev-parse --short=7 HEAD)"
   assert_equal "${lines[-1]}" "team-drill: recorded merge-queue pass on home-pc at $(git -C "${CODE_CHECKOUT:?}" rev-parse --short=7 HEAD)"
   # One line in the team home the drill was run with, never the sandbox's.
-  assert_equal "$(drill_lines)" "$(drill_line pass "11 of 11 checks passed on org/scratch PRs #8 and #9; CodeQL reported on 2 of 2 trial commits")"
+  assert_equal "$(drill_lines)" "$(drill_line pass "13 of 13 checks passed on org/scratch PRs #8 and #9; every required check reported on 2 of 2 trial commits; the roll-up CodeQL on 2")"
 
   # The scripts ran in the sandbox's team home, each PR's head given in full, the App's check
   # posted before the wait on the head's checks, and both landings with 30 minutes.
@@ -406,7 +552,7 @@ team-drill: recorded merge-queue pass on home-pc at $(git -C "${CODE_CHECKOUT:?}
   # on the scratch repository, with the ruleset's required checks but agent-review.
   assert_equal "$(<"$GH_DIR/registry-8.status") $(<"$GH_DIR/registry-8.check")" "0 $team/projects.toml: 1 projects ok"
   assert_equal "$(jq -c '[.repo, .base, .merge_method, .required_checks, (.path | test("/merge-queue-drill\\.[^/]+/checkout$"))]' \
-    "$GH_DIR/registry-8.json")" '["org/scratch","dev","merge",["CodeQL","check"],true]'
+    "$GH_DIR/registry-8.json")" '["org/scratch","dev","merge",["Analyze (actions)","check"],true]'
   # Its ledger holds to the contract, with a passing review of each head under the PR's task.
   mkdir "$BATS_TEST_TMPDIR/drill-home"
   cp "$GH_DIR/ledger-8.jsonl" "$BATS_TEST_TMPDIR/drill-home/ledger.jsonl"
@@ -425,6 +571,23 @@ $base"
   [[ $(branches) != *drill/* ]]
   assert_equal "$(find "$sandboxes" -mindepth 1)" ""
   [[ ! -e $GH_DIR/pr-8.closed && ! -e $GH_DIR/pr-9.closed ]]
+}
+
+@test "the drill runs on the owner login throughout, whatever GitHub login its session names" {
+  set_up
+  # The stub gh and the stub team-land log the three login variables of each call first.
+  local cmd
+  for cmd in gh team-land; do
+    { printf '%s\n' 'printf "GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n" "${GH_CONFIG_DIR-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/login.env"'
+      cat "$STUB_FIXTURES/$cmd.sh"; } >"$STUB_FIXTURES/$cmd.sh.new"
+    mv "$STUB_FIXTURES/$cmd.sh.new" "$STUB_FIXTURES/$cmd.sh"
+  done
+  # As the coordinator's settings name the worker login.
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN='' GITHUB_TOKEN='' run -0 "$drill" org/scratch
+  assert_contains "$output" "PASS PR #9 landed through the queue (team-land ended merged)"
+  # Every gh call and both landings, none on the session's login.
+  assert_equal "$(grep -c . "$STUB_CALLS/login.env")" "$(($(stub_calls gh | grep -c .) + 2))"
+  assert_equal "$(sort -u "$STUB_CALLS/login.env")" "GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>"
 }
 
 @test "a head whose checks do not pass ends the drill before any landing, its pull requests closed and the run recorded failed" {
@@ -471,27 +634,29 @@ team-drill: recorded merge-queue fail on home-pc at "
 team-land: enqueued https://github.com/org/scratch/pull/9 at $(short pr-9.head)
 team-land: the merge queue dropped https://github.com/org/scratch/pull/9: the checks failed"
   assert_contains "$output" "PASS PR #8's trial commit $ma carries the reviewer App's agent-review success
+PASS PR #8's trial commit $ma reported success for every check dev requires (check, Analyze (actions), agent-review)
 FAIL PR #9 landed through the queue (team-land ended dequeued)
 FAIL PR #9 is merged at the head the drill pushed, $(short pr-9.head), with no catch-up
 FAIL PR #9's merge commit is on dev, that head merged cleanly onto a commit holding dev at $(git --git-dir="${ORIGIN:?}" rev-parse --short=7 "$(<"$GH_DIR/pr-8.head")^")
 FAIL PR #9's merge commit was the trial commit of a branch under gh-readonly-queue/dev/
 FAIL PR #9's trial commit carries the reviewer App's agent-review success
+FAIL PR #9's trial commit reported success for every check dev requires (check, Analyze (actions), agent-review): no trial commit to read
 FAIL one pull request landed on top of the other, behind dev's tip
-== CodeQL on the trial commits (no check)
-PR #8: CodeQL reported on the trial commit $ma; its check runs: CodeQL (success), agent-review (success), check (success)
+== the roll-up CodeQL on the trial commits (no check)
+PR #8: the roll-up CodeQL posted on the trial commit $ma; its check runs: Analyze (actions) (success), CodeQL (success), agent-review (success), check (success)
 PR #9: no trial commit to read
-== 5 of 11 checks passed on org/scratch PRs #8 and #9; CodeQL reported on 1 of 1 trial commits
+== 6 of 13 checks passed on org/scratch PRs #8 and #9; every required check reported on 1 of 1 trial commits; the roll-up CodeQL on 1
 team-drill: recorded merge-queue fail on home-pc at "
-  assert_equal "$(drill_lines)" "$(drill_line fail "5 of 11 checks passed on org/scratch PRs #8 and #9; CodeQL reported on 1 of 1 trial commits")"
+  assert_equal "$(drill_lines)" "$(drill_line fail "6 of 13 checks passed on org/scratch PRs #8 and #9; every required check reported on 1 of 1 trial commits; the roll-up CodeQL on 1")"
   [[ ! -e $GH_DIR/pr-8.closed && -e $GH_DIR/pr-9.closed ]]
   [[ $(branches) != *drill/* ]]
   assert_equal "$(find "$sandboxes" -mindepth 1)" ""
 }
 
-@test "a pull request still queued at the deadline has its trial commit read, where CodeQL did not report" {
+@test "a pull request still queued at the deadline has its trial commit read, where the roll-up CodeQL did not post" {
   set_up
   echo waiting >"$GH_DIR/land-9"
-  # The landed trial commit has CodeQL; the one still waiting has the check job and agent-review.
+  # Neither trial commit has the roll-up CodeQL, only the workflows' checks and the App's agent-review.
   check_runs 123456 ""
   TEAM_LAND_DEADLINE_SECONDS=7 run -1 "$drill" org/scratch
   local trial
@@ -500,9 +665,10 @@ team-drill: recorded merge-queue fail on home-pc at "
 7"
   assert_contains "$output" "FAIL PR #9 landed through the queue (team-land ended waiting)"
   assert_contains "$output" "PASS PR #9's trial commit ${trial:0:7} carries the reviewer App's agent-review success"
-  assert_contains "$output" "PR #8: CodeQL did not report on the trial commit $(short pr-8.merge); its check runs: agent-review (success), check (success)
-PR #9: CodeQL did not report on the trial commit ${trial:0:7}; its check runs: agent-review (success), check (success)
-== 6 of 11 checks passed on org/scratch PRs #8 and #9; CodeQL reported on 0 of 2 trial commits"
+  assert_contains "$output" "PASS PR #9's trial commit ${trial:0:7} reported success for every check dev requires (check, Analyze (actions), agent-review)"
+  assert_contains "$output" "PR #8: the roll-up CodeQL did not post on the trial commit $(short pr-8.merge); its check runs: Analyze (actions) (success), agent-review (success), check (success)
+PR #9: the roll-up CodeQL did not post on the trial commit ${trial:0:7}; its check runs: Analyze (actions) (success), agent-review (success), check (success)
+== 8 of 13 checks passed on org/scratch PRs #8 and #9; every required check reported on 2 of 2 trial commits; the roll-up CodeQL on 0"
   # The pull request is taken out of the queue by closing it.
   [[ -e $GH_DIR/pr-9.closed ]]
   [[ $(branches) != *drill/* ]]
@@ -520,10 +686,47 @@ PR #9: CodeQL did not report on the trial commit ${trial:0:7}; its check runs: a
 PASS PR #8 is merged at the head the drill pushed, $(short pr-8.head), with no catch-up
 FAIL PR #8's merge commit $ma is on dev, that head merged cleanly onto a commit holding dev at "
   assert_contains "$output" "PASS PR #8's merge commit was the trial commit of a branch under gh-readonly-queue/dev/
-FAIL PR #8's trial commit $ma carries the reviewer App's agent-review success"
+FAIL PR #8's trial commit $ma carries the reviewer App's agent-review success
+FAIL PR #8's trial commit $ma reported success for every check dev requires (check, Analyze (actions), agent-review): agent-review not reported by the App 123456"
   assert_contains "$output" "FAIL PR #9's merge commit was the trial commit of a branch under gh-readonly-queue/dev/
-FAIL PR #9's trial commit $mb carries the reviewer App's agent-review success"
+FAIL PR #9's trial commit $mb carries the reviewer App's agent-review success
+FAIL PR #9's trial commit $mb reported success for every check dev requires (check, Analyze (actions), agent-review): agent-review not reported by the App 123456"
   assert_equal "$(jq -r '.verdict' "$TEAM_HOME/drills.jsonl")" "fail"
+}
+
+@test "a trial commit missing a required check, or carrying one not successful, fails the required-checks check naming each" {
+  set_up
+  # dev also requires lint, pinned to no App, which a check run or a commit status may meet.
+  queue_rules MERGE 123456 lint
+  echo waiting >"$GH_DIR/land-9"
+  # PR #8's trial commit: no Analyze (actions), and lint a successful status. PR #9's: Analyze
+  # (actions) failed, lint a check run still running and a failed status.
+  check_runs 123456 "" runs-pr-8.json
+  jq '.check_runs |= map(select(.name != "Analyze (actions)"))' "$GH_DIR/runs-pr-8.json" >"$GH_DIR/runs-pr-8.json.new"
+  mv "$GH_DIR/runs-pr-8.json.new" "$GH_DIR/runs-pr-8.json"
+  echo '{"state": "success", "statuses": [{"context": "lint", "state": "success"}]}' >"$GH_DIR/statuses-pr-8.json"
+  check_runs 123456 "" runs-pr-9.json
+  jq '.check_runs |= map(if .name == "Analyze (actions)" then .conclusion = "failure" else . end)
+    | .check_runs += [{name: "lint", status: "in_progress", conclusion: null, app: {id: 15368}}]' \
+    "$GH_DIR/runs-pr-9.json" >"$GH_DIR/runs-pr-9.json.new"
+  mv "$GH_DIR/runs-pr-9.json.new" "$GH_DIR/runs-pr-9.json"
+  echo '{"state": "failure", "statuses": [{"context": "lint", "state": "failure"}]}' >"$GH_DIR/statuses-pr-9.json"
+  TEAM_LAND_DEADLINE_SECONDS=7 run -1 "$drill" org/scratch
+  assert_contains "$output" "FAIL PR #8's trial commit $(short pr-8.merge) reported success for every check dev requires (check, Analyze (actions), agent-review, lint): Analyze (actions) not reported"
+  assert_contains "$output" "FAIL PR #9's trial commit $(short entry-9) reported success for every check dev requires (check, Analyze (actions), agent-review, lint): Analyze (actions) failure, lint in_progress, lint failure"
+  assert_contains "$output" "every required check reported on 1 of 2 trial commits; the roll-up CodeQL on 0"
+  assert_equal "$(jq -r '.verdict' "$TEAM_HOME/drills.jsonl")" "fail"
+  # A lint met by its status alone passes.
+  rm "$GH_DIR"/pr-* "$GH_DIR"/entry-* "$GH_DIR"/started-* "$GH_DIR"/runs-pr-* "$GH_DIR/statuses-pr-9.json" "$GH_DIR/land-9" "$TEAM_HOME/drills.jsonl"
+  echo '{"state": "success", "statuses": [{"context": "lint", "state": "success"}]}' >"$GH_DIR/statuses-pr-9.json"
+  # The first run's PR #8 landed runs/<stamp>-a.txt on dev, and the stub queue ends at once, so a
+  # second run in the same second would name the same file and commit nothing: wait for the next.
+  local second
+  second=$(date -u +%s)
+  while [[ $(date -u +%s) == "$second" ]]; do sleep 0.1; done
+  run -0 "$drill" org/scratch
+  assert_contains "$output" "PASS PR #8's trial commit $(short pr-8.merge) reported success for every check dev requires (check, Analyze (actions), agent-review, lint)"
+  assert_contains "$output" "PASS PR #9's trial commit $(short pr-9.merge) reported success for every check dev requires (check, Analyze (actions), agent-review, lint)"
 }
 
 @test "a landing that prints no result fails, and a record team-drill refuses is said with the exit status kept" {

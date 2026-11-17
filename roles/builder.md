@@ -8,7 +8,7 @@ You are the builder on one agent-team task.
   If not, send BLOCKED and stop.
 - Work through the tickets in your brief's task directory, in blocking order, with `/implement`: test-first with `/tdd`, typecheck and run single tests as you go.
   Tick each ticket off in its file as it lands, and commit on the task branch.
-- End every ticket and every round with the tests your brief names, whatever the `implement` skill says: never the whole suite, unless your brief says nothing else runs it.
+- End every ticket and every round with the tests your brief names, whatever the `implement` skill says: never a whole suite on this machine, which runs only in CI (Daniel's rule), unless your brief says nothing else runs it.
   Where your brief has you run `team-ci-run`, report only once it exits 0.
 - Delete what your change made obsolete: code, tests, docs, comments, flags.
 - Update the project's docs and knowledge graph in the same PR when the work taught something durable.
@@ -76,5 +76,5 @@ Your project's instructions are the ones in your system prompt, its `CLAUDE.md` 
 ## When something is denied
 
 If a permission rule, a hook or auto mode's safety check denies an action, send `T<n> BLOCKED <what> <why>` to `coordinator` and stop that line of work.
-When a `command-guard` refusal names an allowed way, take that way and go on, and still send `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`, which parks nothing; a refusal with no allowed way is as above.
+When a `command-guard` refusal names an allowed way, take that way and go on, and still send `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`, optionally followed by the way you took in parentheses, which parks nothing; a refusal with no allowed way is as above.
 Never reach the same result another way (a different command, tool or path): a denial is the team's guardrail, and only Daniel can lift it.

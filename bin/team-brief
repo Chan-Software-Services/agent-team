@@ -38,13 +38,15 @@
 # without one), team_home, team_code (this code checkout, where a brief points for code such as
 # sops/), team_bin, local_checks (the project's, each in backticks and joined with ", ", or
 # "none"), tests (the tests a builder runs: with the project's changed_tests, "Run only the tests
-# your change reaches, never the whole suite, which CI runs on every head you push: " and its text;
-# without, "Nothing but you runs <project>'s whole suite, so run it once at your end, as the
-# project's docs say, beside the tests your change reaches as you go."; with its branch_ci too,
-# "Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch's
-# head: " and its changed_tests), ui, task_branch and task_worktree (the task worktree's branch and
-# path, the same as branch and worktree without --ticket), parallel, captures and ci, from the
-# ledger and projects.toml.
+# your change reaches, never the whole suite, which CI runs on every head you push: " and its text,
+# or, when the project lists local_checks and no required_checks, "Run only the tests your change
+# reaches, never the whole suite, which the project's local checks run at each review and merge: "
+# and its text; without, "Nothing but you runs <project>'s whole suite, so run it once at your
+# end, as the project's docs say, beside the tests your change reaches as you go."; with its
+# branch_ci too, local_checks or not, "Run only the tests you wrote or changed, never the whole
+# suite, which CI runs on your branch's head: " and its changed_tests), ui, task_branch and
+# task_worktree (the task worktree's branch and path, the same as branch and worktree without
+# --ticket), parallel, captures and ci, from the ledger and projects.toml.
 # ci is empty unless the project has branch_ci: then a newline and two lines, each a list item's
 # continuation, telling the builder to push the brief's branch, if that head is not on origin yet,
 # to run team_bin's team-ci-run <project> <branch> <the full sha it pushed> with Bash
@@ -300,28 +302,27 @@ else
 fi
 facts=$(team_project "$project")
 # The project's facts and the chosen worktree's, in one jq run.
-repo='' base='' task_dir='' local_checks='' changed_tests='' branch_ci='' delivery='' branch='' chosen_wt=''
+repo='' base='' task_dir='' local_checks='' changed_tests='' branch_ci='' required_checks='' delivery='' branch='' chosen_wt=''
 json_vars repo='.repo | tostring' base='.base | tostring' task_dir='.task_dir | tostring' \
   local_checks='.local_checks | if . == [] then "none" else map("`\(.)`") | join(", ") end' \
   changed_tests='.changed_tests | tostring' branch_ci='.branch_ci | tostring' \
+  required_checks='.required_checks // [] | join(" ")' \
   delivery='.delivery | tostring' branch='$chosen.branch | tostring' chosen_wt='$chosen.worktree | tostring' \
   -- --argjson chosen "$chosen" <<<"$facts"
 # In one jq run over the task's events: the latest review made in the brief's project
 # (project_reviews in bin/lib/ledger.jq: another repository's review is none of this one's; null
 # when none), with that review's head (empty when none) and the findings it sent back as a list
 # ("3, 5 and 6"; empty when none), and the checks that went back as a round: the latest ci of
-# outcome failed logged after that review on a PR of the project's repo, or naming no PR (team-next
-# T<n> --ci's on a pass, or the findings round's look), as its head and the names of its failures
-# of the PR's own (empty when none).
+# outcome failed logged after that review on a PR of the project's repo, or naming no PR
+# (failed_ci_after: team-next T<n> --ci's on a pass, or the findings round's look), as its head
+# and the names of its failures of the PR's own (empty when none).
 review='' review_head='' sent_list='' ci_round=''
 json_vars --ledger review='. as $events | project_reviews($project) | last | if . == null then null else $events[.] end | tojson' \
   review_head='. as $events | project_reviews($project) | last | select(. != null) | $events[.].head // empty' \
   sent_list='. as $events | project_reviews($project) | last | select(. != null) | $events[.].sent_back // [] | map(tostring)
     | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' \
   ci_round='(project_reviews($project) | last) as $r | select($r != null)
-    | "https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/" as $prs
-    | [.[$r + 1:][] | select(.event == "ci" and .outcome == "failed"
-        and (.url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))] | last | select(. != null)
+    | failed_ci_after($r; $repo) as $c | select($c != null) | .[$c]
     | {head, names: [(.failed // [])[] | select(.class == "pr") | .name]} | tojson' \
   -- --arg project "$project" --arg repo "$repo" <<<"$events"
 # The task worktree's branch and path; with --ticket, the brief's own are the ticket worktree's.
@@ -382,11 +383,15 @@ declare -A values=(
   [parallel]=''
   [ci]=''
 )
-# A project whose CI (or the local checks its reviewer and team-merge run) runs the whole suite
-# names the tests a builder's change reaches; one whose builders run CI on their branch
-# (branch_ci), the tests a builder wrote or changed.
+# A project whose CI or local checks (which its reviewer and team-merge run) run the whole suite
+# names the tests a builder's change reaches, and which of them runs it: the local checks when it
+# lists some and no required checks, as a project does before its move to CI (sops/ci-only.md),
+# else CI; one whose builders run CI on their branch (branch_ci), the tests a builder wrote or
+# changed.
 if [[ -n $changed_tests && -n $branch_ci ]]; then
   values[tests]="Run only the tests you wrote or changed, never the whole suite, which CI runs on your branch's head: $changed_tests"
+elif [[ -n $changed_tests && $local_checks != none && -z $required_checks ]]; then
+  values[tests]="Run only the tests your change reaches, never the whole suite, which the project's local checks run at each review and merge: $changed_tests"
 elif [[ -n $changed_tests ]]; then
   values[tests]="Run only the tests your change reaches, never the whole suite, which CI runs on every head you push: $changed_tests"
 fi

@@ -18,6 +18,7 @@ The team home is the records the scripts read and write: a git checkout of a pri
 
 - The code repository changes only through pull requests to `dev`, and nothing is committed on `main`, which a release fast-forwards from `dev`.
   GitHub holds the rule: `dev`'s protection requires a pull request, refuses force pushes and deletion, and applies to administrators.
+- The team's sessions push branches and open pull requests on the worker login when `bin/lib/worker-login` names one, while `team-merge` merges on the owner login (`sops/machine-setup.md`, "The worker login").
 - `dev` also requires `agent-review`, the reviewer App's check run, which `team-review-check` posts and `team-merge` requires on the head of every agent-team PR while `bin/lib/review-app` names the App.
   The App's key, `~/.config/agent-team/review-app.pem`, is denied to the workers' and the coordinator's `Read` and Bash; `sops/merging.md` says what the App proves.
 - Records never come here: every tracked path is code, listed in `bin/lib/code`, and none matches `bin/lib/records`; `tests/repo.bats` checks both, so a new path is listed as code in its PR.
@@ -34,6 +35,7 @@ The team home is the records the scripts read and write: a git checkout of a pri
 
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.
+- No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
 - A builder runs on its machine only `tests/run shellcheck --changed` and the single test files it wrote or changed, and the suite on GitHub: at its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, and it reports `DONE` or `PR` only once that exits 0.
 - `dev`'s protection and `projects.toml`'s `required_checks` for `agent-team` require each CI job by its id, so renaming a job changes a required check.
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real; `tests/helpers/common.bash` documents the helpers.
@@ -62,6 +64,7 @@ The team home is the records the scripts read and write: a git checkout of a pri
 - A jq program that includes a module of `bin/lib` also includes, after it, every module that one includes, directly or not (`include "workers"; include "time"; include "ledger";`), which `tests/repo.bats` holds; `tests/README.md` has the jq 1.8.2 fault behind it.
 - The registry is read only through `team-project`; a new key goes in its key lists and in its header, which documents every key.
 - A script reaches Discord's API only through `discord_api` and GitHub through `gh`, but for the reviewer App's calls, which go through `review_app_api` and `curl`, since `gh` takes a token only from its environment or its login; and it never prints a secret.
+- A script reaches GitHub as the session's login, the worker login when one is named, unless it is the owner's: `use_owner_login` for a script that is the owner's throughout, as `team-merge` is, or `owner_gh` (`with_owner_login` for a bounded call) for one call, all in `bin/lib/github-login.sh`.
 
 ## Markdown
 

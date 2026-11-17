@@ -570,8 +570,9 @@ TOML
 
 # The library's file reasons for PR #5 of proj, one per line: file_reasons
 file_reasons() {
-  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh"; dir=$(mktemp -d)
-    pr_file_reasons "$dir" proj owner/proj 5 "$2"; printf "%s\n" "${PR_FILE_REASONS[@]}"' _ "${CODE_CHECKOUT:-$REPO_ROOT}" "$(jq length "$gh_dir/files.json")"
+  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh"; dir=$(mktemp -d "$3/files.XXXXXX")
+    pr_file_reasons "$dir" proj owner/proj 5 "$2"; printf "%s\n" "${PR_FILE_REASONS[@]}"' _ "${CODE_CHECKOUT:-$REPO_ROOT}" \
+    "$(jq length "$gh_dir/files.json")" "$BATS_TEST_TMPDIR"
 }
 
 @test "an agent-team PR's file reasons name its critical list as guardrails, and its other code, docs and tests match nothing" {
@@ -585,7 +586,7 @@ file_reasons() {
     bin/lib/ledger-contract.json bin/lib/data-check bin/lib/records bin/lib/code bin/lib/command_rules.py \
     bin/lib/command_text.py bin/lib/outbound.py bin/lib/kill_rules.py bin/lib/delete_rules.py \
     bin/lib/gate-claude-settings.json bin/lib/opencode-gate bin/lib/opencode-guard.js bin/lib/confine.py \
-    bin/lib/confine-roots bin/lib/confine-shell bin/hooks/git/pre-push \
+    bin/lib/confine-roots bin/lib/confine-shell bin/lib/confine-session bin/hooks/git/pre-push \
     bin/hooks/records-git/pre-commit bin/hooks/lease-fence settings/worker.json settings/reviewer.json coordinator.settings.json \
     assistant.settings.json \
     bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/team-next \

@@ -24,7 +24,7 @@ So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `
 
 ## CI
 
-A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard job `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main`, on each trial commit a merge queue builds (`merge_group`, its `checks_requested` type) and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
+A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard jobs `shard-plan`, whose timings the shards split by, and `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main`, on each trial commit a merge queue builds (`merge_group`, its `checks_requested` type) and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
 On a trial commit the `data` job reads what it adds to the commit the queue built it on (the merge group's base and head shas).
 Each job has a time limit (`timeout-minutes`), about twice its longest recent run, and each that runs bats one above `tests/run`'s file limit, which `tests/repo.bats` holds.
 `dev`'s protection and `projects.toml`'s `required_checks` for `agent-team` require each job by its id, so renaming a job changes a required check, and `team-merge` merges only with every one passed on the PR's exact head.
@@ -39,17 +39,19 @@ The Bootstrap workflow (`.github/workflows/bootstrap.yml`) runs only by hand: `t
 The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
 Each test file's header comment says what it checks and against what.
 No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
-`owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+`owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, rehearsal, `team-heavy` and `flock` they start.
 `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 
 ## The sandbox
 
 Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.
+The sandbox's `TMPDIR` is the test's own `$BATS_TEST_TMPDIR/tmp`, so every script under test and every inner bats makes its temporary files where bats removes them, and a test run leaves nothing in `/tmp`.
 The sandbox's `TEAM_CGROUP_ROOT` holds the cgroup tree and `/proc` that `team-capacity place` and `check` read, empty until a test writes them, so no test moves the machine's processes; `team-capacity sample` reads the machine through its seams, which the sandbox sets to an idle one (`TEAM_MEMINFO` 24 GiB available of 32, `TEAM_READING_PROCS` no process, `TEAM_READING_CPUS` 12) and a test may rewrite or unset.
 The sandbox's `TEAM_SYSTEM_ROOT` puts the library's system tool directories (treehouse's `/usr/local/bin` on Arch) inside it, so a PATH a test trims never gets the machine's own tools back on it.
 It also stands for `/` in the session tmp `team-close` and `team-load-check` remove, `/tmp/agent-team-T<n>`, so no test removes a live task's.
 The sandbox refuses a TMPDIR under `/home` or `/Users` (a job's own tmp under HOME, say), whose paths the ledger reads as a machine's HOME: run the tests with one outside them, as the default is.
 A script run from this checkout has the reviewer App on, since `bin/lib/review-app` names it, while a copy of `bin/` (`copy_bin`) has it off: a test that needs either says so, with `review_app_on` or `review_app_off`.
+A copy of `bin/` has the worker login off too, whatever this checkout commits: a test that needs it on says so with `worker_login_on`, which also writes the login's file into the sandbox's HOME.
 `tests/helpers/common.bash` documents the helpers.
 No test reads the records of the checkout it runs in, so the suite passes on the code alone: a test that needs a real-shaped registry or secrets manifest copies it from `tests/fixtures/`, and `team-doctor`'s `records` line checks the team home's real ledger, registry and secrets description.
 
