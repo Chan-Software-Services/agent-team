@@ -80,7 +80,7 @@ lock_has_its_shape() {
 @test "tools.lock lists every tool of the spec once per OS, each with a version_cmd, a pattern, a pin or a min, and its sources" {
   lock_has_its_shape
   local os both=(claude node codegraph gh-axi chrome-devtools-axi chrome-devtools-mcp lavish-axi opencode bun
-    treehouse no-mistakes rustup cargo-nextest sccache cargo-deny mongodump mongorestore op git jq tmux gh rsync docker docker-compose python bash go)
+    treehouse no-mistakes rustup cargo-nextest sccache cargo-deny mongodump mongorestore mongoimport op git jq tmux gh rsync docker docker-compose python bash go)
   local mac_only=(coreutils findutils gnu-sed grep flock) arch_only=(make unzip)
   for os in arch macos; do
     local expected=("${both[@]}")
@@ -90,12 +90,12 @@ lock_has_its_shape() {
   # Pinned: the tools the bootstrap installs itself, op on Linux only; Claude Code and rustup, which
   # update themselves, only warn.
   assert_equal "$(jq -r '[.tools[] | select(.pin or .from) | .name] | join(" ")' "$LOCK")" \
-    "claude node codegraph gh-axi chrome-devtools-axi chrome-devtools-mcp lavish-axi opencode bun treehouse no-mistakes rustup cargo-nextest sccache cargo-deny mongodump mongorestore op"
+    "claude node codegraph gh-axi chrome-devtools-axi chrome-devtools-mcp lavish-axi opencode bun treehouse no-mistakes rustup cargo-nextest sccache cargo-deny mongodump mongorestore mongoimport op"
   # treehouse is a GitHub release, each archive's checksum recorded; no-mistakes is Daniel's fork,
   # built at a commit on its main past upstream's release (the next test holds its version to
   # both), and keeps upstream's release, which from = "release" would pin instead.
   assert_equal "$(jq -r '[.tools[] | select(.from) | "\(.name)=\(.from)"] | join(" ")' "$LOCK")" \
-    "treehouse=release no-mistakes=fork mongodump=download mongorestore=download"
+    "treehouse=release no-mistakes=fork mongodump=download mongorestore=download mongoimport=download"
   # MongoDB's Database Tools ship every tool in one archive, so their entries name the same one.
   assert_equal "$(jq -c '[.tools[] | select(.from == "download") | .download] | unique | length' "$LOCK")" 1
   assert_equal "$(jq -r '[.tools[] | select(.release) | "\(.name)=\(.release.repo)"] | join(" ")' "$LOCK")" \
@@ -142,7 +142,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" ""
   local expected
   expected=$(printf '%s\n' os; lock_tools arch | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'team home login' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'worker login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
@@ -175,7 +175,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (sops/platform-gotchas.md)"
   local expected
   expected=$(printf '%s\n' os homebrew; lock_tools macos | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'team home login' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'worker login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
@@ -454,7 +454,7 @@ ${channel}0-x86_64-unknown-linux-gnu"
   only_checks 030-tools.sh
   local name
   every_tool_fails arch -
-  for name in mongodump mongorestore; do
+  for name in mongodump mongorestore mongoimport; do
     assert_equal "$(line_of "tool $name")" "FAIL tool $name: not installed; fix: $(download_fix "$name" linux-amd64 'sha256sum -c -' tar)"
   done
   # An ARM Linux, then each Mac, gets its own archive; a Mac's is a .zip, checked with shasum.

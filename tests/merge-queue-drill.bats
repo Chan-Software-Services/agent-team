@@ -427,6 +427,23 @@ $base"
   [[ ! -e $GH_DIR/pr-8.closed && ! -e $GH_DIR/pr-9.closed ]]
 }
 
+@test "the drill runs on the owner login throughout, whatever GitHub login its session names" {
+  set_up
+  # The stub gh and the stub team-land log the three login variables of each call first.
+  local cmd
+  for cmd in gh team-land; do
+    { printf '%s\n' 'printf "GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n" "${GH_CONFIG_DIR-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/login.env"'
+      cat "$STUB_FIXTURES/$cmd.sh"; } >"$STUB_FIXTURES/$cmd.sh.new"
+    mv "$STUB_FIXTURES/$cmd.sh.new" "$STUB_FIXTURES/$cmd.sh"
+  done
+  # As the coordinator's settings name the worker login.
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN='' GITHUB_TOKEN='' run -0 "$drill" org/scratch
+  assert_contains "$output" "PASS PR #9 landed through the queue (team-land ended merged)"
+  # Every gh call and both landings, none on the session's login.
+  assert_equal "$(grep -c . "$STUB_CALLS/login.env")" "$(($(stub_calls gh | grep -c .) + 2))"
+  assert_equal "$(sort -u "$STUB_CALLS/login.env")" "GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>"
+}
+
 @test "a head whose checks do not pass ends the drill before any landing, its pull requests closed and the run recorded failed" {
   set_up
   stub_reply team-ci-wait "team-ci-wait: the checks on the head did not pass" 1
