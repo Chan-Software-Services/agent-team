@@ -266,6 +266,29 @@ library() {
   refused "  no review of T14 is logged: review the head first"
 }
 
+@test "a pass in the PR's project stands for its catch-up though another repository's review found something after it" {
+  local merge
+  base_moves >/dev/null
+  # The pass is proj's, its reviewer's done naming a launch in proj; other's reviewer then found
+  # something in its own repository.
+  event T14 launch '{role: "reviewer", session: "r0000001", project: "proj"}'
+  event T14 'done' '{role: "reviewer", session: "r0000001"}'
+  event T14 launch '{role: "reviewer", session: "r0000002", project: "other"}'
+  review 1234567 findings
+  event T14 'done' '{role: "reviewer", session: "r0000002"}'
+  run_bin -0 --separate-stderr team-catch-up T14
+  merge=$(git --git-dir="${PROJ_ORIGIN:?}" rev-parse "refs/heads/$branch")
+  assert_equal "$(jq -c 'select(.event == "caught-up") | {from, head}' "$TEAM_HOME/ledger.jsonl")" \
+    "$(jq -cn --arg from "$head" --arg m "$merge" '{from: $from, head: $m}')"
+  # proj's own findings, logged after its pass, are refused as before.
+  event T14 launch '{role: "reviewer", session: "r0000003", project: "proj"}'
+  review "$merge" findings
+  event T14 'done' '{role: "reviewer", session: "r0000003"}'
+  base_moves src/third.py >/dev/null
+  rm -- "$GH_DIR/statuses"
+  refused "  the latest review of T14 (of ${merge:0:7}) found something, not a pass: fix and review it first"
+}
+
 @test "a head an earlier catch-up made is caught up again on the same review, which team-state shows" {
   local first second base
   base_moves >/dev/null

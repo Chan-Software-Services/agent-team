@@ -151,6 +151,11 @@ Chan-Software-Services/Conventioner
   done
   run bash -c 'source "$1/bin/lib/team.sh" && canonical_url "$2"' _ "$REPO_ROOT" "$old"
   assert_equal "$output" "$new"
+  # The no-mistakes fork's move of 2026-11-16, read from the real table too.
+  for url in https://github.com/chanjdaniel/no-mistakes/pull/1 https://github.com/Chan-Software-Services/no-mistakes/pull/1; do
+    run bash -c 'source "$1/bin/lib/team.sh" && canonical_url "$2"' _ "$REPO_ROOT" "$url"
+    assert_equal "$output" https://github.com/Chan-Software-Services/no-mistakes/pull/1
+  done
 }
 
 @test "own_project reads the code checkout as the team's own while its origin and the registry name a moved repo under different owners" {
