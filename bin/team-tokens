@@ -64,8 +64,12 @@
 #                    event's model, else default), with how many have replies, the reviews they
 #                    wrote by --until (a review is its task's latest reviewer launch's), those with
 #                    findings, their $w and $w per review, and the models their replies ran on;
-#                    and the window's builder and reviewer launches, but T0's (team-test's), by
-#                    project (the launch's, else its task's) and the toolkits each carried (its
+#                    the window's builder launches by the model each launched on, the same way,
+#                    but T0's, with how many have replies, the tasks they built, the tickets done
+#                    and PRs they delivered by --until (a ticket done or a PR is its task's
+#                    latest builder launch's), their $w and $w per task, and the models their
+#                    replies ran on; and the window's builder and reviewer launches, but T0's
+#                    (team-test's), by project (the launch's, else its task's) and the toolkits each carried (its
 #                    launch event's toolkits, sorted and deduplicated, none for an empty list or
 #                    none named), with how many have replies and, over those, a builder's tickets
 #                    done by --until (a ticket done is its task's latest builder launch's), a
@@ -121,7 +125,8 @@
 # long_sessions {threshold (250000), roles [{role, sessions, long, w, role_w, past_w}], tasks
 # [{task, project, role, sessions, w, past_w, max_context, tickets_done}] (every one, by w)},
 # rebuilds {roles, gap_minutes}, outcomes {sessions, counts, complete_tasks, measures,
-# reviewer_models, builder_toolkits [{project, toolkits, launches, with_replies, tickets_done, w,
+# reviewer_models, builder_models [{model, launches, with_replies, tasks, tickets_done, prs, w,
+# w_per_task, reply_models}], builder_toolkits [{project, toolkits, launches, with_replies, tickets_done, w,
 # w_per_ticket}], reviewer_toolkits [{project, toolkits, launches, with_replies, reviews, findings,
 # w, w_per_review}] (each sorted by project, then toolkits, an empty list first; a ratio with no
 # outcome null)}, relaunches {reasons, all, warmup_w}, rereviews {count, complete, w, median_w,
@@ -1277,18 +1282,19 @@ def relaunches(ledger):
 
 
 # The outcome event each worker role delivers: a builder's ticket done, a reviewer's review.
-OUTCOME = {"builder": "ticket-done", "reviewer": "review"}
+OUTCOME = {"builder": ("ticket-done", "pr"), "reviewer": ("review",)}
 
 
-# Each builder and reviewer launch's outcomes, by the launch's id(): a ticket done is its task's
-# latest builder launch's before it, and a review its latest reviewer launch's, over the whole
-# ledger in its order.
+# Each builder and reviewer launch's outcomes, by the launch's id(): a ticket done or a PR is its
+# task's latest builder launch's before it, and a review its latest reviewer launch's, over the
+# whole ledger in its order.
 def launch_outcomes(ledger):
     last, found = {}, collections.defaultdict(list)
     for e in ledger:
         task, event = e.get("task"), e.get("event")
         if event == "launch" and e.get("role") in OUTCOME:
-            last[(task, OUTCOME[e["role"]])] = e
+            for kind in OUTCOME[e["role"]]:
+                last[(task, kind)] = e
         elif (task, event) in last:
             found[id(last[(task, event)])].append(e)
     return found
@@ -1864,6 +1870,32 @@ def build_report(opts):
         )
     report["outcomes"]["reviewer_models"] = reviewer_models
 
+    # The window's builder launches, but T0's, by the model each launched on (default: none
+    # named), so a builder-model trial's tasks compare with the baseline's (sops/model-trials.md).
+    builder_models = []
+    for model, ls in sorted(group([e for e in events if e.get("event") == "launch" and e.get("role") == "builder" and e.get("task") != "T0"],
+                                  lambda e: e["model"] if isinstance(e.get("model"), str) else "default").items()):
+        seen = [e for e in ls if session_w(e) is not None]
+        got = [x for e in seen for x in delivered[id(e)] if x["_t"] <= until]
+        w = sum(session_w(e) for e in seen)
+        tasks = {e.get("task") for e in seen}
+        full = {by_prefix[e["session"][:8]] for e in seen}
+        replied = group([r for r in rows if r["session"] in full], lambda r: r["model"])
+        builder_models.append(
+            {
+                "model": model,
+                "launches": len(ls),
+                "with_replies": len(seen),
+                "tasks": len(tasks),
+                "tickets_done": sum(1 for x in got if x.get("event") == "ticket-done"),
+                "prs": sum(1 for x in got if x.get("event") == "pr"),
+                "w": r6(w),
+                "w_per_task": r6(ratio(w, len(tasks))),
+                "reply_models": {m: r6(total(rs)) for m, rs in sorted(replied.items())},
+            }
+        )
+    report["outcomes"]["builder_models"] = builder_models
+
     # The window's builder and reviewer launches by their project and the toolkits each carried,
     # so a setup trial's arm compares with its baseline in one project (sops/model-trials.md); T0's,
     # the load check's, are team-test's and in no row.
@@ -1876,7 +1908,7 @@ def build_report(opts):
         out = []
         for (name, kits), ls in sorted(group([e for e in events if e.get("event") == "launch" and e.get("role") == role and e.get("task") != "T0"], toolkit_key).items()):
             seen = [e for e in ls if session_w(e) is not None]
-            got = [x for e in seen for x in delivered[id(e)] if x["_t"] <= until]
+            got = [x for e in seen for x in delivered[id(e)] if x["_t"] <= until and x.get("event") != "pr"]
             w = sum(session_w(e) for e in seen)
             row = {"project": name, "toolkits": list(kits), "launches": len(ls), "with_replies": len(seen)}
             if role == "builder":
@@ -2144,10 +2176,14 @@ def render(report):
         ["Coordinator $w per merge", fd(m["coordinator_w_per_merge"])],
         ["Coordinator $w per launch", fd(m["coordinator_w_per_launch"])],
     ]))
-    P("\nReviewer launches by the model each launched on (default: the user settings' model), the reviews and $w over those with replies:\n")
+    P("\nReviewer launches by the model each launched on (default: one that logged default, or none before launches logged each model), the reviews and $w over those with replies:\n")
     P(table(["Launch model", "Reviewer launches", "With replies", "Reviews", "With findings", "$w", "$w per review", "Reply models"],
             [[x["model"], x["launches"], x["with_replies"], x["reviews"], x["findings"], fd(x["w"]), fd(x["w_per_review"]),
               ", ".join(f"{k} {fd(v)}" for k, v in x["reply_models"].items()) or "-"] for x in o["reviewer_models"]]))
+    P("\nBuilder launches by the model each launched on (default: one that logged default, or none before launches logged each model), the tasks, tickets done, PRs and $w over those with replies:\n")
+    P(table(["Launch model", "Builder launches", "With replies", "Tasks", "Tickets done", "PRs", "$w", "$w per task", "Reply models"],
+            [[x["model"], x["launches"], x["with_replies"], x["tasks"], x["tickets_done"], x["prs"], fd(x["w"]), fd(x["w_per_task"]),
+              ", ".join(f"{k} {fd(v)}" for k, v in x["reply_models"].items()) or "-"] for x in o["builder_models"]]))
     P("\nBuilder launches by toolkits (their project, and the toolkits each launch carried), the tickets done and $w over those with replies:\n")
     P(table(["Project", "Toolkits", "Builder launches", "With replies", "Tickets done", "$w", "$w per ticket"],
             [[x["project"], "+".join(x["toolkits"]) or "none", x["launches"], x["with_replies"], x["tickets_done"], fd(x["w"]),

@@ -9,11 +9,17 @@ It covers setup trials too, since T247: a toolkit, hook or instruction that clai
 
 - A project's `models` table in the registry names a model alias or name per worker role: `models = { reviewer = "sonnet" }` under `[<project>]` in the team home's `projects.toml` (`team-project --help` documents the key).
   With no table, every role runs on the user settings' model (Opus 5.5 today).
-- `team-worker` passes the role's model to `claude --bg` as `--model` and logs it as `model` on the launch event, so the ledger tells a trial's sessions from the baseline's.
-  A launch with no `model` ran on the default.
-- `team-worker --model <alias>` launches one session on another model than the registry's, for a paired review below; the launch logs that model too.
-- An ops session never takes a model: its production work stays on the default.
+- A task's builder model is the task's own: `team-open --builder-model <alias>` names it, else the project's registry `builder` line at the open is the task's, else `default` (the settings' word), and `team-open` keeps it on the task's `opened` event as `builder_model`.
+  `team-worker` launches every builder of the task on it, a fix round's, `team-next`'s hand-offs and `--fill`'s ticket builders, and a resume's, a level's or a recovery's relaunch among them, so a task stays in its arm through every relaunch, and a later edit of the registry changes no open task's builders.
+  A task opened before 2026-11-17 has no `builder_model`, so its builders still take the registry's `builder` line at each launch.
+  A task's builder takes no `--model` (`team-worker` refuses it), so no relaunch can fall back to another model.
+- `team-worker` passes a named model to `claude --bg` as `--model` and logs it as `model` on the launch event, with `model_from` saying where it came from (`task`, `launch` or `registry`), so the ledger tells a trial's sessions from the baseline's.
+  A launch with none named passes no `--model` and logs the settings' word: the `ANTHROPIC_MODEL` of its settings' `env`, else their `model` key, as `model_from` `settings`, and with neither `model` `default`, Claude Code's own default.
+  A launch from before 2026-11-17 logged no `model` when none was named, and ran on the settings' model.
+- `team-worker --model <alias>` launches one planner or reviewer on another model than the registry's, for a paired review below; the launch logs that model too, as `model_from` `launch`.
+- An ops session never takes a named model: its production work stays on the settings' word, which its launch logs.
   T0 and tasks opened before `team-open` have no project, so they take none from the registry.
+- To read back what a session ran on, `team-tokens --json --task T<n>`'s `outcomes.reviewer_models` and `outcomes.builder_models` give each launch model's row with `reply_models`, the models its sessions' replies ran on, read from their transcripts.
 
 ## Before the trial
 
@@ -44,13 +50,13 @@ Each measure is taken per review, for the trial's reviews and for the baseline's
 | Blocking findings and notes sent back | The ledger's `review` events: the share with `verdict` `findings`, and the notes sent back per review, the length of `sent_back` |
 | Re-review rounds per PR | `team-time --json`'s `reviews` (reviews and findings per PR, a review's PR the latest `pr` event before it), and `team-tokens --json`'s `rereviews` |
 | Issues found after a passing review that it should have caught | By the gate after the pass (a later `gate-run` on the PR with a `cause` of `review`, `notes` or `gate-finding`), by a later review of the same PR, or by Daniel; the coordinator judges each and lists it with where it was found |
-| $w per review | `team-tokens --json --task T<n>` for each of the project's tasks in the window: `outcomes.reviewer_models`, the trial model's row against `default`, whose `reply_models` must show the model each ran on |
+| $w per review | `team-tokens --json --task T<n>` for each of the project's tasks in the window: `outcomes.reviewer_models`, the trial model's row against the baseline's (`default`, or the settings' model by name for a launch since 2026-11-17), whose `reply_models` must show the model each ran on |
 
 The paired reviews' own launches log `opus`, so their $w is a row of their own in `reviewer_models`: the cost of the check, never part of the baseline.
 
 ## The baseline
 
-- The baseline is the same project's Opus reviews before `<start>`: reviewer launches with no `model`, from the weeks before the trial, back to the first with usage in the team home's `usage/` (`team-tokens`'s `sources`).
+- The baseline is the same project's Opus reviews before `<start>`: reviewer launches with no named model (no `model`, or `model_from` `settings` or `default`), from the weeks before the trial, back to the first with usage in the team home's `usage/` (`team-tokens`'s `sources`).
 - Reviews are matched by PR size, the lines a PR changes (`gh pr view <n> --repo <repo> --json additions,deletions`, added and deleted together), in four buckets: under 100, 100 to 499, 500 to 1,999, and 2,000 or more.
   Each baseline measure is weighed to the trial's mix of buckets, so a trial of small PRs is never compared with a baseline of large ones.
 - A bucket with no baseline review is left out of both sides, and the note says so.

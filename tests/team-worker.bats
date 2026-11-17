@@ -54,12 +54,13 @@ thread() {
   ledger_line --arg t "$1" '{ts: (now | todate), task: $t, event: "thread", discord_thread: "1563"}'
 }
 
-# opened <task> <project> <branch> <worktree>: a feature task opened in <worktree>, its plan
-# approved, so its builders and reviewers launch.
+# opened <task> <project> <branch> <worktree> [<more fields as a jq object>]: a feature task opened
+# in <worktree>, its plan approved, so its builders and reviewers launch.
 opened() {
-  ledger_line --arg t "$1" --arg p "$2" --arg b "$3" --arg wt "$4" '{ts: (now | todate), task: $t,
+  local more=${5:-'{}'}
+  ledger_line --arg t "$1" --arg p "$2" --arg b "$3" --arg wt "$4" --argjson more "$more" '{ts: (now | todate), task: $t,
     event: "opened", project: $p, path: "feature", type: "feat", title: "A task", branch: $b,
-    base: "main", base_sha: "0123456", worktree: $wt}'
+    base: "main", base_sha: "0123456", worktree: $wt} + $more'
   ledger_line --arg t "$1" '{ts: (now | todate), task: $t, event: "plan-approved", by: "coordinator"}'
 }
 
@@ -629,7 +630,7 @@ base_link() {
   assert_equal "$(bg_calls | jq -r last)" "Read your brief at $TEAM_HOME/tasks/T7/brief-rereview-3.md"
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "reviewer",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-task", machine: "home-pc", admission: $a,
-    brief: "brief-rereview-3"}')"
+    model: "default", model_from: "default", brief: "brief-rereview-3"}')"
   : >"$TEAM_HOME/ledger.jsonl"
   open_task T7
   # An ops-shaped prompt, the brief's own text, names no brief.
@@ -1080,7 +1081,8 @@ session-records-guard block 10"
   cd "$HOME"
   run_bin -0 team-worker T7 builder link/proj/1 -- go
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "builder",
-    session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc", admission: $a}')"
+    session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc", admission: $a,
+    model: "default", model_from: "default"}')"
   run_bin -0 team-log --check
 }
 
@@ -1138,15 +1140,16 @@ session-records-guard block 10"
     "--permission-mode", "auto", "--model", "sonnet", "--name", "T7-reviewer", "Review it"]')"
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "reviewer",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc",
-    admission: $a, model: "sonnet"}')"
+    admission: $a, model: "sonnet", model_from: "registry"}')"
   run_bin -0 team-log --check
 
-  # Each role takes its own line; one the table does not name takes none.
+  # Each role takes its own line; one the table does not name runs on the default, and logs it.
   : >"$STUB_CALLS/claude.log"
   run_bin -0 team-worker T7 builder "$wt1" -- go
   run_bin -0 team-worker T7 planner "$wt1" -- go
   assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg") | [(index("--model") // empty) as $i | .[$i + 1]]')" $'["claude-sonnet-5-5"]\n[]'
-  assert_equal "$(launches | jq -c '[.role, .model]')" $'["reviewer","sonnet"]\n["builder","claude-sonnet-5-5"]\n["planner",null]'
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["reviewer","sonnet","registry"]\n["builder","claude-sonnet-5-5","registry"]\n["planner","default","default"]'
   run_bin -0 team-log --check
 }
 
@@ -1161,7 +1164,7 @@ session-records-guard block 10"
     project: "other", branch: "chore/T7-two", base: "main", base_sha: "0123456", worktree: $wt}'
   run_bin -0 team-worker T7 builder "$wt1" -- go
   run_bin -0 team-worker T7 builder "$HOME/slots/other/1" -- go
-  assert_equal "$(launches | jq -c '[.project, .model]')" $'["proj",null]\n["other","sonnet"]'
+  assert_equal "$(launches | jq -c '[.project, .model]')" $'["proj","default"]\n["other","sonnet"]'
 }
 
 @test "--model launches on the model it names instead of the registry's, and logs it, for T0 too" {
@@ -1170,24 +1173,75 @@ session-records-guard block 10"
   opened T7 proj feat/T7-one "$wt1"
   run_bin -0 team-worker T7 reviewer "$wt1" --model opus -- Review it
   open_task T8
-  run_bin -0 team-worker T8 builder "$wt2" --model 'sonnet[1m]' -- go
+  run_bin -0 team-worker T8 planner "$wt2" --model 'sonnet[1m]' -- go
   run_bin -0 team-worker T0 planner "$wt1" --model haiku -- go
+  run_bin -0 team-worker T0 builder "$wt1" --model haiku -- go
   assert_equal "$(bg_calls | jq -c '[(index("--model") // empty) as $i | .[$i + 1], .[-2], .[-1]]')" \
-    $'["opus","T7-reviewer","Review it"]\n["sonnet[1m]","T8-builder","go"]\n["haiku","T0-planner","go"]'
-  assert_equal "$(launches | jq -c '[.task, .model]')" $'["T7","opus"]\n["T8","sonnet[1m]"]'
+    $'["opus","T7-reviewer","Review it"]\n["sonnet[1m]","T8-planner","go"]\n["haiku","T0-planner","go"]\n["haiku","T0-builder","go"]'
+  assert_equal "$(launches | jq -c '[.task, .model, .model_from]')" $'["T7","opus","launch"]\n["T8","sonnet[1m]","launch"]'
   run_bin -0 team-log --check
 }
 
-@test "with no models key, or for T0, no model is passed or logged" {
+@test "a task's builder model, its opened event's builder_model, is every builder launch's over the registry's, and --model is refused for a task's builder" {
+  # On origin/dev at 86a31a4f a builder took its model only from --model or the registry, so a
+  # relaunch fell back to the settings' model and logged none (the task's build note 01).
+  registry --first 'models = { builder = "opus", reviewer = "opus" }' proj other
+  thread T7
+  opened T7 proj feat/T7-one "$wt1" '{"builder_model": "sonnet"}'
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  run_bin -0 team-worker T7 builder "$wt1" -- go again
+  # The other roles keep their own: the registry's reviewer line, none for a planner.
+  run_bin -0 team-worker T7 reviewer "$wt1" -- Review it
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(bg_calls | jq -c '[.[index("--name") + 1], ((index("--model") // empty) as $i | .[$i + 1])]')" \
+    $'["T7-builder","sonnet"]\n["T7-builder","sonnet"]\n["T7-reviewer","opus"]\n["T7-planner"]'
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["builder","sonnet","task"]\n["builder","sonnet","task"]\n["reviewer","opus","registry"]\n["planner","default","default"]'
+  run_bin -0 team-log --check
+
+  # A task's builder takes no --model, whatever the task names, so no relaunch can lose one.
+  local calls
+  calls=$(bg_calls | wc -l)
+  run_bin -2 team-worker T7 builder "$wt1" --model haiku -- go
+  assert_contains "$output" "--model is not for a task's builder, which runs on its task's builder model (team-open --builder-model, else the registry's at the open) on every launch; launch it without --model"
+  thread T8
+  opened T8 proj feat/T8-task "$wt2" '{"builder_model": "default"}'
+  run_bin -2 team-worker T8 builder "$wt2" --model sonnet -- go
+  assert_contains "$output" "--model is not for a task's builder"
+  assert_equal "$(bg_calls | wc -l)" "$calls"
+
+  # A task whose builder model is default names none: its builders run on the settings' word,
+  # whatever the registry's builder line says since its open.
+  run_bin -0 team-worker T8 builder "$wt2" -- go
+  assert_equal "$(bg_calls | tail -n 1 | jq -c 'index("--model")')" null
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T8","default","default"]'
+}
+
+@test "with nothing naming a model, the launch logs the settings' one: --settings' or the user settings' ANTHROPIC_MODEL, then their model, else default" {
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   run_bin -0 team-worker T7 reviewer "$wt1" -- go
-  # T0 reads no model from the registry, whatever it says.
-  registry --first 'models = { reviewer = "sonnet" }' proj other
-  run_bin -0 team-worker T0 reviewer "$wt1" -- go
-  assert_equal "$(bg_calls | jq -c 'index("--model")')" $'null\nnull'
-  assert_equal "$(launches | jq -c '[.task, has("model")]')" '["T7",false]'
+  mkdir -p "$HOME/.claude"
+  echo '{"model": "opus", "effortLevel": "high"}' >"$HOME/.claude/settings.json"
+  run_bin -0 team-worker T7 reviewer "$wt1" -- go
+  echo '{"model": "opus", "env": {"ANTHROPIC_MODEL": "claude-opus-5-5"}}' >"$HOME/.claude/settings.json"
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  # CLAUDE_CONFIG_DIR moves the user settings, as Claude Code reads them.
+  mkdir -p "$BATS_TEST_TMPDIR/config"
+  echo '{"model": "fable"}' >"$BATS_TEST_TMPDIR/config/settings.json"
+  CLAUDE_CONFIG_DIR=$BATS_TEST_TMPDIR/config run_bin -0 team-worker T7 builder "$wt1" -- go
+  # None passes --model: the session takes the settings' word itself.
+  assert_equal "$(bg_calls | jq -c 'index("--model")' | sort -u)" "null"
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["reviewer","default","default"]\n["reviewer","opus","settings"]\n["planner","claude-opus-5-5","settings"]\n["builder","fable","settings"]'
   run_bin -0 team-log --check
+
+  # The settings a role's launch is given (--settings) outrank the user settings, as for Claude Code.
+  fake_checkout
+  jq '.env.ANTHROPIC_MODEL = "haiku"' "$code/settings/planner.json" >"$code/p.json"
+  mv "$code/p.json" "$code/settings/planner.json"
+  run_fake T7 planner "$wt1" -- go
+  assert_equal "$(launches | tail -n 1 | jq -c '[.model, .model_from]')" '["haiku","settings"]'
 }
 
 @test "a project missing from the registry, or a broken registry, refuses the launch: nothing started or logged" {
@@ -2229,7 +2283,8 @@ assert_prod_write_gated() {
   assert_equal "$(stub_calls curl | jq -r '.[-1]')" "https://discord.com/api/v10/channels/$OPS_COORDINATOR/messages/${request##*/}"
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg r "$request" '{task: "T7", event: "launch",
     role: "ops", session: "5b3c0d2f", worktree: $wt, toolkits: ["prod-read"], project: "proj",
-    branch: "feat/T7-one", machine: "home-pc", request: $r, discord_message: ($r | split("/") | last)}')"
+    branch: "feat/T7-one", machine: "home-pc", model: "default", model_from: "default", request: $r,
+    discord_message: ($r | split("/") | last)}')"
   run_bin -0 team-log --check
 }
 
@@ -2563,14 +2618,14 @@ matcher_matches() {
   run_bin -0 team-log --check
 }
 
-@test "an ops launch takes no model, whatever its project's models table names" {
+@test "an ops launch takes no model, whatever its project's models table or its task's builder model names, and logs the settings' one" {
   registry --first 'models = { planner = "sonnet", builder = "sonnet", reviewer = "sonnet" }' proj other
   thread T7
-  opened T7 proj feat/T7-one "$wt1"
+  opened T7 proj feat/T7-one "$wt1" '{"builder_model": "haiku"}'
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- Answer the request
   assert_equal "$(bg_calls | jq -c 'index("--model")')" "null"
-  assert_equal "$(launches | jq -c 'has("model")')" "false"
+  assert_equal "$(launches | jq -c '[.model, .model_from]')" '["default","default"]'
 }
 
 @test "only the ops role is restricted" {
@@ -3332,7 +3387,7 @@ build_brief() {
   assert_equal "$(files --name "$call")" T7-builder-03
   assert_equal "$(launches)" "$(jq -cn --arg wt "$twt" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "builder",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one--03", machine: "home-pc",
-    admission: $a, brief: "brief-build-03", ticket: "03"}')"
+    admission: $a, model: "default", model_from: "default", brief: "brief-build-03", ticket: "03"}')"
   assert_equal "$(files --settings "$call")" "$t/settings.builder.proj--03.json"
   assert_equal "$(files --mcp-config "$call")" "$t/mcp.builder.proj--03.json"
   assert_equal "$(files --append-system-prompt-file "$call")" "$HOME/.local/state/agent-team/prompts/T7/builder.proj--03.md"

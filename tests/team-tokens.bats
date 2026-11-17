@@ -508,7 +508,7 @@ long_fixture() {
 @test "the report gives cost per outcome, relaunches and re-reviews from the ledger" {
   report_fixture
   report_json
-  assert_equal "$(q '.outcomes | del(.reviewer_models, .builder_toolkits, .reviewer_toolkits)')" \
+  assert_equal "$(q '.outcomes | del(.reviewer_models, .builder_models, .builder_toolkits, .reviewer_toolkits)')" \
     '{"sessions":[{"role":"planner","sessions":1,"w":0.69,"median_w":0.69,"mean_w":0.69,"p90_w":0.69},{"role":"builder","sessions":4,"w":2.54,"median_w":0.62,"mean_w":0.635,"p90_w":0.8},{"role":"reviewer","sessions":2,"w":0.75,"median_w":0.375,"mean_w":0.375,"p90_w":0.5}],"counts":{"merged":1,"tickets_done":2,"reviews":2,"pass":1,"findings":1,"launches":9},"complete_tasks":{"count":1,"merged":1,"tickets_done":1,"reviews":2},"measures":{"worker_w_per_merge":3.36,"worker_w_per_ticket":3.36,"builder_w_per_ticket":1.92,"reviewer_w_per_review":0.375,"coordinator_w_per_merge":2.53,"coordinator_w_per_launch":0.281111}}'
   assert_equal "$(q '.relaunches')" \
     '{"reasons":[{"reason":"stow or handoff","count":1,"with_replies":1,"warmup_w":0.62,"median_w":0.62}],"all":1,"warmup_w":0.62}'
@@ -530,6 +530,32 @@ long_fixture() {
   assert_contains "$output" "| Launch model | Reviewer launches | With replies | Reviews | With findings | \$w | \$w per review | Reply models |"
   assert_contains "$output" "| default | 2 | 1 | 1 | 0 | 0.50 | 0.50 | claude-opus-5-5 0.50 |"
   assert_contains "$output" "| sonnet | 1 | 1 | 1 | 1 | 0.25 | 0.25 | claude-sonnet-5-5 0.25 |"
+}
+
+@test "the report gives each builder launch model's tasks, tickets done, PRs and \$w per task, a launch with no model on the default" {
+  report_fixture
+  # b3 launched on sonnet, its task's builder model, and its PR came after it; T0's builder, the
+  # load check's, is in no row.
+  jq -c 'if .session == "b3b3b3b3" then .model = "sonnet" | .model_from = "task" else . end,
+    if .session == "b3b3b3b3" then {ts: "2026-10-20T12:00:00Z", task: "T1", event: "pr", url: "https://github.com/o/r/pull/1", head: "2222222"} else empty end' \
+    "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  report_json
+  # b2 delivered T1's ticket 01 and l1 T2's; b1 nothing; b3 the PR. b3's replies ran on Opus,
+  # whatever its launch named, which reply_models shows.
+  assert_equal "$(q '.outcomes.builder_models[]' | paste -sd ' ')" \
+    '{"model":"default","launches":3,"with_replies":3,"tasks":2,"tickets_done":2,"prs":0,"w":2.04,"w_per_task":1.02,"reply_models":{"claude-opus-5-5":2.04}} {"model":"sonnet","launches":1,"with_replies":1,"tasks":1,"tickets_done":0,"prs":1,"w":0.5,"w_per_task":0.5,"reply_models":{"claude-opus-5-5":0.5}}'
+  # Each builder launch is in one row, so the rows add up to the builders' $w.
+  assert_equal "$(q '[(.outcomes.builder_models | map(.w) | add), (.outcomes.sessions[] | select(.role == "builder") | .w)]')" '[2.54,2.54]'
+  # A PR after --until is not counted.
+  run_bin -0 team-tokens --until 2026-10-20T11:50Z --json
+  assert_equal "$(jq -c '[.outcomes.builder_models[] | [.model, .launches, .prs]]' <<<"$output")" '[["default",2,0],["sonnet",1,0]]'
+  run_bin -0 team-tokens --until 2026-10-21T16:00Z
+  assert_contains "$output" "| Launch model | Builder launches | With replies | Tasks | Tickets done | PRs | \$w | \$w per task | Reply models |"
+  assert_contains "$output" "| default | 3 | 3 | 2 | 2 | 0 | 2.0 | 1.0 | claude-opus-5-5 2.0 |"
+  assert_contains "$output" "| sonnet | 1 | 1 | 1 | 0 | 1 | 0.50 | 0.50 | claude-opus-5-5 0.50 |"
+  run_bin -0 team-tokens --help
+  assert_contains "$output" "the window's builder launches by the model each launched on"
 }
 
 @test "with no toolkit given, the toolkit lists add up to the report's builder and reviewer figures" {

@@ -67,8 +67,10 @@
 #   models           optional: a table of worker role (planner, builder or reviewer) to the model
 #                    alias or name its sessions launch on, such as { reviewer = "sonnet" }
 #                    (default none: every role on the user settings' model); team-worker passes
-#                    it as --model and logs it on the launch; ops always runs on the default
-#                    (sops/model-trials.md)
+#                    it as --model and logs it on the launch; the builder line is a task's builder
+#                    model only as team-open reads it at the task's open, kept on its opened
+#                    event, so a later edit changes the builders of no task opened since
+#                    2026-11-17; ops always runs on the default (sops/model-trials.md)
 #   visibility       optional: "public" or "private", the GitHub repository's visibility, which
 #                    team-worker states in each worker's autoMode lines (default "public", the
 #                    reading that treats whatever reaches the repository as published)
