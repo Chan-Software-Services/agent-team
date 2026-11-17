@@ -18,7 +18,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `channel-access.sh`: the bot's permissions in one Discord channel, worked out as Discord does from its roles and the channel's overwrites, and the doctor line reported from them, for the doctor's interview and assistant channel lines.
     - `chrome.sh`: the one lookup of a machine's Chrome, its executable and its app, which `team-doctor`'s `chrome` line and `team-tickets --graph` both take.
     - `code`: the paths every tracked path matches.
-    - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a Bash call may run (an ops launch, the capture script, the role variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command of `command_text.py`'s walk.
+    - `command_rules.py`: `bin/hooks/command-guard`'s rule table, each row a guarded thing a call may run (an ops launch, the capture script, the role and login variables, an emptied environment, a lease steal, the coordinator's commands, an upload), decided on each command `command_text.py` walks.
     - `command_text.py`: a Bash command's code text (heredoc bodies out unless a shell may read one, `-c` strings and what is piped into a shell in) and the walk of each simple command it runs, past wrappers, into tools' strings, for `command_rules.py`; `team-tokens` takes its heredoc rule.
     - `compact-hold.sh`: the record of the coordinator's held auto-compaction, one file per session, written under its lock, and its log of each hold, tell, reminder, stow and release, for `bin/hooks/compact-hold` and `team-stowed`.
     - `confine-roots`: the roots every confined session has beside its own, one path per line, starting with the team's machine state `~/.local/state/agent-team`; a guarded path, and none may be in the team home, `~/.config/agent-team` or `~/.claude`.
@@ -33,6 +33,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `fence_rules.py`: `bin/hooks/lease-fence`'s reader, the classes of command the fence holds (a `git push`, `gh`, the team scripts that post, answer, wait or write) among those a Bash call runs, by `command_text.py`'s walk, never where a call only names one.
     - `gate-claude-settings.json`: the settings the gate's Claude takes with `--settings`, its commit attribution off and `command-guard` run on Bash from `~/agent-team`, since it loads no user settings.
     - `gate-config.awk`: reads and sets the one key the team writes in Daniel's no-mistakes config (`agent_path_override`'s opencode), and reads `agent_args_override`'s list for one agent.
+    - `github-login.sh`: where the worker and owner logins live, sourced by `team.sh`: the worker login's constant read, its gh directory judged, a session's environment on it, gh or any command (`bounded` too) run on either login, and the team home's GitHub credential helpers on the owner login.
     - `guarded`: the short list, one extended regular expression per line with its area, `@<project>` or `@own` for one project's line, any changed path of which brings a merge on the default word, the approved plan, back to Daniel for the per-head word, read by `team-merge` from its own checkout.
     - `health.jq`: the health module, the one place that says what unhealthy means: the fold of each heartbeat run into the health record, the ledger's one-pass scan, every health threshold, and the view `team-timers health` prints, its problems and its line in markup and plain text.
     - `kill_rules.py`: `command_rules.py`'s kill rows, refusing a kill by name or pattern, tmux's `kill-*`, and a kill of PIDs read from input, of a PID it cannot read, of a process group, every process or PID 0 or 1, or of a literal PID not proven its own, each naming its allowed way.
@@ -46,7 +47,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `opencode-guard.js`: the opencode plugin that runs `command-guard` before each bash call of an opencode gate's agents, refusing the call on any exit but 0.
     - `outbound.py`: whether a Bash command's `curl` or `wget` sends a request body or a file to a literal host outside the team's own local ones, directly or through a proxy, decided on each command of `command_text.py`'s walk, for `command_rules.py`'s upload row.
     - `prices.json`: each model's list prices per million tokens with the date read and the source, the weights `team-tokens` gives each reply.
-    - `probe.json`: the refusal probe's data, each attempt `team-load-check --probe` has a worker role or the assistant make and the layer that should refuse it, every deny rule of their settings sorted into a family, and their PreToolUse hooks, each with an attempt or the reason it has none.
+    - `probe.json`: the refusal probe's data: each attempt `team-load-check --probe` has a worker role or the assistant make and the layer that should refuse it, every deny rule of theirs in a family, their PreToolUse hooks, each with an attempt or why none, and its GitHub calls as the worker login.
     - `queue.jq`: the queue module, the one place that says an item's state, when its `after:` is met, how items rank, the room for one more task, the problems `team-queue index --check` names, the index's and the list's text, the sweep's findings and what `set`, `take` and `tidy` write.
     - `quota.sh`: the one Bash reader of `team-quota status --json`, its timeout and its reasons, which `team-capacity status` and the heartbeat's quota step take, and `team-tokens` keeps in Python.
     - `reading.sh`: one reading of the machine's load (its memory, its processes by directory and descent, the team's stacks), which `team-capacity sample` takes.
@@ -54,6 +55,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `records-rewrite/`: `team-records-rewrite`'s drop list, message expression, S02 callback and `verify.py`.
     - `repo-moves.json`: the repositories that moved owner, each old `owner/name` to its new one with the date, a constant `ledger.jq` imports, so a PR URL under either owner is one PR to the ledger's event readers, and `team-project` reads for `--find repo` and `--check`.
     - `review-app`: the reviewer App's id and slug, one `id=<n>` and one `slug=<s>` line, a committed constant; with no such file the App is off and agent-team merges on the per-head word alone.
+    - `review_facts.py`: the facts of a diff a review brief lists for its reviewer, the tests it drops and the direct dependencies it adds or changes, which `team-brief` derives as `dropped_tests` and `dependencies`.
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
@@ -65,6 +67,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `tools.lock`: the tools `team-doctor` checks, pinned or with a minimum, and their source per OS (for treehouse and no-mistakes, a GitHub release with each archive's checksum, or a fork's commit; for MongoDB's Database Tools, the publisher's archive with its checksum).
     - `uptime.jq`: `team-uptime`'s rules, the counting of each production check, when one is down, its outages judged as notices through `notice.jq`, each post's text, and the status line.
     - `vendor/git-filter-repo/`: git filter-repo 2.47.0, vendored with its MIT license.
+    - `worker-login`: the worker login's GitHub account, one `login=<name>` line, a committed constant; with no such file the worker login is off and every session runs on the machine's own GitHub login.
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
@@ -87,9 +90,10 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `mongodb`: the driver the prod-mongo server counts and checks its dumps with, at the version the pinned MongoDB MCP server installs.
     - `typescript`: TypeScript 7, which `effect-tsgo diagnostics` needs installed beside it, though `@effect/tsgo` declares no peer.
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
-  - `prod-mongo/`: the prod-mongo toolkit's server body: its start, its tools, the backups root's rules (`destinationRefusal`), `childEnv` and `scrubbed`, a dump's counts and index names, read without decoding a document, and the throwaway MongoDB the restore drill restores a dump into.
+  - `prod-mongo/`: the prod-mongo toolkit's server body: its start and tools, the backups root's rules, `childEnv` and `scrubbed`, a dump's counts, the throwaway MongoDB a drill or a rehearsal restores a dump into, the snapshots that say what changed, by ids, and the undo it prepares for Daniel.
 - `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder or reviewer loads (`--setting-sources user`), none of its worktree's `.claude/`.
 - `sops/`: standing procedures.
+  - `ci-only.md`: moving a project's whole test suite off the team's machine into required CI checks, only when its repository goes public on Daniel's word: the workflow's task, Daniel's steps at github.com, the proof and the registry edit.
   - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
   - `docker.md`: the team's Docker stacks: labels, owner classes, the wrapper contract, `team-stack`'s subcommands, instances, admission, the idle sweep, the reaper, `team-janitor`'s daily report, the heartbeat's steps, the close teardown and the agents' rules.
   - `drills.md`: the drills, live runs of the paths the team's portability and guards rest on: the record in `drills.jsonl`, who runs one, and each drill's runbook, its steps, who takes each, its duration, what passes and how it is recorded.
@@ -112,6 +116,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill`: run by hand by the coordinator, since it starts a real Claude session; it compacts a coordinator-shaped session in a sandbox team home built from `tests/fixtures/compaction-drill/`, checks it still knows each task's wait and every current item, and records its run.
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
+  - `tests/fixtures/guard-corpus/allowed.jsonl`: the calls every guard hook must allow, one JSON object a line with the roles that make it, in the shapes of real ones with fixture values only.
+  - `tests/guard-corpus.bats`: runs each role's PreToolUse hooks, as its settings files write them, on that corpus's calls, with the lease held and, for a call marked `local`, on a fenced machine and while the team holds offline.
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, among them:
     - `confine-seams.py`: runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
@@ -130,6 +136,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `coordinator/`: the coordinator's MCP servers and the claude.ai connectors it keeps, no worker's, the only ones `claude-coordinator` lets it load (its README says how the others are denied and how one is added).
   - `effect/`: for an Effect project's planner, builder and reviewer, the `effect-v4` skill (the installed `effect`'s sources, the v3 and beta traps, the check), a hook giving Effect's findings on each TypeScript file edited, and, but for a planner, Foldkit's DevTools server, held to the worktree.
   - `frontend/`: for Daniel's own session and the coordinator's intake, a walk's planner by `team-ui --capture` alone, never a build worker: the pinned Chrome DevTools MCP server on the Agent Chrome's localhost pages, `ui-capture` of Daniel's page and its selected element, and a skill to fix it.
+  - `prod-mongo/`: for the ops role only, backups of Conventioner's production database into `~/conventioner-backups`, their restore drills, rehearsals of a release's migrations on a dump and undos prepared for Daniel, on the read user's connection string from 1Password.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.
   - `spec-review/`: the `spec-review` skill, two fresh readers of a task's spec and tickets, and `claims-check`, a fresh reader of a branch's prose against its code, which `team-worker` gives every delivering builder.
@@ -165,6 +172,7 @@ It holds:
 
 - The code repository changes only through pull requests to `dev`, and nothing is committed on `main`, which a release fast-forwards from `dev`.
 - GitHub holds the rule: `dev`'s protection requires a pull request, refuses force pushes and deletion, and applies to administrators.
+- The team's sessions push branches and open pull requests on the worker login when `bin/lib/worker-login` names one, while `team-merge` merges on the owner login (`sops/machine-setup.md`, "The worker login").
 - `dev` also requires `agent-review`, pinned by its protection to the reviewer App's check run, which `team-review-check` posts, signed with the App's key `~/.config/agent-team/review-app.pem` (mode 600, restored by `team-secrets`, denied to the workers' and the coordinator's `Read` and Bash), and which `team-merge` requires on the head of every agent-team PR while `bin/lib/review-app` names the App; `team-doctor`'s `review app` line holds the key, the id and the pin together, and `sops/merging.md` says what the App proves and Daniel's steps to set it up.
 - Records never come here: every tracked path is code, listed in `bin/lib/code`, and none matches `bin/lib/records`; `tests/repo.bats` checks both, so a new path is listed as code in its PR.
 - Git runs `bin/hooks/git/` as the code checkout's hooks once it has `git -C ~/agent-team config core.hooksPath bin/hooks/git`, which every worktree shares, each running its own checkout's hooks; they are the local guard, and need no team home.
@@ -188,6 +196,7 @@ It holds:
   `team-checks` gives the commands it runs `TEAM_JOBS` from `team-capacity jobs` unless it is set.
   `tests/shards` splits them by each file's seconds in CI (`tests/timings.tsv`, a file it lacks weighed by its bytes), so refresh the timings with `tests/shards update` when the shards' times drift apart, and a removed bats file takes its row with it, as `tests/repo.bats` holds.
   Every part but `shellcheck` alone and a `--list` (a shard's or `--changed`'s) runs under the machine's heavy-run lock (`bin/team-heavy`, which `team-checks` takes for the local checks too), so two suites on one machine queue instead of overlapping, each in a process group (and on Linux a scope) of its own that leaves a cost sample, and the sandbox clears `TEAM_HEAVY_HELD`, `AGENT_TEAM_TASK` and `TEAM_JOBS` so the tests take their own.
+  No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
   So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them and a gate's end-to-end run, and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
@@ -203,7 +212,7 @@ It holds:
 - The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
   Each test file's header comment says what it checks and against what.
   No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
-  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, rehearsal, `team-heavy` and `flock` they start.
   `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.
@@ -213,6 +222,7 @@ It holds:
   It also stands for `/` in the session tmp `team-close` and `team-load-check` remove, `/tmp/agent-team-T<n>`, so no test removes a live task's.
   The sandbox refuses a TMPDIR under `/home` or `/Users` (a job's own tmp under HOME, say), whose paths the ledger reads as a machine's HOME: run the tests with one outside them, as the default is.
   A script run from this checkout has the reviewer App on, since `bin/lib/review-app` names it, while a copy of `bin/` (`copy_bin`) has it off: a test that needs either says so, with `review_app_on` or `review_app_off`.
+  A copy of `bin/` has the worker login off too, whatever this checkout commits: a test that needs it on says so with `worker_login_on`, which also writes the login's file into the sandbox's HOME.
   `tests/helpers/common.bash` documents the helpers.
 - macOS assesses each new executable file on its first run, about a quarter of a second each, so a test never writes or copies an executable it could share: `stub_command`, `copy_bin` and the doctor's version stubs hard-link a read-only copy made once per run (`shared` in `tests/helpers/common.bash`).
 - No test reads the records of the checkout it runs in, so the suite passes on the code alone: a test that needs a real-shaped registry or secrets manifest copies it from `tests/fixtures/`, and `team-doctor`'s `records` line checks the team home's real ledger, registry and secrets description.
@@ -240,6 +250,7 @@ It holds:
   A kind the contract marks `"push": true` (Daniel's word or an outside fact) is committed and pushed the moment it is logged by the library's `ledger_push`, which each of its writers calls once after its last event, as `tests/repo.bats` holds.
 - The registry is read only through `team-project`; a new key goes in its key lists and in its header, which documents every key.
 - A script reaches Discord's API only through `discord_api` and GitHub through `gh`, but for the reviewer App's calls, which go through `review_app_api` and `curl`, since `gh` takes a token only from its environment or its login; and it never prints a secret.
+- A script reaches GitHub as the session's login, the worker login when one is named, unless it is the owner's: `use_owner_login` for a script that is the owner's throughout, as `team-merge` is, or `owner_gh` (`with_owner_login` for a bounded call) for one call, all in `bin/lib/github-login.sh`.
 
 ## Markdown
 

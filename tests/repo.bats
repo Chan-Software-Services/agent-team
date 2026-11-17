@@ -63,6 +63,32 @@ atlas_host_files() {
 
 # D6 (T31): the production toolkits go public without the Atlas cluster's host, which only the
 # 1Password item's connection string holds.
+@test "a committed bin/lib/worker-login, when there is one, is one login= line of a GitHub login" {
+  [[ -e $REPO_ROOT/bin/lib/worker-login ]] || skip "this checkout names no worker login"
+  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh" && worker_login' repo "$REPO_ROOT"
+  assert_equal "$status" 0
+  assert_equal "$stderr" ""
+  assert_equal "$(cat "$REPO_ROOT/bin/lib/worker-login")" "login=$output"
+}
+
+# copy_bin's copy at <dest> of the checkout <checkout>'s bin/, its shared copies made under
+# <run> as a run's are: copy_bin_of <checkout> <run> <dest>
+copy_bin_of() {
+  # shellcheck disable=SC2034 # copy_bin reads both
+  local REPO_ROOT=$1 BATS_RUN_TMPDIR=$2
+  copy_bin "$3"
+}
+
+@test "a copy of bin/ (copy_bin) has no bin/lib/worker-login and no bin/lib/review-app, even from a checkout that commits both" {
+  local checkout=$BATS_TEST_TMPDIR/checkout copy=$BATS_TEST_TMPDIR/copy
+  mkdir -p "$checkout" "$BATS_TEST_TMPDIR/run"
+  cp -R "$REPO_ROOT/bin" "$checkout/bin"
+  echo login=some-bot >"$checkout/bin/lib/worker-login"
+  printf 'id=1\nslug=some-app\n' >"$checkout/bin/lib/review-app"
+  copy_bin_of "$checkout" "$BATS_TEST_TMPDIR/run" "$copy"
+  [[ -f $copy/lib/github-login.sh && ! -e $copy/lib/worker-login && ! -e $copy/lib/review-app ]]
+}
+
 @test "no tracked code file names an Atlas cluster host" {
   run -0 atlas_host_files "$REPO_ROOT"
   assert_equal "$output" ""
@@ -292,7 +318,7 @@ probe_rules() {
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
       or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "assistant") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused", "script", "kernel") | not)
+      or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login") | not)
       or (.expect == "kernel" and (. as $a | .tool != "Bash" or (.input | contains("@CANARY@/\($a.id)\"") | not)))
       or (.background != null and (.background != true or .tool != "Bash" or .expect != "kernel"))
       or ((.expect | IN("hook", "script")) != (.marker | type == "string"))
@@ -301,6 +327,29 @@ probe_rules() {
     | .id' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
+  assert_equal "$out" ""
+}
+
+# The probe's github calls are the data file's alone: team-load-check spells no call's method, path
+# or body, so a call is changed in one place.
+@test "every github call of the refusal probe is well formed, and team-load-check spells none of them" {
+  local probe=$REPO_ROOT/bin/lib/probe.json out word
+  out=$(jq -r '.github[]
+    | select((.id | test("^[a-z]+(-[a-z]+)*$") | not) or (.method | IN("GET", "POST", "PATCH", "PUT", "DELETE") | not)
+      or (.path | type) != "string" or (.body | IN(null) or type == "object" | not)
+      or (.answer | type) != "string" or (.refused | type) != "array" or .refused == []
+      or (.unshown != null and ((.unshown | type) != "array" or any(.unshown[]; (.reason | type) != "string"
+        or ((.answers | type) == "array") == ((.pattern | type) == "string")))))
+    | .id' "$probe")
+  assert_equal "$out" ""
+  assert_equal "$(jq -r '[.github[].id] | join(" ")' "$probe")" "push protection setting merge"
+  # Each call's path past its placeholders, and each string of its body, is nowhere in the script,
+  # but repos/, which its own reads of the repository and its pull requests start with too.
+  while IFS= read -r word; do
+    [[ -n $word ]] || continue
+    if grep -qF -- "$word" "$REPO_ROOT/bin/team-load-check"; then out+="$word "; fi
+  done < <(jq -r '.github[] | (.path | split("@") | map(select(length > 3 and . != "repos/" and (test("^[A-Z]+$") | not)))[]),
+    (.body // {} | .. | strings | select(test("^@[A-Z]+@$") | not))' "$probe")
   assert_equal "$out" ""
 }
 
@@ -555,6 +604,30 @@ bin/tool:2: b needs c
 bin/tool:3: b needs c
 tests/helpers/x.bash:1: b needs c
 toolkits/x/scripts/run:1: a needs b"
+}
+
+# Each line of a file under <root>/bin that keeps the events of open tasks by a select of is_open
+# per event (`$tasks[.task] | is_open`), which folds a task's lifecycle once for each of its events,
+# as "<path>:<line>"; ledger.jq's open_task_events works each task's status out once:
+# slow_open_selects <root>
+slow_open_selects() {
+  (cd "$1" && grep -rnoE '\[\.task\] *\| *is_open' bin | cut -d: -f1,2 | sort) || true
+}
+
+@test "no file under bin/ selects the events of open tasks by is_open per event, which open_task_events does once per task" {
+  assert_equal "$(slow_open_selects "$REPO_ROOT")" ""
+}
+
+@test "a select of is_open per event under bin/ is named, in any spacing" {
+  local root=$BATS_TEST_TMPDIR/code
+  mkdir -p "$root/bin/lib/doctor.d" "$root/tests"
+  printf '%s\n' 'jq ok' "jq '\$events[] | select(\$tasks[.task] | is_open)'" >"$root/bin/tool"
+  printf '%s\n' '#   select($tasks[.task]|is_open)' >"$root/bin/lib/x.jq"
+  printf '%s\n' "jq '\$tasks[.task]  |  is_open'" >"$root/bin/lib/doctor.d/1.sh"
+  printf '%s\n' "jq '\$tasks[.task] | is_open'" >"$root/tests/x.bats"
+  assert_equal "$(slow_open_selects "$root")" "bin/lib/doctor.d/1.sh:1
+bin/lib/x.jq:1
+bin/tool:2"
 }
 
 # Only Daniel's own terminal runs op (team-secrets restore and save), and only the ops role's
@@ -1630,9 +1703,14 @@ coordinator_deny_gaps() {
   done
   # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a
   # path (a whole tool the coordinator denies is one it does not use, which
-  # tests/claude-assistant.bats lists), and its launcher's header names the same families.
+  # tests/claude-assistant.bats lists), but for the coordinator's own seven on its GitHub login
+  # (the three variables and the four ways to empty the environment), which the assistant's
+  # command-guard hook holds, and its launcher's header names the same
+  # families.
   assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
-  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" ""
+  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" \
+    "$(printf '%s\n' 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)' \
+      'Bash(*env -i*)' 'Bash(*env --i*)' 'Bash(*env - *)' 'Bash(*exec -c*)')"
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \

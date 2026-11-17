@@ -120,11 +120,12 @@ shared_stubs() {
 }
 
 # copy_bin <dest>: a copy of this checkout's bin/ at <dest>, its files linked to the run's shared
-# copy (link_shared), but for bin/lib/review-app: a copy has the reviewer App off until the test
-# turns it on (review_app_on), whatever this checkout commits.
+# copy (link_shared), but for bin/lib/review-app and bin/lib/worker-login: a copy has the reviewer
+# App and the worker login off until the test turns them on (review_app_on, worker_login_on),
+# whatever this checkout commits.
 copy_bin() {
   link_shared bin "$REPO_ROOT/bin" "$1"
-  rm -f "$1/lib/review-app"
+  rm -f "$1/lib/review-app" "$1/lib/worker-login"
 }
 
 # Build the test's sandbox and point TEAM_HOME, HOME and PATH into it, untraced. A sandbox runs
@@ -349,6 +350,40 @@ review_app_off() {
     copy_bin "$CODE_CHECKOUT/bin"
   fi
   rm -f "$CODE_CHECKOUT/bin/lib/review-app"
+}
+
+# worker_login_on [<login>]: the worker login on for the scripts run_bin runs: CODE_CHECKOUT (a
+# copy of bin/ made here when the test made none) gets bin/lib/worker-login naming <login>
+# (default team-worker-bot), and the sandbox's HOME gets the login's file,
+# ~/.config/agent-team/gh-worker/hosts.yml (the directory mode 700, the file mode 600), of fixture
+# text in gh's own format, holding no real token.
+worker_login_on() {
+  local login=${1:-team-worker-bot} dir=$HOME/.config/agent-team/gh-worker
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/lib/worker-login"
+  printf 'login=%s\n' "$login" >"$CODE_CHECKOUT/bin/lib/worker-login"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  printf '%s\n' 'github.com:' '    users:' "        $login:" "            oauth_token: fixture-token-of-$login" \
+    '    git_protocol: https' "    oauth_token: fixture-token-of-$login" "    user: $login" >"$dir/hosts.yml"
+  chmod 600 "$dir/hosts.yml"
+}
+
+# worker_login_off: the worker login off for the scripts run_bin runs, whatever this checkout's
+# bin/lib/worker-login says: CODE_CHECKOUT (a copy of bin/ made here when the test made none, which
+# copy_bin makes with the login off) has no bin/lib/worker-login. The login's file in the
+# sandbox's HOME, if a test wrote one, stays, since off means no session is pointed at it.
+worker_login_off() {
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/lib/worker-login"
 }
 
 # plan_md T<n> [<text>]: write the task's plan, tasks/T<n>/plan.md in the sandbox's team home,

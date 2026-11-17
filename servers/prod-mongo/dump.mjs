@@ -7,7 +7,8 @@
 //                            `documents` is null for a view, which mongodump dumps as metadata only
 //   await countBsonGz(path)  the documents in a gzipped BSON file: a sequence of documents, each
 //                            starting with its little-endian 32-bit length
-//   humanBytes(n), duration(ms), count(n), plural(n, word)
+//   humanBytes(n), duration(ms), limit(ms), count(n), plural(n, word)
+//                            (limit: a bound as duration gives it, but whole minutes as "45 min")
 //                            the answers' forms of a size, a time, a number and a count of things
 //   dumped(name)             whether mongodump dumps a collection of that name: every one but those
 //                            under system., except system.js
@@ -87,6 +88,8 @@ export function duration(ms) {
   if (seconds < 60) return `${seconds} s`;
   return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
+
+export const limit = (ms) => (ms % 60_000 === 0 ? `${ms / 60_000} min` : duration(ms));
 
 export const count = (n) => n.toLocaleString("en-US");
 
