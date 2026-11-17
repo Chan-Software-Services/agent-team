@@ -3,6 +3,7 @@
 # ends, whatever GitHub shows.
 
 load helpers/common
+load helpers/github-api
 
 setup() {
   sandbox
@@ -15,6 +16,9 @@ setup() {
   export GH_DIR=$BATS_TEST_TMPDIR/gh
   mkdir -p "$GH_DIR"
   echo 0 >"$GH_DIR/look"
+  github_stub_setup
+  # Each look reads GitHub again, with no time passing between two looks but the stub sleep's.
+  export TEAM_GITHUB_FRESH_SECONDS=0
   stub_gh
   stub_sleep
   pr OPEN "$head"
@@ -23,29 +27,40 @@ setup() {
 }
 
 # answer <look> <what> <answer>: from look <look> on, gh answers <what> (view, checks, runs, running,
-# run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub) or, for checks, "none" (gh's
-# "no checks reported").
+# run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub),
+# "limited:<refusal>" (a refusal for the limit, github_limited's arguments: "limited:primary",
+# "limited:retry-after 60") or, for checks, "none" (no check run and no status).
 answer() {
   printf '%s\n' "$3" >"$GH_DIR/$2.$1"
 }
 
-# pr <state> <head> [<look>]: the PR as gh pr view shows it, from <look> on (default 0).
+# pr <state> <head> [<look>]: the PR (OPEN, MERGED or CLOSED) as GitHub's pulls/<n> shows it, from
+# <look> on (default 0).
 pr() {
-  answer "${3:-0}" view "$(jq -cn --arg state "$1" --arg head "$2" '{state: $state, headRefOid: $head}')"
+  answer "${3:-0}" view "$(jq -cn --arg state "$1" --arg head "$2" '{number: 217,
+    state: (if $state == "OPEN" then "open" else "closed" end), merged: ($state == "MERGED"),
+    head: {sha: $head, ref: "feat/T14-work"}, title: "OUTPUT-MARKER"}')"
 }
 
-# check <name> <state> [<run id> [<job id>]]: one check as gh pr checks --json shows it, its bucket
-# from its state, its link an Actions job link of run <run id> and job <job id> (default 9<run id>;
-# no run given: a commit status's link).
+# check <name> <state> [<run id> [<job id>]]: one check of the head as GitHub's REST API shows it,
+# <state> as gh pr checks names it: with <run id>, a check run whose html_url is an Actions job link
+# of run <run id> and job <job id> (default 9<run id>); with none, a commit status for SUCCESS,
+# PENDING, FAILURE or ERROR, else a check run, each linked outside Actions.
 check() {
-  jq -cn --arg name "$1" --arg state "$2" --arg run "${3:-}" --arg job "${4:-9${3:-}}" '{name: $name, state: $state,
-    bucket: ({SUCCESS: "pass", SKIPPED: "skipping", FAILURE: "fail", CANCELLED: "cancel"}[$state] // "pending"),
-    link: (if $run == "" then "https://ci.example.invalid/\($name)"
-      else "https://github.com/owner/proj/actions/runs/\($run)/job/\($job)" end),
-    workflow: (if $run == "" then "" else "CI" end)}'
+  jq -cn --arg name "$1" --arg state "$2" --arg run "${3:-}" --arg job "${4:-9${3:-}}" '
+    ($state | ascii_downcase) as $s
+    | (if $run == "" then "https://ci.example.invalid/\($name)"
+       else "https://github.com/owner/proj/actions/runs/\($run)/job/\($job)" end) as $link
+    | if $run == "" and ($s | IN("success", "pending", "failure", "error")) then
+        {context: $name, state: $s, target_url: $link, description: "OUTPUT-MARKER"}
+      else
+        {name: $name, html_url: $link, output: {title: "OUTPUT-MARKER"}}
+        + if $s | IN("in_progress", "queued", "pending", "waiting", "requested") then {status: $s, conclusion: null}
+          else {status: "completed", conclusion: $s} end
+      end'
 }
 
-# checks <look> <check>...: the checks from <look> on.
+# checks <look> <check>...: the head's checks from <look> on, its check runs and statuses.
 checks() {
   local look=$1
   shift
@@ -73,46 +88,72 @@ job() {
          conclusion: (.value[$i + 1:] | if . == "" then null else . end)}]}' --args "$@")"
 }
 
-# head_runs <look> [<id>:<name>:<status>]...: the head's workflow runs as gh api lists them, from
-# <look> on (none given: every one completed, so none listed here keeps the wait going).
+# head_runs <look> [<id>:<name>:<status>[:<conclusion>]]...: the head's workflow runs as gh api lists
+# them, from <look> on (none given: every one completed, so none listed here keeps the wait going).
 head_runs() {
   local look=$1
   shift
   answer "$look" runs "$(jq -cn '{total_count: ($ARGS.positional | length), workflow_runs: [$ARGS.positional[] | split(":")
-    | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: null, display_title: "OUTPUT-MARKER"}]}' --args "$@")"
+    | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: (.[3] // null),
+       updated_at: "2026-10-30T18:52:11Z", display_title: "OUTPUT-MARKER"}]}' --args "$@")"
 }
 
-# gh answers each read (the PR, its checks, the head's runs, the repository's runs in progress, a
-# run, a run's jobs, a job) from the latest answer at
-# or before the current look; gh pr checks exits 8 while a check is pending, as gh does. Anything
-# unplanned fails.
+# gh answers each read (the PR, its head's check runs and statuses, the head's runs, the
+# repository's runs in progress, a run, a run's jobs, a job) from the latest answer at or before the
+# current look, in gh api -i's form through tests/helpers/github-api.bash, a 304 when the read
+# sends the answer's ETag; the merge queue's GraphQL read and a --paginate read print the answer as
+# gh does with no -i. Each call is one line of $GH_DIR/calls, its arguments with -i and an -H
+# header left out. Anything unplanned fails.
 stub_gh() {
   stub_script gh <<'EOF'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
 n=$(cat "$GH_DIR/look")
-printf '%s\n' "$*" >>"$GH_DIR/calls"
-case "$*" in
-  "pr view 217 --repo owner/proj --json state,headRefOid") what=view ;;
-  "pr checks 217 --repo owner/proj --json name,state,bucket,link,workflow") what=checks ;;
+args=() raw=false
+while (($#)); do
+  case $1 in
+    -i) raw=true ;;
+    -H) shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+printf '%s\n' "${args[*]}" >>"$GH_DIR/calls"
+case "${args[*]}" in
+  "api repos/owner/proj/pulls/217") what=view ;;
   "api repos/owner/proj/actions/runs?head_sha="*"&per_page=100") what=runs ;;
   "api graphql "*) what=entry ;;
-  "api repos/owner/proj/commits/"*"/check-runs?filter=latest&per_page=100 --paginate") what=check-runs ;;
+  "api repos/owner/proj/commits/"*"/check-runs?filter=latest&per_page=100 --paginate") what=check-runs-pages ;;
+  "api repos/owner/proj/commits/"*"/check-runs?filter=latest&per_page=100") what=check-runs ;;
   "api repos/owner/proj/commits/"*"/status?per_page=100") what=statuses ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") what=running ;;
-  "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${2%/jobs*} what=jobs-${what##*/} ;;
-  "api repos/owner/proj/actions/runs/"*) what=run-${2##*/} ;;
-  "api repos/owner/proj/actions/jobs/"*) what=job-${2##*/} ;;
-  *) echo "unplanned gh call: $*" >&2; exit 1 ;;
+  "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${GITHUB_ENDPOINT%/jobs*} what=jobs-${what##*/} ;;
+  "api repos/owner/proj/actions/runs/"*) what=run-${GITHUB_ENDPOINT##*/} ;;
+  "api repos/owner/proj/actions/jobs/"*) what=job-${GITHUB_ENDPOINT##*/} ;;
+  *) echo "unplanned gh call: ${args[*]}" >&2; exit 1 ;;
 esac
+# A PR's head's check runs and statuses come from its planned checks, when the test planned some.
+from=$what
+if [[ $what == check-runs || $what == statuses ]] && compgen -G "$GH_DIR/checks.*" >/dev/null; then from=checks; fi
 m=$n
-while ((m >= 0)) && [[ ! -e $GH_DIR/$what.$m ]]; do m=$((m - 1)); done
+while ((m >= 0)) && [[ ! -e $GH_DIR/$from.$m ]]; do m=$((m - 1)); done
 if ((m < 0)); then echo "no answer planned for $what at look $n" >&2; exit 1; fi
-body=$(cat "$GH_DIR/$what.$m")
-case $body in
-  fail) echo "error connecting to api.github.com" >&2; echo "check your internet connection" >&2; exit 1 ;;
-  none) echo "no checks reported on the 'feat/T14-work' branch" >&2; exit 1 ;;
-esac
+body=$(cat "$GH_DIR/$from.$m")
+[[ $body != fail ]] || github_offline
+if [[ $body == limited:* ]]; then
+  read -ra how <<<"${body#limited:}"
+  github_limited "${how[@]}"
+fi
+if [[ $from == checks ]]; then
+  [[ $body != none ]] || body='[]'
+  if [[ $what == check-runs ]]; then
+    body=$(jq -c '[.[] | select(has("context") | not)] | {total_count: length, check_runs: .}' <<<"$body")
+  else
+    body=$(jq -c '{state: "pending", statuses: [.[] | select(has("context"))]}' <<<"$body")
+  fi
+fi
+if $raw; then github_answer 200 "$body"; fi
 printf '%s\n' "$body"
-if [[ $what == checks ]] && jq -e 'any(.[]; .bucket == "pending")' <<<"$body" >/dev/null; then exit 8; fi
 EOF
 }
 
@@ -180,9 +221,16 @@ run_jobs() {
   answer "$look" jobs-7001 "$(jq -cs '{total_count: length, jobs: .}' <<<"$*")"
 }
 
-# The stub sleep moves on to the next look and, after LOOK_LIMIT looks (default 200, 100 minutes),
-# stops the wait with exit 99, so a wait that never ends shows as that exit. The uname stub keeps
-# it ahead of Homebrew's GNU sleep on macOS.
+# gh_calls: the stub gh's calls as stub_calls gh logs them, one JSON array of arguments each, with
+# the reader's -i and its -H header left out.
+gh_calls() {
+  stub_calls gh | jq -c '. as $a | [range(length) | select($a[.] != "-i" and $a[.] != "-H" and (. == 0 or $a[. - 1] != "-H"))
+    | $a[.]]'
+}
+
+# The stub sleep moves on to the next look, and the reader's clock on by its seconds, and, after
+# LOOK_LIMIT looks (default 200), stops the wait with exit 99, so a wait that never ends shows as
+# that exit. The uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
 stub_sleep() {
   stub_command sleep uname
   stub_reply uname Linux
@@ -190,6 +238,7 @@ stub_sleep() {
 n=\$(cat "$GH_DIR/look")
 ((n < \${LOOK_LIMIT:-200})) || exit 99
 echo \$((n + 1)) >"$GH_DIR/look"
+echo \$((\$(cat "\$TEAM_GITHUB_CLOCK") + \$1)) >"\$TEAM_GITHUB_CLOCK"
 EOF
 }
 
@@ -213,7 +262,7 @@ both() {
   assert_equal "${#lines[@]}" 1
   assert_equal "$(jq -r .schema <<<"$output")" team-ci-wait/1
   assert_equal "$(jq -r .text <<<"$output")" "$(sed '/^team-ci-wait: waiting on \(the checks of\|CI run\) /d' <<<"$text_output")"
-  assert_equal "$(jq -r 'keys | join(" ")' <<<"$output")" "failures head outcome schema text"
+  assert_equal "$(jq -r 'keys | join(" ")' <<<"$output")" "failures head limited_until outcome schema text"
 }
 
 @test "T121: a summary check left in_progress on a run that completed ends the wait after 5 minutes, naming the re-run" {
@@ -366,7 +415,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   infrastructure: smoke-shards (1) never started: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/81); rerun it with gh run rerun 7001 --job 81 --repo owner/proj, then run team-ci-wait again
   roll-up: smoke, of smoke-shards (1), left out"
   # Its job is read once, at the end; the roll-up's never.
-  assert_equal "$(stub_calls gh | jq -c 'select(.[1] | contains("/jobs/"))')" '["api","repos/owner/proj/actions/jobs/81"]'
+  assert_equal "$(gh_calls | jq -c 'select(.[1] | contains("/jobs/"))')" '["api","repos/owner/proj/actions/jobs/81"]'
 }
 
 @test "a reading still standing at the deadline ends within its 2 minutes, and the wait always ends" {
@@ -444,7 +493,7 @@ team-ci-wait: every check passed on a1b2c3d: test passed, lint passed"
   # A rereview or verify of a head an earlier review failed: the status GitHub shows is that
   # review's own, set by team-review-status with no link, which the wait would name as the PR's.
   local review
-  review=$(jq -cn '{name: "agent-review", state: "FAILURE", bucket: "fail", link: "", workflow: ""}')
+  review=$(jq -cn '{context: "agent-review", state: "failure", target_url: null, description: "OUTPUT-MARKER"}')
   checks 0 "$(check test SUCCESS 7001)" "$(check lint SUCCESS 7001)" "$review"
   run_bin team-ci-wait "$url" "$head"
   assert_equal "$status" 1
@@ -616,7 +665,7 @@ team-ci-wait: every check passed on 9f8e7d6: test passed"
   run_bin team-ci-wait "$url"
   assert_equal "$status" 75
   assert_equal "$(ended_at)" 10
-  assert_equal "$output" "team-ci-wait: GitHub could not be read for 5 minutes running: gh pr view: error connecting to api.github.com"
+  assert_equal "$output" "team-ci-wait: GitHub could not be read for 5 minutes running: gh api repos/owner/proj/pulls/217: error connecting to api.github.com"
 }
 
 @test "one failing look between good ones neither ends the wait nor advances the stuck clock" {
@@ -659,8 +708,246 @@ EOF
   run_bin team-ci-wait "$url"
   assert_equal "$status" 75
   assert_contains "$output" "the team is holding"
-  # One look's four reads: the PR, its checks, the head's runs and the repository's runs in progress.
-  assert_equal "$(stub_calls gh | grep -c .)" 4
+  # One look's five reads: the PR, its head's check runs and statuses, the head's runs and the repository's runs in
+  # progress.
+  assert_equal "$(stub_calls gh | grep -c .)" 5
+}
+
+# GitHub's rate limit: a wait sleeps it out and goes on, never reading it as an outage (T407).
+
+# fresh_run: the next run from look 0 on the clock's start, with no limit, cache or budget left by
+# the last one.
+fresh_run() {
+  echo 0 >"$GH_DIR/look"
+  github_clock 1795000000
+  rm -rf "${HOME:?}/.local/state/agent-team/github"
+}
+
+# The limit cases plan a budget with 4,000 of its 5,000 requests left, so the budget alone keeps
+# their interval at 30 s, and a refusal's own empty budget adds nothing while its limit stands.
+
+# limit_line <until> [secondary]: the wait's stderr line for a limit until <until> epoch seconds.
+limit_line() {
+  if [[ ${2:-} == secondary ]]; then
+    echo "team-ci-wait: GitHub's secondary rate limit holds the team's requests until $(date -d "@$1" +%H:%M); this is no outage; waiting for it, then looking again"
+  else
+    echo "team-ci-wait: GitHub's API rate limit for core requests is used up until $(date -d "@$1" +%H:%M), when it resets; this is no outage; waiting for it, then looking again"
+  fi
+}
+
+@test "a primary limit met mid-wait is slept out to its reset, said once on stderr, and the wait passes, its clocks not counting the sleep" {
+  t0=$(github_now)
+  github_budget core 5000 1000 $((t0 + 600))
+  checks 0 "$(check test SUCCESS)"
+  answer 1 view limited:primary
+  pr OPEN "$head" 2
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 0
+  # Look 0 reads, look 1 is refused, look 2 finds the limit standing and sleeps to its reset plus a
+  # second, then the reading stands for its 2 minutes of look intervals, the limit's sleep left out.
+  assert_equal "$(ended_at)" 6
+  assert_equal "${lines[*]}" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d team-ci-wait: every check passed on a1b2c3d: test passed"
+  assert_equal "$stderr" "$(limit_line $((t0 + 600)))"
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 30 541 30 30 30"
+  # Nothing is sent while the limit stands: a read at each look but the one that slept it out.
+  assert_equal "$(github_requests | grep -c 'pulls/217 403')" 1
+  assert_equal "$(github_requests | grep -c 'pulls/217')" 6
+  [[ ! -e $HOME/.local/state/agent-team/offline ]]
+  fresh_run
+  github_budget core 5000 1000 $((t0 + 600))
+  run_bin --separate-stderr team-ci-wait --json "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" "[\"passed\",\"$(date -u -d "@$((t0 + 600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
+  assert_equal "$stderr" "$(limit_line $((t0 + 600)))"
+}
+
+@test "a limit, then GitHub unreachable, ends exit 75 after 5 minutes of the failure alone" {
+  t0=$(github_now)
+  github_budget core 5000 1000 $((t0 + 600))
+  answer 0 view limited:primary
+  answer 2 view fail
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 75
+  # The refusal, a look interval, the limit's sleep, then 5 minutes of failing looks.
+  assert_equal "$(ended_at)" 12
+  assert_equal "$output" "team-ci-wait: GitHub could not be read for 5 minutes running: gh api repos/owner/proj/pulls/217: error connecting to api.github.com"
+  assert_equal "$stderr" "$(limit_line $((t0 + 600)))"
+  [[ ! -e $HOME/.local/state/agent-team/offline ]]
+}
+
+@test "a limit never ends a wait but at its deadline, which then names it" {
+  t0=$(github_now)
+  github_budget core 5000 1000 $((t0 + 3600))
+  answer 0 view limited:primary
+  TEAM_CI_WAIT_DEADLINE_SECONDS=300 run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 75
+  # The limit's sleep stops at the deadline, and the look after it sends nothing.
+  assert_equal "$(ended_at)" 2
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "30 270"
+  assert_equal "$(github_requests)" "repos/owner/proj/pulls/217 403"
+  assert_equal "$output" "team-ci-wait: 5 minutes, and GitHub not read yet: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 3600))" +%H:%M), when it resets; this is no outage: run team-ci-wait again to wait, or report BLOCKED"
+  assert_equal "$stderr" "$(limit_line $((t0 + 3600)))"
+  fresh_run
+  github_budget core 5000 1000 $((t0 + 3600))
+  TEAM_CI_WAIT_DEADLINE_SECONDS=300 run_bin --separate-stderr team-ci-wait --json "$url"
+  assert_equal "$status" 75
+  assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" "[\"unreadable\",\"$(date -u -d "@$((t0 + 3600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
+}
+
+@test "--look sleeps out a secondary limit inside its grace, and ends unreadable at once on a primary one past it" {
+  t0=$(github_now)
+  checks 0 "$(check test SUCCESS)"
+  answer 0 view "limited:retry-after 60"
+  pr OPEN "$head" 1
+  run_bin --separate-stderr team-ci-wait --look "$url"
+  assert_equal "$status" 0
+  # The limit its own read met is slept out at once, with no look interval before it.
+  assert_equal "$(ended_at)" 1
+  assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  assert_equal "$stderr" "$(limit_line $((t0 + 60)) secondary)"
+  assert_equal "$(stub_calls sleep | jq -r '.[0]' | paste -sd' ')" "61"
+  fresh_run
+  rm "$GH_DIR/view.1"
+  github_budget core 5000 1000 $((t0 + 600))
+  answer 0 view limited:primary
+  run_bin --separate-stderr team-ci-wait --look "$url"
+  assert_equal "$status" 75
+  assert_equal "$(ended_at)" 0
+  # No sleep at all: each moves the look on.
+  assert_equal "$output" "team-ci-wait: GitHub's API rate limit for core requests is used up until $(date -d "@$((t0 + 600))" +%H:%M), when it resets; this is no outage: look again after it"
+  assert_equal "$stderr" ""
+  fresh_run
+  github_budget core 5000 1000 $((t0 + 600))
+  run_bin --separate-stderr team-ci-wait --json --look "$url"
+  assert_equal "$status" 75
+  assert_equal "$(jq -c '[.outcome, .head, .limited_until]' <<<"$output")" "[\"unreadable\",null,\"$(date -u -d "@$((t0 + 600))" +%Y-%m-%dT%H:%M:%SZ)\"]"
+}
+
+@test "--json's limited_until is null on an end that met no limit" {
+  checks 0 "$(check test SUCCESS)"
+  run_bin team-ci-wait --json --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -c '[.outcome, .limited_until]' <<<"$output")" '["passed",null]'
+}
+
+# The interval: 30 s, 60 s while only queued things are pending, raised as the hour's budget falls.
+
+# sleeps: the seconds of each sleep since the last sleeps, on one line, the stub sleep's log then
+# emptied for the next run.
+sleeps() {
+  stub_calls sleep | jq -r '.[0]' | paste -sd' '
+  : >"$STUB_CALLS/sleep.log"
+}
+
+@test "the wait looks every 60 s while every pending check and open run is queued, and every 30 s once one is in progress" {
+  checks 0 "$(check test QUEUED 7001)"
+  head_runs 0 7001:CI:queued
+  checks 3 "$(check test IN_PROGRESS 7001)"
+  head_runs 3 7001:CI:in_progress
+  checks 5 "$(check test SUCCESS 7001)"
+  head_runs 5
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 9
+  assert_equal "$(sleeps)" "60 60 60 30 30 30 30 30 30"
+  # A queued check beside a run of the head in progress, or beside a check in progress, is waited on
+  # every 30 s.
+  fresh_run
+  rm "$GH_DIR"/checks.* "$GH_DIR"/runs.*
+  checks 0 "$(check test QUEUED 7001)"
+  head_runs 0 7001:CI:in_progress
+  TEAM_CI_WAIT_DEADLINE_SECONDS=120 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "30 30 30 30"
+  fresh_run
+  checks 0 "$(check test QUEUED 7001)" "$(check lint IN_PROGRESS 7001 72)"
+  head_runs 0 7001:CI:queued
+  TEAM_CI_WAIT_DEADLINE_SECONDS=120 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "30 30 30 30"
+}
+
+@test "the queued clock still ends at 20 minutes of quiet looks, looking every 60 s" {
+  checks 0 "$(check "smoke-shards (1)" QUEUED 7001 71)"
+  head_runs 0 7001:CI:queued
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 20
+  assert_equal "$(sleeps)" "$(printf '60 %.0s' {1..20} | sed 's/ $//')"
+  assert_contains "$output" "infrastructure: smoke-shards (1) is still queued after 20 minutes of looks: no runner took it"
+}
+
+@test "the interval rises to 60, 120 and 300 s as the hour's core budget falls under a half, a quarter and a tenth, and is 30 s once it resets" {
+  checks 0 "$(check test IN_PROGRESS 7001)"
+  head_runs 0 7001:CI:in_progress
+  t0=$(github_now)
+  # Each planned budget leaves room for the wait's own requests without crossing the next threshold.
+  for plan in "2000 30 20" "2600 60 10" "3800 120 5" "4600 300 2"; do
+    read -r used seconds looks <<<"$plan"
+    fresh_run
+    github_budget core 5000 "$used" $((t0 + 3600))
+    TEAM_CI_WAIT_DEADLINE_SECONDS=600 run_bin team-ci-wait "$url"
+    assert_equal "$status" 75
+    assert_equal "$(ended_at)" "$looks"
+    assert_equal "$(sleeps | tr ' ' '\n' | sort -u)" "$seconds"
+  done
+  # The deadline still ends the wait at its minutes, the last interval cut to it.
+  fresh_run
+  github_budget core 5000 4600 $((t0 + 3600))
+  TEAM_CI_WAIT_DEADLINE_SECONDS=500 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "300 200"
+  assert_contains "$output" "team-ci-wait: 500 seconds, and checks still pending on a1b2c3d"
+  # A reading whose reset has passed holds nothing: GitHub has given the hour's budget back.
+  fresh_run
+  github_budget core 5000 4600 $((t0 + 300))
+  TEAM_CI_WAIT_DEADLINE_SECONDS=600 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "300 30 30 30 30 30 30 30 30 30 30"
+}
+
+@test "--merge-group's interval follows GraphQL's budget too, which a PR's wait reads nothing under" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  entry 0 OPEN "$trial"
+  # The trial commit's checks and the PR head's alike: one in progress.
+  checks 0 "$(check test IN_PROGRESS 7001)"
+  head_runs 0 7001:CI:in_progress
+  t0=$(github_now)
+  mkdir -p "$HOME/.local/state/agent-team/github"
+  jq -n --argjson reset $((t0 + 3600)) --argjson at "$t0" \
+    '{graphql: {limit: 5000, remaining: 400, used: 4600, reset: $reset, at: $at}}' >"$HOME/.local/state/agent-team/github/budget.json"
+  TEAM_CI_WAIT_DEADLINE_SECONDS=600 run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "300 300"
+  echo 0 >"$GH_DIR/look"
+  TEAM_CI_WAIT_DEADLINE_SECONDS=120 run_bin team-ci-wait "$url"
+  assert_equal "$status" 75
+  assert_equal "$(sleeps)" "30 30 30 30"
+}
+
+@test "the grace for a push and a reading that stands look every 30 s; the budget cuts --look's grace to its 2 minutes" {
+  other=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432
+  # Another head's queued checks hold no 60 s look: the wait looks for its push every 30 s.
+  checks 0 "$(check test QUEUED 7001)"
+  head_runs 0 7001:CI:queued
+  run_bin team-ci-wait "$url" "$other"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(sleeps)" "30 30 30 30"
+  # Once the checks pass, the reading stands for its 2 minutes at 30 s a look.
+  echo 0 >"$GH_DIR/look"
+  checks 2 "$(check test SUCCESS 7001)"
+  head_runs 2
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 6
+  assert_equal "$(sleeps)" "60 60 30 30 30 30"
+  # With the budget under a tenth, --look's grace is one look of its 2 minutes, not 5.
+  fresh_run
+  github_budget core 5000 4600 $(($(github_now) + 3600))
+  run_bin team-ci-wait --look "$url" "$other"
+  assert_equal "$status" 1
+  assert_equal "$(sleeps)" "120"
 }
 
 @test "a malformed command line is a usage error, and a repo no project has is refused" {
@@ -705,17 +992,123 @@ EOF
   run_bin team-ci-wait "$url"
   assert_equal "$status" 1
   [[ $output != *OUTPUT-MARKER* ]]
-  assert_equal "$(stub_calls gh | jq -r '.[0:2] | join(" ")' | LC_ALL=C sort -u)" "api repos/owner/proj/actions/jobs/97002
+  assert_equal "$(gh_calls | jq -r '.[0:2] | join(" ")' | LC_ALL=C sort -u)" "api repos/owner/proj/actions/jobs/97002
 api repos/owner/proj/actions/runs/7002
 api repos/owner/proj/actions/runs?head_sha=$head&per_page=100
 api repos/owner/proj/actions/runs?status=in_progress&per_page=1
-pr checks
-pr view"
+api repos/owner/proj/commits/$head/check-runs?filter=latest&per_page=100
+api repos/owner/proj/commits/$head/status?per_page=100
+api repos/owner/proj/pulls/217"
   # One read of each distinct run per look and of the failed job at the end, with nothing that writes.
-  assert_equal "$(stub_calls gh | jq -c 'select(.[0] == "api" and (.[1] | contains("?") | not))' | LC_ALL=C sort -u)" '["api","repos/owner/proj/actions/jobs/97002"]
+  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | LC_ALL=C sort -u)" '["api","repos/owner/proj/actions/jobs/97002"]
 ["api","repos/owner/proj/actions/runs/7002"]'
-  assert_equal "$(stub_calls gh | jq -c 'select(.[0] == "api" and (.[1] | contains("?") | not))' | grep -c .)" 3
-  assert_equal "$(stub_calls gh | jq -c 'select(.[0] == "api" and length != 2)')" ""
+  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | grep -c .)" 3
+  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and length != 2)')" ""
+}
+
+@test "a pending check's run is taken from the head's runs, and read by its id only when they do not list it" {
+  checks 0 "$(check test SUCCESS 7001)" "$(check e2e IN_PROGRESS 7002 74)"
+  head_runs 0 7002:CI:in_progress
+  run_bin team-ci-wait --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$output" "team-ci-wait: no check has failed on a1b2c3d so far; still pending: e2e (in_progress, run 7002 in_progress)"
+  if github_requests | grep -F 'actions/runs/7002'; then return 1; fi
+  # A run of a moment ago the head's runs do not list yet is read by its id.
+  head_runs 0
+  workflow_run 0 7002 queued
+  run_bin team-ci-wait --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$output" "team-ci-wait: no check has failed on a1b2c3d so far; still pending: e2e (in_progress, run 7002 queued)"
+  assert_equal "$(github_requests | grep -c '^repos/owner/proj/actions/runs/7002 ')" 1
+}
+
+# The reader's cache and ETags (bin/lib/github-api.sh) make the waits on one repository cheap: each
+# reads its runs in progress through one shared answer, and an unchanged answer is a 304 (T407).
+
+@test "four looks on four PRs of one repository read its runs in progress once an interval, and nothing unchanged counts" {
+  # The reader's own 20 s of freshness, on the one clock of the four.
+  unset TEAM_GITHUB_FRESH_SECONDS
+  stub_script gh <<'EOF'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
+case $GITHUB_ENDPOINT in
+  repos/owner/proj/pulls/*)
+    github_answer 200 "$(jq -cn --argjson n "${GITHUB_ENDPOINT##*/}" '{number: $n, state: "open", merged: false,
+      head: {sha: ("\($n)" * 2 + "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678")[0:40]}}')" ;;
+  repos/owner/proj/commits/*/check-runs\?*)
+    github_answer 200 '{"total_count": 1, "check_runs": [{"name": "test", "status": "completed", "conclusion": "success",
+      "html_url": "https://github.com/owner/proj/actions/runs/7001/job/71"}]}' ;;
+  repos/owner/proj/commits/*/status\?*) github_answer 200 '{"state": "success", "statuses": []}' ;;
+  repos/owner/proj/actions/runs\?head_sha=*) github_answer 200 '{"total_count": 0, "workflow_runs": []}' ;;
+  repos/owner/proj/actions/runs\?status=in_progress*) github_answer 200 '{"total_count": 3, "workflow_runs": []}' ;;
+  *) echo "unplanned gh call: $*" >&2; exit 1 ;;
+esac
+EOF
+  local n round
+  for round in 1 2; do
+    : >"$GITHUB_STUB/requests"
+    for n in 217 218 219 220; do
+      run_bin team-ci-wait --look --json "https://github.com/owner/proj/pull/$n"
+      assert_equal "$status" 0
+      assert_equal "$(jq -r .outcome <<<"$output")" passed
+    done
+    # One request for the runs in progress, and four of each other read, one a PR.
+    assert_equal "$(github_requests | grep -c 'actions/runs?status=in_progress')" 1
+    assert_equal "$(github_requests | grep -c .)" 17
+    if ((round == 1)); then
+      assert_equal "$(github_requests | grep -vc ' 200$')" 0
+    else
+      # The PRs, their checks and their runs are unchanged: every request is a 304, none counted.
+      assert_equal "$(github_requests | grep -vc ' 304$')" 0
+    fi
+    # The next round, one interval later.
+    github_clock $(($(github_now) + 30))
+  done
+  # The reader logged each request for its PR.
+  assert_equal "$(jq -r '.for' "$HOME/.local/state/agent-team/github"/calls-*.jsonl | LC_ALL=C sort -u)" "owner/proj#217
+owner/proj#218
+owner/proj#219
+owner/proj#220"
+}
+
+@test "a wait started seconds after a rerun reads its PR's and its run's answers again, never the last wait's cached failure" {
+  # The reader's own 20 s of freshness: the rerun starts, and the next wait begins, inside it.
+  unset TEAM_GITHUB_FRESH_SECONDS
+  checks 0 "$(check test FAILURE 7001)"
+  head_runs 0 7001:CI:completed:failure
+  run_bin team-ci-wait --json "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -r .outcome <<<"$output")" failed
+  # gh run rerun 7001: the check is pending again and its run in progress, 5 s later.
+  rm "$GH_DIR"/checks.* "$GH_DIR"/runs.*
+  checks 0 "$(check test IN_PROGRESS 7001)"
+  head_runs 0 7001:CI:in_progress
+  echo 0 >"$GH_DIR/look"
+  github_clock $(($(github_now) + 5))
+  : >"$GITHUB_STUB/requests"
+  run_bin team-ci-wait --look --json "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -r .outcome <<<"$output")" pending
+  assert_contains "$(github_requests)" "commits/$head/check-runs?filter=latest&per_page=100 200"
+  assert_contains "$(github_requests)" "actions/runs?head_sha=$head&per_page=100 200"
+  # The repository's runs in progress, read by every wait on it, are still shared.
+  assert_equal "$(github_requests | grep -c 'actions/runs?status=in_progress')" 0
+
+  # --run: the run waited on completed, then rerun under the same id.
+  the_run 0 completed failure
+  run_jobs 0 "$(run_job lint completed failure)"
+  job 0 71 "GitHub Actions 1" "Run the lint=failure"
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --json --run "$run_url"
+  assert_equal "$(jq -r .outcome <<<"$output")" failed
+  rm "$GH_DIR"/run-7001.* "$GH_DIR"/jobs-7001.*
+  the_run 0 in_progress
+  run_jobs 0 "$(run_job lint in_progress)"
+  echo 0 >"$GH_DIR/look"
+  github_clock $(($(github_now) + 5))
+  run_bin team-ci-wait --look --json --run "$run_url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -r .outcome <<<"$output")" pending
 }
 
 # The classes of a failed check: the PR's own, infrastructure, or a roll-up left out beside its
@@ -840,7 +1233,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
 team-ci-wait: the checks on a1b2c3d did not pass:
   the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/71 (its job could not be read)
   the PR's: deploy failed: https://ci.example.invalid/deploy"
-  assert_equal "$(stub_calls gh | jq -c 'select(.[1] | contains("/jobs/"))')" '["api","repos/owner/proj/actions/jobs/71"]'
+  assert_equal "$(gh_calls | jq -c 'select(.[1] | contains("/jobs/"))')" '["api","repos/owner/proj/actions/jobs/71"]'
 }
 
 @test "a check queued with no runner for 20 minutes of looks is infrastructure and no longer holds the wait" {
@@ -849,7 +1242,8 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   head_runs 0 7001:CI:queued
   run_bin team-ci-wait "$url"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 40
+  # With only queued things pending it looks every 60 s, so its 20 minutes are 20 looks past the first.
+  assert_equal "$(ended_at)" 20
   assert_equal "$output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
 team-ci-wait: the checks on a1b2c3d did not pass:
   infrastructure: smoke-shards (1) is still queued after 20 minutes of looks: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/71); cancel its run with gh run cancel 7001 --repo owner/proj, then rerun the job with gh run rerun 7001 --job 71 --repo owner/proj, then run team-ci-wait again"
@@ -877,20 +1271,22 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   checks 0 "$(check test QUEUED 7001)"
   workflow_run 0 7001 queued
   head_runs 0 7001:CI:queued
-  checks 30 "$(check test IN_PROGRESS 7001)"
-  workflow_run 30 7001 in_progress
-  checks 60 "$(check test SUCCESS 7001)"
-  head_runs 60
+  # Queued, it looks every 60 s, so look 15 is at 15 minutes; started, every 30 s again.
+  checks 15 "$(check test IN_PROGRESS 7001)"
+  workflow_run 15 7001 in_progress
+  checks 45 "$(check test SUCCESS 7001)"
+  head_runs 45
   run_bin team-ci-wait "$url"
   assert_equal "$status" 0
-  assert_equal "$(ended_at)" 64
+  assert_equal "$(ended_at)" 49
 }
 
 @test "a pending commit status from outside Actions is never called queued, and is waited on to the deadline" {
   checks 0 "$(check test SUCCESS 7001)" "$(check deploy PENDING)"
   TEAM_CI_WAIT_DEADLINE_SECONDS=1800 run_bin team-ci-wait "$url"
   assert_equal "$status" 75
-  assert_equal "$(ended_at)" 60
+  # A pending status is no check in progress, so the wait looks every 60 s: 30 looks to 30 minutes.
+  assert_equal "$(ended_at)" 30
   assert_contains "$output" "deploy (pending, not an Actions run)"
 }
 
@@ -913,7 +1309,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   infrastructure: e2e is still in_progress, but its run 7002 completed failure at 2026-10-30T18:52:11Z: GitHub lost the job's status; re-run it with gh run rerun 7002 --repo owner/proj, then run team-ci-wait again, and report BLOCKED if it sticks again
   infrastructure: smoke-shards (1) is still queued after 10 minutes of looks: no runner took it (https://github.com/owner/proj/actions/runs/7003/job/75); cancel its run with gh run cancel 7003 --repo owner/proj, then rerun the job with gh run rerun 7003 --job 75 --repo owner/proj, then run team-ci-wait again
   roll-up: test, of test-shards (1), left out"
-  assert_equal "$(stub_calls gh | jq -c 'select(.[1] | contains("/jobs/"))')" '["api","repos/owner/proj/actions/jobs/72"]
+  assert_equal "$(gh_calls | jq -c 'select(.[1] | contains("/jobs/"))')" '["api","repos/owner/proj/actions/jobs/72"]
 ["api","repos/owner/proj/actions/jobs/73"]'
   [[ $output != *OUTPUT-MARKER* ]]
 }
@@ -1012,7 +1408,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   both "$url"
   assert_equal "$status" 75
   assert_equal "$(jq -c '[.outcome, .head, .text]' <<<"$output")" \
-    '["unreadable",null,"team-ci-wait: GitHub could not be read for 5 minutes running: gh pr view: error connecting to api.github.com"]'
+    '["unreadable",null,"team-ci-wait: GitHub could not be read for 5 minutes running: gh api repos/owner/proj/pulls/217: error connecting to api.github.com"]'
   echo 0 >"$GH_DIR/look"
   mkdir -p "$HOME/.local/state/agent-team"
   echo '{"since": "2026-10-22T13:05:00Z", "posted": true}' >"$HOME/.local/state/agent-team/offline"
@@ -1027,7 +1423,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 75
   assert_equal "$(ended_at)" 2
   assert_equal "$(jq -c '[.outcome, .head, .text]' <<<"$output")" \
-    '["unreadable",null,"team-ci-wait: 1 minute, and GitHub not read yet: gh pr view: error connecting to api.github.com: run team-ci-wait again to wait, or report BLOCKED"]'
+    '["unreadable",null,"team-ci-wait: 1 minute, and GitHub not read yet: gh api repos/owner/proj/pulls/217: error connecting to api.github.com: run team-ci-wait again to wait, or report BLOCKED"]'
 }
 
 # --look: one readable look at the head, what has failed so far, classed, with no wait (T295).
@@ -1082,7 +1478,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 0
   assert_equal "$(jq -c '[.outcome, .text]' <<<"$output")" '["none","team-ci-wait: a1b2c3d has no GitHub checks reported so far"]'
   # A look reads no job but a failed one's, and nothing that writes.
-  assert_equal "$(stub_calls gh | jq -c 'select(.[1] | contains("/jobs/"))')" ""
+  assert_equal "$(gh_calls | jq -c 'select(.[1] | contains("/jobs/"))')" ""
 }
 
 @test "--look names no stuck, queued or missing check, only pending ones, since each needs a clock" {
@@ -1127,7 +1523,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 75
   assert_equal "$(ended_at)" 4
   assert_equal "$(jq -c '[.outcome, .text]' <<<"$output")" \
-    '["unreadable","team-ci-wait: GitHub could not be read for 2 minutes running: gh pr view: error connecting to api.github.com"]'
+    '["unreadable","team-ci-wait: GitHub could not be read for 2 minutes running: gh api repos/owner/proj/pulls/217: error connecting to api.github.com"]'
   echo 0 >"$GH_DIR/look"
   pr OPEN "$head" 2
   both --look "$url"
@@ -1157,17 +1553,20 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["agent-review","pr","failed"]]'
 }
 
-@test "--merge-group reads every page of the trial commit's check runs: a check still running on a later page holds the pass" {
+@test "--merge-group reads every page of the trial commit's check runs past 100: a check still running on a later page holds the pass" {
   trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
   entry 0 OPEN "$trial"
-  # Two pages, as gh api --paginate prints them: one JSON document after the other.
-  answer 0 check-runs "$(jq -cn --argjson a "$(check_run test completed success)" '{total_count: 2, check_runs: [$a]}')
-$(jq -cn --argjson b "$(check_run late in_progress)" '{total_count: 2, check_runs: [$b]}')"
+  # The first page, which counts more than 100, then every page, as gh api --paginate prints them:
+  # one JSON document after the other.
+  answer 0 check-runs "$(jq -cn --argjson a "$(check_run test completed success)" '{total_count: 101, check_runs: [$a]}')"
+  answer 0 check-runs-pages "$(jq -cn --argjson a "$(check_run test completed success)" '{total_count: 101, check_runs: [$a]}')
+$(jq -cn --argjson b "$(check_run late in_progress)" '{total_count: 101, check_runs: [$b]}')"
   head_runs 0
   statuses 0
   TEAM_CI_WAIT_DEADLINE_SECONDS=0 run_bin team-ci-wait --merge-group "$trial" --json "$url"
   assert_equal "$(jq -r '.outcome' <<<"${lines[-1]}")" deadline
   assert_contains "$output" "late"
+  grep -Fxq "api repos/owner/proj/commits/$trial/check-runs?filter=latest&per_page=100 --paginate" "$GH_DIR/calls"
 }
 
 @test "--merge-group waits on the trial commit's check runs and statuses, and passes once each passed for 2 minutes" {
@@ -1188,9 +1587,11 @@ $(jq -cn --argjson b "$(check_run late in_progress)" '{total_count: 2, check_run
 team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, docs skipped, lint skipped, CodeQL passed"
   assert_equal "$(jq -c '[.outcome, .head, .failures]' <<<"$output")" "[\"passed\",\"$trial\",[]]"
   # It reads the trial commit alone: never the PR's own checks, and the runs of the trial commit.
-  if grep -E '^pr (view|checks) ' "$GH_DIR/calls"; then return 1; fi
+  if grep -E '^pr (view|checks) |/pulls/217' "$GH_DIR/calls"; then return 1; fi
   grep -Fxq "api repos/owner/proj/actions/runs?head_sha=$trial&per_page=100" "$GH_DIR/calls"
-  grep -Fxq "api repos/owner/proj/commits/$trial/check-runs?filter=latest&per_page=100 --paginate" "$GH_DIR/calls"
+  # One page of check runs, since GitHub counts no more than 100 of them.
+  grep -Fxq "api repos/owner/proj/commits/$trial/check-runs?filter=latest&per_page=100" "$GH_DIR/calls"
+  if grep -F -- --paginate "$GH_DIR/calls"; then return 1; fi
   grep -Fxq "api repos/owner/proj/commits/$trial/status?per_page=100" "$GH_DIR/calls"
   grep -q "^api graphql .*mergeQueueEntry.* owner=owner -f name=proj -F number=217$" <(tr '\n' ' ' <"$GH_DIR/calls" | sed 's/ api /\napi /g; s/ *$/\n/')
 }
@@ -1341,8 +1742,8 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   running 20 0
   TEAM_CI_WAIT_QUEUED_SECONDS=300 run_bin team-ci-wait "$url"
   assert_equal "$status" 1
-  # 20 looks held, then 5 minutes of looks counted.
-  assert_equal "$(ended_at)" 29
+  # 20 looks held, then 5 minutes of looks counted, at 60 s a look while only queued things are pending.
+  assert_equal "$(ended_at)" 24
   assert_contains "$output" "
   infrastructure: smoke-shards (1) is still queued after 5 minutes of looks: no runner took it"
   assert_contains "$(stub_calls gh)" "repos/owner/proj/actions/runs?status=in_progress&per_page=1"
@@ -1371,13 +1772,14 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   checks 0 "$(check test QUEUED 7001)"
   workflow_run 0 7001 queued
   head_runs 0 7001:CI:queued
-  # 4 minutes counted, 9 looks held, one look unread, then the last minute.
-  running 9 2
-  answer 18 running fail
-  running 19 0
+  # 4 minutes counted, 9 looks held, one look unread, then the last minute, at 60 s a look while
+  # only queued things are pending.
+  running 5 2
+  answer 14 running fail
+  running 15 0
   TEAM_CI_WAIT_QUEUED_SECONDS=300 run_bin team-ci-wait "$url"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 20
+  assert_equal "$(ended_at)" 15
   assert_contains "$output" "infrastructure: test is still queued after 5 minutes of looks"
 }
 
@@ -1395,7 +1797,7 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
 team-ci-wait: every check passed on a1b2c3d: lint passed, docs skipped, notes skipped"
   assert_equal "$(jq -c '[.outcome, .head, .failures]' <<<"$output")" "[\"passed\",\"$head\",[]]"
   # It reads the run, its jobs and the repository's runs in progress, and nothing of a PR.
-  assert_equal "$(stub_calls gh | jq -r 'join(" ")' | LC_ALL=C sort -u)" "api repos/owner/proj/actions/runs/7001
+  assert_equal "$(gh_calls | jq -r 'join(" ")' | LC_ALL=C sort -u)" "api repos/owner/proj/actions/runs/7001
 api repos/owner/proj/actions/runs/7001/jobs?per_page=100
 api repos/owner/proj/actions/runs?status=in_progress&per_page=1"
   [[ $text_output != *OUTPUT-MARKER* ]]
@@ -1465,6 +1867,25 @@ team-ci-wait: the checks on a1b2c3d did not pass:
     '[{"name":"test","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]'
 }
 
+@test "--run on a green run of another workflow than the project's branch_ci passes on its own jobs, the required checks being branch_ci's" {
+  sed -i 's/^required_checks = .*/required_checks = ["lint", "test", "agent-review"]/' "$TEAM_HOME/projects.toml"
+  sed -i 's/^docs = \[\]/docs = []\nbranch_ci = "ci.yml"\nchanged_tests = "the changed tests"/' "$TEAM_HOME/projects.toml"
+  answer 0 run-7001 "$(jq -cn --arg head "$head" '{id: 7001, status: "completed", conclusion: "success", head_sha: $head,
+    path: ".github/workflows/zizmor-online.yml", html_url: "https://github.com/owner/proj/actions/runs/7001",
+    event: "pull_request", updated_at: "2026-10-30T18:52:11Z", name: "zizmor online", display_title: "OUTPUT-MARKER"}')"
+  run_jobs 0 "$(run_job zizmor completed success)"
+  both --run "$run_url" "$head"
+  assert_equal "$text_status" 0
+  assert_equal "$text_output" "team-ci-wait: waiting on CI run 7001 of owner/proj at a1b2c3d
+team-ci-wait: every check passed on a1b2c3d: zizmor passed"
+  # A run of branch_ci's workflow is still held to them.
+  answer 0 run-7001 "$(jq -c '.path = ".github/workflows/ci.yml"' "$GH_DIR/run-7001.0")"
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the branch's: lint was not reported, and the project requires it"
+}
+
 @test "--run on a run that concluded badly with no failed job is the branch's, naming the run" {
   the_run 0 completed startup_failure
   run_jobs 0
@@ -1523,7 +1944,8 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   run_jobs 0 "$(run_job "smoke-shards (1)" queued)"
   run_bin team-ci-wait --run "$run_url" "$head"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 40
+  # Only a queued job pending, it looks every 60 s: 20 minutes are 20 looks past the first.
+  assert_equal "$(ended_at)" 20
   assert_equal "${lines[2]}" "  infrastructure: smoke-shards (1) is still queued after 20 minutes of looks: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/71); cancel its run with gh run cancel 7001 --repo owner/proj, then rerun the job with gh run rerun 7001 --job 71 --repo owner/proj, then wait on the run again"
   # Another run of the repository in progress holds the clock.
   echo 0 >"$GH_DIR/look"
@@ -1531,7 +1953,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   running 30 0
   run_bin team-ci-wait --run "$run_url" "$head"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 69
+  assert_equal "$(ended_at)" 49
   # So does a job of the run itself, the run then the one in progress, to the deadline.
   echo 0 >"$GH_DIR/look"
   the_run 0 in_progress

@@ -73,7 +73,7 @@ To add a source, add one line to that file in a PR on this repository:
 
 ## The heartbeat's step
 
-- The heartbeat runs `team-janitor tmp` on the lease holder at every run, as its `tmp` step, after the quota step and before the inbox step, with no setting and no lease needed by the command itself.
+- The heartbeat runs `team-janitor tmp` on the lease holder at every run, as its `tmp` step, after the github step and before the inbox step, with no setting and no lease needed by the command itself.
 - The step logs each line the command prints, nothing on a quiet run, and `tmp: failed: <reason>` when it fails or runs past its 120 s, which fails the heartbeat run; 12 failing runs in a row are the `step-tmp` alert.
 - By hand it runs on any machine.
 

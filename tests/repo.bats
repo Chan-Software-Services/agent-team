@@ -983,10 +983,11 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
 }
 
 # chrome-devtools-axi runs one bridge and browser per session name, and a session's Bash calls keep
-# no exported variable, so the worker settings name each worker's session for its task and role
-# (team-worker fills both in), and two UI workers on one machine never share a browser.
-@test "each worker's chrome-devtools-axi runs in a session named for its task and role" {
-  assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$REPO_ROOT/settings/worker.json")" '@TASK@-@ROLE@'
+# no exported variable, so the worker settings name each worker's axi session for its own session
+# name (team-worker fills it in, a ticket builder's T<n>-builder-NN), and two UI workers on one
+# machine never share a browser.
+@test "each worker's chrome-devtools-axi runs in a session named for its own session" {
+  assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$REPO_ROOT/settings/worker.json")" '@SESSION@'
   assert_equal "$(jq -r '.env.CHROME_DEVTOOLS_AXI_SESSION // "unset"' "$REPO_ROOT/coordinator.settings.json")" unset
 }
 
@@ -1047,6 +1048,43 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   grep -qF 'before you change the code' <<<"$builder"
   grep -qF 'test plan' "$REPO_ROOT/templates/briefs/builder-round.md"
   grep -qF 'test plan' "$REPO_ROOT/templates/briefs/rereview.md"
+}
+
+# The Markdown files under each skills/ and commands/ directory below <dir> whose text holds a shell
+# command Claude Code would run when it loads the skill or command, one path relative to <dir> per
+# line: a fence opened with three backticks and an exclamation mark, or an exclamation mark and a
+# backtick-quoted command at the text's start or after a blank, the two patterns Claude Code reads
+# them by (read from its 2.1.325 binary): skill_shell_files <dir>
+skill_shell_files() {
+  local file
+  while IFS= read -r -d '' file; do
+    [[ $(jq -Rs 'test("```!|(^|\\s)!`[^`]+`")' "$file") == true ]] && printf '%s\n' "${file#"$1"/}"
+  done < <(find "$1" -type f -name '*.md' \( -path '*/skills/*' -o -path '*/commands/*' \) -print0)
+  return 0
+}
+
+# A skill's or command's shell command runs when the skill loads, before the session's hooks see a
+# Bash call: the worker settings turn the commands off for every planner, builder and reviewer (and
+# the ops role, whose own file sets it too), and no skill or command a toolkit ships holds one.
+@test "the worker settings turn off skill shell commands, and no toolkit's skill or command holds one" {
+  assert_equal "$(jq -c .disableSkillShellExecution "$REPO_ROOT/settings/worker.json")" true
+  assert_equal "$(skill_shell_files "$REPO_ROOT/toolkits")" ""
+}
+
+@test "a skill or command holding a fenced or inline shell command is named, and prose about one is not" {
+  local dir=$BATS_TEST_TMPDIR/toolkits
+  mkdir -p "$dir/a/skills/fence" "$dir/a/skills/inline" "$dir/a/skills/line" "$dir/a/skills/prose" \
+    "$dir/b/commands" "$dir/b/agents" "$dir/b/docs"
+  printf '%s\n' '# Fence' '' '```!' 'id' '```' >"$dir/a/skills/fence/SKILL.md"
+  printf '%s\n' '# Inline' '' 'The branch: !`git branch --show-current`.' >"$dir/a/skills/inline/SKILL.md"
+  printf '%s' '!`id`' >"$dir/a/skills/line/SKILL.md"
+  printf '%s\n' '# Prose' '' 'Say "no!" and grep `!x` or a!`id` glob.' >"$dir/a/skills/prose/SKILL.md"
+  printf '%s\n' 'Run !`id`.' >"$dir/b/commands/look.md"
+  printf '%s\n' 'Run !`id`.' >"$dir/b/agents/reader.md"
+  printf '%s\n' 'Run !`id`.' >"$dir/b/docs/notes.md"
+  assert_equal "$(skill_shell_files "$dir" | LC_ALL=C sort)" "$(
+    printf '%s\n' a/skills/fence/SKILL.md a/skills/inline/SKILL.md a/skills/line/SKILL.md b/commands/look.md
+  )"
 }
 
 # The tools the sessions run send usage data off the machine unless told not to (T43's audit):
@@ -2255,12 +2293,13 @@ YAML
 }
 
 # The registry fixture is shaped like the team home's, whose required checks for agent-team are
-# the ones dev's protection requires: CI's job ids, each a check name on GitHub.
-@test "CI's jobs are exactly agent-team's required checks, and agent-team has no local checks" {
+# the ones dev's protection requires: CI's job ids, each a check name on GitHub, but the shard
+# jobs, the plan the shards split by (shard-plan) and the shards themselves (test-shards).
+@test "CI's jobs but the shard jobs are exactly agent-team's required checks, and agent-team has no local checks" {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   run_bin -0 team-project agent-team
   assert_equal "$(jq -c '[.required_checks, .local_checks]' <<<"$output")" \
-    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -v -- '-shards$' | jq -R . | jq -cs .),[]]"
+    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -vE -- '^shard-|-shards$' | jq -R . | jq -cs .),[]]"
 }
 
 # A shard job is never a required check itself: the job of the required id waits for every shard,
@@ -2279,6 +2318,79 @@ YAML
     job_block "$id" | grep -qxF "          RESULT: \${{ needs.$id-shards.result }}" || { echo "$id reads no result of $id-shards" >&2; return 1; }
     job_block "$id" | grep -qxF "        run: '[[ \$RESULT == success ]]'" || { echo "$id does not pass only on success" >&2; return 1; }
   done
+}
+
+# Every shard splits by one timings file, which shard-plan writes from the latest successful CI
+# run through the Actions API, else copies from the checkout, and which it alone may read: its
+# token reads the repository and its Actions runs, and no other job's token reads the Actions API.
+@test "test-shards splits by the timings shard-plan reads from the latest successful run, and only shard-plan reads the Actions API" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml id ids plan shards
+  job_block() { sed -n "/^jobs:\$/,\$p" "$ci" | sed -n "/^  $1:\$/,/^  [a-z_-]*:\$/p" | sed '$d'; }
+  plan=$(job_block shard-plan | grep -v '^ *#')
+  shards=$(job_block test-shards | grep -v '^ *#')
+  # The workflow's token reads the contents alone; shard-plan's reads the Actions runs too.
+  assert_equal "$(sed -n '/^permissions:$/,/^[^ ]/p' "$ci" | sed '$d')" $'permissions:\n  contents: read'
+  assert_equal "$(sed -n '/^    permissions:$/,/^    [^ ]/p' <<<"$plan" | sed '$d' | sed 's/ *#.*//')" $'    permissions:\n      contents: read\n      actions: read'
+  grep -qx '    runs-on: ubuntu-24.04' <<<"$plan"
+  grep -qx '    timeout-minutes: 5' <<<"$plan"
+  grep -qxF '          GH_TOKEN: ${{ github.token }}' <<<"$plan"
+  # It writes the latest successful run's timings, else warns and copies the committed file, so it
+  # never fails the run, and uploads either as timings.
+  grep -qF '::warning::' <<<"$plan"
+  grep -qxF '            cp tests/timings.tsv timings/timings.tsv' <<<"$plan"
+  grep -qx '      - uses: actions/upload-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$plan"
+  grep -qxF '          name: timings' <<<"$plan"
+  grep -qxF '          path: timings/timings.tsv' <<<"$plan"
+  # Every shard waits for it and downloads its timings over tests/timings.tsv before it runs.
+  grep -qx '    needs: shard-plan' <<<"$shards"
+  grep -qx '      - uses: actions/download-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$shards"
+  grep -qxF '          name: timings' <<<"$shards"
+  grep -qxF '          path: ${{ runner.temp }}/timings' <<<"$shards"
+  grep -qxF '          echo "TESTS_TIMINGS=$RUNNER_TEMP/timings/timings.tsv" >>"$GITHUB_ENV"' <<<"$shards"
+  (($(grep -n 'actions/download-artifact' <<<"$shards" | cut -d: -f1) < $(grep -nF 'tests/run bats --shard' <<<"$shards" | cut -d: -f1)))
+  # The committed tests/timings.tsv stays in place, so tests/repo.bats still checks it.
+  if grep -nE 'path: tests$|timings\.tsv +tests/' <<<"$shards"; then echo "test-shards writes over tests/timings.tsv" >&2; return 1; fi
+  # A hung gh ends the update before the job's limit, its failure caught like any other, and the
+  # artifact outlives GitHub's 30-day window for rerunning a shard.
+  grep -qF 'if ! timeout 180 tests/shards update --to timings/timings.tsv 2>update.err; then' <<<"$plan"
+  grep -qxF '          retention-days: 30' <<<"$plan"
+  grep -qxF '          overwrite: true' <<<"$plan"
+  # No other job reads the Actions API: none grants itself a permission or takes the run's token.
+  ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
+  for id in $ids; do
+    [[ $id != shard-plan ]] || continue
+    if job_block "$id" | grep -v '^ *#' | grep -nE 'permissions:|actions:|github\.token|GITHUB_TOKEN|GH_TOKEN|\bgh (run|api|workflow)\b'; then
+      echo "$id reads the Actions API or takes a permission" >&2
+      return 1
+    fi
+  done
+}
+
+# A newer run cancels an older one of the same workflow, event and ref (a pull request's runs, by
+# its refs/pull/<n>/merge, or a branch's dispatched ones), only for a pull request or a dispatch,
+# never a merge queue's trial commit or a run of another event, since team-ci-run waits on a
+# dispatched run or the PR's.
+@test "CI and zizmor's online run cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
+  local workflow
+  for workflow in ci.yml zizmor-online.yml; do
+    assert_equal "$(sed -n '/^concurrency:$/,/^[^ ]/p' "$REPO_ROOT/.github/workflows/$workflow" | sed '$d')" \
+      "concurrency:
+  group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.ref }}
+  cancel-in-progress: \${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}"
+  done
+}
+
+# A curl written in a workflow file retries a transient failure, as a release download's HTTP 504
+# failed the required zizmor job twice on one head.
+@test "every curl in a workflow retries a transient failure" {
+  local workflow line found=0
+  for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
+    while IFS= read -r line; do
+      found=$((found + 1))
+      [[ $line == *'curl --retry 5 --retry-all-errors '* ]] || { echo "${workflow##*/}: $line" >&2; return 1; }
+    done < <(grep -v '^ *#' "$workflow" | grep -E '(^|[^a-z])curl ')
+  done
+  ((found >= 5))
 }
 
 # The toolkit tests run MongoDB's Database Tools, which CI installs by the lock's own commands, so
@@ -2348,7 +2460,7 @@ YAML
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/shards" $k
-    assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [<run id>]"
+    assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
   done
 }
 
@@ -3264,7 +3376,7 @@ $planted:28: rm -rf \"\${x:-}\""
 }
 
 # tests/shards in a checkout of three bats files, a.bats and b.bats timed and c.bats not.
-@test "tests/shards weighs a file by its seconds on this platform, an untimed one by its bytes at the timed rate, and every bytes without timings" {
+@test "tests/shards weighs a file by its seconds on this platform, an untimed one by its bytes at the timed rate, and every bytes without timings, from TESTS_TIMINGS' file when set" {
   local copy=$BATS_TEST_TMPDIR/copy column=2
   [[ $(uname -s) != Darwin ]] || column=3
   unset TEAM_HOME
@@ -3282,6 +3394,11 @@ $planted:28: rm -rf \"\${x:-}\""
   else
     assert_equal "$output" $'1\t40\ttests/c.bats\n2\t20\ttests/a.bats\n2\t10\ttests/b.bats'
   fi
+  # TESTS_TIMINGS names the timings in place of tests/timings.tsv, as CI's shards take shard-plan's,
+  # and a row for a file the checkout lacks (tests/extra.bats) weighs nothing.
+  printf '# fresh\nfile\tlinux\tmacos\ntests/a.bats\t3\t3\ntests/b.bats\t30\t30\ntests/c.bats\t4\t4\ntests/extra.bats\t99\t99\n' >"$BATS_TEST_TMPDIR/fresh.tsv"
+  TESTS_TIMINGS=$BATS_TEST_TMPDIR/fresh.tsv run -0 --separate-stderr "$copy/tests/shards" 2
+  assert_equal "$output" $'1\t30\ttests/b.bats\n2\t4\ttests/c.bats\n2\t3\ttests/a.bats'
   rm "$copy/tests/timings.tsv"
   run -0 --separate-stderr "$copy/tests/shards" 2
   assert_equal "$output" $'1\t2000\ttests/c.bats\n2\t1000\ttests/a.bats\n2\t500\ttests/b.bats'
@@ -3289,8 +3406,9 @@ $planted:28: rm -rf \"\${x:-}\""
 
 # tests/shards update in a checkout of its own, on a gh stub whose CI run 4242 has two
 # test-shards jobs and two jobs of other names, the test job's log holding a bats line too, over
-# timings whose macOS seconds it keeps, since CI runs no macOS job.
-@test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty" {
+# timings whose macOS seconds it keeps, since CI runs no macOS job; then with --to, and on a
+# checkout with more files than the run timed.
+@test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty, to --to's file if given, and keeps the timings from a run that timed under half the files" {
   local copy=$BATS_TEST_TMPDIR/copy
   unset TEAM_HOME
   mkdir -p "$copy/tests"
@@ -3331,6 +3449,32 @@ $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t15\ntests/c
   assert_equal "$(stub_calls gh | jq -r '.[0:2] | join(" ")' | sort -u)" "run view"
   assert_equal "$(cat "$copy/tests/timings.tsv")" "$header
 $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
+
+  # With --to, the timings go to that file, the macOS seconds still read from tests/timings.tsv,
+  # which stays as it was.
+  printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30\n' >"$copy/tests/timings.tsv"
+  run -0 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$output" "tests/shards: wrote $BATS_TEST_TMPDIR/fresh.tsv from CI run 4242"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/fresh.tsv")" "$header
+$(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
+  assert_equal "$(cat "$copy/tests/timings.tsv")" "$(printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30')"
+  run -0 --separate-stderr "$copy/tests/shards" update 4242 --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$output" "tests/shards: wrote $BATS_TEST_TMPDIR/fresh.tsv from CI run 4242"
+  run -2 --separate-stderr "$copy/tests/shards" update --to
+  assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
+
+  # A run that timed fewer than half the suite's files leaves the timings as they were: the run
+  # timed 3 files (a, b and c), of 6 in the checkout's tests/, then of 7.
+  for name in a b c d e f; do : >"$copy/tests/$name.bats"; done
+  run -0 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/half.tsv"
+  : >"$copy/tests/g.bats"
+  rm "$BATS_TEST_TMPDIR/fresh.tsv"
+  run -1 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$stderr" "shards: CI run 4242 printed 3 of 7 files; keeping the timings"
+  assert_equal "$output" ""
+  [[ ! -e $BATS_TEST_TMPDIR/fresh.tsv ]]
+  run -1 --separate-stderr "$copy/tests/shards" update
+  assert_equal "$(cat "$copy/tests/timings.tsv")" "$(printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30')"
 }
 
 # The timings are data tests/shards reads: each row names a bats file that exists, with whole
