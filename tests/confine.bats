@@ -5,29 +5,30 @@
 # roots and asserts what survived, never what was parsed. A control runs each spelling without
 # the wrapper and must destroy the canary, so the test can fail.
 # Every case skips, naming the ABI, where the kernel's Landlock ABI is below 2 (no Landlock,
-# ABI 1, macOS). The session tmp is under the machine's /tmp, as the wrapper fixes it, so each
-# test's is named for a task number and a session id no session has, and removed in teardown.
-# lib/confine-shell, the prefix a confined worker's Claude Code runs its shell commands through,
-# is driven as Claude Code calls it, with the command line as one argument.
+# ABI 1, macOS).
+# lib/confine-session writes a session's directory, its session file and its program bash, into
+# the sandbox's HOME, with a session tmp in the test's own directory, so no test makes a
+# directory under the machine's ~/.config or /tmp. A session's commands are driven as Claude Code
+# drives them: the program as its shell, <dir>/bash -c [-l] "<dir>/bash '<line>'", and the
+# program as its prefix, <dir>/bash '<line>' (lib/confine-shell's two forms).
 
 load helpers/common
 
 setup() {
   sandbox
-  unset AGENT_TEAM_WORKTREE AGENT_TEAM_GIT_DIR CLAUDE_JOB_DIR CONFINE_TEST_ABI CONFINE_TEST_FAIL CONFINE_REAL
+  unset AGENT_TEAM_WORKTREE AGENT_TEAM_GIT_DIR CLAUDE_PROJECT_DIR CLAUDE_JOB_DIR CLAUDE_CODE_SHELL BASH_ENV ENV
+  unset CONFINE_TEST_ABI CONFINE_TEST_FAIL CONFINE_REAL
   CONFINE=$REPO_ROOT/bin/lib/confine.py
+  WRITE=$REPO_ROOT/bin/lib/confine-session
   ABI=$(python3 -I "$CONFINE" --abi)
   ((ABI >= 2)) || skip "this machine's Landlock ABI is $ABI, and the file rules need 2"
   BOX=$BATS_TEST_TMPDIR/box
-  WT=$BOX/wt OUT=$BOX/out JOB=$BOX/job
-  TASK=T$((7000000000 + $$ * 1000 + BATS_TEST_NUMBER))
-  printf -v SESSION 'g%07d-0000-test' $((($$ * 100 + BATS_TEST_NUMBER) % 10000000))
-  TASK_TMP=/tmp/agent-team-$TASK GATE_TMP=/tmp/agent-team-gate-${SESSION:0:8}
-  mkdir -p "$WT" "$OUT" "$JOB/tmp"
-}
-
-teardown() {
-  [[ -z ${TASK_TMP-} ]] || rm -rf "${TASK_TMP:?}" "${GATE_TMP:?}"
+  WT=$BOX/wt OUT=$BOX/out GIT=$BOX/git STMP=$BOX/stmp
+  TASK=T7
+  SDIR=$HOME/.config/agent-team/confine/$TASK/builder.test--22
+  SFILE=$SDIR/session.json PROGRAM=$SDIR/bash
+  JOB=$HOME/.claude/jobs/0badc0de
+  mkdir -p "$WT" "$OUT" "$GIT" "$JOB/tmp"
 }
 
 # Exports each <NAME=value> to the wrapper the test runs after it: with <NAME=value>...
@@ -161,12 +162,123 @@ each_spelling() {
   ((ran >= ${#SPELLINGS[@]} - 1))
 }
 
-run_confined() { confined "$WT" --root "$WT" -- bash -c "$1"; }
+run_confined() { bash_call "$1"; }
 run_plain() { run --separate-stderr env -C "$WT" bash -c "$1"; }
 canary_whole() { [[ $status -ne 0 && $(canary_tree) == "${WHOLE//OUT/$OUT}" ]]; }
 canary_lost() { [[ $(canary_tree) != "${WHOLE//OUT/$OUT}" ]]; }
 
-@test "spellings: every delete spelling run under the wrapper leaves the canary tree outside its roots whole and exits non-zero" {
+# The session's directory, written by the real confine-session for the worktree WT, the git
+# directory GIT, the sandbox's HOME and team home, and the session tmp STMP: session_dir
+session_dir() {
+  run -0 "$WRITE" write --dir "$SDIR" --task "$TASK" --worktree "$WT" --git-dir "$GIT" --team-home "$TEAM_HOME" \
+    --home "$HOME" --session-tmp "$STMP"
+  assert_equal "$output" "$PROGRAM"
+}
+
+# Rewrites the session file with a jq filter, keeping its mode: edit_session <jq arguments>...
+edit_session() {
+  jq "$@" "$SFILE" >"$BOX/session.json"
+  chmod u+w "$SFILE"
+  cat "$BOX/session.json" >"$SFILE"
+  chmod 400 "$SFILE"
+}
+
+# A Bash call as Claude Code 2.1.325 runs it in a session whose shell and prefix are the
+# session's program: <program> -c [-l] "<program> '<line>'", the line one quoted argument holding
+# what Claude Code puts around the command (the eval of its text, then the working directory
+# written to a file); -l is what it adds while it has no shell snapshot: bash_call [-l] <command>
+bash_call() {
+  local login=() line
+  if [[ $1 == -l ]]; then
+    login=(-l)
+    shift
+  fi
+  printf -v line 'eval %q && pwd -P >| %q' "$1" "$BOX/cwd"
+  printf -v line '%q %q' "$PROGRAM" "$line"
+  run --separate-stderr env -C "$WT" "$PROGRAM" -c "${login[@]}" "$line"
+}
+
+# The same call through the real bash, with no program of the session's: plain_call [-l] <command>
+plain_call() {
+  local login=() line
+  if [[ $1 == -l ]]; then
+    login=(-l)
+    shift
+  fi
+  printf -v line 'bash -c %q' "$1"
+  run --separate-stderr env -C "$WT" bash -c "${login[@]}" "$line"
+}
+
+# A linked worktree of a new repository, MAIN, as the session's worktree, its common git directory
+# as team-worker names it at the launch, its session tmp, the state directory bin/lib/confine-roots
+# lists and, as once the session has its id, its job tmp.
+session() {
+  rmdir "${WT:?}"
+  MAIN=$(make_repo main)
+  git -C "${MAIN:?}" worktree add -q "$WT" -b task
+  GIT=$(realpath "$MAIN/.git")
+  mkdir -p "$HOME/.local/state/agent-team"
+  session_dir
+  run -0 "$WRITE" job --dir "$SDIR" --session-id 0badc0de
+}
+
+# A copy of the wrapper beside a confine-roots file holding <line>...: listed <line>...
+listed() {
+  mkdir -p "$BOX/lib"
+  cp "$REPO_ROOT/bin/lib/confine.py" "$BOX/lib/"
+  printf '%s\n' '# a comment' '' "$@" >"$BOX/lib/confine-roots"
+  CONFINE=$BOX/lib/confine.py
+}
+
+# Both forms of the session's program must exit 3 with <text> on stderr and run nothing:
+# refused_session <text>
+refused_session() {
+  run --separate-stderr env -C "$WT" "$PROGRAM" "touch $WT/ran"
+  assert_equal "$status: $stderr" "3: confine: $1"
+  run --separate-stderr env -C "$WT" "$PROGRAM" -c -l "touch $WT/ran"
+  assert_equal "$status: $stderr" "3: confine: $1"
+  [[ ! -e $WT/ran && -z $output ]]
+}
+
+# A profile file that removes the canary tree, as code a call left for the next one's shell.
+profile() {
+  printf 'rm -rf %q\n' "${OUT:?}/x" >"$1"
+}
+
+# Every variable phase 4 read for a root, each to name the canary's directory.
+ROOT_VARIABLES=(AGENT_TEAM_WORKTREE AGENT_TEAM_GIT_DIR CLAUDE_PROJECT_DIR CLAUDE_JOB_DIR HOME TEAM_HOME)
+
+# The canary tree, and under the canary's directory what a variable would root there: a job tmp
+# and the state directory of confine-roots.
+variable_canaries() {
+  canary
+  mkdir -p "$OUT/tmp" "$OUT/.local/state/agent-team"
+  : >"$OUT/tmp/f"
+  : >"$OUT/.local/state/agent-team/f"
+}
+
+variables_moved_nothing() {
+  [[ $status -ne 0 ]]
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  [[ -e $OUT/tmp/f && -e $OUT/.local/state/agent-team/f ]]
+}
+
+# write with the test's values but for each <option> <value> given: write_with [<option> <value>]...
+write_with() {
+  local -A options=([--dir]=$SDIR [--task]=$TASK [--worktree]=$WT [--git-dir]=$GIT [--team-home]=$TEAM_HOME [--home]=$HOME [--session-tmp]=$STMP)
+  local arguments=() option
+  while (($# > 0)); do
+    options[$1]=$2
+    shift 2
+  done
+  for option in "${!options[@]}"; do
+    arguments+=("$option" "${options[$option]}")
+  done
+  run --separate-stderr "$WRITE" write "${arguments[@]}"
+}
+
+@test "spellings: every delete spelling a session's Bash call runs leaves the canary tree outside its roots whole and exits non-zero" {
+  session_dir
   each_spelling run_confined canary_whole
 }
 
@@ -174,18 +286,7 @@ canary_lost() { [[ $(canary_tree) != "${WHOLE//OUT/$OUT}" ]]; }
   each_spelling run_plain canary_lost
 }
 
-# A linked worktree of a new repository, MAIN, as the session's worktree, its common git directory
-# as team-worker names it at the launch, its job tmp, its session tmp and the state directory
-# bin/lib/confine-roots lists, with the session's variables exported.
-session() {
-  rmdir "$WT"
-  MAIN=$(make_repo main)
-  git -C "${MAIN:?}" worktree add -q "$WT" -b task
-  mkdir -p "$HOME/.local/state/agent-team"
-  with AGENT_TEAM_WORKTREE="$WT" AGENT_TEAM_GIT_DIR="$(realpath "$MAIN/.git")" CLAUDE_JOB_DIR="$JOB" AGENT_TEAM_TASK="$TASK"
-}
-
-@test "workload: a worker's ordinary deletes, renames and git calls in each root pass under --session" {
+@test "workload: a worker's ordinary deletes, renames and git calls in each root pass in a session's Bash calls" {
   local work text
   session
   : >"$OUT/kept"
@@ -193,8 +294,8 @@ session() {
     'mkdir -p build/a && touch build/a/f && rm -rf build'
     'echo a > f.txt && sed -i s/a/b/ f.txt && grep -q b f.txt && rm f.txt'
     'touch a.txt && mv a.txt b.txt && rm b.txt'
-    "mkdir -p $JOB/tmp/x/y && rm -rf $JOB/tmp/x"
-    '[[ $TMPDIR == '"$TASK_TMP"' ]] && d=$(mktemp -d) && [[ $d == $TMPDIR/* ]] && touch "$d/f" && rm -rf "$d"'
+    "mkdir -p $JOB/tmp/x/y && rm -rf ${JOB:?}/tmp/x"
+    '[[ $TMPDIR == '"$STMP"' ]] && d=$(mktemp -d) && [[ $d == $TMPDIR/* ]] && touch "$d/f" && rm -rf "$d"'
     'f=$(mktemp) && mv "$f" moved && rm moved'
     "touch $HOME/.local/state/agent-team/live.json.1 && mv -f $HOME/.local/state/agent-team/live.json.1 $HOME/.local/state/agent-team/live.json"
     "rm $HOME/.local/state/agent-team/live.json"
@@ -206,117 +307,68 @@ session() {
     'git rm -q tracked && git commit -q -m gone'
   )
   for text in "${work[@]}"; do
-    confined "$WT" --session -- bash -c "$text"
+    bash_call "$text"
     [[ $status -eq 0 ]] ||
       { printf 'refused: %s\nstatus %s, stdout: %s\nstderr: %s\n' "$text" "$status" "$output" "$stderr" >&2; return 1; }
   done
   # The same session still removes nothing outside its roots.
-  confined "$WT" --session -- rm "$OUT/kept"
+  bash_call "rm $OUT/kept"
   [[ $status -ne 0 && -e $OUT/kept ]]
-  confined "$WT" --session -- rm -rf "${MAIN:?}/README.md"
+  bash_call "rm -rf ${MAIN:?}/README.md"
   [[ $status -ne 0 && -e $MAIN/README.md ]]
 }
 
-@test "--session roots the worktree AGENT_TEAM_WORKTREE names, and not the directory CLAUDE_PROJECT_DIR names beside it" {
-  mkdir -p "$BOX/project"
-  : >"$WT/f"
-  : >"$BOX/project/f"
-  with AGENT_TEAM_WORKTREE="$WT" CLAUDE_PROJECT_DIR="$BOX/project"
-  confined "$BOX" --session -- rm "$WT/f" "$BOX/project/f"
-  [[ $status -ne 0 && ! -e $WT/f && -e $BOX/project/f ]]
-}
-
-@test "--session roots the directory CLAUDE_PROJECT_DIR names when AGENT_TEAM_WORKTREE names none" {
-  : >"$WT/f"
-  : >"$WT/g"
-  : >"$OUT/f"
-  with CLAUDE_PROJECT_DIR="$WT"
-  confined "$BOX" --session -- rm "$WT/f" "$OUT/f"
-  [[ $status -ne 0 && ! -e $WT/f && -e $OUT/f ]]
-  with AGENT_TEAM_WORKTREE="$BOX/missing"
-  confined "$BOX" --session -- rm "$WT/g"
-  [[ $status -eq 0 && ! -e $WT/g ]]
-}
-
-@test "--session roots nothing in another repository the command was started in" {
+@test "--session roots the worktree its file names, whatever directory the command was started in" {
   local elsewhere
   session
   elsewhere=$(make_repo elsewhere)
   : >"$elsewhere/f"
-  confined "$elsewhere" --session -- bash -c 'rm f; git rm -q README.md'
+  confined "$elsewhere" --session "$SFILE" -- bash -c 'rm f; git rm -q README.md'
   [[ $status -ne 0 && -e $elsewhere/f && -e $elsewhere/README.md ]]
-  confined "$elsewhere" --session -- bash -c 'cd "$1" && touch f && rm f' _ "$WT"
+  confined "$elsewhere" --session "$SFILE" -- bash -c 'cd "$1" && touch f && rm f' _ "$WT"
   assert_equal "$status" 0
 }
 
-@test "--session makes a task's session tmp with mode 700 and gives it to the command as TMPDIR" {
-  with AGENT_TEAM_WORKTREE="$WT" AGENT_TEAM_TASK="$TASK" CLAUDE_CODE_SESSION_ID="$SESSION" TMPDIR="$BOX"
-  [[ ! -e $TASK_TMP ]]
-  confined "$WT" --session -- bash -c 'echo "$TMPDIR"; d=$(mktemp -d) && rmdir "$d"'
+@test "--session makes the file's session tmp with mode 700 and gives it to the command as TMPDIR" {
+  session_dir
+  with TMPDIR="$BOX"
+  [[ ! -e $STMP ]]
+  confined "$WT" --session "$SFILE" -- bash -c 'echo "$TMPDIR"; d=$(mktemp -d) && rmdir "$d"'
   assert_equal "$status" 0
-  assert_equal "$output" "$TASK_TMP"
-  assert_equal "$(stat -c '%a %F' "$TASK_TMP")" "700 directory"
-  [[ ! -e $GATE_TMP ]]
+  assert_equal "$output" "$STMP"
+  assert_equal "$(stat -c '%a %F' "$STMP")" "700 directory"
   # One already there is kept as it is.
-  : >"$TASK_TMP/kept"
-  confined "$WT" --session -- rm "$TASK_TMP/kept"
+  : >"$STMP/kept"
+  confined "$WT" --session "$SFILE" -- rm "$STMP/kept"
   assert_equal "$status" 0
 }
 
-@test "--session makes a gate agent's session tmp from its session id, and none for a task or an id of another form" {
-  with AGENT_TEAM_WORKTREE="$WT" CLAUDE_CODE_SESSION_ID="$SESSION" TMPDIR="$BOX"
-  confined "$WT" --session -- bash -c 'echo "$TMPDIR"; f=$(mktemp) && rm "$f"'
-  assert_equal "$status" 0
-  assert_equal "$output" "$GATE_TMP"
-  assert_equal "$(stat -c '%a %F' "$GATE_TMP")" "700 directory"
-  with AGENT_TEAM_TASK="T7x" CLAUDE_CODE_SESSION_ID="../$SESSION"
-  confined "$WT" --session -- bash -c 'echo "$TMPDIR"'
-  assert_equal "$status" 0
-  assert_equal "$output" "$BOX"
-}
-
-@test "--session refuses a session tmp that is a link or no directory, without running the command" {
-  with AGENT_TEAM_WORKTREE="$WT" AGENT_TEAM_TASK="$TASK"
-  ln -s "$OUT" "$TASK_TMP"
-  confined "$WT" --session -- touch "$WT/ran"
+@test "--session refuses a session tmp that is a link, no directory or relative, without running the command" {
+  session_dir
+  ln -s "$OUT" "$STMP"
+  confined "$WT" --session "$SFILE" -- touch "$WT/ran"
   assert_equal "$status" 3
-  assert_equal "$stderr" "confine: the session tmp $TASK_TMP is a link, no directory or another user's"
-  rm "$TASK_TMP"
-  : >"$TASK_TMP"
-  confined "$WT" --session -- touch "$WT/ran"
+  assert_equal "$stderr" "confine: the session tmp $STMP is a link, no directory or another user's"
+  rm "${STMP:?}"
+  : >"$STMP"
+  confined "$WT" --session "$SFILE" -- touch "$WT/ran"
   assert_equal "$status" 3
-  assert_equal "$stderr" "confine: the session tmp $TASK_TMP is a link, no directory or another user's"
+  assert_equal "$stderr" "confine: the session tmp $STMP is a link, no directory or another user's"
+  edit_session '.session_tmp = "stmp"'
+  confined "$WT" --session "$SFILE" -- touch "$WT/ran"
+  assert_equal "$status" 3
+  assert_equal "$stderr" "confine: the session file $SFILE names the session tmp stmp, which is not an absolute path"
   [[ ! -e $WT/ran ]]
 }
 
-@test "--session with no worktree is refused with its text, and the command does not run" {
-  with AGENT_TEAM_TASK="$TASK"
-  confined "$WT" --session -- touch "$WT/ran"
-  assert_equal "$status" 3
-  assert_equal "$stderr" "confine: no worktree for this session (AGENT_TEAM_WORKTREE and CLAUDE_PROJECT_DIR name no directory)"
-  with AGENT_TEAM_WORKTREE="$BOX/missing" CLAUDE_PROJECT_DIR="$WT/f"
-  : >"$WT/f"
-  confined "$WT" --session -- touch "$WT/ran"
-  assert_equal "$status" 3
-  [[ ! -e $WT/ran && -z $output ]]
-}
-
-# A copy of the wrapper beside a confine-roots file holding <line>...: listed <line>...
-listed() {
-  mkdir -p "$BOX/lib"
-  cp "$REPO_ROOT/bin/lib/confine.py" "$BOX/lib/"
-  printf '%s\n' '# a comment' '' "$@" >"$BOX/lib/confine-roots"
-  CONFINE=$BOX/lib/confine.py
-}
-
-@test "confine-roots: a listed directory is a root, with ~/ for the home directory, and a missing one is skipped" {
-  with AGENT_TEAM_WORKTREE="$WT"
+@test "confine-roots: a listed directory is a root, with ~/ for the session file's home, and a missing one is skipped" {
+  session_dir
   mkdir -p "$BOX/cache" "$HOME/.cache/tool"
   : >"$BOX/cache/f"
   : >"$HOME/.cache/tool/f"
   : >"$OUT/f"
   listed "$BOX/cache" "$BOX/missing" "  ~/.cache/tool"
-  confined "$WT" --session -- rm "$BOX/cache/f" "$HOME/.cache/tool/f" "$OUT/f"
+  confined "$WT" --session "$SFILE" -- rm "$BOX/cache/f" "$HOME/.cache/tool/f" "$OUT/f"
   [[ $status -ne 0 && ! -e $BOX/cache/f && ! -e $HOME/.cache/tool/f && -e $OUT/f ]]
   # Without --session the file is not read.
   : >"$BOX/cache/f"
@@ -324,53 +376,67 @@ listed() {
   [[ $status -ne 0 && -e $BOX/cache/f ]]
 }
 
-@test "confine-roots: a line in or above the team home, ~/.config/agent-team or ~/.claude, or a relative one, is refused naming it" {
+@test "confine-roots: a line in or above a directory the session file keeps, or a relative one, is refused naming it" {
   local line
-  with AGENT_TEAM_WORKTREE="$WT"
-  mkdir -p "$TEAM_HOME/tasks" "$HOME/.config/agent-team" "$HOME/.claude/jobs"
+  session_dir
+  mkdir -p "$TEAM_HOME/tasks" "$HOME/.claude/jobs"
   ln -s "$TEAM_HOME/tasks" "$BOX/link"
   # shellcheck disable=SC2088 # the roots file names HOME as ~
   for line in "$TEAM_HOME" "$TEAM_HOME/tasks" "$TEAM_HOME/not-there" "$BOX/link" "~/.config/agent-team" "~/.claude/jobs" \
     "~/.config" "$HOME" /; do
     listed "$BOX" "$line"
-    confined "$WT" --session -- touch "$WT/ran"
+    confined "$WT" --session "$SFILE" -- touch "$WT/ran"
     assert_equal "$status" 3
     assert_contains "$stderr" "confine: $BOX/lib/confine-roots lists $line, which is, holds or is under "
   done
   listed cache
-  confined "$WT" --session -- touch "$WT/ran"
+  confined "$WT" --session "$SFILE" -- touch "$WT/ran"
   assert_equal "$status" 3
   assert_equal "$stderr" "confine: $BOX/lib/confine-roots lists cache, which is not an absolute path"
-  # The team home named by ~/.config/agent-team/home, as the scripts find it.
-  mv "$TEAM_HOME" "$HOME/records"
-  echo records >"$HOME/.config/agent-team/home"
-  unset TEAM_HOME
-  # shellcheck disable=SC2088 # the roots file names HOME as ~
-  listed "~/records/tasks"
-  confined "$WT" --session -- touch "$WT/ran"
-  assert_equal "$status" 3
+  [[ ! -e $WT/ran ]]
+  # The kept directories are the file's alone: with another team home written there, the
+  # environment's team home is a directory like any other.
+  edit_session --arg other "$BOX/other-home" '.kept[0] = $other'
+  listed "$TEAM_HOME/tasks"
+  confined "$WT" --session "$SFILE" -- touch "$WT/ran-with-another-team-home"
+  assert_equal "$status" 0
   # And no roots file at all.
   rm "$BOX/lib/confine-roots"
-  confined "$WT" --session -- touch "$WT/ran"
+  confined "$WT" --session "$SFILE" -- touch "$WT/ran"
   assert_equal "$status" 3
   assert_contains "$stderr" "confine: cannot read $BOX/lib/confine-roots: "
   [[ ! -e $WT/ran ]]
 }
 
-@test "confine-roots: the checkout's file lists the team's state directory first, and nothing the wrapper refuses" {
-  with AGENT_TEAM_WORKTREE="$WT"
+@test "confine-roots: the checkout's file lists the team's state directory, ~/.cargo and ~/.cache/sccache, each with its comment, and nothing the wrapper refuses" {
+  local roots=$REPO_ROOT/bin/lib/confine-roots line
+  session_dir
   # shellcheck disable=SC2088 # the roots file names HOME as ~
-  assert_equal "$(grep -v -e '^#' -e '^$' "$REPO_ROOT/bin/lib/confine-roots" | head -n 1)" "~/.local/state/agent-team"
-  mkdir -p "$HOME/.config/agent-team" "$HOME/.claude"
-  confined "$WT" --session -- true
+  assert_equal "$(grep -v -e '^#' -e '^$' "$roots")" "~/.local/state/agent-team
+~/.cargo
+~/.cache/sccache"
+  # Each line follows a comment line of its own.
+  for line in .local/state/agent-team .cargo .cache/sccache; do
+    # shellcheck disable=SC2088 # the roots file names HOME as ~
+    grep -B 1 -x -F "~/$line" "$roots" | head -n 1 | grep -q '^# '
+  done
+  mkdir -p "$HOME/.claude" "$HOME/.cargo/registry" "$HOME/.cache/sccache" "$HOME/.rustup"
+  : >"$HOME/.cargo/registry/f"
+  : >"$HOME/.cache/sccache/f"
+  : >"$HOME/.rustup/f"
+  confined "$WT" --session "$SFILE" -- rm "$HOME/.cargo/registry/f" "$HOME/.cache/sccache/f"
   assert_equal "$status" 0
   assert_equal "$stderr" ""
+  # Not ~/.rustup: a worker installs no toolchain.
+  confined "$WT" --session "$SFILE" -- rm "$HOME/.rustup/f"
+  [[ $status -ne 0 && -e $HOME/.rustup/f ]]
 }
 
 UNCONFINED="so this command runs unconfined; the text guard alone holds it"
 
 @test "no Landlock: the command runs unconfined with the one stderr line, once per session tmp and every time with none" {
   local abi
+  session_dir
   canary
   seams
   for abi in 0 1; do
@@ -383,19 +449,18 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   done
   CONFINE_TEST_ABI=0 confined "$WT" --abi
   assert_equal "$output" 0
-  with AGENT_TEAM_WORKTREE="$WT" AGENT_TEAM_TASK="$TASK" CONFINE_TEST_ABI="1"
-  confined "$WT" --session -- bash -c 'echo "$TMPDIR"'
-  assert_equal "$output" "$TASK_TMP"
+  with CONFINE_TEST_ABI="1"
+  confined "$WT" --session "$SFILE" -- bash -c 'echo "$TMPDIR"'
+  assert_equal "$output" "$STMP"
   assert_equal "$stderr" "confine: this machine has no Landlock (ABI 1), $UNCONFINED"
-  confined "$WT" --session -- echo ran
+  confined "$WT" --session "$SFILE" --shell -- -c 'echo ran'
   assert_equal "$status" 0
   assert_equal "$output" ran
   assert_equal "$stderr" ""
-  # A session with no session tmp is told on every command.
-  unset AGENT_TEAM_TASK
-  confined "$WT" --session -- echo ran
+  # A command with no session tmp is told every time.
+  confined "$WT" --root "$WT" -- echo ran
   assert_equal "$stderr" "confine: this machine has no Landlock (ABI 1), $UNCONFINED"
-  confined "$WT" --session -- echo ran
+  confined "$WT" --root "$WT" -- echo ran
   assert_equal "$stderr" "confine: this machine has no Landlock (ABI 1), $UNCONFINED"
 }
 
@@ -410,12 +475,15 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   [[ ! -e $WT/ran && -z $output ]]
 }
 
+USAGE="Usage: python3 -I confine.py [--root <dir>]... [--session <file>] [--shell] [--entry shell|prefix] -- <command or the shell's arguments>"
+
 @test "the wrapper's command line: --help is its docstring, --abi the kernel's version, the command's status its own" {
   local line
+  session_dir
   confined "$WT" --help
   assert_equal "$status" 0
   assert_equal "${lines[0]}" "Runs a command where the kernel refuses a delete or a rename outside its roots."
-  assert_contains "$output" "Usage: python3 -I confine.py [--root <dir>]... [--session] -- <command> [args...]"
+  assert_contains "$output" "$USAGE"
   confined "$WT" --abi
   assert_equal "$status" 0
   assert_equal "$output" "$ABI"
@@ -425,13 +493,30 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   assert_equal "$stderr" err
   run -127 --separate-stderr python3 -I "$CONFINE" -- "$WT/no-such-command"
   assert_equal "$stderr" "confine: cannot run $WT/no-such-command: No such file or directory"
-  for line in "" "--root" "--root $WT" "--session" "--unknown -- true" "--root $WT --"; do
+  # Among them --session with no file, as phase 4 had it, --shell with no session, and an entry
+  # of no form.
+  for line in "" "--root" "--root $WT" "--session" "--session -- true" "--unknown -- true" "--root $WT --" \
+    "--shell -- -c true" "--session $SFILE --shell --" "--session $SFILE --entry both -- true" "--entry"; do
     # shellcheck disable=SC2086  # each line is a command line's words
     confined "$WT" $line
-    assert_equal "$status" 2
-    assert_equal "${stderr%%$'\n'*}" "Usage: python3 -I confine.py [--root <dir>]... [--session] -- <command> [args...]"
+    assert_equal "$line: $status" "$line: 2"
+    assert_equal "${stderr%%$'\n'*}" "$USAGE"
     assert_equal "$output" ""
   done
+}
+
+@test "--shell runs the session file's shell with the words after --, and --entry names the form in the command's environment alone" {
+  session_dir
+  mkdir -p "$BOX/bin"
+  printf '#!/bin/sh\necho "the other shell ran: $*"\n' >"$BOX/bin/bash"
+  chmod +x "$BOX/bin/bash"
+  with SHELL="$BOX/bin/bash" CLAUDE_CODE_SHELL="$BOX/bin/bash" AGENT_TEAM_CONFINE_SHELL=7
+  confined "$WT" --session "$SFILE" --shell --entry prefix -- -c 'echo "$0 shell=${AGENT_TEAM_CONFINE_SHELL-} prefix=${AGENT_TEAM_CONFINE_PREFIX-}"'
+  assert_equal "$status" 0
+  assert_equal "$output" "$(jq -r .shell "$SFILE") shell=7 prefix=1"
+  edit_session --arg shell "$BOX/bin/bash" '.shell = $shell'
+  confined "$WT" --session "$SFILE" --shell --entry shell -- -c -l 'a line'
+  assert_equal "$output" "the other shell ran: -c -l a line"
 }
 
 @test "a confined command that runs the wrapper again stays inside its first domain" {
@@ -451,77 +536,204 @@ UNCONFINED="so this command runs unconfined; the text guard alone holds it"
   assert_equal "$output" "$ABI"
 }
 
-@test "--session takes the common git directory from AGENT_TEAM_GIT_DIR alone, whatever the worktree's own files name" {
+@test "--session takes the common git directory from its file alone, whatever the worktree's own files name" {
   session
   canary
   # The worktree's files may name another git directory: the roots stay the launch's.
   mkdir -p "$OUT/objects" "$OUT/refs"
   echo 'ref: refs/heads/x' >"$OUT/HEAD"
-  confined "$WT" --session -- bash -c 'mv .git .git.aside && echo "gitdir: $1" >.git' _ "$OUT"
+  bash_call 'mv .git .git.aside && echo "gitdir: '"$OUT"'" >.git'
   assert_equal "$status" 0
-  confined "$WT" --session -- rm -rf "${OUT:?}/x"
+  bash_call "rm -rf ${OUT:?}/x"
   [[ $status -ne 0 ]]
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
-  mv -f "$WT/.git.aside" "$WT/.git"
-  # With none named there is no such root, and git is not asked.
-  : >"$MAIN/.git/probe"
-  unset AGENT_TEAM_GIT_DIR
-  confined "$WT" --session -- rm "$MAIN/.git/probe"
-  [[ $status -ne 0 && -e $MAIN/.git/probe ]]
 }
 
 @test "--session refuses a common git directory that is a link, no directory, relative, or in or above a directory no root may be" {
   local named
   session
-  mkdir -p "$HOME/.claude/repo.git" "$HOME/.config/agent-team" "$TEAM_HOME/.git"
+  mkdir -p "$HOME/.claude/repo.git" "$TEAM_HOME/.git"
   ln -s "$OUT" "$BOX/linked.git"
   : >"$BOX/file.git"
   for named in "$BOX/linked.git" "$BOX/file.git" "$BOX/missing.git" "main/.git" "$TEAM_HOME/.git" "$HOME/.claude/repo.git" "$HOME" /; do
-    with AGENT_TEAM_GIT_DIR="$named"
-    confined "$WT" --session -- touch "$WT/ran"
+    edit_session --arg named "$named" '.git_dir = $named'
+    confined "$WT" --session "$SFILE" -- touch "$WT/ran"
     assert_equal "$named: $status" "$named: 3"
     assert_contains "$stderr" "confine: "
+    assert_contains "$stderr" "$named"
     [[ ! -e $WT/ran && -z $output ]]
   done
 }
 
-@test "--session refuses a job tmp or a listed root that is a link or no directory, without running the command" {
-  session
+@test "the job tmp is a root only after confine-session job names it, and one that is a link or no directory is refused" {
+  local named
+  session_dir
   canary
-  rmdir "$JOB/tmp"
+  : >"$JOB/tmp/f"
+  # Before the session has an id, its commands remove nothing there, whatever CLAUDE_JOB_DIR says.
+  with CLAUDE_JOB_DIR="$JOB"
+  bash_call "rm $JOB/tmp/f"
+  [[ $status -ne 0 && -e $JOB/tmp/f ]]
+  run -0 "$WRITE" job --dir "$SDIR" --session-id 0badc0de
+  assert_equal "$(jq -r .job_tmp "$SFILE")" "$JOB/tmp"
+  assert_equal "$(stat -c %a "$SFILE")" 400
+  bash_call "rm $JOB/tmp/f"
+  [[ $status -eq 0 && ! -e $JOB/tmp/f ]]
+  # A missing job tmp is no root and no refusal.
+  rmdir "${JOB:?}/tmp"
+  bash_call "touch $WT/ran"
+  assert_equal "$status" 0
   ln -s "$OUT" "$JOB/tmp"
-  confined "$WT" --session -- rm -rf "${OUT:?}/x"
+  bash_call "rm -rf ${OUT:?}/x"
   assert_equal "$status" 3
   assert_equal "$stderr" "confine: $JOB/tmp is a link, no directory or another user's, so it is no root"
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
-  rm "$JOB/tmp"
+  rm "${JOB:?}/tmp"
   : >"$JOB/tmp"
-  confined "$WT" --session -- touch "$WT/ran"
+  bash_call "touch $WT/ran-again"
   assert_equal "$status" 3
-  rm "$JOB/tmp"
-  # A missing job tmp is no root and no refusal.
-  confined "$WT" --session -- touch "$WT/ran"
-  assert_equal "$status" 0
+  [[ ! -e $WT/ran-again ]]
+  # job takes the id of a session, 8 hexadecimal characters, and a session file that is there.
+  for named in "" 0badc0d 0BADC0DE 0badc0de0 ../../x; do
+    run -2 "$WRITE" job --dir "$SDIR" --session-id "$named"
+  done
+  run -1 "$WRITE" job --dir "$SDIR/missing" --session-id 0badc0de
+  assert_equal "$output" "confine-session: $SDIR/missing/session.json is no session file of this user's"
+}
+
+@test "a listed root that is a link is refused, without running the command" {
+  session_dir
+  canary
   ln -s "$OUT" "$BOX/listed"
   listed "$BOX/listed"
-  confined "$WT" --session -- rm -rf "${OUT:?}/x"
+  confined "$WT" --session "$SFILE" -- rm -rf "${OUT:?}/x"
   assert_equal "$status" 3
   assert_equal "$stderr" "confine: $BOX/listed is a link, no directory or another user's, so it is no root"
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
 }
 
-# A Bash call as Claude Code 2.1.325 hands it to CLAUDE_CODE_SHELL_PREFIX: its shell runs
-# '<prefix>' '<line>', the line one quoted argument holding what Claude Code puts around the
-# command (the eval of its text, then the working directory written to a file):
-# bash_call <command>
-bash_call() {
-  local line
-  printf -v line 'eval %q && pwd -P >| %q' "$1" "$BOX/cwd"
-  printf -v line '%q %q' "$REPO_ROOT/bin/lib/confine-shell" "$line"
-  run --separate-stderr env -C "$WT" bash -c "$line"
+@test "a session file that is a link, of another mode, no JSON, of another version or short of a key is refused with its text, and nothing runs" {
+  local key unsafe="the session file $SFILE is a link, no regular file, another user's, or writable by group or others"
+  session_dir
+  cp "$SFILE" "$BOX/whole.json"
+  chmod 600 "$BOX/whole.json"
+  # A link, to a file that is whole.
+  rm -f "${SFILE:?}"
+  ln -s "$BOX/whole.json" "$SFILE"
+  refused_session "$unsafe"
+  rm "${SFILE:?}"
+  # No regular file, and none at all.
+  mkdir "$SFILE"
+  refused_session "$unsafe"
+  rmdir "${SFILE:?}"
+  refused_session "cannot read the session file $SFILE: No such file or directory"
+  # Writable by group, or by others.
+  for key in 460 406 664; do
+    cp "$BOX/whole.json" "$SFILE"
+    chmod "$key" "$SFILE"
+    refused_session "$unsafe"
+    rm -f "${SFILE:?}"
+  done
+  # No JSON, and JSON that is no object.
+  echo 'worktree=/' >"$SFILE"
+  run --separate-stderr env -C "$WT" "$PROGRAM" "touch $WT/ran"
+  assert_equal "$status" 3
+  assert_contains "$stderr" "confine: cannot read the session file $SFILE: "
+  echo '[1]' >"$SFILE"
+  refused_session "cannot read the session file $SFILE: it holds no JSON object"
+  # Another version, or none.
+  jq '.version = 2' "$BOX/whole.json" >"$SFILE"
+  refused_session "the session file $SFILE is not version 1"
+  jq 'del(.version)' "$BOX/whole.json" >"$SFILE"
+  refused_session "the session file $SFILE is not version 1"
+  # Each key it must name, missing, empty or of another type.
+  for key in home kept worktree git_dir session_tmp shell; do
+    jq --arg key "$key" 'del(.[$key])' "$BOX/whole.json" >"$SFILE"
+    refused_session "the session file $SFILE names no $key"
+    jq --arg key "$key" '.[$key] = ""' "$BOX/whole.json" >"$SFILE"
+    refused_session "the session file $SFILE names no $key"
+    jq --arg key "$key" '.[$key] = 1' "$BOX/whole.json" >"$SFILE"
+    refused_session "the session file $SFILE names no $key"
+  done
+  jq '.kept = ["relative"]' "$BOX/whole.json" >"$SFILE"
+  refused_session "the session file $SFILE names no kept"
+  # A shell that is no program, and a worktree that is no directory.
+  for key in "$BOX/no-bash" "$WT" bash "$BOX/whole.json"; do
+    jq --arg shell "$key" '.shell = $shell' "$BOX/whole.json" >"$SFILE"
+    refused_session "the session file $SFILE names the shell $key, which is no program"
+  done
+  jq --arg worktree "$BOX/missing" '.worktree = $worktree' "$BOX/whole.json" >"$SFILE"
+  refused_session "the session file $SFILE names the worktree $BOX/missing, which is no directory"
+  # The whole file runs again.
+  cp "$BOX/whole.json" "$SFILE"
+  run -0 env -C "$WT" "$PROGRAM" "touch $WT/ran"
+  [[ -e $WT/ran ]]
 }
 
-@test "confine-shell: a Bash call's delete outside the worktree leaves it whole, and one inside removes it" {
+@test "a login shell's profile files run inside the domain: a call with no snapshot leaves an outside canary whole, and the real bash destroys it" {
+  local file
+  session_dir
+  for file in .bash_profile .profile; do
+    canary
+    rm -f "${HOME:?}/.bash_profile" "${HOME:?}/.profile"
+    profile "$HOME/$file"
+    bash_call -l true
+    assert_equal "$file: $(canary_tree)" "$file: ${WHOLE//OUT/$OUT}"
+    # The control: the same call with the real bash as the shell runs the profile unconfined.
+    plain_call -l true
+    canary_lost
+  done
+}
+
+@test "the file BASH_ENV names runs inside the domain: a call with a snapshot leaves an outside canary whole, and the real bash destroys it" {
+  session_dir
+  canary
+  profile "$BOX/env.sh"
+  with BASH_ENV="$BOX/env.sh"
+  bash_call true
+  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  plain_call true
+  canary_lost
+}
+
+@test "no variable of a call's environment moves a root: with each naming the canary's directory a delete there is refused" {
+  local name line deletes="rm -rf ${OUT:?}/x; rm ${OUT:?}/tmp/f; rm ${OUT:?}/.local/state/agent-team/f"
+  session
+  variable_canaries
+  printf -v line '%q %q' "$PROGRAM" "$deletes"
+  for name in "${ROOT_VARIABLES[@]}"; do
+    run --separate-stderr env -C "$WT" "$name=$OUT" "$PROGRAM" -c "$line"
+    variables_moved_nothing
+  done
+  run --separate-stderr env -C "$WT" "${ROOT_VARIABLES[@]/%/=$OUT}" "$PROGRAM" -c -l "$line"
+  variables_moved_nothing
+  # The prefix form alone, as a hook's command or a server's start reaches it.
+  run --separate-stderr env -C "$WT" "${ROOT_VARIABLES[@]/%/=$OUT}" "$PROGRAM" "$deletes"
+  variables_moved_nothing
+  # The control: unconfined, the same deletes remove all three.
+  run_plain "$deletes"
+  canary_lost
+  [[ ! -e $OUT/tmp/f && ! -e $OUT/.local/state/agent-team/f ]]
+}
+
+@test "no variable a first call wrote into a profile moves a root for the second call" {
+  local name deletes="rm -rf ${OUT:?}/x; rm ${OUT:?}/tmp/f; rm ${OUT:?}/.local/state/agent-team/f" exports=''
+  session
+  variable_canaries
+  for name in "${ROOT_VARIABLES[@]}"; do
+    exports+="export $name=$OUT; "
+  done
+  bash_call "echo '$exports' | tee $HOME/.bash_profile $HOME/.profile $HOME/.bashrc $BOX/env.sh >/dev/null"
+  assert_equal "$status" 0
+  grep -q "export HOME=$OUT" "$HOME/.bash_profile"
+  with BASH_ENV="$BOX/env.sh"
+  bash_call -l "$deletes"
+  variables_moved_nothing
+  bash_call "$deletes"
+  variables_moved_nothing
+}
+
+@test "a session's Bash call: a delete outside the worktree leaves it whole, one inside removes it, and both forms name themselves" {
   session
   canary
   bash_call "rm -rf ${OUT:?}/x"
@@ -532,73 +744,159 @@ bash_call() {
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
   mkdir -p "$WT/build/a"
   : >"$WT/build/a/f"
-  bash_call 'rm -rf build && cd src && echo "it ran in $TMPDIR"'
+  bash_call 'rm -rf build && cd src && echo "it ran in $TMPDIR, shell=${AGENT_TEAM_CONFINE_SHELL-} prefix=${AGENT_TEAM_CONFINE_PREFIX-}"'
   assert_equal "$status" 0
-  assert_equal "$output" "it ran in $TASK_TMP"
+  assert_equal "$output" "it ran in $STMP, shell=1 prefix=1"
   [[ ! -e $WT/build ]]
   assert_equal "$(<"$BOX/cwd")" "$(realpath "$WT")/src"
+  # The prefix form alone, a hook's command, is not the shell form.
+  run -0 --separate-stderr env -C "$WT" "$PROGRAM" 'echo "shell=${AGENT_TEAM_CONFINE_SHELL-} prefix=${AGENT_TEAM_CONFINE_PREFIX-}"'
+  assert_equal "$output" "shell= prefix=1"
+  # What Claude Code runs its shell with at a session's start: the environment probe and the
+  # snapshot's script, a login shell.
+  run -0 --separate-stderr env -C "$WT" "$PROGRAM" -c env
+  assert_contains "$output" "AGENT_TEAM_CONFINE_SHELL=1"
+  run -0 --separate-stderr env -C "$WT" "$PROGRAM" -c -l 'echo "$0"'
+  assert_equal "$output" "$(jq -r .shell "$SFILE")"
 }
 
-@test "confine-shell: the line is the shell's to read, never the wrapper's options, and any other count of arguments exits 2" {
-  local prefix=$REPO_ROOT/bin/lib/confine-shell
+@test "confine-shell: one word is the shell's line to read, never the wrapper's options, and any other command line exits 2" {
+  local shell=$REPO_ROOT/bin/lib/confine-shell usage="confine-shell: usage: confine-shell --session <file> <line>, or --session <file> -c ..."
   session
   canary
   # A shell-form hook's command reaches the prefix as it is written.
-  run -127 --separate-stderr env -C "$WT" "$prefix" "--root ${OUT:?} -- rm -rf ${OUT:?}/x"
+  run -127 --separate-stderr env -C "$WT" "$PROGRAM" "--root ${OUT:?} -- rm -rf ${OUT:?}/x"
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
-  run -127 --separate-stderr env -C "$WT" "$prefix" '--abi'
+  run -127 --separate-stderr env -C "$WT" "$PROGRAM" '--abi'
   assert_equal "$output" ''
-  run -127 --separate-stderr env -C "$WT" "$prefix" '--help x'
+  run -127 --separate-stderr env -C "$WT" "$PROGRAM" '--help x'
   assert_equal "$output" ''
-  # --help alone, which is no call's line, is the header.
-  run -0 --separate-stderr env -C "$WT" "$prefix" --help
-  assert_equal "${lines[0]}" "The prefix a confined worker's Claude Code runs its shell commands through: team-worker names"
-  run --separate-stderr env -C "$WT" "$prefix"
-  assert_equal "$status" 2
-  assert_equal "$stderr" "confine-shell: takes one argument, the command line, as Claude Code's CLAUDE_CODE_SHELL_PREFIX passes it"
-  run --separate-stderr env -C "$WT" "$prefix" echo ran
-  assert_equal "$status" 2
-  assert_equal "$output" ''
+  # --help alone, which is no call's line, is the header, with a session file and with none.
+  run -0 --separate-stderr env -C "$WT" "$PROGRAM" --help
+  assert_equal "${lines[0]}" "A confined session's shell and its shell prefix, in one program: bin/lib/confine-session writes"
+  run -0 --separate-stderr "$shell" --help
+  assert_equal "${lines[0]}" "A confined session's shell and its shell prefix, in one program: bin/lib/confine-session writes"
+  # Phase 4's one-argument form, no words, and no session file.
+  run --separate-stderr env -C "$WT" "$shell" "touch $WT/ran"
+  assert_equal "$status: $stderr" "2: $usage"
+  run --separate-stderr env -C "$WT" "$shell"
+  assert_equal "$status: $stderr" "2: $usage"
+  run --separate-stderr env -C "$WT" "$shell" --session "$SFILE"
+  assert_equal "$status: $stderr" "2: $usage"
+  run --separate-stderr env -C "$WT" "$shell" -c "touch $WT/ran"
+  assert_equal "$status: $stderr" "2: $usage"
+  run --separate-stderr env -C "$WT" "$shell" --root "$WT" "touch $WT/ran"
+  assert_equal "$status: $stderr" "2: $usage"
+  [[ ! -e $WT/ran ]]
 }
 
-@test "confine-shell: the shell is CLAUDE_CODE_SHELL, else SHELL, when an executable bash or zsh, else bash" {
-  local prefix=$REPO_ROOT/bin/lib/confine-shell
-  session
-  mkdir -p "$BOX/bin" "$BOX/other"
-  ln -s "$(command -v bash)" "$BOX/bin/zsh"
-  ln -s "$(command -v bash)" "$BOX/other/bash"
-  ln -s "$(command -v bash)" "$BOX/bin/fish"
-  with SHELL="$BOX/bin/zsh"
-  run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
-  assert_equal "$output" "$BOX/bin/zsh"
-  with CLAUDE_CODE_SHELL="$BOX/other/bash"
-  run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
-  assert_equal "$output" "$BOX/other/bash"
-  with CLAUDE_CODE_SHELL="$BOX/bin/fish" SHELL="$BOX/missing/bash"
-  run --separate-stderr env -C "$WT" "$prefix" 'echo "$0"'
-  assert_equal "$output" bash
-}
-
-@test "confine-shell: the interpreter and the wrapper's roots come from no program on the session's PATH" {
+@test "confine-shell: the interpreter, the shell and the roots come from no variable and no program on the session's PATH" {
+  local tool
   session
   canary
   mkdir -p "$BOX/bin"
-  with PATH="$BOX/bin:$PATH"
-  bash_call "for tool in git python3; do printf '#!/bin/sh\\nrm -rf %s\\nexit 0\\n' ${OUT:?}/x >$BOX/bin/\$tool && chmod +x $BOX/bin/\$tool; done"
+  for tool in git python3 bash sh zsh; do
+    printf '#!/bin/sh\nrm -rf %s\nexit 0\n' "${OUT:?}/x" >"$BOX/bin/$tool"
+    chmod +x "$BOX/bin/$tool"
+  done
+  with PATH="$BOX/bin:$PATH" SHELL="$BOX/bin/zsh" CLAUDE_CODE_SHELL="$BOX/bin/bash"
+  bash_call 'echo "$0"'
   assert_equal "$status" 0
-  [[ -x $BOX/bin/git && -x $BOX/bin/python3 ]]
-  bash_call true
-  assert_equal "$status" 0
+  assert_equal "$output" "$(jq -r .shell "$SFILE")"
   assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+  # The control: a planted program does remove it when one is run.
+  run "$BOX/bin/bash"
+  canary_lost
 }
 
-@test "confine-shell: a profile the outer shell reads sets no seam, so the command still runs confined" {
-  session
-  canary
-  echo 'export CONFINE_TEST_ABI=0 CONFINE_TEST_FAIL=' >"$HOME/.bash_profile"
-  local line
-  printf -v line '%q %q' "$REPO_ROOT/bin/lib/confine-shell" "rm -rf ${OUT:?}/x"
-  run --separate-stderr env -C "$WT" bash -l -c "$line"
-  [[ $status -ne 0 ]]
-  assert_equal "$(canary_tree)" "${WHOLE//OUT/$OUT}"
+@test "confine-session write: the directory is mode 700, the file 400 and the program 500, and a second write replaces the first's files" {
+  local lib
+  lib=$(cd "$REPO_ROOT/bin/lib" && pwd -P)
+  session_dir
+  assert_equal "$(stat -c %a "$SDIR" "${SDIR%/*}" "${SDIR%/*/*}" "$SFILE" "$PROGRAM" | tr '\n' ' ')" "700 700 700 400 500 "
+  assert_equal "$(jq -c 'del(.shell)' "$SFILE")" "$(jq -cn --arg task "$TASK" --arg home "$HOME" --arg team "$(realpath "$TEAM_HOME")" \
+    --arg worktree "$(realpath "$WT")" --arg git "$(realpath "$GIT")" --arg tmp "$STMP" \
+    '{version: 1, task: $task, home: $home, kept: [$team, ($home + "/.config/agent-team"), ($home + "/.claude")], worktree: $worktree, git_dir: $git, session_tmp: $tmp}')"
+  [[ $(jq -r .shell "$SFILE") =~ ^(/opt/homebrew/bin|/usr/local/bin|/usr/bin|/bin)/bash$ ]]
+  assert_equal "$(<"$PROGRAM")" "#!/bin/sh
+# Written by confine-session for $TASK's builder.test--22: the session's shell, which enters its domain first.
+exec '$lib/confine-shell' --session '$SFILE' \"\$@\""
+  assert_equal "$(find "$SDIR" -mindepth 1 | LC_ALL=C sort)" "$PROGRAM
+$SFILE"
+  # A relaunch writes it anew: another worktree, no job tmp of the first's session, the default
+  # session tmp, and nothing left of the temporary names.
+  run -0 "$WRITE" job --dir "$SDIR" --session-id 0badc0de
+  mkdir "$BOX/wt2"
+  run -0 "$WRITE" write --dir "$SDIR/" --task "$TASK" --worktree "$BOX/wt2" --git-dir "$GIT" --team-home "$TEAM_HOME" --home "$HOME"
+  assert_equal "$output" "$PROGRAM"
+  assert_equal "$(jq -r '.worktree, .job_tmp, .session_tmp' "$SFILE")" "$(realpath "$BOX/wt2")
+null
+/tmp/agent-team-$TASK"
+  assert_equal "$(find "$SDIR" -mindepth 1 | LC_ALL=C sort)" "$PROGRAM
+$SFILE"
+  run -0 "$WRITE" --help
+  assert_equal "${lines[0]}" "Writes a confined session's directory: the file its roots are read from and the program its"
+}
+
+@test "confine-session write refuses a path the session's shell path may not be, a directory that is a link, and a worktree or git directory that is none" {
+  local base=$HOME/.config/agent-team/confine named
+  write_with --dir "$base/T7/it's"
+  assert_equal "$status: $stderr" "1: confine-session: $base/T7/it's holds a single quote, which the session's shell path may not"
+  write_with --dir "$base/T7/a"$'\n'"b"
+  assert_equal "$status: $stderr" "1: confine-session: $base/T7/a"$'\n'"b holds a newline, which the session's shell path may not"
+  write_with --dir "$base/T7/a -b"
+  assert_equal "$status: $stderr" "1: confine-session: $base/T7/a -b holds \" -\", which the session's shell path may not"
+  write_with --dir "$base/T7/zsh-builder"
+  assert_equal "$status: $stderr" "1: confine-session: $base/T7/zsh-builder holds \"zsh\", which the session's shell path may not"
+  [[ ! -e $base ]]
+  # The checkout's own path, which the program quotes too.
+  mkdir -p "$BOX/zsh/lib"
+  cp "$WRITE" "$BOX/zsh/lib/"
+  run --separate-stderr "$BOX/zsh/lib/confine-session" write --dir "$SDIR" --task "$TASK" --worktree "$WT" --git-dir "$GIT" \
+    --team-home "$TEAM_HOME" --home "$HOME"
+  assert_equal "$status: $stderr" "1: confine-session: $(realpath "$BOX")/zsh/lib holds \"zsh\", which the session's shell path may not"
+  # A directory outside <home>/.config/agent-team, where a root may be.
+  for named in "$BOX/session" "$HOME/.config/agent-team/../x" "$HOME/.config/agent-team"; do
+    write_with --dir "$named"
+    assert_equal "$status: $stderr" "1: confine-session: $named is not under $HOME/.config/agent-team, where no root may be"
+  done
+  # A link or a file on the way down, each named, and nothing written past it.
+  mkdir -p "$base" "$BOX/elsewhere"
+  ln -s "$BOX/elsewhere" "$base/T7"
+  write_with
+  assert_equal "$status: $stderr" "1: confine-session: $base/T7 is a link, no directory or another user's"
+  [[ -z $(ls -A "$BOX/elsewhere") ]]
+  rm "${base:?}/T7"
+  mkdir "$base/T7"
+  : >"$SDIR"
+  write_with
+  assert_equal "$status: $stderr" "1: confine-session: $SDIR is a link, no directory or another user's"
+  rm "${SDIR:?}"
+  mv "$HOME/.config/agent-team" "$BOX/moved"
+  ln -s "$BOX/moved" "$HOME/.config/agent-team"
+  write_with
+  assert_equal "$status: $stderr" "1: confine-session: $HOME/.config/agent-team is a link, no directory or another user's"
+  rm "${HOME:?}/.config/agent-team"
+  mv "$BOX/moved" "$HOME/.config/agent-team"
+  # A worktree, a git directory or a home that is no directory.
+  write_with --worktree "$BOX/missing"
+  assert_equal "$status: $stderr" "1: confine-session: the worktree $BOX/missing is no directory"
+  write_with --git-dir "$BOX/missing"
+  assert_equal "$status: $stderr" "1: confine-session: the git directory $BOX/missing is no directory"
+  write_with --home "$BOX/missing"
+  assert_equal "$status: $stderr" "1: confine-session: the home directory $BOX/missing is no directory"
+  [[ ! -e $SDIR ]]
+  # A malformed command line.
+  write_with --task 'T7 x'
+  assert_equal "$status" 2
+  write_with --worktree wt
+  assert_equal "$status" 2
+  write_with --dir session
+  assert_equal "$status" 2
+  run -2 "$WRITE" write --dir "$SDIR" --unknown x
+  run -2 "$WRITE" write --dir
+  run -2 "$WRITE" other
+  run -2 "$WRITE"
+  write_with
+  assert_equal "$status: $output" "0: $PROGRAM"
 }
