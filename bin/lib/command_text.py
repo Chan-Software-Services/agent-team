@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The text of a Bash command that runs as code, and the walk of each simple command it runs.
 
-Usage: python3 -I command_text.py              (the command on stdin; prints the text on stdout)
-       python3 -I command_text.py --commands   (the command on stdin; prints its walk, below)
+Usage: python3 -I command_text.py                  (the command on stdin; prints the text on stdout)
+       python3 -I command_text.py --commands       (the command on stdin; prints its walk, below)
+       python3 -I command_text.py --redirections   (the command on stdin; prints its redirections' targets)
 
 bin/lib/command_rules.py, the rule table bin/hooks/command-guard runs, imports call_commands,
 each simple command a call runs (code_parts, blank_heredocs and commands, the walk, together),
@@ -11,6 +12,9 @@ bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does; its kill rows, kil
 and heads_behind, and its delete rows, delete_rules.py, those with the walk, simple_commands,
 find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
+bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands and
+redirection_targets, each file the call redirects from or to over the same parts, which
+--redirections prints as one JSON string a line.
 It reads the command far enough to know its quotes ('...', "..." and $'...'), backslashes, comments,
 arithmetic ($[, and $(( or (( whose two closing parentheses are adjacent, matched as Bash's
 parse_matched_pair does, past quotes, backticks and a $(...) read by this scan: ((cmd) ) is two
@@ -1545,16 +1549,17 @@ def _trap_action(args):
     return args[0] if len(args) > 1 and args[0] != "-" else None
 
 
-def _walk(words, text, depth, outer, reached):
+def _walk(words, text, depth, outer, reached, texts=None):
     """The Commands of one simple command's words, of the text being walked at depth, behind the
-    outer wrappers: the command itself, then what it runs, as commands says."""
+    outer wrappers: the command itself, then what it runs, as commands says; with a texts list,
+    each string it walks is appended to it (_commands)."""
     assignments, words, strings, wrappers = _command(list(words))
     behind = outer + tuple(wrappers)
     yield Command(tuple(assignments), tuple(words), behind, reached)
 
     def run(string, how, ran):
         if string is not None and string != text:
-            yield from _commands(string, depth + 1, ran, how)
+            yield from _commands(string, depth + 1, ran, how, texts)
 
     for how, string in strings:
         yield from run(string, how, behind)
@@ -1564,7 +1569,7 @@ def _walk(words, text, depth, outer, reached):
     here = behind + (tuple(words),)
     if name == "find":
         for found in _exec_commands(args):
-            yield from _walk(found, text, depth, here, FIND)
+            yield from _walk(found, text, depth, here, FIND, texts)
     elif name in SHELLS:
         string = _shell_string(args)
         script = None if string is not None else _shell_script(args)
@@ -1585,11 +1590,15 @@ def _walk(words, text, depth, outer, reached):
         yield from run(_trap_action(args), STRING, here)
 
 
-def _commands(text, depth, outer, reached):
+def _commands(text, depth, outer, reached, texts=None):
+    """The Commands the text runs, as commands says; with a texts list, the text and each string
+    the walk walks are appended to it, in the order walked."""
     if depth > DEPTH:
         raise ValueError(f"a command string nested deeper than {DEPTH}")
+    if texts is not None:
+        texts.append(text)
     for words in simple_commands(text):
-        yield from _walk(words, text, depth, outer, reached)
+        yield from _walk(words, text, depth, outer, reached, texts)
 
 
 def commands(text):
@@ -1607,6 +1616,41 @@ def call_commands(command):
     walked = [found for part in code_parts(command) for found in commands(blank_heredocs(part))]
     walked += commands(command)
     return walked
+
+
+# The redirections that open no file: a heredoc's and a here-string's, whose word is text.
+TEXT_REDIRECTIONS = frozenset(("<<", "<<-", "<<<"))
+
+
+def redirection_targets(command):
+    """Each file a Bash call's command redirects from or to, once each in the order found: the
+    target word of each <, >, >>, >|, <>, &>, &>> and of each <& or >& that names no fd (a number,
+    or one with a - after it, or - alone), the fd or {name} before the operator any, its quotes
+    removed as _command_word removes them, over the same code parts call_commands walks (each
+    heredoc a part still opens blanked) and then the command's own text, each with every string
+    its walk walks (a shell's -c, eval, trap's action and the rest the header lists), so a
+    string is read as the tool runs it. A heredoc's marker and body and a here-string's word are no
+    target, and a body no shell reads is no code part."""
+    found, texts = [], []
+    for text in [blank_heredocs(part) for part in code_parts(command)] + [command]:
+        for _ in _commands(text, 0, (), DIRECT, texts):
+            pass
+    for text in dict.fromkeys(texts):
+        reading = read_command(text)
+        bodies = {h.body[0]: h.end for h in reading.heredocs}
+        for _, segments in reading.pipelines:
+            for start, end in segments:
+                redirects = []
+                _segment_commands(text, start, end, bodies, reading.subscripts, redirects)
+                for operator, target in redirects:
+                    operator = re.sub(r"^(?:[0-9]+|\{\w+\})", "", operator)
+                    if operator in TEXT_REDIRECTIONS:
+                        continue
+                    if operator in ("<&", ">&") and re.fullmatch(r"[0-9]*-?", target):
+                        continue
+                    if target not in found:
+                        found.append(target)
+    return found
 
 
 # What runs the command after it, past its options, as a reading of where a command starts takes
@@ -1700,8 +1744,16 @@ def main():
             sys.stderr.write(f"command_text.py: {type(error).__name__}: {error}\n")
             return 1
         return 0
+    if sys.argv[1:] == ["--redirections"]:
+        try:
+            for target in redirection_targets(sys.stdin.read()):
+                sys.stdout.write(json.dumps(target, ensure_ascii=False) + "\n")
+        except Exception as error:  # noqa: BLE001 - a guard that cannot decide refuses
+            sys.stderr.write(f"command_text.py: {type(error).__name__}: {error}\n")
+            return 1
+        return 0
     if sys.argv[1:]:
-        sys.stderr.write("usage: python3 -I command_text.py [--commands]   (the command on stdin)\n")
+        sys.stderr.write("usage: python3 -I command_text.py [--commands | --redirections]   (the command on stdin)\n")
         return 2
     sys.stdout.write(code_text(sys.stdin.read()))
     return 0

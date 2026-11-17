@@ -10,10 +10,13 @@ passes, exiting 0 either way. Any error of its own exits 1 with one line on stde
 "session_records.py: <ErrorType>: <message>", so the hook refuses: a guard that cannot decide
 refuses. It reads nothing of the team home.
 
-PLACES builds the table of every session-record place, in the order a refusal picks its place by;
+places() builds the table of every session-record place, in the order a refusal picks its place by;
 the hook's header says what each holds, what a session owns there, which paths of a call are
 judged, the rule for one path, and every message. A place keyed by a session or job id lets a
 session reach its own entry and refuses every other; a place not keyed that way is refused whole.
+Read, Grep and Glob are judged by judge_file, Bash by decide_bash: the words its commands spell,
+read through command_text's walk and its redirections' targets, each resolved by delete_rules'
+reading of an operand, in a Context of command_rules', as the hook's header says.
 """
 
 from __future__ import annotations
@@ -26,14 +29,22 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from command_rules import Context  # noqa: E402
+from command_text import call_commands, command_name, redirection_targets  # noqa: E402
+from delete_rules import Unread, candidates, expand  # noqa: E402
 
 # A UUID's shape, 8-4-4-4-12 lowercase hex.
 UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.ASCII)
 
 UNREADABLE = "its input is not a hook call it can read, and a guard that cannot decide refuses."
 
-# The tools whose paths are judged; any other passes unread.
+# The tools whose paths are judged, the file tools' and Bash's; any other passes unread.
 FILE_TOOLS = ("Read", "Grep", "Glob")
+BASH = "Bash"
+# A word that gives a value after its first =: an assignment, a name=value operand (dd's if=) or
+# a long option's --name=value.
+VALUED = re.compile(r"-{0,2}[A-Za-z_][A-Za-z0-9_.-]*(?:\[.*\])?\+?=", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -89,10 +100,16 @@ def temporary_directory(env):
     return f"{base}/claude-{os.getuid()}"
 
 
+def config_directory(env):
+    """Claude Code's config directory: CLAUDE_CONFIG_DIR, else ~/.claude."""
+    home = env.get("HOME") or os.path.expanduser("~")
+    return env.get("CLAUDE_CONFIG_DIR") or f"{home}/.claude"
+
+
 def places(env, session):
     """The table, in order, for a session (its id when it has a UUID's shape, else "")."""
     home = env.get("HOME") or os.path.expanduser("~")
-    config = env.get("CLAUDE_CONFIG_DIR") or f"{home}/.claude"
+    config = config_directory(env)
     rows = []
 
     def add(name, root, owns=None, own_of=None):
@@ -173,6 +190,93 @@ def judge_file(tool, real, given, table):
     return None
 
 
+def judge_bash(real, word, table, config):
+    """A Bash command's refusal for one resolved path it names, or None: refused in a keyed place
+    but as the session's own entry or under it, refused whole in or at a place not keyed, and
+    refused as too wide at a keyed place's root or at the config directory (config, resolved and
+    folded as its volume folds, with the fold), which names the first row; any other passes, the
+    directories above the config directory and the temporary directory among them."""
+    subject = f"a Bash command naming {word}"
+    for place in table:
+        at, root = place.fit(real)
+        where = relation(at, root)
+        if where in (None, "above"):
+            continue
+        if place.own is None:
+            return f"{subject}: {place.name} holds every session's records, and a worker session reads none of it."
+        if where == "root":
+            return f"{subject} would reach every session's records under {place.name}; name a narrower path."
+        if place.own(at[len(root) + 1:].split("/")):
+            continue
+        return f"{subject}: under {place.name} a session reads only {place.owns}, and this is another session's."
+    root, fold = config
+    if (real.lower() if fold else real) == root:
+        return f"{subject} would reach every session's records under {table[0].name}; name a narrower path."
+    return None
+
+
+def glob_start(path):
+    """A path's literal start when it holds a glob, cut as a Glob pattern's is (literal_start), a
+    relative one with no directory before its glob being the directory it runs in."""
+    start = literal_start(path)
+    if not path.startswith("/") and start == "/":
+        return "."
+    return start
+
+
+def bash_words(command):
+    """The words of one walked command that are judged as paths, each as (the word shown, the
+    word read): the value of each assignment before it; each word of each wrapper it ran behind;
+    its name when the name holds a /; each word after its name; and, of a word that gives a value
+    after its first = (VALUED), that value as well as the whole word."""
+    found = []
+    for assignment in command.assignments:
+        found.append((assignment, assignment.partition("=")[2]))
+    words = [word for wrapper in command.wrappers for word in wrapper]
+    if command.words:
+        if "/" in command.words[0]:
+            words.append(command.words[0])
+        words += command.words[1:]
+    for word in words:
+        found.append((word, word))
+        if VALUED.match(word):
+            found.append((word, word.partition("=")[2]))
+    return found
+
+
+def decide_bash(call, env, table, config):
+    """A Bash call's refusal, or None: the first path, in the walk's order, one of its commands
+    names (bash_words, then each redirection's target) that a place refuses (judge_bash)."""
+    tool_input = call.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str):
+        return UNREADABLE
+    context = Context(call, env)
+    # A word holding a blank is no path but where a root holds one: a longer string that mentions
+    # a path (a message, a pattern) passes.
+    blanks = any(re.search(r"\s", place.root) for place in table)
+    seen = set()
+    pairs = [pair for found in call_commands(command) for pair in bash_words(found)]
+    pairs += [(target, target) for target in redirection_targets(command)]
+    for shown, word in pairs:
+        if not word or (shown, word) in seen or (re.search(r"\s", word) and not blanks):
+            continue
+        seen.add((shown, word))
+        try:
+            paths = [path for path in expand(word, context) if path]
+            for path in paths:
+                path = glob_start(path) if re.search(r"[*?\[{]", path) else path
+                bases = [""] if path.startswith("/") else candidates(context)
+                for base in bases:
+                    found = judge_bash(os.path.realpath(os.path.join(base, path)), shown, table, config)
+                    if found:
+                        return found
+        except Unread:
+            # A word the guard cannot read before the command runs passes (the header says why).
+            continue
+    return None
+
+
 def literal_start(pattern):
     """A Glob pattern's literal start: all of it when it has no wildcard, else up to its last /
     before the first one, or / when that leaves nothing."""
@@ -199,14 +303,18 @@ def decide(raw, env):
     if not isinstance(call, dict) or not isinstance(call.get("tool_name"), str):
         return UNREADABLE
     tool = call["tool_name"]
-    if tool not in FILE_TOOLS:
+    if tool not in FILE_TOOLS and tool != BASH:
         return None
     session = call.get("session_id")
     session = session if isinstance(session, str) and UUID.fullmatch(session) else ""
+    table = places(env, session)
+    if tool == BASH:
+        config = os.path.realpath(config_directory(env))
+        fold = folds(config, env)
+        return decide_bash(call, env, table, (config.lower() if fold else config, fold))
     cwd = call.get("cwd")
     cwd = os.path.realpath(cwd if isinstance(cwd, str) and cwd else os.getcwd())
     home = env.get("HOME") or os.path.expanduser("~")
-    table = places(env, session)
 
     def judge(path, given=None):
         return judge_file(tool, resolve(path, cwd, home), given or path, table)

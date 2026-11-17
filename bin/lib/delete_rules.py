@@ -3,6 +3,9 @@
 bin/lib/command_rules.py appends ROWS to its table after the kill rows (bin/lib/kill_rules.py).
 Each row is its id, its test over one command_text.Command and the call's context, returning its
 reason when it refuses and None when it passes, and its allowed way, as kill_rules.py's are.
+bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
+operand, below: expand (a word as the paths the shell may make of it), candidates (the
+directories a relative one is read against) and Unread, which either raises.
 A recursive delete passes only when every path it deletes resolves strictly inside a root (the
 worktree or the job tmp), is no kept path (a root or the worktree's .scratch/task) nor a directory
 holding one, and is no repository's .git; and when no operand holds a variable it leaves empty,
@@ -317,7 +320,7 @@ def _values(name, context, depth):
     if name == "PWD":
         if _rebound(name, context):
             raise Unread
-        return list(_candidates(context))
+        return list(candidates(context))
     values = _assigned(name, context)
     if values is None or depth >= MAX_DEPTH:
         raise Unread
@@ -411,7 +414,7 @@ def _substitute(text, context, depth):
     return results
 
 
-def _expand(word, context):
+def expand(word, context):
     """The word as the paths the shell may make of it, relative ones as they stand."""
     # The walk decoded a $'...' escape or expanded a brace range in a word it marks written.
     if "\\" in word or getattr(word, "written", None) is not None:
@@ -455,7 +458,7 @@ def _within(path, root):
 
 
 @functools.lru_cache(maxsize=None)
-def _candidates(context):
+def candidates(context):
     """Each directory the command may be in when it runs a relative delete, resolved: its cwd and
     each cd target; Unread when one cannot be followed."""
     # cdable_vars makes cd follow a variable of the name it is given.
@@ -470,7 +473,7 @@ def _candidates(context):
         # $PWD in a cd target would read the candidates being found.
         if any("PWD" in reference.groups() for reference in REFERENCE.finditer(target)):
             raise Unread
-        for path in _expand(target, context):
+        for path in expand(target, context):
             (absolute if path.startswith("/") else relative).append(path)
     if relative and (context.environ.get("CDPATH") or _named("CDPATH", context)):
         raise Unread
@@ -545,9 +548,9 @@ def _judge(word, opening, context):
     or with no root one OUTSIDE for its first path, or its word when that is unread."""
     try:
         paths, empty = [], False
-        for path in _expand(word, context):
+        for path in expand(word, context):
             if path and not path.startswith("/"):
-                paths += [os.path.join(base, path) for base in _candidates(context)]
+                paths += [os.path.join(base, path) for base in candidates(context)]
             elif path:
                 paths.append(path)
             else:

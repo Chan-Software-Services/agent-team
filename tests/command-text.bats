@@ -54,6 +54,28 @@ drops() {
   done
 }
 
+# The redirection targets of <command> are exactly the <target>s, in order: redirects <command> <target>...
+redirects() {
+  local command=$1 expected=
+  shift
+  run --separate-stderr python3 -I "$REPO_ROOT/bin/lib/command_text.py" --redirections < <(printf '%s' "$command")
+  if (($#)); then expected=$(printf '"%s"\n' "$@"); fi
+  [[ $status -eq 0 && $output == "$expected" && -z $stderr ]] ||
+    { printf 'redirections of: %s\nstatus %s, stderr: %s\nexpected:\n%s\ngot:\n%s\n' "$command" "$status" "$stderr" "$expected" "$output" >&2; return 1; }
+}
+
+# The redirection targets of <command> hold each <target>, first in that order: redirects_first
+# <command> <target>... (a string's code part, read with the outer command's text after its
+# closing quote, may add a target of its own after them).
+redirects_first() {
+  local command=$1 expected
+  shift
+  run --separate-stderr python3 -I "$REPO_ROOT/bin/lib/command_text.py" --redirections < <(printf '%s' "$command")
+  expected=$(printf '"%s"\n' "$@")
+  [[ $status -eq 0 && $(head -n $# <<<"$output") == "$expected" && -z $stderr ]] ||
+    { printf 'redirections of: %s\nstatus %s, stderr: %s\nexpected first:\n%s\ngot:\n%s\n' "$command" "$status" "$stderr" "$expected" "$output" >&2; return 1; }
+}
+
 # Each way the tests write "run a" to x.sh, and each way they run x.sh.
 WRITES=(
   $'cat > x.sh <<\'EOF\'\nrun a\nEOF'
@@ -317,4 +339,27 @@ run x'"
       [[ -z $stderr ]] || { printf 'runner: %s\nstderr: %s\n' "$runner" "$stderr" >&2; return 1; }
     done
   done
+}
+
+@test "the redirections' targets are each file a command reads from or writes to, in either direction, its fd and quotes aside" {
+  redirects 'cat < in > out' in out
+  redirects 'cmd 2>>err.log &>all.log &>>more.log 3<>both <"a b" >|clobber' err.log all.log more.log both 'a b' clobber
+  redirects 'cmd >&file 1>&2 2>&1 >&- <&3 {fd}>named' file named
+  redirects 'cmd > out && other < out' out
+}
+
+@test "the redirections' targets are read in a chain, a group, a substitution, a loop and a string a shell is given" {
+  redirects 'a; b | c > piped || d' piped
+  redirects '{ cat > grouped; } && (cat > sub)' grouped sub
+  redirects 'x=$(cat < substituted)' substituted
+  redirects 'for f in 1; do cat > looped; done' looped
+  redirects "bash -c 'cat > inner'" inner
+  redirects_first "bash -c 'cat > inner' && eval 'cat < evaluated' && trap 'cat > trapped' EXIT" inner evaluated trapped
+  redirects $'cat <<EOF | bash\necho y > fed\nEOF' fed
+}
+
+@test "a heredoc's marker and body and a here-string's word are no redirection target" {
+  redirects $'cat <<\'EOF\' > out\necho x > hidden\nEOF\ncat <<< here' out
+  redirects $'cat <<-EOF\n\tcat < hidden\n\tEOF'
+  redirects 'cmd <<<"$(cat word)"'
 }

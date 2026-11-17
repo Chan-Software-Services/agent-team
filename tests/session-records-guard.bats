@@ -672,9 +672,7 @@ unreadable() {
   done
 }
 
-@test "any tool but Read, Grep and Glob passes unread" {
-  call -0 Bash "$(jq -cn --arg c "cat $project/$OTHER.jsonl" '{command: $c}')"
-  allowed
+@test "an Edit or an MCP tool's call passes unread" {
   call -0 Edit "$(jq -cn --arg p "$project/$OTHER.jsonl" '{file_path: $p}')"
   allowed
   call -0 mcp__x__read '{"file_path": 7}'

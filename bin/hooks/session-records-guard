@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse hook on every worker role's Read, Grep and Glob (settings/worker.json): of the
+# PreToolUse hook on every worker role's Read, Grep, Glob and Bash (settings/worker.json): of the
 # session records Claude Code keeps, a session reaches only its own. Exit 2 blocks the call and
 # shows stderr to the agent; exit 0 passes it.
 #
@@ -34,6 +34,7 @@
 #   Glob  its path, or the cwd with none; and, when its pattern starts with / or ~, the pattern's
 #         literal start too: the text before its first * ? [ or {, cut back to its last /, or
 #         the whole pattern when it has none of them
+#   Bash  the paths its commands spell, below
 # Any other tool passes unread.
 #
 # The rule for one path, against each place in order: a path in none and above none passes. In a
@@ -48,6 +49,37 @@
 #   <tool> rooted at <path> would search every session's records under <name>; give it a narrower path.
 # each with the path as the call gave it (a Glob's pattern, when the path is only its literal start).
 #
+# A Bash call is held to the same table: it is refused when a path one of its commands spells lies
+# in a place and is not the session's own. The call's text is read before anything runs, never
+# what a program it starts reads by itself, so a team script is judged by its command line alone.
+# Of each command command_text.call_commands walks (past wrappers, into the strings a shell is
+# given, as bin/lib/command_text.py's header lists), these are judged as paths: the value of each
+# assignment before it; each word of each wrapper it ran behind; its name when the name holds a /;
+# each word after its name; of a word or assignment of the form <name>=<value> or
+# --<option>=<value>, the value after its first = as well as the whole word; and the target of each
+# redirection the call makes, in either direction (command_text.redirection_targets). A word
+# holding a blank is no path, unless a place's root holds one, so a longer string that mentions a
+# path (a commit message, a pattern, a heredoc's body no shell reads) passes; a word that is
+# exactly such a path is refused whatever the command does with it.
+# A word becomes paths as bin/lib/delete_rules.py's header says an operand is resolved, by the same
+# code: a leading ~, $HOME, $CLAUDE_JOB_DIR, a variable the same command sets, a brace list, a
+# relative path against the cwd and each directory a cd or pushd of the call names, a .. and a
+# symlink are resolved before the decision. A word that expands to several paths is refused when
+# any one is; a word holding a glob is judged by its literal start, cut as a Glob pattern's is; a
+# word the reading cannot resolve before the command runs passes. That is the command guard's
+# kind of guard, a speed bump on the paths a command spells, whose contract
+# bin/lib/command_rules.py's header states.
+# The rule for one path, against each place in order: in a keyed place it passes as the session's
+# own entry or under it, and any other is refused; a place refused whole, itself included, is
+# refused; a keyed place's root, or the config directory itself, which names the first place, is
+# refused as too wide; anything else passes, the directories above the config directory and the
+# temporary directory among them. Case folds as for the file tools. The first refusal in the
+# walk's order is reported, the redirections' targets after every command's words:
+#   a Bash command naming <word>: under <name> a session reads only <what it owns>, and this is another session's.
+#   a Bash command naming <word>: <name> holds every session's records, and a worker session reads none of it.
+#   a Bash command naming <word> would reach every session's records under <name>; name a narrower path.
+# each with the word as the walk read it, its quotes removed.
+#
 # A path is compared with a root as text, both in lower case when the root's volume folds case,
 # as a Mac's default one does, so a name in another case is the same path there. The volume folds
 # case when the root in upper or in lower case names the root's own directory, or when
@@ -56,7 +88,8 @@
 #
 # It reads nothing of the team home, so it decides on a machine that names none. When it cannot
 # decide it refuses, saying so: input that is not a JSON object with a tool_name string, a Read
-# whose file_path is no string or an empty one, a path or pattern that is no string ("its input is
+# whose file_path is no string or an empty one, a path or pattern that is no string, a Bash call
+# whose command is missing or no string ("its input is
 # not a hook call it can read, and a guard that cannot decide refuses."); session_records.py exiting
 # non-zero, or printing what holds no reason ("it could not read the call
 # (bin/lib/session_records.py: <its last line>), and a guard that cannot decide refuses."); an
