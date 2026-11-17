@@ -446,6 +446,86 @@
       "family": "thread-cache"
     },
     {
+      "id": "read-launchers",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "grep -c . bin/team-load-check bin/claude-coordinator bin/claude-assistant bin/team-worker",
+      "expect": "allowed",
+      "marker": "bin/team-worker:"
+    },
+    {
+      "id": "act-help",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-stow --help",
+      "expect": "allowed",
+      "marker": "Usage: team-stow"
+    },
+    {
+      "id": "load-check-help",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-load-check --help",
+      "expect": "allowed",
+      "marker": "Usage: team-load-check"
+    },
+    {
+      "id": "thread-cache-grep",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "grep -l assistant-threads bin/hooks/assistant-discord-guard",
+      "expect": "allowed",
+      "marker": "bin/hooks/assistant-discord-guard"
+    },
+    {
+      "id": "github-get",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api --method GET rate_limit -F probe=1 --jq .resources.core.limit",
+      "expect": "allowed",
+      "marker": "5000"
+    },
+    {
+      "id": "github-graphql",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login",
+      "expect": "allowed",
+      "marker": "@LOGIN@"
+    },
+    {
+      "id": "release-list",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh release list --limit 1 && echo release-list-ran",
+      "expect": "allowed",
+      "marker": "release-list-ran"
+    },
+    {
+      "id": "inbox-help",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-inbox --help",
+      "expect": "allowed",
+      "marker": "Usage: team-inbox"
+    },
+    {
+      "id": "queue-list",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-queue list",
+      "expect": "allowed",
+      "marker": "room"
+    },
+    {
+      "id": "log-check",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-log --check",
+      "expect": "allowed",
+      "marker": "lines meet the ledger contract"
+    },
+    {
       "id": "prod-mongo-server",
       "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",

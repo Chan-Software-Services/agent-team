@@ -313,20 +313,32 @@ probe_rules() {
 }
 
 @test "every attempt of the refusal probe is well formed, and names a family the data file has" {
-  local out
-  out=$(jq -r '(.families | map(.family)) as $families | .attempts[]
+  local out malformed
+  malformed='(.families | map(.family)) as $families | .attempts[]
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
       or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "assistant") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login") | not)
+      or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login", "allowed") | not)
       or (.expect == "kernel" and (. as $a | .tool != "Bash" or (.input | contains("@CANARY@/\($a.id)\"") | not)))
       or (.background != null and (.background != true or .tool != "Bash" or .expect != "kernel"))
-      or ((.expect | IN("hook", "script")) and (.marker | type) != "string")
-      or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel") | not)))
+      or ((.expect | IN("hook", "script", "allowed")) and (.marker | type) != "string")
+      or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel", "allowed") | not)))
+      or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
       or ((.expect == "rule") != (.family | type == "string"))
       or (.family != null and (.family | IN($families[]) | not)))
-    | .id' "$REPO_ROOT/bin/lib/probe.json")
+    | .id'
+  out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
+  # An attempt that must run is judged by its marker, so one with none, or a marker on a kind that
+  # reads none, is malformed, and so is the login's stand-in on any kind but allowed.
+  out=$(jq -r "$malformed" <<<'{"families": [], "attempts": [
+    {"id": "no-marker", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "allowed"},
+    {"id": "number-marker", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "allowed", "marker": 1},
+    {"id": "login-hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "@LOGIN@"},
+    {"id": "marked", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "allowed", "marker": "@LOGIN@"}]}')
+  assert_equal "$out" "no-marker
+number-marker
+login-hook"
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
 }
