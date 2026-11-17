@@ -49,7 +49,9 @@
 #          TEAM_CAPACITY_PLACE_SECONDS (30) have passed since its wait began, then is a failure
 #          ("no live session has that id", "its process <pid> is gone"); an id listed as no team
 #          session is one at once. It asks the user manager through busctl --user call
-#          org.freedesktop.systemd1 ... StartTransientUnit with the PIDs, and when that call fails
+#          org.freedesktop.systemd1 ... StartTransientUnit with the PIDs and CollectMode
+#          inactive-or-failed, so the scope unloads once it ends, failed too (killed for memory),
+#          and when that call fails
 #          while the session's process runs, once more at once with its pid from a fresh list and
 #          a fresh tree (a process that ended meanwhile); with ids, while the call says a process
 #          is gone (No such process), again a second apart until the id's seconds have passed.
