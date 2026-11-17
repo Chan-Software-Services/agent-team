@@ -419,6 +419,15 @@ proj_moved() {
   assert_equal "$(merged_events | jq -r .head)" "$head"
 }
 
+@test "a clean merge of the base after Daniel's word holds though another repository's review logged after the word found something" {
+  moved_head base
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "launch", role: "reviewer", session: "r0000009", project: "other"}'
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "review", verdict: "findings", head: "1234567"}'
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "done", role: "reviewer", session: "r0000009"}'
+  run_bin -0 team-merge T14
+  assert_equal "$(merged_events | jq -r .head)" "$head"
+}
+
 @test "Daniel's word holds through a conflicted merge whose passing review was logged after it, then a clean catch-up" {
   moved_head conflict base
   local rereviewed
