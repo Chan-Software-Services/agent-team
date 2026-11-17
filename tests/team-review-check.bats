@@ -336,7 +336,7 @@ POST app/installations/777/access_tokens"
 }
 
 @test "the minted token is written to no file while the script runs" {
-  export TOKEN_WATCH=$BATS_TEST_TMPDIR/tmp
+  export TOKEN_WATCH=$BATS_TEST_TMPDIR/token-watch
   mkdir "$TOKEN_WATCH"
   TMPDIR=$TOKEN_WATCH run_bin -0 team-review-check "$URL" "$HEAD_SHA" success "no blocking findings"
   assert_equal "$(curl_calls | wc -l)" 4
