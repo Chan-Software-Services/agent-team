@@ -281,7 +281,7 @@ TABLE
   grep -Eq '^  blocked +team-log +reason; optional cause \(task\|worker\|denial\), role, session, since  \(.*since: when the park began, when it is logged after the fact\)$' <<<"$output"
   grep -Eq '^  held +team-log +reason; optional cause \(daniel-hold\), discord_message \(id\), head, since  \(Daniel.s hold on the task; .*\)$' <<<"$output"
   grep -Eq '^  paused +team-log, team-worker +reason; optional cause \(worker\|room\|stow\|coordinator-hold\|offline\|limit\|machine\|shutdown\), role, session, brief, since  \(.*\)$' <<<"$output"
-  grep -Eq '^  denied +team-log, denial-log +role, what, why; optional session  \(a denial the worker went past .*parks nothing and clears nothing.*a denial that stops the work is a blocked; denial-log, every worker.s PermissionDenied hook, .*never the tool.s input\)$' <<<"$output"
+  grep -Eq '^  denied +team-log, denial-log +role, what, why; optional session, way  \(a denial the worker went past .*parks nothing and clears nothing.*a denial that stops the work is a blocked; denial-log, every worker.s PermissionDenied hook, .*never the tool.s input\)$' <<<"$output"
   grep -Eq '^  retro-schedule +team-log +every_hours \(number\), discord_message \(id\); pushed at once  \(.*every_hours 0 stops.*\)$' <<<"$output"
   grep -Eq '^  retro-change +team-log +retro, proposals  \(the task it is logged on builds those proposals of retro T<m>, or, logged on T<m> itself, records were changed in place for them; .*team-retro digest.*\)$' <<<"$output"
   grep -Eq '^  injection +team-log +role, source, text  \(.*never the personal details.*\)$' <<<"$output"
@@ -1946,19 +1946,36 @@ assert_no_answer_logged() {
   # Blanks around the marker are no part of the why, and a why may hold a semicolon of its own.
   logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/x; outside","session":"b0000001"}' \
     --from-message 'T7 BLOCKED command-guard  a recursive delete of /tmp/x; outside  ;  took its allowed way  '
+  # A worker may name the way it took after the marker, in parentheses or after a comma, a colon
+  # or a dash: the denial is the same, and its way keeps that text, its separator and blanks aside.
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/w","session":"b0000001","way":"(Write tool and absolute paths)"}' \
+    --from-message 'T7 BLOCKED command-guard a recursive delete of /tmp/w; took its allowed way (Write tool and absolute paths)'
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a kill of $p, a PID the guard cannot read","session":"b0000001","way":"($(jobs -p))"}' \
+    --from-message 'T7 BLOCKED command-guard a kill of $p, a PID the guard cannot read; took its allowed way ($(jobs -p))'
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /tmp/y","session":"b0000001","way":"the Write tool, then went on"}' \
+    --from-message 'T7 BLOCKED command-guard a recursive delete of /tmp/y; took its allowed way, the Write tool, then went on'
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a recursive delete of /var/tmp/z","session":"b0000001","way":"left it in place"}' \
+    --from-message 'T7 BLOCKED command-guard a recursive delete of /var/tmp/z; took its allowed way:  left it in place'
+  logs_events '{"task":"T7","event":"denied","role":"builder","what":"command-guard","why":"a kill of PID 9","session":"b0000001","way":"killed the literal PID"}' \
+    --from-message 'T7 BLOCKED command-guard a kill of PID 9; took its allowed way - killed the literal PID'
   stub_reply claude '[]'
   run_bin -0 team-state T7 --json
   assert_equal "$(jq -c '.parks' <<<"$output")" '[]'
-  # A plain BLOCKED still parks, the marker anywhere but at the end included.
-  logs_events '{"task":"T7","event":"blocked","reason":"command-guard a kill; took its allowed way, then failed","cause":"worker","role":"builder","session":"b0000001"}' \
-    --from-message 'T7 BLOCKED command-guard a kill; took its allowed way, then failed'
+  # A plain BLOCKED still parks: the marker mid-sentence with no semicolon before it, or with a
+  # word, not a separator, after it.
+  logs_events '{"task":"T7","event":"blocked","reason":"command-guard a kill it took its allowed way (pkill) around","cause":"worker","role":"builder","session":"b0000001"}' \
+    --from-message 'T7 BLOCKED command-guard a kill it took its allowed way (pkill) around'
+  logs_events '{"task":"T7","event":"blocked","reason":"command-guard a kill; took its allowed way then failed","cause":"worker","role":"builder","session":"b0000001"}' \
+    --from-message 'T7 BLOCKED command-guard a kill; took its allowed way then failed'
   run_bin -0 team-state T7 --json
-  assert_equal "$(jq -r '[.parks[] | .kind] | join(" ")' <<<"$output")" blocked
+  assert_equal "$(jq -r '[.parks[] | .kind] | join(" ")' <<<"$output")" 'blocked blocked'
   # It needs a what and a why before the marker.
-  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way', got 'BLOCKED command-guard; took its allowed way'" \
+  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way [<way>]', got 'BLOCKED command-guard; took its allowed way'" \
     --from-message 'T7 BLOCKED command-guard; took its allowed way'
-  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way', got 'BLOCKED ; took its allowed way'" \
+  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way [<way>]', got 'BLOCKED ; took its allowed way'" \
     --from-message 'T7 BLOCKED ; took its allowed way'
+  refuses_message "team-log: BLOCKED takes 'BLOCKED <what> <why>; took its allowed way [<way>]', got 'BLOCKED command-guard; took its allowed way (left it)'" \
+    --from-message 'T7 BLOCKED command-guard; took its allowed way (left it)'
   # A reviewer launched since: the sender cannot be told, so the denial is refused, never logged without its role.
   launched T7 reviewer r0000001
   refuses_message "team-log: the message's sender is not known: T7-builder (b0000001) and T7-reviewer (r0000001) have no report since their launch; name it with --from <session>" \
@@ -2456,7 +2473,7 @@ ticket_launched() {
   refuses_message "team-log: the message is for T8, not T7" --from-message 'T8 DONE 01 a1b2c3d x'
   refuses_message "team-log: a worker's message starts with its task, T7, then its kind; got 'DONE 01 a1b2c3d x'" \
     --from-message 'DONE 01 a1b2c3d x'
-  local forms="QUESTION <text>, BLOCKED <what> <why>, BLOCKED <what> <why>; took its allowed way, NEED toolkit <name>, PAUSED <why>, PR <full url> [merged <base> conflicts: <files or none>], DONE <NN> <sha>... <line>, DONE review-ready <sha>, DONE merged <base> <sha> conflicts: <files or none>, DONE pass <PR url or head> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE findings <path> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE gate <key=value>..., DONE <report>, FAILED <why>, INJECTION <where> <what it asked>"
+  local forms="QUESTION <text>, BLOCKED <what> <why>, BLOCKED <what> <why>; took its allowed way [<way>], NEED toolkit <name>, PAUSED <why>, PR <full url> [merged <base> conflicts: <files or none>], DONE <NN> <sha>... <line>, DONE review-ready <sha>, DONE merged <base> <sha> conflicts: <files or none>, DONE pass <PR url or head> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE findings <path> findings=<kind:n,...> [before=<list>] guarded=<list> [widening=<list>] [memory=<path>], DONE gate <key=value>..., DONE <report>, FAILED <why>, INJECTION <where> <what it asked>"
   refuses_message "team-log: cannot read 'T7 HELLO there': expected one of $forms" --from-message 'T7 HELLO there'
   refuses_message "team-log: cannot read 'T7 QUESTION': expected one of $forms" --from-message 'T7 QUESTION'
   # Malformed parts of a review, each named.
