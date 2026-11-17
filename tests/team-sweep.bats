@@ -2809,36 +2809,69 @@ exec "$(command -pv sleep)" 30
 SH
 }
 
-# sweep_ended_by_term <args>...: run team-sweep <args> in the background until its look waits on
-# the hanging team-assistant, end it with TERM, and check it ended by the signal and left nothing
-# under its TMPDIR. The sweep's end sends TERM to the hung team-assistant; the test stops it by its
-# pid too, should it still run.
+# A python3 that runs session-activity as a reader that hangs, its pid in
+# $STUB_FIXTURES/activity.pid, and every other script as itself, so a look stands waiting on its
+# activity.
+hanging_activity() {
+  local python
+  python=$(command -v python3)
+  stub_command python3
+  stub_script python3 <<EOF
+if [[ \${2:-} == */session-activity ]]; then
+  echo "\$\$" >"\$STUB_FIXTURES/activity.pid.new"
+  mv "\$STUB_FIXTURES/activity.pid.new" "\$STUB_FIXTURES/activity.pid"
+  exec "\$(command -pv sleep)" 30
+fi
+exec "$python" "\$@"
+EOF
+}
+
+# sweep_ended_by_term <pid file> <args>...: run team-sweep <args> in the background until its look
+# waits on the hanging command whose pid is in <pid file>, end it with TERM, and check it ended by
+# the signal, that its end ended the hung command too, so nothing of the run still writes, and
+# that it left nothing under its TMPDIR, then or once the test has stopped what it started.
 sweep_ended_by_term() {
-  local sweep tries=0 code=0
-  rm -f "$STUB_FIXTURES/assistant.pid"
+  local pid_file=$1 sweep tries=0 code=0 hung
+  shift
+  rm -f "$pid_file"
   guard_sandbox
   "$CODE_CHECKOUT/bin/team-sweep" "$@" >"$BATS_TEST_TMPDIR/sweep.out" 2>&1 3>&- &
   sweep=$!
-  until [[ -e $STUB_FIXTURES/assistant.pid ]]; do
+  until [[ -e $pid_file ]]; do
     if ((++tries == 100)); then
       kill "$sweep" 2>/dev/null || true
-      echo "team-sweep $* never asked team-assistant for its list" >&2
+      echo "team-sweep${*:+ $*} never started the command that writes ${pid_file##*/}" >&2
       return 1
     fi
     sleep 0.1
   done
   kill -TERM "$sweep"
   wait "$sweep" || code=$?
-  kill "$(cat "$STUB_FIXTURES/assistant.pid")" 2>/dev/null || true
+  hung=$(cat "$pid_file")
+  if kill -0 "$hung" 2>/dev/null; then
+    kill "$hung" 2>/dev/null || true
+    echo "team-sweep${*:+ $*} ended by TERM and left the command that wrote ${pid_file##*/} running" >&2
+    return 1
+  fi
   assert_equal "$code" 143
   assert_equal "$(find "$TMPDIR" -mindepth 1)" ""
 }
 
 @test "a text look, a --json look and a --wait ended by TERM leave no file under their TMPDIR" {
   hanging_handoffs
-  sweep_ended_by_term
-  sweep_ended_by_term --json
-  sweep_ended_by_term --wait
+  sweep_ended_by_term "$STUB_FIXTURES/assistant.pid"
+  sweep_ended_by_term "$STUB_FIXTURES/assistant.pid" --json
+  sweep_ended_by_term "$STUB_FIXTURES/assistant.pid" --wait
+}
+
+# The look's own reads, the activity and the registry's, run beside its views, so its end by TERM
+# ends them as it does the views, before it removes the files they write.
+@test "a look ended by TERM while session-activity reads the transcripts ends it and leaves no file under its TMPDIR, in each mode" {
+  queue_room
+  hanging_activity
+  sweep_ended_by_term "$STUB_FIXTURES/activity.pid"
+  sweep_ended_by_term "$STUB_FIXTURES/activity.pid" --json
+  sweep_ended_by_term "$STUB_FIXTURES/activity.pid" --wait
 }
 
 @test "a look that ends normally leaves no file under its TMPDIR, in each mode" {

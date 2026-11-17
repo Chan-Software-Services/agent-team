@@ -304,6 +304,10 @@ ledger=$TEAM_HOME/ledger.jsonl
 # command each runs is sent TERM, so it ends by its own traps and removes its own scratch, and each
 # view, which then ends in a moment, is waited for, so none writes into the directory while it is
 # removed. A view that has ended needs neither, and its children are no longer its own.
+# The main shell itself runs no process that writes into the directory: it makes its files with
+# run_file, which forks nothing, and every read that writes one (a view, the activity, the
+# registry's) runs as a view, since a command substitution is no job, so the end could neither
+# stop it nor wait for it, and a file it made while the directory was removed would stay.
 run_tmp=$(mktemp -d)
 end_run() {
   local -a views children
@@ -317,9 +321,16 @@ end_run() {
 }
 trap end_run EXIT
 
-# A new temporary file of the run, named for what it holds: run_file <name>
+# A new empty file of the run, named for what it holds, its path in <var>: run_file <var> <name>
+# The shell makes it itself, with noclobber, so no process of the run's main shell writes into the
+# run's directory while end_run removes it.
 run_file() {
-  mktemp "$run_tmp/$1.XXXXXX"
+  local - run_file_path run_file_tries=0
+  set -C
+  until run_file_path=$run_tmp/$2.$RANDOM$RANDOM && { : >"$run_file_path"; } 2>/dev/null; do
+    ((++run_file_tries < 100)) || die "cannot make a file in $run_tmp"
+  done
+  printf -v "$1" %s "$run_file_path"
 }
 
 # The quiet time from which session-activity may read a session's transcripts: the default stall
@@ -333,7 +344,7 @@ parse_after=$(ledger_jq 'stall_limits.default' -nr)
 # still come.
 session_activity() {
   local out errors status=0 reason
-  errors=$(run_file activity.err)
+  run_file errors activity.err
   out=$("$TEAM_LIB/session-activity" --parse-after "$parse_after" <<<"$1" 2>"$errors") || status=$?
   if ((status)); then
     reason=$(grep . "$errors" | tail -n 1) || reason="session-activity failed with exit $status and no reason given"
@@ -354,7 +365,8 @@ session_activity() {
 # fails: level_plan <file>
 level_plan() {
   local out err line
-  out=$(run_file plan.out) err=$(run_file plan.err)
+  run_file out plan.out
+  run_file err plan.err
   if TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-capacity" plan --json --sessions "$1" >"$out" 2>"$err" </dev/null; then
     jq -c . "$out"
   else
@@ -374,7 +386,8 @@ HEALTH_TIMEOUT=10
 health_view() {
   local out err rc=0 line
   if ! machine_name >/dev/null 2>&1; then echo '{}'; return; fi
-  out=$(run_file health.out) err=$(run_file health.err)
+  run_file out health.out
+  run_file err health.err
   TEAM_HOME=$TEAM_HOME bounded "$HEALTH_TIMEOUT" "$(dirname "$TEAM_LIB")/team-timers" health --json >"$out" 2>"$err" </dev/null || rc=$?
   if ! jq -ce 'select(type == "object" and .schema == "team-health/1" and (.problems | type) == "array")' "$out" 2>/dev/null; then
     if ((rc == 124)); then
@@ -393,7 +406,8 @@ health_view() {
 # <args>...
 script_view() {
   local schema=$1 script=$2 out err rc=0
-  out=$(run_file "$script.out") err=$(run_file "$script.err")
+  run_file out "$script.out"
+  run_file err "$script.err"
   TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/$script" "${@:3}" >"$out" 2>"$err" </dev/null || rc=$?
   if ((rc > 1)) || ! jq -ce --arg schema "$schema" 'select(type == "object" and .schema == $schema)' "$out" 2>/dev/null; then
     error_view "$err" "$script $3 $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no $schema view"; fi)"
@@ -406,7 +420,8 @@ script_view() {
 # directory) when it fails or prints no list: handoffs_view
 handoffs_view() {
   local out err rc=0
-  out=$(run_file handoffs.out) err=$(run_file handoffs.err)
+  run_file out handoffs.out
+  run_file err handoffs.err
   TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-assistant" list --open --to coordinator --json >"$out" 2>"$err" </dev/null || rc=$?
   if ((rc)) || ! jq -ce 'select(type == "array")' "$out" 2>/dev/null; then
     error_view "$err" "team-assistant list $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no list"; fi)"
@@ -421,7 +436,7 @@ handoffs_view() {
 own_covered() {
   local found err
   if ! ledger_jq 'ledger_events | default_may_hold' -nRe "$ledger" >/dev/null; then echo '{"projects": [], "app": null}'; return; fi
-  err=$(run_file own.err)
+  run_file err own.err
   if found=$(own_projects 2>"$err"); then
     printf '%s\n' "$found"
   else
@@ -435,10 +450,10 @@ own_covered() {
 # stow plan and the live sessions' transcripts; fails with the reason on stderr when the session
 # list cannot be read, and with the sweep's exit code when its jq fails.
 look() {
-  local sessions plan activity plan_file own health plan_pid health_pid queue current due handoffs
-  local queue_pid='' current_pid='' due_pid='' handoffs_pid='' found landing rc=0
+  local sessions plan activity plan_file own health plan_pid health_pid activity_pid own_pid queue current
+  local due handoffs queue_pid='' current_pid='' due_pid='' handoffs_pid='' found landing rc=0
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
-  plan_file=$(run_file plan)
+  run_file plan_file plan
   printf '%s\n' "$sessions" >"$plan_file.sessions"
   echo null >"$plan_file.queue"
   echo null >"$plan_file.current"
@@ -458,7 +473,10 @@ look() {
     handoffs_view >"$plan_file.handoffs" &
     handoffs_pid=$!
   fi
-  activity=$(session_activity "$sessions")
+  session_activity "$sessions" >"$plan_file.activity" &
+  activity_pid=$!
+  own_covered >"$plan_file.own" &
+  own_pid=$!
   wait "$plan_pid" || true
   # The queue reads the plan just written, beside the ledger pass below.
   if [[ -d $TEAM_HOME/tasks/queued ]]; then
@@ -470,7 +488,12 @@ look() {
   health=$(cat "$plan_file.health")
   [[ -n $plan ]] || plan='{"error": "team-capacity plan printed nothing"}'
   [[ -n $health ]] || health='{"error": "team-timers health printed nothing"}'
-  own=$(own_covered)
+  wait "$activity_pid" || true
+  wait "$own_pid" || true
+  activity=$(cat "$plan_file.activity")
+  own=$(cat "$plan_file.own")
+  [[ -n $activity ]] || activity='{"error": "session-activity printed nothing"}'
+  [[ -n $own ]] || own=null
   landing=$(merge_locks_held)
   found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self; $landing)' -nRc \
     --argjson sessions "$sessions" --argjson plan "$plan" --argjson activity "$activity" --argjson own "$own" \
@@ -483,8 +506,8 @@ look() {
   current=$(cat "$plan_file.current")
   due=$(cat "$plan_file.due")
   handoffs=$(cat "$plan_file.handoffs")
-  rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.queue" "$plan_file.current" \
-    "$plan_file.due" "$plan_file.handoffs"
+  rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.activity" "$plan_file.own" \
+    "$plan_file.queue" "$plan_file.current" "$plan_file.due" "$plan_file.handoffs"
   # A failed sweep fails the look with its exit code, once its scripts are waited for and its
   # files gone: --wait calls it as a condition, where set -e stops nothing.
   ((rc == 0)) || return "$rc"
@@ -530,7 +553,7 @@ look_failure() {
 wait_for_finding() {
   local look_n=0 failing_since='' key first=1 status started changed
   local -A initial=() since=() now=()
-  err=$(run_file look.err)
+  run_file err look.err
   started=$(code_sums)
   while :; do
     if look 2>"$err"; then
