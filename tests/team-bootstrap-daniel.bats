@@ -29,6 +29,7 @@ setup() {
   # MongoDB's Database Tools go to ~/.local/bin, with no sudo.
   assert_contains "$output" "tools: running: $(download_fix mongodump linux-amd64 'sha256sum -c -' tar)"
   assert_contains "$output" "tools: running: $(download_fix mongorestore linux-amd64 'sha256sum -c -' tar)"
+  assert_contains "$output" "tools: running: $(download_fix mongoimport linux-amd64 'sha256sum -c -' tar)"
   assert_equal "$(stub_calls sudo)" ""
   [[ $output != *projects:* ]]
 }

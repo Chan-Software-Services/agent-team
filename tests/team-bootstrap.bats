@@ -86,7 +86,7 @@ done: the team home shares history with origin's dev"
   assert_equal "$(cat "$HOME/.config/agent-team/home")" "$TEAM_HOME"
   assert_equal "$(stage_lines packages)" "running: brew install 1password-cli git jq tmux gh rsync python@3.12 bash go coreutils findutils gnu-sed grep flock
 running: brew install --cask docker-desktop"
-  assert_equal "$(stage_lines tools | sed -n '1,4p;11,19p')" "running: curl -fsSL https://claude.ai/install.sh | bash -s $(lock_pin claude)
+  assert_equal "$(stage_lines tools | sed -n '1,4p;11,20p')" "running: curl -fsSL https://claude.ai/install.sh | bash -s $(lock_pin claude)
 running: curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 running: nvm install $node && nvm alias default $node
 running: npm install -g @colbymchenry/codegraph@$(lock_pin codegraph)
@@ -98,12 +98,13 @@ running: $(lock_of sccache .source.macos)
 running: $(lock_of cargo-deny .source.macos)
 running: $(download_fix mongodump darwin-arm64 'shasum -a 256 -c' unzip)
 running: $(download_fix mongorestore darwin-arm64 'shasum -a 256 -c' unzip)
+running: $(download_fix mongoimport darwin-arm64 'shasum -a 256 -c' unzip)
 running: mkdir -p ~/.no-mistakes/bin && install -m 755 $CODE_CHECKOUT/bin/lib/opencode-gate ~/.no-mistakes/bin/opencode-gate"
   assert_equal "$(cat "$STUB_CALLS/rustup-init.log")" "rustup-init -y --no-modify-path --default-toolchain none --profile minimal"
   assert_equal "$(grep -m1 config.yaml <<<"$output")" "tools: ~/.no-mistakes/config.yaml is not there: Daniel's team-secrets restore brings it (the secret no-mistakes-config), then team-bootstrap --stage tools names the wrapper in it"
   # The build: the fork cloned into a new temporary directory (<d> here), built there and installed;
   # <d> is a whole directory, so a HOME under a TMPDIR that mktemp named tmp.* keeps its path.
-  assert_equal "$(sed -E 's#[^ ]*/tmp\.[[:alnum:]]+( |/bin/no-mistakes |$)#<d>\1#g' "$STUB_CALLS/fork-build.log")" "clone -q https://github.com/chanjdaniel/no-mistakes <d>
+  assert_equal "$(sed -E 's#[^ ]*/tmp\.[[:alnum:]]+( |/bin/no-mistakes |$)#<d>\1#g' "$STUB_CALLS/fork-build.log")" "clone -q https://github.com/Chan-Software-Services/no-mistakes <d>
 git checkout -q $(lock_of no-mistakes .fork.commit)
 make build
 install -m 755 <d>/bin/no-mistakes $HOME/.no-mistakes/bin/no-mistakes"

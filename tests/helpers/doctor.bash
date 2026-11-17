@@ -34,6 +34,7 @@ declare -gA FORMAT=(
   [cargo-deny]='cargo-deny %s'
   [mongodump]=$'mongodump version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [mongorestore]=$'mongorestore version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
+  [mongoimport]=$'mongoimport version: %s\ngit version: 99fd6bc7140e31e0287a9b4ef7e03194d834c7f0\nGo version: go1.27.3'
   [op]='%s'
   [git]='git version %s'
   [jq]='jq-%s'
@@ -241,6 +242,10 @@ EOF
   tool_stub treehouse
   echo 'cat "$STUB_FIXTURES/pool.json"' >"$TOOL_ANSWERS/treehouse/status_--json.sh"
   tool_stub no-mistakes
+  # The team home's git asks gh for github.com on the owner login, as team-bootstrap sets it, with
+  # the gh version stub the doctor's command -v gh finds.
+  tool_stub gh
+  team_home_login "$TOOL_STUBS/gh"
   cat >"$TOOL_ANSWERS/no-mistakes/status.sh" <<'EOF'
 if grep -qxF "$PWD" "$STUB_FIXTURES/gates"; then
   printf '    repo:  %s\n  remote:  %s\n    gate:  %s\n  daemon:  ● running\n\n  no active run\n' \
@@ -258,6 +263,16 @@ EOF
   capacity_reading 0
   # And a good heartbeat run just ended, with its checkpoint.
   good_heartbeat_run
+}
+
+# The team home's credential.https://github.com.helper values, the owner login's for <gh>, as
+# team-bootstrap's machine stage sets them: team_home_login <gh>
+team_home_login() {
+  local key=credential.https://github.com.helper value
+  git -C "${TEAM_HOME:?}" config --local --unset-all "$key" || true
+  while IFS= read -r value; do
+    git -C "${TEAM_HOME:?}" config --local --add "$key" "$value"
+  done < <(bash -c 'source "$1/bin/lib/team.sh"; owner_git_helpers "$2"' bash "$REPO_ROOT" "$1")
 }
 
 # The health record a good heartbeat run on the holder home-pc leaves, just now, with its
