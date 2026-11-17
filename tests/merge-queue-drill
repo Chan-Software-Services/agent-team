@@ -20,9 +20,9 @@
 # it pushes one commit, "ci: the merge queue drill's base files", adding each one it lacks, and
 # prints their paths; with none lacking it changes nothing and says so. A push dev's rules refuse
 # ends it with exit 1, naming the paths and Daniel's step. Daniel keeps CodeQL's default setup off
-# and gives dev its ruleset, in the shape sops/merging.md gives a queued base: the merge queue with
-# the merge method MERGE, the required checks check and Analyze (actions) from GitHub Actions and
-# agent-review pinned to the reviewer App, and a code_scanning rule; disabled while --setup pushes.
+# and gives dev its ruleset: the merge queue with the merge method MERGE, the required checks
+# check and Analyze (actions) from GitHub Actions and agent-review pinned to the reviewer App, and
+# a code_scanning rule; disabled while --setup pushes.
 #
 # The drill itself, in order:
 #   it reads dev's rules (gh api repos/<repo>/rules/branches/dev --paginate) and stops, with nothing opened

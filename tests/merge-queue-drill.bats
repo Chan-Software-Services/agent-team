@@ -656,7 +656,7 @@ team-drill: recorded merge-queue fail on home-pc at "
 @test "a pull request still queued at the deadline has its trial commit read, where the roll-up CodeQL did not post" {
   set_up
   echo waiting >"$GH_DIR/land-9"
-  # Neither trial commit has the roll-up CodeQL, only the checks the workflows make.
+  # Neither trial commit has the roll-up CodeQL, only the workflows' checks and the App's agent-review.
   check_runs 123456 ""
   TEAM_LAND_DEADLINE_SECONDS=7 run -1 "$drill" org/scratch
   local trial

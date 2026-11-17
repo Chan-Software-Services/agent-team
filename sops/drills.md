@@ -84,7 +84,7 @@ A drill runs, for real, a path the team rests on and seldom takes: a move betwee
 - It opens and merges two real PRs in the scratch repository and posts there as the reviewer App; it touches no registered project, and refuses a repository whose `dev` lacks the drill's own file.
 - Once, before the first run:
   1. Daniel creates a public repository in the organization, `Chan-Software-Services/merge-queue-drill`, empty.
-  2. Daniel keeps CodeQL's default setup off on it, and gives `dev` a ruleset in the shape `sops/merging.md` gives a queued base, disabled for now: the merge queue with the merge method `MERGE`, no bypass actor, the required checks `check` and `Analyze (actions)` (GitHub Actions) and `agent-review` pinned to the reviewer App's id, and a `code_scanning` rule for CodeQL.
+  2. Daniel keeps CodeQL's default setup off on it, and gives `dev` a ruleset, disabled for now: the merge queue with the merge method `MERGE`, no bypass actor, the required checks `check` and `Analyze (actions)` (GitHub Actions) and `agent-review` pinned to the reviewer App's id, and a `code_scanning` rule for CodeQL.
   3. The coordinator runs `tests/merge-queue-drill --setup Chan-Software-Services/merge-queue-drill`, which pushes the base files to `dev`: a CI of one job, `check`, on `pull_request` and `merge_group`, and the drill's own CodeQL workflow, one job `Analyze (actions)`, on `pull_request`, `push` to `dev` and `merge_group`.
      On a `dev` that already holds the drill's file, it pushes one commit adding only the base files `dev` lacks, and with none lacking it changes nothing; a push the ruleset refuses ends it naming the paths, so the ruleset stays disabled until it has run.
   4. Daniel turns the ruleset on.
