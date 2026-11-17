@@ -1214,6 +1214,67 @@ sleeper_in() {
     '[7168,true]'
 }
 
+# Start team-capacity sample in the background with its memory a FIFO no one writes, and return
+# once its stack listing has ended and been reaped (no timeout child left) and its read of the
+# memory waits on the FIFO (an awk child), setting reading to the sample's pid and reader to that
+# awk's, both noted for teardown. The FIFO is $BATS_TEST_TMPDIR/meminfo.fifo.
+reading_waits_on_memory() {
+  local tries=0
+  mkfifo "$BATS_TEST_TMPDIR/meminfo.fifo"
+  export TEAM_MEMINFO=$BATS_TEST_TMPDIR/meminfo.fifo
+  guard_sandbox
+  "$REPO_ROOT/bin/team-capacity" sample >"$BATS_TEST_TMPDIR/sample.out" 2>&1 3>&- &
+  reading=$!
+  echo "$reading" >>"$BATS_TEST_TMPDIR/sleepers"
+  until reader=$(reading_child 'g?awk') && ! reading_child timeout >/dev/null; do
+    if ((++tries == 100)); then
+      echo "the reading never waited on its memory with its stack listing ended" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "$reader" >>"$BATS_TEST_TMPDIR/sleepers"
+}
+
+# The pid of the reading's child that runs <name>, an extended regular expression matched against
+# its command's whole base name, read from the processes this test started (own_pids), and fail
+# with none: reading_child <name>
+reading_child() {
+  local pids
+  pids=$(own_pids | paste -sd, -)
+  [[ -n $pids ]] || return 1
+  ps -o pid=,ppid=,comm= -p "$pids" |
+    awk -v parent="$reading" -v name="^($1)$" '$2 == parent { n = split($3, part, "/"); if (part[n] ~ name) { print $1; found = 1 } } END { exit !found }'
+}
+
+# The directories left directly under the sandbox's TMPDIR, one per line.
+tmp_dirs_left() {
+  find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d
+}
+
+@test "a reading ended by TERM, or by die, after its stack listing has ended leaves no work directory under its TMPDIR" {
+  sample_machine
+  local reading reader code=0 writer
+  reading_waits_on_memory
+  kill -TERM "$reading"
+  wait "$reading" || code=$?
+  assert_equal "$code" 143
+  assert_equal "$(tmp_dirs_left)" ""
+  # The memory's reader is left waiting, as its run ended; an open and close of the FIFO ends it.
+  exec {writer}>"$BATS_TEST_TMPDIR/meminfo.fifo"
+  exec {writer}>&-
+  rm "$BATS_TEST_TMPDIR/meminfo.fifo"
+
+  # A memory with no MemTotal fails the reading with die, its stack listing ended.
+  code=0
+  reading_waits_on_memory
+  echo "MemFree: 1 kB" >"$BATS_TEST_TMPDIR/meminfo.fifo"
+  wait "$reading" || code=$?
+  assert_equal "$code" 1
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/sample.out")" "team-capacity: no MemTotal and MemAvailable in $BATS_TEST_TMPDIR/meminfo.fifo"
+  assert_equal "$(tmp_dirs_left)" ""
+}
+
 # cost <kind> <peak MiB>...: one cost line of <kind> per peak, its peak a working set.
 cost() {
   local peak
