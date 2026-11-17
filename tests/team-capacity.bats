@@ -424,6 +424,63 @@ left T8-reviewer 4f2a9c1e: already in agent-team-T8-4f2a9c1e.scope"
   assert_contains "$(cgroup_of 101)" "agent-team-T7-heavy.scope"
 }
 
+@test "place puts a restarted session whose old scope is still loaded in a scope of its new process's own, leaving what the old scope holds there" {
+  # T7's builder's first process left a browser running in its scope; the claude daemon restarted
+  # the session as pid 100, in the Konsole tab's scope, and the old scope's name is still loaded.
+  local old
+  old=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
+  fake_process 150 1 "$old" chrome-devtools-axi bridge
+  fake_process 151 150 "$old" chrome --headless
+  echo agent-team-T7-a1b2c3d4.scope >"$STUB_FIXTURES/busctl-loaded"
+  session_tree 100
+  sessions "a1b2c3d4 T7-builder 100"
+  run_bin -0 --separate-stderr team-capacity place
+  assert_equal "$stderr" ""
+  assert_equal "$output" "placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4-100.scope (4 processes)"
+  assert_equal "$(placements)" "agent-team-T7-a1b2c3d4.scope agent-team-T7.slice 100 99 101 102
+agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice 100 99 101 102"
+  assert_equal "$(cgroup_of 100)" "$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)"
+  assert_equal "$(cgroup_of 102)" "$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)"
+  # What the old scope holds stays there, in the task's slice.
+  assert_equal "$(cgroup_of 150)" "$old"
+  assert_equal "$(cgroup_of 151)" "$old"
+
+  # Placed now, so the next heartbeat's place and a launch's place by id move nothing.
+  : >"$STUB_CALLS/busctl.log"
+  run_bin -0 team-capacity place
+  assert_equal "$output" "left T7-builder a1b2c3d4: already in agent-team-T7-a1b2c3d4-100.scope"
+  run_bin -0 team-capacity place a1b2c3d4
+  assert_equal "$output" "left T7-builder a1b2c3d4: already in agent-team-T7-a1b2c3d4-100.scope"
+  assert_equal "$(stub_calls busctl)" ""
+  # The doctor's line counts it as in its task's slice.
+  run_bin -0 team-capacity check --json
+  assert_equal "$(jq -r '.problems[].reason' <<<"$output")" "agent-team.slice is not installed"
+
+  # Restarted again while both scopes hold processes, as pid 200: its own pid's scope again.
+  rm -r "${TEAM_CGROUP_ROOT:?}/proc/100"
+  session_tree 200
+  sessions "a1b2c3d4 T7-builder 200"
+  run_bin -0 team-capacity place a1b2c3d4
+  assert_equal "$output" "placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4-200.scope (4 processes)"
+  assert_equal "$(cgroup_of 101)" "$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)"
+  assert_equal "$(cgroup_of 150)" "$old"
+}
+
+@test "place says a refusal of a restarted session's own pid's scope as any other, and once the old scope has ended uses the session's id alone" {
+  session_tree 100
+  sessions "a1b2c3d4 T7-builder 100"
+  printf '%s\n' agent-team-T7-a1b2c3d4.scope agent-team-T7-a1b2c3d4-100.scope >"$STUB_FIXTURES/busctl-loaded"
+  run_bin -1 --separate-stderr team-capacity place
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-capacity: could not place T7-builder a1b2c3d4 (pid 100) in agent-team-T7.slice: Call failed: Unit agent-team-T7-a1b2c3d4-100.scope was already loaded or has a fragment file."
+  # The old scope ended, so its name is free again.
+  rm "$STUB_FIXTURES/busctl-loaded"
+  : >"$STUB_CALLS/busctl.log"
+  run_bin -0 team-capacity place
+  assert_equal "$output" "placed T7-builder a1b2c3d4 in agent-team-T7-a1b2c3d4.scope (4 processes)"
+  assert_equal "$(placements)" "agent-team-T7-a1b2c3d4.scope agent-team-T7.slice 100 99 101 102"
+}
+
 @test "place tries once more with a fresh tree when a process ends before the call, says each session it cannot place while it places the others, and skips one whose process is gone" {
   session_tree 100
   session_tree 200
@@ -787,6 +844,32 @@ team_reading() {
       (.sessions | map(.memory / $mib))])' "$STATE_DIR/readings.jsonl")" '[["T7",0,[0]],["T9",300,[300]]]'
 }
 
+@test "sample: a session placed again in its own pid's scope uses that scope's, one in neither of its scopes its tree, and what an old scope holds is its task's" {
+  sample_machine
+  local old new
+  old=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
+  new=$(user_cgroup agent-team-T7-a1b2c3d4-100.scope agent-team-T7.slice)
+  # The browser T7's builder's first process left, in its old scope, and the restarted builder in
+  # its own pid's scope; T9's reviewer, restarted and not placed again yet, runs in neither of its
+  # scopes, so it uses its tree, not what its old scope still holds.
+  proc 150 1 1024 30 /tmp "$old"
+  proc 100 99 512 60 "$T7_WT" "$new"
+  proc 200 1 300 40 "$T9_WT" "/user.slice/user-1000.slice/session-2.scope"
+  sessions "a1b2c3d4 T7-builder 100" "b1b2c3d4 T9-reviewer 200"
+  cgroup_memory agent-team-T7.slice 1536 0
+  cgroup_memory agent-team-T7-a1b2c3d4.scope 1024 0 0 agent-team-T7.slice
+  cgroup_memory agent-team-T9-b1b2c3d4.scope 2048 0 0 agent-team-T9.slice
+  unit agent-team-T9-b1b2c3d4.scope CPUUsageNSec=900000000000
+  cgroup_memory agent-team-T7-a1b2c3d4-100.scope 512 0 0 agent-team-T7.slice
+  unit agent-team-T7-a1b2c3d4-100.scope CPUUsageNSec=60000000000
+  run_bin -0 team-capacity sample
+  assert_equal "$(jq -c --argjson mib "$MIB" '.tasks | map([.task, ((.memory - ([.stacks[].memory] | add // 0)) / $mib),
+      (.sessions | map([.id, .memory / $mib, .cpu_seconds]))])' "$STATE_DIR/readings.jsonl")" \
+    '[["T7",1536,[["a1b2c3d4",512,60]]],["T9",300,[["b1b2c3d4",300,40]]]]'
+  assert_equal "$(stub_calls systemctl)" \
+    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team.slice","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4-100.scope"]'
+}
+
 @test "sample: a task's CPU is its slice's since the newest reading and its processes' outside the slice since the snapshot" {
   sample_machine
   docker_state stats 'map(if .Name == "conventioner-2-mongodb-1" then .CPUPerc = "50.00%" else . end)'
@@ -1129,6 +1212,67 @@ sleeper_in() {
       | [($tasks.T7.memory - ([$tasks.T7.stacks[].memory] | add // 0)),
          ($tasks.T9.memory - ([$tasks.T9.stacks[].memory] | add // 0) >= $rss * 1024)]' "$STATE_DIR/readings.jsonl")" \
     '[7168,true]'
+}
+
+# Start team-capacity sample in the background with its memory a FIFO no one writes, and return
+# once its stack listing has ended and been reaped (no timeout child left) and its read of the
+# memory waits on the FIFO (an awk child), setting reading to the sample's pid and reader to that
+# awk's, both noted for teardown. The FIFO is $BATS_TEST_TMPDIR/meminfo.fifo.
+reading_waits_on_memory() {
+  local tries=0
+  mkfifo "$BATS_TEST_TMPDIR/meminfo.fifo"
+  export TEAM_MEMINFO=$BATS_TEST_TMPDIR/meminfo.fifo
+  guard_sandbox
+  "$REPO_ROOT/bin/team-capacity" sample >"$BATS_TEST_TMPDIR/sample.out" 2>&1 3>&- &
+  reading=$!
+  echo "$reading" >>"$BATS_TEST_TMPDIR/sleepers"
+  until reader=$(reading_child 'g?awk') && ! reading_child timeout >/dev/null; do
+    if ((++tries == 100)); then
+      echo "the reading never waited on its memory with its stack listing ended" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "$reader" >>"$BATS_TEST_TMPDIR/sleepers"
+}
+
+# The pid of the reading's child that runs <name>, an extended regular expression matched against
+# its command's whole base name, read from the processes this test started (own_pids), and fail
+# with none: reading_child <name>
+reading_child() {
+  local pids
+  pids=$(own_pids | paste -sd, -)
+  [[ -n $pids ]] || return 1
+  ps -o pid=,ppid=,comm= -p "$pids" |
+    awk -v parent="$reading" -v name="^($1)$" '$2 == parent { n = split($3, part, "/"); if (part[n] ~ name) { print $1; found = 1 } } END { exit !found }'
+}
+
+# The directories left directly under the sandbox's TMPDIR, one per line.
+tmp_dirs_left() {
+  find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d
+}
+
+@test "a reading ended by TERM, or by die, after its stack listing has ended leaves no work directory under its TMPDIR" {
+  sample_machine
+  local reading reader code=0 writer
+  reading_waits_on_memory
+  kill -TERM "$reading"
+  wait "$reading" || code=$?
+  assert_equal "$code" 143
+  assert_equal "$(tmp_dirs_left)" ""
+  # The memory's reader is left waiting, as its run ended; an open and close of the FIFO ends it.
+  exec {writer}>"$BATS_TEST_TMPDIR/meminfo.fifo"
+  exec {writer}>&-
+  rm "$BATS_TEST_TMPDIR/meminfo.fifo"
+
+  # A memory with no MemTotal fails the reading with die, its stack listing ended.
+  code=0
+  reading_waits_on_memory
+  echo "MemFree: 1 kB" >"$BATS_TEST_TMPDIR/meminfo.fifo"
+  wait "$reading" || code=$?
+  assert_equal "$code" 1
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/sample.out")" "team-capacity: no MemTotal and MemAvailable in $BATS_TEST_TMPDIR/meminfo.fifo"
+  assert_equal "$(tmp_dirs_left)" ""
 }
 
 # cost <kind> <peak MiB>...: one cost line of <kind> per peak, its peak a working set.

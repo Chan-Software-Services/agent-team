@@ -318,3 +318,25 @@ SH
   assert_equal "$output" "local check './flip.sh' passed on the head ${head:0:7}
 local check 'echo after' passed on the head ${head:0:7}"
 }
+
+# A check that leaves a read-only tree in its TMPDIR, as go's module cache is, and a directory it
+# may not even read or search (mode 000): the next check's fresh TMPDIR and the scratch's removal
+# at the end both take them.
+@test "a check that leaves a read-only tree in its TMPDIR leaves no scratch behind, passed or failed, nor a worktree" {
+  local tree='mkdir -p "$TMPDIR/mod/cache" "$TMPDIR/locked/x" && echo x >"$TMPDIR/mod/cache/f" && chmod -R a-w "$TMPDIR/mod" && chmod 000 "$TMPDIR/locked"' left
+  local expected
+  for expected in 0 1; do
+    if ((expected == 0)); then
+      registry "['$tree', '$tree']"
+    else
+      registry "['$tree', '$tree && exit 4']"
+    fi
+    run_bin --separate-stderr team-checks proj "$head" --from "$primary"
+    left=$(find "$TMPDIR" -maxdepth 1 -name 'team-checks.*')
+    find "$TMPDIR" -maxdepth 1 -name 'team-checks.*' -exec chmod -R u+rwX {} +
+    assert_equal "$status" "$expected"
+    assert_equal "$left" ""
+    assert_equal "$(grep -c ' passed on the head ' <<<"$output")" $((2 - expected))
+    assert_equal "$(proj_worktrees)" "$primary"
+  done
+}

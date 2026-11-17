@@ -219,6 +219,7 @@ It holds:
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.
 - Tests run the real scripts in a sandbox (`load helpers/common`, then `sandbox` in `setup`): `TEAM_HOME` and `HOME` are temporary, `claude`, `gh`, `curl`, `op`, `systemctl`, `launchctl`, `busctl` and `systemd-run` are stubs, and git is real.
+  The sandbox's `TMPDIR` is the test's own `$BATS_TEST_TMPDIR/tmp`, so every script under test and every inner bats makes its temporary files where bats removes them, and a test run leaves nothing in `/tmp`.
   The sandbox's `TEAM_CGROUP_ROOT` holds the cgroup tree and `/proc` that `team-capacity place` and `check` read, empty until a test writes them, so no test moves the machine's processes; `team-capacity sample` reads the machine through its seams, which the sandbox sets to an idle one (`TEAM_MEMINFO` 24 GiB available of 32, `TEAM_READING_PROCS` no process, `TEAM_READING_CPUS` 12) and a test may rewrite or unset.
   The sandbox's `TEAM_SYSTEM_ROOT` puts the library's system tool directories (treehouse's `/usr/local/bin` on Arch) inside it, so a PATH a test trims never gets the machine's own tools back on it.
   It also stands for `/` in the session tmp `team-close` and `team-load-check` remove, `/tmp/agent-team-T<n>`, so no test removes a live task's.

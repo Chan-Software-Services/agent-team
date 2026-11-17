@@ -570,8 +570,9 @@ TOML
 
 # The library's file reasons for PR #5 of proj, one per line: file_reasons
 file_reasons() {
-  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh"; dir=$(mktemp -d)
-    pr_file_reasons "$dir" proj owner/proj 5 "$2"; printf "%s\n" "${PR_FILE_REASONS[@]}"' _ "${CODE_CHECKOUT:-$REPO_ROOT}" "$(jq length "$gh_dir/files.json")"
+  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh"; dir=$(mktemp -d "$3/files.XXXXXX")
+    pr_file_reasons "$dir" proj owner/proj 5 "$2"; printf "%s\n" "${PR_FILE_REASONS[@]}"' _ "${CODE_CHECKOUT:-$REPO_ROOT}" \
+    "$(jq length "$gh_dir/files.json")" "$BATS_TEST_TMPDIR"
 }
 
 @test "an agent-team PR's file reasons name its critical list as guardrails, and its other code, docs and tests match nothing" {

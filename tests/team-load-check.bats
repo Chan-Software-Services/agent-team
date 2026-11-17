@@ -1681,6 +1681,8 @@ assistant    39005       4               5            0"
   assert_contains "$argv" "$HOME/.local/state/agent-team/assistant-load-check.settings.json"
   assert_contains "$argv" "$REPO_ROOT/roles/assistant.md"
   [[ $argv != *--channels* ]]
+  # Remote Control off, so the run leaves no row in Daniel's Remote Control list.
+  assert_equal "$(jq -c .remoteControlAtStartup "$HOME/.local/state/agent-team/assistant-load-check.settings.json")" false
   [[ $output != *planner* && $output != *builder* ]]
   assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" 4d4d4d4d
   assert_equal "${lines[-1]}" PASS
