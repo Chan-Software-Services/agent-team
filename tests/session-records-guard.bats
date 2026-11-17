@@ -1,18 +1,23 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2154,SC2088 # output and stderr are set by bats' run; a ~ is part of a path as an agent types it
-# hooks/session-records-guard: the worker roles' PreToolUse hook on Read, Grep and Glob, which
-# lets a session reach, under ~/.claude/projects, only its own transcript and session directory,
-# and under Claude Code's temporary directory only its own session directory.
+# shellcheck disable=SC2154,SC2088,SC2030,SC2031 # output and stderr are set by bats' run; a ~ is part of a path as an agent types it; each test is a subshell of its own, so what one sets is its own
+# hooks/session-records-guard on Read, Grep and Glob: of the session-record places its table
+# (bin/lib/session_records.py) lists, a session reaches only its own entry in a place keyed by its
+# session or job id (~/.claude/projects, Claude Code's temporary directory, ~/.claude/jobs, tasks
+# and session-env), and none of a place that holds every session's records (~/.claude/transcripts,
+# history.jsonl, paste-cache, sessions, daemon, daemon.log, file-history and the CLI cache).
 # Each test runs the real hook with a PreToolUse JSON on stdin, as Claude Code does.
 
 load helpers/common
 
 OWN=1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
 OTHER=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+# The job directories of the two sessions, each named by its session id's first 8 characters.
+JOB=${OWN:0:8}
+OTHER_JOB=${OTHER:0:8}
 
 setup() {
   sandbox
-  unset CLAUDE_CONFIG_DIR SESSION_RECORDS_FOLD_CASE TMP TEMP
+  unset CLAUDE_CONFIG_DIR CLAUDE_JOB_DIR SESSION_RECORDS_FOLD_CASE TMP TEMP
   # Claude Code's temporary directory, pinned inside the sandbox: its per-user root is $temp.
   export CLAUDE_CODE_TMPDIR=$HOME/tmp
   temp=$CLAUDE_CODE_TMPDIR/claude-$(id -u)
@@ -75,6 +80,35 @@ others_temp() {
 others_in() {
   assert_equal "$output" ""
   assert_equal "$stderr" "Blocked by session-records-guard: $2 of $3: under $1 a session reads only what lies under its own session directory, and this is another session's."
+}
+
+# owned_by <name> <owns> <tool> <path>: the last call was refused as a reach into another
+# session's entry of the place shown as <name>, where a session reads only <owns>.
+owned_by() {
+  assert_equal "$output" ""
+  assert_equal "$stderr" "Blocked by session-records-guard: $3 of $4: under $1 a session reads only $2, and this is another session's."
+}
+
+# whole <name> <tool> <path>: the last call was refused as a reach into the place shown as <name>,
+# which holds every session's records.
+whole() {
+  assert_equal "$output" ""
+  assert_equal "$stderr" "Blocked by session-records-guard: $2 of $3: $1 holds every session's records, and a worker session reads none of it."
+}
+
+# The keyed places this table adds, each as <dir name>:<what a session owns there>, and the
+# places refused whole under the config directory; the CLI cache's two paths are under $HOME.
+KEYED=("jobs:what lies in its own job directory" "tasks:its own task list" "session-env:its own environment files")
+WHOLE=(transcripts history.jsonl paste-cache sessions daemon daemon.log file-history)
+CACHES=(.cache/claude-cli-nodejs Library/Caches/claude-cli-nodejs)
+
+# own_entry <dir name>: the name of the session's own entry in that keyed place, and
+# other_entry <dir name> another session's.
+own_entry() {
+  if [[ $1 == jobs ]]; then echo "$JOB"; else echo "$OWN"; fi
+}
+other_entry() {
+  if [[ $1 == jobs ]]; then echo "$OTHER_JOB"; else echo "$OTHER"; fi
 }
 
 # unreadable: the last call was refused as input the hook cannot read.
@@ -381,6 +415,250 @@ unreadable() {
   allowed
 }
 
+@test "under ~/.claude/jobs, tasks and session-env a session reaches only its own entry, for each of the three tools" {
+  local entry place owns dir own other path tool
+  for entry in "${KEYED[@]}"; do
+    place=${entry%%:*} owns=${entry#*:} dir=$HOME/.claude/$place
+    own=$(own_entry "$place") other=$(other_entry "$place")
+    mkdir -p "$dir/$own/sub" "$dir/$other"
+    for path in "$dir/$own" "$dir/$own/state.json" "$dir/$own/sub/x.json"; do
+      for tool in read_file grep_in glob_in; do
+        "$tool" -0 "$path"
+        allowed
+      done
+    done
+    # Another session's entry, a file of the place's own, a near name and the full id where the
+    # place keys by its prefix are all another session's.
+    for path in "$dir/$other" "$dir/$other/state.json" "$dir/pins.json" "$dir/${own}x/state.json" \
+      "$dir/${own:0:7}/state.json"; do
+      read_file -2 "$path"
+      owned_by "~/.claude/$place" "$owns" Read "$path"
+      grep_in -2 "$path"
+      owned_by "~/.claude/$place" "$owns" Grep "$path"
+      glob_in -2 "$path"
+      owned_by "~/.claude/$place" "$owns" Glob "$path"
+    done
+  done
+  read_file -2 "$HOME/.claude/jobs/$OWN/state.json"
+  owned_by "~/.claude/jobs" "what lies in its own job directory" Read "$HOME/.claude/jobs/$OWN/state.json"
+}
+
+@test "the own job directory is the one the session id's first 8 characters name, or the one CLAUDE_JOB_DIR names directly in the jobs directory, and no other" {
+  local jobs=$HOME/.claude/jobs dir owns="what lies in its own job directory"
+  mkdir -p "$jobs/f74584cf/tmp" "$jobs/$JOB" "$jobs/$OTHER_JOB/tmp" "$HOME/elsewhere/$OTHER_JOB"
+  export CLAUDE_JOB_DIR=$jobs/f74584cf
+  read_file -0 "$jobs/f74584cf/tmp/notes.txt"
+  allowed
+  grep_in -0 "$jobs/f74584cf"
+  allowed
+  glob_in -0 "$jobs/f74584cf/tmp"
+  allowed
+  read_file -0 "$jobs/$JOB/state.json"
+  allowed
+  read_file -2 "$jobs/$OTHER_JOB/state.json"
+  owned_by "~/.claude/jobs" "$owns" Read "$jobs/$OTHER_JOB/state.json"
+  # A CLAUDE_JOB_DIR anywhere but directly in the jobs directory owns nothing there.
+  for dir in "$HOME/elsewhere/$OTHER_JOB" "$jobs/$OTHER_JOB/tmp" "$jobs" "$HOME/.claude"; do
+    CLAUDE_JOB_DIR=$dir read_file -2 "$jobs/$OTHER_JOB/state.json"
+    owned_by "~/.claude/jobs" "$owns" Read "$jobs/$OTHER_JOB/state.json"
+    CLAUDE_JOB_DIR=$dir read_file -2 "$jobs/tmp/x"
+    owned_by "~/.claude/jobs" "$owns" Read "$jobs/tmp/x"
+    CLAUDE_JOB_DIR=$dir read_file -2 "$jobs/jobs/x"
+    CLAUDE_JOB_DIR=$dir read_file -2 "$jobs/.claude/x"
+  done
+}
+
+@test "a session id that is empty, missing or no UUID owns nothing under jobs, tasks or session-env, CLAUDE_JOB_DIR's directory included" {
+  local session entry place dir
+  export CLAUDE_JOB_DIR=$HOME/.claude/jobs/$JOB
+  for session in "" - team-doctor "${OWN^^}" "$OWN " "h${OWN:1}"; do
+    for entry in "${KEYED[@]}"; do
+      place=${entry%%:*} dir=$HOME/.claude/$place/$(own_entry "$place")
+      read_file -2 "$dir/state.json"
+      owned_by "~/.claude/$place" "${entry#*:}" Read "$dir/state.json"
+      grep_in -2 "$dir"
+    done
+    read_file -2 "$HOME/.claude/jobs/${session:0:8}/state.json"
+  done
+}
+
+@test "each place that holds every session's records is refused whole, itself and what lies under it, for each of the three tools, whatever the session id" {
+  local place name path tool session
+  for place in "${WHOLE[@]/#/.claude/}" "${CACHES[@]}"; do
+    name="~/$place"
+    for session in "$OWN" - team-doctor; do
+      for path in "$HOME/$place" "$HOME/$place/$OWN.jsonl" "$HOME/$place/$OWN/x" "$HOME/$place/x/y.txt"; do
+        read_file -2 "$path"
+        whole "$name" Read "$path"
+        grep_in -2 "$path"
+        whole "$name" Grep "$path"
+        glob_in -2 "$path"
+        whole "$name" Glob "$path"
+      done
+    done
+  done
+}
+
+@test "a Grep or Glob rooted at jobs, tasks or session-env is refused as too wide, naming it, and a Read there fails by itself" {
+  local entry dir name
+  for entry in "${KEYED[@]}"; do
+    dir=$HOME/.claude/${entry%%:*} name="~/.claude/${entry%%:*}"
+    mkdir -p "$dir"
+    grep_in -2 "$dir"
+    wide Grep "$dir" "$name"
+    glob_in -2 "$dir"
+    wide Glob "$dir" "$name"
+    call -2 Grep '{"pattern": "x"}' "$dir"
+    wide Grep "$dir" "$name"
+    read_file -0 "$dir"
+    allowed
+  done
+  # The config directory and above name the projects directory, the first place in the table.
+  for dir in "$HOME/.claude" "~/.claude" "$HOME"; do
+    grep_in -2 "$dir"
+    wide Grep "$dir"
+  done
+  # A directory above the CLI cache alone names it.
+  grep_in -2 "$HOME/.cache"
+  wide Grep "$HOME/.cache" "~/.cache/claude-cli-nodejs"
+  glob_in -2 "$HOME/Library"
+  wide Glob "$HOME/Library" "~/Library/Caches/claude-cli-nodejs"
+}
+
+@test "a Glob whose absolute or ~ pattern starts in jobs, tasks, session-env or a place refused whole is refused by its literal start" {
+  local pattern place
+  for place in jobs tasks session-env; do
+    for pattern in "~/.claude/$place/*/state.json" "$HOME/.claude/$place/**" "$HOME/.claude/$place" "$HOME/.claude/$place/[a-f]*/x"; do
+      call -2 Glob "$(jq -cn --arg p "$pattern" '{pattern: $p}')"
+      wide Glob "$pattern" "~/.claude/$place"
+    done
+  done
+  for pattern in "~/.claude/jobs/$OTHER_JOB/**" "$HOME/.claude/jobs/$OTHER_JOB/tmp/[a-f]*"; do
+    call -2 Glob "$(jq -cn --arg p "$pattern" '{pattern: $p}')"
+    owned_by "~/.claude/jobs" "what lies in its own job directory" Glob "$pattern"
+  done
+  call -2 Glob "$(jq -cn --arg p "~/.claude/tasks/$OTHER/*.json" '{pattern: $p}')"
+  owned_by "~/.claude/tasks" "its own task list" Glob "~/.claude/tasks/$OTHER/*.json"
+  for place in "${WHOLE[@]}"; do
+    for pattern in "~/.claude/$place/*.jsonl" "$HOME/.claude/$place/$OWN/**" "~/.claude/$place"; do
+      call -2 Glob "$(jq -cn --arg p "$pattern" '{pattern: $p}')"
+      whole "~/.claude/$place" Glob "$pattern"
+    done
+  done
+  call -2 Glob "$(jq -cn --arg p "~/.cache/claude-cli-nodejs/*/mcp-logs-*" '{pattern: $p}')"
+  whole "~/.cache/claude-cli-nodejs" Glob "~/.cache/claude-cli-nodejs/*/mcp-logs-*"
+  # The session's own passes.
+  for pattern in "~/.claude/jobs/$JOB/**" "$HOME/.claude/tasks/$OWN/*.json" "~/.claude/session-env/$OWN/*"; do
+    call -0 Glob "$(jq -cn --arg p "$pattern" '{pattern: $p}')"
+    allowed
+  done
+}
+
+@test "a path into jobs or a place refused whole is refused however it is spelled: ~, relative, .., a symlink, another case on a folding volume" {
+  local jobs=$HOME/.claude/jobs owns="what lies in its own job directory" transcripts=$HOME/.claude/transcripts
+  mkdir -p "$jobs/$JOB/tmp" "$jobs/$OTHER_JOB/tmp" "$transcripts"
+  read_file -2 "~/.claude/jobs/$OTHER_JOB/state.json"
+  owned_by "~/.claude/jobs" "$owns" Read "~/.claude/jobs/$OTHER_JOB/state.json"
+  read_file -2 "~/.claude/transcripts/x.jsonl"
+  whole "~/.claude/transcripts" Read "~/.claude/transcripts/x.jsonl"
+  # Relative to a working directory in the session's own job directory.
+  read_file -2 "../$OTHER_JOB/state.json" "$jobs/$JOB"
+  owned_by "~/.claude/jobs" "$owns" Read "../$OTHER_JOB/state.json"
+  read_file -2 "../../transcripts/x.jsonl" "$jobs/$JOB"
+  whole "~/.claude/transcripts" Read "../../transcripts/x.jsonl"
+  read_file -2 "$jobs/$JOB/../$OTHER_JOB/tmp/x"
+  owned_by "~/.claude/jobs" "$owns" Read "$jobs/$JOB/../$OTHER_JOB/tmp/x"
+  ln -s "$jobs/$OTHER_JOB" "$wt/their-job"
+  read_file -2 "$wt/their-job/state.json"
+  owned_by "~/.claude/jobs" "$owns" Read "$wt/their-job/state.json"
+  grep_in -2 "$wt/their-job"
+  owned_by "~/.claude/jobs" "$owns" Grep "$wt/their-job"
+  ln -s "$transcripts" "$wt/talk"
+  glob_in -2 "$wt/talk"
+  whole "~/.claude/transcripts" Glob "$wt/talk"
+  # The session's own, reached the same ways, passes.
+  read_file -0 "~/.claude/jobs/$JOB/tmp/x"
+  allowed
+  read_file -0 "tmp/x" "$jobs/$JOB"
+  allowed
+  ln -s "$jobs/$JOB/tmp" "$wt/scratch"
+  grep_in -0 "$wt/scratch"
+  allowed
+  # On a volume that folds case, another case names the same place.
+  export SESSION_RECORDS_FOLD_CASE=1
+  read_file -2 "$HOME/.claude/Jobs/${OTHER_JOB^^}/state.json"
+  owned_by "~/.claude/jobs" "$owns" Read "$HOME/.claude/Jobs/${OTHER_JOB^^}/state.json"
+  read_file -2 "$HOME/.CLAUDE/Transcripts/x.jsonl"
+  whole "~/.claude/transcripts" Read "$HOME/.CLAUDE/Transcripts/x.jsonl"
+  read_file -2 "$HOME/.claude/HISTORY.JSONL"
+  whole "~/.claude/history.jsonl" Read "$HOME/.claude/HISTORY.JSONL"
+  read_file -0 "$HOME/.claude/JOBS/${JOB^^}/state.json"
+  allowed
+  unset SESSION_RECORDS_FOLD_CASE
+  # A jobs directory that is itself a symlink is guarded by where it leads.
+  mv "$jobs" "$HOME/store-jobs"
+  ln -s "$HOME/store-jobs" "$jobs"
+  read_file -2 "$HOME/store-jobs/$OTHER_JOB/state.json"
+  owned_by "~/.claude/jobs" "$owns" Read "$HOME/store-jobs/$OTHER_JOB/state.json"
+  read_file -0 "$HOME/store-jobs/$JOB/state.json"
+  allowed
+}
+
+@test "a neighbour of each place passes for each of the three tools: shell-snapshots, backups, skills and files of the config directory that are no place" {
+  local path tool
+  for path in "$HOME/.claude/shell-snapshots/snapshot-bash-1.sh" "$HOME/.claude/backups/x.json" \
+    "$HOME/.claude/skills/x/SKILL.md" "$HOME/.claude/settings.json" "$HOME/.claude/daemon.status.json" \
+    "$HOME/.claude/history.jsonl.bak" "$HOME/.claude/jobs-old/x" "$HOME/.claude/tasks.md" "$HOME/.claude/daemon.log.1" \
+    "$HOME/.cache/other/x" "$HOME/.cache/claude-cli-nodejs-old/x" "$HOME/Library/Caches/other"; do
+    for tool in read_file grep_in glob_in; do
+      "$tool" -0 "$path"
+      allowed
+    done
+  done
+}
+
+@test "the config directory's places move with CLAUDE_CONFIG_DIR, and the CLI cache stays under the home directory" {
+  local config=$HOME/config
+  mkdir -p "$config/jobs/$JOB" "$config/jobs/f74584cf"
+  export CLAUDE_CONFIG_DIR=$config
+  read_file -2 "$config/jobs/$OTHER_JOB/state.json"
+  owned_by "~/.claude/jobs" "what lies in its own job directory" Read "$config/jobs/$OTHER_JOB/state.json"
+  read_file -0 "$config/jobs/$JOB/state.json"
+  allowed
+  CLAUDE_JOB_DIR=$config/jobs/f74584cf read_file -0 "$config/jobs/f74584cf/tmp/x"
+  allowed
+  read_file -2 "$config/tasks/$OTHER/1.json"
+  owned_by "~/.claude/tasks" "its own task list" Read "$config/tasks/$OTHER/1.json"
+  read_file -2 "$config/history.jsonl"
+  whole "~/.claude/history.jsonl" Read "$config/history.jsonl"
+  grep_in -2 "$config/session-env"
+  wide Grep "$config/session-env" "~/.claude/session-env"
+  # ~/.claude's are then no session's records, and the CLI cache is where it was.
+  read_file -0 "$HOME/.claude/jobs/$OTHER_JOB/state.json"
+  allowed
+  read_file -0 "$HOME/.claude/history.jsonl"
+  allowed
+  read_file -2 "$HOME/.cache/claude-cli-nodejs/x/mcp-logs-y/1.txt"
+  whole "~/.cache/claude-cli-nodejs" Read "$HOME/.cache/claude-cli-nodejs/x/mcp-logs-y/1.txt"
+}
+
+@test "a failure of the table's module blocks the call, naming its last line, and so does output that holds no reason" {
+  export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+  # The shared hard link is replaced, never written through.
+  local module=$CODE_CHECKOUT/bin/lib/session_records.py
+  printf 'import sys\nsys.stderr.write("session_records.py: RuntimeError: boom\\n")\nsys.exit(1)\n' >"$module.new"
+  mv -f "$module.new" "$module"
+  read_file -2 "$wt/src/main.sh"
+  assert_equal "$stderr" "Blocked by session-records-guard: it could not read the call (bin/lib/session_records.py: session_records.py: RuntimeError: boom), and a guard that cannot decide refuses."
+  call -2 Edit "$(jq -cn --arg p "$wt/src/main.sh" '{file_path: $p}')"
+  printf 'print(%s)\n' "'{\"rule\": \"x\"}'" >"$module.new"
+  mv -f "$module.new" "$module"
+  read_file -2 "$wt/src/main.sh"
+  assert_equal "$stderr" 'Blocked by session-records-guard: it could not read the call (bin/lib/session_records.py: {"rule": "x"}), and a guard that cannot decide refuses.'
+}
+
 @test "input the hook cannot read is refused: no JSON, no tool_name, a Read with no file_path, a path that is no string" {
   local input
   for input in 'not json' '' '[]' '"Read"' '{}' '{"tool_name": 7}' '{"tool_name": "Read"}' \
@@ -418,4 +696,5 @@ unreadable() {
   run_bin -0 hooks/session-records-guard --help
   assert_contains "$output" "Usage: session-records-guard"
   assert_contains "$output" "reaches only its own. Exit 2 blocks the call"
+  assert_contains "$output" "One table, bin/lib/session_records.py's, lists every session-record place"
 }
