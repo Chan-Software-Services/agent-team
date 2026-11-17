@@ -1057,21 +1057,52 @@ def live_session($session; $sessions):
     $sessions | map(select(.id == $session or ((.sessionId // "") | startswith($session)))) | first
   else null end;
 
+# Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
+# task's events after that launch: a pr follows it, and after the latest one come only launches of
+# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
+# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
+# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
+# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
+# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
+# work again; a denied (the worker went past the denial) and a walk-note (Daniel spoke, the worker
+# did not) are neither, and are read as if not there.
+def delivered($launch):
+  def effect: lifecycle_table.kinds[.event // ""].effect // null;
+  $launch.role == "builder" and ($launch.ticket | type) != "string"
+  and (map(select(.event | IN("denied", "walk-note") | not)) | (map(.event == "pr") | rindex(true)) as $pr
+    | $pr != null
+      and (.[$pr + 1:] as $after
+        | all(range($after | length); . as $k | $after[$k]
+            | if .event == "launch" then .role == "reviewer"
+              elif effect == "park" then .session != $launch.session
+              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
+              else (.session | type) == "string" and .session != $launch.session end)));
+
+# Whether a live session (an entry of claude agents --json) waits for input, given whether its
+# launch's builder delivered ($delivered, delivered's): its state is blocked, but for a builder
+# that delivered with no dialog open (its status idle, no waitingFor), since Claude Code also
+# calls a session blocked when its last turn's summary says it waits on someone, as a builder's
+# does after its PR ("awaiting the merge word"). The sweep's waiting-input (task_findings) and
+# the launcher's stop of finished sessions (launch_states) both read it, so they cannot differ.
+def waits_for_input($delivered):
+  .state == "blocked" and ((.status == "idle" and .waitingFor == null and $delivered) | not);
+
 # The task's launches whose sessions a new launch of <role> may stop, over its events as an array,
-# each {session, role, worktree (local_path's), stowed, handed_on}; <role> "" stands for no new
-# launch (the heartbeat's stow plan, over every open task). They are every planner and reviewer,
-# and every builder when the new worker is a builder (team-worker keeps those of its own worktree,
-# one builder holding a worktree's work at a time), or with no new launch every builder that a
-# later logged builder launch of its worktree follows, and every ticket builder (a launch with a
-# ticket) that its ticket's ticket-done follows. Handed on is a launch the ledger follows with a
-# done of its session, or for a builder what else ends it (ends_launch: its ticket's ticket-done
-# for a ticket builder, else a pr or any ticket-done), or with a paused whose cause
-# is stow (park_cause: "stowed", "stowed, handoff written") and then a logged launch of its role
-# and worktree (a stow carries no session, so it
-# hands on only to the fresh worker that resumes the work, and a resumed does not undo it);
-# stowed is whether such a paused follows it, so team-worker can count itself as that fresh
-# worker. Any other paused is a wait the worker comes back from, and a review carries no session,
-# so a reviewer is handed on by the done logged beside its review.
+# each {session, role, worktree (local_path's), stowed, delivered, handed_on}; <role> "" stands
+# for no new launch (the heartbeat's stow plan, over every open task). delivered is whether a
+# builder's launch delivered with nothing asked of it since (delivered's), which launch_states
+# reads. They are every planner and reviewer, and every builder when the new worker is a builder
+# (team-worker keeps those of its own worktree, one builder holding a worktree's work at a time),
+# or with no new launch every builder that a later logged builder launch of its worktree follows,
+# and every ticket builder (a launch with a ticket) that its ticket's ticket-done follows. Handed
+# on is a launch the ledger follows with a done of its session, or for a builder what else ends it
+# (ends_launch: its ticket's ticket-done for a ticket builder, else a pr or any ticket-done), or
+# with a paused whose cause is stow (park_cause: "stowed", "stowed, handoff written") and then a
+# logged launch of its role and worktree (a stow carries no session, so it hands on only to the
+# fresh worker that resumes the work, and a resumed does not undo it); stowed is whether such a
+# paused follows it, so team-worker can count itself as that fresh worker. Any other paused is a
+# wait the worker comes back from, and a review carries no session, so a reviewer is handed on by
+# the done logged beside its review.
 def handed_on_launches($role; $home):
   . as $events
   | [to_entries[] | .key as $i | .value
@@ -1084,23 +1115,25 @@ def handed_on_launches($role; $home):
                    or ($l.ticket != null and .event == "ticket-done" and .ticket == $l.ticket))
                  else $role == "builder" end))
      | [range($i + 1; $events | length) | select($events[.] | .event == "paused" and park_cause == "stow")] as $stows
-     | {session, role, worktree: $wt, stowed: ($stows != []),
+     | {session, role, worktree: $wt, stowed: ($stows != []), delivered: ($events[$i + 1:] | delivered($l)),
         handed_on: (any($events[$i + 1:][]; (.event == "done" and .session == $l.session)
             or ($l.role == "builder" and .event != "done" and ends_launch($l)))
           or any($stows[] as $k | $events[$k + 1:][]; .event == "launch" and .role == $l.role
             and (.worktree | local_path($home)) == $wt))}];
 
 # The live sessions of handed_on_launches' launches, given the session list <sessions>, each
-# {session, role, worktree, state, handed_on}: state "busy", "waiting for input", "no status",
+# {session, role, worktree, state, handed_on}: state "busy", "waiting for input" (waits_for_input,
+# as the sweep reads it, so a builder idle after the pr it delivered is not), "no status",
 # "status <its status>" for one that is not idle, "handed-on" for an idle one whose work is handed
 # on (the one to stop), "stowed" for an idle one a stow followed, else "idle with no event of its
 # own since its launch"; handed_on is the launch's, whatever its state, so team-worker can wait
 # for a busy one whose work is handed on.
 def launch_states($sessions):
   [.[] | live_session(.session; $sessions) as $live | select($live != null)
+   | .delivered as $delivered
    | {session, role, worktree, handed_on,
       state: (if $live.status == "busy" then "busy"
-              elif $live.state == "blocked" then "waiting for input"
+              elif $live | waits_for_input($delivered) then "waiting for input"
               elif $live.status == null then "no status"
               elif $live.status != "idle" then "status \($live.status)"
               elif .handed_on then "handed-on"
@@ -1278,16 +1311,99 @@ def reviewed_head_by($head; match):
 def reviewed_head($head): reviewed_head_by($head; same_head(.[0]; .[1]));
 def exact_reviewed_head($head): reviewed_head_by($head; exact_head(.[0]; .[1]));
 
-# How a base branch's protection, as GitHub's branches API answers it (the branch's JSON as
-# input), fails to hold the reviewer App $app's check, each one object, none when it holds:
-# {kind: "pin"} when no required check agent-review is pinned to the App's id (a context in
-# contexts alone is a commit status's, met by any token), and {kind: "admins", level} when its
-# required checks are enforced for less than everyone, so an administrator could merge past them.
-# team-merge's default word and team-doctor's review app line both read the pin through it.
+# A base's rules, from GitHub's answers for it: the branch's JSON as input (branches/<base>, whose
+# protection is classic protection, on unless it says enabled false), $rules the pages of rules/branches/<base>
+# (each an array of the active rulesets' rules, each with its ruleset_id), and $rulesets each
+# rulesets/<id> read for a ruleset whose rules require a check or a queue. One object, base_rules
+# in bin/lib/team.sh's output: required, each {context, app_id} of both sources, once (app_id null
+# where any source meets it: a classic context with no check, a ruleset check with no
+# integration_id); strict, whether either requires a head up to date with the base; queue, the
+# merge queue rule's parameters, or null; classic, whether classic protection is on the base;
+# bypass, whether anyone may merge past the required checks, and bypass_by, each way:
+# {protection: <level>} when classic protection requires checks for <level>, not everyone, and
+# {ruleset, name, actors} for a ruleset read with bypass actors, each "<type>[ <id>] (<mode>)",
+# actors null when the answer lists none because this token may not see them.
+def base_rules($rules; $rulesets):
+  (.protection != null and .protection.enabled != false) as $classic
+  | (if $classic then .protection.required_status_checks // {} else {} end) as $protected
+  | ($rules | add // []) as $rules
+  | [$rules[] | select(.type == "required_status_checks") | .parameters // {}] as $checks
+  | (($protected.checks // []) | map({context, app_id: (.app_id // null)})) as $pinned
+  | ([$pinned[], ($protected.contexts // [] | .[] | select(IN($pinned[].context) | not) | {context: ., app_id: null}),
+      ($checks[].required_status_checks[]? | {context, app_id: (.integration_id // null)})] | unique) as $required
+  | ((if $classic and ($pinned + ($protected.contexts // []) | length > 0) and $protected.enforcement_level != "everyone"
+      then [{protection: ($protected.enforcement_level // "no one")}] else [] end)
+     + [$rulesets[] | select(.bypass_actors != []) | {ruleset: .id, name,
+         actors: (.bypass_actors | if . == null then null
+           else map("\(.actor_type)\(if .actor_id == null then "" else " \(.actor_id)" end) (\(.bypass_mode // "always"))") end)}]) as $by
+  | {required: $required,
+     strict: ($protected.strict == true or any($checks[]; .strict_required_status_checks_policy == true)),
+     queue: (first($rules[] | select(.type == "merge_queue") | .parameters // {}) // null),
+     classic: $classic, bypass: ($by != []), bypass_by: $by};
+
+# How a base's rules, base_rules' object as input, fail to hold the reviewer App $app's check, each
+# one object, none when it holds: {kind: "pin"} when no required check agent-review is pinned to
+# the App's id (a context alone is a commit status's, met by any token); {kind: "admins", level}
+# when classic protection enforces its required checks for less than everyone, so an administrator
+# could merge past them; and {kind: "bypass", ruleset, name, actors} for each ruleset with bypass
+# actors (bypass_text says it). team-merge's default word and team-doctor's review app line both
+# read the pin through it.
 def review_app_pin_problems($app):
-  .protection.required_status_checks
-  | (select(any((. // {}).checks[]?; .context == "agent-review" and .app_id == $app) | not) | {kind: "pin"}),
-    (select(. != null and .enforcement_level != "everyone") | {kind: "admins", level: (.enforcement_level // "no one")});
+  (select(any(.required[]?; .context == "agent-review" and .app_id == $app) | not) | {kind: "pin"}),
+  (.bypass_by[]? | if has("protection") then {kind: "admins", level: .protection} else {kind: "bypass"} + . end);
+# A ruleset's bypass, a bypass problem as input, as a sentence's end after "<base>'s", with $on
+# (" on <repo>", or "") after the ruleset's name.
+def bypass_text($on):
+  "ruleset \(.name) (\(.ruleset))\($on) " + if .actors == null
+    then "has bypass actors that cannot be read, so who may merge past its required checks is not known"
+    else "lets \(.actors | join(", ")) merge past its required checks" end;
+
+# Where the PR at $url stands with its base's merge queue, over the task's events, or null: by the
+# latest queued, dequeued or merged naming the URL (a trailing slash aside), which team-merge logs
+# as it lands a PR through the queue, {state: "queued", since, head} for a queued (its ts and
+# head), {state: "dequeued", since, reason, head, failed, round_due} for a dequeued, and null for
+# a merged or with none. A queued stands only for its head: once the task logged another head
+# after it (a pr event of the URL, or any review of the task, whichever of its PRs it read, since
+# a fix after findings is reviewed at a head no pr event logs and a review names no PR), the PR
+# left the queue with no team-merge to log its dequeued, a push having dropped it, and it is null.
+# round_due says the queue dropped the PR for a failure of its own on the trial merge (a failed
+# of class pr) with no pr event of the URL and no review of the task since: the head
+# passed what the trial merge failed, so it is the builder's merge-base round, then a rereview,
+# never a second enqueue of the same head.
+def queue_state($url):
+  ($url | rtrimstr("/")) as $u
+  | . as $events
+  | ([range(length) | select($events[.] | (.event | IN("queued", "dequeued", "merged")) and (.url | strings | rtrimstr("/")) == $u)]
+     | last) as $i
+  | if $i == null then null
+    else $events[$i] as $e
+    | [$events[$i + 1:][] | select((.event == "pr" and (.url | strings | rtrimstr("/")) == $u) or .event == "review")] as $since
+    | if $e.event == "queued" then
+        if any($since[]; (.head | type) == "string" and (same_head(.head; $e.head) | not)) then null
+        else {state: "queued", since: $e.ts, head: $e.head} end
+      elif $e.event == "dequeued" then
+        {state: "dequeued", since: $e.ts, reason: $e.reason, head: $e.head, failed: ($e.failed // []),
+         round_due: ($since == [] and any($e.failed[]?; .class == "pr"))}
+      else null end
+    end;
+# The task's PRs not merged that stand in the merge queue (queue_state is queued), from task_prs,
+# each with since, the queued's ts.
+def queued_prs:
+  . as $events
+  | task_prs as $prs
+  | [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
+     | ($events | queue_state($pr.url)) | select(.state? == "queued") | $pr + {since}];
+# The task's PRs not merged that the merge queue dropped for a failure of their own on the trial
+# merge, with no head logged or reviewed since (queue_state's round_due), from task_prs, each with
+# since, the dequeued's ts, and failed, the names of the checks of its own that failed.
+def trial_failed_prs:
+  . as $events
+  | task_prs as $prs
+  | [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
+     | ($events | queue_state($pr.url)) | select(.round_due? == true)
+     | $pr + {since, failed: [.failed[] | select(.class == "pr") | .name]}];
+# A list of names as a phrase: "a", "a and b", "a, b and c".
+def name_list: if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end;
 
 # The project a PR (one of lifecycle.prs, the input) is of, as the task's reviews show it ($events),
 # or null: the project (review_project) of the latest review that names a head one of the PR's pr
@@ -1376,6 +1492,38 @@ def checks_wait_of:
 
 # checks_wait_of without its project and review, as team-state prints it.
 def checks_wait: checks_wait_of | if . == null then null else del(.project, .review) end;
+
+# Whether the launch (the input) may be one of $project's: any launch when $project is "" or
+# null, else one in $project or naming no project, as project_reviews counts a review whose
+# project is not known for every project.
+def launch_in($project): ($project // "") == "" or .project == null or .project == $project;
+
+# The index of the latest ci of outcome failed logged after index $r of the task's events on a PR
+# in the repo $repo (owner/name, either owner of a moved one, in any case), or naming no PR, or
+# null: a pass's failed checks that went back as a round (team-next T<n> --ci's), or a findings
+# round's look. A ci of any PR counts when $repo is "" or null.
+def failed_ci_after($r; $repo):
+  . as $events
+  | ($repo // "") as $repo
+  | "https://github.com/\($repo | canonical_repo | ascii_downcase)/pull/" as $prs
+  | [range($r + 1; length) | select($events[.] | .event == "ci" and .outcome == "failed"
+      and ($repo == "" or .url == null or (.url | canonical_url | ascii_downcase | startswith($prs))))]
+  | last;
+
+# What waits on a fix round in $project, whose repo is $repo, over the task's events, or null: the
+# latest review made in $project (project_reviews) when it sent findings back and no launch in
+# $project (launch_in; an ops session's aside) followed it, {review: <its index>, ci: null}; else
+# the latest ci of outcome failed after that review on a PR of $repo (failed_ci_after) when no
+# such launch followed the ci, {review, ci: <its index>}. So a review, a ci or a launch of one
+# repository never starts or takes another's round; with $project "" or null, every review, ci
+# and launch counts, as it did before reviews ran beside each other in two repositories.
+def round_wait($project; $repo):
+  . as $events
+  | def untaken($at): any($events[$at + 1:][]; .event == "launch" and .role != "ops" and launch_in($project)) | not;
+    (project_reviews($project) | last) as $r
+  | if $r == null then null
+    elif ($events[$r].sent_back // []) != [] and untaken($r) then {review: $r, ci: null}
+    else failed_ci_after($r; $repo) as $c | if $c != null and untaken($c) then {review: $r, ci: $c} else null end end;
 
 # Why the task's reviews do not let the default word, given on no head, merge the PR's
 # head $head unasked, one string per reason, none when they do, judged on the latest review of
@@ -1526,8 +1674,10 @@ def task_state($sessions; $home):
 # A task's state (team-state's JSON) as one line of text, each live worker's context in thousands
 # and the brief it is on, then the tickets done, with the graph fresh or stale when there is one,
 # the latest review, the PR, the state of the checks wait of its latest pass while one stands
-# ("checks <state>", checks_wait's), the words on the PR, the walk, a stow under way, and last the
-# standing parks:
+# ("checks <state>", checks_wait's), the PR's place in the merge queue while it stands in it
+# ("in the merge queue since <ts>, team-merge is waiting", or ", no team-merge waits on it: run
+# team-merge T<n>", the pr's queued), the words on the PR, the walk, a stow under way, and last
+# the standing parks:
 # T14 agent-team feature building | T14-builder idle 302k on build-04 | tickets 3/7, graph stale | review 4 findings, sent back 5, 6 | PR #5 a1b2c3d 16 behind dev checks 2/2 agent-review missing
 def state_line:
   .task as $task
@@ -1564,6 +1714,9 @@ def state_line:
          end
      end)
   + (if .checks_wait == null then "" else " | checks \(.checks_wait.state)" end)
+  + (if .pr.queued? == null then ""
+     else " | in the merge queue since \(.pr.queued.since), " + if .pr.queued.waited_on then "team-merge is waiting"
+       else "no team-merge waits on it: run team-merge \($task)" end end)
   + (if (.rehome_failures // []) == [] then ""
      else " | not re-homed: " + (.rehome_failures
        | map("\(.project)\(if .ticket then "--\(.ticket)" else "" end) on \(.machine): \(.reason)") | join("; ")) end)
@@ -1665,23 +1818,53 @@ def default_holds($pr; $withdrawals; $own):
 # team-merge read them: the sweep reads no GitHub, so a guarded path a reviewer did not name, a
 # plan changed since its approval, Daniel's message not reading back or the App's check is
 # team-merge's to find, and of two open PRs the later review stands for both); only such PRs are
-# named. $withdrawals is default_events' and $own own_projects' {projects, app} (own_in), or null
-# when the registry cannot be read, which raises none.
-def merge_due_finding($withdrawals; $sessions; $own):
+# named, and none that stands in the merge queue (queued_prs), which team-merge is landing or
+# queue-wait names, and none the queue dropped for a failure of its own (trial_failed_prs), which
+# trial-failed names; nor any PR of a task whose merge lock is held ($landing, the tasks a
+# team-merge is landing a PR of now). $withdrawals is default_events' and $own own_projects'
+# {projects, app} (own_in), or null when the registry cannot be read, which raises none.
+def merge_due_finding($withdrawals; $sessions; $own; $landing):
   .[0].task as $task
   | . as $events
   | lifecycle as $state
   | if $own != null and ($state | lifecycle_phase) == "awaiting-merge" and $state.asks == [] and $state.parks == []
-      and ($events | checks_wait | .state) == "passed" then
+      and ($events | checks_wait | .state) == "passed" and ($task | IN($landing[]) | not) then
       select($events | merge_base_round($sessions) | not)
       | task_prs as $prs
-      | [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
+      | [$events | (queued_prs, trial_failed_prs)[] | .url] as $queued
+      | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
          | select($events | default_holds($pr; $withdrawals; $own)) | .url] as $due
       | select($due != [])
       | finding($task; "merge-due"; null; null;
           "awaiting the merge of \($due | join(", ")) on the default word, the approved plan, with no ask open";
           "run team-merge \($task); on a refusal, ask Daniel for the per-head word with team-ask")
     else empty end;
+
+# team-sweep's queue-wait findings, over a task's events, one for each of its PRs that stands in
+# the merge queue (queued_prs) while no process holds the task's merge lock ($landing, the tasks
+# whose lock is held): the queue lands or drops it with no team-merge to log either.
+def queue_wait_findings($landing):
+  .[0].task as $task
+  | select($task | IN($landing[]) | not)
+  | queued_prs[]
+  | finding($task; "queue-wait"; null; null;
+      "PR \(.url) is in the merge queue since \(.since) with no team-merge waiting on it";
+      "run team-merge \($task) with Bash run_in_background, which goes on waiting and logs how it ends");
+
+# team-sweep's trial-failed findings, over a task's events and the session list, one for each of
+# its PRs the merge queue dropped for a failure of its own on the trial merge (trial_failed_prs),
+# while the task awaits merge with no ask open and nothing parking it, and no merge-base round is
+# in flight: the round is the builder's, and team-merge would enqueue the same failing head again.
+def trial_failed_findings($sessions):
+  .[0].task as $task
+  | . as $events
+  | lifecycle as $state
+  | select(($state | lifecycle_phase) == "awaiting-merge" and $state.asks == [] and $state.parks == [])
+  | select($events | merge_base_round($sessions) | not)
+  | trial_failed_prs[]
+  | finding($task; "trial-failed"; null; null;
+      "PR \(.url) failed \(.failed | name_list) on the merge queue's trial merge, which dropped it at \(.since)";
+      "run team-next \($task) --ci, which names the builder-merge-base step and who takes it, then a rereview; never team-merge \($task) on the same head");
 
 # team-sweep's stowing finding, over a task's events, or nothing: its stowing (a stow under way)
 # has stood 30 minutes with no stowed or stow-failed, whatever parks the task, since the worker
@@ -1756,36 +1939,15 @@ def waiting_on:
       + (if length > 1 then ", and \(length - 1) more running" else "" end)
   end;
 
-# Whether the builder of the launch $launch delivered and nothing is asked of it since, over the
-# task's events after that launch: a pr follows it, and after the latest one come only launches of
-# a reviewer, what another session logged of itself (a reviewer's done), and a park that is not
-# the builder's with its end, by the kinds' effects in bin/lib/lifecycle.json: an event that opens
-# a park (held, blocked, waiting, paused) and does not name the builder's session, and one that
-# ends parks (resumed, which carries no session) with no brief, after such an opening. A review,
-# an ask, an answer, a resumed naming a brief or a later builder's launch is the task asking for
-# work again.
-def delivered($launch):
-  def effect: lifecycle_table.kinds[.event // ""].effect // null;
-  $launch.role == "builder" and ($launch.ticket | type) != "string"
-  and ((map(.event == "pr") | rindex(true)) as $pr
-    | $pr != null
-      and (.[$pr + 1:] as $after
-        | all(range($after | length); . as $k | $after[$k]
-            | if .event == "launch" then .role == "reviewer"
-              elif effect == "park" then .session != $launch.session
-              elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
-              else (.session | type) == "string" and .session != $launch.session end)));
-
 # The no-worker, waiting-input, silent, stalled, ticket-gone and ticket-worktree-left findings of
 # an open task that is not parked, the stalled one from session-activity's object as team-sweep
 # passes it ($activity: {sessions}, its object keyed by full session id, or {error} when it
 # failed, where none is stalled). A live session is judged by its latest launch, and one waiting
 # for input is not also called silent; stalled is a busy session, not waiting for input, whose
 # transcripts have gone unwritten past its limit (stall_limits).
-# A session waits for input when its state is blocked, but for a builder that delivered
-# (delivered) with no dialog open (its status idle, no waitingFor): Claude Code also calls a
-# session blocked when its last turn's summary says it waits on someone, as a builder's does
-# after its PR ("awaiting the merge word"), and that one is idle with an event since its launch.
+# A session waits for input as waits_for_input says, which the launcher's launch_states reads
+# too: a builder that delivered with no dialog open does not, and it is idle with an event since
+# its launch.
 # A live session is at work while it is busy, waiting for input, or idle with no ledger event
 # since its launch (silent); idle with an event since, it has handed the next step back to the
 # coordinator, so a task with no session at work is no-worker however many are live. A ticket
@@ -1814,8 +1976,7 @@ def task_findings($sessions; $activity):
       | . + if ($l.ticket | type) == "string" then
           {ended: any($since[]; ends_launch($l)), quiet: (any($since[]; .session == $l.session or .ticket == $l.ticket) | not)}
         else {ended: false, quiet: (.i == $count - 1)} end
-      | . + {prompted: (.live.state == "blocked"
-          and ((.live.status == "idle" and .live.waitingFor == null and ($since | delivered($l))) | not))}]
+      | . + {prompted: (.live | waits_for_input($since | delivered($l)))}]
      | unique_by(.short) | sort_by(.i)) as $live
   | ($live | map(select(.prompted or .live.status != "idle" or .quiet
       or ((.launch.ticket | type) == "string" and (.ended | not))))) as $at_work
@@ -1894,6 +2055,12 @@ def by_task: group_by(.task) | map({key: .[0].task, value: .}) | from_entries;
 # Whether a task's events (an array, or null for a task not in the ledger) are an open task's,
 # opened by team-open or legacy: it has events and no closed.
 def is_open: . != null and (task_status | IN("open", "legacy"));
+
+# The events of the open tasks (is_open), from every ledger event as one array (ledger_events'),
+# as one array in ledger order, each task's status worked out once: a select of is_open per event
+# folds a task's lifecycle once for each of its events, a time that grows with the square of an
+# open task's events.
+def open_task_events: (by_task | map_values(is_open)) as $open | map(select($open[.task]));
 
 # The live sessions named like team workers (T<n>-<role>, or T<n>-<role>-NN for ticket NN's, a
 # builder in a ticket worktree), from the session list and every task's events by id: {task, role,
@@ -2086,22 +2253,25 @@ def assistant_twin_lines($self):
 # team-sweep's findings, over every ledger event as one array, the session list, the stow plan
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
-# every task's withdrawals), else its findings unless it is parked, then its walk-stale, parked or
-# not, since a parked task's walk still needs asking about, then its ci-due, then the stray sessions
-# (named like a team worker whose task is closed or not in the ledger, never the load check's T0,
-# whose session the coordinator waits on for up to 30 minutes), in task number order; then the
-# coordinator-twin, assistant-twin, activity, level, retro-due and health findings. $own is the
-# registered projects that are the team's own, or null, as merge_due_finding takes it, $health the
-# health view, as health_findings takes it, and $self the sweep's own session id, as
-# coordinator_twin_findings takes it.
-def sweep($sessions; $plan; $activity; $own; $health; $self):
+# every task's withdrawals), else its findings unless it is parked, then its queue-wait and
+# trial-failed findings, then its walk-stale, parked or not, since a parked task's walk still
+# needs asking about, then its ci-due, then the stray sessions (named like a team worker whose
+# task is closed or not in the ledger, never the load check's T0, whose session the coordinator
+# waits on for up to 30 minutes), in task number order; then the coordinator-twin, assistant-twin,
+# activity, level, retro-due and health findings. $own is the registered projects that are the
+# team's own, or null, as merge_due_finding takes it, $health the health view, as health_findings
+# takes it, $self the sweep's own session id, as coordinator_twin_findings takes it, and $landing
+# the tasks whose merge lock a process holds, as merge_due_finding takes it.
+def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
   . as $events
   | by_task as $tasks
   | default_events as $withdrawals
   | ([($tasks[] | select(is_open) | stowing_finding,
-        ([merge_due_finding($withdrawals; $sessions; $own)] as $due
+        ([merge_due_finding($withdrawals; $sessions; $own; $landing)] as $due
          | if $due != [] then $due[] elif parked then empty
            else task_findings($sessions; $activity) end),
+        queue_wait_findings($landing),
+        trial_failed_findings($sessions),
         walk_stale_finding,
         ci_due_finding),
       (team_sessions($tasks; $sessions)[] | select(.task_state | IN("closed", "unknown"))
@@ -2368,17 +2538,36 @@ def approves_pr($pr):
   .event == "merge-approved" and (.url | strings | rtrimstr("/")) == ($pr.url | rtrimstr("/"))
   and (.head == null or same_head(.head; $pr.head));
 
+# Whether Daniel's per-head word stands for the PR $pr (one of task_prs) on the task's events, as
+# sops/merging.md has it as far as the ledger shows: the latest merge-approved naming its url (a
+# trailing slash aside) names a head the ledger logged for it (head_logged), or none, as a legacy
+# line, and no review logged after that event has a verdict other than pass. So the word holds
+# through a merge of the base whose re-review passed, and a review that found something ends it;
+# that the new head adds only merges of the base stays team-merge's to check.
+def word_stands($pr):
+  ($pr.url | rtrimstr("/")) as $url
+  | ([to_entries[] | select(.value.event == "merge-approved" and (.value.url | strings | rtrimstr("/")) == $url)]
+     | last) as $approval
+  | $approval != null
+    and ($approval.value.head == null or head_logged($url; $approval.value.head) != null)
+    and all(.[$approval.key + 1:][]; .event != "review" or .verdict == "pass");
+
 # The task's PRs that wait on Daniel's word to merge, from task_prs: none unless its phase is
-# awaiting-merge, then each not merged that no merge-approved names at its head (approves_pr), and
-# whose default word does not hold on the ledger
+# awaiting-merge, then each not merged that no merge-approved names at its head (approves_pr),
+# that does not stand in the merge queue (queued_prs: its word was given, and team-merge is landing
+# it), that the queue did not drop for a failure of its own with no head logged since
+# (trial_failed_prs: the round is the builder's, and no word is asked on the head that failed its
+# trial merge), whose per-head word does not stand (word_stands), and whose default word does not
+# hold on the ledger
 # (default_holds over $withdrawals, default_events', and $own, own_projects' {projects, app}, the
 # team's own and the reviewer App; with $own null, as when the registry cannot be read, none holds).
 def merge_ready_prs($withdrawals; $own):
   . as $events
   | task_prs as $prs
   | if phase != "awaiting-merge" then []
-    else [$prs[] | select(pr_merged($events; $prs) | not) | . as $pr
-      | select(any($events[]; approves_pr($pr)) | not)
+    else [$events | (queued_prs, trial_failed_prs)[] | .url] as $queued
+    | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
+      | select(any($events[]; approves_pr($pr)) or ($events | word_stands($pr)) | not)
       | select($own != null and ($events | default_holds($pr; $withdrawals; $own)) | not)] end;
 
 # Each open task's count of the other open tasks blocked on it, over by_task's answer: {"T<n>": n},

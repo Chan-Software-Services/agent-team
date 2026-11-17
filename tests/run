@@ -2,7 +2,10 @@
 # Run the code's checks: shellcheck on every shell script in bin/, tests/ (not the
 # vendored bats), servers/ and toolkits/, then the whole bats suite on the vendored bats-core,
 # then the toolkit tests (node --test on tests/toolkits/, after servers/install), which need
-# Docker for their throwaway MongoDB.
+# Docker for their throwaway MongoDB. Each toolkit test and hook has a 5-minute limit (node
+# --test's --test-timeout), so a stuck one fails with its name long before CI's job limit, and
+# each file's process ends once its tests have (--test-force-exit), whatever a failed test left
+# running, so node --test never waits on it.
 # The bats files run as many at once as the team's CPU budget allows, each in a bats of its own
 # (every test is sandboxed, so files share nothing), the slowest first by tests/shards' weights:
 # one line per file as it ends, then the whole output of each file that failed, each skipped
@@ -34,8 +37,9 @@
 # nothing, and says so, when the change reaches no shell script, and --list prints them, one path
 # per line, and checks none.
 # With --shard, bats runs shard k of n of the files as tests/shards splits them, by each file's
-# seconds in CI (tests/timings.tsv), as CI's shard jobs do; --list prints that shard's files and
-# runs none. A shard with no file (n above the file count) passes, running nothing.
+# seconds in CI (TESTS_TIMINGS' file, else tests/timings.tsv), as CI's shard jobs do; --list
+# prints that shard's files and runs none. A shard with no file (n above the file count) passes,
+# running nothing.
 # With --changed, bats runs the files a change reaches, by the repository's naming, from the paths
 # changed since <base> (default origin/dev: git diff --name-only --no-renames <base>...HEAD) and in
 # the working tree (git status --porcelain, untracked files included), both sides of a rename and
@@ -64,8 +68,9 @@
 # missing origin/dev is refused.
 # After the bats, it names each file that took over 1.5 times and 60 seconds more than its seconds
 # in tests/timings.tsv for this platform, as a warning annotation under GitHub Actions.
-# TESTS_TIMINGS names the timings file it reads (default tests/timings.tsv), and TESTS_SLOWER_BY
-# the margin in seconds (a whole number, default 60, else refused); neither changes the exit code.
+# TESTS_TIMINGS names the timings file it and tests/shards read (default tests/timings.tsv), and
+# TESTS_SLOWER_BY the margin in seconds (a whole number, default 60, else refused); neither changes
+# the exit code.
 # Exit 0 when every check passes; CI runs each part as its own job. The last line is the wall
 # time, so a slower suite shows, and when the bats ran, how many files at once.
 set -euo pipefail
@@ -490,7 +495,7 @@ if [[ $what == all || $what == bats ]]; then
 fi
 if [[ $what == all || $what == toolkits ]]; then
   if "$root/servers/install"; then
-    node --test "$root"/tests/toolkits/*.test.mjs || fail=1
+    node --test --test-timeout=300000 --test-force-exit "$root"/tests/toolkits/*.test.mjs || fail=1
   else
     fail=1
   fi

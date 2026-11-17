@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+# The merge queue drill, run by hand: land two pull requests at once through the merge queue of a
+# scratch repository, with the team's own scripts, and check what GitHub's docs do not say: that a
+# PR behind its base lands with no catch-up, that the queue's trial commit is the reviewed head
+# merged cleanly onto what is ahead of it, on a branch under gh-readonly-queue/<base>/, and that
+# the reviewer App's agent-review on that commit meets a check pinned to the App. It opens and
+# merges real pull requests and posts as the reviewer App, so it never runs in tests/run; workers
+# may not merge, so the coordinator runs it, and tests/merge-queue-drill.bats dry-runs it on stubs.
+#
+# The scratch repository is a public one in the organization, with dev as its default branch, that
+# holds nothing but this drill's commits: the drill's file .merge-queue-drill at the root of dev
+# says so, and neither form touches a repository whose dev lacks it, or the origin of the code
+# checkout the drill runs from.
+#
+# --setup pushes the base commit to an empty repository's dev: that file, a README and
+# .github/workflows/ci.yml, a CI of one job, check, on pull_request and merge_group. It changes
+# nothing when dev already holds the drill's file. Daniel then turns CodeQL's default setup on and
+# gives dev its ruleset: the merge queue with the merge method MERGE, and the required checks
+# check, CodeQL and agent-review, the last pinned to the reviewer App.
+#
+# The drill itself, in order:
+#   it reads dev's rules (gh api repos/<repo>/rules/branches/dev --paginate) and stops, with nothing opened
+#   or recorded, unless they hold a merge queue that merges with MERGE and require agent-review
+#   from the App bin/lib/review-app names;
+#   it builds a sandbox, a new directory under ~/.cache/agent-team, since the registry takes a
+#   path under HOME alone: checkout/, a clone of the repository, and team/, a team home whose
+#   registry has one project, agent-team, the team's own by its name, so team-land posts
+#   agent-review through the reviewer App: its repo the scratch repository, its path checkout/,
+#   its merge_method merge, and its required_checks the ruleset's but agent-review;
+#   it pushes two branches from dev's tip, drill/<UTC stamp>-a and -b, each adding one file of its
+#   own under runs/, opens a pull request to dev for each, and writes each a task in the sandbox's
+#   ledger (T1 and T2: opened, pr and a passing review of the head);
+#   it posts the App's agent-review on each head (team-review-check), waits on both heads' checks
+#   at once (team-ci-wait), and stops there when either does not pass;
+#   it runs team-land on both at once, each given 30 minutes (TEAM_LAND_DEADLINE_SECONDS replaces
+#   its seconds), and meanwhile lists the repository's gh-readonly-queue/ branches every 3 seconds;
+#   it reads each pull request (gh pr view), its trial commit (the merge commit once merged, else
+#   its queue entry's head commit) and that commit's check runs, and prints one PASS or FAIL line
+#   per check, then whether CodeQL reported on each trial commit, which is no check.
+# The checks, for each pull request: team-land ended merged; GitHub shows it merged at the head
+# the drill pushed, so nothing caught it up; its merge commit has exactly two parents, the second
+# that head and the first a commit holding the dev it was opened from, with the tree of git
+# merge-tree's clean merge of the two, and is on dev; that commit was on a branch under
+# gh-readonly-queue/dev/; and it carries a successful agent-review check run of the App. And one
+# for both: one landed on top of the other, behind dev's tip.
+#
+# Every way the drill ends once it pushed its first branch closes each pull request it opened
+# that is not merged, deletes its branches, and records one merge-queue line in the team home's
+# drills.jsonl, through this checkout's bin/team-drill record merge-queue, with the team home of
+# the environment it was run in (the sandbox's is the scripts' alone): pass when it exits 0, every
+# check passed, else fail; the detail "<passed> of <checks> checks passed on <repo> PRs #<a> and
+# #<b>; CodeQL reported on <n> of <m> trial commits" once it reached its checks, else the step
+# that failed. A record team-drill refuses prints "merge-queue-drill: not recorded: <team-drill's
+# first error line>" on stderr and leaves the drill's exit status as it was. The sandbox is
+# removed either way.
+#
+# Usage: tests/merge-queue-drill --setup <repo>
+#        tests/merge-queue-drill <repo>
+#   repo  the scratch repository, <owner>/<name>
+# It runs on the owner login throughout, every gh and git call and the scripts it runs (team-land
+# among them), whatever GitHub login its session names (use_owner_login in bin/lib/github-login.sh).
+# Refused, exit 1, before anything is read: a worker session (an AGENT_TEAM_ROLE but coordinator).
+# Exit 0 when every check passes (--setup: the base commit is on dev), 1 when any fails or a step
+# fails, 2 on a malformed command line.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+  sed -n '2,/^[^#]/{/^#/!q;s/^# \{0,1\}//;p}' "$0"
+  exit 0
+fi
+die() {
+  echo "merge-queue-drill: $1" >&2
+  exit 1
+}
+usage='usage: tests/merge-queue-drill [--setup] <repo>'
+setup=''
+if [[ ${1:-} == --setup ]]; then
+  setup=1
+  shift
+fi
+[[ $# -eq 1 && $1 =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || { echo "$usage" >&2; exit 2; }
+repo=$1
+if [[ -n ${AGENT_TEAM_ROLE:-} && $AGENT_TEAM_ROLE != coordinator ]]; then
+  die "a $AGENT_TEAM_ROLE session may not run the merge queue drill: that is the coordinator's"
+fi
+# shellcheck source=bin/lib/github-login.sh
+source "$root/bin/lib/github-login.sh"
+use_owner_login
+# Never the repository this code comes from, whatever its dev holds.
+own=$(git -C "${root:?}" remote get-url origin 2>/dev/null) || own=''
+own=${own%/} own=${own%.git}
+if [[ $own =~ [:/]([^/:]+/[^/:]+)$ && ${BASH_REMATCH[1],,} == "${repo,,}" ]]; then
+  die "$repo is the origin of this code checkout, not a scratch repository"
+fi
+remote=https://github.com/$repo.git
+marker=.merge-queue-drill
+
+# Under HOME, by its logical path: the registry's paths are relative to HOME.
+mkdir -p "$HOME/.cache/agent-team"
+sandbox=$(mktemp -d "$HOME/.cache/agent-team/merge-queue-drill.XXXXXX")
+team=$sandbox/team checkout=$sandbox/checkout
+started='' outcome=''
+urls=() heads=() branches=() numbers=()
+
+# record <exit status>: the drill's merge-queue line, through team-drill, which fills in the
+# machine, the commit and Claude Code's version; a refusal is one line on stderr.
+record() {
+  local verdict=fail detail=${outcome:-"it stopped with exit $1 before its verdict"} err
+  [[ $1 != 0 ]] || verdict=pass
+  if ! err=$("$root/bin/team-drill" record merge-queue --verdict "$verdict" --detail "${detail:0:300}" 2>&1 >&3 </dev/null); then
+    echo "merge-queue-drill: not recorded: $(head -n 1 <<<"$err")" >&2
+  fi
+} 3>&1
+# Leave the scratch repository with no open pull request and no branch of this run.
+tidy() {
+  local i state
+  for i in "${!branches[@]}"; do
+    if [[ -n ${urls[i]:-} ]]; then
+      state=$(gh pr view "${urls[i]}" --json state --jq .state 2>/dev/null) || state=''
+      if [[ $state != MERGED ]]; then
+        gh pr close "${urls[i]}" --comment "The merge queue drill ended with this pull request not merged." >/dev/null 2>&1 ||
+          echo "merge-queue-drill: could not close ${urls[i]}; close it by hand" >&2
+      fi
+    fi
+    # A branch GitHub deleted at the merge is gone already.
+    if ! gh api --method DELETE "repos/$repo/git/refs/heads/${branches[i]}" >/dev/null 2>&1 &&
+      git ls-remote --exit-code "$remote" "refs/heads/${branches[i]}" >/dev/null 2>&1; then
+      echo "merge-queue-drill: could not delete $repo's branch ${branches[i]}; delete it by hand" >&2
+    fi
+  done
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [[ -n $started ]]; then
+    tidy
+    record "$status"
+  fi
+  rm -rf "${sandbox:?}"
+  exit "$status"
+}
+trap cleanup EXIT
+
+# stop <what failed>: end the drill, failed, with that as its recorded detail.
+stop() {
+  outcome=$1
+  echo "FAIL $1"
+  exit 1
+}
+
+if [[ -n $setup ]]; then
+  refs=$(git ls-remote "$remote") || die "cannot read $remote"
+  if grep -q $'\trefs/heads/dev$' <<<"$refs"; then
+    git clone -q --depth 1 --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
+    [[ -f $checkout/$marker ]] ||
+      die "$repo's dev holds commits that are not the drill's (no $marker): the drill takes a scratch repository only"
+    echo "merge-queue-drill: $repo's dev already holds the drill's base commit, $(git -C "${checkout:?}" rev-parse --short=7 HEAD)"
+    exit 0
+  fi
+  git init -q -b dev "$checkout"
+  mkdir -p "$checkout/.github/workflows"
+  cat >"$checkout/$marker" <<'EOF'
+This repository is the scratch repository of agent-team's merge queue drill (tests/merge-queue-drill).
+It holds nothing but the drill's commits, and the drill refuses a repository whose dev lacks this file.
+EOF
+  cat >"$checkout/README.md" <<'EOF'
+# The merge queue drill's scratch repository
+
+agent-team's `tests/merge-queue-drill` opens two pull requests here and lands both through `dev`'s merge queue.
+Each run adds two files under `runs/`.
+EOF
+  cat >"$checkout/.github/workflows/ci.yml" <<'EOF'
+# The merge queue drill's CI: one job, check, on every pull request to dev and on each trial
+# commit of dev's merge queue, which dev's ruleset requires.
+name: CI
+on:
+  pull_request:
+    branches: [dev]
+  merge_group:
+    types: [checks_requested]
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "the merge queue drill's check"
+EOF
+  git -C "${checkout:?}" add -A
+  git -C "${checkout:?}" commit -q -m "ci: the merge queue drill's base commit"
+  git -C "${checkout:?}" push -q "$remote" dev || die "cannot push the base commit to $repo's dev"
+  echo "merge-queue-drill: pushed the base commit $(git -C "${checkout:?}" rev-parse --short=7 HEAD) to $repo's dev"
+  exit 0
+fi
+
+echo "== the merge queue drill on $repo, in $sandbox"
+app=$(sed -n 's/^id=\([1-9][0-9]*\)$/\1/p' "$root/bin/lib/review-app" 2>/dev/null | head -n 1) || app=''
+[[ -n $app ]] || die "the reviewer App is off (no id in bin/lib/review-app), so nothing can post agent-review on a trial commit"
+rules=$(gh api "repos/$repo/rules/branches/dev" --paginate | jq -s 'add // []') || die "cannot read $repo's rules for dev"
+problem=$(jq -r --argjson app "$app" '
+  ([.[] | select(.type == "merge_queue")] | first) as $queue
+  | [.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?] as $required
+  | if $queue == null then "has no merge queue"
+    elif $queue.parameters.merge_method != "MERGE" then "has a merge queue that merges with \($queue.parameters.merge_method), not MERGE"
+    elif any($required[]; .context == "agent-review" and .integration_id == $app) | not then
+      "does not require agent-review from the reviewer App \($app)"
+    else empty end' <<<"$rules")
+[[ -z $problem ]] || die "$repo's dev $problem: its ruleset is Daniel's step, in sops/drills.md"
+required=$(jq -c '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context
+  | select(. != "agent-review")] | unique' <<<"$rules")
+
+git clone -q --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
+[[ -f $checkout/$marker ]] ||
+  die "$repo's dev has no $marker: the drill takes only the scratch repository tests/merge-queue-drill --setup made"
+base_sha=$(git -C "${checkout:?}" rev-parse HEAD)
+mkdir -p "$team" "$sandbox/slots/1"
+cat >"$team/projects.toml" <<EOF
+[agent-team]
+repo = "$repo"
+path = "${checkout#"$HOME"/}"
+base = "dev"
+delivery = "direct-pr"
+merge_method = "merge"
+required_checks = $required
+task_dir = ".scratch/task"
+docs = []
+toolkits = []
+
+[agent-team.pool]
+provider = "git"
+slots = ["${sandbox#"$HOME"/}/slots/1"]
+EOF
+
+stamp=$(date -u +%Y%m%d%H%M%S)
+echo "== two pull requests from dev at ${base_sha:0:7}"
+for i in 0 1; do
+  name=$stamp-$([[ $i == 0 ]] && echo a || echo b)
+  branch=drill/$name
+  git -C "${checkout:?}" checkout -q -b "$branch" "$base_sha"
+  mkdir -p "$checkout/runs"
+  echo "The merge queue drill's run $name." >"$checkout/runs/$name.txt"
+  git -C "${checkout:?}" add "runs/$name.txt"
+  git -C "${checkout:?}" commit -q -m "test: the merge queue drill's run $name"
+  head=$(git -C "${checkout:?}" rev-parse HEAD)
+  started=1
+  branches+=("$branch")
+  git -C "${checkout:?}" push -q origin "$branch" || stop "the push of $branch failed"
+  url=$(gh pr create --repo "$repo" --base dev --head "$branch" --title "test: the merge queue drill's run $name" \
+    --body "Opened by agent-team's tests/merge-queue-drill, which lands it through dev's merge queue." | tail -n 1) ||
+    stop "gh pr create failed for $branch"
+  [[ $url =~ ^https://github\.com/[^/]+/[^/]+/pull/([1-9][0-9]*)$ ]] || stop "gh pr create printed no pull request URL for $branch"
+  urls+=("$url") heads+=("$head") numbers+=("${BASH_REMATCH[1]}")
+  # The task whose passing review of the head the App's check stands on.
+  jq -cn --arg task "T$((i + 1))" --arg ts "$(date -u +%FT%TZ)" --arg url "$url" --arg head "$head" \
+    --arg branch "$branch" --arg path "$checkout" --arg base_sha "$base_sha" --arg slot "$sandbox/slots/1" '
+    {ts: $ts, task: $task, event: "opened", project: "agent-team", path: $path, type: "feature",
+     title: "the merge queue drill", branch: $branch, base: "dev", base_sha: $base_sha, worktree: $slot},
+    {ts: $ts, task: $task, event: "pr", url: $url, head: $head, project: "agent-team"},
+    {ts: $ts, task: $task, event: "review", verdict: "pass", head: $head}' >>"$team/ledger.jsonl"
+  echo "PR #${numbers[i]} $url at ${head:0:7}"
+done
+git -C "${checkout:?}" checkout -q dev
+
+echo "== agent-review on each head, then the heads' checks"
+for i in 0 1; do
+  run=$(TEAM_HOME=$team "$root/bin/team-review-check" "${urls[i]}" "${heads[i]}" success "the merge queue drill's review of ${heads[i]:0:7}") ||
+    stop "team-review-check failed on PR #${numbers[i]}'s head"
+  echo "PR #${numbers[i]}: the reviewer App's check run $run"
+done
+pids=()
+for i in 0 1; do
+  TEAM_HOME=$team "$root/bin/team-ci-wait" "${urls[i]}" "${heads[i]}" >"$sandbox/head-$i.out" 2>&1 </dev/null &
+  pids+=($!)
+done
+failed=''
+for i in 0 1; do
+  wait "${pids[i]}" || failed+=" #${numbers[i]}"
+  cat "$sandbox/head-$i.out"
+done
+[[ -z $failed ]] || stop "the checks of the head did not pass on PR$failed, so nothing was enqueued"
+
+echo "== team-land on both at once"
+pids=()
+for i in 0 1; do
+  TEAM_HOME=$team TEAM_LAND_DEADLINE_SECONDS=${TEAM_LAND_DEADLINE_SECONDS:-1800} "$root/bin/team-land" "${urls[i]}" "${heads[i]}" \
+    >"$sandbox/land-$i.out" 2>&1 </dev/null &
+  pids+=($!)
+done
+# The queue's branches while the two land, each line "<sha> <ref>", and once more after.
+queue_branches() {
+  git ls-remote "$remote" 'refs/heads/gh-readonly-queue/*' 2>/dev/null | tr '\t' ' ' >>"$sandbox/queue-branches" || true
+}
+while kill -0 "${pids[0]}" 2>/dev/null || kill -0 "${pids[1]}" 2>/dev/null; do
+  queue_branches
+  sleep 3
+done
+queue_branches
+outcomes=() merges=()
+for i in 0 1; do
+  wait "${pids[i]}" || true
+  echo "-- PR #${numbers[i]}"
+  cat "$sandbox/land-$i.out"
+  result=$(tail -n 1 "$sandbox/land-$i.out" | jq -c 'select(.schema == "team-land/1")' 2>/dev/null) || result=''
+  [[ -n $result ]] || result='{}'
+  outcomes+=("$(jq -r '.outcome // "no result"' <<<"$result")")
+  merges+=("$(jq -r '.merge // ""' <<<"$result")")
+done
+
+echo "== checks"
+passed=0 checks=0
+# check <what> <command...>: PASS or FAIL as the command succeeds.
+check() {
+  checks=$((checks + 1))
+  if "${@:2}" >/dev/null 2>&1; then
+    passed=$((passed + 1))
+    echo "PASS $1"
+  else
+    echo "FAIL $1"
+  fi
+}
+git -C "${checkout:?}" fetch -q origin dev || true
+# merged_at_head <i>: GitHub shows the pull request merged, its head the one the drill pushed.
+merged_at_head() {
+  [[ $(gh pr view "${urls[$1]}" --json state,headRefOid --jq '"\(.state) \(.headRefOid)"') == "MERGED ${heads[$1]}" ]]
+}
+# clean_merge <i>: the merge commit is on dev, and is exactly the head merged cleanly onto a
+# commit that holds the dev the pull request was opened from.
+clean_merge() {
+  local merge=${merges[$1]} tree
+  local -a parents
+  [[ -n $merge ]] || return 1
+  git -C "${checkout:?}" merge-base --is-ancestor "$merge" origin/dev || return 1
+  read -r -a parents <<<"$(git -C "${checkout:?}" rev-list --parents -n 1 "$merge")"
+  ((${#parents[@]} == 3)) && [[ ${parents[2]} == "${heads[$1]}" ]] || return 1
+  git -C "${checkout:?}" merge-base --is-ancestor "$base_sha" "${parents[1]}" || return 1
+  tree=$(git -C "${checkout:?}" merge-tree --write-tree "${parents[1]}" "${parents[2]}") || return 1
+  [[ $tree == "$(git -C "${checkout:?}" rev-parse "$merge^{tree}")" ]]
+}
+# on_queue_branch <i>: a listing while the two landed showed the merge commit on a queue branch.
+on_queue_branch() {
+  [[ -n ${merges[$1]} ]] && grep -q "^${merges[$1]} refs/heads/gh-readonly-queue/dev/" "$sandbox/queue-branches"
+}
+# app_check <i>: the trial commit's latest agent-review check run of the App is a success.
+app_check() {
+  jq -e --argjson app "$app" 'any(.check_runs[]?; .name == "agent-review" and .app.id == $app
+    and .status == "completed" and .conclusion == "success")' "$sandbox/runs-$1.json"
+}
+# stacked: one pull request's merge commit has the other's as its first parent.
+stacked() {
+  [[ -n ${merges[0]} && -n ${merges[1]} ]] || return 1
+  [[ $(git -C "${checkout:?}" rev-parse "${merges[0]}^1") == "${merges[1]}" ||
+    $(git -C "${checkout:?}" rev-parse "${merges[1]}^1") == "${merges[0]}" ]]
+}
+trials=()
+for i in 0 1; do
+  # The trial commit: the merge commit once merged, else the queue entry's head commit, if any.
+  trial=${merges[i]}
+  if [[ -z $trial ]]; then
+    # shellcheck disable=SC2016 # the query's variables are GraphQL's
+    trial=$(gh api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { mergeQueueEntry { headCommit { oid } } } } }' \
+      -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="${numbers[i]}" \
+      --jq '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' 2>/dev/null) || trial=''
+  fi
+  trials+=("$trial")
+  echo '{"check_runs": []}' >"$sandbox/runs-$i.json"
+  if [[ -n $trial ]]; then
+    gh api "repos/$repo/commits/$trial/check-runs?filter=latest&per_page=100" --paginate 2>/dev/null |
+      jq -s '{check_runs: map(.check_runs[]?)}' >"$sandbox/runs-$i.json" ||
+      echo '{"check_runs": []}' >"$sandbox/runs-$i.json"
+  fi
+  # Each commit's short name where the check names it, nothing where there is none.
+  n="PR #${numbers[i]}" merge_name=${merges[i]:+ ${merges[i]:0:7}} trial_name=${trial:+ ${trial:0:7}}
+  check "$n landed through the queue (team-land ended ${outcomes[i]})" [ "${outcomes[i]}" = merged ]
+  check "$n is merged at the head the drill pushed, ${heads[i]:0:7}, with no catch-up" merged_at_head "$i"
+  check "$n's merge commit$merge_name is on dev, that head merged cleanly onto a commit holding dev at ${base_sha:0:7}" clean_merge "$i"
+  check "$n's merge commit was the trial commit of a branch under gh-readonly-queue/dev/" on_queue_branch "$i"
+  check "$n's trial commit$trial_name carries the reviewer App's agent-review success" app_check "$i"
+done
+check "one pull request landed on top of the other, behind dev's tip" stacked
+
+echo "== CodeQL on the trial commits (no check)"
+codeql=0 read_trials=0
+for i in 0 1; do
+  if [[ -z ${trials[i]} ]]; then
+    echo "PR #${numbers[i]}: no trial commit to read"
+    continue
+  fi
+  read_trials=$((read_trials + 1))
+  names=$(jq -r '[.check_runs[]? | "\(.name) (\(.conclusion // .status))"] | sort | join(", ")' "$sandbox/runs-$i.json")
+  if jq -e 'any(.check_runs[]?; .name == "CodeQL")' "$sandbox/runs-$i.json" >/dev/null; then
+    codeql=$((codeql + 1))
+    echo "PR #${numbers[i]}: CodeQL reported on the trial commit ${trials[i]:0:7}; its check runs: $names"
+  else
+    echo "PR #${numbers[i]}: CodeQL did not report on the trial commit ${trials[i]:0:7}; its check runs: ${names:-none}"
+  fi
+done
+
+outcome="$passed of $checks checks passed on $repo PRs #${numbers[0]} and #${numbers[1]}; CodeQL reported on $codeql of $read_trials trial commits"
+echo "== $outcome"
+((passed == checks))

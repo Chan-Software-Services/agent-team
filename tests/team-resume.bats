@@ -112,9 +112,10 @@ reported() {
   sed -n 's/^report: //p' <<<"$output"
 }
 
-# A --wait run a failed test left waiting would hold the bats run open for good.
+# A --wait run a failed test left waiting would hold the bats run open for good. It runs from the
+# code checkout setup made, $BATS_TEST_TMPDIR/code, so the kill is bound by owner and that path.
 teardown() {
-  pkill -f "$CODE_CHECKOUT/bin/team-resume" 2>/dev/null || true
+  pkill -U "$(id -u)" -f "$BATS_TEST_TMPDIR/code/bin/team-resume" 2>/dev/null || true
 }
 
 # doctor_says <check json>...: what the doctor stub prints.

@@ -63,6 +63,32 @@ atlas_host_files() {
 
 # D6 (T31): the production toolkits go public without the Atlas cluster's host, which only the
 # 1Password item's connection string holds.
+@test "a committed bin/lib/worker-login, when there is one, is one login= line of a GitHub login" {
+  [[ -e $REPO_ROOT/bin/lib/worker-login ]] || skip "this checkout names no worker login"
+  run --separate-stderr bash -c 'source "$1/bin/lib/team.sh" && worker_login' repo "$REPO_ROOT"
+  assert_equal "$status" 0
+  assert_equal "$stderr" ""
+  assert_equal "$(cat "$REPO_ROOT/bin/lib/worker-login")" "login=$output"
+}
+
+# copy_bin's copy at <dest> of the checkout <checkout>'s bin/, its shared copies made under
+# <run> as a run's are: copy_bin_of <checkout> <run> <dest>
+copy_bin_of() {
+  # shellcheck disable=SC2034 # copy_bin reads both
+  local REPO_ROOT=$1 BATS_RUN_TMPDIR=$2
+  copy_bin "$3"
+}
+
+@test "a copy of bin/ (copy_bin) has no bin/lib/worker-login and no bin/lib/review-app, even from a checkout that commits both" {
+  local checkout=$BATS_TEST_TMPDIR/checkout copy=$BATS_TEST_TMPDIR/copy
+  mkdir -p "$checkout" "$BATS_TEST_TMPDIR/run"
+  cp -R "$REPO_ROOT/bin" "$checkout/bin"
+  echo login=some-bot >"$checkout/bin/lib/worker-login"
+  printf 'id=1\nslug=some-app\n' >"$checkout/bin/lib/review-app"
+  copy_bin_of "$checkout" "$BATS_TEST_TMPDIR/run" "$copy"
+  [[ -f $copy/lib/github-login.sh && ! -e $copy/lib/worker-login && ! -e $copy/lib/review-app ]]
+}
+
 @test "no tracked code file names an Atlas cluster host" {
   run -0 atlas_host_files "$REPO_ROOT"
   assert_equal "$output" ""
@@ -137,6 +163,37 @@ path_copy() {
 ledger.jsonl: not code
 ledger.jsonl: a record
 sops/machine-setup.md: a record"
+}
+
+# The toolchain rustup installs in every checkout: the pinned stable release, with the components
+# rust-analyzer resolves the standard library with and the check runs.
+@test "rust-toolchain.toml pins Rust 1.100.0, the minimal profile, rustfmt, clippy, rust-analyzer and rust-src" {
+  assert_equal "$(grep -v -e '^#' -e '^$' "$REPO_ROOT/rust-toolchain.toml")" '[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
+}
+
+# Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
+# read on home-pc from the pinned releases, rustup's from its source, since its install there was
+# refused (its commit and date are placeholders). Each pattern reads the pin from its line.
+@test "each Rust tool's version pattern in tools.lock reads its pin from the tool's version line" {
+  local name line rust_pattern pin version
+  while IFS=$'\t' read -r name line; do
+    rust_pattern=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+    pin=$(jq -r --arg name "$name" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")
+    version=''
+    [[ $line =~ $rust_pattern ]] && version=${BASH_REMATCH[1]}
+    assert_equal "$name $version" "$name $pin"
+  done <<'LINES'
+rustup	rustup 1.29.3 (0000000000 2026-11-04)
+cargo-nextest	cargo-nextest 0.9.152 (26ebeda79 2026-11-13)
+sccache	sccache 0.19.0
+cargo-deny	cargo-deny 0.20.2
+LINES
+  # rustup's note on stderr names rustc's version, which is never read as rustup's.
+  rust_pattern=$(jq -r '.tools[] | select(.name == "rustup") | .version_pattern' "$REPO_ROOT/bin/lib/tools.lock")
+  [[ ! 'info: the currently active `rustc` version is `rustc 1.100.0 (1a2b3c4d5 2026-11-12)`' =~ $rust_pattern ]]
 }
 
 @test "each machine's usage and time day files in the team home are records, never code" {
@@ -261,7 +318,7 @@ probe_rules() {
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
       or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "assistant") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused", "script", "kernel") | not)
+      or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login") | not)
       or (.expect == "kernel" and (. as $a | .tool != "Bash" or (.input | contains("@CANARY@/\($a.id)\"") | not)))
       or (.background != null and (.background != true or .tool != "Bash" or .expect != "kernel"))
       or ((.expect | IN("hook", "script")) != (.marker | type == "string"))
@@ -270,6 +327,29 @@ probe_rules() {
     | .id' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
+  assert_equal "$out" ""
+}
+
+# The probe's github calls are the data file's alone: team-load-check spells no call's method, path
+# or body, so a call is changed in one place.
+@test "every github call of the refusal probe is well formed, and team-load-check spells none of them" {
+  local probe=$REPO_ROOT/bin/lib/probe.json out word
+  out=$(jq -r '.github[]
+    | select((.id | test("^[a-z]+(-[a-z]+)*$") | not) or (.method | IN("GET", "POST", "PATCH", "PUT", "DELETE") | not)
+      or (.path | type) != "string" or (.body | IN(null) or type == "object" | not)
+      or (.answer | type) != "string" or (.refused | type) != "array" or .refused == []
+      or (.unshown != null and ((.unshown | type) != "array" or any(.unshown[]; (.reason | type) != "string"
+        or ((.answers | type) == "array") == ((.pattern | type) == "string")))))
+    | .id' "$probe")
+  assert_equal "$out" ""
+  assert_equal "$(jq -r '[.github[].id] | join(" ")' "$probe")" "push protection setting merge"
+  # Each call's path past its placeholders, and each string of its body, is nowhere in the script,
+  # but repos/, which its own reads of the repository and its pull requests start with too.
+  while IFS= read -r word; do
+    [[ -n $word ]] || continue
+    if grep -qF -- "$word" "$REPO_ROOT/bin/team-load-check"; then out+="$word "; fi
+  done < <(jq -r '.github[] | (.path | split("@") | map(select(length > 3 and . != "repos/" and (test("^[A-Z]+$") | not)))[]),
+    (.body // {} | .. | strings | select(test("^@[A-Z]+@$") | not))' "$probe")
   assert_equal "$out" ""
 }
 
@@ -400,7 +480,7 @@ probe_denies() {
 @test "every writer of an inbox kind calls refresh_inbox" {
   local contract=$REPO_ROOT/bin/lib/ledger-contract.json writer missing=()
   assert_equal "$(jq -r '[.kinds | to_entries[] | select(.value.inbox == true) | .key] | sort | join(" ")' "$contract")" \
-    "answered asked blocked closed done interview-thread merge-approved merge-default-restored merge-default-withdrawn merged plan-approval-withdrawn plan-approved pr resumed review ticket-done waiting walk"
+    "answered asked blocked closed dequeued done interview-thread merge-approved merge-default-restored merge-default-withdrawn merged plan-approval-withdrawn plan-approved pr queued resumed review ticket-done waiting walk"
   for writer in $(jq -r '[.kinds[] | select(.inbox == true) | .writer] | flatten | unique[]' "$contract"); do
     grep -qE '^[[:space:]]*refresh_inbox$' "$REPO_ROOT/bin/$writer" || missing+=("$writer")
   done
@@ -524,6 +604,30 @@ bin/tool:2: b needs c
 bin/tool:3: b needs c
 tests/helpers/x.bash:1: b needs c
 toolkits/x/scripts/run:1: a needs b"
+}
+
+# Each line of a file under <root>/bin that keeps the events of open tasks by a select of is_open
+# per event (`$tasks[.task] | is_open`), which folds a task's lifecycle once for each of its events,
+# as "<path>:<line>"; ledger.jq's open_task_events works each task's status out once:
+# slow_open_selects <root>
+slow_open_selects() {
+  (cd "$1" && grep -rnoE '\[\.task\] *\| *is_open' bin | cut -d: -f1,2 | sort) || true
+}
+
+@test "no file under bin/ selects the events of open tasks by is_open per event, which open_task_events does once per task" {
+  assert_equal "$(slow_open_selects "$REPO_ROOT")" ""
+}
+
+@test "a select of is_open per event under bin/ is named, in any spacing" {
+  local root=$BATS_TEST_TMPDIR/code
+  mkdir -p "$root/bin/lib/doctor.d" "$root/tests"
+  printf '%s\n' 'jq ok' "jq '\$events[] | select(\$tasks[.task] | is_open)'" >"$root/bin/tool"
+  printf '%s\n' '#   select($tasks[.task]|is_open)' >"$root/bin/lib/x.jq"
+  printf '%s\n' "jq '\$tasks[.task]  |  is_open'" >"$root/bin/lib/doctor.d/1.sh"
+  printf '%s\n' "jq '\$tasks[.task] | is_open'" >"$root/tests/x.bats"
+  assert_equal "$(slow_open_selects "$root")" "bin/lib/doctor.d/1.sh:1
+bin/lib/x.jq:1
+bin/tool:2"
 }
 
 # Only Daniel's own terminal runs op (team-secrets restore and save), and only the ops role's
@@ -1636,9 +1740,14 @@ coordinator_deny_gaps() {
   done
   # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a
   # path (a whole tool the coordinator denies is one it does not use, which
-  # tests/claude-assistant.bats lists), and its launcher's header names the same families.
+  # tests/claude-assistant.bats lists), but for the coordinator's own seven on its GitHub login
+  # (the three variables and the four ways to empty the environment), which the assistant's
+  # command-guard hook holds, and its launcher's header names the same
+  # families.
   assert_equal "$(coordinator_deny_gaps "$REPO_ROOT/assistant.settings.json" "$REPO_ROOT/bin/claude-assistant")" ""
-  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" ""
+  assert_equal "$(jq -r --slurpfile a "$REPO_ROOT/assistant.settings.json" '.permissions.deny - $a[0].permissions.deny | .[] | select(contains("("))' "$coordinator")" \
+    "$(printf '%s\n' 'Bash(*GH_CONFIG_DIR*)' 'Bash(*GH_TOKEN*)' 'Bash(*GITHUB_TOKEN*)' \
+      'Bash(*env -i*)' 'Bash(*env --i*)' 'Bash(*env - *)' 'Bash(*exec -c*)')"
   # The header claims no control the team lacks.
   if grep -qi ruleset "$launcher"; then echo "bin/claude-coordinator names rulesets" >&2; return 1; fi
   grep -qF "GitHub's protection of agent-team's dev refuses a direct push and a merge with a red check" \
@@ -2003,14 +2112,23 @@ team-review-status https://github.com/me/shop/pull/5 a1b2c3d4e5f60718293a4b5c6d7
 COMMANDS
 }
 
-@test "GitHub's CI and zizmor's online run run on every pull request to dev and main and by hand, and no workflow runs on a push or for a fork's target" {
-  local workflow
-  # The top-level keys under on:, and the branches its pull_request names.
+@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
+  local workflow ci=$REPO_ROOT/.github/workflows/ci.yml
+  # The top-level keys under on:, the branches its pull_request names, and merge_group's types.
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$ci")" \
+    $'pull_request\nmerge_group\nworkflow_dispatch'
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    types: //p' "$ci")" "[checks_requested]"
+  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/zizmor-online.yml")" \
+    $'pull_request\nworkflow_dispatch'
   for workflow in ci.yml zizmor-online.yml; do
-    assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/$workflow")" \
-      $'pull_request\nworkflow_dispatch'
     assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    branches: //p' "$REPO_ROOT/.github/workflows/$workflow")" "[dev, main]"
   done
+  # The data job reads a trial commit's range from the merge group, beside the pull request's.
+  run -0 sed -n '/^  data:$/,/^  [a-z]/p' "$ci"
+  assert_contains "$output" '${{ github.event.merge_group.base_sha }}'
+  assert_contains "$output" '${{ github.event.merge_group.head_sha }}'
+  assert_contains "$output" '${{ github.event.pull_request.base.sha }}'
+  assert_contains "$output" '${{ github.event.pull_request.head.sha }}'
   for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
     if grep -nE '^\s*(push|pull_request_target|schedule):' "$workflow"; then
       echo "$workflow runs on a push, a schedule or with a fork's target's secrets" >&2
@@ -2174,12 +2292,13 @@ YAML
 }
 
 # The registry fixture is shaped like the team home's, whose required checks for agent-team are
-# the ones dev's protection requires: CI's job ids, each a check name on GitHub.
-@test "CI's jobs are exactly agent-team's required checks, and agent-team has no local checks" {
+# the ones dev's protection requires: CI's job ids, each a check name on GitHub, but the shard
+# jobs, the plan the shards split by (shard-plan) and the shards themselves (test-shards).
+@test "CI's jobs but the shard jobs are exactly agent-team's required checks, and agent-team has no local checks" {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   run_bin -0 team-project agent-team
   assert_equal "$(jq -c '[.required_checks, .local_checks]' <<<"$output")" \
-    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -v -- '-shards$' | jq -R . | jq -cs .),[]]"
+    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -vE -- '^shard-|-shards$' | jq -R . | jq -cs .),[]]"
 }
 
 # A shard job is never a required check itself: the job of the required id waits for every shard,
@@ -2198,6 +2317,79 @@ YAML
     job_block "$id" | grep -qxF "          RESULT: \${{ needs.$id-shards.result }}" || { echo "$id reads no result of $id-shards" >&2; return 1; }
     job_block "$id" | grep -qxF "        run: '[[ \$RESULT == success ]]'" || { echo "$id does not pass only on success" >&2; return 1; }
   done
+}
+
+# Every shard splits by one timings file, which shard-plan writes from the latest successful CI
+# run through the Actions API, else copies from the checkout, and which it alone may read: its
+# token reads the repository and its Actions runs, and no other job's token reads the Actions API.
+@test "test-shards splits by the timings shard-plan reads from the latest successful run, and only shard-plan reads the Actions API" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml id ids plan shards
+  job_block() { sed -n "/^jobs:\$/,\$p" "$ci" | sed -n "/^  $1:\$/,/^  [a-z_-]*:\$/p" | sed '$d'; }
+  plan=$(job_block shard-plan | grep -v '^ *#')
+  shards=$(job_block test-shards | grep -v '^ *#')
+  # The workflow's token reads the contents alone; shard-plan's reads the Actions runs too.
+  assert_equal "$(sed -n '/^permissions:$/,/^[^ ]/p' "$ci" | sed '$d')" $'permissions:\n  contents: read'
+  assert_equal "$(sed -n '/^    permissions:$/,/^    [^ ]/p' <<<"$plan" | sed '$d' | sed 's/ *#.*//')" $'    permissions:\n      contents: read\n      actions: read'
+  grep -qx '    runs-on: ubuntu-24.04' <<<"$plan"
+  grep -qx '    timeout-minutes: 5' <<<"$plan"
+  grep -qxF '          GH_TOKEN: ${{ github.token }}' <<<"$plan"
+  # It writes the latest successful run's timings, else warns and copies the committed file, so it
+  # never fails the run, and uploads either as timings.
+  grep -qF '::warning::' <<<"$plan"
+  grep -qxF '            cp tests/timings.tsv timings/timings.tsv' <<<"$plan"
+  grep -qx '      - uses: actions/upload-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$plan"
+  grep -qxF '          name: timings' <<<"$plan"
+  grep -qxF '          path: timings/timings.tsv' <<<"$plan"
+  # Every shard waits for it and downloads its timings over tests/timings.tsv before it runs.
+  grep -qx '    needs: shard-plan' <<<"$shards"
+  grep -qx '      - uses: actions/download-artifact@[0-9a-f]\{40\} # v[0-9.]*' <<<"$shards"
+  grep -qxF '          name: timings' <<<"$shards"
+  grep -qxF '          path: ${{ runner.temp }}/timings' <<<"$shards"
+  grep -qxF '          echo "TESTS_TIMINGS=$RUNNER_TEMP/timings/timings.tsv" >>"$GITHUB_ENV"' <<<"$shards"
+  (($(grep -n 'actions/download-artifact' <<<"$shards" | cut -d: -f1) < $(grep -nF 'tests/run bats --shard' <<<"$shards" | cut -d: -f1)))
+  # The committed tests/timings.tsv stays in place, so tests/repo.bats still checks it.
+  if grep -nE 'path: tests$|timings\.tsv +tests/' <<<"$shards"; then echo "test-shards writes over tests/timings.tsv" >&2; return 1; fi
+  # A hung gh ends the update before the job's limit, its failure caught like any other, and the
+  # artifact outlives GitHub's 30-day window for rerunning a shard.
+  grep -qF 'if ! timeout 180 tests/shards update --to timings/timings.tsv 2>update.err; then' <<<"$plan"
+  grep -qxF '          retention-days: 30' <<<"$plan"
+  grep -qxF '          overwrite: true' <<<"$plan"
+  # No other job reads the Actions API: none grants itself a permission or takes the run's token.
+  ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
+  for id in $ids; do
+    [[ $id != shard-plan ]] || continue
+    if job_block "$id" | grep -v '^ *#' | grep -nE 'permissions:|actions:|github\.token|GITHUB_TOKEN|GH_TOKEN|\bgh (run|api|workflow)\b'; then
+      echo "$id reads the Actions API or takes a permission" >&2
+      return 1
+    fi
+  done
+}
+
+# A newer run cancels an older one of the same workflow, event and ref (a pull request's runs, by
+# its refs/pull/<n>/merge, or a branch's dispatched ones), only for a pull request or a dispatch,
+# never a merge queue's trial commit or a run of another event, since team-ci-run waits on a
+# dispatched run or the PR's.
+@test "CI and zizmor's online run cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
+  local workflow
+  for workflow in ci.yml zizmor-online.yml; do
+    assert_equal "$(sed -n '/^concurrency:$/,/^[^ ]/p' "$REPO_ROOT/.github/workflows/$workflow" | sed '$d')" \
+      "concurrency:
+  group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.ref }}
+  cancel-in-progress: \${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}"
+  done
+}
+
+# A curl written in a workflow file retries a transient failure, as a release download's HTTP 504
+# failed the required zizmor job twice on one head.
+@test "every curl in a workflow retries a transient failure" {
+  local workflow line found=0
+  for workflow in "$REPO_ROOT"/.github/workflows/*.yml; do
+    while IFS= read -r line; do
+      found=$((found + 1))
+      [[ $line == *'curl --retry 5 --retry-all-errors '* ]] || { echo "${workflow##*/}: $line" >&2; return 1; }
+    done < <(grep -v '^ *#' "$workflow" | grep -E '(^|[^a-z])curl ')
+  done
+  ((found >= 5))
 }
 
 # The toolkit tests run MongoDB's Database Tools, which CI installs by the lock's own commands, so
@@ -2267,7 +2459,7 @@ YAML
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/shards" $k
-    assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [<run id>]"
+    assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
   done
 }
 
@@ -2799,24 +2991,25 @@ bats: 3 tests passed; 1 of 2 files failed"
 ok 2 after it"
 }
 
-# test: copy_run_left <copy> <pid file>: the pids, one per line, still running of what a test
-# started from <copy>'s tests: this user's processes whose command line holds <copy>/tests/, and
-# each pid of <pid file> while it is this user's and runs a command holding that path or the
-# test's own "sleep 120". Bound by owner and path, so a kill of them reaches nothing else.
+# test: copy_run_left <pid file>: the pids, one per line, still running of what a test started
+# from the tests of its copy, $BATS_TEST_TMPDIR/copy: this user's processes whose command line
+# holds $BATS_TEST_TMPDIR/copy/tests/, and each pid of <pid file> while it is this user's and runs
+# a command holding that path or the test's own "sleep 120". Bound by owner and path, as
+# tests/bound-kills holds, so a kill of them reaches nothing else.
 copy_run_left() {
-  local tests=${1:?}/tests/ me pid
+  local me pid
   me=$(id -u)
-  [[ $tests == /*/*/tests/ ]] || { echo "copy_run_left: $tests is no copy's path" >&2 && return 1; }
+  [[ $BATS_TEST_TMPDIR == /*/* ]] || { echo "copy_run_left: $BATS_TEST_TMPDIR is no test's directory" >&2 && return 1; }
   # TESTS goes to awk, not ps: an empty ENVIRON["TESTS"] makes index() match every process, so
   # awk refuses one too.
   ps -U "$me" -o pid=,args= |
-    TESTS=$tests awk 'ENVIRON["TESTS"] == "" { exit 1 } index($0, ENVIRON["TESTS"]) { print $1 }' || return 1
-  [[ -e $2 ]] || return 0
+    TESTS=$BATS_TEST_TMPDIR/copy/tests/ awk 'ENVIRON["TESTS"] == "" { exit 1 } index($0, ENVIRON["TESTS"]) { print $1 }' || return 1
+  [[ -e $1 ]] || return 0
   while read -r pid; do
     [[ $pid =~ ^[0-9]+$ ]] || continue
     ps -o uid=,args= -p "$pid" 2>/dev/null |
-      TESTS=$tests ME=$me awk -v pid="$pid" '$1 == ENVIRON["ME"] && (index($0, ENVIRON["TESTS"]) || (NF == 3 && $2 " " $3 == "sleep 120")) { print pid }'
-  done <"$2"
+      TESTS=$BATS_TEST_TMPDIR/copy/tests/ ME=$me awk -v pid="$pid" '$1 == ENVIRON["ME"] && (index($0, ENVIRON["TESTS"]) || (NF == 3 && $2 " " $3 == "sleep 120")) { print pid }'
+  done <"$1"
 }
 
 @test "team-heavy stop ends a tests/run bats run's files too, though each runs under timeout in a process group of its own" {
@@ -2840,7 +3033,7 @@ copy_run_left() {
   wait "$run" || true
   # What the stop TERMed may take a moment to be reaped.
   for ((i = 0; i < 50; i++)); do
-    left=$(copy_run_left "$copy" "$BATS_TEST_TMPDIR/pids")
+    left=$(copy_run_left "$BATS_TEST_TMPDIR/pids")
     [[ -n $left ]] || break
     sleep 0.1
   done
@@ -2853,6 +3046,204 @@ copy_run_left() {
     kill $left 2>/dev/null || true
   fi
   assert_equal "$left" ""
+}
+
+# A test's cleanup once killed every process of the user's: its awk filter matched every line of
+# ps -A, so kill sent TERM to the whole desktop session, twice. A search whose pids a test may kill
+# is bound by its owner and the test's own temporary directory, or tests/bound-kills names it.
+@test "no test kills the pids of a process search it did not bind by owner and its own temporary directory" {
+  run -0 "$REPO_ROOT/tests/bound-kills"
+  assert_equal "$output" ""
+}
+
+# The first planted test is the cleanup that logged the desktop out, as it stood before its fix,
+# and the second that cleanup as first fixed, its filter given to awk, still unbound by owner.
+# Each planted @test line is written %test, since bats rewrites an @test line even in a heredoc.
+@test "tests/bound-kills names the logout's cleanup before its fix, and each unbound search whose pids may reach a kill, by file, line and the binding it lacks" {
+  local logout=$BATS_TEST_TMPDIR/logout.bats forms=$BATS_TEST_TMPDIR/forms.bats
+  local tmp="the test's own temporary directory (\$BATS_TEST_TMPDIR or \$BATS_FILE_TMPDIR in a word of its pipeline)"
+  local neither="bound by neither its owner (-u or -U) nor $tmp" no_tmp="not bound by $tmp"
+  cat >"$logout" <<'LOGOUT'
+%test "team-heavy stop ends a tests/run bats run's files too, though each runs under timeout in a process group of its own" {
+  local copy=$BATS_TEST_TMPDIR/copy run i pid left=''
+  unset TEAM_HOME TESTS_TEST_SECONDS TESTS_FILE_MINUTES
+  limits_checkout "$copy"
+  printf '%s\n' "@test \"sleeps\" { echo \"\$\$\" >\"$BATS_TEST_TMPDIR/pids\"; sleep 120 & echo \"\$!\" >>\"$BATS_TEST_TMPDIR/pids\"; wait \"\$!\"; }" \
+    >"$copy/tests/sleeps.bats"
+  TEAM_JOBS=1 "$copy/tests/run" bats >"$BATS_TEST_TMPDIR/run.out" 2>&1 3>&- &
+  run=$!
+  for ((i = 0; i < 300; i++)); do
+    [[ ! -e $BATS_TEST_TMPDIR/pids || $(wc -l <"$BATS_TEST_TMPDIR/pids") -lt 2 ]] || break
+    sleep 0.1
+  done
+  [[ $(wc -l <"$BATS_TEST_TMPDIR/pids") -eq 2 ]]
+  run -0 "$copy/bin/team-heavy" stop
+  assert_contains "$output" "stopped tests/run bats in "
+  wait "$run" || true
+  for ((i = 0; i < 50; i++)); do
+    left=$(TESTS="$copy/tests/" ps -A -o pid=,args= | awk 'index($0, ENVIRON["TESTS"])')
+    [[ -n $left ]] || break
+    sleep 0.1
+  done
+  [[ -z $left ]] || kill $left 2>/dev/null || true
+  assert_equal "$left" ""
+}
+
+%test "the same cleanup as first fixed, its TESTS given to awk" {
+  local copy=$BATS_TEST_TMPDIR/copy left
+  left=$(ps -A -o pid=,args= | TESTS="$copy/tests/" awk 'index($0, ENVIRON["TESTS"]) { print $1 }')
+  [[ -z $left ]] || kill $left 2>/dev/null || true
+}
+LOGOUT
+  sed -i 's/^%test /@test /' "$logout"
+  run -1 "$REPO_ROOT/tests/bound-kills" "$logout"
+  assert_equal "$output" "$logout:18: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $logout:22
+$logout:28: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $logout:29"
+
+  cat >"$forms" <<'FORMS'
+%test "pgrep piped to xargs kill, bound by neither" {
+  pgrep -f "$copy/vite" | xargs -r kill
+}
+
+%test "a kill of a substituted pgrep, bound by its owner alone" {
+  kill $(pgrep -u "$(id -u)" -f vite)
+}
+
+%test "pkill, bound by the test's directory alone" {
+  pkill -f "$BATS_TEST_TMPDIR/bin/x" 2>/dev/null || true
+}
+
+%test "pidof, which takes no owner" {
+  kill "$(pidof sleep)"
+}
+
+%test "a loop that kills ps -e's pids, behind command -p" {
+  command -p ps -e -o pid=,args= | awk '$2 == "sleep" { print $1 }' |
+    while read -r pid; do kill -KILL "$pid"; done
+}
+
+# A search in a function whose caller kills what it prints.
+helper_left() {
+  ps -A -o pid=,args= | awk '/x/ { print $1 }'
+}
+
+%test "a helper's search, killed by its caller" {
+  left=$(helper_left)
+  kill $left
+}
+
+# A kill in a function that a block holding a search calls.
+kill_these() { kill "$@"; }
+
+%test "a search whose block calls a function that kills" {
+  kill_these $(pgrep -x sleep)
+}
+
+%test "run kill of a searched pid list" {
+  left=$(ps -A -o pid=,args= | awk '/x/ { print $1 }'); run kill $left
+}
+
+%test "run pkill" {
+  run pkill -f vite
+}
+
+%test "ps -A beside -U, which lists every user's processes" {
+  ps -A -U "$me" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "the test's directory only in a redirect's target" {
+  pkill -U "$(id -u)" -f vite 2>>"$BATS_TEST_TMPDIR/err"
+}
+
+%test "the test's directory only in a comment" {
+  pkill -U "$me" -f vite  # not $BATS_TEST_TMPDIR
+}
+
+%test "the test's directory only in another command of the list" {
+  pkill -U "$me" -f vite || touch "$BATS_TEST_TMPDIR/none"
+}
+
+%test "ps -C beside -U, which adds any user's processes of that name" {
+  ps -U "$me" -C sleep -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "a long selection with its value after =, and a long value option's = that takes no next word" {
+  ps -U "$me" --ppid="$pid" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" --sort=pid -A -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "bound by owner and path, in a word of its pipeline" {
+  pkill -U "$(id -u)" -f "$BATS_TEST_TMPDIR/bin/x"
+  run -0 pkill -U "$me" -f "$BATS_FILE_TMPDIR/bin/x"
+  ps -U "$me" -ww -o pid=,args= e | OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" awk 'index($0, ENVIRON["OWN"])' | xargs -r kill
+  ps -U "$me" -o pid=,args= | TESTS=$BATS_TEST_TMPDIR/x awk -v me="$(id -u)" 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" -o pid=,args= |  # filter by the test's directory
+    TESTS=$BATS_TEST_TMPDIR/x awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+  ps -U "$me" -o pid=,args= |
+    TESTS=$BATS_FILE_TMPDIR/copy awk 'index($0, ENVIRON["TESTS"]) { print $1 }' | xargs -r kill
+}
+
+%test "a ps that names its pids, and a probe that sends nothing" {
+  kill $(ps -o pid= -p "$pid")
+  kill -0 "$pid"
+}
+
+%test "a search that reaches no kill" {
+  pgrep -P "$sweep" -x flock >/dev/null
+  root=$(ps -A -o pid=,uid= | awk '$2 == 0 { print $1; exit }')
+  kill -0 $(pgrep x)
+}
+
+%test "text a kill is only in" {
+  refuses "pkill -f vite" 'kill $(pgrep -f x)'
+  bash -c 'pgrep x | xargs kill'
+  # kill $(pgrep x)
+  cat <<'SH'
+kill $(pgrep x)
+SH
+  docker ps --quiet | xargs -r docker kill
+}
+FORMS
+  sed -i 's/^%test /@test /' "$forms"
+  run -1 "$REPO_ROOT/tests/bound-kills" "$forms"
+  assert_equal "$output" "$forms:2: pgrep -f \$copy/vite: $neither, and its pids may reach the kill at $forms:2
+$forms:6: pgrep -u \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:6
+$forms:10: pkill -f \$BATS_TEST_TMPDIR/bin/x: not bound by its owner (-u or -U), and its pids may reach the kill at $forms:10
+$forms:14: pidof sleep: bound by neither its owner (-u or -U; pidof has none: use pgrep) nor $tmp, and its pids may reach the kill at $forms:14
+$forms:18: ps -e -o pid=,args=: $neither, and its pids may reach the kill at $forms:19
+$forms:24: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:29
+$forms:36: pgrep -x sleep: $neither, and its pids may reach the kill at $forms:33
+$forms:40: ps -A -o pid=,args=: $neither, and its pids may reach the kill at $forms:40
+$forms:44: pkill -f vite: $neither, and its pids may reach the kill at $forms:44
+$forms:48: ps -A -U \$me -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:48
+$forms:52: pkill -U \$(id -u) -f vite: $no_tmp, and its pids may reach the kill at $forms:52
+$forms:56: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:56
+$forms:60: pkill -U \$me -f vite: $no_tmp, and its pids may reach the kill at $forms:60
+$forms:64: ps -U \$me -C sleep -o pid=,args=: not bound by its owner (-u or -U, which -C undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:64
+$forms:68: ps -U \$me --ppid=\$pid -o pid=,args=: not bound by its owner (-u or -U, which --ppid=\$pid undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:68
+$forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or -U, which -A undoes: ps adds the processes it selects, any user's, to the owner's), and its pids may reach the kill at $forms:68"
+  # The forms after the first fifteen, bound or reaching no kill, pass alone.
+  sed -i '1,70d' "$forms"
+  run -0 "$REPO_ROOT/tests/bound-kills" "$forms"
+  assert_equal "$output" ""
+}
+
+# The sleeps leave bats' output (fd 3) closed and are killed before any assertion, so a failing
+# own_pids ends the test at once instead of holding the file's run open for their five minutes.
+@test "own_pids names the processes this test started, but not this shell, another test's or one whose environment was emptied" {
+  local own other bare sleep
+  sleep=$(command -v sleep)
+  "$sleep" 300 3>&- &
+  own=$!
+  BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR-other "$sleep" 300 3>&- &
+  other=$!
+  env -i "$sleep" 300 3>&- &
+  bare=$!
+  run own_pids
+  kill "$own" "$other" "$bare"
+  assert_equal "$status" 0
+  assert_equal "$(grep -cxE "$own|$other|$bare|$$" <<<"$output")" 1
+  grep -qx "$own" <<<"$output"
 }
 
 # bats runs a test's time limit countdown as a background job of the test's own shell, so a bare
@@ -2984,7 +3375,7 @@ $planted:28: rm -rf \"\${x:-}\""
 }
 
 # tests/shards in a checkout of three bats files, a.bats and b.bats timed and c.bats not.
-@test "tests/shards weighs a file by its seconds on this platform, an untimed one by its bytes at the timed rate, and every bytes without timings" {
+@test "tests/shards weighs a file by its seconds on this platform, an untimed one by its bytes at the timed rate, and every bytes without timings, from TESTS_TIMINGS' file when set" {
   local copy=$BATS_TEST_TMPDIR/copy column=2
   [[ $(uname -s) != Darwin ]] || column=3
   unset TEAM_HOME
@@ -3002,6 +3393,11 @@ $planted:28: rm -rf \"\${x:-}\""
   else
     assert_equal "$output" $'1\t40\ttests/c.bats\n2\t20\ttests/a.bats\n2\t10\ttests/b.bats'
   fi
+  # TESTS_TIMINGS names the timings in place of tests/timings.tsv, as CI's shards take shard-plan's,
+  # and a row for a file the checkout lacks (tests/extra.bats) weighs nothing.
+  printf '# fresh\nfile\tlinux\tmacos\ntests/a.bats\t3\t3\ntests/b.bats\t30\t30\ntests/c.bats\t4\t4\ntests/extra.bats\t99\t99\n' >"$BATS_TEST_TMPDIR/fresh.tsv"
+  TESTS_TIMINGS=$BATS_TEST_TMPDIR/fresh.tsv run -0 --separate-stderr "$copy/tests/shards" 2
+  assert_equal "$output" $'1\t30\ttests/b.bats\n2\t4\ttests/c.bats\n2\t3\ttests/a.bats'
   rm "$copy/tests/timings.tsv"
   run -0 --separate-stderr "$copy/tests/shards" 2
   assert_equal "$output" $'1\t2000\ttests/c.bats\n2\t1000\ttests/a.bats\n2\t500\ttests/b.bats'
@@ -3009,8 +3405,9 @@ $planted:28: rm -rf \"\${x:-}\""
 
 # tests/shards update in a checkout of its own, on a gh stub whose CI run 4242 has two
 # test-shards jobs and two jobs of other names, the test job's log holding a bats line too, over
-# timings whose macOS seconds it keeps, since CI runs no macOS job.
-@test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty" {
+# timings whose macOS seconds it keeps, since CI runs no macOS job; then with --to, and on a
+# checkout with more files than the run timed.
+@test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty, to --to's file if given, and keeps the timings from a run that timed under half the files" {
   local copy=$BATS_TEST_TMPDIR/copy
   unset TEAM_HOME
   mkdir -p "$copy/tests"
@@ -3051,6 +3448,32 @@ $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t15\ntests/c
   assert_equal "$(stub_calls gh | jq -r '.[0:2] | join(" ")' | sort -u)" "run view"
   assert_equal "$(cat "$copy/tests/timings.tsv")" "$header
 $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
+
+  # With --to, the timings go to that file, the macOS seconds still read from tests/timings.tsv,
+  # which stays as it was.
+  printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30\n' >"$copy/tests/timings.tsv"
+  run -0 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$output" "tests/shards: wrote $BATS_TEST_TMPDIR/fresh.tsv from CI run 4242"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/fresh.tsv")" "$header
+$(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t\ntests/c.bats\t3\t')"
+  assert_equal "$(cat "$copy/tests/timings.tsv")" "$(printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30')"
+  run -0 --separate-stderr "$copy/tests/shards" update 4242 --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$output" "tests/shards: wrote $BATS_TEST_TMPDIR/fresh.tsv from CI run 4242"
+  run -2 --separate-stderr "$copy/tests/shards" update --to
+  assert_equal "$stderr" "shards: usage: tests/shards <n> | tests/shards update [--to <file>] [<run id>]"
+
+  # A run that timed fewer than half the suite's files leaves the timings as they were: the run
+  # timed 3 files (a, b and c), of 6 in the checkout's tests/, then of 7.
+  for name in a b c d e f; do : >"$copy/tests/$name.bats"; done
+  run -0 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/half.tsv"
+  : >"$copy/tests/g.bats"
+  rm "$BATS_TEST_TMPDIR/fresh.tsv"
+  run -1 --separate-stderr "$copy/tests/shards" update --to "$BATS_TEST_TMPDIR/fresh.tsv"
+  assert_equal "$stderr" "shards: CI run 4242 printed 3 of 7 files; keeping the timings"
+  assert_equal "$output" ""
+  [[ ! -e $BATS_TEST_TMPDIR/fresh.tsv ]]
+  run -1 --separate-stderr "$copy/tests/shards" update
+  assert_equal "$(cat "$copy/tests/timings.tsv")" "$(printf '# timings\nfile\tlinux\tmacos\ntests/a.bats\t10\t30')"
 }
 
 # The timings are data tests/shards reads: each row names a bats file that exists, with whole
@@ -3187,4 +3610,44 @@ briefs_without_gotchas() {
   for path in bin/lib/review-app bin/team-review-check; do
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
+}
+
+# The names team-janitor tmp may remove (bin/lib/tmp-leftovers): each line a maker, a project of
+# the registry fixture or bats, and an expression that begins with at least 6 literal characters
+# and holds no |, so no alternation widens it past that beginning, and none is a name another
+# program makes: mktemp's default, systemd's, Claude Code's or pytest's. Says the first line it
+# refuses on stderr and fails: leftovers_hold <file>
+leftovers_hold() {
+  local file=$1 names line maker expression name count=0
+  names=$(sed -n 's/^\[\([a-z0-9-]*\)\]$/\1/p' "$REPO_ROOT/tests/fixtures/projects.toml")
+  while IFS= read -r line; do
+    [[ -n $line && $line != '#'* ]] || continue
+    count=$((count + 1))
+    [[ $line =~ ^([a-z0-9-]+)\ ([^[:space:]]+)$ ]] || { echo "bin/lib/tmp-leftovers: '$line' is not <maker> <expression>" >&2; return 1; }
+    maker=${BASH_REMATCH[1]} expression=${BASH_REMATCH[2]}
+    [[ $maker == bats ]] || grep -Fxq -- "$maker" <<<"$names" ||
+      { echo "bin/lib/tmp-leftovers: the maker of '$line' is neither bats nor a project of the registry fixture" >&2; return 1; }
+    [[ $expression =~ ^[A-Za-z0-9_-]{6} ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' does not begin with 6 literal characters" >&2; return 1; }
+    [[ $expression != *'|'* ]] ||
+      { echo "bin/lib/tmp-leftovers: '$expression' holds a |, which would widen the names it removes" >&2; return 1; }
+    for name in tmp.AbCdEfGhIj systemd-private-x claude-1000 pytest-of-user; do
+      if [[ $name =~ ^($expression)$ ]]; then
+        echo "bin/lib/tmp-leftovers: '$expression' matches $name, which is not the team's" >&2
+        return 1
+      fi
+    done
+  done <"$file"
+  ((count >= 12))
+}
+
+@test "every line of bin/lib/tmp-leftovers is a maker and an expression that begins with 6 literal characters, holds no | and matches no other program's name" {
+  leftovers_hold "$REPO_ROOT/bin/lib/tmp-leftovers"
+}
+
+@test "the leftovers' check refuses a line whose expression widens itself with an alternation" {
+  { cat "$REPO_ROOT/bin/lib/tmp-leftovers"; echo 'no-mistakes nm-cli-home-[0-9]+|[a-z]+'; } >"$BATS_TEST_TMPDIR/tmp-leftovers"
+  run leftovers_hold "$BATS_TEST_TMPDIR/tmp-leftovers"
+  assert_equal "$status" 1
+  assert_equal "$output" "bin/lib/tmp-leftovers: 'nm-cli-home-[0-9]+|[a-z]+' holds a |, which would widen the names it removes"
 }

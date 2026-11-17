@@ -39,6 +39,24 @@ untraced() {
   return "$1"
 }
 
+# own_pids: the pids, one per line, of the processes still running that this test started: this
+# user's whose environment holds this test's BATS_TEST_TMPDIR, which bats exports and every
+# process a test starts inherits, but one started with an emptied environment or another
+# BATS_TEST_TMPDIR (a bats run of its own, whose processes a test binds by their command line's
+# path). The test's own shell is left out, but bats' countdown, a subshell and this pipeline are
+# among them, so a caller narrows them by what it looks for (its arguments, read with ps -o args=
+# -p) before it kills one. A test kills a process it cannot name by the pid it started only from
+# here, or from a search bound as tests/bound-kills holds.
+own_pids() {
+  local me environment=e
+  me=$(id -u)
+  [[ $BATS_TEST_TMPDIR == /*/* ]] || { echo "own_pids: $BATS_TEST_TMPDIR is no test's directory" >&2 && return 1; }
+  # ps shows the environment after the arguments: procps with e, macOS's with -E.
+  [[ $(command -p uname) != Darwin ]] || environment=-E
+  command -p ps -U "$me" -ww -o pid=,args= "$environment" |
+    OWN="BATS_TEST_TMPDIR=$BATS_TEST_TMPDIR" SELF=$$ awk '$1 != ENVIRON["SELF"] && index($0 " ", " " ENVIRON["OWN"] " ") { print $1 }'
+}
+
 # macOS assesses every new executable file on its first run, a quarter of a second each, so a
 # test that wrote its stubs or copied bin/ afresh spent most of its time waiting on that. The
 # executables tests share are therefore made once per bats run, read-only, under
@@ -102,11 +120,12 @@ shared_stubs() {
 }
 
 # copy_bin <dest>: a copy of this checkout's bin/ at <dest>, its files linked to the run's shared
-# copy (link_shared), but for bin/lib/review-app: a copy has the reviewer App off until the test
-# turns it on (review_app_on), whatever this checkout commits.
+# copy (link_shared), but for bin/lib/review-app and bin/lib/worker-login: a copy has the reviewer
+# App and the worker login off until the test turns them on (review_app_on, worker_login_on),
+# whatever this checkout commits.
 copy_bin() {
   link_shared bin "$REPO_ROOT/bin" "$1"
-  rm -f "$1/lib/review-app"
+  rm -f "$1/lib/review-app" "$1/lib/worker-login"
 }
 
 # Build the test's sandbox and point TEAM_HOME, HOME and PATH into it, untraced. A sandbox runs
@@ -189,9 +208,10 @@ sandbox() {
   # heavy run tests/run holds (team-heavy), nor the role and task of the session running the suite
   # (worker_refusal), nor the parallelism team-checks gives the suite (TEAM_JOBS), nor a bound on
   # Docker's answers (TEAM_DOCKER_SECONDS), nor the heartbeat job's mark (TEAM_HEARTBEAT_JOB), nor
-  # the id of the Claude session running the suite (CLAUDE_CODE_SESSION_ID, team-sweep's own).
+  # the id of the Claude session running the suite (CLAUDE_CODE_SESSION_ID, team-sweep's own), nor
+  # the timings CI's shard splits by (TESTS_TIMINGS).
   unset TEAM_COORDINATOR_CHANNEL TEAM_INTERVIEW_CHANNEL TEAM_ASSISTANT_CHANNEL CLAUDE_PROJECT_DIR NVM_DIR TEAM_HEAVY_HELD TEAM_HEAVY_WAIT_MINUTES
-  unset AGENT_TEAM_ROLE AGENT_TEAM_TASK TEAM_JOBS TEAM_DOCKER_SECONDS TEAM_HEARTBEAT_JOB CLAUDE_CODE_SESSION_ID
+  unset AGENT_TEAM_ROLE AGENT_TEAM_TASK TEAM_JOBS TEAM_DOCKER_SECONDS TEAM_HEARTBEAT_JOB CLAUDE_CODE_SESSION_ID TESTS_TIMINGS
   # The state and cache directories and Claude Code's config directory are HOME's, as the
   # sandbox's HOME is.
   unset XDG_STATE_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR
@@ -330,6 +350,40 @@ review_app_off() {
     copy_bin "$CODE_CHECKOUT/bin"
   fi
   rm -f "$CODE_CHECKOUT/bin/lib/review-app"
+}
+
+# worker_login_on [<login>]: the worker login on for the scripts run_bin runs: CODE_CHECKOUT (a
+# copy of bin/ made here when the test made none) gets bin/lib/worker-login naming <login>
+# (default team-worker-bot), and the sandbox's HOME gets the login's file,
+# ~/.config/agent-team/gh-worker/hosts.yml (the directory mode 700, the file mode 600), of fixture
+# text in gh's own format, holding no real token.
+worker_login_on() {
+  local login=${1:-team-worker-bot} dir=$HOME/.config/agent-team/gh-worker
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/lib/worker-login"
+  printf 'login=%s\n' "$login" >"$CODE_CHECKOUT/bin/lib/worker-login"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  printf '%s\n' 'github.com:' '    users:' "        $login:" "            oauth_token: fixture-token-of-$login" \
+    '    git_protocol: https' "    oauth_token: fixture-token-of-$login" "    user: $login" >"$dir/hosts.yml"
+  chmod 600 "$dir/hosts.yml"
+}
+
+# worker_login_off: the worker login off for the scripts run_bin runs, whatever this checkout's
+# bin/lib/worker-login says: CODE_CHECKOUT (a copy of bin/ made here when the test made none, which
+# copy_bin makes with the login off) has no bin/lib/worker-login. The login's file in the
+# sandbox's HOME, if a test wrote one, stays, since off means no session is pointed at it.
+worker_login_off() {
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/lib/worker-login"
 }
 
 # plan_md T<n> [<text>]: write the task's plan, tasks/T<n>/plan.md in the sandbox's team home,
@@ -1000,6 +1054,29 @@ keeps_named() {
   done < <(grep -ohE '`/[a-z][a-z0-9-]*`|skills/[a-z][a-z0-9-]*/SKILL\.md|the `[a-z][a-z0-9-]*` skill' "$@" |
     sed -E 's#^`/##; s#`$##; s#^skills/##; s#/SKILL\.md$##; s#^the `##; s#` skill$##' | sort -u)
   return "$found"
+}
+
+# hold_merge_lock <task>: a process that holds the task's merge lock as team-merge does, the file
+# open and locked, until the test kills it; prints its pid once the lock is held.
+hold_merge_lock() {
+  local lock=$HOME/.local/state/agent-team/merge/$1.lock pid
+  mkdir -p "${lock%/*}"
+  rm -f "$lock.held"
+  # shellcheck disable=SC2016
+  bash -c 'exec 9>>"$1" && flock -n 9 && : >"$1.held" && exec sleep 600' _ "$lock" >/dev/null 2>&1 3>&- &
+  pid=$!
+  while [[ ! -e $lock.held ]]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.05
+  done
+  echo "$pid"
+}
+
+# release_merge_lock <pid>: ends hold_merge_lock's process <pid>, and returns once it is gone, so
+# the lock is free.
+release_merge_lock() {
+  kill "$1"
+  while kill -0 "$1" 2>/dev/null; do sleep 0.05; done
 }
 
 assert_equal() {

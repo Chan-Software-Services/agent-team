@@ -1,10 +1,24 @@
 // What a running process holds, read on Linux and macOS: the environment and the sockets from
-// /proc on Linux, and through ps and lsof on macOS, which has no /proc; the children through ps
-// on both.
+// /proc on Linux, and through ps and lsof on macOS, which has no /proc; the children and each
+// process's start time from /proc on Linux and through ps on macOS. And the end of what a test
+// started, so a failed or timed-out test leaves nothing running that holds node --test open.
 //
 //   startingEnvironment(pid)   the environment the process started with (Linux: its
 //                              /proc/<pid>/environ; macOS: what `ps -E` appends to its command)
-//   children(pid)              the pids of the process's children (`ps -A`, on both systems)
+//   children(pid)              the pids of the process's children (Linux: /proc/<pid>/stat's
+//                              ppid; macOS: `ps -A`)
+//   owned(t, child)            returns `child`, a spawned ChildProcess, after arranging that it
+//                              and every process below it end when test `t` ends, passed, failed
+//                              or timed out (node:test runs `t.after` on each): the tree is read
+//                              first, since a process whose parent ends is no longer below it;
+//                              the child gets SIGTERM and up to 15 s to exit, so a script that
+//                              cleans up on SIGTERM does (the restore drill removing its
+//                              throwaway, team-heavy stopping its scope, whose own stop waits up
+//                              to 10 s); then every process of the tree read first that is still
+//                              the same process, by its start time, and every process now below
+//                              one of them or below the child (one it started since, as on its
+//                              SIGTERM) gets SIGKILL, the child too, and the hook resolves once
+//                              the child has exited
 //   inetPeers(pid)             the remote address of every TCP and UDP socket it holds, as
 //                              "host:port": an IPv4 address, or an IPv4-mapped IPv6 one, as
 //                              dotted IPv4 on both systems; any other IPv6 address in each
@@ -24,10 +38,99 @@ export function startingEnvironment(pid) {
   return execFileSync("ps", ["-E", "-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" });
 }
 
+// Every process: [pid, ppid, started], `started` being its start time, so a pid read twice is the
+// same process only when its start is the same. On Linux the start is field 22 of
+// /proc/<pid>/stat, in clock ticks since boot, which no step of the wall clock moves (ps's
+// lstart is the boot time plus those ticks, and an NTP step moves the boot time it reads); on
+// macOS, which has no /proc, it is ps's lstart, to the second.
+const processTable = () => (linux ? procProcessTable() : psProcessTable());
+
+function procProcessTable() {
+  const table = [];
+  for (const pid of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+    let stat;
+    try {
+      stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      continue; // Gone while we looked.
+    }
+    // The command name, field 2, is in parentheses and may hold blanks or parentheses itself, so
+    // the fields are counted from after its last ")": field 3 first, ppid field 4, start field 22.
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    table.push([pid, fields[1], fields[19]]);
+  }
+  return table;
+}
+
+const psProcessTable = () =>
+  execFileSync("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "lstart="], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } })
+    .trim().split("\n").map((line) => {
+      const [pid, ppid, ...started] = line.trim().split(/\s+/);
+      return [pid, ppid, started.join(" ")];
+    });
+
 export function children(pid) {
-  return execFileSync("ps", ["-A", "-o", "pid=", "-o", "ppid="], { encoding: "utf8" })
-    .trim().split("\n").map((line) => line.trim().split(/\s+/))
-    .filter(([, ppid]) => ppid === String(pid)).map(([child]) => child);
+  return processTable().filter(([, ppid]) => ppid === String(pid)).map(([child]) => child);
+}
+
+// Every process of `table` below any of `pids`: their children, their children's, and on, as a
+// Map of pid to start time.
+function below(pids, table) {
+  const childrenOf = new Map();
+  for (const [pid, ppid, started] of table) childrenOf.set(ppid, [...(childrenOf.get(ppid) ?? []), [pid, started]]);
+  const found = new Map();
+  const queue = pids.map(String);
+  while (queue.length) {
+    for (const [pid, started] of childrenOf.get(queue.shift()) ?? []) {
+      if (found.has(pid)) continue;
+      found.set(pid, started);
+      queue.push(pid);
+    }
+  }
+  return found;
+}
+
+const graceMs = 15_000;
+
+export function owned(t, child) {
+  t.after(() => endTree(child));
+  return child;
+}
+
+const running = (child) => child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+
+// Resolves true once `child` has exited, or false after `ms` (never, with no `ms`).
+function exited(child, ms) {
+  if (!running(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = ms === undefined ? undefined : setTimeout(() => resolve(false), ms);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+async function endTree(child) {
+  if (!running(child)) return;
+  const tree = below([child.pid], processTable());
+  child.kill("SIGTERM");
+  await exited(child, graceMs);
+  const now = processTable();
+  const startOf = new Map(now.map(([pid, , started]) => [pid, started]));
+  // A pid of the first read whose start has changed is another process since, never this tree's.
+  const same = [...tree].filter(([pid, started]) => startOf.get(pid) === started).map(([pid]) => pid);
+  const roots = running(child) ? [String(child.pid), ...same] : same;
+  for (const pid of new Set([...same, ...below(roots, now).keys()])) {
+    try {
+      process.kill(Number(pid), "SIGKILL");
+    } catch (error) {
+      // Gone since the second read, or another user's process.
+      if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+    }
+  }
+  if (running(child)) child.kill("SIGKILL");
+  await exited(child);
 }
 
 export function inetPeers(pid) {

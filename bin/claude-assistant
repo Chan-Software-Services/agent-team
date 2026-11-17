@@ -23,9 +23,10 @@
 # home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP config,
 # ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny every
 # server `claude mcp list` names in the team home but the Discord plugin's, as
-# claude-coordinator's do (bin/lib/launch.sh). It runs on the user settings' model at their
-# effort, with their Remote Control, as the coordinator does, and compacts at 200k tokens by the
-# launch's --autocompact flag, idle from 100k.
+# claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
+# bin/lib/worker-login names one, by its settings' env, as the coordinator's does. It runs on the
+# user settings' model at their effort, with their Remote Control, as the coordinator does, and
+# compacts at 200k tokens by the launch's --autocompact flag, idle from 100k.
 #
 # It refuses (exit 1), in this order: while another launch holds the non-blocking flock on
 # ~/.local/state/agent-team/assistant-launch.lock; while `claude agents --json --all` lists a
@@ -34,8 +35,9 @@
 # lease, naming the holder, or saying an assistant never starts offline when GitHub is
 # unreachable; with no ASSISTANT_CHANNEL (an empty TEAM_ASSISTANT_CHANNEL); with no bot token in
 # ~/.claude/channels/discord/.env; with no Daniel's id readable from the coordinator's
-# access.json; and while that file has a group for #assistant, since the coordinator would hear
-# it too.
+# access.json; while that file has a group for #assistant, since the coordinator would hear it
+# too; and while the worker login is named but not on this machine. Each of these comes before its
+# Discord state or settings are written.
 #
 # Usage: claude-assistant [--prompt <text>]   (always in the team home)
 #        claude-assistant --load-check <worktree> [--prompt <text>]
@@ -118,6 +120,14 @@ if jq -e --arg c "$ASSISTANT_CHANNEL" '(.groups // {}) | has($c)' "$discord/acce
   die "the coordinator would hear #assistant too: remove that group with /discord:access group rm $ASSISTANT_CHANNEL in the coordinator"
 fi
 
+mcp=$LAUNCH_STATE/assistant.mcp.json
+settings=$LAUNCH_STATE/assistant.settings.json
+# The settings before the Discord state, since their writer refuses a worker login that is not
+# on this machine. No MCP template and no connectors: it runs no server of its own and keeps no
+# connector.
+launch_settings "$code/assistant.settings.json" "" "" "$settings" "$mcp" \
+  "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
+
 mkdir -p "$state"
 chmod 700 "$state"
 ln -sfn ../discord/.env "$state/.env"
@@ -128,12 +138,6 @@ jq -n --arg channel "$ASSISTANT_CHANNEL" --argjson daniel "$daniel" \
   >"$state/access.json.$$"
 chmod 600 "$state/access.json.$$"
 mv -f "$state/access.json.$$" "$state/access.json"
-
-mcp=$LAUNCH_STATE/assistant.mcp.json
-settings=$LAUNCH_STATE/assistant.settings.json
-# No MCP template and no connectors: it runs no server of its own and keeps no connector.
-launch_settings "$code/assistant.settings.json" "" "" "$settings" "$mcp" \
-  "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
 # inherit the lock's file, so a running assistant never holds the next launch's lock.
