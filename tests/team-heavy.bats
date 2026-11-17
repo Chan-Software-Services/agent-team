@@ -523,7 +523,7 @@ gone() {
 }
 
 @test "a run's admission is released at its end, when its command fails too, and its temporary directory goes" {
-  local tmp=$BATS_TEST_TMPDIR/tmp
+  local tmp=$BATS_TEST_TMPDIR/heavy-tmp
   mkdir "$tmp"
   TMPDIR=$tmp run_bin -0 team-heavy run --kind tests-run -- true
   assert_equal "$(jq -c . "$ADMITTED")" '[]'

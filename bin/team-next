@@ -67,10 +67,10 @@
 # none of NN's phase or an earlier one is left, NN's phase's deliverer gets builder-deliver (its
 # goal from the plan) --name deliver, or for a task of more than one phase --name deliver-p<n>
 # with tickets set to "every ticket of phase <n> (<its tickets>)", a name a launch already read
-# taking -2, -3 and so on, in the sending builder's project; the next phase's first ticket is
-# launched by hand, as the first one is. Each is launched as a builder with the toolkits of the
-# task's latest builder launch in its project (launch_in in bin/lib/ledger.jq: one naming no
-# project counts), else of its latest builder launch. In a phase whose cap is above 1 (below), a DONE <NN> with tickets of
+# taking -2, -3 and so on, in the sending builder's project; the next phase is started by --fill
+# (below), at any cap. Each is launched as a builder with the toolkits of the task's latest builder
+# launch in its project (launch_in in bin/lib/ledger.jq: one naming no project counts), else of its
+# latest builder launch. In a phase whose cap is above 1 (below), a DONE <NN> with tickets of
 # its phase left is logged and checked the same way, but its hand-off is --fill's, and none ready
 # is no refusal, since others may run; with cap 1 every step above is as it was.
 # --fill, with no message, takes the same task checks and needs a plan-approved; it launches the
@@ -78,6 +78,19 @@
 # T<n> --json reads them (its refusal is its own). A phase's cap is the latest plan-approved's
 # parallel (team-log), its entry for that phase, the last entry for a later phase, and 1 when the
 # latest plan-approved has none, so a later approval without it builds one ticket at a time again.
+# Before a project's first launch of a phase after a merged part (no ticket of the phase in that
+# project running or done, and the project's latest merged naming the phase among its phases_left
+# with no ticket of the project in a phase before it there), it fetches origin's base into that
+# project's task worktree (with no credential prompt, at most 60 seconds) and fast-forwards the task
+# branch to it when the branch is its ancestor, "brought phase <p>'s task branch to origin/<base>:
+# <branch> <old8>..<new8> in <worktree>", so the phase's ticket worktrees, and at cap 1 the task
+# worktree, hold what merged into the base since; a branch that holds the base already is left as it
+# is, and a project's phase already started is never touched. Every ready ticket's project is
+# checked before any branch moves. It never merges, forces or pushes, and refuses the fill, moving
+# no branch and launching nothing, naming the step that clears it: the task worktree off the task
+# branch, or with changes to tracked files or files git does not ignore, or a branch with commits
+# the base does not hold ("have a builder merge origin/<base> into <branch> ..."), exit 1; a base it
+# cannot fetch, exit 75.
 # Running are the phase's tickets team-tickets calls running, whatever their sessions' state. With
 # cap 1, the lowest-numbered ready ticket is launched in the task's worktree, as a DONE <NN>'s
 # hand-off launches it (T<n>-builder), when none runs. With a cap above 1, each ready ticket is
@@ -1280,14 +1293,78 @@ tilde() {
   echo "${1/#"$HOME/"/"~/"}"
 }
 
+# changed_files <worktree> [untracked]: its changes to tracked files, then with untracked its
+# untracked files git does not ignore, joined by ", ", or nothing.
+changed_files() {
+  {
+    git -C "$1" diff --name-only HEAD
+    [[ -z ${2:-} ]] || git -C "$1" ls-files --others --exclude-standard
+  } | paste -sd, | sed 's/,/, /g'
+}
+
+# base_due <project> <phase> <the tickets as JSON>: before the project's first launch of <phase>,
+# when the project's latest merged names it among its phases_left and no phase before it there has a
+# ticket of the project (the project's next phase after a merged part), fetches origin's base,
+# through origin_git, into the task worktree in <project> and, when the task branch is its ancestor
+# and not at it, adds "<worktree> <branch> <base> <head> <base's tip>", tab-separated, to moves, for
+# move_to_base; a branch that holds the base already adds nothing. Refused, having moved no branch,
+# when the worktree is off its branch or has uncommitted changes, or the branch has commits the base
+# does not hold (exit 1), or the base cannot be fetched (exit 75).
+base_due() {
+  local project=$1 p=$2 ticket_list=$3 line wt branch base on dirty head onto why stop mine rc=0 NET_ERR
+  mine=$(jq -c --arg proj "$project" '[.[] | select(.project == $proj) | .phase // 1] | unique' <<<"$ticket_list")
+  ledger_jq '[.[] | select(.event == "merged" and (.project // $proj) == $proj)] | last
+      | . != null and (.phases_left | type) == "array" and any(.phases_left[]; . == $p)
+        and all(.phases_left[] | select(. < $p); IN($mine[]) | not)' \
+    -e --arg proj "$project" --argjson p "$p" --argjson mine "$mine" <<<"$events" >/dev/null || return 0
+  line=$(ledger_jq '[open_worktrees(.[]; $home) | select(.project == $proj and .ticket == null)] | last
+      | select(. != null) | .worktree, .branch' -r --arg proj "$project" <<<"$events")
+  { IFS= read -r wt; IFS= read -r branch; } <<<"$line"
+  [[ -n $wt ]] || die "$task has no open worktree in $project"
+  why="phase $p starts after a merged part, but" stop="no ticket of phase $p is launched"
+  [[ -d $wt ]] || die "$why the task worktree $wt is not on this machine, so $stop"
+  base=$(team_project "$project" base) || exit 1
+  on=$(git -C "$wt" symbolic-ref -q --short HEAD) || on="a detached HEAD"
+  [[ $on == "$branch" ]] ||
+    die "$why the task worktree $wt is on $on, not $branch, so it is not brought to origin/$base and $stop: check out $branch there, then run team-next $task --fill again"
+  dirty=$(changed_files "$wt" untracked)
+  [[ -z $dirty ]] ||
+    die "$why the task worktree $wt has uncommitted changes ($dirty), so $branch is not brought to origin/$base and $stop: commit or remove them, then run team-next $task --fill again"
+  NET_ERR=$(mktemp)
+  origin_git -C "$wt" fetch -q --no-write-fetch-head origin "+refs/heads/$base:refs/remotes/origin/$base" || rc=$?
+  if ((rc != 0)); then
+    echo "${0##*/}: $why origin's $base cannot be fetched into $wt ($(origin_reason "$rc")), so $branch is not brought to it and $stop: run team-next $task --fill again once it can be" >&2
+    rm -f -- "$NET_ERR"
+    exit 75
+  fi
+  rm -f -- "$NET_ERR"
+  head=$(git -C "$wt" rev-parse HEAD)
+  onto=$(git -C "$wt" rev-parse "refs/remotes/origin/$base")
+  ! git -C "$wt" merge-base --is-ancestor "$onto" HEAD || return 0
+  git -C "$wt" merge-base --is-ancestor HEAD "$onto" ||
+    die "$why $branch at ${head:0:8} holds commits origin/$base at ${onto:0:8} does not, so it is not brought to origin/$base and $stop: have a builder merge origin/$base into $branch in $wt (a merge commit, never a rebase), then run team-next $task --fill again"
+  moves+=("$wt"$'\t'"$branch"$'\t'"$base"$'\t'"$head"$'\t'"$onto")
+}
+
+# move_to_base <phase>: fast-forwards each task branch of moves to its base's tip, printing what moved.
+move_to_base() {
+  local move wt branch base head onto
+  for move in "${moves[@]}"; do
+    IFS=$'\t' read -r wt branch base head onto <<<"$move"
+    git -C "$wt" merge -q --ff-only "$onto" >&2 ||
+      die "phase $1 starts after a merged part, but $branch in $wt cannot fast-forward to origin/$base at ${onto:0:8}; its reason is above"
+    echo "brought phase $1's task branch to origin/$base: $branch ${head:0:8}..${onto:0:8} in $wt"
+  done
+}
+
 # fill: launches, in number order (--next's first), each ready ticket of the phase being built (the
 # earliest with a ticket not done) while fewer than its cap run, as the header says, printing one
 # line a step and, when it launched nothing or tickets wait, the line that says why.
 fill() {
-  local tickets phase building cap problem open running_tsv candidates_tsv n alone project k=0 c
-  local -a running=() waiting=() todo=() todo_projects=() bare=() launched=()
+  local tickets phase building cap problem open started running_tsv candidates_tsv n alone project k=0 c
+  local -a running=() starts=() moves=() waiting=() todo=() todo_projects=() bare=() launched=()
   tickets=$(task_tickets) || exit
-  json_vars phase='.phase' building='.building' problem='.problem' open='.open' \
+  json_vars phase='.phase' building='.building' problem='.problem' open='.open' started='.started' \
     running_tsv='[.running[] | [.ticket, .alone] | @tsv] | join("\n")' \
     candidates_tsv='[.candidates[] | [.ticket, .alone, .project] | @tsv] | join("\n")' \
     <<<"$(jq -c --arg n "$next" --arg task "$task" "$waits$held_def"'
@@ -1297,6 +1374,7 @@ fill() {
     | (map(select(.ticket == $n)) | first) as $nx
     | ([sort_by(.ticket)[] | select(.state != "done" and ph == $p) | waits] | join("; ")) as $open
     | {phase: $p, building: $b, open: $open,
+       started: [.[] | select(ph == $p and (.state | IN("running", "done"))) | .project] | unique | join("\n"),
        problem: (if $n == "" then null
          elif $nx == null then "--next \($n) is none of \($task)'"'"'s tickets: they are \(map(.ticket) | sort | join(", "))"
          elif ($nx.state | IN("ready", "waiting") | not) then "--next \($n) is not ready: \($nx | waits)"
@@ -1308,6 +1386,18 @@ fill() {
          | map({ticket, alone: (.touches == null), project}))}' <<<"$tickets")"
   [[ -z $problem ]] || die "$problem"
   cap=$(cap_of "$phase") || exit
+  while IFS=$'\t' read -r n c project; do
+    [[ -z $n ]] || { todo+=("$n") bare+=("$c") todo_projects+=("$project"); }
+  done <<<"$candidates_tsv"
+  # A project's first launch of a phase after a merged part starts on a task branch that holds
+  # origin's base: every such project is checked first, so a refusal moves no branch.
+  if ((${#todo[@]})); then
+    mapfile -t starts < <(printf '%s\n' "${todo_projects[@]}" | awk 'NR == FNR { if ($0 != "") s[$0] = 1; next } !($0 in s) && !seen[$0]++' \
+      <(printf '%s\n' "$started") -)
+    moves=()
+    for project in "${starts[@]}"; do base_due "$project" "$phase" "$tickets"; done
+    move_to_base "$phase"
+  fi
   return_done_tickets
   alone=''
   while IFS=$'\t' read -r n c; do
@@ -1315,9 +1405,6 @@ fill() {
     running+=("$n") k=$((k + 1))
     if ((cap > 1)) && [[ $c == true && -z $alone ]]; then alone=$n; fi
   done <<<"$running_tsv"
-  while IFS=$'\t' read -r n c project; do
-    [[ -z $n ]] || { todo+=("$n") bare+=("$c") todo_projects+=("$project"); }
-  done <<<"$candidates_tsv"
 
   local i j rest note
   # A running ticket's gone builder first, stowed or crashed, relaunched in its own ticket worktree;
@@ -1780,14 +1867,6 @@ else
   [[ $chosen != null ]] ||
     die "tickets $([[ $phased == false ]] || echo "of phase $building ")remain once $ticket is done, but none is ready: $(open_list); --next <NN> launches a waiting one"
 fi
-# changed_files <worktree> [untracked]: its changes to tracked files, then with untracked its
-# untracked files git does not ignore, joined by ", ", or nothing.
-changed_files() {
-  {
-    git -C "$1" diff --name-only HEAD
-    [[ -z ${2:-} ]] || git -C "$1" ls-files --others --exclude-standard
-  } | paste -sd, | sed 's/,/, /g'
-}
 
 # integrate: ticket NN's tested head fast-forwards the task branch, under the task's lock, as the
 # header says: the five checks, the fast-forward, the copy back of the ticket's file and build
