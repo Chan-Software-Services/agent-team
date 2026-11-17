@@ -13,8 +13,8 @@
 #              reviewer's is that launch's alone, while a task's builder's becomes its task's
 #              builder model, which every later builder launch of the task keeps (below);
 #              default is the settings' word: no --model passed to claude, the settings' word
-#              logged, and for a task's builder of a task that has a builder model, that
-#              model from then on
+#              logged, and for a task's builder of a task that has a builder model, it makes
+#              default the task's builder model from then on
 #   --request  ops only, and required for it: the link to Daniel's Discord message asking for
 #              this launch, https://discord.com/channels/<guild>/<channel>/<message>; any other
 #              value is a malformed command line (exit 2)
