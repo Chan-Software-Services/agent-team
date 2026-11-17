@@ -764,6 +764,117 @@ base_link() {
   done
 }
 
+# The line a worker's autoMode.environment gains on the worker login <login>.
+login_line() {
+  echo "This session's GitHub login is $1, an account that pushes branches and opens pull requests; merging is team-merge's."
+}
+
+@test "on the worker login, a planner's, builder's and reviewer's settings take its variables and its autoMode line" {
+  code_checkout
+  worker_login_on team-bot-a
+  open_task T7
+  local role settings
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    settings=$(generated settings "$role")
+    assert_equal "$(jq -c '.env | with_entries(select(.key | test("^(GH|GITHUB)_")))' "$settings")" \
+      "$(jq -cn --arg dir "$HOME/.config/agent-team/gh-worker" '{GH_CONFIG_DIR: $dir, GH_TOKEN: "", GITHUB_TOKEN: ""}')"
+    # The worker settings' own env stays beside them.
+    assert_equal "$(jq -r .env.AGENT_TEAM_ROLE "$settings")" "$role"
+    assert_equal "$(jq -r '.autoMode.environment[-1]' "$settings")" "$(login_line team-bot-a)"
+    assert_equal "$(jq -r --arg line "$(login_line team-bot-a)" '[.autoMode.environment[] | select(. == $line)] | length' "$settings")" 1
+  done
+  # The variables come from the library's worker_login_env, never spelled in the launcher.
+  run grep -cE 'GH_CONFIG_DIR|GH_TOKEN|GITHUB_TOKEN' "$CODE_CHECKOUT/bin/team-worker"
+  assert_equal "$output" 0
+}
+
+@test "with the worker login off, the settings are those of the login on less its variables and its line" {
+  code_checkout
+  open_task T7
+  local role off on
+  for role in planner builder reviewer; do
+    worker_login_off
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    off=$(cat "$(generated settings "$role")")
+    assert_equal "$(jq -c '[.env | keys[] | select(test("^(GH|GITHUB)_"))]' <<<"$off")" '[]'
+    assert_equal "$(jq -c '[.autoMode.environment[] | select(test("GitHub login"))]' <<<"$off")" '[]'
+    worker_login_on
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    on=$(cat "$(generated settings "$role")")
+    assert_equal "$(jq --arg line "$(login_line team-worker-bot)" \
+      'del(.env.GH_CONFIG_DIR, .env.GH_TOKEN, .env.GITHUB_TOKEN) | .autoMode.environment -= [$line]' <<<"$on")" \
+      "$(jq . <<<"$off")"
+  done
+  # Off, the settings are the ones a launch from this checkout writes, which names no worker login.
+  worker_login_off
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  off=$(jq -S . "$(generated settings builder)")
+  unset CODE_CHECKOUT
+  [[ ! -e $REPO_ROOT/bin/lib/worker-login ]] || skip "this checkout names a worker login"
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  assert_equal "$(jq -S --arg code "$REPO_ROOT" 'walk(if type == "string" then gsub($code; "@CODE@") else . end)' "$(generated settings builder)")" \
+    "$(jq -S --arg code "$(realpath "$BATS_TEST_TMPDIR/code")" 'walk(if type == "string" then gsub($code; "@CODE@") else . end)' <<<"$off")"
+}
+
+@test "a worker login named but not on this machine refuses the launch before the lease, the settings or the session" {
+  code_checkout
+  worker_login_on
+  open_task T7
+  # With no lease held, a launch the login lets through is refused for the lease instead.
+  run_bin -0 team-lease release
+  local dir=$HOME/.config/agent-team/gh-worker shown=\~/.config/agent-team/gh-worker role reason
+  for reason in "$shown/hosts.yml is mode 644, not 600" "$shown/hosts.yml is empty" \
+    "$shown/hosts.yml is missing" "$shown is missing"; do
+    worker_login_on
+    case $reason in
+      *644*) chmod 644 "$dir/hosts.yml" ;;
+      *empty) : >"$dir/hosts.yml" ;;
+      *hosts.yml\ is\ missing) rm -f "$dir/hosts.yml" ;;
+      *) rm -f "$dir/hosts.yml" && rmdir "$dir" ;;
+    esac
+    for role in planner builder reviewer; do
+      refused_launch "the worker login team-worker-bot is not on this machine ($reason): Daniel's team-secrets restore brings it (the secret worker-github-login)" \
+        T7 "$role" "$wt1" -- go
+      [[ ! -e $(generated settings "$role") ]]
+    done
+  done
+  assert_equal "$(stub_calls claude)" ""
+  # T0, the load check, which asks for no lease, is refused the same way.
+  refused_launch "the worker login team-worker-bot is not on this machine ($shown is missing): Daniel's team-secrets restore brings it (the secret worker-github-login)" \
+    T0 builder "$wt1" -- go
+  assert_equal "$(stub_calls claude)" ""
+}
+
+@test "a malformed bin/lib/worker-login refuses the launch with the reader's message" {
+  code_checkout
+  worker_login_on
+  open_task T7
+  local role
+  printf 'login=a\nlogin=b\n' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  for role in planner builder reviewer; do
+    refused_launch "$CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line" T7 "$role" "$wt1" -- go
+    [[ ! -e $(generated settings "$role") ]]
+  done
+  assert_equal "$(stub_calls claude)" ""
+}
+
+@test "an ops launch gets no worker login and is not refused for one" {
+  code_checkout
+  worker_login_on
+  # Neither the login's file nor a well-formed constant: only a planner's, builder's or reviewer's
+  # launch reads them.
+  rm -f "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  printf 'login=a b\n' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  open_task T7
+  ops_stub
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  local settings
+  settings=$(generated settings ops)
+  assert_equal "$(jq -c '[.env | keys[] | select(test("^(GH|GITHUB)_"))]' "$settings")" '[]'
+  assert_equal "$(jq -c '[.autoMode.environment[] | select(test("GitHub login"))]' "$settings")" '[]'
+}
+
 @test "the autoMode lines state the registry's projects: repositories, visibility and base branches" {
   registry --first 'visibility = "private"' proj other
   cat >>"$TEAM_HOME/projects.toml" <<'TOML'
@@ -1404,15 +1515,6 @@ EOF
   done
 }
 
-@test "a launched worker's chrome-devtools-axi session is named for its task and role" {
-  open_task T7
-  local role
-  for role in builder reviewer; do
-    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit browser -- go
-    assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" "T7-$role"
-  done
-}
-
 @test "the browser toolkit adds its plugin directory and no MCP server" {
   open_task T7
   run_bin -0 team-worker T7 builder "$wt1" --toolkit browser -- go
@@ -1918,6 +2020,17 @@ skills_only_kit() {
   for role in planner builder reviewer; do
     run_bin -0 team-worker T7 "$role" "$wt1" -- go
     assert_equal "$(jq -r .crossSessionInbound "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" accept
+  done
+}
+
+# A skill's shell command runs as the skill loads, before any hook sees a Bash call, so no worker
+# runs one: the worker settings turn them off under every role's own file.
+@test "every role's generated settings turn off skill shell commands" {
+  open_task T7
+  local role
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    assert_equal "$(jq -c .disableSkillShellExecution "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" true
   done
 }
 
@@ -2643,11 +2756,11 @@ matcher_matches() {
   run -1 grep -Eq '@[A-Z_]+@' "$TEAM_HOME/tasks/T7/settings.ops.json" "$TEAM_HOME/tasks/T7/mcp.ops.json"
 }
 
-@test "@TEAM_CODE@, @TASK@, @TASK_DIR@, @WORKTREE@ and @ROLE@ are substituted in the settings and the MCP config" {
+@test "@TEAM_CODE@, @TASK@, @TASK_DIR@, @WORKTREE@, @ROLE@ and @SESSION@ are substituted in the settings and the MCP config" {
   fake_checkout
-  echo '{"env": {"WHO": "@ROLE@", "WHERE": "@WORKTREE@"}, "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "@TEAM_CODE@/bin/hooks/x @TASK@", "args": ["@TASK_DIR@"]}]}]}}' \
+  echo '{"env": {"WHO": "@ROLE@", "WHERE": "@WORKTREE@", "NAME": "@SESSION@"}, "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "@TEAM_CODE@/bin/hooks/x @TASK@", "args": ["@TASK_DIR@"]}]}]}}' \
     >"$code/settings/planner.json"
-  echo '{"mcpServers": {"alpha": {"command": "@TEAM_CODE@/a", "args": ["--task", "@TASK@", "@TASK_DIR@", "@ROLE@"], "env": {"ROOT": "@WORKTREE@"}}}}' >"$code/toolkits/kit-a/.mcp.json"
+  echo '{"mcpServers": {"alpha": {"command": "@TEAM_CODE@/a", "args": ["--task", "@TASK@", "@TASK_DIR@", "@ROLE@", "@SESSION@"], "env": {"ROOT": "@WORKTREE@"}}}}' >"$code/toolkits/kit-a/.mcp.json"
   open_task T7
   # The worktree by its real path, though the launch names it through a symlink.
   ln -s "$wt1" "$HOME/slot-link"
@@ -2657,9 +2770,10 @@ matcher_matches() {
   assert_equal "$(jq -c '.hooks.PreToolUse[-1].hooks[0] | [.command, .args[0]]' "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" \
     "$(jq -cn --arg code "$code" --arg t "$TEAM_HOME/tasks/T7" '["\($code)/bin/hooks/x T7", $t]')"
   assert_equal "$(jq -r .env.WHO "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" planner
+  assert_equal "$(jq -r .env.NAME "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" T7-planner
   assert_equal "$(jq -r .env.WHERE "$TEAM_HOME/tasks/T7/settings.planner.proj.json")" "$(realpath "$wt1")"
   assert_equal "$(jq -c . "$TEAM_HOME/tasks/T7/mcp.planner.proj.json")" \
-    "$(jq -cn --arg code "$code" --arg t "$TEAM_HOME/tasks/T7" --arg wt "$(realpath "$wt1")" '{mcpServers: {alpha: {command: "\($code)/a", args: ["--task", "T7", $t, "planner"], env: {ROOT: $wt}}}}')"
+    "$(jq -cn --arg code "$code" --arg t "$TEAM_HOME/tasks/T7" --arg wt "$(realpath "$wt1")" '{mcpServers: {alpha: {command: "\($code)/a", args: ["--task", "T7", $t, "planner", "T7-planner"], env: {ROOT: $wt}}}}')"
 }
 
 # The ledger lines given on stdin, one per line, each "launch <task> <role> <session> <worktree>"
@@ -2792,6 +2906,53 @@ LINES
   log_lines <<<'T9 {event: "paused", reason: "stowed"}'
   run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
   assert_equal "$(stops)" 2f2f2f2f
+}
+
+@test "a builder's launch stops an earlier builder idle after the pr it delivered, though Claude Code calls it blocked, and leaves one at a real prompt" {
+  # Claude Code calls a session blocked when its last turn's summary says it waits on someone
+  # (a builder's "awaiting the merge word" after its PR), with no dialog open: status idle, no
+  # waitingFor. team-sweep names no such builder waiting-input, and the launch reads it the same.
+  open_task T9
+  log_lines <<LINES
+launch T9 builder 2f2f2f2f $wt1
+T9 {event: "pr", url: "https://github.com/owner/proj/pull/5", head: "1234567"}
+launch T9 reviewer 7e7e7e7e $wt1
+LINES
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/delivered.jsonl"
+  local reviewer='{"id": "7e7e7e7e", "name": "T9-reviewer", "status": "busy", "state": "working"}'
+  stop_stub
+  # launch_with <builder's session object>: the builder's launch on the delivered ledger, the
+  # launch it logs taken out again after, so each case starts from the same ledger.
+  launch_with() {
+    echo "[$1, $reviewer]" >"$STUB_FIXTURES/agents.json"
+    : >"$STUB_CALLS/claude.log"
+    run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+    cp "$BATS_TEST_TMPDIR/delivered.jsonl" "$TEAM_HOME/ledger.jsonl"
+  }
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "idle", "state": "blocked"}'
+  assert_equal "$(stops)" 2f2f2f2f
+  assert_contains "$stderr" "team-worker: stopped T9-builder 2f2f2f2f: its work is handed on"
+  run_bin -0 team-sweep
+  # A dialog open (a permission prompt, a question) is still left and named, whatever it
+  # delivered, and team-sweep names it waiting-input.
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "idle", "state": "blocked", "waitingFor": "dialog open"}'
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "waiting", "state": "blocked"}'
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+  # So is one blocked once something is asked of it since: the review's findings came back.
+  log_lines <<<'T9 {event: "review", verdict: "findings", head: "1234567", findings: {blocking: 1}, sent_back: [1]}'
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/delivered.jsonl"
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "idle", "state": "blocked"}'
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
 }
 
 @test "a paused for any reason but stowed leaves an idle reviewer, a resumed after it too" {
@@ -3216,6 +3377,22 @@ build_brief() {
   mkdir -p "$TEAM_HOME/tasks/T7"
   echo "# T7 brief (builder): ticket $1" >"$TEAM_HOME/tasks/T7/brief-build-$1.md"
   echo "$TEAM_HOME/tasks/T7/brief-build-$1.md"
+}
+
+@test "a launched worker's chrome-devtools-axi session is its session's name, so two ticket builders never share one" {
+  thread T7
+  opened T7 proj feat/T7-one "$wt1"
+  local role
+  for role in builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit browser -- go
+    assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" "T7-$role"
+  done
+  local n
+  for n in 03 07; do
+    ticket_worktree "$n"
+    run_bin -0 team-worker T7 builder "$twt" --toolkit browser -- "Read your brief at $(build_brief "$n")"
+    assert_equal "$(jq -r .env.CHROME_DEVTOOLS_AXI_SESSION "$TEAM_HOME/tasks/T7/settings.builder.proj--$n.json")" "T7-builder-$n"
+  done
 }
 
 @test "a builder in ticket NN's worktree is T<n>-builder-NN, logs ticket and the ticket branch, and has files of its own" {

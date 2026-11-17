@@ -65,17 +65,17 @@ FIX="fix: bin/lib/confine-session's, bin/lib/confine-shell's and bin/lib/confine
   tools_at arch
   seams
   CONFINE_TEST_ABI=0 run_bin -0 team-doctor
-  assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (sops/platform-gotchas.md)"
+  assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (bin/lib/confine.py)"
   CONFINE_TEST_ABI=1 run_bin -0 team-doctor
-  assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 1), so its workers run on the text guard alone (sops/platform-gotchas.md)"
+  assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 1), so its workers run on the text guard alone (bin/lib/confine.py)"
   CONFINE_TEST_ABI=0 run_bin -0 --separate-stderr team-doctor --json
   jq -e '.[] | select(.check == "confine") | .verdict == "WARN" and .fix == ""' <<<"$output"
   # macOS, whatever the kernel under the test.
   on_macos
   tools_at macos
   run_bin -0 team-doctor
-  assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (sops/platform-gotchas.md)"
-  grep -qF 'on a machine with no Landlock' "$REPO_ROOT/sops/platform-gotchas.md"
+  assert_equal "$(line_of confine)" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (bin/lib/confine.py)"
+  grep -qF 'Where the kernel has no Landlock' "$REPO_ROOT/bin/lib/confine.py"
 }
 
 @test "the confine line fails with the wrapper's last line when it cannot enter the domain where Landlock is" {

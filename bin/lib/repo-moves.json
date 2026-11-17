@@ -3,6 +3,7 @@
     {"from": "chanjdaniel/agent-team", "to": "Chan-Software-Services/agent-team", "on": "2026-11-14"},
     {"from": "chanjdaniel/agent-team-records", "to": "Chan-Software-Services/agent-team-records", "on": "2026-11-14"},
     {"from": "chanjdaniel/Conventioner", "to": "Chan-Software-Services/Conventioner", "on": "2026-11-14"},
-    {"from": "chanjdaniel/intone_app", "to": "Chan-Software-Services/intone_app", "on": "2026-11-14"}
+    {"from": "chanjdaniel/intone_app", "to": "Chan-Software-Services/intone_app", "on": "2026-11-14"},
+    {"from": "chanjdaniel/no-mistakes", "to": "Chan-Software-Services/no-mistakes", "on": "2026-11-16"}
   ]
 }

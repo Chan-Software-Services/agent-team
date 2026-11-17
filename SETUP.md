@@ -61,5 +61,7 @@ Done when every check that applies passes and you are reading `~/agent-team/SETU
 ## Stages 2 to 8, and 9 on Daniel's word
 
 Follow `sops/machine-setup.md` from stage 2: it runs `team-bootstrap` one stage at a time and lists what each stage hands Daniel.
+Stage 2's `team-bootstrap` also sets the team home's own credential helper for github.com, so the team home's git reaches the records on the owner login whichever login a session runs on.
+Stage 7's `team-secrets restore`, in Daniel's own terminal, restores the worker login with the other secrets, the GitHub login the team's sessions push branches and open pull requests with once `bin/lib/worker-login` names it (`sops/machine-setup.md`, "The worker login").
 Stage 8 ends it with the doctor and the load check passing and one summary for Daniel in this conversation: ready as a standby, where moving the team here is `team-resume --wait` started here first and, once it says this machine is ready, Daniel saying "hand off" to the coordinator on the machine that holds it, or ready to take the team.
 Stage 9 takes the team only when Daniel says it should run here.

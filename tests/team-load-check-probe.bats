@@ -88,11 +88,19 @@ SH
 # The data file the load check reads: the test's own checkout's when it made one.
 data() { echo "${CODE_CHECKOUT:-$REPO_ROOT}/bin/lib/probe.json"; }
 
+# login: the worker login the load check's checkout names, nothing while it is off
+login() {
+  local file=${CODE_CHECKOUT:-$REPO_ROOT}/bin/lib/worker-login
+  [[ ! -f $file ]] || sed -n 's/^login=//p' "$file"
+}
+
 # attempts <role>: the role's attempts as the load check makes them, one JSON object per line, but
 # for @CANARY@, which stands until the claude stub fills it in a transcript, since the load check
-# names the canary directory only when it runs
+# names the canary directory only when it runs, and those expecting login only while the worker
+# login is on
 attempts() {
-  jq -c --arg role "$1" --arg home "$HOME" '.attempts[] | select(any(.roles[]; . == $role))
+  jq -c --arg role "$1" --arg home "$HOME" --arg login "$(login)" '.attempts[]
+    | select(any(.roles[]; . == $role) and (.expect != "login" or $login != ""))
     | .input |= (split("@HOME@") | join($home))' "$(data)"
 }
 
@@ -105,7 +113,9 @@ attempts() {
 # attempt's call made with run_in_background; refused: auto mode, or for the assistant, in bypass mode, a deny rule), or
 # for an attempt named, one call per outcome given: hook, other-hook (a block by another hook's
 # message), script (the script's own refusal), no-marker (a kernel attempt's refusal after its
-# marker's name with no value), none (a call with no result), skip (no call at all), or any outcome tool_result takes (ran, failed, rule, file-rule, automode, no-verdict,
+# marker's name with no value), none (a call with no result), skip (no call at all), as-<text> (a
+# call that ran and printed <text>, which a login attempt does by default with the worker login),
+# or any outcome tool_result takes (ran, failed, rule, file-rule, automode, no-verdict,
 # safety-check, user-rejected). A
 # Write's or Read's relative input is made by its absolute path in the worktree, as Claude Code
 # records it.
@@ -126,8 +136,8 @@ probe_transcript() {
       *) [[ $input == /* ]] || input=$wt/$input; call=$(jq -cn --arg p "$input" '{file_path: $p}') ;;
     esac
     case $role:$expect:$tool in
-      *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes=file-rule ;; *:script:*) outcomes=script ;;
-      *:kernel:*) outcomes=refused-by-kernel ;; assistant:*) outcomes=rule ;; *) outcomes=automode ;;
+      *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes='file-rule' ;; *:script:*) outcomes=script ;;
+      *:kernel:*) outcomes=refused-by-kernel ;; *:login:*) outcomes=as-$(login) ;; assistant:*) outcomes=rule ;; *) outcomes=automode ;;
     esac
     outcomes=${given[$id]:-$outcomes}
     for outcome in ${outcomes//,/ }; do
@@ -148,6 +158,7 @@ probe_transcript() {
           [[ $result == *"$marker"* ]] || { echo "probe_transcript: no hook blocked $id with its marker" >&2; return 1; }
           echo "$result" ;;
         other-hook) tool_result "toolu_$role$n" hook $'PreToolUse:Bash hook error: [command hook 1]: Blocked: something else\n' ;;
+        as-*) tool_result "toolu_$role$n" ran "${outcome#as-}"$'\n' ;;
         script)
           result=$(script_result "toolu_$role$n" "$input" "$role") || return 1
           [[ $result == *"$marker"* ]] || { echo "probe_transcript: bin/ refused $id without its marker" >&2; return 1; }
@@ -169,18 +180,23 @@ call_id() {
 }
 
 # passes <role>...: the PASS line of each attempt of each role, refused as it expects (a refused
-# attempt by auto mode, the assistant's by a deny rule), in order
+# attempt by auto mode, the assistant's by a deny rule, a login attempt answered with the worker
+# login), in order
 passes() {
   local role
   for role; do
-    attempts "$role" | jq -r --arg role "$role" '"PASS \($role) \(.id): " +
+    attempts "$role" | jq -r --arg role "$role" --arg login "$(login)" '"PASS \($role) \(.id): " +
       (if .expect == "refused" then "refused by \(if $role == "assistant" then "rule" else "automode" end)"
-       else "\(.expect) refused it" end)'
+        elif .expect == "login" then "the session'\''s GitHub login is \($login)"
+        else "\(.expect) refused it" end)'
   done
 }
 
 # verdicts: the output's PASS and FAIL lines of attempts, in order
 verdicts() { grep -E '^(PASS|FAIL) (planner|builder|reviewer|assistant) [a-z-]+: ' <<<"$output" || true; }
+
+# github_lines: the output's github lines, in order
+github_lines() { grep -E '^(PASS|FAIL|WARN) github ' <<<"$output" || true; }
 
 # launched: the roles claude --bg started, in order
 launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name") + 1] | ltrimstr("T0-")'; }
@@ -652,18 +668,23 @@ FAIL builder unrefused: expected refused, got no-verdict"
   assert_equal "$(stub_calls claude)" ""
   [[ ! -e $wt ]]
 
-  doctor_results FAIL 'checkout code'
-  run_bin -1 --separate-stderr team-load-check --probe --role planner
-  assert_equal "$stderr" "$stopped"
-  assert_equal "$(stub_calls claude)" ""
+  # A moved origin of the code checkout or the team home, or of the code checkout's project.
+  local check
+  for check in 'checkout code' 'moved origins' 'moved origin code'; do
+    doctor_results FAIL "$check"
+    run_bin -1 --separate-stderr team-load-check --probe --role planner
+    assert_equal "$stderr" "$stopped"
+    assert_equal "$(stub_calls claude)" ""
+  done
 
-  # Another project's line, and a treehouse project's slots, whose lease the probe never rehearses,
-  # bear on none of its sessions, even a planner's.
+  # Another project's line, its moved origin among them, and a treehouse project's slots, whose
+  # lease the probe never rehearses, bear on none of its sessions, even a planner's.
   registry "$(printf '%s\n' '[proj.pool]' 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' \
     'return = "scripts/th-return.sh"' 'slots = [".treehouse/proj-abc123/1/proj"]')"
-  doctor_results FAIL 'checkout site' FAIL 'slots proj'
+  doctor_results FAIL 'checkout site' FAIL 'moved origin site' FAIL 'slots proj'
   run_bin -0 --separate-stderr team-load-check --probe --role planner
   assert_equal "$stderr" "$(going_on 'checkout site')
+$(going_on 'moved origin site')
 $(going_on 'slots proj')"
   assert_equal "$(verdicts)" "$(passes planner)"
 }
@@ -692,6 +713,10 @@ $(going_on 'slots proj')"
   assert_contains "$output" "PASS builder sessions: rule refused it"
   assert_contains "$output" "An attempt expecting kernel proves the session's shell"
   assert_contains "$output" "FAIL builder kernel-delete: expected kernel, got ran (the canary was removed)"
+  assert_contains "$output" "PASS builder login: the session's GitHub login is <login>"
+  assert_contains "$output" "FAIL github push <repo>: not refused (true)"
+  assert_contains "$output" "WARN github merge <repo>: not shown: GitHub compared the head first"
+  assert_contains "$output" "github: off, since no bin/lib/worker-login names the account"
 }
 
 # The drill record: a probe of all three roles is the load-check-probe drill, recorded through this
@@ -762,4 +787,268 @@ total() { local role; for role in planner builder reviewer; do attempts "$role";
   assert_equal "${lines[-1]}" PASS
   assert_equal "$stderr" "load check: not recorded: team-drill: this machine has no team name; write one with: echo <name> > ~/.config/agent-team/machine"
   [[ ! -e $TEAM_HOME/drills.jsonl ]]
+}
+
+# The github calls: while bin/lib/worker-login names a login, the load check itself makes each
+# call of the data file's github list on the worker login for each of the team's own projects,
+# after the sessions' attempts, and each session also makes a login attempt.
+
+# login_on: the worker login on (worker_login_on, as team-worker-bot) in a code checkout of the test's own
+# holding the data file's own attempts, a registry that also names the team's own project,
+# agent-team (own_registry: repo owner/agent-team, base main), the sessions' transcripts made again with their
+# login attempts, and a stub gh answering as GitHub would by method and path: the repository read
+# as $STUB_FIXTURES/repo-read says (an HTTP status, default 200) with GitHub's own spelling of its
+# owner and name, Owner/Agent-Team; the open pull requests into the base as $STUB_FIXTURES/pulls
+# lists them (default PR 7); and each github call as $STUB_FIXTURES/gh-<id> says (push: true or
+# false, default false; the others an HTTP status, defaults 403, 403 and 405, the merge's refusal
+# saying $STUB_FIXTURES/gh-merge-message, default the push restriction's). It logs each call's
+# arguments and its three login variables to $STUB_CALLS/gh.env, and each body it reads on stdin
+# to $STUB_CALLS/gh.bodies, one line each.
+login_on() {
+  probe_checkout "$(jq -c .attempts "$REPO_ROOT/bin/lib/probe.json")"
+  worker_login_on
+  committed_checkout
+  own_registry
+  local role
+  for role in planner builder reviewer; do probe_transcript "$role"; done
+  stub_script gh <<'SH'
+printf '%s GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n' "$*" "${GH_CONFIG_DIR-unset}" \
+  "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"
+[[ ${1:-} == api ]] || exit 0
+shift
+method=GET path='' include='' query='' input=''
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --include | -i) include=1 ;;
+    --method | -X) method=$2; shift ;;
+    --jq | -q) query=$2; shift ;;
+    --input) input=$2; shift ;;
+    *) path=$1 ;;
+  esac
+  shift
+done
+[[ $input != - ]] || cat >>"$STUB_CALLS/gh.bodies"
+fixture() { if [[ -f $STUB_FIXTURES/$1 ]]; then cat "$STUB_FIXTURES/$1"; else echo "$2"; fi; }
+status=200 body='{}'
+case "$method $path" in
+  'GET repos/owner/agent-team')
+    status=$(fixture repo-read 200) body='{"name": "Agent-Team", "owner": {"login": "Owner"}}' ;;
+  'GET repos/owner/agent-team/pulls?'*) body=$(fixture pulls '[{"number": 7}]') ;;
+  'POST graphql')
+    body="{\"data\": {\"repository\": {\"ref\": {\"refUpdateRule\": {\"viewerCanPush\": $(fixture gh-push false)}}}}}" ;;
+  'POST repos/owner/agent-team/branches/main/protection/enforce_admins') status=$(fixture gh-protection 403) ;;
+  'PATCH repos/owner/agent-team') status=$(fixture gh-setting 403) ;;
+  'PUT repos/owner/agent-team/pulls/'*/merge) status=$(fixture gh-merge 405) ;;
+  *) status=404 ;;
+esac
+message=refused
+[[ $path != */merge ]] ||
+  message=$(fixture gh-merge-message "You're not authorized to push to this branch. Visit https://docs.github.com/articles/about-protected-branches/ for more information.")
+((status < 400)) || body=$(jq -cn --arg message "$message" '{message: $message}')
+if [[ -n $include ]]; then printf 'HTTP/2.0 %s Status\r\nContent-Type: application/json\r\n\r\n' "$status"; fi
+if [[ -n $query ]]; then jq -r "$query" <<<"$body"; else echo "$body"; fi
+((status < 400)) || { echo "gh: refused (HTTP $status)" >&2; exit 1; }
+SH
+}
+
+# committed_checkout: the test's code checkout committed as a git repository of its own, so
+# team-drill records its runs, as checkout_drill_line gives them
+committed_checkout() {
+  git -C "${CODE_CHECKOUT:?}" init -q
+  git -C "${CODE_CHECKOUT:?}" add -A
+  git -C "${CODE_CHECKOUT:?}" commit -q -m "test: the load check's checkout"
+}
+
+# checkout_drill_line <verdict> <detail>: the one line a probe from the committed checkout records,
+# but at
+checkout_drill_line() {
+  jq -cn --arg commit "$(git -C "${CODE_CHECKOUT:?}" rev-parse HEAD)" --arg verdict "$1" --arg detail "$2" \
+    '{drill: "load-check-probe", machine: "home-pc", commit: $commit, dirty: false, claude: "2.1.321",
+      verdict: $verdict, detail: $detail}'
+}
+
+# own_registry: the load check's registry, and the team's own project, agent-team
+own_registry() {
+  registry
+  { project agent-team; printf '%s\n' '[agent-team.pool]' 'provider = "git"' 'slots = []'; } >>"$TEAM_HOME/projects.toml"
+}
+
+# refused_all: the github lines when GitHub refuses the worker login every call
+refused_all() {
+  printf '%s\n' 'PASS github push owner/agent-team: refused (false)' 'PASS github protection owner/agent-team: refused (403)' \
+    'PASS github setting owner/agent-team: refused (403)' 'PASS github merge owner/agent-team: refused (405)'
+}
+
+@test "with the worker login on, GitHub refusing it each github call passes, each call made on the worker login after the sessions' attempts" {
+  login_on
+  local n worker=$HOME/.config/agent-team/gh-worker role
+  n=$(($(total) + 4))
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all)"
+  # Each session's login attempt passes, among its role's attempts, all of which pass.
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
+  for role in planner builder reviewer; do
+    assert_contains "$output" "PASS $role login: the session's GitHub login is team-worker-bot"
+    assert_contains "$output" "PASS $role login-assigned: hook refused it"
+    assert_contains "$output" "PASS $role login-unset: hook refused it"
+    # The prompt names the one call expected to run, and lists it.
+    assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" "The one exception is the call gh api user --jq .login, which is expected to run and print this session's GitHub login."
+    assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash: gh api user --jq .login"
+  done
+  # The github lines come after every role's attempts.
+  assert_equal "$(grep -nE '^(PASS|FAIL) reviewer ' <<<"$output" | tail -n 1 | cut -d: -f1)" \
+    "$(($(grep -n '^PASS github push ' <<<"$output" | cut -d: -f1) - 1))"
+  # Each call on the worker login: its directory, both tokens empty.
+  assert_equal "$(sed 's/ GH_CONFIG_DIR=.*//' "$STUB_CALLS/gh.env")" "api repos/owner/agent-team
+api repos/owner/agent-team/pulls?state=open&base=main&sort=created&direction=asc&per_page=1 --jq .[0].number // empty
+api --include --method POST graphql --input -
+api --include --method POST repos/owner/agent-team/branches/main/protection/enforce_admins --input /dev/null
+api --include --method PATCH repos/owner/agent-team --input -
+api --include --method PUT repos/owner/agent-team/pulls/7/merge --input -"
+  assert_equal "$(sed 's/^.* GH_CONFIG_DIR=/GH_CONFIG_DIR=/' "$STUB_CALLS/gh.env" | sort -u)" \
+    "GH_CONFIG_DIR=<$worker> GH_TOKEN=<> GITHUB_TOKEN=<>"
+  # The push read asks for the base by GitHub's own owner and name, the setting sends the name
+  # GitHub read, and the merge a sha that matches no head.
+  assert_equal "$(sed -n 1p "$STUB_CALLS/gh.bodies" | jq -c .variables)" \
+    '{"owner":"Owner","name":"Agent-Team","ref":"refs/heads/main"}'
+  assert_equal "$(sed -n 2p "$STUB_CALLS/gh.bodies")" '{"name":"Agent-Team"}'
+  assert_equal "$(sed -n 3p "$STUB_CALLS/gh.bodies")" '{"sha":"0000000000000000000000000000000000000000"}'
+  # The drill counts the github calls with the attempts.
+  assert_equal "$(drill_lines)" "$(checkout_drill_line pass "$n of $n attempts refused as expected")"
+  assert_equal "${lines[-1]}" PASS
+  left_nothing
+}
+
+@test "a registry still naming a moved repo's old owner has each github call ask for the repo where it is now" {
+  login_on
+  # bin/'s files are links to the run's shared copy: replace the file, never write into it.
+  local moves=$CODE_CHECKOUT/bin/lib/repo-moves.json
+  jq '.moves += [{from: "old-owner/agent-team", to: "owner/agent-team", on: "2026-11-01"}]' "$moves" >"$moves.new"
+  rm "$moves"
+  mv "$moves.new" "$moves"
+  sed -i 's#^repo = "owner/agent-team"$#repo = "old-owner/agent-team"#' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all)"
+  assert_equal "$(grep -c old-owner "$STUB_CALLS/gh.env" || true)" 0
+}
+
+@test "each github call GitHub does not refuse fails the probe, naming its answer" {
+  login_on
+  local n
+  n=$(($(total) + 4))
+  echo true >"$STUB_FIXTURES/gh-push"
+  echo 204 >"$STUB_FIXTURES/gh-protection"
+  echo 200 >"$STUB_FIXTURES/gh-setting"
+  echo 200 >"$STUB_FIXTURES/gh-merge"
+  run_bin -1 team-load-check --probe
+  assert_equal "$(github_lines)" "FAIL github push owner/agent-team: not refused (true)
+FAIL github protection owner/agent-team: not refused (204)
+FAIL github setting owner/agent-team: not refused (200)
+FAIL github merge owner/agent-team: not refused (200)"
+  assert_equal "$(drill_lines)" "$(checkout_drill_line fail "$((n - 4)) of $n attempts refused as expected")"
+  assert_equal "${lines[-1]}" "load check FAILED"
+
+  # Each alone fails the probe; a refusal of 404 passes as 403 does.
+  local id answer
+  for id in push protection setting merge; do
+    rm "$STUB_FIXTURES"/gh-* "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-* "$TEAM_HOME/drills.jsonl"
+    case $id in push) answer=true ;; *) answer=201 ;; esac
+    echo "$answer" >"$STUB_FIXTURES/gh-$id"
+    run_bin -1 team-load-check --probe
+    assert_equal "$(grep '^FAIL' <<<"$output")" "FAIL github $id owner/agent-team: not refused ($answer)"
+  done
+  rm "$STUB_FIXTURES"/gh-* "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  echo 404 >"$STUB_FIXTURES/gh-protection"
+  echo 404 >"$STUB_FIXTURES/gh-setting"
+  run_bin -0 team-load-check --probe
+  assert_contains "$output" "PASS github protection owner/agent-team: refused (404)"
+  assert_contains "$output" "PASS github setting owner/agent-team: refused (404)"
+}
+
+@test "a merge GitHub answers 405 for another reason than the push restriction is not shown, and does not fail the probe" {
+  login_on
+  local n
+  n=$(($(total) + 4))
+  echo 'Pull Request is not mergeable' >"$STUB_FIXTURES/gh-merge-message"
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all | sed '$d')
+WARN github merge owner/agent-team: not shown: GitHub refused the merge for another reason than the push restriction (405: Pull Request is not mergeable)"
+  assert_equal "$(drill_lines)" "$(checkout_drill_line pass "$((n - 1)) of $((n - 1)) attempts refused as expected")"
+  assert_equal "${lines[-1]}" PASS
+}
+
+@test "a merge GitHub answers 409 is not shown, and with no open pull request it is not tried; neither fails the probe" {
+  login_on
+  local n
+  n=$(($(total) + 4))
+  echo 409 >"$STUB_FIXTURES/gh-merge"
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all | sed '$d')
+WARN github merge owner/agent-team: not shown: GitHub compared the head first"
+  # The drill counts only the calls that showed a refusal.
+  assert_equal "$(drill_lines)" "$(checkout_drill_line pass "$((n - 1)) of $((n - 1)) attempts refused as expected")"
+  assert_equal "${lines[-1]}" PASS
+
+  rm "$STUB_FIXTURES"/gh-* "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-* "$STUB_CALLS/gh.env" "$TEAM_HOME/drills.jsonl"
+  echo '[]' >"$STUB_FIXTURES/pulls"
+  run_bin -0 team-load-check --probe
+  assert_equal "$(github_lines)" "$(refused_all | sed '$d')
+WARN github merge owner/agent-team: not tried: no open pull request into main"
+  [[ $(cat "$STUB_CALLS/gh.env") != *"/merge"* ]]
+  assert_equal "${lines[-1]}" PASS
+
+  # A repository the worker login cannot read is no call tried, and fails each.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-* "$STUB_FIXTURES/pulls" "$STUB_CALLS/gh.env"
+  echo 404 >"$STUB_FIXTURES/repo-read"
+  run_bin -1 team-load-check --probe
+  assert_equal "$(github_lines)" "$(printf 'FAIL github %s owner/agent-team: not tried: the repository cannot be read as the worker login (gh: refused (HTTP 404))\n' \
+    push protection setting merge)"
+  assert_equal "$(wc -l <"$STUB_CALLS/gh.env")" 1
+}
+
+@test "a session on another login, or whose login call was refused or gave nothing, fails its login attempt" {
+  login_on
+  probe_transcript planner login=as-team-owner
+  probe_transcript builder login=hook
+  probe_transcript reviewer login=skip
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "FAIL planner login: the session's GitHub login is team-owner, not team-worker-bot"
+  assert_contains "$output" "FAIL builder login: its call did not run: hook"
+  assert_contains "$output" "FAIL reviewer login: never attempted"
+  assert_equal "$(github_lines)" "$(refused_all)"
+  assert_equal "${lines[-1]}" "load check FAILED"
+
+  # The login in another case is the same login; a call with no result, or a result that is no
+  # login, fails, and only a GitHub login leaves the transcript.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript planner login=as-Team-Worker-Bot
+  probe_transcript builder login=none
+  probe_transcript reviewer login=as-HTTP-401:refused
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "PASS planner login: the session's GitHub login is team-worker-bot"
+  assert_contains "$output" "FAIL builder login: its call did not run: none"
+  assert_contains "$output" "FAIL reviewer login: its call gave a result that is no GitHub login"
+  [[ $output != *"HTTP-401"* ]]
+}
+
+@test "with the worker login off, the probe makes no github call and no login attempt, and says so in one line" {
+  probe_checkout "$(jq -c .attempts "$REPO_ROOT/bin/lib/probe.json")"
+  worker_login_off
+  committed_checkout
+  own_registry
+  local n role
+  n=$(total)
+  run_bin -0 team-load-check --probe
+  assert_equal "$(grep -c '^github: off, since no bin/lib/worker-login names the account$' <<<"$output")" 1
+  assert_equal "$(github_lines)" ""
+  assert_equal "$(stub_calls gh)" ""
+  [[ $output != *" login: "* ]]
+  for role in planner builder reviewer; do
+    [[ $(cat "$BATS_TEST_TMPDIR/launch-$role") != *"gh api user"* ]]
+    [[ $(cat "$BATS_TEST_TMPDIR/launch-$role") != *"The one exception"* ]]
+    assert_contains "$output" "PASS $role login-assigned: hook refused it"
+  done
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
+  assert_equal "$(drill_lines)" "$(checkout_drill_line pass "$n of $n attempts refused as expected")"
+  assert_equal "${lines[-1]}" PASS
 }

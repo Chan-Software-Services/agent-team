@@ -10,6 +10,7 @@
 
 load helpers/common
 load helpers/treehouse
+load helpers/github-api
 
 setup() {
   sandbox
@@ -117,9 +118,41 @@ session_is() {
 # gh: GitHub as the PRs under $GH_DIR (<owner>_<repo>-<n>.json, with the checks on the head in
 # checks/<owner>_<repo>-<n>.json), with no workflow run of any head, and the bare origins. pr
 # merge merges the PR's branch into its base on the origin for real, with a merge commit.
+# team-ci-wait's reads (gh api -i, through bin/lib/github-api.sh) are answered through
+# tests/helpers/github-api.bash: a PR as pulls/<n> shows it, and a head's checks as its commit
+# statuses, with no check run.
 fake_github() {
+  github_stub_setup
+  # No time passes between two looks of the test, which read GitHub again each time.
+  export TEAM_GITHUB_FRESH_SECONDS=0
   stub_script gh <<'SH'
 pr_file() { echo "$GH_DIR/${1//\//_}-$2.json"; }
+if [[ $1 == api && $2 == -i ]]; then
+  source "$GITHUB_STUB_HELPER"
+  github_request "$@"
+  if [[ $GITHUB_ENDPOINT =~ ^repos/([^/]+/[^/]+)/pulls/([0-9]+)$ ]]; then
+    file=$(pr_file "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")
+    [[ -f $file ]] || github_answer 404 '{"message": "Not Found"}'
+    github_answer 200 "$(jq -c '{number, state: (if .state == "OPEN" then "open" else "closed" end),
+      merged: (.state == "MERGED"), head: {sha: .headRefOid, ref: .headRefName}, base: {ref: .baseRefName}}' "$file")"
+  elif [[ $GITHUB_ENDPOINT =~ ^repos/[^/]+/[^/]+/commits/[0-9a-f]+/check-runs\? ]]; then
+    github_answer 200 '{"total_count": 0, "check_runs": []}'
+  elif [[ $GITHUB_ENDPOINT =~ ^repos/([^/]+/[^/]+)/commits/([0-9a-f]+)/status\? ]]; then
+    # The checks of the PR whose head the commit is.
+    sha=${BASH_REMATCH[2]} checks='[]'
+    for file in "$GH_DIR/${BASH_REMATCH[1]//\//_}"-*.json; do
+      [[ -f $file && $(jq -r .headRefOid "$file") == "$sha" ]] || continue
+      checks=$(cat "$GH_DIR/checks/${file##*/}")
+    done
+    github_answer 200 "$(jq -c '{state: "pending", statuses: [.[] | {context: .name, state: (.state | ascii_downcase),
+      target_url: (.link // null)}]}' <<<"$checks")"
+  elif [[ $GITHUB_ENDPOINT =~ ^repos/[^/]+/[^/]+/actions/runs\?(head_sha=[0-9a-f]+|status=in_progress)\& ]]; then
+    # No workflow runs, and none in progress: this GitHub runs no Actions.
+    github_answer 200 '{"total_count": 0, "workflow_runs": []}'
+  fi
+  echo "unplanned gh call: $*" >&2
+  exit 1
+fi
 case "$1 $2" in
   "pr view")
     jq --arg fields "$7" '. as $pr | $fields | split(",") | map({key: ., value: $pr[.]}) | from_entries' "$(pr_file "$5" "$3")" ;;
@@ -154,12 +187,6 @@ case "$1 $2" in
     elif [[ $2 =~ ^repos/[^/]+/([^/]+)/compare/([^.]+)\.\.\.(.+)$ && $3 == --jq && $4 == .behind_by ]]; then
       # How many commits the base has that the head lacks.
       git --git-dir "${ORIGINS:?}/${BASH_REMATCH[1]}.git" rev-list --count "${BASH_REMATCH[3]}..${BASH_REMATCH[2]}"
-    elif [[ $2 =~ ^repos/[^/]+/[^/]+/actions/runs\?head_sha=[0-9a-f]+\&per_page=100$ ]]; then
-      # No workflow runs: this GitHub runs no Actions, so team-ci-wait's look reads only the checks.
-      echo '{"total_count": 0, "workflow_runs": []}'
-    elif [[ $2 =~ ^repos/[^/]+/[^/]+/actions/runs\?status=in_progress\&per_page=1$ ]]; then
-      # Nor has it any run in progress, which the look reads for its queued clock.
-      echo '{"total_count": 0, "workflow_runs": []}'
     elif [[ $2 =~ ^repos/([^/]+/([^/]+))/pulls/([0-9]+)/commits$ ]]; then
       file=$(pr_file "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}")
       git=(git --git-dir "${ORIGINS:?}/${BASH_REMATCH[2]}.git")

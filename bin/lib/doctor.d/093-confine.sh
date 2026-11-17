@@ -26,7 +26,7 @@ if ((confine_rc != 0)) || [[ ! $confine_abi =~ ^[0-9]+$ ]]; then
   report confine FAIL "confine.py --abi exited $confine_rc${confine_line:+: $confine_line}" \
     "bin/lib/confine-session's, bin/lib/confine-shell's and bin/lib/confine.py's own --help say what each needs"
 elif ((confine_abi < 2)); then
-  report confine WARN "this machine has no Landlock (ABI $confine_abi), so its workers run on the text guard alone (sops/platform-gotchas.md)"
+  report confine WARN "this machine has no Landlock (ABI $confine_abi), so its workers run on the text guard alone (bin/lib/confine.py)"
 else
   # The real pair on a session directory of the doctor's own: confine-session writes it under the
   # scratch, with a home there too, so the run makes nothing under ~/.config or /tmp, and its

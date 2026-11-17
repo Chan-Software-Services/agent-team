@@ -161,18 +161,20 @@ Taking the PC down for a while (an update, a restart, a night off) is a handoff 
 GitHub redirects a moved repository's old URL, but only until someone makes a repository at the old name, so each machine follows a move.
 `bin/lib/repo-moves.json` is the table of the moves, old `owner/name` to new; every reader of the ledger and every script that takes a PR URL reads a URL under either owner as the same repository, and logs it under the new one.
 Its moves of 2026-11-14 took agent-team, agent-team-records, Conventioner and intone_app from Daniel's own account to the organization `Chan-Software-Services`.
+Its move of 2026-11-16 took the no-mistakes fork, which `bin/lib/tools.lock` builds the gate from, to the same organization.
 
 The coordinator's steps, in order, once the code that adds a move has merged:
 
 1. The registry edit: `team-project --check` names each project whose `repo` is a move's old one, with the `repo` to set; set each in `projects.toml`, in one commit of the team home, and `--check` passes.
-2. On each machine, `team-doctor`'s `moved origins` line names each checkout (the code checkout, the team home, each project's primary checkout) whose origin names a moved repository, with its fix; run `git -C <path> remote set-url origin https://github.com/<new>.git` for each but a treehouse project's, and the line passes once none is left.
+2. On each machine, `team-doctor`'s `moved origins` line names the code checkout and the team home when its origin names a moved repository, and each other registered project's `moved origin <project>` line its primary checkout, each with its fix; run `git -C <path> remote set-url origin https://github.com/<new>.git` for each but a treehouse project's, and each line passes once its checkout is fixed.
+   `team-load-check` goes on past a `moved origin <project>` failure of a project none of its sessions needs, as it goes past that project's other lines, and stops on `moved origins`, so a treehouse project's move can wait for a time when none of its slots is leased.
 3. For a treehouse project, whose pool treehouse names `<checkout's folder>-<the first 3 bytes of the SHA-256 of the origin URL, in hex>`, so that a bare `set-url` would send the next lease to a new, empty pool and the registry's `slots` would stop matching, move the pool with the origin, keeping its pre-warmed slots:
    1. Check that no slot is leased: `treehouse status` in the primary checkout shows none leased, and the doctor's `leases` line passes saying so.
    2. Set the origin: `git -C <primary> remote set-url origin https://github.com/<new>.git`.
    3. Rename the pool folder, under `~/.treehouse/` unless its `treehouse.toml` sets another root, to the name treehouse now derives, which the doctor's `slots` line names (`printf '%s' https://github.com/<new>.git | sha256sum | cut -c1-6` gives its hash).
    4. Run `git -C <primary> worktree repair <each slot>`, each slot by its new path, so git finds the moved worktrees.
    5. Rewrite the project's `slots` in `projects.toml` under the new folder, in a commit of the team home.
-   6. Check that `treehouse status` lists the slots again, and that the doctor's `origin`, `slots` and `moved origins` lines pass.
+   6. Check that `treehouse status` lists the slots again, and that the doctor's `origin`, `slots` and `moved origin <project>` lines pass.
 4. For a gated project (`delivery = "no-mistakes"`), re-register it with the gate: `no-mistakes init` in its primary checkout, then check that `no-mistakes status` there names the new URL as its remote.
 
 ## A real server later

@@ -1806,7 +1806,7 @@ planner     42006       3               3            0"
   git -C "${code:?}" worktree add -q --detach "$HOME/code-wt"
   export TEAM_LOAD_CHECK_CHECKOUT=$HOME/code-wt
   local check
-  for check in 'trust code' 'checkout code' 'claude login' 'trust team home' projects 'trust nowhere' 'tool jq'; do
+  for check in 'trust code' 'checkout code' 'moved origin code' 'moved origins' 'claude login' 'trust team home' projects 'trust nowhere' 'tool jq'; do
     doctor_results FAIL 'trust site' FAIL "$check"
     run_bin -1 --separate-stderr team-load-check
     assert_equal "${lines[2]}" "FAIL $check: broken; fix: repair it"
@@ -1828,11 +1828,13 @@ planner     42006       3               3            0"
     assert_equal "$(stub_calls claude)" ""
   done
 
-  doctor_results FAIL 'trust proj' FAIL 'gate proj'
+  # A moved origin leaves the pool treehouse names from it as it was, so the lease goes on.
+  doctor_results FAIL 'trust proj' FAIL 'gate proj' FAIL 'moved origin proj'
   run_bin -0 --separate-stderr team-load-check
   assert_contains "$output" "PASS lease proj: slot ${slots[0]} leased, pre-warmed and clean, returned"
   assert_equal "$stderr" "$(going_on 'trust proj')
-$(going_on 'gate proj')"
+$(going_on 'gate proj')
+$(going_on 'moved origin proj')"
   assert_equal "${lines[-1]}" "PASS"
 
   # The context form rehearses no lease, so a treehouse project's slots bear on none of its sessions.
@@ -1844,15 +1846,31 @@ $(going_on 'gate proj')"
 
 @test "the ops form stops on any FAIL of the project its worktree is in, and goes on past another project's" {
   ops_setup
-  doctor_results FAIL 'branches proj'
-  run_bin -1 --separate-stderr team-load-check --role ops --worktree "$wt" --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
-  assert_equal "$stderr" "$stopped"
-  [[ ! -e $STUB_FIXTURES/launched ]]
+  local check
+  for check in 'branches proj' 'moved origin proj'; do
+    doctor_results FAIL "$check"
+    run_bin -1 --separate-stderr team-load-check --role ops --worktree "$wt" --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+    assert_equal "$stderr" "$stopped"
+    [[ ! -e $STUB_FIXTURES/launched ]]
+  done
 
-  doctor_results FAIL 'branches site'
+  doctor_results FAIL 'branches site' FAIL 'moved origin site'
   run_bin -0 --separate-stderr team-load-check --role ops --worktree "$wt" --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
-  assert_equal "$stderr" "$(going_on 'branches site')"
+  assert_equal "$stderr" "$(going_on 'branches site')
+$(going_on 'moved origin site')"
   assert_equal "${lines[-1]}" "PASS"
+}
+
+@test "a registry team-project refuses stops every per-project FAIL, another project's moved origin too" {
+  echo 'not toml [' >"$TEAM_HOME/projects.toml"
+  local check
+  for check in 'trust site' 'moved origin site'; do
+    doctor_results FAIL "$check"
+    run_bin -1 --separate-stderr team-load-check
+    assert_equal "$stderr" "$stopped"
+    [[ ! -e $wt ]]
+    assert_equal "$(stub_calls claude)" ""
+  done
 }
 
 @test "a doctor whose --json prints no results array stops the load check, launching nothing" {
