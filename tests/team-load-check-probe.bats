@@ -152,7 +152,7 @@ probe_transcript() {
           fi
           result=''
           for hook in $(jq -r '.hooks[].hook' "$(data)"); do
-            result=$(hook_result "toolu_$role$n" "$hook" "$tool" "$call" "$wt" 2>/dev/null) || continue
+            result=$(hook_result "toolu_$role$n" "$hook" "$tool" "$call" "$wt" "$role" 2>/dev/null) || continue
             [[ $result != *"$marker"* ]] || break
           done
           [[ $result == *"$marker"* ]] || { echo "probe_transcript: no hook blocked $id with its marker" >&2; return 1; }

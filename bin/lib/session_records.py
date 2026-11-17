@@ -266,7 +266,7 @@ def decide_bash(call, env, table, config):
             paths = [path for path in expand(word, context) if path]
             for path in paths:
                 path = glob_start(path) if re.search(r"[*?\[{]", path) else path
-                bases = [""] if path.startswith("/") else candidates(context)
+                bases = [""] if path.startswith("/") else [base.path for base in candidates(context)]
                 for base in bases:
                     found = judge_bash(os.path.realpath(os.path.join(base, path)), shown, table, config)
                     if found:

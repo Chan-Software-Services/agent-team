@@ -160,3 +160,6 @@
 {"roles": ["builder", "planner", "reviewer"], "tool": "Read", "input": {"file_path": "@JOB@/tmp/test.log"}, "local": true}
 {"roles": ["builder", "planner", "reviewer"], "tool": "Grep", "input": {"pattern": "not ok", "path": "@JOB@/tmp", "output_mode": "content"}, "local": true}
 {"roles": ["builder", "planner", "reviewer"], "tool": "Bash", "input": {"command": "df -h ~ /tmp @WORKTREE@/README.md"}, "local": true}
+{"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end && rm -rf test-results playwright-report && cd .."}, "local": true}
+{"roles": ["builder", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end; npx playwright test --reporter=line; cd ..; rm -rf front-end/test-results"}, "local": true}
+{"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "tmux -S @JOB@/tmp/look.sock new-session -d -s look 'npm run dev'; tmux -S @JOB@/tmp/look.sock capture-pane -p -t look; tmux -S @JOB@/tmp/look.sock kill-server"}, "local": true}
