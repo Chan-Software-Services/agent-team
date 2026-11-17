@@ -3636,9 +3636,11 @@ full: 2 of phase 1's cap 2 build (02, 03); ready and waiting for a slot: 04"
 }
 
 # builder_model <model>: T7's opened event names <model> as its builder model, as team-open
-# --builder-model logs it.
+# --builder-model logs it, and the setup's builder launches ran on it, as team-worker logs them.
 builder_model() {
-  jq -c --arg m "$1" 'if .event == "opened" then .builder_model = $m else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  jq -c --arg m "$1" 'if .event == "opened" then .builder_model = $m
+    elif .event == "launch" and .role == "builder" and .model_from == null then .model = $m | .model_from = "task"
+    else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
   mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
 }
 

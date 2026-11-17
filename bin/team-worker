@@ -11,7 +11,10 @@
 #   --model    not for ops: the model alias or name to launch on instead of the registry's, such
 #              as opus for a model trial's paired review (sops/model-trials.md); a planner's or a
 #              reviewer's is that launch's alone, while a task's builder's becomes its task's
-#              builder model, which every later builder launch of the task keeps (below)
+#              builder model, which every later builder launch of the task keeps (below);
+#              default is the settings' word: no --model passed to claude, the settings' word
+#              logged, and for a task's builder of a task that has a builder model, that
+#              model from then on
 #   --request  ops only, and required for it: the link to Daniel's Discord message asking for
 #              this launch, https://discord.com/channels/<guild>/<channel>/<message>; any other
 #              value is a malformed command line (exit 2)
@@ -108,14 +111,18 @@
 # fails, or a session list that cannot be read, is a warning, and the launch goes on. T0 stops
 # nothing.
 # The session's model, logged on the launch as model with where it came from as model_from: the
-# model --model names (launch); else a task's builder launches on its task's builder model (task),
-# the latest of the builder_model of its opened event (team-open --builder-model, else the
-# registry's builder line at the open) and the model of an earlier builder launch of the task on
-# --model (or one logged with a model before launches logged model_from), so every builder of
-# the task, in each of its projects' worktrees, a fix round's, team-next's hand-offs and --fill's
-# ticket builders, a resume's, a level's and a recovery's relaunch among them, runs on it until
-# another builder's --model switches it, and one of default names none, so its builders run on
-# the settings' word below, whatever the registry says since; else on the one the worktree's
+# model --model names (launch), but --model default, the settings' word below; else a task's
+# builder launches on its task's builder model (task), which the latest of its opened event and
+# its builder launches decides: the builder_model of its opened event (team-open --builder-model,
+# else the registry's builder line at the open), the model of a builder launch on --model or on
+# the task's model (or of one logged with a model before launches logged model_from), default
+# after a builder launch on the settings' word once the task had a builder model (--model
+# default, the way back to it), and none after a launch logged before model_from with no model,
+# which ran on the settings' word, or one on the registry's line; so every builder of the task,
+# in each of its projects' worktrees, a fix round's, team-next's hand-offs and --fill's ticket
+# builders, a resume's, a level's and a recovery's relaunch among them, runs on it until another
+# builder's --model switches it, and one of default names none, so its builders run on the
+# settings' word below, whatever the registry says since; else on the one the worktree's
 # project names for the role in the registry, team-project's models (registry), which a builder
 # of a task with no builder model reads too, each passed to claude --model; else on its
 # settings' word, passing none: an ANTHROPIC_MODEL in the env of its generated settings, then of
@@ -661,22 +668,27 @@ stem=$role
 [[ -z $ticket ]] || stem+=--$ticket
 
 # The model the session launches on, and where it came from (the header's model paragraph):
-# --model's (launch); for a task's builder its task's builder model (task), the latest of its
-# opened event's builder_model and the model of a builder launch on --model (one logged as
-# launch, or with a model and no model_from, logged before launches said where it came from), so
-# a builder's --model holds for every later builder of the task, default naming none; else, and
-# for a task with neither, the registry's for the role (registry); ops takes none of them. With
-# none, the settings' word, read once its settings are generated, below.
-model_from='' task_model=''
+# --model's (launch), but --model default, which names the settings' word; for a task's builder
+# its task's builder model (task), which the latest of its opened event and its builder launches
+# decides: opened's builder_model, a launch's model when it came from --model or the task (or,
+# logged before launches said where, it logged one), and default after a launch on the settings'
+# word once the task had one; a legacy launch that logged no model, or one from the registry,
+# leaves the task none, default naming none too; else the registry's for the role (registry);
+# ops takes none of them. With none, the settings' word, read once its settings are generated,
+# below.
+model_from='' task_model='' settings_named=''
+if [[ $model == default ]]; then model='' settings_named=1; fi
 [[ -z $model ]] || model_from=launch
-if [[ -z $model && $role == builder && $task != T0 ]]; then
-  task_model=$(jq -r '[.[] | if .event == "opened" then .builder_model
-      elif .event == "launch" and .role == "builder" and (.model | type) == "string"
-        and (.model_from == "launch" or .model_from == "task" or .model_from == null) then .model
-      else empty end | strings] | last // empty' <<<"$events")
+if [[ -z $model && -z $settings_named && $role == builder && $task != T0 ]]; then
+  task_model=$(jq -r 'reduce (.[] | select(.event == "opened" or (.event == "launch" and .role == "builder"))) as $e ("";
+      if $e.event == "opened" then ($e.builder_model | strings) // .
+      elif $e.model_from == "launch" or $e.model_from == "task" then $e.model
+      elif $e.model_from == null then ($e.model | strings) // ""
+      elif $e.model_from == "registry" or . == "" then ""
+      else "default" end)' <<<"$events")
   [[ -z $task_model || $task_model == default ]] || model=$task_model model_from=task
 fi
-if [[ -z $model && -z $task_model && -n $project && $role != ops ]]; then
+if [[ -z $model && -z $task_model && -z $settings_named && -n $project && $role != ops ]]; then
   models=$(team_project "$project" models) || exit 1
   model=$(jq -r --arg role "$role" '.[$role] // empty' <<<"$models")
   [[ -z $model ]] || model_from=registry

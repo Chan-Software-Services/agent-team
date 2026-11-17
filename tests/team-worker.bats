@@ -1232,11 +1232,21 @@ session-records-guard block 10"
   run_bin -0 team-worker T7 builder "$wt1" -- a fix round
   run_bin -0 team-worker T7 builder "$wt1" --model 'sonnet[1m]' -- switched
   run_bin -0 team-worker T7 builder "$wt1" -- relaunched again
+  # --model default is the way back to the settings' word: no --model passed, the settings' word
+  # logged, and every later builder of the task on it, never the registry's line.
+  run_bin -0 team-worker T7 builder "$wt1" --model default -- back
+  run_bin -0 team-worker T7 builder "$wt1" -- relaunched on the settings
   assert_equal "$(bg_calls | jq -c '[.[-1], ((index("--model") // empty) as $i | .[$i + 1])]')" \
-    $'["go","fable"]\n["relaunched","fable"]\n["Review it","haiku"]\n["a fix round","fable"]\n["switched","sonnet[1m]"]\n["relaunched again","sonnet[1m]"]'
+    $'["go","fable"]\n["relaunched","fable"]\n["Review it","haiku"]\n["a fix round","fable"]\n["switched","sonnet[1m]"]\n["relaunched again","sonnet[1m]"]\n["back"]\n["relaunched on the settings"]'
   assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
-    $'["builder","fable","launch"]\n["builder","fable","task"]\n["reviewer","haiku","launch"]\n["builder","fable","task"]\n["builder","sonnet[1m]","launch"]\n["builder","sonnet[1m]","task"]'
+    $'["builder","fable","launch"]\n["builder","fable","task"]\n["reviewer","haiku","launch"]\n["builder","fable","task"]\n["builder","sonnet[1m]","launch"]\n["builder","sonnet[1m]","task"]\n["builder","default","default"]\n["builder","default","default"]'
   run_bin -0 team-log --check
+  # A planner's or a reviewer's --model default is its launch's alone: the settings' word over
+  # the registry's line.
+  registry --first 'models = { builder = "opus", reviewer = "opus" }' proj other
+  run_bin -0 team-worker T7 reviewer "$wt1" --model default -- Review it
+  assert_equal "$(bg_calls | tail -n 1 | jq -c 'index("--model")')" null
+  assert_equal "$(launches | tail -n 1 | jq -c '[.role, .model, .model_from]')" '["reviewer","default","default"]'
 
   # A task opened before tasks kept a builder model: its builder launched on --model before
   # launches logged where a model came from keeps that model too, over the registry's.
@@ -1246,6 +1256,16 @@ session-records-guard block 10"
     session: "f0000001", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T8-task", machine: "home-pc", model: "fable"}'
   run_bin -0 team-worker T8 builder "$wt2" -- relaunched
   assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T8","fable","task"]'
+  # The latest builder launch decides: a legacy one that logged neither a model nor where it came
+  # from ran on the settings' word, so it ends that model, and the next reads the registry again.
+  thread T10
+  opened T10 proj feat/T10-task "$wt2"
+  ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T10", event: "launch", role: "builder",
+    session: "f0000002", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T10-task", machine: "home-pc", model: "fable"}'
+  ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T10", event: "launch", role: "builder",
+    session: "f0000003", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T10-task", machine: "home-pc"}'
+  run_bin -0 team-worker T10 builder "$wt2" -- go
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T10","opus","registry"]'
   # With none of those, such a task's builders read the registry at each launch, as before.
   thread T9
   opened T9 proj feat/T9-task "$wt1"
