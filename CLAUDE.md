@@ -55,6 +55,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `records-rewrite/`: `team-records-rewrite`'s drop list, message expression, S02 callback and `verify.py`.
     - `repo-moves.json`: the repositories that moved owner, each old `owner/name` to its new one with the date, a constant `ledger.jq` imports, so a PR URL under either owner is one PR to the ledger's event readers, and `team-project` reads for `--find repo` and `--check`.
     - `review-app`: the reviewer App's id and slug, one `id=<n>` and one `slug=<s>` line, a committed constant; with no such file the App is off and agent-team merges on the per-head word alone.
+    - `review_facts.py`: the facts of a diff a review brief lists for its reviewer, the tests it drops and the direct dependencies it adds or changes, which `team-brief` derives as `dropped_tests` and `dependencies`.
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
@@ -89,9 +90,10 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `mongodb`: the driver the prod-mongo server counts and checks its dumps with, at the version the pinned MongoDB MCP server installs.
     - `typescript`: TypeScript 7, which `effect-tsgo diagnostics` needs installed beside it, though `@effect/tsgo` declares no peer.
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
-  - `prod-mongo/`: the prod-mongo toolkit's server body: its start, its tools, the backups root's rules (`destinationRefusal`), `childEnv` and `scrubbed`, a dump's counts and index names, read without decoding a document, and the throwaway MongoDB the restore drill restores a dump into.
+  - `prod-mongo/`: the prod-mongo toolkit's server body: its start and tools, the backups root's rules, `childEnv` and `scrubbed`, a dump's counts, the throwaway MongoDB a drill or a rehearsal restores a dump into, the snapshots that say what changed, by ids, and the undo it prepares for Daniel.
 - `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder or reviewer loads (`--setting-sources user`), none of its worktree's `.claude/`.
 - `sops/`: standing procedures.
+  - `ci-only.md`: moving a project's whole test suite off the team's machine into required CI checks, only when its repository goes public on Daniel's word: the workflow's task, Daniel's steps at github.com, the proof and the registry edit.
   - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
   - `docker.md`: the team's Docker stacks: labels, owner classes, the wrapper contract, `team-stack`'s subcommands, instances, admission, the idle sweep, the reaper, `team-janitor`'s daily report, the heartbeat's steps, the close teardown and the agents' rules.
   - `drills.md`: the drills, live runs of the paths the team's portability and guards rest on: the record in `drills.jsonl`, who runs one, and each drill's runbook, its steps, who takes each, its duration, what passes and how it is recorded.
@@ -114,6 +116,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill`: run by hand by the coordinator, since it starts a real Claude session; it compacts a coordinator-shaped session in a sandbox team home built from `tests/fixtures/compaction-drill/`, checks it still knows each task's wait and every current item, and records its run.
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
+  - `tests/fixtures/guard-corpus/allowed.jsonl`: the calls every guard hook must allow, one JSON object a line with the roles that make it, in the shapes of real ones with fixture values only.
+  - `tests/guard-corpus.bats`: runs each role's PreToolUse hooks, as its settings files write them, on that corpus's calls, with the lease held and, for a call marked `local`, on a fenced machine and while the team holds offline.
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, among them:
     - `confine-seams.py`: runs `bin/lib/confine.py`, which has no test seam, on another ABI or a domain that cannot be entered.
@@ -132,6 +136,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `coordinator/`: the coordinator's MCP servers and the claude.ai connectors it keeps, no worker's, the only ones `claude-coordinator` lets it load (its README says how the others are denied and how one is added).
   - `effect/`: for an Effect project's planner, builder and reviewer, the `effect-v4` skill (the installed `effect`'s sources, the v3 and beta traps, the check), a hook giving Effect's findings on each TypeScript file edited, and, but for a planner, Foldkit's DevTools server, held to the worktree.
   - `frontend/`: for Daniel's own session and the coordinator's intake, a walk's planner by `team-ui --capture` alone, never a build worker: the pinned Chrome DevTools MCP server on the Agent Chrome's localhost pages, `ui-capture` of Daniel's page and its selected element, and a skill to fix it.
+  - `prod-mongo/`: for the ops role only, backups of Conventioner's production database into `~/conventioner-backups`, their restore drills, rehearsals of a release's migrations on a dump and undos prepared for Daniel, on the read user's connection string from 1Password.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.
   - `spec-review/`: the `spec-review` skill, two fresh readers of a task's spec and tickets, and `claims-check`, a fresh reader of a branch's prose against its code, which `team-worker` gives every delivering builder.
@@ -191,6 +196,7 @@ It holds:
   `team-checks` gives the commands it runs `TEAM_JOBS` from `team-capacity jobs` unless it is set.
   `tests/shards` splits them by each file's seconds in CI (`tests/timings.tsv`, a file it lacks weighed by its bytes), so refresh the timings with `tests/shards update` when the shards' times drift apart, and a removed bats file takes its row with it, as `tests/repo.bats` holds.
   Every part but `shellcheck` alone and a `--list` (a shard's or `--changed`'s) runs under the machine's heavy-run lock (`bin/team-heavy`, which `team-checks` takes for the local checks too), so two suites on one machine queue instead of overlapping, each in a process group (and on Linux a scope) of its own that leaves a cost sample, and the sandbox clears `TEAM_HEAVY_HELD`, `AGENT_TEAM_TASK` and `TEAM_JOBS` so the tests take their own.
+  No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
   So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them and a gate's end-to-end run, and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
@@ -206,7 +212,7 @@ It holds:
 - The toolkit tests are `node --test` files in `tests/toolkits/`, run after `servers/install`: each starts a toolkit's server exactly as its `.mcp.json` declares, with `op` stubbed and a throwaway MongoDB in Docker (for `vercel-read`, a fake of Vercel's API on the loopback instead), and speaks MCP to it over stdio (`tests/toolkits/helpers/` documents the helpers).
   Each test file's header comment says what it checks and against what.
   No test reaches 1Password or production: the test `PATH` refuses to start if a real `op` is on it.
-  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, `team-heavy` and `flock` they start.
+  `owned` (`tests/toolkits/helpers/process.mjs`) ends a process a test started, and every process below it, when the test ends, passed, failed or timed out, since a child left running holds `node --test` open; the prod-mongo tests hand it each restore drill, rehearsal, `team-heavy` and `flock` they start.
   `tests/run toolkits` gives each test and hook a 5-minute limit and ends each file's process once its tests have, so a stuck test fails with its name long before CI's job limit.
 - One file: `tests/vendor/bats-core/bin/bats tests/<name>.bats`; one test: add `-f '<part of its name>'`.
   A toolkit test file: `node --test tests/toolkits/<name>.test.mjs`; one test: add `--test-name-pattern '<part of its name>'`.

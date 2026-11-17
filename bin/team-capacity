@@ -115,8 +115,15 @@
 #          summed for the team's and the others' over the seconds between; the team's adds the
 #          stacks' cpu_percent, which the others' is less of. Docker not answering in time leaves
 #          the stacks out, so they count as the others'. It adds:
+#            team_cpu_nsec  on Linux agent-team.slice's CPUUsageNSec, else null, and null when
+#                      the user manager did not answer or the slice has no counter. With it, a
+#                      snapshot and the newest stored reading's team_cpu_nsec, the team's CPU is
+#                      the counter's rise since that reading (all of it when it fell), plus the
+#                      team's processes outside the slice since the snapshot, over the seconds,
+#                      plus the stacks', so a process that ended between two readings counts; the
+#                      others' then leaves out every process in the slice
 #            systemd   on Linux whether the user manager answered (systemctl --user show of the
-#                      units below), else null
+#                      team's slice and the units below), else null
 #            sessions  whether the session list (claude agents --json) could be read
 #            tasks     per task with work here (a held worktree, a live team session, a running
 #                      team stack or a process in its slice), by number: {task, memory (bytes),
@@ -1023,9 +1030,7 @@ capacity_line() {
     out=$(jq -r "${given[@]}" "$input | capacity_units(.)[]" --args ${gates[@]+"${gates[@]}"}) ||
       die "could not list the units to read"
     mapfile -t names < <(grep . <<<"$out" || true)
-    if ((${#names[@]} == 0)); then
-      units='{}'
-    elif out=$(systemctl --user show -p Id,ControlGroup,CPUUsageNSec "${names[@]}" 2>/dev/null); then
+    if out=$(systemctl --user show -p Id,ControlGroup,CPUUsageNSec "${names[@]}" 2>/dev/null); then
       units=$(unit_values <<<"$out")
     fi
   fi

@@ -606,6 +606,30 @@ tests/helpers/x.bash:1: b needs c
 toolkits/x/scripts/run:1: a needs b"
 }
 
+# Each line of a file under <root>/bin that keeps the events of open tasks by a select of is_open
+# per event (`$tasks[.task] | is_open`), which folds a task's lifecycle once for each of its events,
+# as "<path>:<line>"; ledger.jq's open_task_events works each task's status out once:
+# slow_open_selects <root>
+slow_open_selects() {
+  (cd "$1" && grep -rnoE '\[\.task\] *\| *is_open' bin | cut -d: -f1,2 | sort) || true
+}
+
+@test "no file under bin/ selects the events of open tasks by is_open per event, which open_task_events does once per task" {
+  assert_equal "$(slow_open_selects "$REPO_ROOT")" ""
+}
+
+@test "a select of is_open per event under bin/ is named, in any spacing" {
+  local root=$BATS_TEST_TMPDIR/code
+  mkdir -p "$root/bin/lib/doctor.d" "$root/tests"
+  printf '%s\n' 'jq ok' "jq '\$events[] | select(\$tasks[.task] | is_open)'" >"$root/bin/tool"
+  printf '%s\n' '#   select($tasks[.task]|is_open)' >"$root/bin/lib/x.jq"
+  printf '%s\n' "jq '\$tasks[.task]  |  is_open'" >"$root/bin/lib/doctor.d/1.sh"
+  printf '%s\n' "jq '\$tasks[.task] | is_open'" >"$root/tests/x.bats"
+  assert_equal "$(slow_open_selects "$root")" "bin/lib/doctor.d/1.sh:1
+bin/lib/x.jq:1
+bin/tool:2"
+}
+
 # Only Daniel's own terminal runs op (team-secrets restore and save), and only the ops role's
 # production servers fetch a credential, each through Daniel's 1Password prompt: every other
 # session is denied the 1Password CLI and other processes' environments. The rules match the CLI

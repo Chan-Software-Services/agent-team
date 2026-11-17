@@ -45,9 +45,9 @@
 #              fork at its pinned commit (with the packages stage's Go and make), rustup and then
 #              the Rust toolchain rust-toolchain.toml pins (its tool rust-toolchain line's fix, after
 #              rustup's in the doctor's order), cargo-nextest, sccache and cargo-deny from their
-#              release archives into ~/.cargo/bin, mongodump and mongorestore from MongoDB's
-#              Database Tools archive for this OS and CPU (into ~/.local/bin, no sudo), the
-#              1Password CLI, opencode; then the gate's opencode wrapper,
+#              release archives into ~/.cargo/bin, mongodump, mongorestore and mongoimport from
+#              MongoDB's Database Tools archive for this OS and CPU (into ~/.local/bin, no sudo),
+#              the 1Password CLI, opencode; then the gate's opencode wrapper,
 #              ~/.no-mistakes/bin/opencode-gate, while the gate-agent line asks for it (on any gate
 #              but a Claude one), and
 #              agent_path_override.opencode in ~/.no-mistakes/config.yaml set to its full path,
