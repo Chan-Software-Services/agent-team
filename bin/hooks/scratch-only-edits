@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
 # PreToolUse hook for planners and reviewers: they write files only inside the worktree's .scratch/
-# directory. Exit 2 blocks the tool call and shows stderr to the agent; exit 0 passes it.
+# directory, and a planner also inside each of its task's other worktrees' task directory (below).
+# Exit 2 blocks the tool call and shows stderr to the agent; exit 0 passes it.
 #
 # Usage: scratch-only-edits [<file>]   (the hook's input on stdin)
 #   file  the one file, relative to the worktree, an edit tool may write (the ops session's
 #         .scratch/answer.md): plain names joined by /, none of them . or .., the first not
 #         starting with a -
 #
-# It reads nothing of the team home, so it decides on a machine that names none. When it cannot
-# decide it refuses, saying so: input that is not a JSON object with a tool_name string, a wrong
-# argument on its command line (which so blocks every call), and any command of its own that fails,
-# which ends as an exit 2 naming the hook and the exit code (team_guard in bin/lib/team.sh).
+# A planner's other task directories: when the session's settings' env names it a planner
+# (AGENT_TEAM_ROLE) of a task (AGENT_TEAM_TASK), set at launch and changed by no tool call of the
+# session, and it is given no <file>, a target outside its own set may also lie under the
+# .scratch/task of each other of its task's open worktrees as the ledger names them at the call
+# (opened, worktree-added or moved, and not returned; never a ticket worktree's), so each
+# repository's tickets, scope.txt and spec land where team-tickets reads them. They count only while
+# the session's root is itself one of those worktrees, and each by its worktree's real path with
+# /.scratch/task after it, only when resolving that path changes nothing, so a link at .scratch or
+# .scratch/task leaves it out. A refusal then names every directory the session may write.
+#
+# It reads the team home only for that, the ledger, once, and only when a target lies outside the
+# session's own set, so it decides on a machine that names none, with no other task directories
+# there. When it cannot decide it refuses, saying so: input that is not a JSON object with a
+# tool_name string, a wrong argument on its command line (which so blocks every call), and any
+# command of its own that fails, which ends as an exit 2 naming the hook and the exit code
+# (team_guard in bin/lib/team.sh).
 #
 # An Edit, Write, MultiEdit or NotebookEdit call is judged by its path, resolved with its symlinks:
-# it must lie under .scratch/, or, given <file>, be that file under the worktree, its path resolved
-# with its symlinks being the path as written, so a write is refused when the file or a directory
-# between the worktree and it is a link. A Bash call is judged the same with or without <file>, against .scratch/ (the ops
-# session that passes one has no Bash).
+# it must lie under .scratch/ or a planner's other task directories (above), or, given <file>, be
+# that file under the worktree, its path resolved with its symlinks being the path as written, so a
+# write is refused when the file or a directory between the worktree and it is a link. A Bash call
+# is judged the same with or without <file>, against .scratch/ and a planner's other task
+# directories (the ops session that passes one has no Bash).
 #
 # A Bash call is allowed unread when it holds no > and not the letters tee once every ', " and \ is
 # taken out of it (and every \ that ends a line, with its newline), and holds no ANSI-C string
@@ -225,8 +239,8 @@
 # The verdict: a relative target is unknown when the directory is, and behind a wrapper option that
 # holds a C or a D (env's -C, sudo's -D) or is --chdir, for a tee file; otherwise it is taken from
 # each directory the shell may be in. The target, its symlinks resolved, must then lie under
-# .scratch/ or under /tmp, $TMPDIR or $CLAUDE_JOB_DIR, or be, as written, /dev/null, /dev/stdout,
-# /dev/stderr or /dev/fd/*; an empty one writes nothing. A target holding any other expansion (a
+# .scratch/, a planner's other task directories (above), or under /tmp, $TMPDIR or $CLAUDE_JOB_DIR,
+# or be, as written, /dev/null, /dev/stdout, /dev/stderr or /dev/fd/*; an empty one writes nothing. A target holding any other expansion (a
 # $( ) but basename's among them), a variable the walk does not follow there, an unquoted brace,
 # *, ?, [, a ~ after = or :, a ~user, an ANSI-C escape, or an unquoted variable whose value holds a
 # blank or a glob character, is one the hook cannot work out, and is refused, never allowed.
@@ -250,8 +264,8 @@
 # Test seams: TEAM_SYSTEM_ROOT stands for / in /tmp, as in the library's tool_dirs, and
 # TEAM_BASH_VERSION (major.minor) for the running bash's version.
 set -euo pipefail
-# A guard decides or refuses (bin/lib/team.sh), and reads nothing of the team home, so it decides
-# on a machine that names none.
+# A guard decides or refuses (bin/lib/team.sh), and needs no team home, reading the ledger only for
+# a planner's other task directories, so it decides on a machine that names none.
 # shellcheck disable=SC2034 # read by bin/lib/team.sh
 team_guard=scratch-only-edits team_home_report=1
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
@@ -280,6 +294,36 @@ under() {
   [[ $1 == "$2" || $1 == "$2"/* ]]
 }
 
+# task_dirs: fill task_dir with the .scratch/task of each other worktree of a planner's task, once,
+# and where with the directories the session may write, joined by "or", for the refusal. Only for
+# a planner (AGENT_TEAM_ROLE) of a task (AGENT_TEAM_TASK), both from its settings' env, which no
+# tool call of the session changes, with no one file given: its task's open worktrees, as the
+# ledger names them now (open_worktrees in bin/lib/ledger.jq), but ticket worktrees, must hold the
+# session's root, and each other one's .scratch/task counts by its real path only when no link
+# lies at .scratch or .scratch/task. Read only when a target lies outside the session's own set.
+task_dir=() where=$scratch dirs_read=''
+task_dirs() {
+  [[ -z $dirs_read ]] || return 0
+  dirs_read=1
+  [[ ${AGENT_TEAM_ROLE:-} == planner && ${AGENT_TEAM_TASK:-} =~ ^T[0-9]+$ && -z $one ]] || return 0
+  [[ -n $TEAM_HOME && -f $TEAM_HOME/ledger.jsonl ]] || return 0
+  local list own wt dir mine=''
+  local -a peer_wts=()
+  list=$(task_event_array "$AGENT_TEAM_TASK" |
+    ledger_jq '[open_worktrees(.[]; $home) | select(.ticket == null) | .worktree] | unique[]' -r)
+  own=$(realpath -m -- "$root")
+  while IFS= read -r wt; do
+    [[ -n $wt ]] || continue
+    wt=$(realpath -m -- "$wt")
+    if [[ $wt == "$own" ]]; then mine=1; else peer_wts+=("$wt"); fi
+  done <<<"$list"
+  [[ -n $mine ]] || return 0
+  for wt in ${peer_wts[@]+"${peer_wts[@]}"}; do
+    dir=$(realpath -m -- "$wt/.scratch/task")
+    [[ $dir != "$wt/.scratch/task" ]] || { task_dir+=("$dir") && where+=" or $dir"; }
+  done
+}
+
 if [[ $tool != Bash ]]; then
   path=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$input")
   [[ -n $path ]] || exit 0
@@ -292,7 +336,9 @@ if [[ $tool != Bash ]]; then
     exit 2
   fi
   under "$target" "$scratch" && exit 0
-  echo "Blocked: this role may edit files only under $scratch (tried $target)." >&2
+  task_dirs
+  for dir in ${task_dir[@]+"${task_dir[@]}"}; do under "$target" "$dir" && exit 0; done
+  echo "Blocked: this role may edit files only under $where (tried $target)." >&2
   exit 2
 fi
 
@@ -3928,6 +3974,13 @@ if ((${#paths[@]})); then
         continue 2
       fi
     done
+    task_dirs
+    for dir in ${task_dir[@]+"${task_dir[@]}"}; do
+      if under "${resolved[k]}" "$dir"; then
+        inside[${pi[k]}]=1
+        continue 2
+      fi
+    done
     isout[k]=1
     if [[ -n ${pm[k]} ]]; then
       outm[${pi[k]}]=${pm[k]}
@@ -3966,6 +4019,6 @@ if ((${#unknown[@]})); then
 fi
 if ((${#outside[@]})); then
   list=$(printf '%s, ' "${outside[@]}")
-  echo "Blocked: this role may write files only under $scratch; write there with the Write tool, not a shell redirection or tee (tried ${list%, })." >&2
+  echo "Blocked: this role may write files only under $where; write there with the Write tool, not a shell redirection or tee (tried ${list%, })." >&2
 fi
 exit 2
