@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Runs a command where the kernel refuses a delete or a rename outside its roots.
 
-Usage: python3 -I confine.py [--root <dir>]... [--session] -- <command> [args...]
+Usage: python3 -I confine.py [--root <dir>]... [--session <file>] [--shell] [--entry shell|prefix] -- <command or the shell's arguments>
        python3 -I confine.py --abi
 
-  --root <dir>   a directory under which removing and renaming stay allowed; one that is no
-                 directory is refused (exit 3)
-  --session      add the roots of a worker's or gate agent's session (below)
-  --abi          print the kernel's Landlock ABI version, 0 when it has none, and exit
+  --root <dir>      a directory under which removing and renaming stay allowed; one that is no
+                    directory is refused (exit 3)
+  --session <file>  add the roots of a worker's or gate agent's session, read from its session
+                    file (below), which bin/lib/confine-session wrote at the launch
+  --shell           run the session file's shell, with the words after -- as its arguments;
+                    a usage error without --session
+  --entry <form>    set AGENT_TEAM_CONFINE_SHELL=1 (shell) or AGENT_TEAM_CONFINE_PREFIX=1 (prefix)
+                    for the command, which shows the load check which form ran; never read here
+  --abi             print the kernel's Landlock ABI version, 0 when it has none, and exit
 
 It enters a Landlock domain and then runs the command in its place, so the command, and every
 process it starts, removes or renames a directory entry only under a root: the kernel refuses
@@ -16,33 +21,41 @@ The handled rights are REMOVE_DIR, REMOVE_FILE and REFER only, so reads, writes,
 truncations are as before everywhere. REFER is allowed beneath / and all three beneath each root,
 so a rename out of a directory outside the roots is refused, into a root too, since it removes
 the outside entry, and so is a rename onto an existing entry outside them.
-Not held: a broker outside the domain (systemd-run --user, the Docker daemon, ssh), overwriting
-or truncating a file's contents, whatever the command does inside its roots, and signals.
+The claim: a confined session's roots are the ones its launcher wrote, and no program of the
+session's choosing runs before the domain is entered.
+Not held: a broker outside the domain (systemd-run --user, the Docker daemon, ssh); overwriting
+or truncating a file's contents, the session file, the session's program bash, this file and a
+settings file among them, since the write rights are not handled; a session whose settings no
+longer name that program; whatever the command does inside its roots; and signals.
 The domain sets no_new_privs, so a setuid program (sudo) gains nothing inside it, and it can
 never be left: a confined command that runs this wrapper again only narrows its own roots.
 
---session's roots, each only when it is a directory, each resolved through its links:
-  - the session's worktree: AGENT_TEAM_WORKTREE when it names a directory, else
-    CLAUDE_PROJECT_DIR, never the working directory, so a cd into another repository roots
-    nothing there. With neither, it exits 3 and the command does not run:
-    "confine: no worktree for this session (AGENT_TEAM_WORKTREE and CLAUDE_PROJECT_DIR name no
-    directory)";
-  - that worktree's common git directory, AGENT_TEAM_GIT_DIR, which team-worker fixes at the
-    launch, without which git could not remove its own index.lock in a linked worktree; none
-    when it is unset, since nothing the session's commands may rewrite is asked for it. One
-    that is not an absolute path, is a link or no directory, or is, holds or is under a
-    directory no root may be in (below) is refused (exit 3);
-  - $CLAUDE_JOB_DIR/tmp, when it is there; one that is a link, no directory or another user's
-    is refused (exit 3);
-  - the session tmp: /tmp/agent-team-<AGENT_TEAM_TASK> when that is T<digits>, else
-    /tmp/agent-team-gate-<the first 8 characters of CLAUDE_CODE_SESSION_ID> when that holds only
-    letters, digits and dashes, else none. It is made, mode 700, when missing, and the command
-    gets it as TMPDIR; one that is a link, no directory or another user's is refused (exit 3);
-  - each line of the file confine-roots beside this one, a path that may start with ~/. A line
-    naming nothing is skipped. A line that is not an absolute path, that names a link or
-    anything but a directory, or that is, holds or is under the team home (TEAM_HOME, else the
-    first line of ~/.config/agent-team/home), ~/.config/agent-team or ~/.claude, is refused
-    (exit 3) naming it, and so is a file that cannot be read.
+--session's roots come from the file and the file confine-roots beside this one alone: no
+variable of the environment names a root, a home directory or the team home, and nothing is
+asked of the worktree's own files. The file is one
+JSON object, version 1, with the keys task, home, kept, worktree, git_dir, session_tmp, shell
+and, once the session has an id, job_tmp. Each root is resolved through its links:
+  - worktree, the session's worktree, never the working directory, so a cd into another
+    repository roots nothing there;
+  - git_dir, that worktree's common git directory, without which git could not remove its own
+    index.lock in a linked worktree. One that is not an absolute path, is a link, no directory
+    or another user's, or is, holds or is under a directory of kept is refused (exit 3);
+  - job_tmp, when the file names one and it is there; one that is a link, no directory or
+    another user's is refused (exit 3);
+  - session_tmp, an absolute path, made, mode 700, when missing, which the command gets as
+    TMPDIR; one that is a link, no directory or another user's is refused (exit 3);
+  - each line of the file confine-roots beside this one, a path that may start with ~/, which
+    stands for the file's home. A line naming nothing is skipped. A line that is not an absolute
+    path, that names a link or anything but a directory, or that is, holds or is under a
+    directory of kept (the team home, ~/.config/agent-team and ~/.claude, as the launcher
+    resolved them) is refused (exit 3) naming it, and so is a roots file that cannot be read.
+The session file is refused, exit 3, and nothing runs:
+  "the session file <file> is a link, no regular file, another user's, or writable by group or
+  others"; "cannot read the session file <file>: <error>" (no JSON among them); "the session
+  file <file> is not version 1"; "the session file <file> names no <key>" for home, kept,
+  worktree, git_dir, session_tmp and shell; "the session file <file> names the shell <path>,
+  which is no program"; "the session file <file> names the worktree <path>, which is no
+  directory".
 
 Where the kernel has no Landlock, or only ABI 1 (no REFER), and on macOS, the command runs
 unconfined, and stderr says so: "confine: this machine has no Landlock (ABI <n>), so this
@@ -60,8 +73,8 @@ replaces those two reads.
 """
 import ctypes
 import errno
+import json
 import os
-import re
 import stat
 import sys
 
@@ -75,8 +88,8 @@ REMOVE = REMOVE_DIR | REMOVE_FILE | REFER
 PR_SET_NO_NEW_PRIVS = 38
 NEEDED_ABI = 2  # REFER's
 MARKER = ".confine-unconfined"
-NO_WORKTREE = ("no worktree for this session (AGENT_TEAM_WORKTREE and CLAUDE_PROJECT_DIR name no "
-               "directory)")
+SESSION_KEYS = ("home", "kept", "worktree", "git_dir", "session_tmp", "shell")
+ENTRIES = {"shell": "AGENT_TEAM_CONFINE_SHELL", "prefix": "AGENT_TEAM_CONFINE_PREFIX"}
 
 
 class RulesetAttr(ctypes.Structure):
@@ -84,7 +97,8 @@ class RulesetAttr(ctypes.Structure):
 
 
 class PathBeneath(ctypes.Structure):
-    _pack_ = 1
+    # The kernel's struct is packed, 12 bytes; unpacked it has the same two offsets and four
+    # bytes of padding the kernel never reads, and no packing warning from Python 3.14.
     _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
 
 
@@ -114,29 +128,6 @@ def _within(path, directory):
     return path == directory or path.startswith(directory.rstrip("/") + "/")
 
 
-def _home():
-    return os.environ.get("HOME") or os.path.expanduser("~")
-
-
-def _team_home():
-    """The team home as the scripts find it, or None when nothing names one."""
-    named = os.environ.get("TEAM_HOME", "")
-    if not named:
-        try:
-            with open(os.path.join(_home(), ".config/agent-team/home"), encoding="utf-8") as file:
-                named = file.readline().strip()
-        except (OSError, UnicodeDecodeError):
-            return None
-    return os.path.join(_home(), named) if named else None
-
-
-def _kept():
-    """The directories no root may be, hold or be under, resolved."""
-    return [os.path.realpath(directory) for directory in
-            (_team_home(), os.path.join(_home(), ".config/agent-team"), os.path.join(_home(), ".claude"))
-            if directory]
-
-
 def _own_directory(path):
     """Whether path is there; Refused when it is a link, no directory or another user's."""
     try:
@@ -150,7 +141,16 @@ def _own_directory(path):
     return True
 
 
-def _listed_roots():
+def _outside_kept(root, kept, named):
+    """Refused when root is, holds or is under a directory no root may be in."""
+    for directory in kept:
+        if _within(root, directory) or _within(directory, root):
+            raise Refused(f"{named}, which is, holds or is under {directory}; "
+                          "no git directory or confine-roots line may be a path of the team home, "
+                          "~/.config/agent-team or ~/.claude")
+
+
+def _listed_roots(home, kept):
     """The directories confine-roots lists, resolved; Refused on a line that may never be one."""
     path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "confine-roots")
     try:
@@ -158,85 +158,106 @@ def _listed_roots():
             lines = file.read().splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise Refused(f"cannot read {path}: {error}") from error
-    kept = _kept()
     roots = []
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        named = os.path.join(_home(), line[2:]) if line.startswith("~/") else line
+        named = os.path.join(home, line[2:]) if line.startswith("~/") else line
         if not os.path.isabs(named):
             raise Refused(f"{path} lists {line}, which is not an absolute path")
         root = os.path.realpath(named)
-        for directory in kept:
-            if _within(root, directory) or _within(directory, root):
-                raise Refused(f"{path} lists {line}, which is, holds or is under {directory}; "
-                              "no path of the team home, ~/.config/agent-team or ~/.claude is a root")
+        _outside_kept(root, kept, f"{path} lists {line}")
         if _own_directory(named.rstrip("/") or "/"):
             roots.append(root)
     return roots
 
 
-def _worktree():
-    for name in ("AGENT_TEAM_WORKTREE", "CLAUDE_PROJECT_DIR"):
-        named = os.environ.get(name, "")
-        if named and os.path.isdir(named):
-            return os.path.realpath(named)
-    raise Refused(NO_WORKTREE)
+def read_session(path):
+    """The session file's object, as bin/lib/confine-session wrote it; Refused on any other."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise Refused(f"the session file {path} is a link, no regular file, another user's, "
+                          "or writable by group or others") from error
+        raise Refused(f"cannot read the session file {path}: {error.strerror}") from error
+    try:
+        found = os.fstat(fd)
+        if not stat.S_ISREG(found.st_mode) or found.st_uid != os.geteuid() or found.st_mode & 0o022:
+            raise Refused(f"the session file {path} is a link, no regular file, another user's, "
+                          "or writable by group or others")
+        try:
+            session = json.loads(os.read(fd, found.st_size + 1).decode("utf-8"))
+        except (OSError, ValueError) as error:
+            raise Refused(f"cannot read the session file {path}: {error}") from error
+    finally:
+        os.close(fd)
+    if not isinstance(session, dict):
+        raise Refused(f"cannot read the session file {path}: it holds no JSON object")
+    if session.get("version") != 1 or session.get("version") is True:
+        raise Refused(f"the session file {path} is not version 1")
+    for key in SESSION_KEYS:
+        value = session.get(key)
+        if key == "kept":
+            named = (isinstance(value, list) and value
+                     and all(isinstance(one, str) and os.path.isabs(one) for one in value))
+        else:
+            named = isinstance(value, str) and value
+        if not named:
+            raise Refused(f"the session file {path} names no {key}")
+    if not isinstance(session.get("job_tmp", ""), str):
+        raise Refused(f"the session file {path} names no job_tmp")
+    shell = session["shell"]
+    if not (os.path.isabs(shell) and os.path.isfile(shell) and os.access(shell, os.X_OK)):
+        raise Refused(f"the session file {path} names the shell {shell}, which is no program")
+    return session
 
 
-def _git_common():
-    """The common git directory team-worker fixed at the launch, or None when none is named."""
-    named = os.environ.get("AGENT_TEAM_GIT_DIR", "")
-    if not named:
-        return None
+def _git_common(path, named, kept):
+    """The common git directory the launcher fixed, resolved."""
+    told = f"the session file {path} names the git directory {named}"
     if not os.path.isabs(named):
-        raise Refused(f"AGENT_TEAM_GIT_DIR names {named}, which is not an absolute path")
+        raise Refused(f"{told}, which is not an absolute path")
     if not _own_directory(named.rstrip("/") or "/"):
-        raise Refused(f"AGENT_TEAM_GIT_DIR names {named}, which is no directory")
+        raise Refused(f"{told}, which is no directory")
     root = os.path.realpath(named)
-    for directory in _kept():
-        if _within(root, directory) or _within(directory, root):
-            raise Refused(f"AGENT_TEAM_GIT_DIR names {named}, which is, holds or is under {directory}; "
-                          "no path of the team home, ~/.config/agent-team or ~/.claude is a root")
+    _outside_kept(root, kept, told)
     return root
 
 
-def _session_tmp():
-    """The session tmp, made when missing, or None when the session names none."""
-    task = os.environ.get("AGENT_TEAM_TASK", "")
-    session = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    if re.fullmatch(r"T[0-9]+", task, re.ASCII):
-        path = f"/tmp/agent-team-{task}"
-    elif re.fullmatch(r"[A-Za-z0-9-]+", session):
-        path = f"/tmp/agent-team-gate-{session[:8]}"
-    else:
-        return None
+def _session_tmp(path, named):
+    """The session tmp, made when missing."""
+    if not os.path.isabs(named):
+        raise Refused(f"the session file {path} names the session tmp {named}, which is not an absolute path")
     try:
-        os.mkdir(path, 0o700)
+        os.mkdir(named, 0o700)
     except FileExistsError:
         pass
     except OSError as error:
-        raise Refused(f"cannot make the session tmp {path}: {error.strerror}") from error
+        raise Refused(f"cannot make the session tmp {named}: {error.strerror}") from error
     try:
-        found = os.lstat(path)
+        found = os.lstat(named)
     except OSError as error:
-        raise Refused(f"cannot read the session tmp {path}: {error.strerror}") from error
+        raise Refused(f"cannot read the session tmp {named}: {error.strerror}") from error
     if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.geteuid():
-        raise Refused(f"the session tmp {path} is a link, no directory or another user's")
-    return path
+        raise Refused(f"the session tmp {named} is a link, no directory or another user's")
+    return named
 
 
-def session_roots():
-    """A session's roots and its session tmp (or None)."""
-    worktree = _worktree()
-    tmp = _session_tmp()
-    job = os.environ.get("CLAUDE_JOB_DIR", "")
-    job = os.path.join(job, "tmp") if job else None
-    if job and not _own_directory(job):
+def session_roots(path, session):
+    """A session's roots and its session tmp, from its session file alone."""
+    kept = [os.path.realpath(directory) for directory in session["kept"]]
+    worktree = session["worktree"]
+    if not (os.path.isabs(worktree) and os.path.isdir(worktree)):
+        raise Refused(f"the session file {path} names the worktree {worktree}, which is no directory")
+    tmp = _session_tmp(path, session["session_tmp"])
+    git = _git_common(path, session["git_dir"], kept)
+    job = session.get("job_tmp", "")
+    if job and not (os.path.isabs(job) and _own_directory(job.rstrip("/") or "/")):
         job = None
-    roots = [os.path.realpath(root) for root in (worktree, _git_common(), job, tmp) if root]
-    return roots + _listed_roots(), tmp
+    roots = [os.path.realpath(root) for root in (worktree, git, job, tmp) if root]
+    return roots + _listed_roots(session["home"], kept), tmp
 
 
 def _unconfined_notice(version, tmp):
@@ -288,7 +309,7 @@ def _usage():
 
 
 def main(argv):
-    roots, session = [], False
+    roots, session_file, shell, entry = [], None, False, None
     while argv and argv[0] != "--":
         word = argv.pop(0)
         if word == "--help":
@@ -297,14 +318,18 @@ def main(argv):
         if word == "--abi":
             print(abi())
             return 0
-        if word == "--session":
-            session = True
+        if word == "--shell":
+            shell = True
+        elif word == "--session" and argv and argv[0] != "--":
+            session_file = argv.pop(0)
+        elif word == "--entry" and argv and argv[0] in ENTRIES:
+            entry = argv.pop(0)
         elif word == "--root" and argv:
             roots.append(argv.pop(0))
         else:
             return _usage()
     command = argv[1:]
-    if not command:
+    if not command or (shell and session_file is None):
         return _usage()
     try:
         for root in roots:
@@ -312,11 +337,15 @@ def main(argv):
                 raise Refused(f"--root names no directory: {root}")
         roots = [os.path.realpath(root) for root in roots]
         tmp = None
-        if session:
-            found, tmp = session_roots()
+        if session_file is not None:
+            session = read_session(session_file)
+            found, tmp = session_roots(session_file, session)
             roots += found
-            if tmp:
-                os.environ["TMPDIR"] = tmp
+            os.environ["TMPDIR"] = tmp
+            if shell:
+                command = [session["shell"]] + command
+        if entry:
+            os.environ[ENTRIES[entry]] = "1"
         version = abi()
         if version < NEEDED_ABI:
             _unconfined_notice(version, tmp)
