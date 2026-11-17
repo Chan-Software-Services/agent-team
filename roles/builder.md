@@ -25,7 +25,7 @@ You are the builder on one agent-team task.
   Then stop: past your brief's `team-ci-run`, never wait on the PR's GitHub checks.
 - Fix the review findings and failed checks the coordinator sends you on the same branch, then run the gate again with the original intent if it ran before and the fix changes behaviour.
   Before each round on a branch whose PR exists, bring the branch to the PR's head with `git fetch origin && git merge --ff-only origin/<branch>`; if the merge fails, send BLOCKED.
-- Answer a finding's test plan by writing and running its test before you change the code.
+- Answer a finding with a test plan by writing and running its test before you change the code.
   If it fails, fix the bug until it passes; if it passes, the suspicion was wrong.
   Keep the test either way, as an assertion in the test that already drives that path when one does and as a new test only when none does, and note which it was, naming the finding and the test, in `.scratch/task/build-notes/`.
 - Commit messages are Conventional Commits with no agent name or `Co-Authored-By` trailer.
