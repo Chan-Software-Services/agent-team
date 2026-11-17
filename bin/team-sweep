@@ -261,9 +261,9 @@
 # wait is counted, and nowhere else, the tests' seam; a due item's day is team-current's own
 # (TEAM_CURRENT_NOW).
 # Every temporary file a run makes, a look's and its background views', the scripts those run
-# included (their TMPDIR), is in one directory of the run under TMPDIR, which it removes at its end
-# in every mode, by TERM, INT or HUP too, once it has sent TERM to every process below the views
-# still running and waited for them; only a KILL leaves it.
+# included (their TMPDIR, but team-current's), is in one directory of the run under TMPDIR, which
+# it removes at its end in every mode, by TERM, INT or HUP too, once it has sent TERM to every
+# process below the views still running and waited for them; only a KILL leaves it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/error-view.sh
@@ -307,7 +307,9 @@ ledger=$TEAM_HOME/ledger.jsonl
 # and each view, which then ends in a moment, is waited for, so none writes into the directory
 # while it is removed. A view that has ended needs neither, and its children are no longer its own.
 # Each view runs with the directory as its TMPDIR, so a script it runs that TERM ends before its
-# trap is set, its mktemp made, leaves its scratch where the run removes it.
+# trap is set, its mktemp made, leaves its scratch where the run removes it; but for team-current's
+# two, which keep the caller's TMPDIR, since team-current check judges an item's where against it
+# as a temp root, and neither makes scratch.
 # The main shell itself runs no process that writes into the directory: it makes its files with
 # run_file, which forks nothing, and every read that writes one (a view, the activity, the
 # registry's) runs as a view, since a command substitution is no job, so the end could neither
@@ -473,9 +475,9 @@ look() {
   TMPDIR=$run_tmp health_view >"$plan_file.health" &
   health_pid=$!
   if [[ -f $TEAM_HOME/tasks/current.md ]]; then
-    TMPDIR=$run_tmp script_view team-current-check/1 team-current check --json >"$plan_file.current" &
+    script_view team-current-check/1 team-current check --json >"$plan_file.current" &
     current_pid=$!
-    TMPDIR=$run_tmp script_view team-current-due/1 team-current due --json --list coordinator >"$plan_file.due" &
+    script_view team-current-due/1 team-current due --json --list coordinator >"$plan_file.due" &
     due_pid=$!
   fi
   if [[ -f $TEAM_HOME/assistant/handoffs.jsonl ]]; then
