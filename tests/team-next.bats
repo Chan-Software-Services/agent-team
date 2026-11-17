@@ -7,6 +7,7 @@
 # copy of bin/ whose team-ci-wait is a stub answering with a --json end (ci_wait_ends).
 
 load helpers/common
+load helpers/github-api
 
 setup() {
   sandbox
@@ -1073,22 +1074,42 @@ counts="findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,n
 # pr_on_github <head> [<behind_by>] [<checks as JSON>]: the gh stub answers team-state's reads
 # of PR 9 (open, against main, at <head>), its checks (agent-review passed by default), its
 # required checks (none), the compare of main with <head> (0 behind by default), the real
-# team-ci-wait's look at it (the PR's state and head, no workflow run of the head and none of the
-# repository in progress), so a findings round's look ends on its first look, and, read only with
+# team-ci-wait's look at it through the reader (gh api -i, answered through
+# tests/helpers/github-api.bash: the PR's state and head, its checks as the head's commit statuses
+# with no check run, no workflow run of the head and none of the repository in progress), so a
+# findings round's look ends on its first look, and, read only with
 # the reviewer App on, the head's agent-review check runs and commit statuses (none). With GH_QUEUE
 # set, it answers the reads of main's rules too, a ruleset with a merge queue; else those fail, as
 # a base whose rules cannot be read.
 pr_on_github() {
   export GH_HEAD=$1 GH_BEHIND=${2:-0}
   export GH_CHECKS=${3:-'[{"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'}
+  github_stub_setup
+  # No time passes between two looks of a test, which read GitHub again each time.
+  export TEAM_GITHUB_FRESH_SECONDS=0
   stub_script gh <<'SH'
+if [[ $1 == api && $2 == -i ]]; then
+  source "$GITHUB_STUB_HELPER"
+  github_request "$@"
+  case $GITHUB_ENDPOINT in
+    repos/owner/proj/pulls/9)
+      github_answer 200 "$(jq -cn --arg h "$GH_HEAD" '{number: 9, state: "open", merged: false,
+        head: {sha: $h, ref: "feat/T7-toil"}, base: {ref: "main"}}')" ;;
+    "repos/owner/proj/commits/$GH_HEAD/check-runs?filter=latest&per_page=100")
+      github_answer 200 '{"total_count": 0, "check_runs": []}' ;;
+    "repos/owner/proj/commits/$GH_HEAD/status?per_page=100")
+      github_answer 200 "$(jq -c '{state: "pending", statuses: [.[] | {context: .name, state: (.state | ascii_downcase),
+        target_url: (.link // null)}]}' <<<"$GH_CHECKS")" ;;
+    "repos/owner/proj/actions/runs?head_sha=$GH_HEAD&per_page=100" | "repos/owner/proj/actions/runs?status=in_progress&per_page=1")
+      github_answer 200 '{"total_count": 0, "workflow_runs": []}' ;;
+  esac
+  echo "unplanned gh call: $*" >&2
+  exit 1
+fi
 case "$*" in
   "pr view 9 --repo owner/proj --json number,state,baseRefName,headRefOid,headRefName,changedFiles")
     jq -cn --arg h "$GH_HEAD" '{number: 9, state: "OPEN", baseRefName: "main", headRefOid: $h, headRefName: "feat/T7-toil",
       changedFiles: 1}' ;;
-  "pr view 9 --repo owner/proj --json state,headRefOid") jq -cn --arg h "$GH_HEAD" '{state: "OPEN", headRefOid: $h}' ;;
-  "api repos/owner/proj/actions/runs?head_sha=$GH_HEAD&per_page=100") echo '{"total_count": 0, "workflow_runs": []}' ;;
-  "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") echo '{"total_count": 0, "workflow_runs": []}' ;;
   "pr checks 9 --repo owner/proj --required"*) echo '[]' ;;
   "pr checks 9 --repo owner/proj"*) echo "$GH_CHECKS" ;;
   "api repos/owner/proj/compare/main...$GH_HEAD --jq .behind_by") echo "$GH_BEHIND" ;;
@@ -1133,11 +1154,14 @@ live() {
 }
 
 # The calls that could reach Discord, merge or post: curl's, and gh's beyond team-state's and
-# team-ci-wait's reads (the base's rules among them, its branch, rules/branches and rulesets).
+# team-ci-wait's reads (the base's rules among them, its branch, rules/branches and rulesets), the
+# reader's -i and its -H header left out.
 outside_calls() {
   stub_calls curl
-  stub_calls gh | jq -c 'select((.[0] == "pr" and (.[1] == "view" or .[1] == "checks"))
-    or (.[0] == "api" and (.[1] | test("/compare/|/branches/|/rulesets/[0-9]+$|/pulls/[0-9]+/files$|/actions/runs[?](head_sha=|status=in_progress&)|/commits/[0-9a-f]+/(check-runs[?]|status$)"))) | not)'
+  stub_calls gh | jq -c '. as $a | [range(length) | select($a[.] != "-i" and $a[.] != "-H" and (. == 0 or $a[. - 1] != "-H"))
+      | $a[.]]
+    | select((.[0] == "pr" and (.[1] == "view" or .[1] == "checks"))
+    or (.[0] == "api" and (.[1] | test("/compare/|/branches/|/rulesets/[0-9]+$|/pulls/[0-9]+(/files)?$|/actions/runs[?](head_sha=|status=in_progress&)|/commits/[0-9a-f]+/(check-runs[?]|status([?]|$))"))) | not)'
 }
 
 @test "a pass whose PR head moved past the reviewed head is refused naming both, nothing logged" {
@@ -2441,7 +2465,7 @@ The PR's failures, \`test-shards (2)\` and \`lint\`, are \`blocking\` findings o
   # The real look on the fake GitHub, which has no check of the head: nothing failed.
   run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "$message"
   assert_equal "$(tail -n 1 <<<"$output")" "$(fix_line 3 .scratch/task/review.md)"
-  stub_calls gh | grep -qF '"state,headRefOid"'
+  stub_calls gh | grep -qF '"repos/owner/proj/pulls/9"'
   # Infrastructure failures and roll-ups alone, a pass so far and checks still pending: today's.
   ci_wait_ends failed "$sha" 1 "team-ci-wait: the checks on ${sha:0:7} did not pass" "[$(infra "smoke-shards (1)" never-started 7 10),
     $(rollup smoke 7 12), $(infra build setup 8 20 "Run actions/checkout@v4")]"
