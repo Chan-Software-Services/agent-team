@@ -753,7 +753,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   if section builder 'What you do' | grep -F -e 'tests/run' -e '--changed'; then return 1; fi
   # Daniel's rule, 2026-11-15: no whole suite on the team's machine, in the reviewer's and the planner's roles too.
   section reviewer 'What you do' | grep -qxF -- '- Run no test suite on this machine (Daniel'"'"'s rule): a whole suite runs only in CI, which is the coordinator'"'"'s wait; run at most the local checks your brief names, with `team-checks`.'
-  section planner 'What you do' | grep -qxF -- '- Explore freely: read code and run commands, the app and single tests, never a whole suite, which runs only in CI.'
+  section planner 'What you do' | grep -qxF -- '- Explore freely: read code, run commands, the app and single tests, never a whole suite (CI runs it).'
   section builder 'What you do' | grep -qF -- '- Fix the review findings and failed checks the coordinator sends you on the same branch'
   section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read.'
   if section builder 'What you do' | grep -F -e team-ci-wait -e 'When every finding it sends is a plain `note`'; then return 1; fi
