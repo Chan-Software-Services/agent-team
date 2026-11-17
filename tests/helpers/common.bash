@@ -653,7 +653,8 @@ cgroup_of() {
 # into the scope, under its Slice, and answer with a job; a call naming a pid listed in
 # $STUB_FIXTURES/busctl-refuse is refused and moves nothing, and so is one naming a pid listed in
 # $STUB_FIXTURES/busctl-gone, whose process then exits (its /proc entry goes), as one that ends
-# between the read of the tree and the call.
+# between the read of the tree and the call, and one naming a scope listed in
+# $STUB_FIXTURES/busctl-loaded, a unit still loaded, refused in systemd's words.
 fake_placement() {
   stub_script busctl <<'EOF'
 [[ ${2:-} == call && ${6:-} == StartTransientUnit ]] || { echo "busctl stub: unplanned call: $*" >&2; exit 127; }
@@ -666,6 +667,10 @@ while ((${#args[@]})); do
     *) args=("${args[@]:3}") ;;
   esac
 done
+if grep -qxF "$scope" "$STUB_FIXTURES/busctl-loaded" 2>/dev/null; then
+  echo "Call failed: Unit $scope was already loaded or has a fragment file." >&2
+  exit 1
+fi
 for pid in "${pids[@]}"; do
   if grep -qxF "$pid" "$STUB_FIXTURES/busctl-gone" 2>/dev/null; then
     rm -rf "${TEAM_CGROUP_ROOT:?}/proc/$pid"
