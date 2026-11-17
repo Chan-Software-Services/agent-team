@@ -498,7 +498,7 @@ H3 note assistant->coordinator 2026-11-14T10:02:00Z open"
   assert_contains "$output" "usage: team-assistant"
 }
 
-@test "thread opens a public thread under #assistant with a 7-day archive, records its id and prints it" {
+@test "thread opens a public thread under #assistant with a 1-day idle time, records its id and prints it" {
   local name
   name=$(printf 'x%.0s' {1..120})
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-assistant thread "$name"
@@ -506,19 +506,19 @@ H3 note assistant->coordinator 2026-11-14T10:02:00Z open"
   assert_equal "$stderr" ""
   assert_equal "$(stub_calls curl | jq -r '.[-1]')" "https://discord.com/api/v10/channels/$ASSISTANT/threads"
   assert_equal "$(stub_calls curl | jq -r '.[index("-d") + 1]')" \
-    "{\"name\":\"$(printf 'x%.0s' {1..100})\",\"type\":11,\"auto_archive_duration\":10080}"
+    "{\"name\":\"$(printf 'x%.0s' {1..100})\",\"type\":11,\"auto_archive_duration\":1440}"
   assert_equal "$(stub_calls curl | jq -c '.[:6]')" '["-fsS","-H","@-","-X","POST","-H"]'
   AGENT_TEAM_ROLE=assistant run_bin -0 team-assistant thread "The doctor's slow line" --from "$DANIEL"
   assert_equal "$(stub_calls curl | tail -n 1 | jq -r '.[-1]')" "https://discord.com/api/v10/channels/$ASSISTANT/messages/$DANIEL/threads"
   assert_equal "$(stub_calls curl | tail -n 1 | jq -r '.[index("-d") + 1]')" \
-    '{"name":"The doctor'\''s slow line","auto_archive_duration":10080}'
+    '{"name":"The doctor'\''s slow line","auto_archive_duration":1440}'
   assert_equal "$(cat "$HOME/.local/state/agent-team/assistant-threads")" "1571000000000000777"
   [[ $(cat "$discord/stdin") == "Authorization: Bot $FAKE_DISCORD_TOKEN"* ]]
 }
 
 @test "thread is the assistant's alone, needs the channel, and says when Discord refuses" {
   run_bin -1 --separate-stderr team-assistant thread "Doctor"
-  assert_equal "$stderr" "team-assistant: thread is the assistant's alone: it opens the assistant's topic threads under #assistant"
+  assert_equal "$stderr" "team-assistant: thread is the assistant's alone: it opens and closes the assistant's topic threads under #assistant"
   AGENT_TEAM_ROLE=coordinator run_bin -1 team-assistant thread "Doctor"
   TEAM_ASSISTANT_CHANNEL='' AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant thread "Doctor"
   assert_equal "$stderr" "team-assistant: no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so no thread can open under #assistant"
