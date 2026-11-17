@@ -686,6 +686,30 @@ $TEAM_HOME/ledger.jsonl: 3 of 7 lines break the ledger contract"
   run_bin -0 team-log --check
 }
 
+# The report's "a log line that quotes a denied command": the command in the call matched the deny
+# rule again, so the coordinator logged a paraphrase.
+@test "a field's value is taken from a file by <key>-file=, so a denied command is logged as it was" {
+  opened_task T26
+  local file=$BATS_TEST_TMPDIR/what.txt
+  printf '%s\n' 'git push -q origin fix/x; bats tests/x.bats -f "the guard"' >"$file"
+  run_bin -0 team-log T26 denied role=builder "what-file=$file" 'why=[deny rule] git push * -f*'
+  assert_equal "$(logged_after 2)" \
+    '{"task":"T26","event":"denied","role":"builder","what":"git push -q origin fix/x; bats tests/x.bats -f \"the guard\"","why":"[deny rule] git push * -f*"}'
+  # Only the one trailing newline is dropped; a value of several lines is kept whole.
+  printf 'a\nb\n\n' >"$file"
+  run_bin -0 team-log T26 injection role=builder source=x "text-file=$file"
+  assert_equal "$(jq -c .text "$TEAM_HOME/ledger.jsonl" | tail -1)" '"a\nb\n"'
+  : >"$file"
+  run_bin -2 team-log T26 denied role=builder "what-file=$file" why=x
+  assert_contains "$output" "what-file=$file: the file is empty"
+  run_bin -2 team-log T26 denied role=builder "what-file=$BATS_TEST_TMPDIR/none" why=x
+  assert_contains "$output" "what-file=$BATS_TEST_TMPDIR/none: cannot read the file"
+  echo x >"$file"
+  run_bin -2 team-log T26 denied role=builder what=x "what-file=$file" why=x
+  assert_contains "$output" "what is given twice"
+  run_bin -0 team-log --check
+}
+
 @test "injection records where outside text asked a worker to act, and what it asked" {
   opened_task T26
   run_bin -0 team-log T26 injection role=builder 'source=https://github.com/chanjdaniel/agent-team/pull/9#issuecomment-1' \

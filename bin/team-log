@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Record an event the coordinator writes by hand in the ledger, against the ledger contract.
 #
-# Usage: team-log T<n> <event> [key=value]...
+# Usage: team-log T<n> <event> [key=value | key-file=<path>]...
 #        team-log T<n> --from-message '<message>' [--from <session>] [--sent-back <list>] [--relay <id>] [--print]
 #        team-log --check [<file>]
 #        team-log --check-lifecycle [<file>]
 #        team-log --fix-sent-back [<file>]
 # Appends {ts (now, UTC), task, event, key: value...}, each value typed as the contract types its field.
+# A <key>-file=<path> pair takes the field's value from the file's text, its one trailing newline
+# dropped, so a value that would match a deny rule in the call (a denied command, team-log T<n>
+# denied role=<role> what-file=<file> why=<why>) is logged as it was; a file that cannot be read
+# or is empty is a malformed command line.
 # The event is checked against the task's state too, by the lifecycle table (bin/lib/lifecycle.json,
 # through ledger_append in bin/lib/team.sh): one the table refuses (a closed task's held, a review
 # of a task with no opened) is refused, logging nothing, from the table's lifecycle_from on,
@@ -202,7 +206,7 @@ help_more() {
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 why=$(worker_refusal "" "runs no team-log") && die "$why"
 
-usage="usage: team-log T<n> <event> [key=value]... | team-log T<n> --from-message '<message>' [--from <session>] [--sent-back <list>] [--relay <id>] [--print] | team-log --check [<file>] | team-log --check-lifecycle [<file>] | team-log --fix-sent-back [<file>]"
+usage="usage: team-log T<n> <event> [key=value | key-file=<path>]... | team-log T<n> --from-message '<message>' [--from <session>] [--sent-back <list>] [--relay <id>] [--print] | team-log --check [<file>] | team-log --check-lifecycle [<file>] | team-log --fix-sent-back [<file>]"
 
 if [[ ${1:-} == --check ]]; then
   [[ $# -le 2 ]] || usage_error "$usage"
@@ -318,10 +322,19 @@ retired=$(ledger_jq '$contract.kinds[$event].retired // empty' -nr --arg event "
 [[ -z $retired ]] || die "$event is retired by $retired"
 
 local -A seen=()
-local pairs=() bad=''
+local pairs=() bad='' path
 for pair in "$@"; do
   key=${pair%%=*}
-  if [[ $pair != *=?* || ! $key =~ ^[a-z][a-z0-9_]*$ ]]; then bad="not a key=value: '$pair'"
+  # <key>-file=<path>: the field's value is the file's text, its one trailing newline dropped.
+  if [[ $key =~ ^[a-z][a-z0-9_]*-file$ && $pair == *=?* ]]; then
+    path=${pair#*=}
+    if ! value=$(cat -- "$path" 2>/dev/null && echo .); then bad="$pair: cannot read the file"
+    elif value=${value%.} value=${value%$'\n'} && [[ -z $value ]]; then bad="$pair: the file is empty"
+    else key=${key%-file} pair=$key=$value
+    fi
+  fi
+  if [[ -n $bad ]]; then :
+  elif [[ $pair != *=?* || ! $key =~ ^[a-z][a-z0-9_]*$ ]]; then bad="not a key=value: '$pair'"
   elif [[ $key == ts || $key == task || $key == event ]]; then bad="$key is set by team-log"
   elif [[ -n ${seen[$key]:-} ]]; then bad="$key is given twice"
   fi
