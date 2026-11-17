@@ -28,6 +28,8 @@ A word that does not hold falls to the next only for its own reasons, never for 
 
 Every merge, on either word, needs the checks every merge gets: the PR open, not a draft, not conflicting and on the project's base; every required check present and passed on the head, none failing or pending; `agent-review` success on the head, which on agent-team with the reviewer App on is the App's own check run (see "agent-team behind the reviewer App"); no agent attribution line in its commits; and the project's local checks passing on the head through `team-checks`.
 
+GitHub holds one more thing once `bin/lib/worker-login` names the worker login and a base's protection restricts who can push to the owner alone (`sops/machine-setup.md`, "The worker login"): that restriction refuses a merge into the base by a session's login, the worker login, so a PR merges only through `team-merge`, which runs on the owner login whatever session runs it.
+
 The per-head word needs Daniel's message read back from Discord, in the task's thread or `#coordinator`, from an author in `allowFrom`, sent no earlier than the head was first logged, and the PR's head the approval's head, or one that adds only merges of the base since it, either with a passing review logged after the word, or made by `team-catch-up` from a head whose latest review is a pass logged after the word (git showing it adds only clean merges of the base to that head), or each clean (a merge of the base whose tree is `git merge-tree`'s of its parents, as `team-catch-up` makes it) with no review logged after the word that found something.
 
 The default word, the unattended one, needs:
@@ -116,6 +118,7 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
 ## What never merges on any word
 
 - A release to `main`: it stays Daniel's own, outside `team-merge`.
+- A merge by a session's own login, with the worker login on, into a base whose protection restricts pushes to the owner: GitHub refuses it, and only `team-merge`, on the owner login, merges.
 - A PR with a required check missing or not passed, any check failing or pending, or any other check every merge gets unmet.
 - On the default word, a PR of agent-team, the team's own project, until the reviewer App is set up and `dev`'s protection pins its check, or on a plan the coordinator approved, or one approved before T276: it merges on the per-head word.
 - On any word, a PR of agent-team with the reviewer App on whose head lacks the App's own `agent-review` check run passed.
@@ -144,6 +147,7 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
   On a branch the gate's mirror holds, it prints a second step after the push, `team-clean-messages <worktree> --clear-gate-lane`, which runs with the same OK once the push has landed, since the gate's next run would otherwise refuse the old commits.
   That step and the mirrors under `~/.no-mistakes/repos` are the coordinator's: `settings/worker.json` denies every worker the flag and any Bash call naming that path, and `coordinator.settings.json` denies neither.
 - After logging a merge word, a plan approval, or a withdrawal or giving back of either, `team-log` runs `team-inbox`, so the team home's `waiting.md` is current, and the list `team-inbox --post` posts with it: it shows each withdrawal of the default word that stands ("-# Default merge word withdrawn for <T<n>, project <name> or every project> since <link>") and leaves out of its PRs ready to merge a PR the default word covers on the ledger, whose refusal comes back as an ask.
+  It also leaves out a PR whose per-head word stands on the ledger (`word_stands` in `bin/lib/ledger.jq`: the latest `merge-approved` naming its URL names a head the ledger logged for it, and no review logged since found something), so the word is not asked for again after a merge of the base whose re-review passed; that the new head adds only merges of the base stays `team-merge`'s to check, and `team-time` stops counting Daniel's wait on the same rule.
 - `team-snapshot` gives at session start one line per withdrawal of the default word that stands: "Default merge word withdrawn for <T<n>, project <name> or every project> since <ts> (Discord message <id>, <task>)".
 - While the reviewer App is off, no reader offers the default word for agent-team: `merge_authority` gives it the one reason above, so `team-next` prints the merge ask for its PRs, the sweep raises no `merge-due` for them, and `waiting.md` lists them.
   With the App on, the readers offer it on a plan Daniel approved, as for a product project, and `team-merge` alone reads the App's check and the pin.
@@ -170,7 +174,7 @@ What it does not prove, each a speed bump against a steered session of the same 
 - a session that writes `~/agent-team/bin/` directly changes the scripts with no merge at all;
 - a session that writes the ledger or the live checkout's `bin/lib/review-app` changes what `team-merge` reads on this machine, though GitHub's pin still refuses the merge, which is why `team-merge` checks the pin;
 - a script run with `AGENT_TEAM_ROLE` cleared is not refused as a worker's;
-- a merge by the raw API, around `team-merge`, skips its other rules (the approved plan, the short list, the findings rule), which GitHub does not hold.
+- while the worker login is off, a merge by the raw API, around `team-merge`, skips its other rules (the approved plan, the short list, the findings rule), which GitHub does not hold.
 
 A second App check, posted by `team-merge` itself just before it merges and required by the protection, would put those rules behind the key too; it is a small follow-up, not part of T276.
 
