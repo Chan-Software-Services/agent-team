@@ -25,7 +25,7 @@ Facts are yours to find, never Daniel's: look each one up in the code, the docs 
 
 ## Deliver, in `{{task_dir}}/`
 
-For a task with worktrees in two repositories, each repository's tickets, its own `scope.txt` and a `spec.md` go in that repository's worktree's task directory, where `team-tickets` reads them: your hook lets you write each of your task's worktrees' task directory, never their code.
+For a task with worktrees in two repositories, each repository's tickets, its own `scope.txt` and a `spec.md` go in that repository's worktree's task directory, where `team-tickets` reads them: your hook lets you write the `.scratch/task/` of each of your task's other worktrees (never a ticket worktree's), never their code.
 
 1. `spec.md`, following `~/.claude/skills/to-spec/SKILL.md` (read and follow it; do not stop to check seams with the user: choose them and state them).
    Its Implementation Decisions name each choice a builder would otherwise make (a library, a file's place, a default, an error's handling, wording users see, which cases a test covers) and how it was made, and end with the line `Left to the builder: none`, or each choice left open and why.

@@ -13,10 +13,12 @@
 # session, and it is given no <file>, a target outside its own set may also lie under the
 # .scratch/task of each other of its task's open worktrees as the ledger names them at the call
 # (opened, worktree-added or moved, and not returned; never a ticket worktree's), so each
-# repository's tickets, scope.txt and spec land where team-tickets reads them. They count only while
+# repository's tickets, scope.txt and spec land where team-tickets reads them when the project's
+# task_dir is .scratch/task, as the hook's own .scratch/ assumes. They count only while
 # the session's root is itself one of those worktrees, and each by its worktree's real path with
 # /.scratch/task after it, only when resolving that path changes nothing, so a link at .scratch or
-# .scratch/task leaves it out. A refusal then names every directory the session may write.
+# .scratch/task leaves it out. An edit tool's refusal, and a shell refusal of a target outside,
+# then name its own .scratch/ and each such directory.
 #
 # It reads the team home only for that, the ledger, once, and only when a target lies outside the
 # session's own set, so it decides on a machine that names none, with no other task directories
