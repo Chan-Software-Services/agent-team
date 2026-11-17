@@ -178,7 +178,8 @@
 # (a YAML explicit key), so a file this cannot read with certainty is a doubt; evals/, which no
 # session loads, may hold anything. No skill file holds an exclamation mark anywhere, since Claude
 # Code runs a command a skill's text writes with one, and looks for it after filling the skill's
-# arguments in. The toolkit's name, each skill directory's and each agent file's before its .md
+# arguments in; settings/worker.json's disableSkillShellExecution turns that off, so this is a
+# second layer. The toolkit's name, each skill directory's and each agent file's before its .md
 # hold only lowercase letters, digits and dashes, since Claude Code's text of a skill opens with
 # the skill directory's path, where a name could write such a command. A toolkit
 # that fails any of these is checked against the project's list like every other, so one that

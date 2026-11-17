@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=30127
+manual_bytes=30125
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -952,16 +952,16 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 
 @test "a worker goes on by a command-guard refusal's allowed way and reports it, which the coordinator logs denied and lists in its status report" {
   # Each worker role says it in the same words, right after its denial section's first sentence.
-  local sentence="When a \`command-guard\` refusal names an allowed way, take that way and go on, and still send \`T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way\`, which parks nothing; a refusal with no allowed way is as above." role
+  local sentence="When a \`command-guard\` refusal names an allowed way, take that way and go on, and still send \`T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way\`, optionally followed by the way you took in parentheses, which parks nothing; a refusal with no allowed way is as above." role
   for role in builder planner reviewer ops; do
     assert_equal "$(grep -A 3 -x '## When something is denied' "$REPO_ROOT/roles/$role.md" | sed -n 4p)" "$sentence"
   done
   # The manual's BLOCKED row logs it denied, and the status report lists it.
   grep -E '^\| `BLOCKED <what> <why>`' "$manual" |
-    grep -qF '; one ending "; took its allowed way" is logged denied, parks nothing and waits for your status report, no ping. |'
+    grep -qF '; one ending "; took its allowed way [<way>]" is logged denied, parks nothing, waits for your status report, no ping. |'
   grep -qF "the snapshot's denials line" "$plugin/skills/status-report/SKILL.md"
   # The form the role sentence gives is one team-log --from-message reads.
-  grep -qF '"BLOCKED <what> <why>; took its allowed way"' "$REPO_ROOT/bin/lib/messages.jq"
+  grep -qF '"BLOCKED <what> <why>; took its allowed way [<way>]"' "$REPO_ROOT/bin/lib/messages.jq"
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {

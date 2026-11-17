@@ -8,6 +8,7 @@
   "syncClaudeAiPlugins": false,
   "syncClaudeAiSkills": false,
   "disableClaudeAiConnectors": true,
+  "disableSkillShellExecution": true,
   "isolatePeerMachines": true,
   "crossSessionInbound": "accept",
   "promptCacheTtl": "1h",

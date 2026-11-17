@@ -1956,6 +1956,17 @@ skills_only_kit() {
   done
 }
 
+# A skill's shell command runs as the skill loads, before any hook sees a Bash call, so no worker
+# runs one: the worker settings turn them off under every role's own file.
+@test "every role's generated settings turn off skill shell commands" {
+  open_task T7
+  local role
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    assert_equal "$(jq -c .disableSkillShellExecution "$TEAM_HOME/tasks/T7/settings.$role.proj.json")" true
+  done
+}
+
 # The deny matrices (sudo and Claude sessions, Docker's prune commands, the 1Password CLI, another
 # process's environment and the git hooks setting, team-run-approved, Discord) run on the source
 # files in tests/repo.bats; here each role's generated deny list is proved to be those files', and
