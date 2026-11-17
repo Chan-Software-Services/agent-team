@@ -65,11 +65,11 @@
 #             each the rule allows, "keeps <id> <what>: <why>" for each it holds ("item 3 of
 #             waiting.md waits on Daniel in it", "a reply owed to Daniel in waiting.md is of it",
 #             "its last message is 5 h old, under a day"), and last "would archive <n> threads,
-#             keeps <n>". With no thread whose work is done it asks Discord nothing. The
-#             heartbeat's threads step runs it with neither option. A waiting.json
-#             that is missing, cannot be read or is older than the ledger or a list team-inbox
-#             reads (thread_waiting) archives nothing (exit 1), as does a Discord that cannot be
-#             read; in a worker session it is refused (worker_refusal), and on a
+#             keeps <n>" ("1 thread" for one). With no thread whose work is done it asks Discord
+#             nothing and needs no waiting.json, exiting 0. The heartbeat's threads step runs it
+#             with neither option. Otherwise a waiting.json that is missing, cannot be read or is
+#             older than the ledger or a list team-inbox reads (thread_waiting) archives nothing
+#             (exit 1), as does a Discord that cannot be read; in a worker session it is refused (worker_refusal), and on a
 #             machine that is fenced or that lost the lease (lease_refusal), as a post is.
 # --interview and wait refuse on a machine that is fenced or that lost the lease (lease_refusal,
 # checked before each read), and with no interview channel set; wait ends with the hold's
