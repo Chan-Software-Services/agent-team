@@ -149,7 +149,7 @@ PASS moved origin site: site's checkout ~/projects/site has origin https://githu
   run_bin -0 team-doctor
   # shellcheck disable=SC2088
   assert_equal "$(grep '^PASS moved origin ' <<<"$output")" "PASS moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin git@github.com:Chan-Software-Services/Conventioner.git, which names no moved repository of bin/lib/repo-moves.json
-PASS moved origin site: site's checkout ~/projects/site has origin ssh://git@github.com/chanjdaniel/no-mistakes.git/, which names no moved repository of bin/lib/repo-moves.json"
+PASS moved origin site: site's checkout ~/projects/site has origin ssh://git@github.com/chanjdaniel/site.git/, which names no moved repository of bin/lib/repo-moves.json"
 }
 
 @test "moved origins names the code checkout and the team home whose origin, HTTPS or SSH, names a moved repository, and each project's line its own, with its fix, a treehouse project's the pool move" {
