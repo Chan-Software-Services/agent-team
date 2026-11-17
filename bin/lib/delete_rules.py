@@ -66,7 +66,9 @@ to what stands before it in its list by && too (a || before it skips it when wha
 succeeds), is where it runs; one that begins its and-or list, with one operand, whose target is a
 directory it may enter now from each directory before it, with no rm, rmdir, unlink, mv or find
 before it in the call and no || after it in the delete's own list (whose failure may run the
-delete), is taken as run, so it alone is where the call is; either takes only options by which
+delete), is taken as run, so it alone is where the call is; either is the builtin by its bare
+name, behind no wrapper but a bare command, builtin or time (behind env, nice, sudo and the other
+external wrappers, or by a path, a cd program runs in a child), and takes only options by which
 it goes to its target (cd's -L, -P and -e, none of pushd's, whose -n moves nothing); any other
 adds its target to the directories before it. In any other call they are the cwd and each cd or
 pushd target anywhere in it. cd alone is HOME; each target is resolved as an operand is, a
@@ -562,7 +564,14 @@ def _goes(command, operands):
     """Whether the cd or pushd, on success, has gone to its target, given only options by which it
     does (cd's -L, -P and -e, alone or in a cluster; none of pushd's, whose -n moves nothing) and,
     with operands, exactly that many operands: a second one, or an option it does not take (-@
-    where Bash lacks it), makes it fail on a directory that is there."""
+    where Bash lacks it), makes it fail on a directory that is there. It is the builtin only by its
+    bare name, behind no wrapper but a bare command, builtin or time: behind env, nice, timeout,
+    sudo and the other external wrappers, or by a path (/usr/bin/cd), a cd program runs in a child
+    and never moves the shell, and command -v only prints."""
+    if command.words[0] not in ("cd", "pushd") or any(
+        tuple(wrapper) not in (("command",), ("builtin",), ("time",)) for wrapper in command.wrappers
+    ):
+        return False
     args, options = list(command.words[1:]), "LPe" if command_name(command.words[0]) == "cd" else ""
     while args and args[0].startswith("-") and args[0] != "-":
         word = args.pop(0)

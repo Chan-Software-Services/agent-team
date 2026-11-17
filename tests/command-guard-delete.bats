@@ -188,6 +188,16 @@ refuses_wrapped() {
     "$CD_WAY" "cd $OUT; cd $JOB/tmp extra; rm -rf x" "cd $OUT; cd -Z $JOB/tmp; rm -rf x" \
     "cd $OUT; cd -@ $JOB/tmp; rm -rf x" "cd $OUT; pushd -n $JOB/tmp && rm -rf x" "cd $OUT; pushd -n $JOB/tmp; rm -rf x"
   passes "cd $OUT; cd -LPe -- $JOB/tmp; rm -rf x" "cd $OUT; pushd -- $JOB/tmp; rm -rf x" "cd $OUT; cd $JOB/tmp extra && rm -rf x"
+  # A cd behind an external wrapper, or by a path, runs a cd program in a child and never moves
+  # the shell, and command -v only prints, so each adds its directory; a bare command, builtin or
+  # time runs the builtin in the shell.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; env cd $JOB/tmp; rm -rf x" "cd $OUT; nice cd $JOB/tmp; rm -rf x" \
+    "cd $OUT; /usr/bin/cd $JOB/tmp; rm -rf x" "cd $OUT; env cd $JOB/tmp && rm -rf x" \
+    "cd $OUT; timeout 5 cd $JOB/tmp && rm -rf x" "cd $OUT; nohup pushd $JOB/tmp && rm -rf x" \
+    "cd $OUT; command -v cd $JOB/tmp && rm -rf x"
+  passes "cd $OUT; command cd $JOB/tmp; rm -rf x" "cd $OUT; builtin cd $JOB/tmp && rm -rf x" \
+    "cd $OUT; time cd $JOB/tmp; rm -rf x"
   # A relative cd after a link is read from the link's path too, as Bash's logical PWD holds it.
   mkdir "$JOB/tmp/d"
   ln -s "$JOB/tmp/d" "$OUT/link"
