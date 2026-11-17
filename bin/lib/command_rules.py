@@ -21,8 +21,16 @@ flock -c, watch and parallel, and find -exec run, a shell's script file and what
 reads among them, by its name.
 For each row of the table in order, and each command in the walk's order, the first command a
 row refuses ends the walk: it prints one JSON line, {"rule": <id>, "reason": <text>, "allowed":
-<text or null>}, the reason being the text command-guard puts after "Blocked by command-guard: ",
-and the allowed way the row's, null for every row but the kill and delete rows. It prints nothing
+<text or null>, "where": <text or null>}, the reason being the text command-guard puts after
+"Blocked by command-guard: ",
+and the allowed way the row's, or one a delete row's refusal names of its own (a relative path
+read from a cd's directory), null for every row but the kill and delete rows; where, for a call of
+more than one line, "It stands on line <n> of the call: <the line>", the first line whose own walk
+runs the refused command, else the first holding each of its words (one outside a heredoc's body
+first), and, after a heredoc's closing line, "; the heredoc opened on line <n> (<its operator and
+marker>) ended at line <n>, so Bash runs the lines after it as commands", with ", and line <n> is
+<marker> again: that heredoc may have ended earlier than you meant" when a later line is its
+closing line again, ending in a full stop; null for a call of one line. It prints nothing
 when no row refuses, and exits 0
 either way. Any error of its own exits 1 with one line on stderr, "command_rules.py: <ErrorType>:
 <message>", or "<row id>: <ErrorType>: <message>" when a row raised, so the hook refuses: a guard
@@ -127,7 +135,7 @@ from typing import Callable
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    ASSIGNMENT, call_commands, command_name, from_wrappers, has_blank, heads, leads,
+    ASSIGNMENT, call_commands, command_name, commands, from_wrappers, has_blank, heads, leads, read_command,
 )
 import delete_rules  # noqa: E402
 import kill_rules  # noqa: E402
@@ -163,8 +171,8 @@ EMPTIES = {
 @dataclass(frozen=True)
 class Row:
     """A rule: its id, its test over one Command and the call's context, which refuses by
-    returning True (the row's reason) or a reason of its own, its reason and its allowed way
-    (None: the refusal names none)."""
+    returning True (the row's reason), a reason of its own, or a reason and an allowed way of its
+    own as a tuple, its reason and its allowed way (None: the refusal names none)."""
 
     id: str
     test: Callable
@@ -476,6 +484,66 @@ ROWS = (
 )
 
 
+# The most characters of a line a refusal quotes.
+LINE_CHARACTERS = 160
+
+
+def _line_number(text, offset):
+    return text.count("\n", 0, offset) + 1
+
+
+def _line_of(found, text):
+    """The line number of the call's text the refused command stands on: the first line whose own
+    walk runs it, else the first that holds each of its words; lines outside a heredoc's body
+    first, then those in one (a body a shell reads); None when none does."""
+    lines = text.split("\n")
+    bodies = set()
+    for heredoc in read_command(text).heredocs:
+        bodies.update(range(_line_number(text, heredoc.body[0]), _line_number(text, heredoc.end - 1)))
+    order = [n for n in range(1, len(lines) + 1) if n not in bodies] + sorted(bodies)
+
+    def runs(line):
+        try:
+            return found in list(commands(line))
+        except Exception:  # noqa: BLE001 - a line that does not read alone holds no command of its own
+            return False
+
+    for matches in (runs, lambda line: bool(found.words) and all(word in line for word in found.words)):
+        for n in order:
+            if n <= len(lines) and matches(lines[n - 1]):
+                return n
+    return None
+
+
+def where(found, text):
+    """The second line of a refusal of a call of more than one line: the line its command stands
+    on, and the heredoc that ended last before it, with a later line that is its closing line
+    again; None for a call of one line, or when no line holds the command."""
+    if "\n" not in text.rstrip("\n"):
+        return None
+    n = _line_of(found, text)
+    if n is None:
+        return None
+    lines = text.split("\n")
+    line = lines[n - 1].strip()
+    if len(line) > LINE_CHARACTERS:
+        line = line[: LINE_CHARACTERS - 3] + "..."
+    out = f"It stands on line {n} of the call: {line}"
+    ended = [h for h in read_command(text).heredocs if _line_number(text, h.end - 1) < n]
+    if ended:
+        heredoc = max(ended, key=lambda h: h.end)
+        opened, closed = _line_number(text, heredoc.marker[0]), _line_number(text, heredoc.end - 1)
+        marker = lines[closed - 1].strip()
+        out += (
+            f"; the heredoc opened on line {opened} ({text[heredoc.marker[0] : heredoc.marker[1]]}) ended at line"
+            f" {closed}, so Bash runs the lines after it as commands"
+        )
+        again = next((k for k in range(closed + 1, len(lines) + 1) if lines[k - 1].strip() == marker), None)
+        if again is not None:
+            out += f", and line {again} is {marker} again: that heredoc may have ended earlier than you meant"
+    return out + "."
+
+
 class RowError(Exception):
     """A row that raised, named."""
 
@@ -491,8 +559,9 @@ def refusal(command, context=None):
             except Exception as error:  # noqa: BLE001 - named, then refused by the caller
                 raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
             if refused:
-                reason = refused if isinstance(refused, str) else row.reason
-                return {"rule": row.id, "reason": reason, "allowed": row.allowed}
+                reason, allowed = refused if isinstance(refused, tuple) else (refused, row.allowed)
+                reason = reason if isinstance(reason, str) else row.reason
+                return {"rule": row.id, "reason": reason, "allowed": allowed, "where": where(found, command)}
     return None
 
 

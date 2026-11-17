@@ -37,7 +37,10 @@
 # them or its .scratch/task, a repository's .git, a variable left empty, a find with no start
 # path, or a path it cannot read before it runs; bin/lib/delete_rules.py), and last any other
 # command run with its environment emptied, which drops the session's GitHub login.
-# The hook refuses with that row's reason, and its allowed way when it names one;
+# The hook refuses with that row's reason, and its allowed way when it names one, and for a call of
+# more than one line a second line naming the line the refused command stands on, and a heredoc
+# that ended before it ("It stands on line <n> of the call: <the line>...", command_rules.py's
+# where);
 # command_rules.py's header holds each row's wording, what the guard does not see, and in its
 # Contract paragraph what the kill and delete rows promise and what they leave to a kernel layer.
 # It fails closed: when command_rules.py exits non-zero, the call is refused with "it could not
@@ -58,7 +61,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
 # A wrong argument in the settings blocks every call the hook sees, the fail-closed side.
 [[ $# -eq 0 ]] || usage_error "usage: command-guard   (the hook's input on stdin)"
 
-# Refuse with <reason>, and the allowed way when one is given: block <reason> [<allowed>]
+# Refuse with <reason>, and the allowed way when one is given, and where the refused command
+# stands on a second line when given: block <reason> [<allowed> [<where>]]
 block() {
   if [[ -z ${2:-} ]]; then
     echo "Blocked by command-guard: $1; a guardrail, so report it as BLOCKED and do not reach it another way." >&2
@@ -67,6 +71,7 @@ block() {
   else
     echo "Blocked by command-guard: $1; the allowed way: $2. A guardrail: do not reach it another way." >&2
   fi
+  [[ -z ${3:-} ]] || echo "$3" >&2
   exit 2
 }
 
@@ -107,4 +112,6 @@ reason=$(jq -er '.reason | strings' <<<"$rules" 2>/dev/null) ||
   block "it could not read the command (bin/lib/command_rules.py: ${rules##*$'\n'})"
 allowed=$(jq -r '.allowed // empty | strings' <<<"$rules" 2>/dev/null) ||
   block "it could not read the command (bin/lib/command_rules.py: ${rules##*$'\n'})"
-block "$reason" "$allowed"
+where=$(jq -r '.where // empty | strings' <<<"$rules" 2>/dev/null) ||
+  block "it could not read the command (bin/lib/command_rules.py: ${rules##*$'\n'})"
+block "$reason" "$allowed" "$where"

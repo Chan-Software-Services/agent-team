@@ -9,7 +9,8 @@ each simple command a call runs (code_parts, blank_heredocs and commands, the wa
 from it, with heads and the other readings of where a command's name may stand, as
 bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does; its kill rows, kill_rules.py, import command_name
 and heads_behind, and its delete rows, delete_rules.py, those with the walk, simple_commands,
-find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
+plain_sequence (a call's commands in the order they run, below), find's FIND_EXEC, SHELLS, the
+option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
 It reads the command far enough to know its quotes ('...', "..." and $'...'), backslashes, comments,
 arithmetic ($[, and $(( or (( whose two closing parentheses are adjacent, matched as Bash's
@@ -111,6 +112,11 @@ alone (su --comm), and their short ones in a cluster as getopt reads it (env -uS
 A shell with no -c or -s whose first operand, past its options (-o and -O, --rcfile and
 --init-file with their value) and a -- or -, is a file, and source or . with one, run that file
 with the words after it: the Command is that file and its words, never read.
+plain_sequence(text) gives the text's Commands in the order Bash runs them, each with the
+separator after it (&&, ||, ; for a semicolon or a newline, or nothing at the end), when every
+pipeline of it is at its top level and of one segment, none holds a group, substitution, compound
+command or function, none is sent to the background or run after ! or coproc, and no command of it
+runs a string, a find -exec, a script file or a sourced file; else None.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -1596,6 +1602,37 @@ def commands(text):
     """Each Command the text runs, as the header says: each simple command (simple_commands), then
     the commands of each string, find -exec, script file or sourced file it runs, in turn."""
     return _commands(text, 0, (), DIRECT)
+
+
+# The reserved words before a pipeline that change when or whether it runs in this shell: ! turns
+# its status round, and coproc runs it in the background.
+UNPLAIN = frozenset(("!", "coproc"))
+
+
+def plain_sequence(text):
+    """The text's simple commands in the order Bash runs them, each with the separator after it
+    ("&&", "||", ";" for a semicolon or a newline, "" at the end), when the text is a plain
+    sequence: each pipeline of it at its top level and of one segment, holding no group,
+    substitution, compound command or function, none sent to the background (&) or run after !
+    or coproc, and no command of it running a string, a find -exec, a script file or a sourced
+    file; else None. So no command of it runs out of its place or in another shell."""
+    reading = read_command(text)
+    if any(parent is not None or len(segments) != 1 for parent, segments in reading.pipelines):
+        return None
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    found = []
+    for _, ((start, end),) in reading.pipelines:
+        simple = _segment_commands(text, start, end, bodies, reading.subscripts)
+        if text.startswith("&", end) and not text.startswith("&&", end):
+            return None
+        if not simple:
+            continue
+        walked = list(_walk(simple[0], text, 0, (), DIRECT))
+        if len(simple) != 1 or len(walked) != 1 or text[start:end].split(None, 1)[0] in UNPLAIN:
+            return None
+        separator = text[end : end + 2] if text.startswith(("&&", "||"), end) else ";" if end < len(text) else ""
+        found.append((walked[0], separator))
+    return tuple(found)
 
 
 def call_commands(command):
