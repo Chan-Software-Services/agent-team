@@ -57,6 +57,8 @@
 # Usage: tests/merge-queue-drill --setup <repo>
 #        tests/merge-queue-drill <repo>
 #   repo  the scratch repository, <owner>/<name>
+# It runs on the owner login throughout, every gh and git call and the scripts it runs (team-land
+# among them), whatever GitHub login its session names (use_owner_login in bin/lib/github-login.sh).
 # Refused, exit 1, before anything is read: a worker session (an AGENT_TEAM_ROLE but coordinator).
 # Exit 0 when every check passes (--setup: the base commit is on dev), 1 when any fails or a step
 # fails, 2 on a malformed command line.
@@ -82,6 +84,9 @@ repo=$1
 if [[ -n ${AGENT_TEAM_ROLE:-} && $AGENT_TEAM_ROLE != coordinator ]]; then
   die "a $AGENT_TEAM_ROLE session may not run the merge queue drill: that is the coordinator's"
 fi
+# shellcheck source=bin/lib/github-login.sh
+source "$root/bin/lib/github-login.sh"
+use_owner_login
 # Never the repository this code comes from, whatever its dev holds.
 own=$(git -C "${root:?}" remote get-url origin 2>/dev/null) || own=''
 own=${own%/} own=${own%.git}

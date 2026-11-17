@@ -764,6 +764,117 @@ base_link() {
   done
 }
 
+# The line a worker's autoMode.environment gains on the worker login <login>.
+login_line() {
+  echo "This session's GitHub login is $1, an account that pushes branches and opens pull requests; merging is team-merge's."
+}
+
+@test "on the worker login, a planner's, builder's and reviewer's settings take its variables and its autoMode line" {
+  code_checkout
+  worker_login_on team-bot-a
+  open_task T7
+  local role settings
+  for role in planner builder reviewer; do
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    settings=$(generated settings "$role")
+    assert_equal "$(jq -c '.env | with_entries(select(.key | test("^(GH|GITHUB)_")))' "$settings")" \
+      "$(jq -cn --arg dir "$HOME/.config/agent-team/gh-worker" '{GH_CONFIG_DIR: $dir, GH_TOKEN: "", GITHUB_TOKEN: ""}')"
+    # The worker settings' own env stays beside them.
+    assert_equal "$(jq -r .env.AGENT_TEAM_ROLE "$settings")" "$role"
+    assert_equal "$(jq -r '.autoMode.environment[-1]' "$settings")" "$(login_line team-bot-a)"
+    assert_equal "$(jq -r --arg line "$(login_line team-bot-a)" '[.autoMode.environment[] | select(. == $line)] | length' "$settings")" 1
+  done
+  # The variables come from the library's worker_login_env, never spelled in the launcher.
+  run grep -cE 'GH_CONFIG_DIR|GH_TOKEN|GITHUB_TOKEN' "$CODE_CHECKOUT/bin/team-worker"
+  assert_equal "$output" 0
+}
+
+@test "with the worker login off, the settings are those of the login on less its variables and its line" {
+  code_checkout
+  open_task T7
+  local role off on
+  for role in planner builder reviewer; do
+    worker_login_off
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    off=$(cat "$(generated settings "$role")")
+    assert_equal "$(jq -c '[.env | keys[] | select(test("^(GH|GITHUB)_"))]' <<<"$off")" '[]'
+    assert_equal "$(jq -c '[.autoMode.environment[] | select(test("GitHub login"))]' <<<"$off")" '[]'
+    worker_login_on
+    run_bin -0 team-worker T7 "$role" "$wt1" -- go
+    on=$(cat "$(generated settings "$role")")
+    assert_equal "$(jq --arg line "$(login_line team-worker-bot)" \
+      'del(.env.GH_CONFIG_DIR, .env.GH_TOKEN, .env.GITHUB_TOKEN) | .autoMode.environment -= [$line]' <<<"$on")" \
+      "$(jq . <<<"$off")"
+  done
+  # Off, the settings are the ones a launch from this checkout writes, which names no worker login.
+  worker_login_off
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  off=$(jq -S . "$(generated settings builder)")
+  unset CODE_CHECKOUT
+  [[ ! -e $REPO_ROOT/bin/lib/worker-login ]] || skip "this checkout names a worker login"
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  assert_equal "$(jq -S --arg code "$REPO_ROOT" 'walk(if type == "string" then gsub($code; "@CODE@") else . end)' "$(generated settings builder)")" \
+    "$(jq -S --arg code "$(realpath "$BATS_TEST_TMPDIR/code")" 'walk(if type == "string" then gsub($code; "@CODE@") else . end)' <<<"$off")"
+}
+
+@test "a worker login named but not on this machine refuses the launch before the lease, the settings or the session" {
+  code_checkout
+  worker_login_on
+  open_task T7
+  # With no lease held, a launch the login lets through is refused for the lease instead.
+  run_bin -0 team-lease release
+  local dir=$HOME/.config/agent-team/gh-worker shown=\~/.config/agent-team/gh-worker role reason
+  for reason in "$shown/hosts.yml is mode 644, not 600" "$shown/hosts.yml is empty" \
+    "$shown/hosts.yml is missing" "$shown is missing"; do
+    worker_login_on
+    case $reason in
+      *644*) chmod 644 "$dir/hosts.yml" ;;
+      *empty) : >"$dir/hosts.yml" ;;
+      *hosts.yml\ is\ missing) rm -f "$dir/hosts.yml" ;;
+      *) rm -f "$dir/hosts.yml" && rmdir "$dir" ;;
+    esac
+    for role in planner builder reviewer; do
+      refused_launch "the worker login team-worker-bot is not on this machine ($reason): Daniel's team-secrets restore brings it (the secret worker-github-login)" \
+        T7 "$role" "$wt1" -- go
+      [[ ! -e $(generated settings "$role") ]]
+    done
+  done
+  assert_equal "$(stub_calls claude)" ""
+  # T0, the load check, which asks for no lease, is refused the same way.
+  refused_launch "the worker login team-worker-bot is not on this machine ($shown is missing): Daniel's team-secrets restore brings it (the secret worker-github-login)" \
+    T0 builder "$wt1" -- go
+  assert_equal "$(stub_calls claude)" ""
+}
+
+@test "a malformed bin/lib/worker-login refuses the launch with the reader's message" {
+  code_checkout
+  worker_login_on
+  open_task T7
+  local role
+  printf 'login=a\nlogin=b\n' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  for role in planner builder reviewer; do
+    refused_launch "$CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line" T7 "$role" "$wt1" -- go
+    [[ ! -e $(generated settings "$role") ]]
+  done
+  assert_equal "$(stub_calls claude)" ""
+}
+
+@test "an ops launch gets no worker login and is not refused for one" {
+  code_checkout
+  worker_login_on
+  # Neither the login's file nor a well-formed constant: only a planner's, builder's or reviewer's
+  # launch reads them.
+  rm -f "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  printf 'login=a b\n' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  open_task T7
+  ops_stub
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  local settings
+  settings=$(generated settings ops)
+  assert_equal "$(jq -c '[.env | keys[] | select(test("^(GH|GITHUB)_"))]' "$settings")" '[]'
+  assert_equal "$(jq -c '[.autoMode.environment[] | select(test("GitHub login"))]' "$settings")" '[]'
+}
+
 @test "the autoMode lines state the registry's projects: repositories, visibility and base branches" {
   registry --first 'visibility = "private"' proj other
   cat >>"$TEAM_HOME/projects.toml" <<'TOML'

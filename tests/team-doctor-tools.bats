@@ -142,7 +142,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" ""
   local expected
   expected=$(printf '%s\n' os; lock_tools arch | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker 'docker veth' chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'team home login' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'worker login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'
@@ -175,7 +175,7 @@ lock_has_its_shape() {
   assert_equal "$(grep -v '^PASS ' <<<"$output")" "WARN confine: this machine has no Landlock (ABI 0), so its workers run on the text guard alone (sops/platform-gotchas.md)"
   local expected
   expected=$(printf '%s\n' os homebrew; lock_tools macos | cut -f1 | sed 's/^/tool /'
-    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
+    printf '%s\n' docker chrome servers machine 'team home' 'moved origins' 'team home fetch' 'team home history' 'team home pack' 'team home login' 'git hooks' 'guard hooks' confine 'records hooks' 'claude login' 'github login' 'worker login' 'review app' 'merge queue' config plugins memory 'memory index' discord 'own settings' 1password
     secret_ids | sed 's/^/secret /'
     echo 'discord access'
     echo 'interview channel'

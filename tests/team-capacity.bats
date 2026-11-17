@@ -184,6 +184,187 @@ reloaded the user manager"
   assert_contains "$output" "the user's systemd does not answer (systemctl --user daemon-reload: Failed to connect to user scope bus"
 }
 
+# The gate's daemon <hash>'s process <pid>, running in the slice with GH_CONFIG_DIR=<dir> in its
+# environment, or none with no <dir>: daemon_process <hash> <pid> [<dir>]
+daemon_process() {
+  local unit=no-mistakes-daemon-$1.service
+  echo "$2" >"$HOME/.fake-systemd/$unit.MainPID"
+  fake_process "$2" 1 "$(user_cgroup "$unit" agent-team.slice)" no-mistakes daemon run
+  if [[ -n ${3:-} ]]; then
+    printf '%s\0' PATH=/usr/bin "GH_CONFIG_DIR=$3" >"$TEAM_CGROUP_ROOT/proc/$2/environ"
+  else
+    printf '%s\0' PATH=/usr/bin >"$TEAM_CGROUP_ROOT/proc/$2/environ"
+  fi
+}
+
+# Make no-mistakes daemon restart do what systemd does for the daemon <hash>: start a new process
+# in the slice with the environment its drop-in names: restart_from_drop_in <hash>
+restart_from_drop_in() {
+  printf '%s\n' "hash=$1" >"$STUB_FIXTURES/restart-hash"
+  stub_script no-mistakes <<'EOF'
+[[ $* == "daemon restart" ]] || { echo "no-mistakes stub: unplanned call: $*" >&2; exit 127; }
+source "$STUB_FIXTURES/restart-hash"
+unit=no-mistakes-daemon-$hash.service state=$HOME/.fake-systemd
+pid=$(($(cat "$state/$unit.MainPID") + 1))
+echo "$pid" >"$state/$unit.MainPID"
+echo "/user.slice/user-$(id -u).slice/user@$(id -u).service/agent.slice/agent-team.slice/$unit" >"$state/$unit.ControlGroup"
+mkdir -p "$TEAM_CGROUP_ROOT/proc/$pid"
+dir=$(sed -n 's/^Environment="GH_CONFIG_DIR=\([^"]*\)".*/\1/p' "$HOME/.config/systemd/user/$unit.d/agent-team.conf")
+{ printf '%s\0' PATH=/usr/bin; [[ -z $dir ]] || printf '%s\0' "GH_CONFIG_DIR=$dir"; } >"$TEAM_CGROUP_ROOT/proc/$pid/environ"
+echo "daemon restarted"
+EOF
+}
+
+# The drop-in as install wrote it before the worker login, byte for byte.
+TODAYS_DROP_IN="# team-capacity install: every gate run in the team's slice.
+[Service]
+Slice=agent-team.slice
+"
+
+@test "install with the worker login on names its gh directory in the drop-in, restarts an idle daemon already in the slice onto it, and a second install changes nothing" {
+  worker_login_off
+  gate_daemon 60757c3c inactive
+  run_bin -0 team-capacity install
+  worker_login_on
+  gate_daemon 60757c3c active "$(user_cgroup no-mistakes-daemon-60757c3c.service agent-team.slice)"
+  daemon_process 60757c3c 700
+  : >"$STUB_CALLS/systemctl.log" && : >"$STUB_CALLS/no-mistakes.log"
+  restart_from_drop_in 60757c3c
+  run_bin -0 team-capacity install
+  assert_equal "$output" "wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager
+restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+  assert_equal "$(cat "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" "# team-capacity install: every gate run in the team's slice.
+[Service]
+Slice=agent-team.slice
+Environment=\"GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
+  assert_equal "$(tr '\0' '\n' <"$TEAM_CGROUP_ROOT/proc/701/environ" | grep '^GH_CONFIG_DIR=')" "GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker"
+  assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
+
+  : >"$STUB_CALLS/systemctl.log" && : >"$STUB_CALLS/no-mistakes.log"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
+  assert_equal "$(stub_calls systemctl | jq -c 'select(.[1] != "show")')" ""
+  assert_equal "$(stub_calls no-mistakes)" ""
+
+  # A daemon on the worker's directory that still holds a token, which would answer before it, is
+  # on another login than its drop-in names, and restarts.
+  printf '%s\0' PATH=/usr/bin "GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker" GH_TOKEN=fixture-token \
+    >"$TEAM_CGROUP_ROOT/proc/701/environ"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+}
+
+@test "install quotes the worker login's directory in the drop-in, so systemd keeps a home path with a blank in it whole" {
+  local home="$HOME/a home"
+  local units=$home/.config/systemd/user
+  mkdir -p "$units"
+  HOME=$home worker_login_on
+  HOME=$home UNITS=$units gate_daemon 60757c3c inactive
+  HOME=$home run_bin -0 team-capacity install
+  assert_equal "$(grep '^Environment=' "$units/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" \
+    "Environment=\"GH_CONFIG_DIR=$home/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
+}
+
+@test "install with the worker login on names a daemon running a pipeline, tries its restart again next time, and check names it meanwhile" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  worker_login_on
+  gate_daemon 60757c3c active "$(user_cgroup no-mistakes-daemon-60757c3c.service agent-team.slice)"
+  daemon_process 60757c3c 700
+  stub_reply no-mistakes "Error: 1 pipeline run is active; pass --force to restart anyway" 1
+  run_bin -0 team-capacity install
+  assert_contains "$output" "reloaded the user manager"
+  assert_contains "$output" "the gate's daemon no-mistakes-daemon-60757c3c.service runs a pipeline (no-mistakes daemon restart: Error: 1 pipeline run is active; pass --force to restart anyway), so it runs on the GitHub login it started with until it restarts: once no gate runs, run team-capacity install again"
+  assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
+
+  # The drop-in is written, so the next install only tries the restart again.
+  : >"$STUB_CALLS/systemctl.log" && : >"$STUB_CALLS/no-mistakes.log"
+  run_bin -0 team-capacity install
+  assert_equal "$(stub_calls systemctl | jq -c 'select(.[1] == "daemon-reload")')" ""
+  assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
+  assert_contains "$output" "so it runs on the GitHub login it started with until it restarts"
+
+  level_applied manual full 1080
+  run_bin -1 team-capacity check
+  assert_contains "$output" "the gate's daemon no-mistakes-daemon-60757c3c.service still runs on the GitHub login it started with, its restart waiting; fix: team-capacity install once no gate runs"
+
+  # Once no pipeline runs, the restart puts it on the worker login, and check passes.
+  restart_from_drop_in 60757c3c
+  run_bin -0 team-capacity install
+  assert_equal "$output" "restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+  run_bin -0 team-capacity check
+}
+
+@test "check names a gate daemon whose drop-in does not name the worker login while it is on" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  gate_daemon 60757c3c inactive
+  worker_login_off
+  run_bin -0 team-capacity install
+  level_applied manual full 1080
+  run_bin -0 team-capacity check
+  worker_login_on
+  run_bin -1 team-capacity check
+  assert_contains "$output" "WARN "
+  assert_contains "$output" "the gate's daemon no-mistakes-daemon-60757c3c.service has a drop-in that does not name the worker login team-worker-bot; fix: team-capacity install (Daniel's yes)"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager"
+  run_bin -0 team-capacity check
+}
+
+@test "with the worker login on but not usable, install writes today's drop-in and check passes, each naming why the daemon stays on the machine's own login" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  worker_login_on
+  chmod 644 "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  gate_daemon 60757c3c inactive
+  run_bin -0 team-capacity install
+  assert_equal "$output" "the gate's daemon stays on the machine's own GitHub login: ~/.config/agent-team/gh-worker/hosts.yml is mode 644, not 600
+wrote ~/.config/systemd/user/agent-team.slice
+wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager"
+  cmp <(printf '%s' "$TODAYS_DROP_IN") "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf"
+  level_applied manual full 1080
+  run_bin -0 team-capacity check
+  assert_equal "$output" "PASS manual, full (90%): no reading of the machine's load yet, so no budget; systemd backend: agent-team.slice holds the team, 0 live team sessions in it; the gate's daemon stays on the machine's own GitHub login: ~/.config/agent-team/gh-worker/hosts.yml is mode 644, not 600"
+  run_bin -0 team-capacity check --json
+  assert_equal "$(jq -r .verdict <<<"$output")" PASS
+
+  # A malformed constant is a reason too, never a failure of install or check.
+  printf 'login=a\nlogin=b\n' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  chmod 600 "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "the gate's daemon stays on the machine's own GitHub login: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line
+agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
+  run_bin -0 team-capacity check
+  assert_contains "$output" "; the gate's daemon stays on the machine's own GitHub login: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line"
+
+  # With no gate daemon there is no daemon to name.
+  rm -r "${UNITS:?}/no-mistakes-daemon-60757c3c.service" "${UNITS:?}/no-mistakes-daemon-60757c3c.service.d"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
+}
+
+@test "with the worker login off the drop-in is today's byte for byte, and turning it off restarts the daemon onto the machine's own login" {
+  worker_login_off
+  gate_daemon 0000aaaa inactive
+  run_bin -0 team-capacity install
+  cmp <(printf '%s' "$TODAYS_DROP_IN") "$UNITS/no-mistakes-daemon-0000aaaa.service.d/agent-team.conf"
+
+  worker_login_on
+  gate_daemon 60757c3c active "$(user_cgroup no-mistakes-daemon-60757c3c.service agent-team.slice)"
+  daemon_process 60757c3c 700 "$HOME/.config/agent-team/gh-worker"
+  restart_from_drop_in 60757c3c
+  run_bin -0 team-capacity install
+  worker_login_off
+  run_bin -0 team-capacity install
+  assert_equal "$output" "wrote ~/.config/systemd/user/no-mistakes-daemon-0000aaaa.service.d/agent-team.conf
+wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager
+restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the machine's own GitHub login (no pipeline was running)"
+  cmp <(printf '%s' "$TODAYS_DROP_IN") "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf"
+  assert_equal "$(tr '\0' '\n' <"$TEAM_CGROUP_ROOT/proc/702/environ" | grep -c '^GH_CONFIG_DIR=')" 0
+}
+
 @test "place adopts each live team session, its pty host and its descendants into its task's scope, and leaves the coordinator, an unnamed session, a load check's T0 session and a placed one" {
   session_tree 100
   session_tree 500

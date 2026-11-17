@@ -159,6 +159,21 @@ $channel-x86_64-unknown-linux-gnu (active)"
   assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $CODE_CHECKOUT/bin/team-secrets restore (discord-bot-env: mode 644; discord-access-json: missing)"
 }
 
+@test "check puts a worker login whose file is not on this machine in the secrets step, beside any failing secret" {
+  tools_at arch
+  worker_login_on team-bot
+  rm "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  run_bin -1 team-bootstrap --stage check
+  # shellcheck disable=SC2088 # ~ is part of the step as the script prints it
+  assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $CODE_CHECKOUT/bin/team-secrets restore (worker-github-login: ~/.config/agent-team/gh-worker/hosts.yml is missing)"
+  assert_equal "$(stage_lines check | tail -n1)" "summary: not set up yet: only Daniel's steps above are left; then team-bootstrap again"
+  # Named once, beside another failing secret.
+  rm "$HOME/$(jq -r '.secrets[1].target' "$TEAM_HOME/machine/secrets.json")"
+  run_bin -1 team-bootstrap --stage check
+  # shellcheck disable=SC2088 # ~ is part of the step as the script prints it
+  assert_equal "$(stage_lines check | grep '^Daniel')" "Daniel 1: secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $CODE_CHECKOUT/bin/team-secrets restore (discord-access-json: missing; worker-github-login: ~/.config/agent-team/gh-worker/hosts.yml is missing)"
+}
+
 @test "check names Daniel's /discord:access step while #coordinator lets in others; a missing access.json is the secrets step's alone" {
   tools_at arch
   access_json "[\"$DANIEL_ID\"]" '[]'
@@ -377,4 +392,35 @@ done: the team home shares history with origin's dev"
   assert_equal "$(stage_lines machine | tail -n3)" "running: git -C $home fetch origin
 could not fetch the team home (fatal: '$gone' does not appear to be a git repository), so its history is read as it was last fetched
 Daniel: $(history_fix) ($(history_reason)); then team-bootstrap again"
+}
+
+@test "machine: the team home's own github.com credential helpers are set to the owner login's for this gh, worker login on or off, and a second run says nothing of them" {
+  tools_at arch
+  local home=$TEAM_HOME key=credential.https://github.com.helper
+  local helper="!env -u GH_CONFIG_DIR -u GH_TOKEN -u GITHUB_TOKEN $TOOL_STUBS/gh auth git-credential"
+  local set_them="{ git -C $home config --local --unset-all $key || [ \$? = 5 ]; } && git -C $home config --local --add $key '' && git -C $home config --local --add $key '$helper'"
+  # A team home with a helper of its own, and the global config's, which stays.
+  git -C "${home:?}" config --local --unset-all "$key"
+  git -C "${home:?}" config --local --add "$key" store
+  git config --global --add "$key" '!gh auth git-credential'
+  run_bin -0 team-bootstrap --stage machine --dry-run
+  assert_equal "$(stage_lines machine | grep -F "$key")" "would run: $set_them"
+  assert_equal "$(git -C "${home:?}" config --local --get-all "$key")" store
+  run_bin -0 team-bootstrap --stage machine
+  assert_equal "$(stage_lines machine | grep -F "$key")" "running: $set_them"
+  assert_equal "$(git -C "${home:?}" config --local --get-all "$key")" "
+$helper"
+  assert_equal "$(git config --global --get-all "$key")" '!gh auth git-credential'
+  # A second run changes nothing and says nothing of them.
+  run_bin -0 team-bootstrap --stage machine
+  [[ $output != *"$key"* && $output != *"team home login"* ]]
+  # With no value at all, and with the worker login on, the stage sets them the same way.
+  git -C "${home:?}" config --local --unset-all "$key"
+  worker_login_on
+  run_bin -0 team-bootstrap --stage machine
+  assert_equal "$(stage_lines machine | grep -F "$key")" "running: $set_them"
+  assert_equal "$(git -C "${home:?}" config --local --get-all "$key")" "
+$helper"
+  run_bin -0 team-bootstrap --stage machine
+  [[ $output != *"$key"* ]]
 }
