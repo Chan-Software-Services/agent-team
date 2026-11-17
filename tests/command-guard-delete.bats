@@ -151,7 +151,8 @@ refuses_wrapped() {
     "$CD_WAY" "(cd /tmp); rm -rf x"
   refuses "a recursive delete of $TMP/x, $OUTSIDE: x is relative, read from $TMP, where cd tmp leaves the call" \
     "$CD_WAY" "cd /tmp; cd ..; cd tmp; rm -rf x"
-  refuses "a recursive delete of $HOME/x, $OUTSIDE: x is relative, read from $HOME, where cd leaves the call" \
+  # A cd with no operand beginning its list is never taken as run, so the call may still be in the cwd.
+  refuses "a recursive delete of $HOME/x, $OUTSIDE: x is relative, read from $HOME, where cd may leave the call" \
     "$CD_WAY" "cd; rm -rf x"
   refuses "a recursive delete of $HOME/x, $OUTSIDE: x is relative, read from $HOME, where cd -- leaves the call" \
     "$CD_WAY" "cd -- && rm -rf x"
@@ -177,6 +178,22 @@ refuses_wrapped() {
     "cd worktree || rm -rf x"
   refuses "a recursive delete of $up/x, $OUTSIDE: x is relative, read from $up, where cd .. leaves the call" \
     "$CD_WAY" "true && cd src; cd ..; rm -rf x"
+  # A cd after || is skipped when what stands before it succeeds, && after it or not: (a || cd) && rm.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; true || cd $JOB/tmp && rm -rf x" "cd $OUT; true && false || cd $JOB/tmp && rm -rf x"
+  passes "cd $OUT; true || true && cd $JOB/tmp && rm -rf x"
+  # A cd beginning its list fails on a directory that is there with a second operand or an option it
+  # does not take, and pushd -n moves nothing: each adds its directory, && after it or not.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; cd $JOB/tmp extra; rm -rf x" "cd $OUT; cd -Z $JOB/tmp; rm -rf x" \
+    "cd $OUT; cd -@ $JOB/tmp; rm -rf x" "cd $OUT; pushd -n $JOB/tmp && rm -rf x" "cd $OUT; pushd -n $JOB/tmp; rm -rf x"
+  passes "cd $OUT; cd -LPe -- $JOB/tmp; rm -rf x" "cd $OUT; pushd -- $JOB/tmp; rm -rf x" "cd $OUT; cd $JOB/tmp extra && rm -rf x"
+  # A relative cd after a link is read from the link's path too, as Bash's logical PWD holds it.
+  mkdir "$JOB/tmp/d"
+  ln -s "$JOB/tmp/d" "$OUT/link"
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd .. leaves the call" \
+    "$CD_WAY" "cd $OUT/link && cd .. && rm -rf x" "cd $OUT/link; cd ..; rm -rf x"
+  passes "cd $OUT/link && rm -rf x" "cd -P $OUT/link && rm -rf x"
   # A call that is no plain sequence keeps every cd target anywhere in it.
   refuses "a recursive delete of $up/sub, $OUTSIDE: sub is relative, read from $up, where cd .. may leave the call" \
     "$CD_WAY" "{ cd src && rm -rf sub; }; cd .." "cd src && rm -rf sub & cd .." "cd src && rm -rf sub; cd .. | cat" \

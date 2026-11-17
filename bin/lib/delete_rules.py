@@ -61,14 +61,18 @@ A relative operand is checked against every directory the command may be in when
 plain sequence (command_text.plain_sequence: no group, substitution, compound command, function,
 background job, ! or coproc, and no string, find -exec, script or sourced file run, so each
 command runs in its place) of which the walk reads every command, those are the input's cwd and
-each cd or pushd target before the delete, in order: one joined to the delete by && alone is
-where it runs; one that begins its and-or list, whose target is a directory it may enter now from
-each directory before it, with no rm, rmdir, unlink, mv or find before it in the call and no ||
-after it in the delete's own list (whose failure may run the delete), is taken as run, so it
-alone is where the call is; any other adds its target to the directories before it. In any other
-call they are the cwd and each cd or pushd target anywhere in it. cd alone is HOME; each target is
-resolved as an operand is, a relative one against every directory so far, both as the shell's
-logical cd reads it and as the file system does. A cd -, popd, pushd with no directory or a +N or
+each cd or pushd target before the delete, in order: one joined to the delete by && alone, and
+to what stands before it in its list by && too (a || before it skips it when what precedes
+succeeds), is where it runs; one that begins its and-or list, with one operand, whose target is a
+directory it may enter now from each directory before it, with no rm, rmdir, unlink, mv or find
+before it in the call and no || after it in the delete's own list (whose failure may run the
+delete), is taken as run, so it alone is where the call is; either takes only options by which
+it goes to its target (cd's -L, -P and -e, none of pushd's, whose -n moves nothing); any other
+adds its target to the directories before it. In any other call they are the cwd and each cd or
+pushd target anywhere in it. cd alone is HOME; each target is resolved as an operand is, a
+relative one against every directory so far, both as the shell's logical cd reads it, from each
+path its logical PWD may hold there (a link's own path, before the link is followed), and as the
+file system does. A cd -, popd, pushd with no directory or a +N or
 -N, a cd to an unread target, a relative cd target while CDPATH is set or named, env's -C or
 --chdir and sudo's -D or --chdir (in a plain sequence, those before the delete and on its own
 wrappers) make every relative operand unread, and so do a call with no cwd and one that names
@@ -112,7 +116,7 @@ import glob
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -481,11 +485,16 @@ def _within(path, root):
 @dataclass(frozen=True)
 class Base:
     """A directory a relative path may be read from, resolved: the cd whose target it is, as its
-    words (None for the cwd), and whether the call surely is there when it is read."""
+    words (None for the cwd), whether the call surely is there when it is read, and each path
+    Bash's logical PWD may hold there, normalized as cd -L leaves it (the path alone when none)."""
 
     path: str
     cd: str | None = None
     sure: bool = False
+    logical: tuple = ()
+
+    def logicals(self):
+        return tuple(dict.fromkeys((self.path,) + self.logical))
 
 
 def _cd_text(command):
@@ -494,32 +503,36 @@ def _cd_text(command):
 
 def _reached(target, command, bases, context):
     """The Bases of one cd target from each of bases: an absolute one alone, a relative one from
-    each, both as the shell's logical cd reads it and as the file system does; Unread when the
-    guard cannot follow it."""
+    each, both as the shell's logical cd reads it, from each path the base's PWD may hold, and as
+    the file system does; Unread when the guard cannot follow it."""
     # $PWD in a cd target would read the directories being found.
     if any("PWD" in reference.groups() for reference in REFERENCE.finditer(target)):
         raise Unread
-    found = []
+    readings = {}
     for path in _expand(target, context):
         if not path.startswith("/") and (context.environ.get("CDPATH") or _named("CDPATH", context)):
             raise Unread
         for base in bases if not path.startswith("/") else bases[:1]:
-            joined = os.path.join(base.path, path)
-            for resolved in (os.path.realpath(joined), os.path.realpath(os.path.normpath(joined))):
-                if resolved not in [b.path for b in found]:
-                    found.append(Base(resolved, _cd_text(command)))
-    return found
+            # The file system's reading (cd -P, or -L falling back), whose PWD is where it led.
+            physical = os.path.realpath(os.path.join(base.path, path))
+            readings.setdefault(physical, []).append(physical)
+            # The logical one, from each path PWD may hold, .. taken off it before any link is followed.
+            for logical in base.logicals():
+                joined = os.path.normpath(os.path.join(logical, path))
+                readings.setdefault(os.path.realpath(joined), []).append(joined)
+    return [Base(resolved, _cd_text(command), False, tuple(dict.fromkeys(paths))) for resolved, paths in readings.items()]
 
 
 def _merged(bases, more, sure):
-    """bases with more added (or more alone, when sure), each named once."""
-    out = []
-    for base in ([] if sure else [Base(b.path, b.cd) for b in bases]) + [Base(b.path, b.cd, sure) for b in more]:
-        if base.path not in [b.path for b in out]:
-            out.append(base)
+    """bases with more added (or more alone, when sure), each named once, with every logical path
+    either gave it."""
+    out = {}
+    for base in ([] if sure else [replace(b, sure=False) for b in bases]) + [replace(b, sure=sure) for b in more]:
+        seen = out.get(base.path)
+        out[base.path] = replace(seen, logical=tuple(dict.fromkeys(seen.logical + base.logical))) if seen else base
     if len(out) > MAX_CANDIDATES:
         raise Unread
-    return out
+    return list(out.values())
 
 
 @functools.lru_cache(maxsize=None)
@@ -545,6 +558,21 @@ def _candidates(context):
     return tuple(found)
 
 
+def _goes(command, operands):
+    """Whether the cd or pushd, on success, has gone to its target, given only options by which it
+    does (cd's -L, -P and -e, alone or in a cluster; none of pushd's, whose -n moves nothing) and,
+    with operands, exactly that many operands: a second one, or an option it does not take (-@
+    where Bash lacks it), makes it fail on a directory that is there."""
+    args, options = list(command.words[1:]), "LPe" if command_name(command.words[0]) == "cd" else ""
+    while args and args[0].startswith("-") and args[0] != "-":
+        word = args.pop(0)
+        if word == "--":
+            break
+        if not options or word.startswith("--") or any(flag not in options for flag in word[1:]):
+            return False
+    return operands is None or len(args) == operands
+
+
 def _is_cd(command):
     return bool(command.words) and command.reached not in (SCRIPT, SOURCE) and command_name(command.words[0]) in (
         "cd", "pushd", "popd")
@@ -559,9 +587,11 @@ def _moves(command):
 @functools.lru_cache(maxsize=None)
 def _ordered(context, index):
     """The Bases of the plain sequence's command at index, from the cwd and each cd before it in
-    order: a cd joined to it by && alone, or one that begins its and-or list and whose target is a
-    directory it may enter from every Base now, with no command that may take a directory away
-    before it and no || after it in the command's own list, is where the call is (sure); any other adds its target to the Bases."""
+    order: a cd joined to it by && alone, and to what stands before it in its list by && too, or one
+    that begins its and-or list, with one operand, and whose target is a directory it may enter
+    from every Base now, with no command that may take a directory away before it and no || after
+    it in the command's own list, each taking only options by which it goes there (_goes), is
+    where the call is (sure); any other adds its target to the Bases."""
     if context.cwd is None or _named("cdable_vars", context):
         raise Unread
     sequence = _sequence(context)
@@ -580,11 +610,15 @@ def _ordered(context, index):
         between = [separator for _, separator in sequence[q:index]]
         # In the delete's own list, a || after the cd may run the delete because the cd failed.
         failed = ";" not in between and "||" in between
-        begins = q == 0 or sequence[q - 1][1] == ";"
-        run = begins and all(os.path.isdir(b.path) and os.access(b.path, os.X_OK) for b in reached)
-        sure = all(separator == "&&" for separator in between) or (
-            run and not failed and not any(_moves(c) for c, _ in sequence[:q])
+        before = sequence[q - 1][1] if q else ";"
+        # (a || cd X) && rm skips the cd when a succeeds, so only a cd after ; or && is sure by &&.
+        anded = before != "||" and all(separator == "&&" for separator in between) and _goes(command, None)
+        run = (
+            before == ";"
+            and _goes(command, 1)
+            and all(os.path.isdir(b.path) and os.access(b.path, os.X_OK) for b in reached)
         )
+        sure = anded or (run and not failed and not any(_moves(c) for c, _ in sequence[:q]))
         bases = _merged(bases, reached, sure)
     return tuple(bases)
 
