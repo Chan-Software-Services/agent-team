@@ -55,7 +55,7 @@
 # Of each command command_text.call_commands walks (past wrappers, into the strings a shell is
 # given, as bin/lib/command_text.py's header lists), these are judged as paths: the value of each
 # assignment before it; each word of each wrapper it ran behind; its name when the name holds a /;
-# each word after its name; of a word or assignment of the form <name>=<value> or
+# each word after its name; of such a word of the form <name>=<value> or
 # --<option>=<value>, the value after its first = as well as the whole word; and the target of each
 # redirection the call makes, in either direction (command_text.redirection_targets). A word
 # holding a blank is no path, unless a place's root holds one, so a longer string that mentions a

@@ -212,8 +212,8 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   assert_contains "$output" "PASS builder ops-launch: hook refused it"
   assert_contains "$output" "PASS builder sessions: rule refused it"
   assert_contains "$output" "PASS builder upload: hook refused it"
-  # Each role is refused every session-record place by the session records guard's own block,
-  # by Read and by Bash alike.
+  # Each role is refused each probed session-record place by the session records guard's own
+  # block, by Read, and five of them by Bash as well.
   local role id absent=load-check-probe-absent
   for role in planner builder reviewer; do
     for id in file-history mcp-logs transcripts job-directory transcripts-directory prompt-history paste-cache \
