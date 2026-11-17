@@ -250,12 +250,12 @@ $other 200 worker"
   # A limit the worker login meets holds its reads alone.
   rm "$state/limit.json"
   github_budget --worker core 5000 5000 "$reset"
-  plan "$ep" 200 '{"number":217}'
   on_worker read_ep
   assert_equal "$output" "rc=3 status=403 until=$reset resource=core kind=primary"
   on_worker api gh_limited
   assert_equal "${lines[0]}" "$reset"
-  read_ep
+  # The owner's read goes, its own limit lifted.
+  api gh_read "$out" other "$other"
   assert_equal "$output" "rc=0 status=200 until= resource= kind="
   api gh_limited
   assert_equal "$output" "rc=1 status= until= resource= kind="

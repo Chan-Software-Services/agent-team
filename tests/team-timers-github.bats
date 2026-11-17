@@ -51,7 +51,8 @@ utc() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 local_clock() { date -d "@$1" +%H:%M; }
 
 # One line of the reader's call log: logged <seconds before now> <by> <for or ""> <resource>
-# [<counted>], in the day's file of its time, as bin/lib/github-api.sh's gh_log writes it.
+# [<counted>], in the day's file of its time, as bin/lib/github-api.sh's gh_log writes it, in
+# $github, the owner login's state unless the call sets it to another login's.
 logged() {
   local at=$((now - $1))
   mkdir -p "$github"
@@ -165,6 +166,68 @@ GitHub's API: core requests at 92% of 5,000 for the hour, past 90%; it resets at
   assert_equal "$(alerts_posted)" "GitHub's API: core requests at 92% of 5,000 for the hour, past 90%; it resets at $(local_clock "$reset"). 4,600 not logged (workers' own gh and other scripts)."
   assert_equal "$(github_keys)" "[\"core/90/$(utc "$reset")\"]"
   grep -E "github: core/70/$(utc "$reset"): closed with no post \(a higher threshold of its window was crossed before it was posted\)$" "$log"
+}
+
+@test "with the worker login on, each login's reading goes to its own budget, and each crossing posts under its own key and spenders" {
+  worker_login_on
+  local worker=$state/github-worker at
+  at=$(local_clock "$reset")
+  github_budget core 5000 1000 "$reset"
+  github_budget --worker core 5000 3600 "$reset"
+  github_budget --worker graphql 5000 10 "$reset"
+  logged 300 team-ci-run "owner/proj fix/a" core
+  github=$worker logged 200 team-ci-wait owner/proj#1 core
+  github=$worker logged 100 team-ci-wait owner/proj#2 core
+  run_bin -0 team-timers run
+  assert_equal "$(gh_calls)" "api rate_limit
+api rate_limit"
+  jq -e '.core.used == 1000 and .graphql.used == 0' "$github/budget.json"
+  jq -e '.core.used == 3600 and .graphql.used == 10' "$worker/budget.json"
+  assert_equal "$(alerts_posted)" "GitHub's API on the worker login team-worker-bot: core requests at 72% of 5,000 for the hour, past 70%; it resets at $at. Most: team-ci-wait 2 (2); 3,598 not logged (workers' own gh and other scripts)."
+  assert_equal "$(github_keys)" "[\"worker/core/70/$(utc "$reset")\"]"
+  grep -E "github: worker/core/70/$(utc "$reset"): posted to #coordinator \(message [0-9]+\)$" "$log"
+
+  # The owner login crossing the same threshold of the same window is a notice of its own.
+  github_budget core 5000 3700 "$reset"
+  run_bin -0 team-timers run
+  assert_equal "$(alerts_posted | tail -n 1)" "GitHub's API: core requests at 74% of 5,000 for the hour, past 70%; it resets at $at. Most: team-ci-run 1 (1); 3,699 not logged (Daniel's own gh and other scripts)."
+  assert_equal "$(github_keys)" "[\"core/70/$(utc "$reset")\",\"worker/core/70/$(utc "$reset")\"]"
+  # Neither posts again in its window, and the reset closes both.
+  run_bin -0 team-timers run
+  assert_equal "$(alerts_posted | wc -l)" 2
+  github_clock $((reset + 1))
+  now=$((reset + 1))
+  github_budget core 5000 0 $((now + 3600))
+  github_budget --worker core 5000 0 $((now + 3600))
+  run_bin -0 team-timers run
+  assert_equal "$(github_keys)" "[]"
+  grep -E "github: worker/core/70/$(utc "$reset"): closed with no post \(its window reset\)$" "$log"
+  jq -e '.steps | has("github") | not' "$state/health.json"
+}
+
+@test "a worker login named but not on this machine, or whose read fails, fails the step, the owner's reading still written and judged" {
+  worker_login_on
+  rm "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  github_budget core 5000 3600 "$reset"
+  run_bin -0 team-timers run
+  assert_equal "$(gh_calls)" "api rate_limit"
+  grep -E "github: failed: the worker login team-worker-bot is not on this machine \(~/.config/agent-team/gh-worker/hosts.yml is missing\)$" "$log"
+  jq -e '.core.used == 3600' "$github/budget.json"
+  assert_equal "$(github_keys)" "[\"core/70/$(utc "$reset")\"]"
+  jq -e '.steps.github.runs == 1' "$state/health.json"
+
+  # Its file back, a read on it that fails is the step failing, named so.
+  worker_login_on
+  stub_script gh <<'STUB'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
+[[ -z $(github_account) ]] || github_offline
+github_rate_limit
+STUB
+  run_bin -0 team-timers run
+  grep -E "github: failed: gh api rate_limit on the worker login team-worker-bot: error connecting to api.github.com$" "$log"
+  [[ ! -e $state/github-worker/budget.json ]]
+  jq -e '.steps.github.runs == 2' "$state/health.json"
 }
 
 @test "a post Discord refuses fails the step alone, never the run, and is tried again at the next run" {

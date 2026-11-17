@@ -1,14 +1,19 @@
 # The one reader of GitHub's REST answers for the scripts that poll GitHub (team-ci-wait,
-# team-ci-run): a cache every process of the machine shares, revalidated with ETags, so a read of
-# an unchanged answer is a 304, which GitHub does not count against its limit; the budget each
-# answer reports; a rate-limit refusal told apart from every other failure, and held until it
-# lifts, so no process asks again before then; and a log of every request, by the command that
-# sent it. Sourced after team.sh:
+# team-ci-run): a cache every process of the machine on one GitHub login shares, revalidated with
+# ETags, so a read of an unchanged answer is a 304, which GitHub does not count against its limit;
+# the budget each answer reports; a rate-limit refusal told apart from every other failure, and
+# held until it lifts, so no process on that login asks again before then; and a log of every
+# request, by the command that sent it. Sourced after team.sh:
 #
 #   # shellcheck source=bin/lib/github-api.sh
 #   source "$TEAM_LIB/github-api.sh"
 #
-# Its state is $GITHUB_API_DIR, ~/.local/state/agent-team/github, made on first use:
+# Its state is $GITHUB_API_DIR, one directory per GitHub login, since GitHub's limits are per
+# account: the owner login's ~/.local/state/agent-team/github (the one directory there was before
+# the worker login, so what it recorded stands), the worker login's
+# ~/.local/state/agent-team/github-worker; sourcing the library points it at the session's login,
+# bin/lib/github-login.sh's session_login, and gh_use_login at another. Each is made on first use
+# and holds:
 #   cache/<key>.json   {endpoint, etag, fetched, status} of one endpoint's last 2xx answer,
 #                      fetched in epoch seconds, <key> the sha256 of the endpoint as read;
 #   cache/<key>.body   that answer's body; cache/<key>.lock its lock;
@@ -43,6 +48,10 @@
 # 60 s). Any other 403 is a plain failure.
 #
 # It provides:
+#   gh_use_login owner | worker
+#                      points GITHUB_API_DIR at that login's state, for every function below, for
+#                      a script that reads GitHub on a login other than its session's (the
+#                      heartbeat reads each login's budget).
 #   gh_now             prints now in epoch seconds: the number in the file TEAM_GITHUB_CLOCK
 #                      names when it is set (the tests' clock), else the machine's.
 #   gh_utc <epoch seconds>
@@ -106,7 +115,14 @@
 # Its seams are TEAM_GITHUB_CLOCK and TEAM_GITHUB_FRESH_SECONDS.
 # shellcheck shell=bash
 
-GITHUB_API_DIR=$HOME/.local/state/agent-team/github
+gh_use_login() {
+  case $1 in
+    owner) GITHUB_API_DIR=$HOME/.local/state/agent-team/github ;;
+    worker) GITHUB_API_DIR=$HOME/.local/state/agent-team/github-worker ;;
+    *) echo "gh_use_login: no login $1 (owner or worker)" >&2; return 1 ;;
+  esac
+}
+gh_use_login "$(session_login)"
 # How long a reader waits for another reading the same endpoint.
 GITHUB_LOCK_SECONDS=30
 # GitHub's least wait after a secondary limit with no Retry-After.

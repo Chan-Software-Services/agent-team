@@ -266,28 +266,35 @@
 #                     Discord refuses (tried again next run) each fail the step, so 12 runs in a row
 #                     are the step-quota alert.
 #              github  On the holder, after the quota step: gh api rate_limit (GitHub's own reading
-#                     of the user's API budget, which it does not count against it), stopped after
-#                     20 s and killed 10 s later, whose core and graphql it writes to
-#                     bin/lib/github-api.sh's budget.json. Each of them at or past 70% or 90% of its
+#                     of the user's API budget, which it does not count against it) on the owner
+#                     login, and on the worker login too when bin/lib/worker-login names one
+#                     (bin/lib/github-login.sh), each stopped after 20 s and killed 10 s later, whose
+#                     core and graphql it writes to that login's budget.json (bin/lib/github-api.sh
+#                     keeps each login's state apart). Each of them at or past 70% or 90% of its
 #                     hour's limit is, at its highest threshold crossed, a notice of the github
 #                     source (bin/lib/notice.jq), keyed "<resource>/<threshold>/<reset as a UTC
-#                     time>" and posted once to #coordinator, mentioning no one: "GitHub's API: core
-#                     requests at 72% of 5,000 for the hour, past 70%; it resets at 07:27. Most:
-#                     team-ci-wait 1,830 (9), team-ci-run 240 (3), team-next 40 (2); 1,100 not
-#                     logged (workers' own gh and other scripts)." ("GraphQL points" for graphql;
-#                     the reset in this machine's local time; the top three of the reader's call
-#                     log's counted requests of the hour by the command that sent them, each with
-#                     its subjects counted in brackets, as gh_spenders gives them; and the use no
-#                     log accounts for, left out when 0). As the quota's, a notice stays until its
+#                     time>" ("worker/<resource>/..." for the worker login's) and posted once to
+#                     #coordinator, mentioning no one: "GitHub's API: core requests at 72% of 5,000
+#                     for the hour, past 70%; it resets at 07:27. Most: team-ci-wait 1,830 (9),
+#                     team-ci-run 240 (3), team-next 40 (2); 1,100 not logged (workers' own gh and
+#                     other scripts)." ("GitHub's API on the worker login <name>: ..." for the
+#                     worker login's; "GraphQL points" for graphql; the reset in this machine's
+#                     local time; the top three of that login's call log's counted requests of the
+#                     hour by the command that sent them, each with its subjects counted in
+#                     brackets, as gh_spenders gives them; and the use no log accounts for, left
+#                     out when 0, "Daniel's own gh and other scripts" for the owner login's while
+#                     the worker login is on). As the quota's, a notice stays until its
 #                     reset passes, so a crossing is posted once per window and no lower threshold
 #                     after a higher one; one not yet posted closes with no post once a higher one
 #                     of its window is wanted; then it closes with no post. Each post, failed post
 #                     and close is a log line as the quota step's ("github:
 #                     core/70/2026-11-16T07:27:14Z: posted to #coordinator (message <id>)"). A read
 #                     that fails, prints no reading or is stopped ("github: failed: gh api
-#                     rate_limit timed out after 20 s"), a notice record it cannot write and a post
-#                     Discord refuses (tried again next run) each fail the step, never the run, so
-#                     12 runs in a row are the step-github alert. Like every step on the holder, it
+#                     rate_limit timed out after 20 s", "gh api rate_limit on the worker login
+#                     <name>: ..." for the worker login's), a worker login named but not on this
+#                     machine, a notice record it cannot write and a post Discord refuses (tried
+#                     again next run) each fail the step, never the run, the other login's reading
+#                     still written and judged, so 12 runs in a row are the step-github alert. Like every step on the holder, it
 #                     makes no read on a run that is offline, fenced or off the lease.
 #              tmp    On the holder, after the github step, every run, with no setting: team-janitor
 #                     tmp, which removes the team's stale leftovers from /tmp and /var/tmp and posts
@@ -1444,63 +1451,81 @@ crossing_actions() {
   done < <(jq -c '.actions[] | select(.do == "post")' <<<"$NOTICE_PLAN")
 }
 
-# The GitHub notices, from gh api rate_limit's core and graphql ($readings, each {resource, limit,
-# used, reset (epoch seconds), reset_text (the reset in this machine's local time), spenders
-# (bin/lib/github-api.sh's gh_spenders of its hour)}), the notice record (the input) and now
-# ($clock, epoch seconds), judged as the quota notices are: each resource at or past 70% or 90% of
-# its limit wants a notice of its highest threshold crossed, keyed "<resource>/<threshold>/<reset as
-# a UTC time>", unless a notice of its resource and reset at that threshold or above is already
-# kept; each kept notice whose reset has not come stays wanted, so a crossing posts once per window
-# and closes with no post when its reset passes; a kept notice not yet posted is dropped, with no
-# post, once a higher threshold of its window is wanted. The text names the top three spenders of
-# the hour, each with its subjects counted, and the use no log accounts for, left out when 0.
+# The GitHub notices, from each login's gh api rate_limit core and graphql ($readings, each {login
+# (owner or worker), account (the worker login's name, empty for the owner's), unlogged (what the
+# use no log accounts for is), resource, limit, used, reset (epoch seconds), reset_text (the reset
+# in this machine's local time), spenders (bin/lib/github-api.sh's gh_spenders of its hour, from
+# its login's log)}), the notice record (the input) and now ($clock, epoch seconds), judged as the
+# quota notices are: each login's resource at or past 70% or 90% of its limit wants a notice of its
+# highest threshold crossed, keyed "<resource>/<threshold>/<reset as a UTC time>" for the owner
+# login and "worker/<resource>/<threshold>/<reset>" for the worker login, unless a notice of its
+# login, resource and reset at that threshold or above is already kept; each kept notice whose
+# reset has not come stays wanted, so a crossing posts once per window and closes with no post when
+# its reset passes; a kept notice not yet posted is dropped, with no post, once a higher threshold
+# of its window is wanted. The text names the worker login when it is that login's, the top three
+# spenders of the hour, each with its subjects counted, and the use no log accounts for, left out
+# when 0.
 # shellcheck disable=SC2016 # jq's variables
 GITHUB_PLAN='
 def github_n: floor | if . >= 1000 then "\(. / 1000 | floor | github_n)," + ("00" + (. % 1000 | tostring))[-3:] else tostring end;
 def github_text($t):
   (.spenders[:3] | map("\(.by) \(.calls | github_n) (\(.subjects | length))")) as $most
   | ([0, .used - ([.spenders[].calls] | add // 0)] | max) as $rest
-  | "GitHub\u0027s API: "
+  | "GitHub\u0027s API" + (if .login == "worker" then " on the worker login \(.account)" else "" end) + ": "
     + (if .resource == "core" then "core requests" elif .resource == "graphql" then "GraphQL points"
        else "\(.resource) requests" end)
     + " at \(.used * 100 / .limit | floor)% of \(.limit | github_n) for the hour, past \($t)%; it resets at \(.reset_text)."
     + ([if $most != [] then "Most: " + ($most | join(", ")) else empty end,
-        if $rest > 0 then "\($rest | github_n) not logged (workers\u0027 own gh and other scripts)" else empty end]
+        if $rest > 0 then "\($rest | github_n) not logged (\(.unlogged))" else empty end]
        | if . == [] then "" else " " + join("; ") + "." end);
 [(.notices // {})[] | select(.source == "github") | . as $n
-   | .key | capture("^(?<resource>[^/]+)/(?<threshold>[0-9]+)/(?<reset>[^/]+)$")
+   | .key | capture("^(?:(?<login>worker)/)?(?<resource>[^/]+)/(?<threshold>[0-9]+)/(?<reset>[^/]+)$")
    | select((try (.reset | fromdateiso8601) catch 0) > $clock)
-   | {key: $n.key, state: $n.state, text: $n.text, resource, threshold: (.threshold | tonumber), reset}] as $kept
+   | {key: $n.key, state: $n.state, text: $n.text, login: (.login // "owner"), resource,
+      threshold: (.threshold | tonumber), reset}] as $kept
 | [$readings[] | select(.limit > 0) | . as $r | [70, 90 | select($r.used * 100 >= . * $r.limit)] as $crossed
    | select($crossed != []) | ($crossed | max) as $t | (.reset | todate) as $reset
-   | select(all($kept[]; .resource != $r.resource or .reset != $reset or .threshold < $t))
-   | {key: "\(.resource)/\($t)/\($reset)", resource, reset: $reset, text: github_text($t)}] as $new
+   | select(all($kept[]; .login != $r.login or .resource != $r.resource or .reset != $reset or .threshold < $t))
+   | {key: "\(if .login == "worker" then "worker/" else "" end)\(.resource)/\($t)/\($reset)", login, resource,
+      reset: $reset, text: github_text($t)}] as $new
 | ($new | map({key, since: null, detail: null, text})
-   + [$kept[] | . as $k | select(.state != "open" or all($new[]; .resource != $k.resource or .reset != $k.reset))
+   + [$kept[] | . as $k
+      | select(.state != "open" or all($new[]; .login != $k.login or .resource != $k.resource or .reset != $k.reset))
       | {key, since: null, detail: null, text}]) as $wanted
 | notice_plan("github"; $wanted; null; $clock; null)
 '
 
-# The github step, on the holder after the quota step, as the header's github says: gh api
-# rate_limit, which GitHub does not count (GITHUB_TIMEOUT, killed KILL_SECONDS later), its core and
-# graphql written to bin/lib/github-api.sh's budget.json, and each crossing of 70% or 90% of an
-# hour's limit a notice of the github source, judged with no holding as the quota's are, posted once
-# as an alert and closed with no post when its reset passes. A read that fails or is stopped, a
-# notice record it cannot write and a post Discord refuses fail the step alone, never the run.
+# The github step, on the holder after the quota step, as the header's github says: on the owner
+# login, and on the worker login when bin/lib/worker-login names one, gh api rate_limit, which
+# GitHub does not count (GITHUB_TIMEOUT, killed KILL_SECONDS later), its core and graphql written to
+# that login's budget.json (bin/lib/github-api.sh's gh_use_login), and each crossing of 70% or 90% of
+# an hour's limit a notice of the github source, judged with no holding as the quota's are, posted
+# once as an alert and closed with no post when its reset passes. A read that fails or is stopped,
+# a worker login named but not on this machine, a notice record it cannot write and a post Discord
+# refuses fail the step alone, never the run; the other login's reading is still written and
+# judged.
 github_step() {
-  local rc=0 out why='' clock readings='[]' resource limit remaining used reset spenders
-  out=$(timeout --kill-after="$KILL_SECONDS" "$GITHUB_TIMEOUT" gh api rate_limit 2>"$err" </dev/null {run_fd}>&-) || rc=$?
-  case $rc in
-    0)
-      jq -e '[.resources.core, .resources.graphql]
-        | all(type == "object" and ([.limit, .remaining, .used, .reset] | all(type == "number" and . >= 0 and . == floor)))' \
-        <<<"$out" >/dev/null 2>&1 || why="gh api rate_limit printed no rate limit reading"
-      ;;
-    124 | 137) why="gh api rate_limit timed out after $GITHUB_TIMEOUT s" ;;
-    *) why="gh api rate_limit: $(grep -q . "$err" && first_error || echo "exited $rc")" ;;
-  esac
-  [[ -n $why ]] || clock=$(gh_now 2>"$err") || why=$(first_error)
-  if [[ -z $why ]]; then
+  local why='' clock readings='[]' login account='' problem out unlogged session_dir=$GITHUB_API_DIR
+  local resource limit remaining used reset spenders
+  local -a whys=() logins=(owner)
+  if ! clock=$(gh_now 2>"$err"); then
+    whys+=("$(first_error)")
+    logins=()
+  elif ! account=$(worker_login 2>"$err"); then
+    whys+=("$(first_error)")
+  elif [[ -n $account ]]; then
+    if problem=$(worker_login_problem); then
+      whys+=("the worker login $account is not on this machine ($problem)")
+    else
+      logins+=(worker)
+    fi
+  fi
+  for login in "${logins[@]}"; do
+    github_rate_limit "$login" "$account" || { whys+=("$GITHUB_WHY"); continue; }
+    out=$GITHUB_READING
+    unlogged="workers' own gh and other scripts"
+    [[ $login == worker || -z $account ]] || unlogged="Daniel's own gh and other scripts"
+    gh_use_login "$login"
     mkdir -p "$GITHUB_API_DIR" 2>/dev/null || true
     for resource in core graphql; do
       read -r limit remaining used reset < <(jq -r --arg r "$resource" '.resources[$r] | "\(.limit) \(.remaining) \(.used) \(.reset)"' <<<"$out")
@@ -1509,23 +1534,50 @@ github_step() {
       if ((limit > 0 && used * 100 >= 70 * limit)); then
         spenders=$(gh_spenders "$resource" $((reset - 3600)) 2>/dev/null) || spenders='[]'
       fi
-      readings=$(jq -c --arg r "$resource" --argjson limit "$limit" --argjson used "$used" --argjson reset "$reset" \
+      readings=$(jq -c --arg login "$login" --arg account "$account" --arg unlogged "$unlogged" --arg r "$resource" \
+        --argjson limit "$limit" --argjson used "$used" --argjson reset "$reset" \
         --arg at "$(date -d "@$reset" +%H:%M)" --argjson spenders "$spenders" \
-        '. + [{resource: $r, limit: $limit, used: $used, reset: $reset, reset_text: $at, spenders: $spenders}]' <<<"$readings")
+        '. + [{login: $login, account: (if $login == "worker" then $account else "" end), unlogged: $unlogged, resource: $r,
+          limit: $limit, used: $used, reset: $reset, reset_text: $at, spenders: $spenders}]' <<<"$readings")
     done
-    notices_judge github notice "$GITHUB_PLAN" --argjson readings "$readings" --argjson clock "$clock" ||
-      why="cannot judge the github notices in $NOTICES: $(first_error)"
+  done
+  GITHUB_API_DIR=$session_dir
+  if [[ $readings != '[]' ]]; then
+    if notices_judge github notice "$GITHUB_PLAN" --argjson readings "$readings" --argjson clock "$clock"; then
+      crossing_actions github "$clock"
+      [[ -z $CROSSING_WHY ]] || whys+=("$CROSSING_WHY")
+    else
+      whys+=("cannot judge the github notices in $NOTICES: $(first_error)")
+    fi
   fi
-  if [[ -z $why ]]; then
-    crossing_actions github "$clock"
-    why=$CROSSING_WHY
-  fi
-  if [[ -n $why ]]; then
+  if ((${#whys[@]})); then
+    why=$(printf '%s; ' "${whys[@]}")
+    why=${why%; }
     problem github "failed: $why"
     step_fail github "$why"
   else
     step_ok github
   fi
+}
+
+# github_rate_limit <owner|worker> <worker login>: gh api rate_limit on that login, its reading in
+# GITHUB_READING; else fails, GITHUB_WHY why ("gh api rate_limit timed out after 20 s", "on the
+# worker login" after rate_limit for the worker login's).
+github_rate_limit() {
+  local rc=0 what='gh api rate_limit' run=with_owner_login
+  if [[ $1 == worker ]]; then what="gh api rate_limit on the worker login $2" run=with_worker_login; fi
+  GITHUB_READING='' GITHUB_WHY=''
+  GITHUB_READING=$("$run" timeout --kill-after="$KILL_SECONDS" "$GITHUB_TIMEOUT" gh api rate_limit 2>"$err" </dev/null {run_fd}>&-) || rc=$?
+  case $rc in
+    0)
+      jq -e '[.resources.core, .resources.graphql]
+        | all(type == "object" and ([.limit, .remaining, .used, .reset] | all(type == "number" and . >= 0 and . == floor)))' \
+        <<<"$GITHUB_READING" >/dev/null 2>&1 || GITHUB_WHY="$what printed no rate limit reading"
+      ;;
+    124 | 137) GITHUB_WHY="$what timed out after $GITHUB_TIMEOUT s" ;;
+    *) GITHUB_WHY="$what: $(grep -q . "$err" && first_error || echo "exited $rc")" ;;
+  esac
+  [[ -z $GITHUB_WHY ]]
 }
 
 # The inbox step, on the holder after the tmp step: team-inbox, logged only when it retired the
