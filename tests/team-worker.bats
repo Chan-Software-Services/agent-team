@@ -1184,7 +1184,8 @@ session-records-guard block 10"
 
 @test "a task's builder model, its opened event's builder_model, is every builder launch's over the registry's, and --model is refused for a task's builder" {
   # On origin/dev at 86a31a4f a builder took its model only from --model or the registry, so a
-  # relaunch fell back to the settings' model and logged none (the task's build note 01).
+  # relaunch fell back to the registry's builder line, or with none to the settings' model and
+  # logged none (the task's build note 01).
   registry --first 'models = { builder = "opus", reviewer = "opus" }' proj other
   thread T7
   opened T7 proj feat/T7-one "$wt1" '{"builder_model": "sonnet"}'
