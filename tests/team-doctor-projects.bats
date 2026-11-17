@@ -137,7 +137,7 @@ PASS moved origins: read 3 origins (the code checkout's, the team home's and eac
   assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
   # Nor is an SSH remote of the new owner, or of the old owner's repository that never moved.
   git -C "${CONVENTIONER:?}" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
-  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/no-mistakes.git/
+  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/site.git/
   run_bin -0 team-doctor
   assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
 }
