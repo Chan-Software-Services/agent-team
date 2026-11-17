@@ -143,7 +143,7 @@ registry() {
   run_bin -0 team-project --find repo chan-software-services/AGENT-TEAM
   assert_equal "$output" beta
   # A repo of the old owner that never moved is no moved one's.
-  run_bin -0 team-project --find repo chanjdaniel/no-mistakes
+  run_bin -0 team-project --find repo chanjdaniel/site
   assert_equal "$output" ""
 }
 
@@ -164,6 +164,20 @@ team-project: $TEAM_HOME/projects.toml: 2 problems"
     "$TEAM_HOME/projects.toml"
   run_bin -0 team-project --check
   assert_contains "$output" "2 projects ok"
+}
+
+@test "--check names the no-mistakes fork under its old owner with the repo to set, and --find repo finds it by either" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  sed -i 's#^repo = "Chan-Software-Services/no-mistakes"#repo = "chanjdaniel/no-mistakes"#' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-project: $TEAM_HOME/projects.toml: no-mistakes: repo chanjdaniel/no-mistakes moved to Chan-Software-Services/no-mistakes (bin/lib/repo-moves.json): set repo = \"Chan-Software-Services/no-mistakes\"
+team-project: $TEAM_HOME/projects.toml: 1 problem"
+  local repo
+  for repo in chanjdaniel/no-mistakes Chan-Software-Services/no-mistakes; do
+    run_bin -0 team-project --find repo "$repo"
+    assert_equal "$output" no-mistakes
+  done
 }
 
 @test "--check lists a moved repo with the registry's other problems, in one run" {
@@ -422,7 +436,7 @@ home_setting() {
   # Daniel's no-mistakes fork: merge commits keep upstream's history, so the next update is a merge.
   run_bin -0 team-project no-mistakes
   assert_equal "$(jq -r '[.repo, .base, .delivery, .merge_method, .task_dir, .pool.provider] | join(" ")' <<<"$output")" \
-    "chanjdaniel/no-mistakes main direct-pr merge .scratch/task git"
+    "Chan-Software-Services/no-mistakes main direct-pr merge .scratch/task git"
   assert_equal "$(jq -r .path <<<"$output")" "$HOME/Documents/projects/personal/no-mistakes"
   assert_equal "$(jq -c '[.required_checks, .docs, .toolkits]' <<<"$output")" '[[],["AGENTS.md"],[]]'
   assert_equal "$(jq -c .local_checks <<<"$output")" \

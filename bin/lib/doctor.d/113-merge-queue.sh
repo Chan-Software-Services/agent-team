@@ -1,15 +1,15 @@
-# merge queue   Each registered project whose base has a merge queue, by its rules read from
-#               GitHub (base_rules in bin/lib/team.sh: its classic protection and its rulesets):
-#               fails naming, for each such project, the first of the queue's merge method not
-#               the registry's merge_method, the strict rule (a branch up to date before it
-#               merges) on, classic protection left on the base beside the ruleset, or, for a
-#               project that is the team's own while the reviewer App is on, agent-review
-#               pinned to the App's id missing from the required checks; each fix is Daniel's
-#               step 6 of sops/merging.md. A base whose rules cannot be read fails too, with
-#               the github login line's fix. Passes naming the projects with a queue, or saying
-#               none has one; a base with no queue, an unprotected one included, is not named.
-#               Nothing is read while team-project refuses the registry, which is the projects
-#               line's, or bin/lib/review-app is malformed, which is the review app line's.
+# merge queue   Each registered project whose base has a merge queue, by its rules read from GitHub
+#               on the owner login (base_rules in bin/lib/team.sh: its classic protection and its
+#               rulesets): fails naming, for each such project, the first of the queue's merge
+#               method not the registry's merge_method, the strict rule (a branch up to date before
+#               it merges) on, classic protection left on the base beside the ruleset, or, for a
+#               project that is the team's own while the reviewer App is on, agent-review pinned to
+#               the App's id missing from the required checks; each fix is Daniel's step 6 of
+#               sops/merging.md. A base whose rules cannot be read fails too, with the github login
+#               line's fix. Passes naming the projects with a queue, or saying none has one; a base
+#               with no queue, an unprotected one included, is not named. Nothing is read while
+#               team-project refuses the registry, which is the projects line's, or
+#               bin/lib/review-app is malformed, which is the review app line's.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # err, the doctor's
 
@@ -27,7 +27,7 @@ merge_queue_check() {
     mapfile -d '' -t fields < <(jq --raw-output0 '.repo, .base, .merge_method' <<<"$registry_reply")
     # The registry's repo at the end of its moves (bin/lib/repo-moves.json), where GitHub has it now.
     repo=$(canonical_repo "${fields[0]}") base=${fields[1]} method=${fields[2]}
-    if ! rules=$(base_rules "$repo" "$base" 2>"$err"); then
+    if ! rules=$(with_owner_login base_rules "$repo" "$base" 2>"$err"); then
       reasons+=("$base's rules on $repo cannot be read from GitHub: $(first_error)")
       fixes+=("the github login line's fix, then run team-doctor again")
       continue
