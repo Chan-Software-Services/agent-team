@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Writes a confined session's directory: the file its roots are read from and the program its
+# Claude Code runs as its shell, both fixed at the launch, outside every root.
+#
+# Usage: confine-session write --dir <directory> --task <task> --worktree <path> --git-dir <path>
+#                              --team-home <path> --home <path> [--session-tmp <path>]
+#        confine-session job --dir <directory> --session-id <8 hexadecimal characters>
+#
+# write makes <directory>, and each missing directory from <home>/.config/agent-team down to it,
+# mode 700, and in it:
+#   session.json  mode 400, one object: version (1), task, home (--home), kept (the directories no
+#                 git directory or confine-roots line may be, hold or be under: the team home,
+#                 <home>/.config/agent-team and <home>/.claude, each resolved), worktree and
+#                 git_dir (each resolved), session_tmp (--session-tmp, else
+#                 /tmp/agent-team-<task>) and shell, the first executable of
+#                 /opt/homebrew/bin/bash, /usr/local/bin/bash, /usr/bin/bash and /bin/bash, never
+#                 the one on PATH;
+#   bash          mode 500, three lines: #!/bin/sh, a comment, and
+#                 exec '<this checkout>/bin/lib/confine-shell' --session '<directory>/session.json' "$@"
+# each written to a temporary name there and renamed into place, so a second write replaces the
+# first's files, and prints the program's path. team-worker names that program as the session's
+# CLAUDE_CODE_SHELL and CLAUDE_CODE_SHELL_PREFIX: it enters the domain from the roots in the file
+# and only then runs a shell (bin/lib/confine-shell and bin/lib/confine.py's --help say how).
+# <directory> is <home>/.config/agent-team/confine/<task>/<the launch's stem>: under
+# <home>/.config/agent-team, where confine.py lets no git directory or confine-roots line be and
+# no launch puts a root, so no confined command removes or renames an entry there, and on the
+# machine, never in the team home, since the program is code.
+#
+# write refuses (exit 1, "confine-session: <reason>"):
+#   - a <directory> or a checkout path holding a single quote, a newline, " -" or "zsh"
+#     ("<path> holds <what>, which the session's shell path may not"): the program quotes both
+#     with single quotes, Claude Code splits a prefix at its last " -" and reads "zsh" first;
+#   - a <directory> that is not under <home>/.config/agent-team;
+#   - a directory from <home>/.config/agent-team down to <directory> that is a link, no directory
+#     or another user's;
+#   - a worktree or a git directory that is no directory, and a home that is none;
+#   - no bash in the four places.
+#
+# job records the job tmp of the session, <home>/.claude/jobs/<id>/tmp, in <directory>'s
+# session.json, by a temporary file and a rename, once the session has an id; until then the
+# session's commands remove and rename nothing there.
+#
+# Exit status: 0 done, 1 refused, 2 a malformed command line.
+# It sources no library and needs no team home; it needs jq.
+set -euo pipefail
+
+refuse() {
+  echo "confine-session: $1" >&2
+  exit 1
+}
+
+usage_error() {
+  echo "confine-session: $1; see confine-session --help" >&2
+  exit 2
+}
+
+# Whether <path> is there; refuses one that is a link, no directory or another user's.
+own_directory() {
+  [[ -e $1 || -L $1 ]] || return 1
+  [[ ! -L $1 && -d $1 && -O $1 ]] || refuse "$1 is a link, no directory or another user's"
+}
+
+# Refuses <path> when it holds what the session's shell path may not.
+shell_path() {
+  local what=''
+  case $1 in
+  *\'*) what="a single quote" ;;
+  *$'\n'*) what="a newline" ;;
+  *' -'*) what='" -"' ;;
+  *zsh*) what='"zsh"' ;;
+  esac
+  [[ -z $what ]] || refuse "$1 holds $what, which the session's shell path may not"
+}
+
+# Writes stdin to <name> in the session directory with <mode>, by a temporary name and a rename.
+place() {
+  local tmp
+  tmp=$(mktemp "$dir/.$1.XXXXXX")
+  cat >"$tmp"
+  chmod "$2" "$tmp"
+  mv -f -- "$tmp" "$dir/$1"
+}
+
+command=${1-}
+[[ $# -eq 0 ]] || shift
+case $command in
+--help)
+  sed -n '2,$ { /^#/!q; s/^# \{0,1\}//p; }' "${BASH_SOURCE[0]}"
+  exit 0
+  ;;
+write | job) ;;
+*) usage_error "takes write or job" ;;
+esac
+
+dir='' task='' worktree='' git_dir='' team_home='' home='' session_tmp='' session_id=''
+while (($# > 0)); do
+  (($# > 1)) || usage_error "$1 takes a value"
+  case $command:$1 in
+  *:--dir) dir=$2 ;;
+  write:--task) task=$2 ;;
+  write:--worktree) worktree=$2 ;;
+  write:--git-dir) git_dir=$2 ;;
+  write:--team-home) team_home=$2 ;;
+  write:--home) home=$2 ;;
+  write:--session-tmp) session_tmp=$2 ;;
+  job:--session-id) session_id=$2 ;;
+  *) usage_error "$command takes no $1" ;;
+  esac
+  shift 2
+done
+[[ $dir == /* ]] || usage_error "--dir takes an absolute path"
+dir=${dir%/}
+
+if [[ $command == job ]]; then
+  [[ $session_id =~ ^[0-9a-f]{8}$ ]] || usage_error "--session-id takes 8 hexadecimal characters"
+  [[ ! -L $dir/session.json && -f $dir/session.json && -O $dir/session.json ]] ||
+    refuse "$dir/session.json is no session file of this user's"
+  jq --arg id "$session_id" '.job_tmp = .home + "/.claude/jobs/" + $id + "/tmp"' "$dir/session.json" | place session.json 400
+  exit 0
+fi
+
+[[ $task =~ ^[A-Za-z0-9._-]+$ ]] || usage_error "--task takes a task's id"
+for value in "$worktree" "$git_dir" "$team_home" "$home"; do
+  [[ $value == /* ]] || usage_error "--worktree, --git-dir, --team-home and --home each take an absolute path"
+done
+session_tmp=${session_tmp:-/tmp/agent-team-$task}
+[[ $session_tmp == /* ]] || usage_error "--session-tmp takes an absolute path"
+
+lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+shell_path "$dir"
+shell_path "$lib"
+[[ -d $home ]] || refuse "the home directory $home is no directory"
+[[ -d $worktree ]] || refuse "the worktree $worktree is no directory"
+[[ -d $git_dir ]] || refuse "the git directory $git_dir is no directory"
+home=${home%/}
+kept=$home/.config/agent-team
+[[ $dir == "$kept"/* && /$dir/ != */../* && /$dir/ != */./* ]] ||
+  refuse "$dir is not under $kept, where no root may be"
+
+shell=''
+for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /usr/bin/bash /bin/bash; do
+  if [[ -f $candidate && -x $candidate ]]; then
+    shell=$candidate
+    break
+  fi
+done
+[[ -n $shell ]] || refuse "no bash in /opt/homebrew/bin, /usr/local/bin, /usr/bin or /bin"
+
+# Each directory from <home>/.config/agent-team down to the session's, made mode 700 when missing.
+mkdir -p -- "$home/.config"
+step=$kept
+rest=${dir#"$kept"/}
+while :; do
+  own_directory "$step" || mkdir -m 700 -- "$step"
+  own_directory "$step" || refuse "$step could not be made"
+  [[ -n $rest ]] || break
+  step+=/${rest%%/*}
+  if [[ $rest == */* ]]; then rest=${rest#*/}; else rest=''; fi
+done
+chmod 700 "$dir"
+
+jq -n --arg task "$task" --arg home "$home" --arg team_home "$(realpath -m -- "$team_home")" \
+  --arg config "$(realpath -m -- "$kept")" --arg claude "$(realpath -m -- "$home/.claude")" \
+  --arg worktree "$(realpath -- "$worktree")" --arg git_dir "$(realpath -- "$git_dir")" \
+  --arg session_tmp "$session_tmp" --arg shell "$shell" \
+  '{version: 1, task: $task, home: $home, kept: [$team_home, $config, $claude], worktree: $worktree,
+    git_dir: $git_dir, session_tmp: $session_tmp, shell: $shell}' | place session.json 400
+printf '%s\n' '#!/bin/sh' "# Written by confine-session for $task's ${dir##*/}: the session's shell, which enters its domain first." \
+  "exec '$lib/confine-shell' --session '$dir/session.json' \"\$@\"" | place bash 500
+echo "$dir/bash"
