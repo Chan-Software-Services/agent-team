@@ -534,10 +534,11 @@ long_fixture() {
 
 @test "the report gives each builder launch model's tasks, tickets done, PRs and \$w per task, a launch with no model on the default" {
   report_fixture
-  # b3 launched on sonnet, its task's builder model, and its PR came after it; T0's builder, the
-  # load check's, is in no row.
+  # b3 launched on sonnet, its task's builder model, and its PR came after it, delivered at two
+  # heads, which is one PR; T0's builder, the load check's, is in no row.
   jq -c 'if .session == "b3b3b3b3" then .model = "sonnet" | .model_from = "task" else . end,
-    if .session == "b3b3b3b3" then {ts: "2026-10-20T12:00:00Z", task: "T1", event: "pr", url: "https://github.com/o/r/pull/1", head: "2222222"} else empty end' \
+    if .session == "b3b3b3b3" then {ts: "2026-10-20T12:00:00Z", task: "T1", event: "pr", url: "https://github.com/o/r/pull/1", head: "2222222"},
+      {ts: "2026-10-20T12:10:00Z", task: "T1", event: "pr", url: "https://github.com/o/r/pull/1", head: "3333333"} else empty end' \
     "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
   mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
   report_json

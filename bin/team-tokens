@@ -67,8 +67,11 @@
 #                    the window's builder launches by the model each launched on, the same way,
 #                    but T0's, with how many have replies, the tasks they built, the tickets done
 #                    and PRs they delivered by --until (a ticket done or a PR is its task's
-#                    latest builder launch's), their $w and $w per task, and the models their
-#                    replies ran on; and the window's builder and reviewer launches, but T0's
+#                    latest builder launch's, a PR once by its URL whatever heads it was
+#                    delivered at), their $w and $w per task, and the models their replies ran on
+#                    (a launch on the settings' model since 2026-11-17 is in its word's row, opus
+#                    say, and one before in default, so one baseline is two rows:
+#                    sops/model-trials.md); and the window's builder and reviewer launches, but T0's
 #                    (team-test's), by project (the launch's, else its task's) and the toolkits each carried (its
 #                    launch event's toolkits, sorted and deduplicated, none for an empty list or
 #                    none named), with how many have replies and, over those, a builder's tickets
@@ -1888,7 +1891,8 @@ def build_report(opts):
                 "with_replies": len(seen),
                 "tasks": len(tasks),
                 "tickets_done": sum(1 for x in got if x.get("event") == "ticket-done"),
-                "prs": sum(1 for x in got if x.get("event") == "pr"),
+                # A pr event is logged again for each head a PR is delivered at, so one PR is its URL.
+                "prs": len({x.get("url") or id(x) for x in got if x.get("event") == "pr"}),
                 "w": r6(w),
                 "w_per_task": r6(ratio(w, len(tasks))),
                 "reply_models": {m: r6(total(rs)) for m, rs in sorted(replied.items())},

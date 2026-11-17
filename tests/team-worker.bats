@@ -1153,18 +1153,30 @@ session-records-guard block 10"
   run_bin -0 team-log --check
 }
 
-@test "the model is the launch worktree's project's: a worktree added from a second project takes that one's" {
-  registry --first 'models = { builder = "sonnet" }' other proj
+@test "the registry's model is the launch worktree's project's, a second project's for its worktree, but a task's builder model holds across its projects" {
+  registry --first 'models = { builder = "sonnet", reviewer = "sonnet" }' other proj
   local other
   other=$(make_repo other)
   git -C "${other:?}" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
+  git -C "${other:?}" worktree add -q -b chore/T8-two "$HOME/slots/other/2"
+  # A task opened before tasks kept a builder model: each worktree's builder reads its project's line.
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   ledger_line --arg wt "$HOME/slots/other/1" '{ts: (now | todate), task: "T7", event: "worktree-added",
     project: "other", branch: "chore/T7-two", base: "main", base_sha: "0123456", worktree: $wt}'
   run_bin -0 team-worker T7 builder "$wt1" -- go
   run_bin -0 team-worker T7 builder "$HOME/slots/other/1" -- go
-  assert_equal "$(launches | jq -c '[.project, .model]')" $'["proj","default"]\n["other","sonnet"]'
+  assert_equal "$(launches | jq -c '[.project, .model, .model_from]')" $'["proj","default","default"]\n["other","sonnet","registry"]'
+  # A task that keeps one, default among them, runs its builders on it in every project's
+  # worktree, while its reviewer still reads the worktree's project's line.
+  thread T8
+  opened T8 proj feat/T8-one "$wt2" '{"builder_model": "default"}'
+  ledger_line --arg wt "$HOME/slots/other/2" '{ts: (now | todate), task: "T8", event: "worktree-added",
+    project: "other", branch: "chore/T8-two", base: "main", base_sha: "0123456", worktree: $wt}'
+  run_bin -0 team-worker T8 builder "$HOME/slots/other/2" -- go
+  run_bin -0 team-worker T8 reviewer "$HOME/slots/other/2" -- go
+  assert_equal "$(launches | tail -n 2 | jq -c '[.project, .role, .model, .model_from]')" \
+    $'["other","builder","default","default"]\n["other","reviewer","sonnet","registry"]'
 }
 
 @test "--model launches on the model it names instead of the registry's, and logs it, for T0 too" {
@@ -1182,10 +1194,10 @@ session-records-guard block 10"
   run_bin -0 team-log --check
 }
 
-@test "a task's builder model, its opened event's builder_model, is every builder launch's over the registry's, and --model is refused for a task's builder" {
-  # On origin/dev at 86a31a4f a builder took its model only from --model or the registry, so a
-  # relaunch fell back to the registry's builder line, or with none to the settings' model and
-  # logged none (the task's build note 01).
+@test "a task's builder model, its opened event's builder_model, is every builder launch's over the registry's" {
+  # Before a task kept its builder model, a builder took its model only from --model or the
+  # registry, so a relaunch fell back to the registry's builder line, or with none to the
+  # settings' model and logged none.
   registry --first 'models = { builder = "opus", reviewer = "opus" }' proj other
   thread T7
   opened T7 proj feat/T7-one "$wt1" '{"builder_model": "sonnet"}'
@@ -1200,22 +1212,45 @@ session-records-guard block 10"
     $'["builder","sonnet","task"]\n["builder","sonnet","task"]\n["reviewer","opus","registry"]\n["planner","default","default"]'
   run_bin -0 team-log --check
 
-  # A task's builder takes no --model, whatever the task names, so no relaunch can lose one.
-  local calls
-  calls=$(bg_calls | wc -l)
-  run_bin -2 team-worker T7 builder "$wt1" --model haiku -- go
-  assert_contains "$output" "--model is not for a task's builder, which runs on its task's builder model (team-open --builder-model, else the registry's at the open) on every launch; launch it without --model"
-  thread T8
-  opened T8 proj feat/T8-task "$wt2" '{"builder_model": "default"}'
-  run_bin -2 team-worker T8 builder "$wt2" --model sonnet -- go
-  assert_contains "$output" "--model is not for a task's builder"
-  assert_equal "$(bg_calls | wc -l)" "$calls"
-
   # A task whose builder model is default names none: its builders run on the settings' word,
   # whatever the registry's builder line says since its open.
+  thread T8
+  opened T8 proj feat/T8-task "$wt2" '{"builder_model": "default"}'
   run_bin -0 team-worker T8 builder "$wt2" -- go
   assert_equal "$(bg_calls | tail -n 1 | jq -c 'index("--model")')" null
   assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T8","default","default"]'
+}
+
+@test "a task builder's --model becomes its task's builder model: every later builder launch keeps it, until another --model switches it" {
+  registry --first 'models = { builder = "opus" }' proj other
+  thread T7
+  opened T7 proj feat/T7-one "$wt1" '{"builder_model": "sonnet"}'
+  run_bin -0 team-worker T7 builder "$wt1" --model fable -- go
+  run_bin -0 team-worker T7 builder "$wt1" -- relaunched
+  # A reviewer's or a planner's --model is that launch's alone.
+  run_bin -0 team-worker T7 reviewer "$wt1" --model haiku -- Review it
+  run_bin -0 team-worker T7 builder "$wt1" -- a fix round
+  run_bin -0 team-worker T7 builder "$wt1" --model 'sonnet[1m]' -- switched
+  run_bin -0 team-worker T7 builder "$wt1" -- relaunched again
+  assert_equal "$(bg_calls | jq -c '[.[-1], ((index("--model") // empty) as $i | .[$i + 1])]')" \
+    $'["go","fable"]\n["relaunched","fable"]\n["Review it","haiku"]\n["a fix round","fable"]\n["switched","sonnet[1m]"]\n["relaunched again","sonnet[1m]"]'
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["builder","fable","launch"]\n["builder","fable","task"]\n["reviewer","haiku","launch"]\n["builder","fable","task"]\n["builder","sonnet[1m]","launch"]\n["builder","sonnet[1m]","task"]'
+  run_bin -0 team-log --check
+
+  # A task opened before tasks kept a builder model: its builder launched on --model before
+  # launches logged where a model came from keeps that model too, over the registry's.
+  thread T8
+  opened T8 proj feat/T8-task "$wt2"
+  ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T8", event: "launch", role: "builder",
+    session: "f0000001", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T8-task", machine: "home-pc", model: "fable"}'
+  run_bin -0 team-worker T8 builder "$wt2" -- relaunched
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T8","fable","task"]'
+  # With none of those, such a task's builders read the registry at each launch, as before.
+  thread T9
+  opened T9 proj feat/T9-task "$wt1"
+  run_bin -0 team-worker T9 builder "$wt1" -- go
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T9","opus","registry"]'
 }
 
 @test "with nothing naming a model, the launch logs the settings' one: --settings' or the user settings' ANTHROPIC_MODEL, then their model, else default" {
@@ -1236,6 +1271,12 @@ session-records-guard block 10"
   assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
     $'["reviewer","default","default"]\n["reviewer","opus","settings"]\n["planner","claude-opus-5-5","settings"]\n["builder","fable","settings"]'
   run_bin -0 team-log --check
+
+  # T0 reads no model from the registry, whatever it says, nor from a task.
+  registry --first 'models = { builder = "sonnet", reviewer = "sonnet" }' proj other
+  run_bin -0 team-worker T0 reviewer "$wt1" -- go
+  run_bin -0 team-worker T0 builder "$wt1" -- go
+  assert_equal "$(bg_calls | tail -n 2 | jq -c '[.[-2], index("--model")]')" $'["T0-reviewer",null]\n["T0-builder",null]'
 
   # The settings a role's launch is given (--settings) outrank the user settings, as for Claude Code.
   fake_checkout

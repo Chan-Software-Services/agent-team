@@ -3654,8 +3654,8 @@ logged_models() {
 }
 
 @test "a task's builder model holds through each builder launch team-next makes: the next ticket's, a stow's round, the fill's and its relaunches" {
-  # On origin/dev at 86a31a4f each of these launched with no --model and logged no model (the
-  # task's build note 01).
+  # Before a task kept its builder model, each of these launched with no --model and logged no
+  # model, so the builder fell back to the settings' model.
   local head
   head=$(git -C "${wt:?}" rev-parse HEAD)
   builder_model sonnet
@@ -3669,6 +3669,21 @@ logged_models() {
   assert_equal "$(launch_models)" $'["T7-builder","sonnet"]\n["T7-builder","sonnet"]'
   assert_equal "$(logged_models | jq -c 'select(.[0] != "brief-review")')" \
     $'["brief-build-02","sonnet","task"]\n["brief-round-1","sonnet","task"]'
+}
+
+@test "a builder launched on --model keeps that model through team-next's next builder launch" {
+  # The setup's builder b0000001 launched on --model fable, which is its task's builder model
+  # from then on, over the opened event's.
+  builder_model sonnet
+  jq -c 'if .event == "launch" and .session == "b0000001" then .model = "fable" | .model_from = "launch" else . end' \
+    "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  local head
+  head=$(git -C "${wt:?}" rev-parse HEAD)
+  run_bin -0 team-next T7 -- "T7 DONE 01 ${head:0:8} done"
+  assert_equal "$(launch_models)" '["T7-builder","fable"]'
+  assert_equal "$(logged_models)" '["brief-build-02","fable","task"]'
+  run_bin -0 team-log --check
 }
 
 @test "a task's builder model holds through --fill's ticket builders and their relaunches after a stow" {
