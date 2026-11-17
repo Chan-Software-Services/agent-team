@@ -184,6 +184,187 @@ reloaded the user manager"
   assert_contains "$output" "the user's systemd does not answer (systemctl --user daemon-reload: Failed to connect to user scope bus"
 }
 
+# The gate's daemon <hash>'s process <pid>, running in the slice with GH_CONFIG_DIR=<dir> in its
+# environment, or none with no <dir>: daemon_process <hash> <pid> [<dir>]
+daemon_process() {
+  local unit=no-mistakes-daemon-$1.service
+  echo "$2" >"$HOME/.fake-systemd/$unit.MainPID"
+  fake_process "$2" 1 "$(user_cgroup "$unit" agent-team.slice)" no-mistakes daemon run
+  if [[ -n ${3:-} ]]; then
+    printf '%s\0' PATH=/usr/bin "GH_CONFIG_DIR=$3" >"$TEAM_CGROUP_ROOT/proc/$2/environ"
+  else
+    printf '%s\0' PATH=/usr/bin >"$TEAM_CGROUP_ROOT/proc/$2/environ"
+  fi
+}
+
+# Make no-mistakes daemon restart do what systemd does for the daemon <hash>: start a new process
+# in the slice with the environment its drop-in names: restart_from_drop_in <hash>
+restart_from_drop_in() {
+  printf '%s\n' "hash=$1" >"$STUB_FIXTURES/restart-hash"
+  stub_script no-mistakes <<'EOF'
+[[ $* == "daemon restart" ]] || { echo "no-mistakes stub: unplanned call: $*" >&2; exit 127; }
+source "$STUB_FIXTURES/restart-hash"
+unit=no-mistakes-daemon-$hash.service state=$HOME/.fake-systemd
+pid=$(($(cat "$state/$unit.MainPID") + 1))
+echo "$pid" >"$state/$unit.MainPID"
+echo "/user.slice/user-$(id -u).slice/user@$(id -u).service/agent.slice/agent-team.slice/$unit" >"$state/$unit.ControlGroup"
+mkdir -p "$TEAM_CGROUP_ROOT/proc/$pid"
+dir=$(sed -n 's/^Environment="GH_CONFIG_DIR=\([^"]*\)".*/\1/p' "$HOME/.config/systemd/user/$unit.d/agent-team.conf")
+{ printf '%s\0' PATH=/usr/bin; [[ -z $dir ]] || printf '%s\0' "GH_CONFIG_DIR=$dir"; } >"$TEAM_CGROUP_ROOT/proc/$pid/environ"
+echo "daemon restarted"
+EOF
+}
+
+# The drop-in as install wrote it before the worker login, byte for byte.
+TODAYS_DROP_IN="# team-capacity install: every gate run in the team's slice.
+[Service]
+Slice=agent-team.slice
+"
+
+@test "install with the worker login on names its gh directory in the drop-in, restarts an idle daemon already in the slice onto it, and a second install changes nothing" {
+  worker_login_off
+  gate_daemon 60757c3c inactive
+  run_bin -0 team-capacity install
+  worker_login_on
+  gate_daemon 60757c3c active "$(user_cgroup no-mistakes-daemon-60757c3c.service agent-team.slice)"
+  daemon_process 60757c3c 700
+  : >"$STUB_CALLS/systemctl.log" && : >"$STUB_CALLS/no-mistakes.log"
+  restart_from_drop_in 60757c3c
+  run_bin -0 team-capacity install
+  assert_equal "$output" "wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager
+restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+  assert_equal "$(cat "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" "# team-capacity install: every gate run in the team's slice.
+[Service]
+Slice=agent-team.slice
+Environment=\"GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
+  assert_equal "$(tr '\0' '\n' <"$TEAM_CGROUP_ROOT/proc/701/environ" | grep '^GH_CONFIG_DIR=')" "GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker"
+  assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
+
+  : >"$STUB_CALLS/systemctl.log" && : >"$STUB_CALLS/no-mistakes.log"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
+  assert_equal "$(stub_calls systemctl | jq -c 'select(.[1] != "show")')" ""
+  assert_equal "$(stub_calls no-mistakes)" ""
+
+  # A daemon on the worker's directory that still holds a token, which would answer before it, is
+  # on another login than its drop-in names, and restarts.
+  printf '%s\0' PATH=/usr/bin "GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker" GH_TOKEN=fixture-token \
+    >"$TEAM_CGROUP_ROOT/proc/701/environ"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+}
+
+@test "install quotes the worker login's directory in the drop-in, so systemd keeps a home path with a blank in it whole" {
+  local home="$HOME/a home"
+  local units=$home/.config/systemd/user
+  mkdir -p "$units"
+  HOME=$home worker_login_on
+  HOME=$home UNITS=$units gate_daemon 60757c3c inactive
+  HOME=$home run_bin -0 team-capacity install
+  assert_equal "$(grep '^Environment=' "$units/no-mistakes-daemon-60757c3c.service.d/agent-team.conf")" \
+    "Environment=\"GH_CONFIG_DIR=$home/.config/agent-team/gh-worker\" \"GH_TOKEN=\" \"GITHUB_TOKEN=\""
+}
+
+@test "install with the worker login on names a daemon running a pipeline, tries its restart again next time, and check names it meanwhile" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  worker_login_on
+  gate_daemon 60757c3c active "$(user_cgroup no-mistakes-daemon-60757c3c.service agent-team.slice)"
+  daemon_process 60757c3c 700
+  stub_reply no-mistakes "Error: 1 pipeline run is active; pass --force to restart anyway" 1
+  run_bin -0 team-capacity install
+  assert_contains "$output" "reloaded the user manager"
+  assert_contains "$output" "the gate's daemon no-mistakes-daemon-60757c3c.service runs a pipeline (no-mistakes daemon restart: Error: 1 pipeline run is active; pass --force to restart anyway), so it runs on the GitHub login it started with until it restarts: once no gate runs, run team-capacity install again"
+  assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
+
+  # The drop-in is written, so the next install only tries the restart again.
+  : >"$STUB_CALLS/systemctl.log" && : >"$STUB_CALLS/no-mistakes.log"
+  run_bin -0 team-capacity install
+  assert_equal "$(stub_calls systemctl | jq -c 'select(.[1] == "daemon-reload")')" ""
+  assert_equal "$(stub_calls no-mistakes)" '["daemon","restart"]'
+  assert_contains "$output" "so it runs on the GitHub login it started with until it restarts"
+
+  level_applied manual full 1080
+  run_bin -1 team-capacity check
+  assert_contains "$output" "the gate's daemon no-mistakes-daemon-60757c3c.service still runs on the GitHub login it started with, its restart waiting; fix: team-capacity install once no gate runs"
+
+  # Once no pipeline runs, the restart puts it on the worker login, and check passes.
+  restart_from_drop_in 60757c3c
+  run_bin -0 team-capacity install
+  assert_equal "$output" "restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the worker login team-worker-bot (no pipeline was running)"
+  run_bin -0 team-capacity check
+}
+
+@test "check names a gate daemon whose drop-in does not name the worker login while it is on" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  gate_daemon 60757c3c inactive
+  worker_login_off
+  run_bin -0 team-capacity install
+  level_applied manual full 1080
+  run_bin -0 team-capacity check
+  worker_login_on
+  run_bin -1 team-capacity check
+  assert_contains "$output" "WARN "
+  assert_contains "$output" "the gate's daemon no-mistakes-daemon-60757c3c.service has a drop-in that does not name the worker login team-worker-bot; fix: team-capacity install (Daniel's yes)"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager"
+  run_bin -0 team-capacity check
+}
+
+@test "with the worker login on but not usable, install writes today's drop-in and check passes, each naming why the daemon stays on the machine's own login" {
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  worker_login_on
+  chmod 644 "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  gate_daemon 60757c3c inactive
+  run_bin -0 team-capacity install
+  assert_equal "$output" "the gate's daemon stays on the machine's own GitHub login: ~/.config/agent-team/gh-worker/hosts.yml is mode 644, not 600
+wrote ~/.config/systemd/user/agent-team.slice
+wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager"
+  cmp <(printf '%s' "$TODAYS_DROP_IN") "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf"
+  level_applied manual full 1080
+  run_bin -0 team-capacity check
+  assert_equal "$output" "PASS manual, full (90%): no reading of the machine's load yet, so no budget; systemd backend: agent-team.slice holds the team, 0 live team sessions in it; the gate's daemon stays on the machine's own GitHub login: ~/.config/agent-team/gh-worker/hosts.yml is mode 644, not 600"
+  run_bin -0 team-capacity check --json
+  assert_equal "$(jq -r .verdict <<<"$output")" PASS
+
+  # A malformed constant is a reason too, never a failure of install or check.
+  printf 'login=a\nlogin=b\n' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  chmod 600 "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "the gate's daemon stays on the machine's own GitHub login: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line
+agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
+  run_bin -0 team-capacity check
+  assert_contains "$output" "; the gate's daemon stays on the machine's own GitHub login: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line"
+
+  # With no gate daemon there is no daemon to name.
+  rm -r "${UNITS:?}/no-mistakes-daemon-60757c3c.service" "${UNITS:?}/no-mistakes-daemon-60757c3c.service.d"
+  run_bin -0 team-capacity install
+  assert_equal "$output" "agent-team.slice and the gate's drop-ins are installed, and the gate's daemon runs in the slice: nothing to do"
+}
+
+@test "with the worker login off the drop-in is today's byte for byte, and turning it off restarts the daemon onto the machine's own login" {
+  worker_login_off
+  gate_daemon 0000aaaa inactive
+  run_bin -0 team-capacity install
+  cmp <(printf '%s' "$TODAYS_DROP_IN") "$UNITS/no-mistakes-daemon-0000aaaa.service.d/agent-team.conf"
+
+  worker_login_on
+  gate_daemon 60757c3c active "$(user_cgroup no-mistakes-daemon-60757c3c.service agent-team.slice)"
+  daemon_process 60757c3c 700 "$HOME/.config/agent-team/gh-worker"
+  restart_from_drop_in 60757c3c
+  run_bin -0 team-capacity install
+  worker_login_off
+  run_bin -0 team-capacity install
+  assert_equal "$output" "wrote ~/.config/systemd/user/no-mistakes-daemon-0000aaaa.service.d/agent-team.conf
+wrote ~/.config/systemd/user/no-mistakes-daemon-60757c3c.service.d/agent-team.conf
+reloaded the user manager
+restarted the gate's daemon no-mistakes-daemon-60757c3c.service onto the machine's own GitHub login (no pipeline was running)"
+  cmp <(printf '%s' "$TODAYS_DROP_IN") "$UNITS/no-mistakes-daemon-60757c3c.service.d/agent-team.conf"
+  assert_equal "$(tr '\0' '\n' <"$TEAM_CGROUP_ROOT/proc/702/environ" | grep -c '^GH_CONFIG_DIR=')" 0
+}
+
 @test "place adopts each live team session, its pty host and its descendants into its task's scope, and leaves the coordinator, an unnamed session, a load check's T0 session and a placed one" {
   session_tree 100
   session_tree 500
@@ -580,9 +761,9 @@ team_reading() {
   # The machine's part: the team's processes by directory and descent.
   assert_equal "$(jq -c --argjson mib "$MIB" '[.memory.total, .memory.team - 628935884 - 315621376, .cpu]' <<<"$reading" |
     jq -c --argjson mib "$MIB" '.[1] /= $mib')" '[34359738368,1638,null]'
-  # One systemctl call for every task's slice, every live team session's scope and the heavy run's.
+  # One systemctl call for the team's slice, every task's slice, every live team session's scope and the heavy run's.
   assert_equal "$(stub_calls systemctl)" \
-    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4.scope","agent-team-T9-b1b2c3d4.scope","agent-team-heavy-210.scope"]'
+    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team.slice","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4.scope","agent-team-T9-b1b2c3d4.scope","agent-team-heavy-210.scope"]'
 }
 
 @test "sample: a cgroup's use is its working set, so page cache never counts and a group it cannot read counts its processes" {
@@ -631,6 +812,96 @@ team_reading() {
   assert_equal "$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c '.cpu.seconds as $s | [.cpu.seconds >= 300,
       (.tasks[0].cpu == ((175 / $s + 0.5012) * 100 | round / 100)), (.tasks[1].cpu == ((60 / $s) * 100 | round / 100)),
       .tasks[0].cpu_nsec]')" '[true,true,true,240000000000]'
+}
+
+# team_cpu_machine <slice CPU seconds> <builder's> <outside shell's> <in-slice stranger's> <other program's>:
+# the processes of sample_machine's T7 at those cumulative CPU seconds, and the team slice's counter:
+# its builder in its scope, a shell in its worktree outside the slice, a process in the builder's
+# scope whose directory is no team path, and another program. The stacks use 50% of a core.
+team_cpu_machine() {
+  local scope
+  scope=$(user_cgroup agent-team-T7-a1b2c3d4.scope agent-team-T7.slice)
+  : >"$TEAM_READING_PROCS"
+  proc 100 99 512 "$2" "$T7_WT" "$scope"
+  proc 102 1 100 "$3" "$T7_WT/src"
+  proc 104 1 10 "$4" /tmp "$scope"
+  proc 400 1 2048 "$5" /
+  sessions "a1b2c3d4 T7-builder 100"
+  docker_state stats 'map(.CPUPerc = (if .Name == "conventioner-2-mongodb-1" then "50.00%" else "0.00%" end))'
+  unit agent-team.slice CPUUsageNSec="$1"000000000
+}
+
+# The newest reading's [team_cpu_nsec, cpu.team == <team CPU seconds> / seconds + 0.5,
+# cpu.others == max(<others' CPU seconds> / seconds - 0.5, 0)], each to hundredths.
+team_cpu_of() {
+  tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c --argjson team "$1" --argjson others "$2" '
+    def h: . * 100 | round / 100;
+    .cpu.seconds as $s
+    | [.team_cpu_nsec, .cpu.team == ($team / $s + 0.5 | h),
+       .cpu.others == ([$others / $s - 0.5, 0] | max | h)]'
+}
+
+@test "sample: the team's CPU is its slice's rise since the newest reading and its processes' outside the slice since the snapshot" {
+  sample_machine
+  team_cpu_machine 1000 60 5 10 100
+  run_bin -0 team-capacity sample
+  assert_equal "$(jq -c '[.team_cpu_nsec, .cpu]' "$STATE_DIR/readings.jsonl")" '[1000000000000,null]'
+  # Five minutes later the slice used 2,370 s, though its processes alive now used 140 s and 40 s
+  # of their own: the rest ran in processes that ended between the readings. The shell outside
+  # the slice used 25 s, the other program 300 s; the stranger in the slice is the team's.
+  age_by 300
+  team_cpu_machine 3370 200 30 50 400
+  run_bin -0 team-capacity sample
+  assert_equal "$(team_cpu_of 2395 300)" '[3370000000000,true,true]'
+  # team-level shows it as the team's cores.
+  local cores
+  cores=$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -r '.cpu.team * 10 | round / 10 | tostring')
+  run_bin -0 team-level status --stored
+  assert_contains "$output" "the team uses "
+  assert_contains "$output" " and $cores cores"
+}
+
+@test "sample: with a prior reading that has no team_cpu_nsec, the team's CPU is its processes', and the next reading is the slice's" {
+  sample_machine
+  team_cpu_machine 1000 60 5 10 100
+  run_bin -0 team-capacity sample
+  # The reading before this change: no counter.
+  jq -c 'del(.team_cpu_nsec)' "$STATE_DIR/readings.jsonl" >"$STATE_DIR/readings.jsonl.new"
+  mv "$STATE_DIR/readings.jsonl.new" "$STATE_DIR/readings.jsonl"
+  age_by 300
+  team_cpu_machine 3370 200 30 50 400
+  run_bin -0 team-capacity sample
+  # The team's processes, the builder's 140 s and the shell's 25 s; the stranger in the slice is the others'.
+  assert_equal "$(team_cpu_of 165 340)" '[3370000000000,true,true]'
+  age_by 300
+  team_cpu_machine 4000 260 40 60 700
+  run_bin -0 team-capacity sample
+  assert_equal "$(team_cpu_of 640 300)" '[4000000000000,true,true]'
+}
+
+@test "sample: with the user manager not answering, team_cpu_nsec is null and the team's CPU is its processes'" {
+  sample_machine
+  team_cpu_machine 1000 60 5 10 100
+  run_bin -0 team-capacity sample
+  age_by 300
+  team_cpu_machine 3370 200 30 50 400
+  mkdir -p "$HOME/.fake-systemd"
+  touch "$HOME/.fake-systemd/down"
+  run_bin -0 team-capacity sample
+  assert_equal "$(team_cpu_of 165 340)" '[null,true,true]'
+  assert_equal "$(tail -n 1 "$STATE_DIR/readings.jsonl" | jq -c .systemd)" false
+}
+
+@test "sample on Linux with no task and no session still asks the user manager for the team's slice" {
+  load_docker
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  docker_stub
+  docker_empty
+  proc 400 1 2048 99 /
+  unit agent-team.slice CPUUsageNSec=5000000000
+  run_bin -0 team-capacity sample
+  assert_equal "$(stub_calls systemctl)" '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team.slice"]'
+  assert_equal "$(jq -c '[.tasks, .team_cpu_nsec, .systemd]' "$STATE_DIR/readings.jsonl")" '[[],5000000000,true]'
 }
 
 @test "the reading reads a heavy run's holder line by team-heavy's own form" {

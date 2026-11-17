@@ -14,7 +14,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
 - For a task that changes a UI, read `~/agent-team/sops/frontend-patterns.md` before you spec a reusable component, a long list, a dialog, a prototype's data or a bundle budget.
 - On a project with Effect code, when your session lists `effect-v4`, invoke it before you spec Effect code, and put the installed `effect` version and the check command it gives in the spec.
 - For a research task, write the report your brief asks for, into the same task directory.
-- Explore freely: read code, run commands, run the app and its tests. You may edit files only inside the task directory; a hook blocks everything else.
+- Explore freely: read code, run commands, run the app and single tests, never a whole suite, which runs only in CI. You may edit files only inside the task directory; a hook blocks everything else.
 - The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format (name, description, type, and the fact with its why and how to apply), and name the file in your DONE.
 - Do not commit, push, or open PRs.
 

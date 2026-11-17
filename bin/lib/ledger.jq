@@ -2013,6 +2013,12 @@ def by_task: group_by(.task) | map({key: .[0].task, value: .}) | from_entries;
 # opened by team-open or legacy: it has events and no closed.
 def is_open: . != null and (task_status | IN("open", "legacy"));
 
+# The events of the open tasks (is_open), from every ledger event as one array (ledger_events'),
+# as one array in ledger order, each task's status worked out once: a select of is_open per event
+# folds a task's lifecycle once for each of its events, a time that grows with the square of an
+# open task's events.
+def open_task_events: (by_task | map_values(is_open)) as $open | map(select($open[.task]));
+
 # The live sessions named like team workers (T<n>-<role>, or T<n>-<role>-NN for ticket NN's, a
 # builder in a ticket worktree), from the session list and every task's events by id: {task, role,
 # name, session (the short id), status, state, logged (a launch of the task names it), task_state
