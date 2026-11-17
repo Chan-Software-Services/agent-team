@@ -236,7 +236,7 @@ TABLE
   assert_equal "${lines[0]}" "$(sed -n '2s/^# //p' "$REPO_ROOT/bin/team-log")"
   assert_contains "$output" "Ledger contract, strict from $STRICT_FROM"
   # The forms a list and an object take, the whole numbers' type and the one-time conversion.
-  assert_contains "$output" "Usage: team-log T<n> <event> [key=value]...
+  assert_contains "$output" "Usage: team-log T<n> <event> [key=value | key-file=<path>]...
        team-log T<n> --from-message '<message>' [--from <session>] [--sent-back <list>] [--relay <id>] [--print]
        team-log --check [<file>]
        team-log --check-lifecycle [<file>]
@@ -683,6 +683,30 @@ $TEAM_HOME/ledger.jsonl: 3 of 7 lines break the ledger contract"
   run_bin -0 team-log T26 denied role=builder session=4f2a9c1e what=Bash 'why=[deny rule] git reset * --hard*'
   assert_equal "$(logged_after 2)" \
     '{"task":"T26","event":"denied","role":"builder","session":"4f2a9c1e","what":"Bash","why":"[deny rule] git reset * --hard*"}'
+  run_bin -0 team-log --check
+}
+
+# The report's "a log line that quotes a denied command": the command in the call matched the deny
+# rule again, so the coordinator logged a paraphrase.
+@test "a field's value is taken from a file by <key>-file=, so a denied command is logged as it was" {
+  opened_task T26
+  local file=$BATS_TEST_TMPDIR/what.txt
+  printf '%s\n' 'git push -q origin fix/x; bats tests/x.bats -f "the guard"' >"$file"
+  run_bin -0 team-log T26 denied role=builder "what-file=$file" 'why=[deny rule] git push * -f*'
+  assert_equal "$(logged_after 2)" \
+    '{"task":"T26","event":"denied","role":"builder","what":"git push -q origin fix/x; bats tests/x.bats -f \"the guard\"","why":"[deny rule] git push * -f*"}'
+  # Only the one trailing newline is dropped; a value of several lines is kept whole.
+  printf 'a\nb\n\n' >"$file"
+  run_bin -0 team-log T26 injection role=builder source=x "text-file=$file"
+  assert_equal "$(jq -c .text "$TEAM_HOME/ledger.jsonl" | tail -1)" '"a\nb\n"'
+  : >"$file"
+  run_bin -2 team-log T26 denied role=builder "what-file=$file" why=x
+  assert_contains "$output" "what-file=$file: the file is empty"
+  run_bin -2 team-log T26 denied role=builder "what-file=$BATS_TEST_TMPDIR/none" why=x
+  assert_contains "$output" "what-file=$BATS_TEST_TMPDIR/none: cannot read the file"
+  echo x >"$file"
+  run_bin -2 team-log T26 denied role=builder what=x "what-file=$file" why=x
+  assert_contains "$output" "what is given twice"
   run_bin -0 team-log --check
 }
 
@@ -1558,7 +1582,7 @@ null
 
 @test "too few arguments is a usage error" {
   run_bin -2 team-log
-  assert_contains "$output" "usage: team-log T<n> <event> [key=value]..."
+  assert_contains "$output" "usage: team-log T<n> <event> [key=value | key-file=<path>]..."
   run_bin -2 team-log T14
   run_bin -2 team-log --check a b
   run_bin -2 team-log --check-lifecycle a b

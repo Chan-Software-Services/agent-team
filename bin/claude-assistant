@@ -13,10 +13,12 @@
 #
 # Bypass mode, by Daniel's choice. Its settings are assistant.settings.json with @TEAM_CODE@
 # naming this checkout, @TEAM_HOME@ the team home and @DISCORD_STATE_DIR@ that directory, written
-# to ~/.local/state/agent-team/assistant.settings.json: every deny rule of the coordinator's, so
-# deny rules stop the plain spelling of a force push, a push to dev or main, git reset --hard,
-# git clean, git branch -D, a Docker prune and a merge outside team-merge, by the workers' own
-# rules (tests/repo.bats holds the three together), and besides them the Discord token and both
+# to ~/.local/state/agent-team/assistant.settings.json: every deny rule of the coordinator's on a
+# command or a path but those its command-guard hook holds command by command (its GitHub login, a
+# force push and a cd into ~/.config/agent-team), so deny rules stop the plain spelling of a force
+# push, a push to dev or main, git reset --hard, git clean, git branch -D, a Docker prune and a
+# merge outside team-merge, by the workers' own rules and its own git push * (tests/repo.bats
+# holds the three together), and besides them the Discord token and both
 # access files, any git push and git commit, GitHub's writes, the team's scripts that would act
 # as the coordinator, and starting or stopping a session. Its memory is the team home's
 # memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in the team
