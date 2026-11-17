@@ -1049,6 +1049,43 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   grep -qF 'test plan' "$REPO_ROOT/templates/briefs/rereview.md"
 }
 
+# The Markdown files under each skills/ and commands/ directory below <dir> whose text holds a shell
+# command Claude Code would run when it loads the skill or command, one path relative to <dir> per
+# line: a fence opened with three backticks and an exclamation mark, or an exclamation mark and a
+# backtick-quoted command at the text's start or after a blank, the two patterns Claude Code reads
+# them by (read from its 2.1.325 binary): skill_shell_files <dir>
+skill_shell_files() {
+  local file
+  while IFS= read -r -d '' file; do
+    [[ $(jq -Rs 'test("```!|(^|\\s)!`[^`]+`")' "$file") == true ]] && printf '%s\n' "${file#"$1"/}"
+  done < <(find "$1" -type f -name '*.md' \( -path '*/skills/*' -o -path '*/commands/*' \) -print0)
+  return 0
+}
+
+# A skill's or command's shell command runs when the skill loads, before the session's hooks see a
+# Bash call: the worker settings turn the commands off for every planner, builder and reviewer (and
+# the ops role, whose own file sets it too), and no skill or command a toolkit ships holds one.
+@test "the worker settings turn off skill shell commands, and no toolkit's skill or command holds one" {
+  assert_equal "$(jq -c .disableSkillShellExecution "$REPO_ROOT/settings/worker.json")" true
+  assert_equal "$(skill_shell_files "$REPO_ROOT/toolkits")" ""
+}
+
+@test "a skill or command holding a fenced or inline shell command is named, and prose about one is not" {
+  local dir=$BATS_TEST_TMPDIR/toolkits
+  mkdir -p "$dir/a/skills/fence" "$dir/a/skills/inline" "$dir/a/skills/line" "$dir/a/skills/prose" \
+    "$dir/b/commands" "$dir/b/agents" "$dir/b/docs"
+  printf '%s\n' '# Fence' '' '```!' 'id' '```' >"$dir/a/skills/fence/SKILL.md"
+  printf '%s\n' '# Inline' '' 'The branch: !`git branch --show-current`.' >"$dir/a/skills/inline/SKILL.md"
+  printf '%s' '!`id`' >"$dir/a/skills/line/SKILL.md"
+  printf '%s\n' '# Prose' '' 'Say "no!" and grep `!x` or a!`id` glob.' >"$dir/a/skills/prose/SKILL.md"
+  printf '%s\n' 'Run !`id`.' >"$dir/b/commands/look.md"
+  printf '%s\n' 'Run !`id`.' >"$dir/b/agents/reader.md"
+  printf '%s\n' 'Run !`id`.' >"$dir/b/docs/notes.md"
+  assert_equal "$(skill_shell_files "$dir" | LC_ALL=C sort)" "$(
+    printf '%s\n' a/skills/fence/SKILL.md a/skills/inline/SKILL.md a/skills/line/SKILL.md b/commands/look.md
+  )"
+}
+
 # The tools the sessions run send usage data off the machine unless told not to (T43's audit):
 # lavish-axi's analytics, codegraph's telemetry and Chrome DevTools MCP's Google usage statistics.
 @test "the worker, coordinator and assistant settings turn off the tools' telemetry" {
