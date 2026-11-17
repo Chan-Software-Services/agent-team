@@ -236,7 +236,7 @@ TABLE
   assert_equal "${lines[0]}" "$(sed -n '2s/^# //p' "$REPO_ROOT/bin/team-log")"
   assert_contains "$output" "Ledger contract, strict from $STRICT_FROM"
   # The forms a list and an object take, the whole numbers' type and the one-time conversion.
-  assert_contains "$output" "Usage: team-log T<n> <event> [key=value]...
+  assert_contains "$output" "Usage: team-log T<n> <event> [key=value | key-file=<path>]...
        team-log T<n> --from-message '<message>' [--from <session>] [--sent-back <list>] [--relay <id>] [--print]
        team-log --check [<file>]
        team-log --check-lifecycle [<file>]
@@ -1582,7 +1582,7 @@ null
 
 @test "too few arguments is a usage error" {
   run_bin -2 team-log
-  assert_contains "$output" "usage: team-log T<n> <event> [key=value]..."
+  assert_contains "$output" "usage: team-log T<n> <event> [key=value | key-file=<path>]..."
   run_bin -2 team-log T14
   run_bin -2 team-log --check a b
   run_bin -2 team-log --check-lifecycle a b

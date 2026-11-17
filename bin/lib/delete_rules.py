@@ -561,7 +561,7 @@ def _ordered(context, index):
     """The Bases of the plain sequence's command at index, from the cwd and each cd before it in
     order: a cd joined to it by && alone, or one that begins its and-or list and whose target is a
     directory it may enter from every Base now, with no command that may take a directory away
-    before it, is where the call is (sure); any other adds its target to the Bases."""
+    before it and no || after it in the command's own list, is where the call is (sure); any other adds its target to the Bases."""
     if context.cwd is None or _named("cdable_vars", context):
         raise Unread
     sequence = _sequence(context)
