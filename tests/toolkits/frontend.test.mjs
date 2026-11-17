@@ -7,7 +7,7 @@
 // open_devtools, which chrome-helper.test.mjs checks fails at once on one too old.
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { connect, createServer } from "node:net";
 import { join } from "node:path";
@@ -796,10 +796,17 @@ describe("agent-chrome", () => {
     // The Chrome agent-chrome left running, by its debugging port.
     const version = await fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json()).catch(() => null);
     if (version) {
+      // Its pid, from the profile's SingletonLock, a link to "<host>-<pid>": the socket closes
+      // before Chrome has done writing its profile, under the test file's temp root, which is
+      // removed at exit, so the hook waits for the process to end (up to 10 s).
+      const pid = Number(readlinkSync(join(home, ".local/share/agent-team/agent-chrome/SingletonLock")).split("-").pop());
+      const running = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
       const ws = new WebSocket(version.webSocketDebuggerUrl);
       await new Promise((resolve) => ws.addEventListener("open", resolve));
       ws.send(JSON.stringify({ id: 1, method: "Browser.close" }));
       await new Promise((resolve) => ws.addEventListener("close", resolve));
+      for (let i = 0; i < 100 && running(); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.ok(!running(), `the Agent Chrome, pid ${pid}, did not exit within 10 s of Browser.close`);
     }
   });
 

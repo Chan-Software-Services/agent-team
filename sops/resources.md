@@ -136,6 +136,10 @@ The coordinator and Daniel's own sessions are never in the slice.
 A worker session is the claude daemon's child (the daemon, then the session's `bg-pty-host`, then the session), never `team-worker`'s, so it cannot be started inside the slice.
 Instead `team-capacity place` adopts each live session named `T<n>-<role>` after it starts, but a load check's `T0-<role>`, which is no task's work: the session's process, its `bg-pty-host` parent and every descendant move into the transient scope `agent-team-T<n>-<id>.scope` in its task's slice, through the user manager's `StartTransientUnit` (`busctl --user call org.freedesktop.systemd1 ...`).
 A descendant the team's slice already holds stays where it is, a session already in its scope is left, and a call that fails while the session runs is tried once more at once, with the session's pid from a fresh session list and a fresh tree, since a process may end between the read and the call.
+A session the claude daemon restarted runs under a new pid outside its slice, and its scope may still be loaded, holding what its first process left running (a browser toolkit's bridge and Chrome), so `StartTransientUnit` refuses the name ("Unit agent-team-T<n>-<id>.scope was already loaded or has a fragment file").
+Then `place` leaves those processes in the old scope, which stays in the task's slice and is counted there, and at once puts the session in `agent-team-T<n>-<id>-<pid>.scope`, named by its new process's pid, in the same slice; a session in that scope is left too, and a refusal of that name fails as any other call does.
+The user manager cannot add the session to the old scope instead: its `AttachProcessesToUnit` refuses a scope that is not delegated ("Process migration not available on non-delegated units").
+A session's use in a reading is the scope of the two its process runs in, and its process tree's while it runs in neither (restarted, before `place` moves it), so the old scope's processes count for the task alone, through its slice.
 `team-worker` runs `place <id>` for its new session right after the launch, which the claude daemon may not list yet, or list with no running process: with ids, `place` reads the list again once a second until the session is placeable or `TEAM_CAPACITY_PLACE_SECONDS` (30) have passed since that id's wait began.
 With ids, a call that fails saying a process is gone (`No such process`, a short-lived process of the tree that ended before the call) is tried again 1 second apart, within the same seconds; any other failure gets the one retry.
 An id listed under a name that is no team session fails at once, since a name does not change.
@@ -144,11 +148,11 @@ A session it still cannot place is a warning, and the launch stands.
 Once all of a scope's processes end, systemd removes the scope.
 
 The assumptions, checked on home-pc on 2026-11-01 (T175 build note `01-cgroups.md`): the user manager's cgroup delegates `cpu`, `memory` and `pids`; systemd is 262; Docker's cgroup driver is `systemd` on cgroup v2; the claude daemon was started from a Konsole tab, and every session it starts sits in that tab's scope under `user@1000.service`; and Daniel's own run of the probe moved such a process into `agent-team-probe.scope`.
-Workers' permissions do not allow the `busctl` call by hand: the tests use a stub, and a live check of placement is Daniel's or the coordinator's.
+The tests use a stub for the `busctl` call; a worker probes the user manager only with throwaway scopes of its own outside `agent-team.slice`, and a live check of a team session's placement is Daniel's or the coordinator's.
 
 ## Readings
 
-The heartbeat's `capacity` step runs `team-capacity sample` on the lease holder every run, every 5 minutes, then `team-capacity place --quiet`, which places again any live team session outside its slice (one the claude daemon restarted, say).
+The heartbeat's `capacity` step runs `team-capacity sample` on the lease holder every run, every 5 minutes, then `team-capacity place --quiet`, which places again any live team session outside its slice (one the claude daemon restarted, say, as "Placement" says).
 Each reading goes to `~/.local/state/agent-team/capacity/readings.jsonl`, kept for 24 hours.
 Its machine's part (`bin/lib/reading.sh`) is the memory, what the other programs use, and the team's processes, found by their working directory and their descent, their CPU read against a snapshot of the last reading's, `procs.tsv` beside the readings.
 A snapshot misses a process that started and ended between two readings (a test, a compiler, a `shellcheck`), so on Linux the team's CPU is its slice's instead: each reading keeps `agent-team.slice`'s `CPUUsageNSec` as `team_cpu_nsec` (null off Linux, when the user manager does not answer, or with no counter).

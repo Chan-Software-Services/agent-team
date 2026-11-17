@@ -7,6 +7,7 @@
 
 load helpers/common
 load helpers/queue
+load helpers/github-api
 
 setup() {
   sandbox
@@ -21,6 +22,9 @@ setup() {
   export GH_DIR=$BATS_TEST_TMPDIR/gh
   mkdir -p "$GH_DIR"
   echo 0 >"$GH_DIR/look"
+  github_stub_setup
+  # team-ci-wait reads GitHub again at each look, with no time passing but the stub sleep's.
+  export TEAM_GITHUB_FRESH_SECONDS=0
   review_app_off
   poster team-review-status "agent-review success"
   land_gh
@@ -88,9 +92,29 @@ job() {
 # enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables
 # kept in $GH_DIR/dequeues), a trial commit's check runs, no
 # status and no workflow run of it, a job, and a status POST, each from the latest answer at or
-# before the current look. Anything unplanned fails.
+# before the current look; team-ci-wait's REST reads (gh api -i, through bin/lib/github-api.sh) in
+# gh api -i's form through tests/helpers/github-api.bash. Each call is one line of $GH_DIR/calls,
+# with -i and an -H header left out. Anything unplanned fails.
 land_gh() {
   stub_script gh <<'EOF'
+source "$GITHUB_STUB_HELPER"
+github_request "$@"
+args=() raw=false
+while (($#)); do
+  case $1 in
+    -i) raw=true ;;
+    -H) shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+set -- "${args[@]}"
+# answer <body>: the read's answer, in gh api -i's form for the reader.
+answer() {
+  if $raw; then github_answer 200 "$1"; fi
+  printf '%s\n' "$1"
+  exit 0
+}
 n=$(cat "$GH_DIR/look")
 if (($# > 2)); then printf '%s\n' "$1 $2 ${*: -1}"; else printf '%s\n' "$1 $2"; fi >>"$GH_DIR/calls"
 case "$1 $2" in
@@ -111,9 +135,9 @@ case "$1 $2" in
     sha=${2#repos/owner/proj/commits/}
     what=checks-${sha:0:7}
     ;;
-  "api repos/owner/proj/commits/"*"/status?per_page=100") echo '{"state": "pending", "statuses": []}'; exit 0 ;;
-  "api repos/owner/proj/actions/runs?head_sha="*) echo '{"total_count": 0, "workflow_runs": []}'; exit 0 ;;
-  "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") echo '{"total_count": 0, "workflow_runs": []}'; exit 0 ;;
+  "api repos/owner/proj/commits/"*"/status?per_page=100") answer '{"state": "pending", "statuses": []}' ;;
+  "api repos/owner/proj/actions/runs?head_sha="*) answer '{"total_count": 0, "workflow_runs": []}' ;;
+  "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") answer '{"total_count": 0, "workflow_runs": []}' ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${2##*/} ;;
   *) echo "unplanned gh call: $*" >&2; exit 1 ;;
 esac
@@ -125,13 +149,13 @@ case $body in
   fail) echo "error connecting to api.github.com" >&2; exit 1 ;;
   refuse:*) echo '{"errors": []}'; echo "gh:${body#refuse:}" >&2; exit 1 ;;
 esac
-printf '%s\n' "$body"
+answer "$body"
 EOF
 }
 
-# The stub sleep moves on to the next look and, after LOOK_LIMIT looks (default 60), stops the
-# script with exit 99, so a landing that never ends shows as that exit. The uname stub keeps it
-# ahead of Homebrew's GNU sleep on macOS.
+# The stub sleep moves on to the next look, and the reader's clock on by its seconds, and, after
+# LOOK_LIMIT looks (default 60), stops the script with exit 99, so a landing that never ends shows
+# as that exit. The uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
 stub_sleep() {
   stub_command sleep uname
   stub_reply uname Linux
@@ -139,6 +163,7 @@ stub_sleep() {
 n=\$(cat "$GH_DIR/look")
 ((n < \${LOOK_LIMIT:-60})) || exit 99
 echo \$((n + 1)) >"$GH_DIR/look"
+echo \$((\$(cat "\$TEAM_GITHUB_CLOCK") + \$1)) >"\$TEAM_GITHUB_CLOCK"
 EOF
 }
 
@@ -188,7 +213,7 @@ team-land: $url merged as 0e0e0e0
   assert_equal "$(enqueues)" "-f pr=PR_kwDOtest5 -f head=$head"
   assert_equal "$(posted_on)" "--merge-group $url $t1"
   # The wait on the trial commit is team-ci-wait's: the commit's check runs, never the PR's checks.
-  grep -Fxq "api repos/owner/proj/commits/$t1/check-runs?filter=latest&per_page=100 --paginate" "$GH_DIR/calls"
+  grep -Fxq "api repos/owner/proj/commits/$t1/check-runs?filter=latest&per_page=100" "$GH_DIR/calls"
   if grep -E '^pr ' "$GH_DIR/calls"; then return 1; fi
 }
 
