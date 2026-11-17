@@ -2829,6 +2829,53 @@ LINES
   assert_equal "$(stops)" 2f2f2f2f
 }
 
+@test "a builder's launch stops an earlier builder idle after the pr it delivered, though Claude Code calls it blocked, and leaves one at a real prompt" {
+  # Claude Code calls a session blocked when its last turn's summary says it waits on someone
+  # (a builder's "awaiting the merge word" after its PR), with no dialog open: status idle, no
+  # waitingFor. team-sweep names no such builder waiting-input, and the launch reads it the same.
+  open_task T9
+  log_lines <<LINES
+launch T9 builder 2f2f2f2f $wt1
+T9 {event: "pr", url: "https://github.com/owner/proj/pull/5", head: "1234567"}
+launch T9 reviewer 7e7e7e7e $wt1
+LINES
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/delivered.jsonl"
+  local reviewer='{"id": "7e7e7e7e", "name": "T9-reviewer", "status": "busy", "state": "working"}'
+  stop_stub
+  # launch_with <builder's session object>: the builder's launch on the delivered ledger, the
+  # launch it logs taken out again after, so each case starts from the same ledger.
+  launch_with() {
+    echo "[$1, $reviewer]" >"$STUB_FIXTURES/agents.json"
+    : >"$STUB_CALLS/claude.log"
+    run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+    cp "$BATS_TEST_TMPDIR/delivered.jsonl" "$TEAM_HOME/ledger.jsonl"
+  }
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "idle", "state": "blocked"}'
+  assert_equal "$(stops)" 2f2f2f2f
+  assert_contains "$stderr" "team-worker: stopped T9-builder 2f2f2f2f: its work is handed on"
+  run_bin -0 team-sweep
+  # A dialog open (a permission prompt, a question) is still left and named, whatever it
+  # delivered, and team-sweep names it waiting-input.
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "idle", "state": "blocked", "waitingFor": "dialog open"}'
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "waiting", "state": "blocked"}'
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+  # So is one blocked once something is asked of it since: the review's findings came back.
+  log_lines <<<'T9 {event: "review", verdict: "findings", head: "1234567", findings: {blocking: 1}, sent_back: [1]}'
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/delivered.jsonl"
+  launch_with '{"id": "2f2f2f2f", "name": "T9-builder", "status": "idle", "state": "blocked"}'
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+}
+
 @test "a paused for any reason but stowed leaves an idle reviewer, a resumed after it too" {
   open_task T9
   log_lines <<LINES
