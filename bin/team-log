@@ -11,6 +11,8 @@
 # dropped, so a value that would match a deny rule in the call (a denied command, team-log T<n>
 # denied role=<role> what-file=<file> why=<why>) is logged as it was; a file that cannot be read
 # or is empty is a malformed command line.
+# The value reaches the ledger and the team home's origin whole, so a secret in a denied command
+# (a token in an assignment, an Authorization header) is written into the file as <secret>.
 # The event is checked against the task's state too, by the lifecycle table (bin/lib/lifecycle.json,
 # through ledger_append in bin/lib/team.sh): one the table refuses (a closed task's held, a review
 # of a task with no opened) is refused, logging nothing, from the table's lifecycle_from on,

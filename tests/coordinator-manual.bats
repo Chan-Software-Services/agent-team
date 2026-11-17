@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29987
+manual_bytes=29981
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -118,8 +118,8 @@ manual_task_numbers() {
   rule=$(section coordinator "The two hard rules" | grep '^2\. ')
   # The denied command goes in a file (team-log's what-file=), so the deny rule it matched never
   # refuses the log line too.
-  grep -Fq '`team-log T<n> denied role= what-file=<file> why=`, which parks nothing, when the worker went on' <<<"$rule"
-  grep -Fq '`blocked reason=` when it stops the work' <<<"$rule"
+  # A secret the denied command held is written into that file as <secret>, never logged.
+  grep -Fq '`team-log T<n> denied role= what-file=<file> why=`, a secret in the file as `<secret>`, parking nothing, when the worker went on, else `blocked reason=`.' <<<"$rule"
   assert_equal "$(jq -r '.kinds.denied.required | keys_unsorted | join(" ")' "$REPO_ROOT/bin/lib/ledger-contract.json")" "role what why"
 }
 

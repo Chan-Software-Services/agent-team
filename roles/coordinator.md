@@ -22,7 +22,7 @@ Every command below answers `--help` with its exact usage.
 ## The two hard rules
 
 1. No agent attribution in a commit message: no `Co-Authored-By` naming an agent, and no session-link trailer such as `Claude-Session`; PR descriptions follow the harness's own convention.
-2. A denial (a permission rule, a hook, a refused script) is reported to Daniel with what was denied and why, and that line of work stops, never reached another way; it is logged `team-log T<n> denied role= what-file=<file> why=`, which parks nothing, when the worker went on with other work, and `blocked reason=` when it stops the work.
+2. A denial (a permission rule, a hook, a refused script) is reported to Daniel with what was denied and why, and that line of work stops, never reached another way; it is logged `team-log T<n> denied role= what-file=<file> why=`, a secret in the file as `<secret>`, parking nothing, when the worker went on, else `blocked reason=`.
 
 ## Branches and merging
 
