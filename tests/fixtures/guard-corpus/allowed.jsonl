@@ -153,3 +153,6 @@
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__react", "input": {"chat_id": "@ASSISTANT_CHANNEL@", "message_id": "1567", "emoji": "👀"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__edit_message", "input": {"chat_id": "@ASSISTANT_THREAD@", "message_id": "1568", "text": "Step 2 is done."}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__download_attachment", "input": {"chat_id": "@ASSISTANT_CHANNEL@", "message_id": "1569"}, "cwd": "@TEAM_HOME@"}
+{"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end && rm -rf test-results playwright-report && cd .."}, "local": true}
+{"roles": ["builder", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end; npx playwright test --reporter=line; cd ..; rm -rf front-end/test-results"}, "local": true}
+{"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "tmux -S @JOB@/tmp/look.sock new-session -d -s look 'npm run dev'; tmux -S @JOB@/tmp/look.sock capture-pane -p -t look; tmux -S @JOB@/tmp/look.sock kill-server"}, "local": true}
