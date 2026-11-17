@@ -867,7 +867,7 @@ team_reading() {
       (.sessions | map([.id, .memory / $mib, .cpu_seconds]))])' "$STATE_DIR/readings.jsonl")" \
     '[["T7",1536,[["a1b2c3d4",512,60]]],["T9",300,[["b1b2c3d4",300,40]]]]'
   assert_equal "$(stub_calls systemctl)" \
-    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4-100.scope"]'
+    '["--user","show","-p","Id,ControlGroup,CPUUsageNSec","agent-team.slice","agent-team-T7.slice","agent-team-T9.slice","agent-team-T7-a1b2c3d4-100.scope"]'
 }
 
 @test "sample: a task's CPU is its slice's since the newest reading and its processes' outside the slice since the snapshot" {
