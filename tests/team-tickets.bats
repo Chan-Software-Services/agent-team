@@ -533,7 +533,7 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
   assert_contains "$output" "a task directory with no spec.md, a spec with no such"
 }
 
-@test "the planner's role and briefs give the line formats, the Phase:, Touches: and Parallel: lines and the check, and the manual names team-tickets" {
+@test "the planner's role and briefs give the line formats, the Phase:, Touches: and Parallel: lines, each repository's task directory and the check, and the manual names team-tickets" {
   local file
   for file in roles/planner.md templates/briefs/planner-feature.md templates/briefs/planner-interview.md; do
     assert_contains "$(cat "$REPO_ROOT/$file")" '`Blocked by: None` or `Blocked by: 01, 03`'
@@ -544,6 +544,8 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
     assert_contains "$(cat "$REPO_ROOT/$file")" '`Touches: bin/team-next, tests/team-next.bats`'
     assert_contains "$(cat "$REPO_ROOT/$file")" 'keep tickets that may build at once disjoint'
     assert_contains "$(cat "$REPO_ROOT/$file")" '`Parallel:` line in `spec.md`, a cap from 1 to 3 per phase'
+    # A task with worktrees in two repositories has each one's tickets in its own worktree.
+    assert_contains "$(cat "$REPO_ROOT/$file")" "each repository's tickets, its own \`scope.txt\` and a \`spec.md\`"
   done
   assert_contains "$(cat "$REPO_ROOT/templates/briefs/planner-feature.md")" '`{{team_bin}}/team-tickets {{task}} --check`'
   assert_contains "$(cat "$REPO_ROOT/templates/briefs/planner-interview.md")" '`{{team_bin}}/team-tickets {{task}} --check`'
