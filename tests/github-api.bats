@@ -73,6 +73,12 @@ run_reader() {
   run "${opts[@]}" "$reader" "$@"
 }
 
+# on_worker <command>...: <command> on the worker login, as a session on it is: GH_CONFIG_DIR its
+# gh directory, the token variables empty.
+on_worker() {
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN='' GITHUB_TOKEN='' "$@"
+}
+
 # read_ep [<endpoint> [<fresh seconds>]]: gh_read of <endpoint> (default the PR) into $out/body.
 read_ep() {
   api gh_read "$out" body "${1:-$ep}" ${2:+"$2"}
@@ -213,6 +219,61 @@ $ep 200"
   [[ ! -e $state/limit.json ]]
   api gh_limited
   assert_equal "$output" "rc=1 status= until= resource= kind="
+}
+
+@test "each login keeps its own state: a limit met on one never holds the other's reads, nor mixes their budgets and logs" {
+  local worker=$HOME/.local/state/agent-team/github-worker other=repos/owner/proj/pulls/218 reset
+  reset=$(($(now) + 600))
+  github_budget core 5000 5000 "$reset"
+  plan "$ep" primary
+  plan "$other" 200 '{"number":218}'
+  # The owner login meets its limit, which holds its own next read.
+  read_ep
+  assert_equal "$output" "rc=3 status=403 until=$reset resource=core kind=primary"
+  api gh_read "$out" other "$other"
+  assert_equal "$output" "rc=3 status= until=$reset resource=core kind=primary"
+  # The worker login's read goes, the owner's limit standing.
+  on_worker api gh_read "$out" other "$other"
+  assert_equal "$output" "rc=0 status=200 until= resource= kind="
+  assert_equal "$(cat "$out/other")" '{"number":218}'
+  assert_equal "$(github_requests)" "$ep 403
+$other 200 worker"
+  # Each budget, limit and log is its own login's.
+  assert_equal "$(jq -c '.core | [.used, .remaining]' "$state/budget.json")" '[5000,0]'
+  assert_equal "$(jq -c '.core | [.used, .remaining]' "$worker/budget.json")" '[1,4999]'
+  [[ -e $state/limit.json && ! -e $worker/limit.json ]]
+  assert_equal "$(jq -c '[.endpoint, .status]' "$state"/calls-*.jsonl)" "[\"$ep\",403]"
+  assert_equal "$(jq -c '[.endpoint, .status]' "$worker"/calls-*.jsonl)" "[\"$other\",200]"
+  on_worker api gh_limited
+  assert_equal "$output" "rc=1 status= until= resource= kind="
+
+  # A limit the worker login meets holds its reads alone.
+  rm "$state/limit.json"
+  github_budget --worker core 5000 5000 "$reset"
+  plan "$ep" 200 '{"number":217}'
+  on_worker read_ep
+  assert_equal "$output" "rc=3 status=403 until=$reset resource=core kind=primary"
+  on_worker api gh_limited
+  assert_equal "${lines[0]}" "$reset"
+  read_ep
+  assert_equal "$output" "rc=0 status=200 until= resource= kind="
+  api gh_limited
+  assert_equal "$output" "rc=1 status= until= resource= kind="
+}
+
+@test "the owner login's state is the one directory there was before, so a limit it recorded still stands" {
+  local reset
+  reset=$(($(now) + 600))
+  mkdir -p "$state"
+  jq -cn --argjson until "$reset" --argjson now "$(now)" \
+    '{resource: "core", kind: "primary", until: $until, seen: $now, by: "team-ci-wait", endpoint: "x"}' >"$state/limit.json"
+  plan "$ep" 200 '{"number":217}'
+  read_ep
+  assert_equal "$output" "rc=3 status= until=$reset resource=core kind=primary"
+  # A gh directory of its own that is not the worker login's is the owner's too.
+  GH_CONFIG_DIR=$BATS_TEST_TMPDIR/elsewhere read_ep
+  assert_equal "${output%% *}" rc=3
+  assert_equal "$(github_requests)" ""
 }
 
 @test "a secondary refusal stands for every resource: Retry-After's seconds, else 60" {
