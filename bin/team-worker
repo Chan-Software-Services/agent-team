@@ -113,13 +113,21 @@
 # mcp-roles.json names for other roles only; an ops launch's servers each get AGENT_TEAM_ROLE=ops
 # in their own environment, since the production servers read no secret without it.
 # A planner, builder or reviewer of a project whose registry entry says confine = "on", and each
-# of T0's, runs every shell command through bin/lib/confine-shell, where the kernel refuses a
-# delete or rename outside the session's roots: its settings' env holds CLAUDE_CODE_SHELL_PREFIX,
-# this checkout's bin/lib/confine-shell, AGENT_TEAM_WORKTREE, the worktree's real path, and
-# AGENT_TEAM_GIT_DIR, the worktree's common git directory as git names it at this launch, the
-# session's roots, so no later call asks the worktree's own files for them. With
-# "off" or no key it holds none of them, and ops, which has no shell, never does. The roles' hooks are
-# in exec form (a command with "args"), which Claude Code runs without the prefix.
+# of T0's, runs every shell command where the kernel refuses a delete or rename outside the
+# session's roots, which are fixed at this launch: bin/lib/confine-session writes the session's
+# directory, ~/.config/agent-team/confine/<task>/<the stem below>/, holding session.json, the
+# roots (the worktree's real path, its common git directory as git names it now, the session tmp
+# /tmp/agent-team-<task>, the team home among the directories no root may be in), and the program
+# bash, and the settings' env names that program as CLAUDE_CODE_SHELL and
+# CLAUDE_CODE_SHELL_PREFIX, so no shell runs before the domain and no later call asks the
+# environment or the worktree's own files for a root; a refusal of confine-session ends the
+# launch with its text. The env also holds RUSTUP_AUTO_INSTALL "0", so a missing Rust toolchain
+# fails instead of downloading into ~/.rustup, which is no root. Once claude --bg has printed
+# the session's id, confine-session job records its job tmp, ~/.claude/jobs/<id>/tmp, as a root;
+# when that fails the launch stands, with a warning that its commands cannot remove or rename
+# there. With "off" or no key the env holds none of them and no directory is written, and ops,
+# which has no shell, never has either. The roles' hooks are in exec form (a command with
+# "args"), which Claude Code runs without the prefix.
 # The merged settings and MCP config are generated into tasks/<task>/ (gitignored), as
 # settings.<role>.<project>.json and mcp.<role>.<project>.json for a planner, builder or reviewer
 # with a project (so a task's sessions on two projects' worktrees never share one), with --NN
@@ -832,10 +840,10 @@ substitute='walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TA
   | gsub("@PROJECT_ORIGINS@"; $facts.origins) else . end)'
 
 # A planner, builder or reviewer of a project whose registry entry says confine = "on", and each
-# of T0, the load check, runs its shell commands through this checkout's bin/lib/confine-shell:
-# its settings' env names it as CLAUDE_CODE_SHELL_PREFIX, the worktree's real path as
-# AGENT_TEAM_WORKTREE, the first root, and its common git directory, read above at this launch,
-# as AGENT_TEAM_GIT_DIR. Ops has no shell, and is never confined.
+# of T0, the load check, runs its shell commands confined: bin/lib/confine-session writes the
+# session's directory here, with the worktree's real path and its common git directory, read
+# above at this launch, and the settings' env names its program as the session's shell and shell
+# prefix. Ops has no shell, and is never confined.
 confine=''
 if [[ $role != ops ]]; then
   if [[ $task == T0 ]]; then
@@ -844,8 +852,11 @@ if [[ $role != ops ]]; then
     confine=$(team_project "$launch_project" confine) || exit 1
   fi
 fi
-shell_prefix=''
-[[ $confine != on ]] || shell_prefix=$code/bin/lib/confine-shell
+shell_program='' session_dir=$HOME/.config/agent-team/confine/$task/$stem
+if [[ $confine == on ]]; then
+  shell_program=$("$code/bin/lib/confine-session" write --dir "$session_dir" --task "$task" --worktree "$worktree" \
+    --git-dir "$common_dir" --team-home "$TEAM_HOME" --home "$HOME" --session-tmp "${TEAM_SYSTEM_ROOT:-}/tmp/agent-team-$task") || exit 1
+fi
 
 # Role settings layered on the shared worker settings; permission lists, each event's hook list
 # and each autoMode list are concatenated, the shared ones first, so a role's hooks add to the
@@ -855,7 +866,7 @@ shell_prefix=''
 # reviewer get Remote Control off (see the header).
 settings=$taskdir/settings.$stem.json
 jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --arg session "$name" --argjson facts "$facts" \
-  --arg memory "$memory" --arg shell_prefix "$shell_prefix" --arg git_dir "$common_dir" \
+  --arg memory "$memory" --arg shell_program "$shell_program" \
   --argjson login_env "$login_env" --arg login_line "$login_line" '.[0] as $base | .[1] as $own
   | ($base * $own)
   | .permissions.deny = (($base.permissions.deny // []) + ($own.permissions.deny // []))
@@ -874,7 +885,7 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
   | .worktree.bgIsolation = "none"
   | if $task == "T0" and $role != "ops" then .remoteControlAtStartup = false else . end
   | if $memory != "" then .autoMemoryDirectory = $memory else . end
-  | if $shell_prefix != "" then .env += {CLAUDE_CODE_SHELL_PREFIX: $shell_prefix, AGENT_TEAM_WORKTREE: $worktree, AGENT_TEAM_GIT_DIR: $git_dir} else . end
+  | if $shell_program != "" then .env += {CLAUDE_CODE_SHELL: $shell_program, CLAUDE_CODE_SHELL_PREFIX: $shell_program, RUSTUP_AUTO_INSTALL: "0"} else . end
   | '"$substitute"'
   | if $login_env == {} then . else .env += $login_env | .autoMode.environment += [$login_line] end' \
   "$code/settings/worker.json" "$code/settings/$role.json" >"$settings"
@@ -1026,6 +1037,13 @@ out=$(cd "$worktree" && claude --bg "${restricted[@]}" "${sources[@]}" \
   "$prompt")
 [[ $out != *"send a prompt to start"* ]] || die "the session started without its prompt: $out"
 id=$(grep -oE '\b[0-9a-f]{8}\b' <<<"$out" | head -n 1) || die "could not read the session id from: $out"
+
+# A confined session's job tmp is a root only once its id is known; the session is already
+# running, so a failure here is a warning, and its commands are only refused a removal there.
+if [[ -n $shell_program ]] && ! job_out=$("$code/bin/lib/confine-session" job --dir "$session_dir" --session-id "$id" 2>&1); then
+  job_out=$(grep . <<<"$job_out" | tail -n 1 | sed 's/^confine-session: //' || true)
+  echo "team-worker: warning: could not record $name's job tmp (${job_out:-confine-session job failed}), so its commands cannot remove or rename there" >&2
+fi
 
 # T0 logs nothing, so its ops launch records the message it ran on in the machine's state.
 if [[ $task == T0 && $role == ops ]]; then

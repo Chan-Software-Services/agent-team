@@ -2955,6 +2955,239 @@ returned $HOME/slots/proj/3 for ticket 05
 nothing to launch: 06 waiting: PR 9; 07 blocked on 06"
 }
 
+# phase_merged [<parallel>]: T7's phase 1 merged into origin's main with a merge commit, and main
+# moved on origin since (another task's merge, pushed from a clone of its own, so T7's repository
+# has not fetched it); tickets 02, 03 and 04 are phase 2's, ready but for 02's done blocker.
+# Sets merge_tip (the merge) and base_tip (origin's main now).
+phase_merged() {
+  local other=$BATS_TEST_TMPDIR/other
+  fill_ready "${1:-}"
+  ticket 02-second "Blocked by: 01" "Phase: 2" "Touches: two.txt"
+  ticket 03-third "Blocked by: None" "Phase: 2" "Touches: three.txt"
+  ticket 04-fourth "Blocked by: None" "Phase: 2" "Touches: four.txt"
+  git -C "${primary:?}" merge -q --no-ff -m "Merge pull request #9 from owner/feat/T7-toil" feat/T7-toil
+  git -C "${primary:?}" push -q origin main
+  merge_tip=$(git -C "${primary:?}" rev-parse HEAD)
+  git clone -q "$BATS_TEST_TMPDIR/origin/proj.git" "$other"
+  echo t9 >"$other/t9.txt"
+  git -C "${other:?}" add t9.txt
+  git -C "${other:?}" commit -q -m "feat: another task's change"
+  git -C "${other:?}" push -q origin main
+  base_tip=$(git -C "${other:?}" rev-parse HEAD)
+  event merged "$(jq -cn --arg m "$merge_tip" '{pr: 9, merge: $m, head: "h0", by: "team-merge", project: "proj", phases_left: [2]}')"
+}
+
+# base_moves <file>: another commit on origin's main of proj, pushed from the clone phase_merged made.
+base_moves() {
+  echo "$1" >"$BATS_TEST_TMPDIR/other/$1"
+  git -C "${BATS_TEST_TMPDIR:?}/other" add "$1"
+  git -C "${BATS_TEST_TMPDIR:?}/other" commit -q -m "feat: $1"
+  git -C "${BATS_TEST_TMPDIR:?}/other" push -q origin main
+}
+
+# other_phase_ready: a second repository, other, with a free slot for a ticket worktree, its
+# task directory ignored, its phase 1 merged (phases_left [2]) and its base moved since, so its task
+# branch is an ancestor of origin's main; sets other_tip (origin's main of other now).
+other_phase_ready() {
+  local clone=$BATS_TEST_TMPDIR/other-clone
+  second_repo
+  sed -i 's|slots = \["slots/other/1"\]|slots = ["slots/other/1", "slots/other/2"]|' "$TEAM_HOME/projects.toml"
+  echo ".scratch/" >>"$(git -C "${wt_other:?}" rev-parse --git-common-dir)/info/exclude"
+  mkdir -p "$wt_other/.scratch/task/tickets"
+  event merged '{pr: 4, merge: "m1", head: "h1", by: "team-merge", project: "other", phases_left: [2]}'
+  git clone -q "$BATS_TEST_TMPDIR/origin/other.git" "$clone"
+  echo o >"$clone/o.txt"
+  git -C "${clone:?}" add o.txt
+  git -C "${clone:?}" commit -q -m "feat: another task's change in other"
+  git -C "${clone:?}" push -q origin main
+  other_tip=$(git -C "${clone:?}" rev-parse HEAD)
+}
+
+# other_ticket <NN-slug> <lines>...: a ticket file of those lines in other's task directory.
+other_ticket() {
+  printf '%s\n' "# ${1%%-*}: ${1#*-}" "" "${@:2}" "" "- [ ] it works" >"$wt_other/.scratch/task/tickets/$1.md"
+}
+
+# The task branch's tip.
+task_tip() {
+  git -C "${wt:?}" rev-parse refs/heads/feat/T7-toil
+}
+
+@test "--fill at cap 2 brings the task branch to origin's base before a merged part's next phase, so its ticket worktrees hold it" {
+  phase_merged 2
+  local old
+  old=$(task_tip)
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_equal "$(head -n 1 <<<"$output")" \
+    "brought phase 2's task branch to origin/main: feat/T7-toil ${old:0:8}..${base_tip:0:8} in $wt"
+  assert_equal "$(grep '^launched' <<<"$output")" "launched T7-builder-02 c0000001
+launched T7-builder-03 c0000002"
+  assert_equal "$(task_tip)" "$base_tip"
+  assert_equal "$(git -C "${HOME:?}/slots/proj/2" rev-parse HEAD)" "$base_tip"
+  assert_equal "$(git -C "${HOME:?}/slots/proj/3" rev-parse HEAD)" "$base_tip"
+
+  # Once the phase has started, the fill leaves the branch alone, though the base moved again.
+  echo again >"$BATS_TEST_TMPDIR/other/again.txt"
+  git -C "${BATS_TEST_TMPDIR:?}/other" add again.txt
+  git -C "${BATS_TEST_TMPDIR:?}/other" commit -q -m "feat: a third change"
+  git -C "${BATS_TEST_TMPDIR:?}/other" push -q origin main
+  event ticket-done '{ticket: "03", commits: ["0123456"]}'
+  run_bin -0 --separate-stderr team-next T7 --fill
+  [[ $output != *brought* ]]
+  assert_equal "$(tail -n 1 <<<"$output")" "launched T7-builder-04 c0000003"
+  assert_equal "$(task_tip)" "$base_tip"
+
+  # Nor once every launched ticket of the phase is done and none runs.
+  base_moves again2.txt
+  event ticket-done '{ticket: "02", commits: ["0123456"]}'
+  event ticket-done '{ticket: "04", commits: ["0123456"]}'
+  ticket 05-fifth "Blocked by: None" "Phase: 2" "Touches: five.txt"
+  run_bin -0 --separate-stderr team-next T7 --fill
+  [[ $output != *brought* ]]
+  assert_equal "$(tail -n 1 <<<"$output")" "launched T7-builder-05 c0000004"
+  assert_equal "$(task_tip)" "$base_tip"
+  run_bin -0 team-log --check
+}
+
+@test "cap 1's --fill brings the task branch to origin's base before a merged part's next phase, and launches its first ticket in the task worktree" {
+  phase_merged
+  local old
+  old=$(task_tip)
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_equal "$output" "brought phase 2's task branch to origin/main: feat/T7-toil ${old:0:8}..${base_tip:0:8} in $wt
+brief $TEAM_HOME/tasks/T7/brief-build-02.md
+launched T7-builder c0000001
+full: 1 of phase 2's cap 1 build (02); ready and waiting for a slot: 03, 04"
+  assert_equal "$(task_tip)" "$base_tip"
+  assert_equal "$(git -C "${wt:?}" rev-parse HEAD)" "$base_tip"
+  assert_equal "$(fill_launches | jq -r .worktree)" "slots/proj/1"
+}
+
+@test "--fill brings nothing to the task branch before a phase that follows no merged part" {
+  # Phase 1 not merged: a phase 2 after it starts where the task branch is.
+  fill_ready 2
+  ticket 02-second "Blocked by: 01" "Phase: 2" "Touches: two.txt"
+  ticket 03-third "Blocked by: None" "Phase: 2" "Touches: three.txt"
+  ticket 04-fourth "Blocked by: None" "Phase: 2" "Touches: four.txt"
+  local old
+  old=$(task_tip)
+  run_bin -0 --separate-stderr team-next T7 --fill
+  [[ $output != *brought* ]]
+  assert_equal "$(task_tip)" "$old"
+}
+
+@test "--fill at a merged part's next phase brings nothing to a task branch that holds origin's base already" {
+  phase_merged 2
+  git -C "${wt:?}" fetch -q origin
+  git -C "${wt:?}" merge -q --ff-only origin/main
+  run_bin -0 --separate-stderr team-next T7 --fill
+  [[ $output != *brought* ]]
+  assert_equal "$(grep -c '^launched' <<<"$output")" 2
+  assert_equal "$(task_tip)" "$base_tip"
+}
+
+@test "--fill refuses a merged part's next phase, changing nothing, on a dirty task worktree, one off its branch, a base it cannot fetch and a branch that left the base" {
+  phase_merged 2
+  local old before
+  old=$(task_tip)
+  # A change to a tracked file, then an untracked file git does not ignore.
+  echo changed >>"$wt/one.txt"
+  refused "phase 2 starts after a merged part, but the task worktree $wt has uncommitted changes (one.txt), so feat/T7-toil is not brought to origin/main and no ticket of phase 2 is launched: commit or remove them, then run team-next T7 --fill again" \
+    T7 --fill
+  git -C "${wt:?}" checkout -q -- one.txt
+  echo stray >"$wt/stray.txt"
+  refused "has uncommitted changes (stray.txt)" T7 --fill
+  rm "$wt/stray.txt"
+  assert_equal "$(task_tip)" "$old"
+
+  # Off the task branch.
+  git -C "${wt:?}" checkout -q --detach
+  refused "phase 2 starts after a merged part, but the task worktree $wt is on a detached HEAD, not feat/T7-toil, so it is not brought to origin/main and no ticket of phase 2 is launched: check out feat/T7-toil there, then run team-next T7 --fill again" \
+    T7 --fill
+  git -C "${wt:?}" checkout -q feat/T7-toil
+
+  # A base that cannot be fetched: exit 75, nothing changed.
+  git -C "${wt:?}" remote set-url origin "$BATS_TEST_TMPDIR/no-such-origin.git"
+  before=$(state)
+  run_bin -75 --separate-stderr team-next T7 --fill
+  assert_contains "$stderr" "team-next: phase 2 starts after a merged part, but origin's main cannot be fetched into $wt ("
+  assert_contains "$stderr" "), so feat/T7-toil is not brought to it and no ticket of phase 2 is launched: run team-next T7 --fill again once it can be"
+  assert_equal "$(state)" "$before"
+  git -C "${wt:?}" remote set-url origin "$BATS_TEST_TMPDIR/origin/proj.git"
+  assert_equal "$(task_tip)" "$old"
+
+  # A commit on the task branch that the base does not hold: never a merge or a force.
+  local own
+  own=$(commit own.txt "fix: after the merge")
+  refused "phase 2 starts after a merged part, but feat/T7-toil at ${own:0:8} holds commits origin/main at ${base_tip:0:8} does not, so it is not brought to origin/main and no ticket of phase 2 is launched: have a builder merge origin/main into feat/T7-toil in $wt (a merge commit, never a rebase), then run team-next T7 --fill again" \
+    T7 --fill
+  assert_equal "$(task_tip)" "$own"
+}
+
+@test "--fill brings each project's task branch to its base before that project's first launch of the phase, though another project's started it" {
+  phase_merged 2
+  other_phase_ready
+  local old_other
+  old_other=$(git -C "${wt_other:?}" rev-parse HEAD)
+  other_ticket 05-fifth "Blocked by: 03" "Phase: 2" "Touches: five.txt"
+  echo five.txt >"$wt_other/.scratch/task/scope.txt"
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_contains "$output" "brought phase 2's task branch to origin/main: feat/T7-toil"
+  [[ $output != *"in $wt_other"* ]]
+  event ticket-done '{ticket: "03", commits: ["0123456"]}'
+  run_bin -0 --separate-stderr team-next T7 --fill --next 05
+  assert_equal "$(head -n 1 <<<"$output")" \
+    "brought phase 2's task branch to origin/main: feat/T7-toil ${old_other:0:8}..${other_tip:0:8} in $wt_other"
+  assert_contains "$output" "launched T7-builder-05"
+  assert_equal "$(git -C "${HOME:?}/slots/other/2" rev-parse HEAD)" "$other_tip"
+}
+
+@test "--fill brings a project's task branch to its base before its next phase with a ticket of it, past a phase all another project's" {
+  phase_merged 2
+  other_phase_ready
+  # proj's phase 1 merged with phases 2 and 3 left; phase 2 was all other's, done and merged.
+  event merged "$(jq -cn --arg m "$merge_tip" '{pr: 9, merge: $m, head: "h0", by: "team-merge", project: "proj", phases_left: [2, 3]}')"
+  other_ticket 05-fifth "Blocked by: None" "Phase: 2"
+  event ticket-done '{ticket: "05", commits: ["0123456"]}'
+  event merged '{pr: 5, merge: "m2", head: "h2", by: "team-merge", project: "other", phases_left: [3]}'
+  ticket 02-second "Blocked by: 01" "Phase: 3" "Touches: two.txt"
+  ticket 03-third "Blocked by: None" "Phase: 3" "Touches: three.txt"
+  ticket 04-fourth "Blocked by: None" "Phase: 3" "Touches: four.txt"
+  local old
+  old=$(task_tip)
+  run_bin -0 --separate-stderr team-next T7 --fill
+  assert_equal "$(head -n 1 <<<"$output")" \
+    "brought phase 3's task branch to origin/main: feat/T7-toil ${old:0:8}..${base_tip:0:8} in $wt"
+  assert_equal "$(git -C "${HOME:?}/slots/proj/2" rev-parse HEAD)" "$base_tip"
+}
+
+@test "--fill brings nothing to a task branch whose project has a ticket in an earlier phase left by its merged part" {
+  phase_merged 2
+  # Phase 2's tickets all done in proj, its PR not merged yet, and phase 3 ready.
+  event merged "$(jq -cn --arg m "$merge_tip" '{pr: 9, merge: $m, head: "h0", by: "team-merge", project: "proj", phases_left: [2, 3]}')"
+  for n in 02 03 04; do event ticket-done "$(jq -cn --arg n "$n" '{ticket: $n, commits: ["0123456"]}')"; done
+  ticket 05-fifth "Blocked by: None" "Phase: 3" "Touches: five.txt"
+  local old
+  old=$(task_tip)
+  run_bin -0 --separate-stderr team-next T7 --fill
+  [[ $output != *brought* ]]
+  assert_equal "$(task_tip)" "$old"
+}
+
+@test "--fill checks every ready ticket's project before it moves a task branch, so a refusal in one moves none" {
+  phase_merged 2
+  second_repo
+  echo ".scratch/" >>"$(git -C "${wt_other:?}" rev-parse --git-common-dir)/info/exclude"
+  mkdir -p "$wt_other/.scratch/task/tickets"
+  printf '%s\n' "# 05: fifth" "" "Blocked by: None" "Phase: 2" "" "- [ ] it works" >"$wt_other/.scratch/task/tickets/05-fifth.md"
+  event merged '{pr: 4, merge: "m1", head: "h1", by: "team-merge", project: "other", phases_left: [2]}'
+  echo stray >"$wt_other/stray.txt"
+  local old
+  old=$(task_tip)
+  refused "phase 2 starts after a merged part, but the task worktree $wt_other has uncommitted changes (stray.txt)" T7 --fill
+  assert_equal "$(task_tip)" "$old"
+}
+
 @test "--fill takes the message forms' task checks, needs plan-approved and takes only --next" {
   run_bin -2 team-next T7 --fill -- "T7 DONE 01 $sha done"
   assert_contains "$output" "--fill takes no message"
