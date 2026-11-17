@@ -67,8 +67,8 @@ succeeds), is where it runs; one that begins its and-or list, with one operand, 
 directory it may enter now from each directory before it, with no rm, rmdir, unlink, mv or find
 before it in the call and no || after it in the delete's own list (whose failure may run the
 delete), is taken as run, so it alone is where the call is; either is the builtin by its bare
-name, behind no wrapper but a bare command, builtin or time (behind env, nice, sudo and the other
-external wrappers, or by a path, a cd program runs in a child), and takes only options by which
+name, behind no wrapper but a bare command or builtin (behind env, nice, sudo, time and the other
+external wrappers, or by a path, a cd program may run in a child), and takes only options by which
 it goes to its target (cd's -L, -P and -e, none of pushd's, whose -n moves nothing); any other
 adds its target to the directories before it. In any other call they are the cwd and each cd or
 pushd target anywhere in it. cd alone is HOME; each target is resolved as an operand is, a
@@ -565,11 +565,12 @@ def _goes(command, operands):
     does (cd's -L, -P and -e, alone or in a cluster; none of pushd's, whose -n moves nothing) and,
     with operands, exactly that many operands: a second one, or an option it does not take (-@
     where Bash lacks it), makes it fail on a directory that is there. It is the builtin only by its
-    bare name, behind no wrapper but a bare command, builtin or time: behind env, nice, timeout,
-    sudo and the other external wrappers, or by a path (/usr/bin/cd), a cd program runs in a child
-    and never moves the shell, and command -v only prints."""
+    bare name, behind no wrapper but a bare command or builtin: behind env, nice, timeout, sudo and
+    the other external wrappers, or by a path (/usr/bin/cd), a cd program runs in a child and never
+    moves the shell, and command -v only prints; time is Bash's keyword only unquoted at a
+    pipeline's start, which the walk does not say, else the time program, so a timed cd is none."""
     if command.words[0] not in ("cd", "pushd") or any(
-        tuple(wrapper) not in (("command",), ("builtin",), ("time",)) for wrapper in command.wrappers
+        tuple(wrapper) not in (("command",), ("builtin",)) for wrapper in command.wrappers
     ):
         return False
     args, options = list(command.words[1:]), "LPe" if command_name(command.words[0]) == "cd" else ""
