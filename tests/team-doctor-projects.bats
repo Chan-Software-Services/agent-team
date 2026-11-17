@@ -53,6 +53,11 @@ PASS changes site: the primary checkout is clean"
   assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then $clone"
   # Nothing else fails; team-config sees the worktree as site's checkout, with no memory set up.
   assert_equal "$(grep -v '^PASS ' <<<"$output" | grep -v ' site: ' || true)" "WARN memory: memory site setting missing; fix: team-config apply"
+  # A worktree shows its checkout's origin, so a moved one there is Conventioner's line alone.
+  git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
+  TEAM_DOCTOR_CHECKS='084-moved-origins.sh 200-projects.sh' run_bin -1 team-doctor
+  assert_equal "$(grep -E ' site: ' <<<"$output")" "FAIL checkout site: ~/projects/site is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then $clone"
+  assert_contains "$(line_of 'moved origin conventioner')" "FAIL moved origin conventioner: "
 }
 
 @test "an origin other than https://github.com/<repo>.git fails, and so does a treehouse pool named from it" {
@@ -123,26 +128,31 @@ PASS changes site: the primary checkout is clean"
   assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is https://github.com/someone/Conventioner.git, not https://github.com/chanjdaniel/Conventioner.git; fix: git -C ~/projects/Conventioner remote set-url origin https://github.com/chanjdaniel/Conventioner.git"
 }
 
-@test "moved origins passes on a machine whose origins name no moved repository, saying how many it read" {
+@test "moved origins passes on a machine whose origins name no moved repository, saying how many it read, and each project's line its origin" {
   only_checks 084-moved-origins.sh
   tools_at arch
-  # The team home's origin is the sandbox's bare repository, the projects' their GitHub URLs, and
-  # the code checkout has none, so three are read.
+  # The team home's origin is the sandbox's bare repository and the code checkout has none, so
+  # moved origins reads one, and each project's primary checkout has its line.
   run_bin -0 team-doctor
+  # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
   assert_equal "$output" "PASS team home: $TEAM_HOME, named by TEAM_HOME: a checkout of its own on dev, with an origin
-PASS moved origins: read 3 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+PASS moved origins: read 1 origin (the code checkout's and the team home's), and none names a moved repository of bin/lib/repo-moves.json
+PASS moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/Chan-Software-Services/Conventioner.git, which names no moved repository of bin/lib/repo-moves.json
+PASS moved origin site: site's checkout ~/projects/site has origin https://github.com/owner/site.git, which names no moved repository of bin/lib/repo-moves.json"
   # The new owner in any case is no move's from.
   git -C "${CODE_CHECKOUT:?}" remote add origin https://github.com/chan-software-services/agent-team.git
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 2 origins (the code checkout's and the team home's), and none names a moved repository of bin/lib/repo-moves.json"
   # Nor is an SSH remote of the new owner, or of the old owner's repository that never moved.
   git -C "${CONVENTIONER:?}" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
-  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/no-mistakes.git/
+  git -C "${SITE:?}" remote set-url origin ssh://git@github.com/chanjdaniel/site.git/
   run_bin -0 team-doctor
-  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 4 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+  # shellcheck disable=SC2088
+  assert_equal "$(grep '^PASS moved origin ' <<<"$output")" "PASS moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin git@github.com:Chan-Software-Services/Conventioner.git, which names no moved repository of bin/lib/repo-moves.json
+PASS moved origin site: site's checkout ~/projects/site has origin ssh://git@github.com/chanjdaniel/site.git/, which names no moved repository of bin/lib/repo-moves.json"
 }
 
-@test "moved origins names each checkout whose origin, HTTPS or SSH, names a moved repository, with its fix, and a treehouse project's pool move" {
+@test "moved origins names the code checkout and the team home whose origin, HTTPS or SSH, names a moved repository, and each project's line its own, with its fix, a treehouse project's the pool move" {
   only_checks 084-moved-origins.sh
   tools_at arch
   register intone chanjdaniel/intone_app direct-pr git
@@ -152,18 +162,23 @@ PASS moved origins: read 3 origins (the code checkout's, the team home's and eac
   git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/ChanJDaniel/Conventioner/
   git -C "${intone:?}" remote set-url origin ssh://git@github.com/chanjdaniel/intone_app.git/
   run_bin -1 team-doctor
+  assert_equal "$(line_of 'moved origins')" "FAIL moved origins: the code checkout $CODE_CHECKOUT has origin https://github.com/chanjdaniel/agent-team.git, a repository that moved to Chan-Software-Services/agent-team; the team home $TEAM_HOME has origin git@github.com:chanjdaniel/agent-team-records.git, a repository that moved to Chan-Software-Services/agent-team-records; fix: git -C $CODE_CHECKOUT remote set-url origin https://github.com/Chan-Software-Services/agent-team.git; git -C $TEAM_HOME remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git"
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  assert_equal "$(line_of 'moved origins')" "FAIL moved origins: the code checkout $CODE_CHECKOUT has origin https://github.com/chanjdaniel/agent-team.git, a repository that moved to Chan-Software-Services/agent-team; the team home $TEAM_HOME has origin git@github.com:chanjdaniel/agent-team-records.git, a repository that moved to Chan-Software-Services/agent-team-records; conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; intone's checkout ~/projects/intone_app has origin ssh://git@github.com/chanjdaniel/intone_app.git/, a repository that moved to Chan-Software-Services/intone_app; fix: git -C $CODE_CHECKOUT remote set-url origin https://github.com/Chan-Software-Services/agent-team.git; git -C $TEAM_HOME remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git; move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner; git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git"
+  assert_equal "$(line_of 'moved origin conventioner')" "FAIL moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  # shellcheck disable=SC2088
+  assert_equal "$(line_of 'moved origin intone')" "FAIL moved origin intone: intone's checkout ~/projects/intone_app has origin ssh://git@github.com/chanjdaniel/intone_app.git/, a repository that moved to Chan-Software-Services/intone_app; fix: git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git"
+  assert_contains "$(line_of 'moved origin site')" "PASS moved origin site: "
   # Each fix, run, clears its checkout; the doctor itself changed nothing.
   assert_equal "$(git -C "${CODE_CHECKOUT:?}" remote get-url origin)" https://github.com/chanjdaniel/agent-team.git
   git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team.git
   git -C "${TEAM_HOME:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git
   git -C "${intone:?}" remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
   run_bin -1 team-doctor
-  assert_equal "$(line_of 'moved origins')" "FAIL moved origins: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  assert_equal "$(grep '^FAIL' <<<"$output")" "FAIL moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 2 origins (the code checkout's and the team home's), and none names a moved repository of bin/lib/repo-moves.json"
 }
 
-@test "moved origins reads a primary checkout once, the code checkout's from a worktree of it, and skips a missing checkout" {
+@test "moved origins reads a primary checkout once, the code checkout's from a worktree of it, on its own line though it is a project's, and skips a missing checkout" {
   only_checks 084-moved-origins.sh
   tools_at arch
   # The code checkout is also a registered project's primary checkout, by a link at the path the
@@ -180,9 +195,10 @@ PASS moved origins: read 3 origins (the code checkout's, the team home's and eac
   rm -rf "${SITE:?}"
   CODE_CHECKOUT=$BATS_TEST_TMPDIR/wt run_bin -1 team-doctor
   assert_equal "$(line_of 'moved origins')" "FAIL moved origins: the code checkout $CODE_CHECKOUT has origin git@github.com:chanjdaniel/agent-team, a repository that moved to Chan-Software-Services/agent-team; fix: git -C $CODE_CHECKOUT remote set-url origin https://github.com/Chan-Software-Services/agent-team.git"
+  assert_equal "$(grep -o '^[A-Z]* moved origin [^:]*' <<<"$output")" "PASS moved origin conventioner"
   git -C "${CODE_CHECKOUT:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team.git
   CODE_CHECKOUT=$BATS_TEST_TMPDIR/wt run_bin -0 team-doctor
-  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 3 origins (the code checkout's, the team home's and each project's primary checkout's), and none names a moved repository of bin/lib/repo-moves.json"
+  assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 2 origins (the code checkout's and the team home's), and none names a moved repository of bin/lib/repo-moves.json"
 }
 
 @test "a treehouse slot outside the pool its origin names fails the slots line" {
@@ -671,6 +687,20 @@ queue_on() {
   run_bin -0 team-doctor
   assert_contains "$output" "agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456)"
   assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c chanjdaniel || true)" 0
+}
+
+@test "the merge queue line reads each base's rules on the owner login, whatever GitHub login the doctor's session names" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  queue_on owner/site
+  # The stub gh logs the three login variables of each call before it answers.
+  { printf '%s\n' 'printf "GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n" "${GH_CONFIG_DIR-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"'
+    cat "$STUB_FIXTURES/gh.sh"; } >"$STUB_FIXTURES/gh.sh.new"
+  mv "$STUB_FIXTURES/gh.sh.new" "$STUB_FIXTURES/gh.sh"
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN=fixture-session-token GITHUB_TOKEN=fixture-session-token \
+    run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$(sort -u "$STUB_CALLS/gh.env")" "GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>"
 }
 
 @test "the merge queue line fails on a queue whose merge method is not the registry's, a strict rule, or classic protection beside it, the first of them" {

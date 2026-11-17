@@ -21,9 +21,17 @@ flock -c, watch and parallel, and find -exec run, a shell's script file and what
 reads among them, by its name.
 For each row of the table in order, and each command in the walk's order, the first command a
 row refuses ends the walk: it prints one JSON line, {"rule": <id>, "reason": <text>, "allowed":
-<text or null>}, the reason being the text command-guard puts after "Blocked by command-guard: ",
-and the allowed way the row's, null for every row but the kill and delete rows. It prints nothing
-when no row refuses, and exits 0
+<text or null>, "where": <text or null>}, the reason being the text command-guard puts after
+"Blocked by command-guard: ",
+and the allowed way the row's, or one a delete row's refusal names of its own (a relative path
+read from a cd's directory), null for every row but force-push and the kill and delete rows; where, for a call of
+more than one line, "It stands on line <n> of the call: <the line>", the first line whose own walk
+runs the refused command, else the first holding each of its words (one outside a heredoc's body
+first), and, after a heredoc's closing line, "; the heredoc opened on line <n> (<its operator and
+marker>) ended at line <n>, so Bash runs the lines after it as commands", with ", and line <n> is
+<marker> again: that heredoc may have ended earlier than you meant" when a later line is its
+closing line again, ending in a full stop; null for a call of one line, or when no line of it
+holds the refused command. It prints nothing when no row refuses, and exits 0
 either way. Any error of its own exits 1 with one line on stderr, "command_rules.py: <ErrorType>:
 <message>", or "<row id>: <ErrorType>: <message>" when a row raised, so the hook refuses: a guard
 that cannot decide refuses.
@@ -46,6 +54,12 @@ The rows, in order:
     worker_refusal reads them).
   role-unset: either, or an element of either, named by unset, or either by env's -u (alone or
     ending a short cluster, its value joined or next) or --unset. The same reason.
+  login-assigned: an assignment of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN (LOGIN_VARIABLES,
+    bin/lib/github-login.sh's), in every form role-assigned reads, by the same reader. Reason: a
+    session's GitHub login is its settings' (bin/lib/github-login.sh's worker_login_env), whether
+    or not bin/lib/worker-login names one.
+  login-unset: any of them, or an element, in every form role-unset reads, by the same reader.
+    The same reason.
   environment-emptied: a command named team-<anything>, claude-coordinator or claude-assistant
     behind env -i (alone or among env's short options), env --ignore-environment (or a prefix GNU
     takes), env - or exec -c, past any wrappers between or in a string a shell runs there: it
@@ -58,6 +72,18 @@ The rows, in order:
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
+  force-push, for a session with a role (a worker or the assistant; a gate agent has none, and
+    never had the deny rules this row took over): git, past its own options, running push with a
+    long option that names --force, --force-with-lease or --force-if-includes by a prefix of three
+    letters or more, f among a short cluster's flags before -o's value (-f, -uf), or a refspec
+    starting with + (after a -- too). Reason: it rewrites what others pushed. Its allowed way:
+    push without forcing, or start a fresh local branch from the moved remote one.
+  cd-secrets, for a session with a role: cd or pushd whose first operand, as written, holds
+    .config/agent-team, or for a worker .claude/channels, or for the assistant whose last
+    component is discord or discord-assistant. Reason: they hold the team's keys and the Discord
+    bot's files. Each read command by command, never across a call's other commands, as the deny
+    rules they replace in settings/worker.json and assistant.settings.json did (the coordinator,
+    which runs no command-guard, keeps its own).
   The kill rows, bin/lib/kill_rules.py's (its header holds their wording): a kill by name or
     pattern, tmux's kill-*, a kill of PIDs read from input, of a PID the guard cannot read before
     it runs, of a process group, every process or PID 0 or 1, and of a literal PID not proven the
@@ -68,6 +94,10 @@ The rows, in order:
     worktree and the job tmp, of either of them, the worktree's .scratch/task or a directory
     holding one, of a repository's .git, of a variable the command leaves empty, by a find with no
     start path, and of a path the guard cannot read before it runs, each naming its allowed way.
+  login-emptied, last so each row above speaks first: any other command behind an emptied
+    environment, as environment-emptied reads one: it would run with no GH_CONFIG_DIR, so gh and
+    git in it, directly or through any program or script, answer as the machine's own login.
+    Reason: a session's GitHub login is its settings', as for the login rows.
 Each row is given the call's context (Context): the command's text, the hook input's cwd, the
 worktree, the job tmp, the roots, the kept paths and the role, each read on a row's first use of
 it; only the kill and delete rows use it, so a call with neither reads no process or file for it.
@@ -117,13 +147,16 @@ from typing import Callable
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    ASSIGNMENT, call_commands, command_name, from_wrappers, has_blank, heads, leads,
+    ASSIGNMENT, call_commands, command_name, commands, from_wrappers, has_blank, heads, leads, read_command,
+    short_cluster,
 )
 import delete_rules  # noqa: E402
 import kill_rules  # noqa: E402
 import outbound  # noqa: E402
 
 ROLE_VARIABLES = ("AGENT_TEAM_ROLE", "AGENT_TEAM_TASK")
+# The names that choose a session's GitHub login, bin/lib/github-login.sh's LOGIN_VARIABLES.
+LOGIN_VARIABLES = ("GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN")
 DECLARERS = frozenset("export declare typeset local readonly let read mapfile readarray".split())
 # What runs a script by its path, with its options before it.
 INTERPRETERS = frozenset(("node", "deno", "bun", "npx", "source", "."))
@@ -151,8 +184,8 @@ EMPTIES = {
 @dataclass(frozen=True)
 class Row:
     """A rule: its id, its test over one Command and the call's context, which refuses by
-    returning True (the row's reason) or a reason of its own, its reason and its allowed way
-    (None: the refusal names none)."""
+    returning True (the row's reason), a reason of its own, or a reason and an allowed way of its
+    own as a tuple, its reason and its allowed way (None: the refusal names none)."""
 
     id: str
     test: Callable
@@ -266,10 +299,9 @@ def _capture(command, context):
     return False
 
 
-def _role_word(word, ends):
-    """Whether word names AGENT_TEAM_ROLE or AGENT_TEAM_TASK, followed by nothing or by one of
-    ends."""
-    for variable in ROLE_VARIABLES:
+def _names_word(variables, word, ends):
+    """Whether word names one of variables, followed by nothing or by one of ends."""
+    for variable in variables:
         if word.startswith(variable):
             rest = word[len(variable) :]
             if not rest or rest[0] in ends:
@@ -277,46 +309,64 @@ def _role_word(word, ends):
     return False
 
 
-def _assigned(command, context):
-    if any(_role_word(word, "=+[") and ASSIGNMENT.match(word) for word in command.assignments):
-        return True
-    for words in heads(command):
-        if not words:
-            continue
-        name, args = command_name(words[0]), list(words[1:])
-        if name in DECLARERS and any(_role_word(word, "=+[<) \t\n'\";&|") for word in args):
+def _assigned(variables):
+    """A test refusing an assignment of one of variables, or of an element of one, alone, before
+    a command or through env, or one named by a declarer or printf -v."""
+
+    def assigned(command, context):
+        if any(_names_word(variables, word, "=+[") and ASSIGNMENT.match(word) for word in command.assignments):
             return True
-        if name == "printf":
-            for k, word in enumerate(args):
-                if word == "-v" and k + 1 < len(args) and args[k + 1].startswith(ROLE_VARIABLES):
-                    return True
-                if word.startswith(tuple("-v" + variable for variable in ROLE_VARIABLES)):
-                    return True
-    return False
+        for words in heads(command):
+            if not words:
+                continue
+            name, args = command_name(words[0]), list(words[1:])
+            if name in DECLARERS and any(_names_word(variables, word, "=+[<) \t\n'\";&|") for word in args):
+                return True
+            if name == "printf":
+                for k, word in enumerate(args):
+                    if word == "-v" and k + 1 < len(args) and args[k + 1].startswith(variables):
+                        return True
+                    if word.startswith(tuple("-v" + variable for variable in variables)):
+                        return True
+        return False
+
+    return assigned
 
 
-def _env_unsets(words):
-    """Whether env's words unset either variable: -u or --unset with it, joined or next."""
+def _env_unsets(variables, words):
+    """Whether env's words unset one of variables: -u or --unset with it, joined or next."""
     for k, word in enumerate(words):
         following = words[k + 1] if k + 1 < len(words) else ""
         unset = ENV_UNSET.fullmatch(word) or word == "--unset"
-        if unset and following.startswith(ROLE_VARIABLES):
+        if unset and following.startswith(variables):
             return True
         joined = ENV_UNSET.match(word)
-        if joined and word[joined.end() :].startswith(ROLE_VARIABLES):
+        if joined and word[joined.end() :].startswith(variables):
             return True
-        if word.startswith("--unset=") and word[len("--unset=") :].startswith(ROLE_VARIABLES):
+        if word.startswith("--unset=") and word[len("--unset=") :].startswith(variables):
             return True
     return False
 
 
-def _unset(command, context):
-    for words in heads(command):
-        if words and command_name(words[0]) == "unset" and any(_role_word(word, "[") for word in words[1:]):
-            return True
-        if words and command_name(words[0]) == "env" and _env_unsets(list(words[1:])):
-            return True
-    return any(command_name(words[0]) == "env" and _env_unsets(list(words[1:])) for words in from_wrappers(command))
+def _unset(variables):
+    """A test refusing one of variables, or an element of one, named by unset, or one by env's -u
+    or --unset."""
+
+    def unset(command, context):
+        for words in heads(command):
+            if not words:
+                continue
+            name, args = command_name(words[0]), list(words[1:])
+            if name == "unset" and any(_names_word(variables, word, "[") for word in args):
+                return True
+            if name == "env" and _env_unsets(variables, args):
+                return True
+        return any(
+            command_name(words[0]) == "env" and _env_unsets(variables, list(words[1:]))
+            for words in from_wrappers(command)
+        )
+
+    return unset
 
 
 def _team_script(word):
@@ -334,11 +384,25 @@ def _empties(wrapper):
     return pattern is not None and any(pattern[0].fullmatch(word) for word in wrapper[1:])
 
 
-def _emptied(command, context):
-    # What runs behind an emptied environment, a string a shell runs there among it.
-    if command.words and _team_script(command.words[0]) and any(_empties(w) for w in command.wrappers):
-        return True
-    # A team script past env's or exec's options where the walk took it as an option's value.
+def _command_word(word):
+    """Whether a word may name a command: any but an option."""
+    return bool(word) and not word.startswith("-")
+
+
+def _behind_emptied(runs):
+    """A test refusing a command whose name runs(word) accepts behind an emptied environment."""
+
+    def emptied(command, context):
+        # What runs behind an emptied environment, a string a shell runs there among it.
+        if command.words and runs(command.words[0]) and any(_empties(w) for w in command.wrappers):
+            return True
+        # One past env's or exec's options where the walk took it as an option's value.
+        return _past_emptying_options(command, runs)
+
+    return emptied
+
+
+def _past_emptying_options(command, runs):
     for words in from_wrappers(command):
         for k in leads(words):
             pattern = EMPTIES.get(command_name(words[k]))
@@ -351,7 +415,7 @@ def _emptied(command, context):
                     continue
                 after = rest[e + 1 :]
                 starts = (0, 1) if valued.fullmatch(rest[e]) else (0,)
-                if any(_team_script(after[j]) for j in leads(after, starts)):
+                if any(runs(after[j]) for j in leads(after, starts)):
                     return True
     return False
 
@@ -372,7 +436,88 @@ def _upload(command, context):
     return outbound.uploads_outside(command)
 
 
+# git's options before its subcommand that take the next word as their value.
+GIT_VALUED = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path"))
+# git push's long options that force, any of which a prefix of three letters or more names.
+FORCES = ("force", "force-with-lease", "force-if-includes")
+
+
+def _git_push(words):
+    """git push's words after push, when words run git push past git's own options, else None."""
+    words = list(words)
+    if not words or command_name(words[0]) != "git":
+        return None
+    k = 1
+    while k < len(words) and words[k].startswith("-"):
+        k += 2 if words[k] in GIT_VALUED else 1
+    return list(words[k + 1 :]) if words[k : k + 1] == ["push"] else None
+
+
+def _forces(args):
+    """Whether git push's words force: a long option naming one of FORCES by a prefix, f among a
+    short cluster's flags before -o's value, or a refspec starting with +."""
+    ended = False
+    for word in args:
+        if ended or not word.startswith("-"):
+            if word.startswith("+"):
+                return True
+        elif word == "--":
+            ended = True
+        elif word.startswith("--"):
+            name = word[2:].partition("=")[0]
+            if len(name) >= 3 and any(force.startswith(name) for force in FORCES):
+                return True
+        elif "f" in short_cluster(word, "o")[0]:
+            return True
+    return False
+
+
+def _force_push(command, context):
+    """A worker's or the assistant's force push; a gate agent, which has no role, never had the
+    deny rules this row took over."""
+    if not context.role:
+        return False
+    return any((args := _git_push(words)) is not None and _forces(args) for words in heads(command))
+
+
+# The directories a cd may not enter, by role: a worker's and the assistant's.
+WORKER_KEPT_OUT = (".config/agent-team", ".claude/channels")
+ASSISTANT_KEPT_OUT = (".config/agent-team",)
+# The Discord bot's directories the assistant keeps out of, by their last component.
+DISCORD = ("discord", "discord-assistant")
+
+
+def _cd_into(command, context):
+    """A worker's or the assistant's cd or pushd whose target, as written, names one of the
+    directories its role keeps out of."""
+    if not context.role:
+        return None
+    assistant = context.role == "assistant"
+    for words in heads(command):
+        if not words or command_name(words[0]) not in ("cd", "pushd"):
+            continue
+        targets = [word for word in words[1:] if not word.startswith("-")]
+        target = targets[0] if targets else ""
+        kept = ASSISTANT_KEPT_OUT if assistant else WORKER_KEPT_OUT
+        if any(name in target for name in kept) or (
+            assistant and target.rstrip("/").rpartition("/")[2] in DISCORD
+        ):
+            return CD_ASSISTANT if assistant else CD_SECRETS
+    return None
+
+
+FORCE_REASON = (
+    "a force push (git push with --force, --force-with-lease, --force-if-includes, -f or a +refspec),"
+    " which rewrites what others pushed"
+)
+FORCE_WAY = (
+    "push without forcing; when the remote branch moved under you, start a fresh local branch from it under a new"
+    " name and carry your commits over"
+)
+CD_SECRETS = "a cd into ~/.config/agent-team or ~/.claude/channels, which hold the team's keys and the Discord bot's files"
+CD_ASSISTANT = "a cd into ~/.config/agent-team or the Discord bot's directories, which hold the team's keys and the bot's files"
 ROLE_REASON = "a worker's role and task are its settings' ({})"
+LOGIN_REASON = "a session's GitHub login is its settings' ({})"
 
 ROWS = (
     Row(
@@ -385,11 +530,25 @@ ROWS = (
         _capture,
         "the frontend toolkit's capture script is Daniel's own sessions' (run by its path or by an interpreter)",
     ),
-    Row("role-assigned", _assigned, ROLE_REASON.format("an assignment of AGENT_TEAM_ROLE or AGENT_TEAM_TASK")),
-    Row("role-unset", _unset, ROLE_REASON.format("an unset of AGENT_TEAM_ROLE or AGENT_TEAM_TASK")),
+    Row(
+        "role-assigned",
+        _assigned(ROLE_VARIABLES),
+        ROLE_REASON.format("an assignment of AGENT_TEAM_ROLE or AGENT_TEAM_TASK"),
+    ),
+    Row("role-unset", _unset(ROLE_VARIABLES), ROLE_REASON.format("an unset of AGENT_TEAM_ROLE or AGENT_TEAM_TASK")),
+    Row(
+        "login-assigned",
+        _assigned(LOGIN_VARIABLES),
+        LOGIN_REASON.format("an assignment of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN"),
+    ),
+    Row(
+        "login-unset",
+        _unset(LOGIN_VARIABLES),
+        LOGIN_REASON.format("an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN"),
+    ),
     Row(
         "environment-emptied",
-        _emptied,
+        _behind_emptied(_team_script),
         ROLE_REASON.format(
             "a team script run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c"
         ),
@@ -405,7 +564,79 @@ ROWS = (
         "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
     ),
     Row("upload", _upload, outbound.REASON),
-) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS)
+    Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
+    Row("cd-secrets", _cd_into, None),
+) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS) + (
+    # Last, so a more particular row behind an emptied environment (a team script, an upload, a
+    # kill or a delete) speaks first.
+    Row(
+        "login-emptied",
+        _behind_emptied(_command_word),
+        LOGIN_REASON.format(
+            "a command run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c"
+        ),
+    ),
+)
+
+
+# The most characters of a line a refusal quotes.
+LINE_CHARACTERS = 160
+
+
+def _line_number(text, offset):
+    return text.count("\n", 0, offset) + 1
+
+
+def _line_of(found, text):
+    """The line number of the call's text the refused command stands on: the first line whose own
+    walk runs it, else the first that holds each of its words; lines outside a heredoc's body
+    first, then those in one (a body a shell reads); None when none does."""
+    lines = text.split("\n")
+    bodies = set()
+    for heredoc in read_command(text).heredocs:
+        bodies.update(range(_line_number(text, heredoc.body[0]), _line_number(text, heredoc.end - 1)))
+    order = [n for n in range(1, len(lines) + 1) if n not in bodies] + sorted(bodies)
+
+    def runs(line):
+        try:
+            return found in list(commands(line))
+        except Exception:  # noqa: BLE001 - a line that does not read alone holds no command of its own
+            return False
+
+    for matches in (runs, lambda line: bool(found.words) and all(word in line for word in found.words)):
+        for n in order:
+            if n <= len(lines) and matches(lines[n - 1]):
+                return n
+    return None
+
+
+def where(found, text):
+    """The second line of a refusal of a call of more than one line: the line its command stands
+    on, and the heredoc that ended last before it, with a later line that is its closing line
+    again; None for a call of one line, or when no line holds the command."""
+    if "\n" not in text.rstrip("\n"):
+        return None
+    n = _line_of(found, text)
+    if n is None:
+        return None
+    lines = text.split("\n")
+    line = lines[n - 1].strip()
+    if len(line) > LINE_CHARACTERS:
+        line = line[: LINE_CHARACTERS - 3] + "..."
+    out = f"It stands on line {n} of the call: {line}"
+    ended = [h for h in read_command(text).heredocs if _line_number(text, h.end - 1) < n]
+    if ended:
+        heredoc = max(ended, key=lambda h: h.end)
+        opened, closed = _line_number(text, heredoc.marker[0]), _line_number(text, heredoc.end - 1)
+        marker = lines[closed - 1].strip()
+        out += (
+            f"; the heredoc opened on line {opened} ({text[heredoc.marker[0] : heredoc.marker[1]]}) ended at line"
+            f" {closed}, so Bash runs the lines after it as commands"
+        )
+        again = next((k for k in range(closed + 1, len(lines) + 1) if lines[k - 1].strip() == marker), None)
+        if again is not None:
+            out += f", and line {again} is {marker} again: that heredoc may have ended earlier than you meant"
+    return out + "."
 
 
 class RowError(Exception):
@@ -423,8 +654,9 @@ def refusal(command, context=None):
             except Exception as error:  # noqa: BLE001 - named, then refused by the caller
                 raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
             if refused:
-                reason = refused if isinstance(refused, str) else row.reason
-                return {"rule": row.id, "reason": reason, "allowed": row.allowed}
+                reason, allowed = refused if isinstance(refused, tuple) else (refused, row.allowed)
+                reason = reason if isinstance(reason, str) else row.reason
+                return {"rule": row.id, "reason": reason, "allowed": allowed, "where": where(found, command)}
     return None
 
 

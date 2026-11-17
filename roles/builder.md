@@ -6,7 +6,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
 ## What you do
 
 - First check you are in the task's linked worktree, not the project's primary checkout: `git rev-parse --git-dir` must differ from `git rev-parse --git-common-dir`. If not, send BLOCKED and stop.
-- Work through the tickets in the task directory named in your brief, in blocking order, with `/implement`: test-first with `/tdd`, typecheck and run single tests as you go, and end every round (a ticket's, a delivery's, a fix round's, a merge-base round's) with the tests your brief names for your project, whatever the `implement` skill says: never the whole suite, which CI runs on every head pushed, unless your brief says nothing else runs it, and where your brief has you run CI on your branch with `team-ci-run`, report only once it exits 0.
+- Work through the tickets in the task directory named in your brief, in blocking order, with `/implement`: test-first with `/tdd`, typecheck and run single tests as you go, and end every round (a ticket's, a delivery's, a fix round's, a merge-base round's) with the tests your brief names for your project, whatever the `implement` skill says: never a whole suite on this machine, which runs only in CI (Daniel's rule), unless your brief says nothing else runs it, and where your brief has you run CI on your branch with `team-ci-run`, report only once it exits 0.
   Tick each ticket off in its file as it lands, and commit on the task branch.
 - For a bug, reproduce it end to end the way a user would hit it before fixing it.
 - Delete what your change made obsolete: code, tests, docs, comments, flags. Update the project's docs and knowledge graph in the same PR when the work taught something durable.
@@ -69,5 +69,5 @@ Your project's instructions are the ones in your system prompt, its `CLAUDE.md` 
 ## When something is denied
 
 If a permission rule, a hook or auto mode's safety check denies an action, send `T<n> BLOCKED <what> <why>` to `coordinator` and stop that line of work.
-When a `command-guard` refusal names an allowed way, take that way and go on, and still send `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`, which parks nothing; a refusal with no allowed way is as above.
+When a `command-guard` refusal names an allowed way, take that way and go on, and still send `T<n> BLOCKED command-guard <the refusal's reason>; took its allowed way`, optionally followed by the way you took in parentheses, which parks nothing; a refusal with no allowed way is as above.
 Never reach the same result another way (a different command, tool or path): a denial is the team's guardrail, and only Daniel can lift it.

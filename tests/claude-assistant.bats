@@ -275,6 +275,8 @@ assert_nothing_written() {
       'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)' \
       "$REPO_ROOT/assistant.settings.json")"
   [[ $(cat "$settings") != *@TEAM_CODE@* && $(cat "$settings") != *@TEAM_HOME@* && $(cat "$settings") != *@DISCORD_STATE_DIR@* ]]
+  # Its Remote Control is the user settings', which its own settings leave alone.
+  assert_equal "$(jq -c 'has("remoteControlAtStartup")' "$settings")" false
   assert_equal "$(jq -c '[.env.AGENT_TEAM_ROLE, .env.DISCORD_STATE_DIR, .env.DISCORD_ACCESS_MODE, .autoMemoryDirectory]' "$settings")" \
     "$(jq -cn --arg d "$discord_state" --arg m "$TEAM_HOME/memory/assistant" '["assistant", $d, "static", $m]')"
   assert_equal "$(find "$state" -name '*.json.*')" ""
@@ -314,15 +316,16 @@ assert_nothing_written() {
     jq -e --arg r "Bash(*/${rule#Bash(}" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
       { echo "no path spelling of $rule" >&2; return 1; }
   done < <(jq -r '.permissions.deny[] | select(test("^Bash\\((team-|claude-coordinator )"))' "$settings")
-  # But for the tools the coordinator denies only to keep their definitions out of its context.
+  # But for the tools the coordinator denies only to keep their definitions out of its context,
+  # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
+  # assistant's command-guard hook holds instead, command by command.
   assert_equal "$(jq -r --slurpfile a "$settings" '.permissions.deny - $a[0].permissions.deny | .[]' "$REPO_ROOT/coordinator.settings.json" | paste -sd ' ')" \
-    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow"
+    "Artifact ArtifactComments ArtifactData ReportFindings ScheduleWakeup TaskCreate TaskGet TaskList TaskUpdate Workflow Bash(*GH_CONFIG_DIR*) Bash(*GH_TOKEN*) Bash(*GITHUB_TOKEN*) Bash(*env -i*) Bash(*env --i*) Bash(*env - *) Bash(*exec -c*) Bash(git push --force*) Bash(git push -f*) Bash(git push * --force*) Bash(git push * -f*) Bash(git push * +*) Bash(git -C * push --force*) Bash(git -C * push -f*) Bash(git -C * push * --force*) Bash(git -C * push * -f*) Bash(git -C * push * +*) Bash(cd *.config/agent-team*) Bash(pushd *.config/agent-team*)"
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
-    "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels/discord && cat .env" \
-    "cd ~/.claude/channels/discord-assistant && cat .env" "cd ~/.claude/channels && cat discord/.env" \
-    "pushd ~/.claude/channels/discord" "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
+    "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels && cat discord/.env" \
+    "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
     "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
     "git push" "git push origin main" "git push -u origin x" "git -C ~/agent-team-records push" \
     "git -C ~/agent-team-records push origin main" "git commit -m x" "git -C ~/agent-team-records commit -m x" \
@@ -346,6 +349,14 @@ assert_nothing_written() {
     "sudo pacman -S jq" "op read op://x/y" "cat /proc/1/environ"; do
     denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
   done
+  # A cd into the bot's directories: its command-guard hook refuses it, command by command.
+  # shellcheck disable=SC2088
+  for command in "cd ~/.claude/channels/discord && cat .env" "cd ~/.claude/channels/discord-assistant && cat .env" \
+    "pushd ~/.claude/channels/discord" "cd ~/.config/agent-team && cat review-app.pem"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: a cd into ~/.config/agent-team or the Discord bot's directories"
+  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -357,7 +368,7 @@ assert_nothing_written() {
     "cat ~/.claude/channels/discord-assistant/inbox/a.png" \
     "team-state" "team-lease status" "team-lease check" "team-timers health" "team-timers status --json" \
     "team-config diff" "team-secrets check" "team-stack ls" "team-capacity status" "team-doctor" \
-    "claude agents" "claude --version" "grep -rn claude-coordinator bin"; do
+    "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }
@@ -395,6 +406,87 @@ assert_nothing_written() {
   run_bin -3 claude-assistant
 }
 
+# The worker login (bin/lib/github-login.sh), as tests/claude-coordinator.bats has it: the same
+# settings writer, bin/lib/launch.sh's launch_settings, gives both sessions the login.
+
+# The refusal when the login is named but its file is not usable, by what is wrong with the file:
+# login_refusal <login> <what of hosts.yml>
+login_refusal() {
+  # shellcheck disable=SC2088 # ~ is part of the message as the script prints it
+  echo "claude-assistant: the worker login $1 is not on this machine (~/.config/agent-team/gh-worker/hosts.yml $2): Daniel's team-secrets restore brings it (the secret worker-github-login)"
+}
+
+@test "with the worker login on, its settings hold the login's environment, and nothing else changes" {
+  local settings=$state/assistant.settings.json off
+  code_checkout
+  worker_login_off
+  run_bin -0 claude-assistant
+  off=$(jq -c . "$settings")
+  worker_login_on
+  run_bin -0 claude-assistant
+  assert_equal "$(jq -c '[.env.GH_CONFIG_DIR, .env.GH_TOKEN, .env.GITHUB_TOKEN]' "$settings")" \
+    "$(jq -cn --arg dir "$HOME/.config/agent-team/gh-worker" '[$dir, "", ""]')"
+  assert_equal "$(jq -c 'del(.env.GH_CONFIG_DIR, .env.GH_TOKEN, .env.GITHUB_TOKEN)' "$settings")" "$off"
+}
+
+@test "with the worker login off, its settings are today's: the template, with no login of its own" {
+  local settings=$state/assistant.settings.json
+  code_checkout
+  worker_login_on
+  worker_login_off
+  run_bin -0 claude-assistant
+  assert_equal "$(jq -c 'del(.deniedMcpServers)' "$settings")" \
+    "$(jq -c --arg code "$CODE_CHECKOUT" --arg home "$TEAM_HOME" --arg discord "$discord_state" \
+      'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)' \
+      "$CODE_CHECKOUT/assistant.settings.json")"
+  assert_equal "$(jq -c '.env | keys | map(select(test("^(GH_|GITHUB_)")))' "$settings")" '[]'
+}
+
+@test "with the worker login named but not on this machine, it refuses before writing or starting anything" {
+  local dir=$HOME/.config/agent-team/gh-worker
+  code_checkout
+  worker_login_on team-bot
+  rm "$dir/hosts.yml"
+  run_bin -1 --separate-stderr claude-assistant
+  assert_equal "$stderr" "$(login_refusal team-bot 'is missing')"
+  assert_nothing_written
+  echo 'github.com:' >"$dir/hosts.yml"
+  chmod 640 "$dir/hosts.yml"
+  run_bin -1 --separate-stderr claude-assistant
+  assert_equal "$stderr" "$(login_refusal team-bot 'is mode 640, not 600')"
+  assert_nothing_written
+  # It asked only for the session list, the check it makes first.
+  assert_equal "$(stub_calls claude | sort -u)" '["agents","--json","--all"]'
+}
+
+@test "a malformed worker login constant refuses the launch with the reader's message" {
+  code_checkout
+  worker_login_on
+  echo 'team-bot' >"$CODE_CHECKOUT/bin/lib/worker-login"
+  run_bin -1 --separate-stderr claude-assistant
+  assert_equal "$stderr" "claude-assistant: $CODE_CHECKOUT/bin/lib/worker-login is not one login=<a GitHub login> line"
+  assert_nothing_written
+}
+
+@test "the login check comes after the lock, the one-session check and the Discord checks" {
+  code_checkout
+  worker_login_on team-bot
+  rm "$HOME/.config/agent-team/gh-worker/hosts.yml"
+  sessions "$(session 5e6f7a8b 5e6f7a8b-3333 assistant working)"
+  run_bin -1 --separate-stderr claude-assistant
+  assert_equal "$stderr" "claude-assistant: an assistant is already live: session 5e6f7a8b; stop it with claude stop 5e6f7a8b first"
+  echo '[]' >"$BATS_TEST_TMPDIR/sessions.json"
+  rm "$HOME/.claude/channels/discord/.env"
+  run_bin -1 --separate-stderr claude-assistant
+  assert_contains "$stderr" "claude-assistant: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
+  assert_nothing_written
+}
+
+@test "its header says the session runs on the worker login when one is named" {
+  run_bin -0 claude-assistant --help
+  assert_contains "$(tr -s ' \n' '  ' <<<"$output")" "Its session runs on the worker login when bin/lib/worker-login names one"
+}
+
 # The load check's form: claude-assistant --load-check <worktree> [--prompt <text>].
 
 # The load check's launch command line, with the given first prompt or the default one:
@@ -428,7 +520,11 @@ load_check_argv() {
     "$(jq -c --arg code "$REPO_ROOT" --arg home "$TEAM_HOME" --arg discord "$discord_state" \
       'walk(if type == "string" then gsub("@TEAM_CODE@"; $code) | gsub("@TEAM_HOME@"; $home) | gsub("@DISCORD_STATE_DIR@"; $discord) else . end)
        | .enabledPlugins["discord@claude-plugins-official"] = false
-       | del(.hooks.Stop, .hooks.SessionStart)' "$REPO_ROOT/assistant.settings.json")"
+       | del(.hooks.Stop, .hooks.SessionStart)
+       | .remoteControlAtStartup = false' "$REPO_ROOT/assistant.settings.json")"
+  # Remote Control off, outranking the user settings' true, so the run leaves no row in Daniel's
+  # Remote Control list on claude.ai.
+  assert_equal "$(jq -c '.remoteControlAtStartup' "$settings")" false
   # Neither the Stop hook nor the start digest, which read the live assistant's list and hand-offs
   # and would have this session act on them; the guards on its tool calls stay.
   assert_equal "$(jq -c '.hooks | keys' "$settings")" '["PreToolUse"]'

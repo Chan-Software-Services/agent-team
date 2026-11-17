@@ -3,8 +3,8 @@
 #
 # tickets_sandbox writes a registry of two projects, proj (task_dir .scratch/task) and other
 # (task_dir .work/task), and opens T172 on proj ("toil") in the worktree $wt, whose task directory
-# is $task_dir and ticket directory $tickets, made empty; the helpers below write its tickets and
-# its ledger.
+# is $task_dir, with a spec.md that team-tickets --check passes (spec_file), and ticket directory
+# $tickets, made empty; the helpers below write its tickets, its spec and its ledger.
 # shellcheck shell=bash
 
 tickets_sandbox() {
@@ -43,6 +43,7 @@ TOML
   task_dir=$wt/.scratch/task
   tickets=$task_dir/tickets
   mkdir -p "$tickets"
+  spec_file "$task_dir/spec.md"
   event T172 opened "$(jq -cn --arg wt "$wt" '{project: "proj", path: "feature", type: "feat", title: "toil",
     branch: "feat/T172-toil", base: "dev", base_sha: "aba9d074", worktree: $wt}')"
 }
@@ -72,6 +73,14 @@ build_launch() {
 # ticket <NN-slug> <lines>...: write a ticket file of those lines under a title.
 ticket() {
   printf '%s\n' "# ${1%%-*}: ${1#*-}" "" "${@:2}" "" "- [ ] it works" >"$tickets/$1.md"
+}
+
+# spec_file <file> [<lines>...]: write a spec of a title, a blank line, those lines, then the
+# ## Failure modes and assumptions section team-tickets --check requires, with one item; so the
+# first of the lines is line 3.
+spec_file() {
+  printf '%s\n' "# spec" "" "${@:2}" "" "## Failure modes and assumptions" "" \
+    "- A rerun after a crash: it reads the files again; tested by running it twice." >"$1"
 }
 
 # A fresh ticket set of the given files only.

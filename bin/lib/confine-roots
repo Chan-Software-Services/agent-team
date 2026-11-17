@@ -1,14 +1,24 @@
-# The roots every confined session has beside its own: bin/lib/confine.py --session lets a
-# worker's or gate agent's commands remove and rename a directory entry only under a root, and
-# each line here is one more, on every machine and for every task.
-# One path per line, absolute or starting with ~/ for the home directory; a line naming nothing
+# The roots every confined session has beside its own: bin/lib/confine.py --session <file> lets
+# a worker's or gate agent's commands remove and rename a directory entry only under a root, and
+# each line here is one more, on every machine and for every task. A session's own roots are in
+# its session file, which bin/lib/confine-session wrote at its launch.
+# One path per line, absolute or starting with ~/ for the home directory the session file names,
+# never the environment's HOME; a line naming nothing
 # on a machine is skipped there, and one naming a link or anything but a directory is refused.
 # This file is a guarded path (bin/lib/guarded), so each change comes back to Daniel for the
 # per-head word.
 # No path of the team home, of another worktree or of ~/.config/agent-team may be a root:
 # confine.py refuses to run a command while a line is, holds or is under the team home,
-# ~/.config/agent-team or ~/.claude.
+# ~/.config/agent-team or ~/.claude, as the session file names them.
+# ~/.rustup is no root: a worker installs no toolchain, and a confined launch's settings set
+# RUSTUP_AUTO_INSTALL=0, so a missing one fails instead of downloading.
 
 # The team's machine state, which scripts a worker runs write by rename: team-capacity,
 # team-stack, and the library's lease probe cache.
 ~/.local/state/agent-team
+# Cargo's own directory: cargo renames and removes entries under registry/ and git/ when it
+# fetches or unpacks a crate, and takes ~/.cargo/.package-cache as its lock.
+~/.cargo
+# The sccache cache: the sccache server, which a session's first compile starts, writes and
+# evicts cache entries by rename and removal.
+~/.cache/sccache

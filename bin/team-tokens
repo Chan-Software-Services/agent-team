@@ -85,10 +85,11 @@
 #                    a rolling seven days; then the newest quota reading, team-quota status --json's
 #                    (Claude's own reading of the plan's limits, the week it counts included), now's
 #                    whatever --until, --task and --machine say: each window's use and reset (as
-#                    team-quota words it, in the machine's local time) and the reading's age, or
-#                    that there is no reading yet, or that team-quota could not be read (it
-#                    failed, printed no team-quota/1 object or took over 30 seconds), which
-#                    changes nothing else
+#                    team-quota words it, in the machine's local time) and the reading's age, with
+#                    team-quota's note under the table when it shows no fresh model window
+#                    ("model windows: none read yet, ..." and the like), or that there is no
+#                    reading yet, or that team-quota could not be read (it failed, printed no
+#                    team-quota/1 object or took over 30 seconds), which changes nothing else
 #   coordinator turns
 #                    from this machine's transcripts of the sessions claude-coordinator named
 #                    coordinator, each turn: from what woke the coordinator (a message from Daniel,
@@ -125,11 +126,11 @@
 # w, w_per_review}] (each sorted by project, then toolkits, an empty list first; a ratio with no
 # outcome null)}, relaunches {reasons, all, warmup_w}, rereviews {count, complete, w, median_w,
 # mean_w}, blocks, current_block (or null), seven_days {from, to, machines, all}, quota (team-quota
-# status --json's object, or null when it could not be read), quota_error (why, or null) and
-# coordinator (or null) {machine, sessions, unread_replies, turns, all, daniel_turns, waits {all,
-# idle, mid_turn}, compactions}, its times in seconds; each list's items are objects named after
-# the table's columns, tokens are counts and $w has six decimals, a whole number printed as an
-# integer.
+# status --json's object, its model_note included, or null when it could not be read), quota_error
+# (why, or null) and coordinator (or null) {machine, sessions, unread_replies, turns, all,
+# daniel_turns, waits {all, idle, mid_turn}, compactions}, its times in seconds; each list's items
+# are objects named after the table's columns, tokens are counts and $w has six decimals, a whole
+# number printed as an integer.
 #
 # export reads this machine's Claude Code transcripts (~/.claude/projects/*/*.jsonl and each
 # session's subagents/*.jsonl) and writes one line per assistant reply into the team home's
@@ -1978,7 +1979,9 @@ def read_quota(team, here):
     return status, None
 
 
-# The quota reading's lines for the last seven days, from report's quota and quota_error.
+# The quota reading's lines for the last seven days, from report's quota and quota_error, with
+# team-quota's model_note under the table when it shows no fresh model window, so the week is
+# never taken for a model's own.
 def quota_text(report):
     q = report["quota"]
     if q is None:
@@ -1988,7 +1991,8 @@ def quota_text(report):
     rows = [[w["name"], f"{math.floor(w['used'])}%", w["reset_text"]] for w in q["windows"]]
     r = q["reading"]
     return (f"The newest quota reading (team-quota status), read on {r['machine'] or 'an unnamed machine'} {q['age_minutes']} min ago"
-            + ("" if q["fresh"] else "; it is stale") + ":\n\n" + table(["Window", "Used", "Reset"], rows))
+            + ("" if q["fresh"] else "; it is stale") + ":\n\n" + table(["Window", "Used", "Reset"], rows)
+            + (f"\n\n{q['model_note']}." if q.get("model_note") else ""))
 
 
 def fm(x):

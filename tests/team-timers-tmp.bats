@@ -1,15 +1,18 @@
 #!/usr/bin/env bats
-# team-timers' tmp step: on the holder after the quota step and before the inbox step, the real
+# team-timers' tmp step: on the holder after the github step and before the inbox step, the real
 # team-janitor tmp, whose sweep and warning run against the two roots under the sandbox's
 # TEAM_SYSTEM_ROOT ($TMP_ROOT and $VAR_ROOT), never the machine's /tmp, with the /tmp root's file
 # system the reading TEAM_TMP_DF names (10% of 16 GiB unless a test writes another). The
 # heartbeat suite's setup: home-pc holds the lease on a bare origin, the stub claude lists the
 # coordinator and the assistant, a usage read of the model windows was just taken
 # (usage_read_now), so the quota step starts no Claude Code and logs nothing, the service managers
-# are fakes, and Discord is the inbox helper's fake, which keeps each alert's body. There is no stack.json: the step has no setting.
+# are fakes, GitHub is tests/helpers/github-api.bash's heartbeat stub (an idle hour), and Discord
+# is the inbox helper's fake, which keeps each alert's body. There is no stack.json: the step has
+# no setting.
 
 load helpers/common
 load helpers/inbox
+load helpers/github-api
 
 setup() {
   sandbox
@@ -18,6 +21,7 @@ setup() {
   origin=$(hold_lease home-pc)
   usage_read_now
   fake_service_managers
+  github_heartbeat_stub
   stub_command uname
   stub_reply uname Linux
   state=$HOME/.local/state/agent-team
@@ -91,7 +95,7 @@ fake_janitor() {
   chmod +x "$CODE_CHECKOUT/bin/team-janitor"
 }
 
-@test "on the holder the tmp step runs after the quota step and before the inbox step, logging each line team-janitor tmp prints" {
+@test "on the holder the tmp step runs after the github step and before the inbox step, logging each line team-janitor tmp prints" {
   [[ ! -e $HOME/.config/agent-team/stack.json ]]
   quota_past
   inbox_kept

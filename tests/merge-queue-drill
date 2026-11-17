@@ -12,16 +12,26 @@
 # says so, and neither form touches a repository whose dev lacks it, or the origin of the code
 # checkout the drill runs from.
 #
-# --setup pushes the base commit to an empty repository's dev: that file, a README and
-# .github/workflows/ci.yml, a CI of one job, check, on pull_request and merge_group. It changes
-# nothing when dev already holds the drill's file. Daniel then turns CodeQL's default setup on and
-# gives dev its ruleset: the merge queue with the merge method MERGE, and the required checks
-# check, CodeQL and agent-review, the last pinned to the reviewer App.
+# --setup pushes the base commit to an empty repository's dev: that file, a README,
+# .github/workflows/ci.yml, a CI of one job, check, on pull_request and merge_group, and
+# .github/workflows/codeql.yml, CodeQL's advanced setup, one job Analyze (actions) on
+# pull_request and push to dev and merge_group, its actions pinned by full sha. On a dev that holds
+# the drill's file but lacks one or more of the others (by path; it never rewrites a file dev has),
+# it pushes one commit, "ci: the merge queue drill's base files", adding each one it lacks, and
+# prints their paths; with none lacking it changes nothing and says so. A push dev's rules refuse
+# ends it with exit 1, naming the paths and Daniel's step. Daniel keeps CodeQL's default setup off
+# and gives dev its ruleset: the merge queue with the merge method MERGE, the required checks
+# check and Analyze (actions) from GitHub Actions and agent-review pinned to the reviewer App, and
+# a code_scanning rule; disabled while --setup pushes.
 #
 # The drill itself, in order:
 #   it reads dev's rules (gh api repos/<repo>/rules/branches/dev --paginate) and stops, with nothing opened
 #   or recorded, unless they hold a merge queue that merges with MERGE and require agent-review
 #   from the App bin/lib/review-app names;
+#   it clones dev and stops the same way when dev lacks .github/workflows/codeql.yml, or CodeQL's
+#   default setup reads configured (gh api repos/<repo>/code-scanning/default-setup), since it
+#   refuses the workflow's uploads and runs nothing on a trial commit; a default setup that cannot
+#   be read is said on one line on stderr, and the drill goes on;
 #   it builds a sandbox, a new directory under ~/.cache/agent-team, since the registry takes a
 #   path under HOME alone: checkout/, a clone of the repository, and team/, a team home whose
 #   registry has one project, agent-team, the team's own by its name, so team-land posts
@@ -35,30 +45,36 @@
 #   it runs team-land on both at once, each given 30 minutes (TEAM_LAND_DEADLINE_SECONDS replaces
 #   its seconds), and meanwhile lists the repository's gh-readonly-queue/ branches every 3 seconds;
 #   it reads each pull request (gh pr view), its trial commit (the merge commit once merged, else
-#   its queue entry's head commit) and that commit's check runs, and prints one PASS or FAIL line
-#   per check, then whether CodeQL reported on each trial commit, which is no check.
+#   its queue entry's head commit) and that commit's check runs and commit statuses, and prints
+#   one PASS or FAIL line per check, then whether the code scanning roll-up CodeQL, which GitHub
+#   Advanced Security posts only on a pull request, posted on each trial commit, which is no check.
 # The checks, for each pull request: team-land ended merged; GitHub shows it merged at the head
 # the drill pushed, so nothing caught it up; its merge commit has exactly two parents, the second
 # that head and the first a commit holding the dev it was opened from, with the tree of git
 # merge-tree's clean merge of the two, and is on dev; that commit was on a branch under
-# gh-readonly-queue/dev/; and it carries a successful agent-review check run of the App. And one
-# for both: one landed on top of the other, behind dev's tip.
+# gh-readonly-queue/dev/; it carries a successful agent-review check run of the App; and it
+# reported success for every check dev's rules require, each by a check run of its name (of its
+# App where the rule pins one) or, pinned to none, a commit status of its context, the FAIL naming
+# each one not reported or not successful. And one for both: one landed on top of the other,
+# behind dev's tip.
 #
 # Every way the drill ends once it pushed its first branch closes each pull request it opened
 # that is not merged, deletes its branches, and records one merge-queue line in the team home's
 # drills.jsonl, through this checkout's bin/team-drill record merge-queue, with the team home of
 # the environment it was run in (the sandbox's is the scripts' alone): pass when it exits 0, every
 # check passed, else fail; the detail "<passed> of <checks> checks passed on <repo> PRs #<a> and
-# #<b>; CodeQL reported on <n> of <m> trial commits" once it reached its checks, else the step
-# that failed. A record team-drill refuses prints "merge-queue-drill: not recorded: <team-drill's
-# first error line>" on stderr and leaves the drill's exit status as it was. The sandbox is
-# removed either way.
+# #<b>; every required check reported on <n> of <m> trial commits; the roll-up CodeQL on <k>"
+# once it reached its checks, else the step that failed. A record team-drill refuses prints
+# "merge-queue-drill: not recorded: <team-drill's first error line>" on stderr and leaves the
+# drill's exit status as it was. The sandbox is removed either way.
 #
 # Usage: tests/merge-queue-drill --setup <repo>
 #        tests/merge-queue-drill <repo>
 #   repo  the scratch repository, <owner>/<name>
+# It runs on the owner login throughout, every gh and git call and the scripts it runs (team-land
+# among them), whatever GitHub login its session names (use_owner_login in bin/lib/github-login.sh).
 # Refused, exit 1, before anything is read: a worker session (an AGENT_TEAM_ROLE but coordinator).
-# Exit 0 when every check passes (--setup: the base commit is on dev), 1 when any fails or a step
+# Exit 0 when every check passes (--setup: every base file is on dev), 1 when any fails or a step
 # fails, 2 on a malformed command line.
 set -euo pipefail
 
@@ -82,6 +98,9 @@ repo=$1
 if [[ -n ${AGENT_TEAM_ROLE:-} && $AGENT_TEAM_ROLE != coordinator ]]; then
   die "a $AGENT_TEAM_ROLE session may not run the merge queue drill: that is the coordinator's"
 fi
+# shellcheck source=bin/lib/github-login.sh
+source "$root/bin/lib/github-login.sh"
+use_owner_login
 # Never the repository this code comes from, whatever its dev holds.
 own=$(git -C "${root:?}" remote get-url origin 2>/dev/null) || own=''
 own=${own%/} own=${own%.git}
@@ -144,28 +163,21 @@ stop() {
   exit 1
 }
 
-if [[ -n $setup ]]; then
-  refs=$(git ls-remote "$remote") || die "cannot read $remote"
-  if grep -q $'\trefs/heads/dev$' <<<"$refs"; then
-    git clone -q --depth 1 --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
-    [[ -f $checkout/$marker ]] ||
-      die "$repo's dev holds commits that are not the drill's (no $marker): the drill takes a scratch repository only"
-    echo "merge-queue-drill: $repo's dev already holds the drill's base commit, $(git -C "${checkout:?}" rev-parse --short=7 HEAD)"
-    exit 0
-  fi
-  git init -q -b dev "$checkout"
-  mkdir -p "$checkout/.github/workflows"
-  cat >"$checkout/$marker" <<'EOF'
+# The drill's base files, by their paths in dev; write_base <dir> writes each below <dir>.
+base_files=("$marker" README.md .github/workflows/ci.yml .github/workflows/codeql.yml)
+write_base() {
+  mkdir -p "$1/.github/workflows"
+  cat >"$1/$marker" <<'EOF'
 This repository is the scratch repository of agent-team's merge queue drill (tests/merge-queue-drill).
 It holds nothing but the drill's commits, and the drill refuses a repository whose dev lacks this file.
 EOF
-  cat >"$checkout/README.md" <<'EOF'
+  cat >"$1/README.md" <<'EOF'
 # The merge queue drill's scratch repository
 
 agent-team's `tests/merge-queue-drill` opens two pull requests here and lands both through `dev`'s merge queue.
 Each run adds two files under `runs/`.
 EOF
-  cat >"$checkout/.github/workflows/ci.yml" <<'EOF'
+  cat >"$1/.github/workflows/ci.yml" <<'EOF'
 # The merge queue drill's CI: one job, check, on every pull request to dev and on each trial
 # commit of dev's merge queue, which dev's ruleset requires.
 name: CI
@@ -182,6 +194,81 @@ jobs:
     steps:
       - run: echo "the merge queue drill's check"
 EOF
+  cat >"$1/.github/workflows/codeql.yml" <<'EOF'
+# The merge queue drill's CodeQL, CodeQL's advanced setup: one Analyze job per language (actions,
+# the only one this repository has) on every pull request to dev, each push to dev and each trial
+# commit of dev's merge queue, whose Analyze (actions) check dev's ruleset requires, since the
+# code scanning roll-up CodeQL is never posted on a trial commit.
+name: CodeQL
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  merge_group:
+    types: [checks_requested]
+permissions: {}
+# A pull request's newer run cancels its older one; a push's or a trial commit's is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+EOF
+}
+
+if [[ -n $setup ]]; then
+  refs=$(git ls-remote "$remote") || die "cannot read $remote"
+  if grep -q $'\trefs/heads/dev$' <<<"$refs"; then
+    git clone -q --depth 1 --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
+    [[ -f $checkout/$marker ]] ||
+      die "$repo's dev holds commits that are not the drill's (no $marker): the drill takes a scratch repository only"
+    # A dev the drill made before it had all of today's base files gets the ones it lacks, by
+    # path; a file dev has is never rewritten.
+    lacking=()
+    for file in "${base_files[@]}"; do
+      [[ -e $checkout/$file ]] || lacking+=("$file")
+    done
+    if ((${#lacking[@]} == 0)); then
+      echo "merge-queue-drill: $repo's dev already holds the drill's base files, at $(git -C "${checkout:?}" rev-parse --short=7 HEAD)"
+      exit 0
+    fi
+    write_base "$sandbox/files"
+    for file in "${lacking[@]}"; do
+      mkdir -p "$(dirname "$checkout/$file")"
+      cp "$sandbox/files/$file" "$checkout/$file"
+    done
+    git -C "${checkout:?}" add -- "${lacking[@]}"
+    git -C "${checkout:?}" commit -q -m "ci: the merge queue drill's base files"
+    git -C "${checkout:?}" push -q "$remote" HEAD:dev ||
+      die "$repo's dev refused the push of ${lacking[*]}: its ruleset must be disabled for it, Daniel's step in sops/drills.md, then run --setup again"
+    echo "merge-queue-drill: pushed $(git -C "${checkout:?}" rev-parse --short=7 HEAD) to $repo's dev, adding the base files it lacked: ${lacking[*]}"
+    exit 0
+  fi
+  git init -q -b dev "$checkout"
+  write_base "$checkout"
   git -C "${checkout:?}" add -A
   git -C "${checkout:?}" commit -q -m "ci: the merge queue drill's base commit"
   git -C "${checkout:?}" push -q "$remote" dev || die "cannot push the base commit to $repo's dev"
@@ -202,12 +289,25 @@ problem=$(jq -r --argjson app "$app" '
       "does not require agent-review from the reviewer App \($app)"
     else empty end' <<<"$rules")
 [[ -z $problem ]] || die "$repo's dev $problem: its ruleset is Daniel's step, in sops/drills.md"
-required=$(jq -c '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context
-  | select(. != "agent-review")] | unique' <<<"$rules")
+# Every check dev's rules require, each {context, integration_id} once, in the rules' order.
+required_rules=$(jq -c 'reduce (.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?
+  | {context, integration_id}) as $c ([]; if index([$c]) then . else . + [$c] end)' <<<"$rules")
+required_names=$(jq -r 'map(.context) | join(", ")' <<<"$required_rules")
+required=$(jq -c 'map(.context | select(. != "agent-review")) | unique' <<<"$required_rules")
 
 git clone -q --branch dev "$remote" "$checkout" 2>/dev/null || die "cannot clone $remote"
 [[ -f $checkout/$marker ]] ||
   die "$repo's dev has no $marker: the drill takes only the scratch repository tests/merge-queue-drill --setup made"
+[[ -f $checkout/.github/workflows/codeql.yml ]] ||
+  die "$repo's dev has no .github/workflows/codeql.yml: run tests/merge-queue-drill --setup $repo"
+# CodeQL's default setup refuses an advanced setup's uploads and analyses nothing on a trial
+# commit; one that cannot be read leaves the queue's own landing as the proof.
+if default_setup=$(gh api "repos/$repo/code-scanning/default-setup" --jq .state 2>"$sandbox/default-setup.err"); then
+  [[ $default_setup != configured ]] ||
+    die "$repo: CodeQL's default setup is on, which refuses the drill's workflow's uploads and runs nothing on a trial commit: Daniel turns it off, sops/drills.md"
+else
+  echo "merge-queue-drill: $repo's CodeQL default setup could not be read, so the drill goes on: $(head -n 1 "$sandbox/default-setup.err")" >&2
+fi
 base_sha=$(git -C "${checkout:?}" rev-parse HEAD)
 mkdir -p "$team" "$sandbox/slots/1"
 cat >"$team/projects.toml" <<EOF
@@ -304,14 +404,16 @@ done
 
 echo "== checks"
 passed=0 checks=0
-# check <what> <command...>: PASS or FAIL as the command succeeds.
+# check <what> <command...>: PASS or FAIL as the command succeeds, a FAIL followed by the reason
+# the command left in why, if any.
 check() {
   checks=$((checks + 1))
+  why=''
   if "${@:2}" >/dev/null 2>&1; then
     passed=$((passed + 1))
     echo "PASS $1"
   else
-    echo "FAIL $1"
+    echo "FAIL $1${why:+: $why}"
   fi
 }
 git -C "${checkout:?}" fetch -q origin dev || true
@@ -341,6 +443,36 @@ app_check() {
   jq -e --argjson app "$app" 'any(.check_runs[]?; .name == "agent-review" and .app.id == $app
     and .status == "completed" and .conclusion == "success")' "$sandbox/runs-$1.json"
 }
+# seen($r): what the trial commit's check runs ($runs) and commit statuses ($statuses) say of the
+# required check $r, each a conclusion or a status: check runs of its name, of its App where the
+# rule pins one, and commit statuses of its context where it pins none.
+seen='def seen($r): [$runs[0].check_runs[]? | select(.name == $r.context
+    and ($r.integration_id == null or .app.id == $r.integration_id)) | .conclusion // .status]
+  + (if $r.integration_id == null then [$statuses[0].statuses[]? | select(.context == $r.context) | .state] else [] end);'
+# trial_jq <i> <program>: the program over trial commit i's check runs and statuses, with $required.
+trial_jq() {
+  jq -rn --argjson required "$required_rules" --slurpfile runs "$sandbox/runs-$1.json" \
+    --slurpfile statuses "$sandbox/statuses-$1.json" "$seen $2"
+}
+# required_checks <i>: the trial commit reported success for every check dev's rules require;
+# why names each one not reported, or each of its results when none is a success.
+required_checks() {
+  [[ -n ${trials[$1]} ]] || { why='no trial commit to read'; return 1; }
+  why=$(trial_jq "$1" '[$required[] as $r | seen($r) as $seen
+    | if any($seen[]; . == "success") then empty
+      elif $seen != [] then $seen[] | "\($r.context) \(.)"
+      elif $r.integration_id != null and any($runs[0].check_runs[]?; .name == $r.context) then
+        "\($r.context) not reported by the App \($r.integration_id)"
+      else "\($r.context) not reported" end] | join(", ")') || {
+    why="the trial commit's checks could not be read"
+    return 1
+  }
+  [[ -z $why ]]
+}
+# all_reported <i>: every check dev's rules require reported on the trial commit, whatever its result.
+all_reported() {
+  trial_jq "$1" 'all($required[]; seen(.) != [])' | grep -qx true
+}
 # stacked: one pull request's merge commit has the other's as its first parent.
 stacked() {
   [[ -n ${merges[0]} && -n ${merges[1]} ]] || return 1
@@ -360,10 +492,14 @@ for i in 0 1; do
   fi
   trials+=("$trial")
   echo '{"check_runs": []}' >"$sandbox/runs-$i.json"
+  echo '{"statuses": []}' >"$sandbox/statuses-$i.json"
   if [[ -n $trial ]]; then
     gh api "repos/$repo/commits/$trial/check-runs?filter=latest&per_page=100" --paginate 2>/dev/null |
       jq -s '{check_runs: map(.check_runs[]?)}' >"$sandbox/runs-$i.json" ||
       echo '{"check_runs": []}' >"$sandbox/runs-$i.json"
+    gh api "repos/$repo/commits/$trial/status?per_page=100" --paginate 2>/dev/null |
+      jq -s '{statuses: map(.statuses[]?)}' >"$sandbox/statuses-$i.json" ||
+      echo '{"statuses": []}' >"$sandbox/statuses-$i.json"
   fi
   # Each commit's short name where the check names it, nothing where there is none.
   n="PR #${numbers[i]}" merge_name=${merges[i]:+ ${merges[i]:0:7}} trial_name=${trial:+ ${trial:0:7}}
@@ -372,26 +508,28 @@ for i in 0 1; do
   check "$n's merge commit$merge_name is on dev, that head merged cleanly onto a commit holding dev at ${base_sha:0:7}" clean_merge "$i"
   check "$n's merge commit was the trial commit of a branch under gh-readonly-queue/dev/" on_queue_branch "$i"
   check "$n's trial commit$trial_name carries the reviewer App's agent-review success" app_check "$i"
+  check "$n's trial commit$trial_name reported success for every check dev requires ($required_names)" required_checks "$i"
 done
 check "one pull request landed on top of the other, behind dev's tip" stacked
 
-echo "== CodeQL on the trial commits (no check)"
-codeql=0 read_trials=0
+echo "== the roll-up CodeQL on the trial commits (no check)"
+codeql=0 read_trials=0 reported=0
 for i in 0 1; do
   if [[ -z ${trials[i]} ]]; then
     echo "PR #${numbers[i]}: no trial commit to read"
     continue
   fi
   read_trials=$((read_trials + 1))
+  if all_reported "$i"; then reported=$((reported + 1)); fi
   names=$(jq -r '[.check_runs[]? | "\(.name) (\(.conclusion // .status))"] | sort | join(", ")' "$sandbox/runs-$i.json")
   if jq -e 'any(.check_runs[]?; .name == "CodeQL")' "$sandbox/runs-$i.json" >/dev/null; then
     codeql=$((codeql + 1))
-    echo "PR #${numbers[i]}: CodeQL reported on the trial commit ${trials[i]:0:7}; its check runs: $names"
+    echo "PR #${numbers[i]}: the roll-up CodeQL posted on the trial commit ${trials[i]:0:7}; its check runs: $names"
   else
-    echo "PR #${numbers[i]}: CodeQL did not report on the trial commit ${trials[i]:0:7}; its check runs: ${names:-none}"
+    echo "PR #${numbers[i]}: the roll-up CodeQL did not post on the trial commit ${trials[i]:0:7}; its check runs: ${names:-none}"
   fi
 done
 
-outcome="$passed of $checks checks passed on $repo PRs #${numbers[0]} and #${numbers[1]}; CodeQL reported on $codeql of $read_trials trial commits"
+outcome="$passed of $checks checks passed on $repo PRs #${numbers[0]} and #${numbers[1]}; every required check reported on $reported of $read_trials trial commits; the roll-up CodeQL on $codeql"
 echo "== $outcome"
 ((passed == checks))

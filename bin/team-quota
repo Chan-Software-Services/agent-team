@@ -11,7 +11,8 @@
 # (~/.config/agent-team/machine, or null), used a percentage (above 100 once a window is
 # exceeded) and resets_at a UTC time (YYYY-MM-DDTHH:MM:SSZ). windows holds every window of
 # rate_limits under its own name (five_hour, the 5-hour window; seven_day, the week; and any
-# other a later Claude Code may add) whose used_percentage and resets_at (epoch seconds) are numbers;
+# other a later Claude Code may add) whose used_percentage and resets_at (epoch seconds) are
+# numbers;
 # models each per-model weekly window of rate_limits.model_scoped whose display_name is a string,
 # utilization a number from 0 to 1000 (a percentage, as /usage gives it) and resets_at an ISO time.
 # Claude Code 2.1.325's status line gives five_hour and seven_day alone (spend_limit behind a
@@ -53,9 +54,9 @@
 # resets_at an ISO time, each one whose utilization or resets_at is null left out, as /usage leaves
 # it out; every other key of rate_limits (Sonnet's, Opus's and the OAuth apps' weeks, spend and
 # overage) is dropped unread. Its reading is {at, machine, source: "usage", windows, models}, at
-# the time the read began, source telling it from a status line reading, which has none; it is appended to the same day file
-# as the line's, with a team home and a machine name, every read, since its at is what says the
-# model window is fresh, and never to quota.json. After each attempt it writes the attempt record
+# the time the read began, source telling it from a status line reading, which has none; it is
+# appended to the same day file as the line's, with a team home and a machine name, every read,
+# since its at is what says the model window is fresh, and never to quota.json. After each attempt it writes the attempt record
 # ~/.local/state/agent-team/quota-usage.json, {at, ok, why, reading: the last good reading, or
 # null}, ok false with why on a failure, the reading's only home with no team home or no machine
 # name; the attempt holds the lock quota-usage.lock beside it, taken without waiting and closed in
@@ -81,12 +82,13 @@
 # prints its line only when the outcome differs from the last attempt's (none, ok changed, or
 # another why), so the heartbeat logs each change once; the models' numbers are no part of it.
 # status: the windows reading, the newest reading with a window across every machine's
-# usage/*/quota/ (each machine's latest day file), this machine's state file and its usage attempt
-# record's reading, by its at; a stored window or model window that breaks the rules above is left
-# out, and a line that is not a reading, or is left with no window, is skipped. The model reading
-# apart, the newest usage reading or reading holding a model window among each machine's latest
-# two day files (a read just before midnight UTC is found once the line has opened the next day's),
-# the state file and the attempt record's reading: the one source of model windows, fresh at most
+# usage/*/quota/ (each machine's newest day file that holds one, an older one standing when a newer
+# holds none), this machine's state file and its usage attempt record's reading, by its at; a stored
+# window or model window that breaks the rules above is left out, and a line that is not a reading,
+# or is left with no window, is skipped. The model reading apart, the newest usage reading or
+# reading holding a model window in each machine's newer of its latest two day files that holds one
+# (a read just before midnight UTC is found once the line has opened the next day's), the state
+# file and the attempt record's reading: the one source of model windows, fresh at most
 # QUOTA_MODEL_FRESH_MINUTES old. It prints "read on <machine> <n> min ago" (": stale, over 180
 # minutes old" past QUOTA_FRESH_MINUTES), then one line per window, five_hour, seven_day, every
 # other window by name, then, while the model reading is fresh, each of its model windows as
@@ -430,37 +432,48 @@ quota_usage() {
   exit "$rc"
 }
 
-# Each machine's latest <n> day files, one path per line; none with no team home.
-latest_day_files() {
-  local dir
-  [[ -z $TEAM_HOME_PROBLEM && -n $TEAM_HOME && -d $TEAM_HOME ]] || return 0
-  for dir in "$TEAM_HOME"/usage/*/quota; do
-    [[ -d $dir ]] || continue
-    find "$dir" -maxdepth 1 -name '*.jsonl' -type f | sort | tail -n "$1"
-  done
+# reading_of <jq condition>: the newest valid reading among the lines on stdin that meets <jq
+# condition>, or null: each window and model window held to the rules the line writes them by, one
+# that breaks them left out, and a line left with none skipped, as a line that is no reading is.
+# shellcheck disable=SC2016 # jq's variables
+READING_JQ=$QUOTA_JQ'
+def utc: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+def readings: inputs | fromjson? | select(type == "object" and (.at | utc)
+  and (.windows | type) == "object" and (.models | type) == "array")
+| .windows |= with_entries(select((.value | type) == "object" and (.value.used | is_number)
+    and .value.used >= 0 and (.value.resets_at | utc)))
+| .models |= map(select(type == "object" and (.name | type) == "string" and .name != ""
+    and (.used | is_number) and .used >= 0 and .used <= 1000 and (.resets_at | utc)))
+| select(.windows != {} or .models != []);
+'
+reading_of() {
+  jq -cRn "$READING_JQ"'[readings | select('"$1"')] | max_by(.at)'
 }
 
-# newest_reading <jq condition> <file>...: the newest stored reading, of the files named, this
-# machine's state file and its usage attempt record's reading, that meets <jq condition>, or null:
-# each window and model window held to the rules the line writes them by, one that breaks them
-# left out, and a line left with none skipped, as a line that is no reading is.
+# newest_reading <jq condition> <depth>: the newest stored reading that meets <jq condition>, of
+# each machine's newest day file that holds one, among its latest <depth> day files (all of them
+# with 0), of this machine's state file and of its usage attempt record's reading, or null; a day
+# file with no such reading (a torn or hand-edited line, or only readings of another kind) gives
+# way to the machine's next older one. With no team home it reads the state files alone.
 newest_reading() {
-  local condition=$1 files=("${@:2}")
-  [[ ! -f $STATE ]] || files+=("$STATE")
+  local condition=$1 depth=$2 readings=() dir file reading n
+  if [[ -z $TEAM_HOME_PROBLEM && -n $TEAM_HOME && -d $TEAM_HOME ]]; then
+    for dir in "$TEAM_HOME"/usage/*/quota; do
+      [[ -d $dir ]] || continue
+      n=0
+      while IFS= read -r file; do
+        ((depth == 0 || n < depth)) || break
+        n=$((n + 1))
+        reading=$(reading_of "$condition" <"$file")
+        [[ $reading == null ]] || { readings+=("$reading"); break; }
+      done < <(find "$dir" -maxdepth 1 -name '*.jsonl' -type f | sort -r)
+    done
+  fi
   {
-    ((${#files[@]} == 0)) || cat -- "${files[@]}"
+    ((${#readings[@]} == 0)) || printf '%s\n' "${readings[@]}"
+    [[ ! -f $STATE ]] || cat -- "$STATE"
     [[ ! -f $USAGE_STATE ]] || jq -c '.reading // empty' "$USAGE_STATE" 2>/dev/null || true
-  } | jq -cRn "$QUOTA_JQ"'
-    def utc: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
-    [inputs | fromjson? | select(type == "object" and (.at | utc)
-      and (.windows | type) == "object" and (.models | type) == "array")
-    | .windows |= with_entries(select((.value | type) == "object" and (.value.used | is_number)
-        and .value.used >= 0 and (.value.resets_at | utc)))
-    | .models |= map(select(type == "object" and (.name | type) == "string" and .name != ""
-        and (.used | is_number) and .used >= 0 and .used <= 1000 and (.resets_at | utc)))
-    | select(.windows != {} or .models != [])
-    | select('"$condition"')]
-    | max_by(.at)'
+  } | reading_of "$condition"
 }
 
 # team-quota status's object from the windows reading on stdin (or null), the model reading $model
@@ -508,7 +521,7 @@ STATUS_TEXT_JQ='
 '
 
 quota_status() {
-  local json='' status latest=() recent=() windows model problem
+  local json='' status windows model problem
   while (($#)); do
     case $1 in
       --json) [[ -z $json ]] || usage_error "$USAGE"; json=1 ;;
@@ -516,10 +529,8 @@ quota_status() {
     esac
     shift
   done
-  mapfile -t latest < <(latest_day_files 1)
-  mapfile -t recent < <(latest_day_files 2)
-  windows=$(newest_reading '.windows != {}' "${latest[@]}")
-  model=$(newest_reading '.source == "usage" or .models != []' "${recent[@]}")
+  windows=$(newest_reading '.windows != {}' 0)
+  model=$(newest_reading '.source == "usage" or .models != []' 2)
   # The why of this machine's last usage read, when it failed.
   problem=null
   if [[ -f $USAGE_STATE ]]; then

@@ -33,18 +33,47 @@
 # below. TEAM_CI_WAIT_GRACE_SECONDS replaces the grace's seconds, TEAM_CI_WAIT_QUEUED_SECONDS the
 # queued limit's 20 minutes (QUEUED_SECONDS), and TEAM_CI_WAIT_DEADLINE_SECONDS the deadline's 90
 # minutes (DEADLINE_SECONDS), in seconds (the tests' seams).
-# It looks every 30 s (WAIT_SECONDS), counting time in looks, so a test steps it with a stub
-# sleep. Each look reads the PR's state and head (gh pr view), its checks (gh pr checks), the head's
-# workflow runs (gh api repos/<repo>/actions/runs?head_sha=<head>&per_page=100), once per run,
-# the workflow run of each pending check whose link is an Actions job link
-# (.../actions/runs/<run id>/job/<job id>, through gh api repos/<repo>/actions/runs/<run id>), and
-# how many workflow runs of the repository are in progress (gh api
-# repos/<repo>/actions/runs?status=in_progress&per_page=1, its total_count), for the queued clock;
-# once, when the wait ends on a failure, it reads the Actions job of each failed or cancelled check
-# with an Actions job link that is not a roll-up (gh api repos/<repo>/actions/jobs/<job id>), for
-# its runner and steps: only reads of metadata, never a log or a check's output.
+# The interval before each look is gh_interval's over a base of 30 s (WAIT_SECONDS), or of 60 s
+# (QUEUED_WAIT_SECONDS) when the last readable look waits only on queued things (a check pending,
+# no pending check in_progress and no open workflow run in_progress), but 30 s through the grace
+# for a push and while a reading stands for its 2 minutes; gh_interval raises it to 60, 120 or 300
+# s as the hour's budget of GitHub's core requests (with --merge-group, GraphQL's points too) falls
+# under a half, a quarter or a tenth; no interval runs past the grace's end, in the grace and with
+# --look, or else past the deadline's. It counts its clocks in seconds, so a test steps it with a
+# stub sleep: the grace and the deadline count every second it slept (elapsed), and each other clock
+# (stuck, queued, settled, failing) adds the look interval slept before each look that counts for
+# it, so each ends at its minutes whatever the interval. It reads GitHub's
+# REST API through bin/lib/github-api.sh's reader alone (gh_read, and gh_call where an answer
+# cannot be cached), which logs each request for <repo>#<n> (with --run, <repo> run <id>): every
+# process of the machine shares its cache, and it asks again with the answer's ETag, so a read of
+# an unchanged answer is a 304, which costs nothing against GitHub's limit. Its own subject's
+# reads (the PR, its head's checks and runs, a run and its jobs) ask GitHub every look (OWN_FRESH,
+# 0 s), so a wait begun seconds after a rerun never ends on the answer an earlier wait cached; the
+# repository's runs in progress, the one read every wait on the repository makes, are read once in
+# 20 s among them all, whichever wait makes it.
+# Each look reads, at repos/<repo>/:
+#   pulls/<n>                                     the PR's state (merged, closed or open) and head
+#   commits/<head>/check-runs?filter=latest&per_page=100
+#   commits/<head>/status?per_page=100            its head's checks: the check runs, every page
+#                                                 with gh api --paginate only when GitHub counts
+#                                                 over 100 of them, and the statuses, each read as
+#                                                 gh pr checks reads a check (a check run's
+#                                                 html_url its link; a conclusion of success
+#                                                 passed, of skipped or neutral skipped, of
+#                                                 cancelled cancelled, any other a failure)
+#   actions/runs?head_sha=<head>&per_page=100     the head's workflow runs, which give the run of
+#                                                 each pending check whose link is an Actions job
+#                                                 link (.../actions/runs/<run id>/job/<job id>)
+#   actions/runs/<run id>                         such a run, once per look, only when the head's
+#                                                 runs do not list it
+#   actions/runs?status=in_progress&per_page=1    how many workflow runs of the repository are in
+#                                                 progress, its total_count, for the queued clock:
+#                                                 the same read for every wait on the repository
+# Once, when the wait ends on a failure, it reads the Actions job of each failed or cancelled check
+# with an Actions job link that is not a roll-up (actions/jobs/<job id>), for its runner and
+# steps: only reads of metadata, never a log or a check's output.
 # A workflow run of the head that is not completed holds the wait whatever the checks show, since
-# in a re-run's or a push's first seconds gh pr checks may list only another workflow's checks, and
+# in a re-run's or a push's first seconds the head's checks may list only another workflow's, and
 # an earlier attempt's failure may yet be replaced.
 # A run GitHub does not list yet holds nothing, so a reading of no check, or of every check passed,
 # counts only once it has stood for 2 minutes of looks (SETTLE_SECONDS), with no run open and no
@@ -52,9 +81,19 @@
 # through team-project, and one still not listed when that reading has stood is a failure.
 # agent-review is never among them here, since a reviewer sets it at its verdict, apart from CI.
 # Before each look, while the team holds offline (offline_hold), it ends at once with exit 75 and
-# the hold's text. Without --json or --look, it prints one line when it starts, naming the PR and
-# the short head of the first look, and its result when it ends, nothing in between; it ends at the
-# earliest look where one of these holds:
+# the hold's text.
+# Then, while GitHub's rate limit stands for a resource the look reads (core, and graphql too with
+# --merge-group), as the reader's limit.json records it, the wait sends nothing and sleeps it out,
+# to a second past its until (at most to the deadline), then looks: the first sleep for each until
+# prints one line on stderr, "team-ci-wait: <the limit's text>; waiting for it, then looking
+# again", the text naming the limit, primary or secondary, its reset in local time, and that it is
+# no outage. A limit's sleep counts toward the grace and the deadline alone, and a read the limit
+# refuses ends its look as a failed read does, but neither starts nor advances the failing clock:
+# a limit never ends the wait but at its deadline, which, with GitHub not read yet, names it.
+# Nothing here writes the team's offline flag for a limit, since GitHub is up.
+# Without --json or --look, it prints one line when it starts, naming the PR and the short head of
+# the first look, and its result when it ends, nothing in between; it ends at the earliest look
+# where one of these holds:
 #   the PR is merged or closed                         exit 1, naming its state
 #   the head is still not <sha> after the grace        exit 1, naming both short heads: it is
 #                                                      another commit; report it to the
@@ -70,7 +109,8 @@
 #   no check pending but stuck or queued ones, no      exit 1, naming each failed, cancelled,
 #   workflow run open but a queued one's, and at       stuck or queued check in its class (below)
 #   least one failed, cancelled, stuck or queued
-#   a gh call failing at every look for 5 minutes      exit 75, with gh's last reason line
+#   a gh call failing at every look for 5 minutes,     exit 75, with gh's last reason line
+#   the rate limit's refusals not counted
 #   90 minutes of looks with checks still pending or   exit 75, naming each pending check with
 #   a workflow run open                                its run's id and status and each other
 #                                                      open run: run team-ci-wait again to wait
@@ -91,7 +131,7 @@
 # plan's runners while the team's other runs hold them, and only one queued while nothing runs is
 # one no runner took; the deadline bounds the wait all the same. A look whose gh call
 # fails reads no state: it neither starts nor advances the stuck, the queued or the standing
-# clock, while the deadline counts every look. A pending check from outside Actions (no run in
+# clock, while the deadline counts every sleep. A pending check from outside Actions (no run in
 # its link) is never queued, and is waited on until it concludes or the deadline; agent-review is
 # a check like any other, unless --no-agent-review leaves it out.
 # A failure's text keeps the first line, "the checks on <short> did not pass:", and gives each
@@ -119,26 +159,28 @@
 # failure, exit 1 (failed); none, but checks pending or a run open, exit 0 (pending); every check
 # passed or skipped, exit 0 (passed); no check and no run open, exit 0 (none); the head still not
 # <sha> after the grace, the PR merged or closed, or the team holding offline, as the wait ends;
-# GitHub not read for the grace, exit 75 (unreadable).
-# --json's object is {schema: "team-ci-wait/1", outcome, head, text, failures}: outcome one of
-# passed, none, failed, other-head (still not <sha> after the grace), moved, closed (merged or
-# closed), deadline, unreadable (gh failing for its limit, or the deadline with no readable look),
-# offline, and with --look pending; head the PR's head at the last readable look, null before
+# GitHub not read for the grace, exit 75 (unreadable). A rate limit, standing or met by the look's
+# own read, is met at once, with no look interval first: one that lifts within what is left of the
+# grace is slept out as above, then the look taken; one that does not ends the look at once, exit
+# 75 (unreadable), "team-ci-wait: <the limit's text>: look again after it".
+# --json's object is {schema: "team-ci-wait/1", outcome, head, text, failures, limited_until}:
+# outcome one of passed, none, failed, other-head (still not <sha> after the grace), moved, closed
+# (merged or closed), deadline, unreadable (gh failing for its 5 minutes, a look's grace, a rate
+# limit past a look's grace, or the deadline with no readable look), offline, and with --look
+# pending; head the PR's head at the last readable look, null before
 # one; text what the end prints without --json, the starting line left out; failures each failure
 # of a failed end, in the text's order, as {name, class (pr, infrastructure or rollup), kind
 # (failed, cancelled, missing, never-started, setup, queued, stuck or rollup), state (the check's,
 # lowercase, null for a missing one), link, run, job (the Actions run and job ids as numbers, else
 # null), step (the first failing step's name, else null), rerun (the command its line gives, else
-# null)}, and [] on any other end.
+# null)}, and [] on any other end; limited_until the until of the last rate limit the wait met, as
+# a UTC time (2026-11-16T07:27:14Z), else null.
 # --merge-group waits on the trial commit the merge queue built for the PR, with the same clocks,
 # classes, deadlines and outcomes, --json's head the trial commit, and these differences. Each look
-# reads the PR's state and its queue entry's head commit (gh api graphql), the commit's check runs
-# (gh api repos/<repo>/commits/<trial sha>/check-runs?filter=latest&per_page=100 --paginate, so
-# every page of them) and its statuses
-# (gh api repos/<repo>/commits/<trial sha>/status?per_page=100) in place of gh pr checks, each
-# read as gh pr checks reads a check (a check run's html_url its link; a conclusion of success
-# passed, of skipped or neutral skipped, of cancelled cancelled, any other a failure), and the
-# workflow runs of the trial commit. There is no grace, since the caller read the trial commit
+# reads the PR's state and its queue entry's head commit (gh api graphql, through gh_call, one
+# GraphQL point a look, never cached) in place of pulls/<n>, and the rest as a PR's look does, at
+# the trial commit: its check runs and statuses and its workflow runs, with the repository's runs
+# in progress. There is no grace, since the caller read the trial commit
 # from the entry. Once the entry's head commit is no longer <trial sha> (the queue rebuilt the
 # entry onto another trial commit, landed it or dropped it), the wait ends at that look: on a
 # merged or closed PR as on a head; when a check of the trial commit failed, as a failure, exit 1,
@@ -146,25 +188,26 @@
 # commit it gives up; else exit 1 (other-head), naming where the entry is. --look and a <sha>
 # after the URL are refused with it.
 # With --run, the wait is on the one workflow run, read as a PR's checks are, but for what follows.
-# Each look reads the run (gh api repos/<repo>/actions/runs/<id>), its jobs, the latest attempt's
-# (gh api repos/<repo>/actions/runs/<id>/jobs?per_page=100), and the repository's runs in progress
-# as above. A job is a check: its name, its state the conclusion once completed else its status,
+# Each look reads, through the reader as above, the run (repos/<repo>/actions/runs/<id>), its jobs,
+# the latest attempt's (repos/<repo>/actions/runs/<id>/jobs?per_page=100), and the repository's runs
+# in progress. A job is a check: its name, its state the conclusion once completed else its status,
 # passed on success, skipped on skipped or neutral, cancelled on cancelled, failed on any other
-# conclusion or none, pending while not completed, its link the job's page, and a pending job's
-# run the run itself. The head is the run's head_sha, which never changes, and there is no PR to be
+# conclusion or none, pending while not completed, its link the job's page, and a pending job's run
+# the run itself. The head is the run's head_sha, which never changes, and there is no PR to be
 # merged, closed or moved: a run whose head is not <sha> ends the wait at the first readable look,
 # exit 1 (other-head), with no grace. The run holds the wait while it is not completed, with no job
 # listed too; once it is completed, a reading with nothing pending counts at once, with no 2
 # minutes, since a completed run's jobs are final until a rerun, which needs a wait of its own. A
 # completed run with a job still pending is held, and that job is stuck after 5 minutes. The
 # required checks are the project's as for a PR, and one the completed run does not list is a
-# failure. A run that completed with a conclusion that is no pass, with no job failed, cancelled or
-# pending to say why (a workflow that never started, a cancel before any job), is a failure of the
-# branch's own, named by its workflow with the run's link. Its texts: the starting line names the
-# run, "waiting on CI run <id> of <repo> at <short>"; the class "the PR's" reads "the branch's"
-# (--json's class stays pr); and wherever a line says to run team-ci-wait again it says to wait on
-# the run again, since its caller may be team-ci-run. Its ends, at the earliest look where one
-# holds:
+# failure, but for a run of another workflow than the project's branch_ci, when it names one, which
+# answers for its own jobs alone. A run that completed with a conclusion that is no pass, with no
+# job failed, cancelled or pending to say why (a workflow that never started, a cancel before any
+# job), is a failure of the branch's own, named by its workflow with the run's link. Its texts: the
+# starting line names the run, "waiting on CI run <id> of <repo> at <short>"; the class "the PR's"
+# reads "the branch's" (--json's class stays pr); and wherever a line says to run team-ci-wait again
+# it says to wait on the run again, since its caller may be team-ci-run. Its ends, at the earliest
+# look where one holds:
 #   the run's head is not <sha>                        exit 1, naming both short heads
 #   the run completed, no job pending, every job       exit 0, naming each (with no job at all and
 #   passed or skipped, every required check listed     none required, saying so: outcome none)
@@ -179,10 +222,17 @@
 # line, 75 try again later.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/github-api.sh
+source "$TEAM_LIB/github-api.sh"
 
-# Seconds between looks, how long a check must look stuck or queued, how long a reading with nothing
-# left to wait on must stand, how long gh may fail, and the deadline.
+# Seconds between looks, and while only queued things are pending, how long a check must look stuck
+# or queued, how long a reading with nothing left to wait on must stand, how long gh may fail, and
+# the deadline.
 WAIT_SECONDS=30
+# Seconds within which an answer about the wait's own subject is served from the cache with no
+# request: none, so each look asks again, for a 304 when nothing changed.
+OWN_FRESH=0
+QUEUED_WAIT_SECONDS=60
 STUCK_SECONDS=300
 QUEUED_SECONDS=${TEAM_CI_WAIT_QUEUED_SECONDS:-1200}
 SETTLE_SECONDS=120
@@ -259,6 +309,10 @@ else
   whose="the PR's" again="run team-ci-wait again" again_wait="$again to wait on them" again_unread="$again to wait"
 fi
 required=$(team_project "$project" required_checks)
+# The workflow whose run carries the required checks, when the project names one.
+branch_ci=$(team_project "$project" branch_ci)
+# Whom the reader logs each request for.
+if [[ -n $run_id ]]; then GH_FOR="$repo run $run_id"; else GH_FOR="$repo#$number"; fi
 
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
@@ -269,30 +323,27 @@ echo '[]' >"$dir/failures"
 finish() {
   if $json; then
     jq -cn --arg outcome "$1" --arg head "$head" --arg text "$3" --slurpfile failures "$dir/failures" \
+      --arg limited "$([[ -z $limited_until ]] || gh_utc "$limited_until")" \
       '{schema: "team-ci-wait/1", outcome: $outcome, head: (if $head == "" then null else $head end), text: $text,
-        failures: $failures[0]}'
+        failures: $failures[0], limited_until: (if $limited == "" then null else $limited end)}'
   else
     printf '%s\n' "$3"
   fi
   exit "$2"
 }
 
-# --merge-group's reads of a look: $dir/view, {state, headRefOid: the trial commit, entry: the
-# head commit of the PR's queue entry, "" with none}, and $dir/checks, the trial commit's check
-# runs and statuses as gh pr checks gives a PR's; fails with gh's reason in $dir/error.
-read_group() {
-  # shellcheck disable=SC2016 # the query's variables are GraphQL's
-  github "$dir" entry api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    state mergeQueueEntry { headCommit { oid } } } } }' \
-    -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$number" || return 1
-  if ! jq -e --arg sha "$group" '.data.repository.pullRequest | objects
-    | {state, headRefOid: $sha, entry: (.mergeQueueEntry.headCommit.oid // "")}' "$dir/entry" >"$dir/view" 2>/dev/null; then
-    echo "gh api graphql: no such pull request" >"$dir/error"
-    return 1
+# read_checks <sha>: $dir/checks, the commit's check runs and statuses as gh pr checks gives a PR's
+# ({name, state, bucket, link}): a check run's state its conclusion once completed, else its
+# status, its link its html_url, its bucket pass on success, skipping on skipped or neutral,
+# cancel on cancelled, fail on any other conclusion, else pending; a status's state its own, pass
+# on success, pending on pending, else fail. The check runs are one page unless GitHub counts more
+# than 100 of them, then every page, uncached. Fails as the reader does, its reason in $dir/error.
+read_checks() {
+  gh_read "$dir" check-runs "repos/$repo/commits/$1/check-runs?filter=latest&per_page=100" "$OWN_FRESH" || return
+  if jq -e '(.total_count // 0) > 100' "$dir/check-runs" >/dev/null 2>&1; then
+    gh_call "$dir" check-runs api "repos/$repo/commits/$1/check-runs?filter=latest&per_page=100" --paginate || return
   fi
-  github "$dir" check-runs api "repos/$repo/commits/$group/check-runs?filter=latest&per_page=100" --paginate || return 1
-  github "$dir" statuses api "repos/$repo/commits/$group/status?per_page=100" || return 1
+  gh_read "$dir" statuses "repos/$repo/commits/$1/status?per_page=100" "$OWN_FRESH" || return
   jq -n --slurpfile runs "$dir/check-runs" --slurpfile statuses "$dir/statuses" '
     [($runs[].check_runs[] | (if .status == "completed" then .conclusion // "" else .status end) as $state
       | {name, state: ($state | ascii_upcase), link: (.html_url // ""),
@@ -302,16 +353,34 @@ read_group() {
        bucket: ({success: "pass", pending: "pending"}[.state] // "fail")})]' >"$dir/checks"
 }
 
+# --merge-group's reads of a look: $dir/view, {state, headRefOid: the trial commit, entry: the
+# head commit of the PR's queue entry, "" with none}, and $dir/checks, the trial commit's; fails
+# with the reason in $dir/error.
+read_group() {
+  # shellcheck disable=SC2016 # the query's variables are GraphQL's
+  gh_call "$dir" entry api graphql -f query='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    state mergeQueueEntry { headCommit { oid } } } } }' \
+    -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$number" || return
+  if ! jq -e --arg sha "$group" '.data.repository.pullRequest | objects
+    | {state, headRefOid: $sha, entry: (.mergeQueueEntry.headCommit.oid // "")}' "$dir/entry" >"$dir/view" 2>/dev/null; then
+    echo "gh api graphql: no such pull request" >"$dir/error"
+    return 1
+  fi
+  read_checks "$group"
+}
+
 # Read one look into $dir/look, {state, head, entry, checks: [{name, state, bucket, link, run}],
 # open_runs: [{id, name, status}], busy}, each pending check's run {id, status, conclusion,
 # updated_at} when its link is an Actions job link, else null, open_runs the head's workflow runs
 # not yet completed (with --run, the run itself), entry the head commit of the PR's queue entry
 # with --merge-group ("" with none), else null, and busy whether something of the repository runs:
 # more workflow runs in progress than open_runs has, or a check in progress of an Actions run not
-# completed. It fails with gh's reason in $dir/error, and leaves the last look's file as it was.
+# completed. It fails as the reader does (3 for a limit, else 1), its reason in $dir/error, and
+# leaves the last look's file as it was.
 read_look() {
-  if [[ -n $run_id ]]; then read_run; else read_pr; fi || return 1
-  github "$dir" running api "repos/$repo/actions/runs?status=in_progress&per_page=1" || return 1
+  if [[ -n $run_id ]]; then read_run; else read_pr; fi || return
+  gh_read "$dir" running "repos/$repo/actions/runs?status=in_progress&per_page=1" || return
   jq --slurpfile running "$dir/running" '
     .busy = (($running[0].total_count // 0) > ([.open_runs[] | select(.status == "in_progress")] | length)
       or any(.checks[]; .state == "in_progress" and .run != null and .run.status != "completed"))' "$dir/reading" >"$dir/look.new"
@@ -325,8 +394,8 @@ read_look() {
 # why (a workflow that never started, a cancel before any job), is itself a failed or cancelled
 # check, by the workflow's name with the run's link.
 read_run() {
-  github "$dir" wf-run api "repos/$repo/actions/runs/$run_id" || return 1
-  github "$dir" wf-jobs api "repos/$repo/actions/runs/$run_id/jobs?per_page=100" || return 1
+  gh_read "$dir" wf-run "repos/$repo/actions/runs/$run_id" "$OWN_FRESH" || return
+  gh_read "$dir" wf-jobs "repos/$repo/actions/runs/$run_id/jobs?per_page=100" "$OWN_FRESH" || return
   jq -n --slurpfile run "$dir/wf-run" --slurpfile jobs "$dir/wf-jobs" '
     $run[0] as $r
     | [$jobs[0].jobs[]
@@ -345,26 +414,33 @@ read_run() {
        open_runs: [$r | select(.status != "completed") | {id, name, status}]}' >"$dir/reading"
 }
 
-# The reading of the PR, its checks and its head's workflow runs, into $dir/reading.
+# The reading of the PR, its checks and its head's workflow runs, into $dir/reading: the PR's state
+# MERGED once merged, CLOSED once closed, else OPEN, and a pending check's run taken from the head's
+# runs, or read by its id when they do not list it.
 read_pr() {
   local id files=()
   rm -f "$dir"/run-*
   if [[ -n $group ]]; then
-    read_group || return 1
+    read_group || return
   else
-    github "$dir" view pr view "$number" --repo "$repo" --json state,headRefOid || return 1
-    github "$dir" checks pr checks "$number" --repo "$repo" --json name,state,bucket,link,workflow || return 1
+    gh_read "$dir" pull "repos/$repo/pulls/$number" "$OWN_FRESH" || return
+    jq '{state: (if .merged then "MERGED" elif .state == "closed" then "CLOSED" else "OPEN" end), headRefOid: .head.sha}' \
+      "$dir/pull" >"$dir/view"
+    read_checks "$(jq -r .headRefOid "$dir/view")" || return
   fi
-  github "$dir" head-runs api "repos/$repo/actions/runs?head_sha=$(jq -r .headRefOid "$dir/view")&per_page=100" || return 1
+  gh_read "$dir" head-runs "repos/$repo/actions/runs?head_sha=$(jq -r .headRefOid "$dir/view")&per_page=100" "$OWN_FRESH" || return
   while IFS= read -r id; do
-    github "$dir" "run-$id" api "repos/$repo/actions/runs/$id" || return 1
+    gh_read "$dir" "run-$id" "repos/$repo/actions/runs/$id" "$OWN_FRESH" || return
     files+=("$dir/run-$id")
-  done < <(jq -r '[.[] | select(.bucket == "pending") | .link // "" | capture("/actions/runs/(?<id>[0-9]+)/job/[0-9]+").id]
-    | unique[]' "$dir/checks")
+  done < <(jq -r --slurpfile head_runs "$dir/head-runs" '[$head_runs[0].workflow_runs[].id | tostring] as $listed
+    | [.[] | select(.bucket == "pending") | .link // "" | capture("/actions/runs/(?<id>[0-9]+)/job/[0-9]+").id]
+    | unique[] | select(IN($listed[]) | not)' "$dir/checks")
   jq -n --slurpfile view "$dir/view" --slurpfile checks "$dir/checks" --slurpfile head_runs "$dir/head-runs" --argjson without_review "$without_review" \
     --argjson runs "$(jq -s 'map({key: (.id | tostring), value: {id, status, conclusion, updated_at}}) | from_entries' \
       /dev/null "${files[@]}")" '
-    {state: $view[0].state, head: $view[0].headRefOid, entry: $view[0].entry,
+    ($head_runs[0].workflow_runs | map({key: (.id | tostring), value: {id, status, conclusion, updated_at}}) | from_entries)
+      + $runs as $runs
+    | {state: $view[0].state, head: $view[0].headRefOid, entry: $view[0].entry,
      checks: [$checks[0][] | select($without_review and .name == "agent-review" | not) | {name, state: (.state | ascii_downcase), bucket, link: (.link // ""),
        run: (if .bucket == "pending" then $runs[(.link // "") | capture("/actions/runs/(?<id>[0-9]+)/job/[0-9]+").id // ""]
          else null end)}],
@@ -390,9 +466,10 @@ span() {
 }
 
 # tick <clocks> <seconds> <filter> <out> <step>: the clocks of the checks the jq <filter> selects at
-# the last readable look, in the associative array <clocks> (each name's count of looks since the
-# first that saw it, which this look adds its <step> to, 1 or, to hold every clock, 0; a check no
-# longer selected loses its clock), and in the array <out> each name whose clock has run <seconds>.
+# the last readable look, in the associative array <clocks> (each name's seconds since the first
+# look that saw it, which this look adds its <step> to: the look interval slept before it or, to
+# hold every clock, 0; a check no longer selected loses its clock), and in the array <out> each
+# name whose clock has run <seconds>.
 # shellcheck disable=SC2004 # counted is an associative array, by nameref, keyed by $name
 tick() {
   local -n counted=$1 out=$4
@@ -406,7 +483,7 @@ tick() {
   for name in "${!counted[@]}"; do
     if [[ -z ${now[$name]:-} ]]; then
       unset "counted[$name]"
-    elif ((counted[$name] * WAIT_SECONDS >= $2)); then
+    elif ((counted[$name] >= $2)); then
       out+=("$name")
     fi
   done
@@ -470,7 +547,7 @@ report() {
   local id
   : >"$dir/jobs"
   while IFS= read -r id; do
-    if github "$dir" "job-$id" api "repos/$repo/actions/jobs/$id"; then
+    if gh_read "$dir" "job-$id" "repos/$repo/actions/jobs/$id"; then
       jq -c --arg id "$id" '{($id): .}' "$dir/job-$id" >>"$dir/jobs"
     fi
   done < <(jq -r --argjson stuck "$stuck_json" --argjson queued "$queued_json" --arg repo "$repo" \
@@ -516,9 +593,67 @@ look_end() {
   finish passed 0 "$(passed_text)"
 }
 
-look_n=0 seen_n=0 head='' first_head='' failing_since='' settled_since='' settled_on='' text=''
+# The clocks, in seconds: elapsed, every sleep's, which bounds the grace and the deadline; slept,
+# the look interval slept before this look, which each clock that counts this look adds; failing,
+# since the first look of a run of failed reads, and settled, since the reading now standing was
+# first seen, each empty when not running. limited_until is the until of the last limit met, and
+# told the last one whose sleep was said on stderr.
+elapsed=0 slept=0 head='' first_head='' failing='' settled='' settled_on='' text='' limited_until='' told=''
 # How long gh may fail before the end: a look's grace, else FAILING_SECONDS.
 if $look; then failing_limit=$GRACE_SECONDS; else failing_limit=$FAILING_SECONDS; fi
+# The rate limits a look reads under: core, and with --merge-group GraphQL's for its entry.
+limits=(core)
+[[ -z $group ]] || limits+=(graphql)
+
+# The seconds at which the wait ends: the deadline, and a reading standing then gets its 2 minutes.
+deadline_at() {
+  echo $((DEADLINE_SECONDS + (${#settled} ? SETTLE_SECONDS : 0)))
+}
+
+# pause [grace]: sleep the look interval before the next look, gh_interval's over its base: 30 s,
+# or 60 s when the last readable look waits only on queued things, but 30 s in the grace (with
+# "grace") and while a reading stands, and the base alone while a limit stands; at most to the
+# grace's end in the grace and with --look, else to the deadline's.
+pause() {
+  local base=$WAIT_SECONDS seconds end
+  if [[ ${1:-} != grace && -z $settled ]] && jq -e '[.checks[] | select(.bucket == "pending")] as $pending
+    | ($pending | length) > 0 and all($pending[]; .state != "in_progress")
+      and all(.open_runs[]; .status != "in_progress")' "$dir/look" >/dev/null 2>&1; then
+    base=$QUEUED_WAIT_SECONDS
+  fi
+  # A limit standing is slept out at the next look, so the budget its refusal emptied adds nothing.
+  if gh_limited "${limits[@]}" >/dev/null; then seconds=$base; else seconds=$(gh_interval "$base" "${limits[@]}"); fi
+  if [[ ${1:-} == grace ]] || $look; then end=$GRACE_SECONDS; else end=$(deadline_at); fi
+  ((elapsed >= end || seconds <= end - elapsed)) || seconds=$((end - elapsed))
+  sleep "$seconds"
+  elapsed=$((elapsed + seconds)) slept=$seconds
+}
+
+# sleep_limit: when a limit stands for a resource the look reads, sleep it out, to a second past
+# its until but at most to the deadline, saying so on stderr once for each until; with --look, end
+# unreadable instead when it does not fit in what is left of the grace. The sleep adds to elapsed
+# alone, never to slept.
+sleep_limit() {
+  local record lifts resource kind seconds left
+  record=$(gh_limit_record "${limits[@]}") || return 0
+  read -r lifts resource kind <<<"$record"
+  limited_until=$lifts
+  seconds=$((lifts + 1 - $(gh_now)))
+  if $look; then
+    if ((seconds > GRACE_SECONDS - elapsed)); then
+      finish unreadable 75 "team-ci-wait: $(gh_limit_text "$lifts" "$resource" "$kind"): look again after it"
+    fi
+  else
+    left=$(($(deadline_at) - elapsed))
+    ((seconds <= left)) || seconds=$left
+  fi
+  if [[ $lifts != "$told" ]]; then
+    echo "team-ci-wait: $(gh_limit_text "$lifts" "$resource" "$kind"); waiting for it, then looking again" >&2
+    told=$lifts
+  fi
+  sleep "$seconds"
+  elapsed=$((elapsed + seconds))
+}
 # The stuck and queued clocks, which tick keeps by nameref, and the names that ran theirs out.
 # shellcheck disable=SC2034
 declare -A stuck_looks=() queued_looks=()
@@ -527,8 +662,11 @@ while :; do
   if hold=$(offline_hold); then
     finish offline 75 "team-ci-wait: $hold"
   fi
-  if read_look; then
-    failing_since=''
+  sleep_limit
+  read_rc=0
+  read_look || read_rc=$?
+  if ((read_rc == 0)); then
+    failing=''
     { read -r state && read -r head; } < <(jq -r '.state, .head' "$dir/look")
     if [[ -z $first_head ]]; then
       if [[ -n $run_id && $head != "$expected"* ]]; then
@@ -539,12 +677,11 @@ while :; do
         if [[ $state != OPEN ]]; then
           finish closed 1 "team-ci-wait: $repo#$number is ${state,,}: its checks no longer matter"
         fi
-        if ((look_n * WAIT_SECONDS >= GRACE_SECONDS)); then
+        if ((elapsed >= GRACE_SECONDS)); then
           finish other-head 1 "team-ci-wait: the head of $repo#$number is ${head:0:7}, not ${expected:0:7}, after $(span "$GRACE_SECONDS") of looks: it is another commit, and its checks are not the ones to wait on; if ${head:0:7} is not your own, report it to the coordinator"
         fi
         # GitHub may not show the push yet: look again.
-        sleep "$WAIT_SECONDS"
-        look_n=$((look_n + 1))
+        pause grace
         continue
       fi
       first_head=$head
@@ -579,10 +716,10 @@ while :; do
     # open, pending in any state but in_progress, is queued, from the first readable look that saw
     # it; the queued clocks count only the looks at which nothing else of the repository runs, since
     # a check queued while something runs may only be waiting for a runner.
-    tick stuck_looks "$STUCK_SECONDS" '.bucket == "pending" and .run.status == "completed"' stuck 1
+    tick stuck_looks "$STUCK_SECONDS" '.bucket == "pending" and .run.status == "completed"' stuck "$slept"
     tick queued_looks "$QUEUED_SECONDS" \
       '.bucket == "pending" and .state != "in_progress" and .run != null and .run.status != "completed"' queued \
-      "$(jq -r 'if .busy then 0 else 1 end' "$dir/look")"
+      "$(jq -r --argjson slept "$slept" 'if .busy then 0 else $slept end' "$dir/look")"
     stuck_json=$(jq -cn '$ARGS.positional' --args "${stuck[@]}")
     queued_json=$(jq -cn '$ARGS.positional' --args "${queued[@]}")
     # What this look says with nothing left to wait on: "failed" now, or "settled" for a reading
@@ -599,11 +736,20 @@ while :; do
         finish failed 1 "$text"
       fi
       names=$(jq -c '[.checks[].name] | sort' "$dir/look")
-      if [[ $names != "$settled_on" ]]; then
-        settled_on=$names settled_since=$seen_n
+      if [[ $names != "$settled_on" || -z $settled ]]; then
+        settled_on=$names settled=0
+      else
+        settled=$((settled + slept))
       fi
-      if (((seen_n - settled_since) * WAIT_SECONDS >= SETTLE_SECONDS)); then
-        unlisted=$(jq -c --argjson required "$required" '[.checks[].name] as $listed
+      if ((settled >= SETTLE_SECONDS)); then
+        # With --run, a run of another workflow than the project's branch_ci answers for its own
+        # jobs alone: the required checks are branch_ci's.
+        wanted=$required
+        if [[ -n $run_id && -n $branch_ci ]] &&
+          ! jq -e --arg path ".github/workflows/$branch_ci" '.path == $path' "$dir/wf-run" >/dev/null 2>&1; then
+          wanted='[]'
+        fi
+        unlisted=$(jq -c --argjson required "$wanted" '[.checks[].name] as $listed
           | [$required[] | select(. != "agent-review" and (IN($listed[]) | not))]' "$dir/look")
         if [[ $unlisted != '[]' ]]; then
           report "$unlisted"
@@ -617,22 +763,25 @@ while :; do
         finish passed 0 "$(passed_text)"
       fi
     else
-      settled_since='' settled_on=''
+      settled='' settled_on=''
     fi
-    seen_n=$((seen_n + 1))
+  elif ((read_rc == 3)); then
+    # A refusal for the limit is no failure to read: the next look finds the limit standing. With
+    # --look that is at once, with no look interval first: it sleeps the limit out or ends.
+    limited_until=${GH_LIMIT_UNTIL:-}
+    if $look && gh_limit_record "${limits[@]}" >/dev/null; then continue; fi
   else
-    [[ -n $failing_since ]] || failing_since=$look_n
-    if (((look_n - failing_since) * WAIT_SECONDS >= failing_limit)); then
+    if [[ -z $failing ]]; then failing=0; else failing=$((failing + slept)); fi
+    if ((failing >= failing_limit)); then
       finish unreadable 75 "team-ci-wait: GitHub could not be read for $(span "$failing_limit") running: $(cat "$dir/error")"
     fi
   fi
   # A reading standing at the deadline gets its 2 minutes, which bounds the wait all the same.
-  if ((look_n * WAIT_SECONDS >= DEADLINE_SECONDS + (${#settled_since} ? SETTLE_SECONDS : 0))); then
+  if ((elapsed >= $(deadline_at))); then
     if [[ -s $dir/look ]]; then
       finish deadline 75 "team-ci-wait: $(span "$DEADLINE_SECONDS"), and checks still pending on ${first_head:0:7}: $(pending_text): $again_wait, or report BLOCKED"
     fi
     finish unreadable 75 "team-ci-wait: $(span "$DEADLINE_SECONDS"), and GitHub not read yet: $(cat "$dir/error"): $again_unread, or report BLOCKED"
   fi
-  sleep "$WAIT_SECONDS"
-  look_n=$((look_n + 1))
+  pause
 done

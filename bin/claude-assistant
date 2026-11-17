@@ -13,19 +13,22 @@
 #
 # Bypass mode, by Daniel's choice. Its settings are assistant.settings.json with @TEAM_CODE@
 # naming this checkout, @TEAM_HOME@ the team home and @DISCORD_STATE_DIR@ that directory, written
-# to ~/.local/state/agent-team/assistant.settings.json: every deny rule of the coordinator's, so
-# deny rules stop the plain spelling of a force push, a push to dev or main, git reset --hard,
-# git clean, git branch -D, a Docker prune and a merge outside team-merge, by the workers' own
-# rules (tests/repo.bats holds the three together), and besides them the Discord token and both
+# to ~/.local/state/agent-team/assistant.settings.json: every deny rule of the coordinator's on a
+# command or a path but those its command-guard hook holds command by command (its GitHub login, a
+# force push and a cd into ~/.config/agent-team), so deny rules stop the plain spelling of a force
+# push, a push to dev or main, git reset --hard, git clean, git branch -D, a Docker prune and a
+# merge outside team-merge, by the workers' own rules and its own git push * (tests/repo.bats
+# holds the three together), and besides them the Discord token and both
 # access files, any git push and git commit, GitHub's writes, the team's scripts that would act
 # as the coordinator, and starting or stopping a session. Its memory is the team home's
 # memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in the team
 # home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP config,
 # ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny every
 # server `claude mcp list` names in the team home but the Discord plugin's, as
-# claude-coordinator's do (bin/lib/launch.sh). It runs on the user settings' model at their
-# effort, with their Remote Control, as the coordinator does, and compacts at 200k tokens by the
-# launch's --autocompact flag, idle from 100k.
+# claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
+# bin/lib/worker-login names one, by its settings' env, as the coordinator's does. It runs on the
+# user settings' model at their effort, with their Remote Control, as the coordinator does, and
+# compacts at 200k tokens by the launch's --autocompact flag, idle from 100k.
 #
 # It refuses (exit 1), in this order: while another launch holds the non-blocking flock on
 # ~/.local/state/agent-team/assistant-launch.lock; while `claude agents --json --all` lists a
@@ -34,23 +37,26 @@
 # lease, naming the holder, or saying an assistant never starts offline when GitHub is
 # unreachable; with no ASSISTANT_CHANNEL (an empty TEAM_ASSISTANT_CHANNEL); with no bot token in
 # ~/.claude/channels/discord/.env; with no Daniel's id readable from the coordinator's
-# access.json; and while that file has a group for #assistant, since the coordinator would hear
-# it too.
+# access.json; while that file has a group for #assistant, since the coordinator would hear it
+# too; and while the worker login is named but not on this machine. Each of these comes before its
+# Discord state or settings are written.
 #
 # Usage: claude-assistant [--prompt <text>]   (always in the team home)
 #        claude-assistant --load-check <worktree> [--prompt <text>]
 #   --prompt      the session's first prompt, in place of "You are the assistant. Daniel talks to
 #                 you in #assistant on Discord. Wait for their messages."
 #   --load-check  team-load-check's form, for its --probe and --context of the assistant: it
-#                 launches T0-assistant in <worktree> with the assistant's settings and role prompt
-#                 but the Discord plugin off (its server denied with the others), no --channels
-#                 and no Stop or SessionStart hook (assistant-stop and assistant-digest read the
-#                 live assistant's list and hand-offs, which this session must never act on, so
-#                 --context measures its start without the digest), and prints the session's id
-#                 alone, as team-worker does. Its settings and MCP
-#                 config are ~/.local/state/agent-team/assistant-load-check.settings.json and
-#                 .mcp.json, so the live assistant's stay as they are. It is no assistant, so it
-#                 takes no launch lock and none of the refusals above but a malformed command line
+#                 launches T0-assistant in <worktree> with the assistant's settings and role
+#                 prompt but the Discord plugin off (its server denied with the others), no
+#                 --channels and no Stop or SessionStart hook (assistant-stop and
+#                 assistant-digest read the live assistant's list and hand-offs, which this
+#                 session must never act on, so --context measures its start without the
+#                 digest), and Remote Control off (remoteControlAtStartup false), so it leaves
+#                 no row in Daniel's Remote Control list on claude.ai, and prints the session's
+#                 id alone, as team-worker does. Its settings and MCP config are
+#                 ~/.local/state/agent-team/assistant-load-check.settings.json and .mcp.json, so
+#                 the live assistant's stay as they are. It is no assistant, so it takes no
+#                 launch lock and none of the refusals above but a malformed command line
 #                 (exit 2) and a <worktree> that is no directory, and writes no Discord state.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
@@ -76,7 +82,8 @@ state=$HOME/.claude/channels/discord-assistant
 # The load check's assistant: the same settings and role prompt, the Discord plugin off and no
 # --channels, so it hears and posts nothing, and neither the Stop hook nor the start digest, so
 # it is never told to act on the live assistant's list or hand-offs; named T0-assistant, so it is
-# no assistant to the singleton check, the fence or the heartbeat.
+# no assistant to the singleton check, the fence or the heartbeat. Remote Control is off, outranking
+# the user settings' true, so it leaves no row in Daniel's Remote Control list on claude.ai.
 if [[ -n $load_check ]]; then
   [[ -d $load_check ]] || die "no worktree at $load_check for the load check's assistant"
   cd "$load_check"
@@ -85,7 +92,8 @@ if [[ -n $load_check ]]; then
   mkdir -p "$LAUNCH_STATE"
   template=$(mktemp "$LAUNCH_STATE/assistant-load-check.template.XXXXXX")
   trap 'rm -f -- "$template"' EXIT
-  jq '.enabledPlugins["discord@claude-plugins-official"] = false | del(.hooks.Stop, .hooks.SessionStart)' \
+  jq '.enabledPlugins["discord@claude-plugins-official"] = false | del(.hooks.Stop, .hooks.SessionStart)
+    | .remoteControlAtStartup = false' \
     "$code/assistant.settings.json" >"$template"
   launch_settings "$template" "" "" "$settings" "$mcp" "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
   out=$(claude --bg --name T0-assistant \
@@ -118,6 +126,14 @@ if jq -e --arg c "$ASSISTANT_CHANNEL" '(.groups // {}) | has($c)' "$discord/acce
   die "the coordinator would hear #assistant too: remove that group with /discord:access group rm $ASSISTANT_CHANNEL in the coordinator"
 fi
 
+mcp=$LAUNCH_STATE/assistant.mcp.json
+settings=$LAUNCH_STATE/assistant.settings.json
+# The settings before the Discord state, since their writer refuses a worker login that is not
+# on this machine. No MCP template and no connectors: it runs no server of its own and keeps no
+# connector.
+launch_settings "$code/assistant.settings.json" "" "" "$settings" "$mcp" \
+  "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
+
 mkdir -p "$state"
 chmod 700 "$state"
 ln -sfn ../discord/.env "$state/.env"
@@ -128,12 +144,6 @@ jq -n --arg channel "$ASSISTANT_CHANNEL" --argjson daniel "$daniel" \
   >"$state/access.json.$$"
 chmod 600 "$state/access.json.$$"
 mv -f "$state/access.json.$$" "$state/access.json"
-
-mcp=$LAUNCH_STATE/assistant.mcp.json
-settings=$LAUNCH_STATE/assistant.settings.json
-# No MCP template and no connectors: it runs no server of its own and keeps no connector.
-launch_settings "$code/assistant.settings.json" "" "" "$settings" "$mcp" \
-  "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
 # inherit the lock's file, so a running assistant never holds the next launch's lock.

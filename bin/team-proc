@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Print a process's counters and nothing else of it, for the coordinator and the assistant, whose
+# settings deny reading /proc, where a process's environment, command line and memory may hold a
+# secret: its io (the bytes it read and wrote), cgroup (the scope it is in), status, stat and
+# smaps_rollup (its memory), each as "== /proc/<pid>/<counter>" and the file's text.
+#
+# Usage: team-proc <pid> [<counter>...]
+#        team-proc <pid>/task/<tid> [<counter>...]
+#        team-proc /proc/<pid>[/task/<tid>][/<counter>]
+#
+# <pid> and <tid> are digits, with or without /proc/ before them; with no counter named it prints
+# all five, in that order, and a path ending in one counter prints that one alone.
+# Refused, exit 1 naming why, before it reads anything: any name but those five (environ, cmdline,
+# mem, maps, fd, cwd, root, exe and every other), under /proc/<pid>/task/<tid>/ too; a path of
+# any other shape (self, thread-self, .., a name below a counter); and a worker session
+# (AGENT_TEAM_ROLE builder, planner, reviewer or ops), whose deny rules keep /proc. A counter
+# named both in the path and after it is a malformed command line, exit 2. It reads each file only by the path built from those digits and
+# that name, and only when that path resolved is the same path under the resolved /proc, so a link
+# reaches nothing else. A counter it cannot read (a process that ended, another user's io) is one
+# line on stderr, "team-proc: cannot read /proc/<pid>/<counter>", and the exit is 1 once every
+# named counter was tried; a machine with no /proc is refused, naming it.
+# Test seam: TEAM_PROC, the /proc to read, as bin/lib/team.sh's merge_lock_held reads it.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+counters=(io cgroup status stat smaps_rollup)
+usage="usage: team-proc <pid>[/task/<tid>] [<counter>...] | team-proc /proc/<pid>[/task/<tid>][/<counter>]"
+
+[[ ${AGENT_TEAM_ROLE:-} != @(builder|planner|reviewer|ops) ]] ||
+  die "a $AGENT_TEAM_ROLE session runs no team-proc: it is the coordinator's and the assistant's, and a worker's deny rules keep /proc"
+(($#)) || usage_error "$usage"
+
+# Refuse <name> unless it is one of the counters: counter <name>
+counter() {
+  local name
+  for name in "${counters[@]}"; do [[ $1 != "$name" ]] || return 0; done
+  die "team-proc prints only ${counters[*]}; '$1' is none of them (a process's environ, cmdline, memory, maps, files and links may hold a secret)"
+}
+
+target=$1
+shift
+[[ $target =~ ^(/proc/)?([0-9]+)(/task/([0-9]+))?(/([^/]+))?/?$ ]] ||
+  die "team-proc reads /proc/<pid> or /proc/<pid>/task/<tid>, of digits, or one counter there; got '$target'"
+pid=${BASH_REMATCH[2]} tid=${BASH_REMATCH[4]} named=${BASH_REMATCH[6]}
+dir=$pid${tid:+/task/$tid}
+if [[ -n $named ]]; then
+  (($# == 0)) || usage_error "the path names its counter, $named, so no other is taken: $usage"
+  set -- "$named"
+fi
+(($#)) || set -- "${counters[@]}"
+for name; do counter "$name"; done
+
+proc=${TEAM_PROC:-/proc}
+[[ -d $proc ]] || die "this machine has no $proc"
+root=$(realpath -e -- "$proc") || die "cannot read $proc"
+failed=0
+for name; do
+  file=$root/$dir/$name
+  if ! real=$(realpath -e -- "$file" 2>/dev/null) || [[ $real != "$file" || ! -f $real ]] ||
+    ! text=$(cat -- "$real" 2>/dev/null); then
+    echo "team-proc: cannot read /proc/$dir/$name" >&2
+    failed=1
+    continue
+  fi
+  echo "== /proc/$dir/$name"
+  printf '%s\n' "$text"
+done
+exit "$failed"

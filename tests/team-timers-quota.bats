@@ -12,6 +12,7 @@
 
 load helpers/common
 load helpers/inbox
+load helpers/github-api
 
 setup() {
   sandbox
@@ -25,6 +26,8 @@ setup() {
   log=$state/heartbeat.log
   inbox_discord alerts
   inbox_guild_kept
+  # GitHub answers the github step's gh api rate_limit with an idle hour, and nothing else.
+  github_heartbeat_stub
   # The posts' times are this machine's local time: a zone off UTC by a half hour shows it.
   export TZ=Asia/Kolkata
   usage_read_now

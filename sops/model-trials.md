@@ -77,8 +77,8 @@ So a change's own numbers never keep it: only the team's own tasks with and with
 ### The arm
 
 - A change that can be a toolkit is one: the coordinator gives `--toolkit <name>` to the first builder of every other task of the project opened after `<start>`, in the order they open, and not to the tasks between them.
-- `team-next` launches a task's later builders with the toolkits of its latest builder launch, and its reviewers with those of its latest reviewer launch, else of its latest builder launch, so a task stays in its first builder's arm.
-  A launch by hand (the next phase's first ticket, a resume, a replacement) gives the same `--toolkit`s as the task's latest launch of that role, else of its latest builder launch, so no task mixes arms.
+- `team-next` launches a task's later builders with the toolkits of its latest builder launch, and its reviewers with those of its latest reviewer launch, else of its latest builder launch, each read among the task's launches in the launch's project first, else among all of them, so a task stays in its first builder's arm and a repository's worker carries another's toolkits only when its project has no launch of its own.
+  A launch by hand (a resume, a replacement) gives the same `--toolkit`s as the task's latest launch of that role, else of its latest builder launch, so no task mixes arms.
 - The ledger's launch events log each launch's `toolkits`, which tells the arms apart, and the measures below split by them.
 - A change that cannot be a toolkit (a role prompt's wording or a setting, say) is trialled by alternating weeks from `<start>`: on in the first week, off in the second, and so on, each week's launches its arm, measured with `--since` and `--until` set to the week; the closing note says which form the trial took.
 

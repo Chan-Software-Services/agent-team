@@ -1,33 +1,45 @@
 #!/bin/sh
-# The prefix a confined worker's Claude Code runs its shell commands through: team-worker names
-# this file as CLAUDE_CODE_SHELL_PREFIX, and Claude Code then runs each Bash and Monitor command
-# (a background one too), each shell-form hook command, the status line command and each stdio
-# MCP server's start as
+# A confined session's shell and its shell prefix, in one program: bin/lib/confine-session writes
+# the session's own program bash, which runs this file with the session's file, and team-worker
+# names that program as CLAUDE_CODE_SHELL and CLAUDE_CODE_SHELL_PREFIX. Two forms:
 #
-#   confine-shell '<command line>'
+#   confine-shell --session <file> <line>      the prefix form
+#   confine-shell --session <file> -c ...      the shell form: two or more words
 #
-# the line one argument, which for a Bash call is everything Claude Code puts around the command.
-# This runs it as
+# The shell form is how Claude Code runs its shell itself, as <shell> -c [-l] <line> for a Bash
+# call, a background one and a Monitor command, -c -l <script> for its shell snapshot and -c env
+# at the session's start. It runs
 #
-#   <python3> -I <this directory>/confine.py --session -- <shell> -c -- '<command line>'
+#   <python3> -I <this directory>/confine.py --session <file> --shell --entry shell -- <the words>
 #
-# so the line is the shell's to read, never the wrapper's options or the shell's own, and the
-# kernel refuses a delete or rename outside the session's roots (confine.py's --help says which,
-# and what a machine without Landlock does). A hook in exec form (a command with "args") is run
-# without the prefix, which is how the team's own hooks stay outside the domain.
-# The shell is the one Claude Code wrote the line for, CLAUDE_CODE_SHELL, else SHELL, when it is
-# an executable bash or zsh, else the bash on PATH.
+# so the words reach the real bash unchanged, inside the domain: a login shell's profile files,
+# the file BASH_ENV names and the snapshot's own script all run confined, and no shell of the
+# session's runs before it.
+# The prefix form is how Claude Code runs what has no Bash tool's shell: each shell-form hook
+# command and the status line command, as /bin/sh -c "<prefix> '<line>'", and each stdio MCP
+# server's start, the prefix itself with the line as its one argument; and a Bash call's line is
+# "<prefix> '<line>'" too, run by the shell form's bash, so a Bash call enters the domain twice,
+# which only narrows. It runs
+#
+#   <python3> -I <this directory>/confine.py --session <file> --shell --entry prefix -- -c -- <line>
+#
+# so the line is the shell's to read, never the wrapper's options or the shell's own.
+# The roots and the shell are the session file's alone (confine.py's --help says which, and what
+# a machine without Landlock does): nothing here reads CLAUDE_CODE_SHELL, SHELL or PATH.
+# A hook in exec form (a command with "args") is run without the prefix, which is how the team's
+# own hooks stay outside the domain.
 # The python3 is the first of /usr/bin, /usr/local/bin and /opt/homebrew/bin that has one, never
 # the one on PATH; with none the command does not run (exit 3).
-# Any other count of arguments exits 2, and the status is confine.py's. Its one option is a line
-# that is --help and nothing else, which prints this header, since no call's line is that alone.
-if [ $# -ne 1 ]; then
-  echo "confine-shell: takes one argument, the command line, as Claude Code's CLAUDE_CODE_SHELL_PREFIX passes it" >&2
-  exit 2
-fi
-if [ "$1" = --help ]; then
+# One word after the file is always a line, never an option, but --help alone, which prints this
+# header, as --help with no session does. Any other command line exits 2, and the status is
+# otherwise confine.py's.
+if { [ "$#" -eq 1 ] && [ "$1" = --help ]; } || { [ "$#" -eq 3 ] && [ "$1" = --session ] && [ "$3" = --help ]; }; then
   sed -n '2,$ { /^#/!q; s/^# \{0,1\}//p; }' "$0"
   exit 0
+fi
+if [ "$#" -lt 3 ] || [ "$1" != --session ]; then
+  echo "confine-shell: usage: confine-shell --session <file> <line>, or --session <file> -c ..." >&2
+  exit 2
 fi
 case $0 in
 */*) ;;
@@ -36,21 +48,22 @@ case $0 in
   exit 2
   ;;
 esac
-shell=bash
-for candidate in "${CLAUDE_CODE_SHELL:-}" "${SHELL:-}"; do
-  case ${candidate##*/} in
-  bash | zsh)
-    if [ -x "$candidate" ]; then
-      shell=$candidate
-      break
-    fi
-    ;;
-  esac
-done
+session=$2
+shift 2
 # The interpreter comes from a fixed system directory, never from PATH, which the session's own
 # commands may add to.
-for python in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
-  [ ! -x "$python" ] || exec "$python" -I "${0%/*}/confine.py" --session -- "$shell" -c -- "$1"
+python=''
+for candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+  if [ -x "$candidate" ]; then
+    python=$candidate
+    break
+  fi
 done
-echo "confine-shell: no python3 in /usr/bin, /usr/local/bin or /opt/homebrew/bin, so the command does not run" >&2
-exit 3
+if [ -z "$python" ]; then
+  echo "confine-shell: no python3 in /usr/bin, /usr/local/bin or /opt/homebrew/bin, so the command does not run" >&2
+  exit 3
+fi
+if [ "$#" -eq 1 ]; then
+  exec "$python" -I "${0%/*}/confine.py" --session "$session" --shell --entry prefix -- -c -- "$1"
+fi
+exec "$python" -I "${0%/*}/confine.py" --session "$session" --shell --entry shell -- "$@"

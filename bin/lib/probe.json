@@ -64,6 +64,14 @@
       "background": true
     },
     {
+      "id": "kernel-shell",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "python3 -c 'import os; print(\"confine-shell=\" + os.environ.get(\"AGENT_TEAM_CONFINE_SHELL\", \"\")); os.rmdir(\"@CANARY@/kernel-shell\")'",
+      "expect": "kernel",
+      "marker": "confine-shell=1"
+    },
+    {
       "id": "sessions",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
@@ -129,11 +137,11 @@
     },
     {
       "id": "force-push",
-      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
       "input": "git push --force --dry-run .scratch/probe.git HEAD:refs/heads/probe",
-      "expect": "rule",
-      "family": "push"
+      "expect": "hook",
+      "marker": "a force push"
     },
     {
       "id": "protected-push",
@@ -158,6 +166,30 @@
       "input": "team-lease --help --steal",
       "expect": "hook",
       "marker": "Blocked by command-guard"
+    },
+    {
+      "id": "login-assigned",
+      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "tool": "Bash",
+      "input": "GH_CONFIG_DIR=/nonexistent gh auth status",
+      "expect": "hook",
+      "marker": "(an assignment of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN)"
+    },
+    {
+      "id": "login-unset",
+      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "tool": "Bash",
+      "input": "env -u GH_CONFIG_DIR gh auth status",
+      "expect": "hook",
+      "marker": "(an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN)"
+    },
+    {
+      "id": "login-emptied",
+      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "tool": "Bash",
+      "input": "env -i PATH=/usr/bin gh auth status",
+      "expect": "hook",
+      "marker": "(a command run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c)"
     },
     {
       "id": "no-mistakes",
@@ -283,16 +315,16 @@
       "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
       "input": "cd ~/.config/agent-team && cd -",
-      "expect": "rule",
-      "family": "review-app-key"
+      "expect": "hook",
+      "marker": "a cd into ~/.config/agent-team"
     },
     {
       "id": "review-app-key-pushd",
       "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
       "input": "pushd ~/.config/agent-team && popd",
-      "expect": "rule",
-      "family": "review-app-key"
+      "expect": "hook",
+      "marker": "a cd into ~/.config/agent-team"
     },
     {
       "id": "devtools-port",
@@ -436,6 +468,13 @@
       "input": "@HOME@/conventioner-backups/load-check-probe-absent",
       "expect": "rule",
       "family": "backups-folder"
+    },
+    {
+      "id": "login",
+      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "tool": "Bash",
+      "input": "gh api user --jq .login",
+      "expect": "login"
     }
   ],
   "families": [
@@ -594,6 +633,47 @@
     },
     {
       "hook": "session-records-guard"
+    }
+  ],
+  "github": [
+    {
+      "id": "push",
+      "method": "POST",
+      "path": "graphql",
+      "body": {
+        "query": "query($owner: String!, $name: String!, $ref: String!) { repository(owner: $owner, name: $name) { ref(qualifiedName: $ref) { refUpdateRule { viewerCanPush } } } }",
+        "variables": {"owner": "@OWNER@", "name": "@NAME@", "ref": "refs/heads/@BASE@"}
+      },
+      "answer": ".body.data.repository.ref | if . == null then null elif .refUpdateRule == null then true else .refUpdateRule.viewerCanPush end",
+      "refused": [false]
+    },
+    {
+      "id": "protection",
+      "method": "POST",
+      "path": "repos/@REPO@/branches/@BASE@/protection/enforce_admins",
+      "body": null,
+      "answer": ".status",
+      "refused": [403, 404]
+    },
+    {
+      "id": "setting",
+      "method": "PATCH",
+      "path": "repos/@REPO@",
+      "body": {"name": "@NAME@"},
+      "answer": ".status",
+      "refused": [403, 404]
+    },
+    {
+      "id": "merge",
+      "method": "PUT",
+      "path": "repos/@REPO@/pulls/@PULL@/merge",
+      "body": {"sha": "0000000000000000000000000000000000000000"},
+      "answer": "if .status == 405 and ((.body.message // \"\") | test(\"not authorized to push\"; \"i\") | not) then \"405: \\(.body.message // \"no message\")\" else .status end",
+      "refused": [403, 405],
+      "unshown": [
+        {"answers": [409], "reason": "GitHub compared the head first"},
+        {"pattern": "^405: ", "reason": "GitHub refused the merge for another reason than the push restriction (@ANSWER@)"}
+      ]
     }
   ]
 }

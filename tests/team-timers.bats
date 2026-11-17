@@ -8,6 +8,7 @@ load helpers/common
 load helpers/docker
 load helpers/inbox
 load helpers/uptime
+load helpers/github-api
 
 # The live session list with only the coordinator and the assistant in it, which the coordinator
 # step looks for.
@@ -31,6 +32,8 @@ setup() {
   notices=$HOME/.local/state/agent-team/notices.json
   inbox_discord alerts
   inbox_guild_kept
+  # GitHub answers the github step's gh api rate_limit with an idle hour, and nothing else.
+  github_heartbeat_stub
   # Every run here ends in seconds, so a run that hangs is stopped at 120 s, never the 70
   # minutes of the default; a test of the time limit itself sets its own.
   export TEAM_TIMERS_RUN_SECONDS=120

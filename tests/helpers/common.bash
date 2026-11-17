@@ -5,6 +5,10 @@
 # cgroups or 1Password. A test of a script that runs Docker adds a stub docker with `load
 # helpers/docker` (tests/helpers/docker.bash documents it), and never reaches this machine's
 # Docker, which DOCKER_HOST points away from.
+# The sandbox's TMPDIR is the test's own $BATS_TEST_TMPDIR/tmp, made empty, so a test's mktemp,
+# each script's under test and each inner bats' run directory land where bats removes them, and
+# a test run leaves nothing in /tmp; a test that needs the TMPDIR the suite started with saves it
+# before calling `sandbox`.
 # Bats runs a DEBUG trap before every command of the test's own shell, its functions included,
 # which makes code that loops there (a matrix of commands, a parse in bash) 20 or more times
 # slower than the same code in a script: wrap such code in `untraced` (below), as the deny-rule
@@ -120,11 +124,12 @@ shared_stubs() {
 }
 
 # copy_bin <dest>: a copy of this checkout's bin/ at <dest>, its files linked to the run's shared
-# copy (link_shared), but for bin/lib/review-app: a copy has the reviewer App off until the test
-# turns it on (review_app_on), whatever this checkout commits.
+# copy (link_shared), but for bin/lib/review-app and bin/lib/worker-login: a copy has the reviewer
+# App and the worker login off until the test turns them on (review_app_on, worker_login_on),
+# whatever this checkout commits.
 copy_bin() {
   link_shared bin "$REPO_ROOT/bin" "$1"
-  rm -f "$1/lib/review-app"
+  rm -f "$1/lib/review-app" "$1/lib/worker-login"
 }
 
 # Build the test's sandbox and point TEAM_HOME, HOME and PATH into it, untraced. A sandbox runs
@@ -158,7 +163,10 @@ sandbox() {
   # above all (tool_dirs in bin/lib/team.sh).
   export TEAM_SYSTEM_ROOT=$root/system
   export TEAM_CGROUP_ROOT=$root/cgroup-root
-  mkdir -p "$TEAM_HOME" "$HOME/.claude/channels/discord" "$STUB_CALLS" "$STUB_FIXTURES" "$TEAM_CGROUP_ROOT/proc"
+  # Every script under test and every inner bats makes its temporary files in the test's own
+  # directory, which bats removes, never in the TMPDIR the suite was started with.
+  export TMPDIR=$root/tmp
+  mkdir -p "$TEAM_HOME" "$HOME/.claude/channels/discord" "$STUB_CALLS" "$STUB_FIXTURES" "$TEAM_CGROUP_ROOT/proc" "$TMPDIR"
   : >"$TEAM_HOME/ledger.jsonl"
   echo "DISCORD_BOT_TOKEN=$FAKE_DISCORD_TOKEN" >"$HOME/.claude/channels/discord/.env"
 
@@ -207,9 +215,10 @@ sandbox() {
   # heavy run tests/run holds (team-heavy), nor the role and task of the session running the suite
   # (worker_refusal), nor the parallelism team-checks gives the suite (TEAM_JOBS), nor a bound on
   # Docker's answers (TEAM_DOCKER_SECONDS), nor the heartbeat job's mark (TEAM_HEARTBEAT_JOB), nor
-  # the id of the Claude session running the suite (CLAUDE_CODE_SESSION_ID, team-sweep's own).
+  # the id of the Claude session running the suite (CLAUDE_CODE_SESSION_ID, team-sweep's own), nor
+  # the timings CI's shard splits by (TESTS_TIMINGS).
   unset TEAM_COORDINATOR_CHANNEL TEAM_INTERVIEW_CHANNEL TEAM_ASSISTANT_CHANNEL CLAUDE_PROJECT_DIR NVM_DIR TEAM_HEAVY_HELD TEAM_HEAVY_WAIT_MINUTES
-  unset AGENT_TEAM_ROLE AGENT_TEAM_TASK TEAM_JOBS TEAM_DOCKER_SECONDS TEAM_HEARTBEAT_JOB CLAUDE_CODE_SESSION_ID
+  unset AGENT_TEAM_ROLE AGENT_TEAM_TASK TEAM_JOBS TEAM_DOCKER_SECONDS TEAM_HEARTBEAT_JOB CLAUDE_CODE_SESSION_ID TESTS_TIMINGS
   # The state and cache directories and Claude Code's config directory are HOME's, as the
   # sandbox's HOME is.
   unset XDG_STATE_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR
@@ -348,6 +357,40 @@ review_app_off() {
     copy_bin "$CODE_CHECKOUT/bin"
   fi
   rm -f "$CODE_CHECKOUT/bin/lib/review-app"
+}
+
+# worker_login_on [<login>]: the worker login on for the scripts run_bin runs: CODE_CHECKOUT (a
+# copy of bin/ made here when the test made none) gets bin/lib/worker-login naming <login>
+# (default team-worker-bot), and the sandbox's HOME gets the login's file,
+# ~/.config/agent-team/gh-worker/hosts.yml (the directory mode 700, the file mode 600), of fixture
+# text in gh's own format, holding no real token.
+worker_login_on() {
+  local login=${1:-team-worker-bot} dir=$HOME/.config/agent-team/gh-worker
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/lib/worker-login"
+  printf 'login=%s\n' "$login" >"$CODE_CHECKOUT/bin/lib/worker-login"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  printf '%s\n' 'github.com:' '    users:' "        $login:" "            oauth_token: fixture-token-of-$login" \
+    '    git_protocol: https' "    oauth_token: fixture-token-of-$login" "    user: $login" >"$dir/hosts.yml"
+  chmod 600 "$dir/hosts.yml"
+}
+
+# worker_login_off: the worker login off for the scripts run_bin runs, whatever this checkout's
+# bin/lib/worker-login says: CODE_CHECKOUT (a copy of bin/ made here when the test made none, which
+# copy_bin makes with the login off) has no bin/lib/worker-login. The login's file in the
+# sandbox's HOME, if a test wrote one, stays, since off means no session is pointed at it.
+worker_login_off() {
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  rm -f "$CODE_CHECKOUT/bin/lib/worker-login"
 }
 
 # plan_md T<n> [<text>]: write the task's plan, tasks/T<n>/plan.md in the sandbox's team home,
@@ -617,7 +660,8 @@ cgroup_of() {
 # into the scope, under its Slice, and answer with a job; a call naming a pid listed in
 # $STUB_FIXTURES/busctl-refuse is refused and moves nothing, and so is one naming a pid listed in
 # $STUB_FIXTURES/busctl-gone, whose process then exits (its /proc entry goes), as one that ends
-# between the read of the tree and the call.
+# between the read of the tree and the call, and one naming a scope listed in
+# $STUB_FIXTURES/busctl-loaded, a unit still loaded, refused in systemd's words.
 fake_placement() {
   stub_script busctl <<'EOF'
 [[ ${2:-} == call && ${6:-} == StartTransientUnit ]] || { echo "busctl stub: unplanned call: $*" >&2; exit 127; }
@@ -630,6 +674,10 @@ while ((${#args[@]})); do
     *) args=("${args[@]:3}") ;;
   esac
 done
+if grep -qxF "$scope" "$STUB_FIXTURES/busctl-loaded" 2>/dev/null; then
+  echo "Call failed: Unit $scope was already loaded or has a fragment file." >&2
+  exit 1
+fi
 for pid in "${pids[@]}"; do
   if grep -qxF "$pid" "$STUB_FIXTURES/busctl-gone" 2>/dev/null; then
     rm -rf "${TEAM_CGROUP_ROOT:?}/proc/$pid"
