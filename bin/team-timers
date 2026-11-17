@@ -1505,7 +1505,7 @@ def github_text($t):
 # refuses fail the step alone, never the run; the other login's reading is still written and
 # judged.
 github_step() {
-  local why='' clock readings='[]' login account='' problem out unlogged session_dir=$GITHUB_API_DIR
+  local why='' clock readings='[]' on_login account='' problem out unlogged session_dir=$GITHUB_API_DIR
   local resource limit remaining used reset spenders
   local -a whys=() logins=(owner)
   if ! clock=$(gh_now 2>"$err"); then
@@ -1520,12 +1520,12 @@ github_step() {
       logins+=(worker)
     fi
   fi
-  for login in "${logins[@]}"; do
-    github_rate_limit "$login" "$account" || { whys+=("$GITHUB_WHY"); continue; }
+  for on_login in "${logins[@]}"; do
+    github_rate_limit "$on_login" "$account" || { whys+=("$GITHUB_WHY"); continue; }
     out=$GITHUB_READING
     unlogged="workers' own gh and other scripts"
-    [[ $login == worker || -z $account ]] || unlogged="Daniel's own gh and other scripts"
-    gh_use_login "$login"
+    [[ $on_login == worker || -z $account ]] || unlogged="Daniel's own gh and other scripts"
+    gh_use_login "$on_login"
     mkdir -p "$GITHUB_API_DIR" 2>/dev/null || true
     for resource in core graphql; do
       read -r limit remaining used reset < <(jq -r --arg r "$resource" '.resources[$r] | "\(.limit) \(.remaining) \(.used) \(.reset)"' <<<"$out")
@@ -1534,7 +1534,7 @@ github_step() {
       if ((limit > 0 && used * 100 >= 70 * limit)); then
         spenders=$(gh_spenders "$resource" $((reset - 3600)) 2>/dev/null) || spenders='[]'
       fi
-      readings=$(jq -c --arg login "$login" --arg account "$account" --arg unlogged "$unlogged" --arg r "$resource" \
+      readings=$(jq -c --arg login "$on_login" --arg account "$account" --arg unlogged "$unlogged" --arg r "$resource" \
         --argjson limit "$limit" --argjson used "$used" --argjson reset "$reset" \
         --arg at "$(date -d "@$reset" +%H:%M)" --argjson spenders "$spenders" \
         '. + [{login: $login, account: (if $login == "worker" then $account else "" end), unlogged: $unlogged, resource: $r,
@@ -1564,10 +1564,10 @@ github_step() {
 # GITHUB_READING; else fails, GITHUB_WHY why ("gh api rate_limit timed out after 20 s", "on the
 # worker login" after rate_limit for the worker login's).
 github_rate_limit() {
-  local rc=0 what='gh api rate_limit' run=with_owner_login
-  if [[ $1 == worker ]]; then what="gh api rate_limit on the worker login $2" run=with_worker_login; fi
+  local rc=0 what='gh api rate_limit' runner=with_owner_login
+  if [[ $1 == worker ]]; then what="gh api rate_limit on the worker login $2" runner=with_worker_login; fi
   GITHUB_READING='' GITHUB_WHY=''
-  GITHUB_READING=$("$run" timeout --kill-after="$KILL_SECONDS" "$GITHUB_TIMEOUT" gh api rate_limit 2>"$err" </dev/null {run_fd}>&-) || rc=$?
+  GITHUB_READING=$("$runner" timeout --kill-after="$KILL_SECONDS" "$GITHUB_TIMEOUT" gh api rate_limit 2>"$err" </dev/null {run_fd}>&-) || rc=$?
   case $rc in
     0)
       jq -e '[.resources.core, .resources.graphql]
