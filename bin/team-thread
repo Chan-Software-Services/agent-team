@@ -69,8 +69,9 @@
 #             nothing and needs no waiting.json, exiting 0. The heartbeat's threads step runs it
 #             with neither option. Otherwise a waiting.json that is missing, cannot be read or is
 #             older than the ledger or a list team-inbox reads (thread_waiting) archives nothing
-#             (exit 1), as does a Discord that cannot be read; in a worker session it is refused (worker_refusal), and on a
-#             machine that is fenced or that lost the lease (lease_refusal), as a post is.
+#             (exit 1), as does a Discord that cannot be read; in a worker session it is refused
+#             (worker_refusal), and on a machine that is fenced or that lost the lease
+#             (lease_refusal), as a post is.
 # --interview and wait refuse on a machine that is fenced or that lost the lease (lease_refusal,
 # checked before each read), and with no interview channel set; wait ends with the hold's
 # message (offline_hold) when the team holds offline. In a worker session only a planner's wait
