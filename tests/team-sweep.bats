@@ -2797,12 +2797,18 @@ assistant-handoff: team-assistant list printed no list: fix what team-assistant 
 
 # A code checkout whose team-assistant hangs on its list, its pid in $STUB_FIXTURES/assistant.pid,
 # so a look stands waiting on its hand-offs' view, every other file of the look made; the hand-off
-# log is there, so the look starts that view.
+# log is there, so the look starts that view. Before it hangs it makes a directory in its TMPDIR
+# with no trap to remove it, as a script that TERM ends before its trap is set leaves its mktemp,
+# and starts a writer, its pid in $STUB_FIXTURES/writer.pid, that makes a file in its TMPDIR a
+# second later, as a script's own background read goes on once TERM has ended the script.
 hanging_handoffs() {
   queue_room
   handoff_sent H1 task assistant coordinator 45
   ln -f "$BATS_RUN_TMPDIR/shared/stub" "$CODE_CHECKOUT/bin/team-assistant"
   stub_script team-assistant <<'SH'
+mktemp -d >/dev/null
+("$(command -pv sleep)" 1; : >"${TMPDIR:-/tmp}/late") &
+echo "$!" >"$STUB_FIXTURES/writer.pid"
 echo "$$" >"$STUB_FIXTURES/assistant.pid.new"
 mv "$STUB_FIXTURES/assistant.pid.new" "$STUB_FIXTURES/assistant.pid"
 exec "$(command -pv sleep)" 30
@@ -2828,12 +2834,13 @@ EOF
 
 # sweep_ended_by_term <pid file> <args>...: run team-sweep <args> in the background until its look
 # waits on the hanging command whose pid is in <pid file>, end it with TERM, and check it ended by
-# the signal, that its end ended the hung command too, so nothing of the run still writes, and
-# that it left nothing under its TMPDIR, then or once the test has stopped what it started.
+# the signal, that its end ended the hung command and the writer that command started
+# ($STUB_FIXTURES/writer.pid, when there is one) too, so nothing of the run still writes, and that
+# it left nothing under its TMPDIR.
 sweep_ended_by_term() {
-  local pid_file=$1 sweep tries=0 code=0 hung
+  local pid_file=$1 sweep tries=0 code=0 hung writer
   shift
-  rm -f "$pid_file"
+  rm -f "$pid_file" "$STUB_FIXTURES/writer.pid"
   guard_sandbox
   "$CODE_CHECKOUT/bin/team-sweep" "$@" >"$BATS_TEST_TMPDIR/sweep.out" 2>&1 3>&- &
   sweep=$!
@@ -2852,6 +2859,14 @@ sweep_ended_by_term() {
     kill "$hung" 2>/dev/null || true
     echo "team-sweep${*:+ $*} ended by TERM and left the command that wrote ${pid_file##*/} running" >&2
     return 1
+  fi
+  if [[ -e $STUB_FIXTURES/writer.pid ]]; then
+    writer=$(cat "$STUB_FIXTURES/writer.pid")
+    if kill -0 "$writer" 2>/dev/null; then
+      kill "$writer" 2>/dev/null || true
+      echo "team-sweep${*:+ $*} ended by TERM and left the writer below the hung command running" >&2
+      return 1
+    fi
   fi
   assert_equal "$code" 143
   assert_equal "$(find "$TMPDIR" -mindepth 1)" ""

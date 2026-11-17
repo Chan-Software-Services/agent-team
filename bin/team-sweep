@@ -260,9 +260,10 @@
 # TEAM_SWEEP_NOW (a UTC time, as 2026-11-15T10:00:00Z) stands for now where an assistant-handoff's
 # wait is counted, and nowhere else, the tests' seam; a due item's day is team-current's own
 # (TEAM_CURRENT_NOW).
-# Every temporary file a run makes, a look's and its background views', is in one directory of the
-# run under TMPDIR, which it removes at its end in every mode, by TERM, INT or HUP too, once it has
-# sent TERM to what the views still running run and waited for them; only a KILL leaves it.
+# Every temporary file a run makes, a look's and its background views', the scripts those run
+# included (their TMPDIR), is in one directory of the run under TMPDIR, which it removes at its end
+# in every mode, by TERM, INT or HUP too, once it has sent TERM to every process below the views
+# still running and waited for them; only a KILL leaves it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/error-view.sh
@@ -300,21 +301,29 @@ ledger=$TEAM_HOME/ledger.jsonl
 
 # The run's directory, as the header says. The views still running when the run ends are its own
 # background jobs that bash has not yet reaped (jobs -r: an ended job bash has reaped is left out,
-# since the kernel may have given its pid to another process), so none is another process's: the
-# command each runs is sent TERM, so it ends by its own traps and removes its own scratch, and each
-# view, which then ends in a moment, is waited for, so none writes into the directory while it is
-# removed. A view that has ended needs neither, and its children are no longer its own.
+# since the kernel may have given its pid to another process), so none is another process's: every
+# process below each, the command it runs and what that runs in turn (a script's own background
+# reads, which it does not wait for when TERM ends it), is sent TERM, so it ends by its own traps,
+# and each view, which then ends in a moment, is waited for, so none writes into the directory
+# while it is removed. A view that has ended needs neither, and its children are no longer its own.
+# Each view runs with the directory as its TMPDIR, so a script it runs that TERM ends before its
+# trap is set, its mktemp made, leaves its scratch where the run removes it.
 # The main shell itself runs no process that writes into the directory: it makes its files with
 # run_file, which forks nothing, and every read that writes one (a view, the activity, the
 # registry's) runs as a view, since a command substitution is no job, so the end could neither
 # stop it nor wait for it, and a file it made while the directory was removed would stay.
 run_tmp=$(mktemp -d)
 end_run() {
-  local -a views children
+  local -a views below
   mapfile -t views < <(jobs -rp)
   if ((${#views[@]})); then
-    mapfile -t children < <(ps -A -o pid=,ppid= | awk -v views=" ${views[*]} " 'index(views, " " $2 " ") { print $1 }')
-    ((${#children[@]} == 0)) || kill -TERM "${children[@]}" 2>/dev/null || true
+    mapfile -t below < <(ps -A -o pid=,ppid= | awk -v views="${views[*]}" '
+      { parent[$1] = $2 }
+      END {
+        n = split(views, v, " "); for (i = 1; i <= n; i++) mark[v[i]] = 1
+        do { more = 0; for (p in parent) if (!(p in mark) && (parent[p] in mark)) { mark[p] = 1; print p; more = 1 } } while (more)
+      }')
+    ((${#below[@]} == 0)) || kill -TERM "${below[@]}" 2>/dev/null || true
     wait "${views[@]}" 2>/dev/null || true
   fi
   rm -rf "$run_tmp"
@@ -459,28 +468,28 @@ look() {
   echo null >"$plan_file.current"
   echo null >"$plan_file.due"
   echo null >"$plan_file.handoffs"
-  level_plan "$plan_file.sessions" >"$plan_file" &
+  TMPDIR=$run_tmp level_plan "$plan_file.sessions" >"$plan_file" &
   plan_pid=$!
-  health_view >"$plan_file.health" &
+  TMPDIR=$run_tmp health_view >"$plan_file.health" &
   health_pid=$!
   if [[ -f $TEAM_HOME/tasks/current.md ]]; then
-    script_view team-current-check/1 team-current check --json >"$plan_file.current" &
+    TMPDIR=$run_tmp script_view team-current-check/1 team-current check --json >"$plan_file.current" &
     current_pid=$!
-    script_view team-current-due/1 team-current due --json --list coordinator >"$plan_file.due" &
+    TMPDIR=$run_tmp script_view team-current-due/1 team-current due --json --list coordinator >"$plan_file.due" &
     due_pid=$!
   fi
   if [[ -f $TEAM_HOME/assistant/handoffs.jsonl ]]; then
-    handoffs_view >"$plan_file.handoffs" &
+    TMPDIR=$run_tmp handoffs_view >"$plan_file.handoffs" &
     handoffs_pid=$!
   fi
-  session_activity "$sessions" >"$plan_file.activity" &
+  TMPDIR=$run_tmp session_activity "$sessions" >"$plan_file.activity" &
   activity_pid=$!
-  own_covered >"$plan_file.own" &
+  TMPDIR=$run_tmp own_covered >"$plan_file.own" &
   own_pid=$!
   wait "$plan_pid" || true
   # The queue reads the plan just written, beside the ledger pass below.
   if [[ -d $TEAM_HOME/tasks/queued ]]; then
-    script_view team-queue/1 team-queue list --json --plan "$plan_file" >"$plan_file.queue" &
+    TMPDIR=$run_tmp script_view team-queue/1 team-queue list --json --plan "$plan_file" >"$plan_file.queue" &
     queue_pid=$!
   fi
   wait "$health_pid" || true
