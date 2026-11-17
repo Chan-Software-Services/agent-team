@@ -7,6 +7,7 @@ load helpers/common
 load helpers/treehouse
 load helpers/docker
 load helpers/inbox
+load helpers/discord-threads
 
 setup() {
   sandbox
@@ -54,8 +55,13 @@ return = "scripts/th-return.sh"
 slots = [".treehouse/conv-abc123/1/conv", ".treehouse/conv-abc123/2/conv"]
 TOML
   team_origin=$(make_team_home)
-  # team-thread's post answers with the thread's id; team-inbox's calls go to the fake Discord.
+  # team-thread's post answers with the thread's id, and team-close's read of it with the thread
+  # archived already, so the close leaves it be; team-inbox's calls go to the fake Discord.
   stub_script curl <<'SH'
+if [[ ${*: -1} == https://discord.com/api/v10/channels/1563000000000000001 && " $* " != *" -X "* ]]; then
+  echo '{"id":"1563000000000000001","type":11,"thread_metadata":{"archived":true}}'
+  exit 0
+fi
 [[ ! -f $STUB_FIXTURES/inbox.sh ]] || source "$STUB_FIXTURES/inbox.sh"
 echo '{"id":"1563000000000000001"}'
 SH
@@ -157,7 +163,7 @@ rm 4f2a9c1e archive:2 worktrees:2"
   assert_equal "$(events worktree-returned)" "$(jq -cn --arg wt "$slot" \
     '{task: "T1", event: "worktree-returned", project: "home", worktree: $wt, branch: "feat/T1-work"}')"
   assert_equal "$(events closed)" "$(jq -cn --arg wt "$slot" \
-    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch"], returned: [$wt], kept: []}')"
+    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch"], returned: [$wt], kept: [], threads: ["1563000000000000001"]}')"
   run_bin -0 team-log --check
   run_bin -0 team-state T1
   assert_contains "$output" "closed"
@@ -822,7 +828,7 @@ SH
   [[ -f $wt/.scratch/task/spec.md ]]
   assert_equal "$(events worktree-returned)" ""
   assert_equal "$(events closed)" "$(jq -cn --arg wt "$wt" \
-    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch"], returned: [], kept: [$wt]}')"
+    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch"], returned: [], kept: [$wt], threads: ["1563000000000000001"]}')"
   assert_equal "$(claude_actions)" '["stop","4f2a9c1e"]
 ["rm","4f2a9c1e"]'
 }
@@ -1019,7 +1025,8 @@ ops_session() {
 ["stop","4f2a9c1e"]
 ["rm","4f2a9c1e"]'
   assert_equal "$(events closed)" "$(jq -cn --arg wt "$wt" \
-    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch"], returned: [$wt], kept: []}')"
+    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch"], returned: [$wt], kept: [],
+      threads: ["1563000000000000001"]}')"
 }
 
 @test "a failed team-ops-end stops the close half closed with its reason, and a second close after the fix completes" {
@@ -1126,7 +1133,8 @@ $conv_wt"
     '{task: "T1", event: "worktree-returned", project: "home", worktree: $h, branch: "feat/T1-work"},
      {task: "T1", event: "worktree-returned", project: "conv", worktree: $c, branch: "feat/T1-move"}' | jq -c .)"
   assert_equal "$(events closed)" "$(jq -cn --arg h "$home_wt" --arg c "$conv_wt" \
-    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch", "tasks/T1/scratch-conv"], returned: [$h, $c], kept: []}')"
+    '{task: "T1", event: "closed", archive: ["tasks/T1/scratch", "tasks/T1/scratch-conv"], returned: [$h, $c], kept: [],
+      threads: ["1563000000000000001"]}')"
   run_bin -0 team-log --check
 }
 
@@ -1921,4 +1929,65 @@ main"
   assert_contains "$stderr" "team-close: cannot read origin's ticket branches of feat/T1-work ("
   assert_contains "$stderr" "delete them by hand: git -C $home push origin --delete <each feat/T1-work--NN that git -C $home ls-remote origin 'refs/heads/feat/T1-work--*' lists>"
   assert_equal "$(events closed | jq -c .kept)" "$(jq -cn --arg wt "$wt" '[$wt]')"
+}
+
+# Task T1 (team-open's, on the git pool), whose thread team-open opened (1563000000000000001, the
+# setup's Discord answer) last had a message <seconds> ago and whose interview thread last had one
+# <seconds> ago, on the fake Discord of helpers/discord-threads:
+# threaded_task <thread's seconds ago> <interview's seconds ago>
+threaded_task() {
+  run_bin -0 team-open home feature feat work "Do the work"
+  ledger_line '{ts: "2026-10-22T02:01:00Z", task: "T1", event: "interview-thread", discord_thread: "1563000000000000702"}'
+  threads_discord
+  thread 1563000000000000001 "$COORDINATOR" "T1 · home · Do the work" "$1"
+  thread 1563000000000000702 "$INTERVIEW" "T1 · home · Do the work" "$2"
+}
+
+@test "a close names the task's threads on closed, archives each the rule allows and leaves the rest to the heartbeat" {
+  threaded_task 172800 7200
+  run_bin -0 --separate-stderr team-close T1
+  assert_equal "$(events closed | jq -c .threads)" '["1563000000000000001","1563000000000000702"]'
+  assert_contains "$stderr" "team-close: archived T1's thread 1563000000000000001"
+  assert_contains "$stderr" "team-close: keeps T1's interview thread 1563000000000000702 in view: its last message is 2 h old, under a day; the heartbeat archives it once the rule allows (team-thread archive)"
+  assert_equal "$(archived_threads)" "1563000000000000001"
+  run_bin -0 team-log --check
+
+  # The heartbeat's pass finds the one kept, still under a day: nothing more is archived.
+  run_bin -0 team-thread archive
+  assert_equal "$output" ""
+}
+
+@test "a close keeps a thread in view while waiting.md holds a reply owed of the task" {
+  threaded_task 172800 172800
+  printf '%s\n' "# Current items" "- owe T1 the closing summary, mine to send | 1563000000000000999" >"$TEAM_HOME/tasks/current.md"
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-close: keeps T1's thread 1563000000000000001 in view: a reply owed to Daniel in waiting.md is of it; the heartbeat archives it once the rule allows (team-thread archive)"
+  assert_contains "$stderr" "team-close: keeps T1's interview thread 1563000000000000702 in view: a reply owed to Daniel in waiting.md is of it;"
+  assert_equal "$(archived_threads)" ""
+}
+
+@test "a close keeps its threads in view without a token, closing all the same" {
+  threaded_task 172800 172800
+  : >"$HOME/.claude/channels/discord/.env"
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-close: keeps T1's thread 1563000000000000001 in view: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env; the heartbeat archives it once the rule allows (team-thread archive)"
+  assert_equal "$(events closed | jq -r .event)" "closed"
+  assert_equal "$(archived_threads)" ""
+}
+
+@test "a close keeps a thread Discord cannot read in view and archives the rest" {
+  threaded_task 172800 172800
+  rm "$DISCORD_DIR/channel-1563000000000000702.json"
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-close: archived T1's thread 1563000000000000001"
+  assert_contains "$stderr" "team-close: keeps T1's interview thread 1563000000000000702 in view: Discord could not be read: curl: (22) The requested URL returned error: 404; the heartbeat archives it once the rule allows (team-thread archive)"
+}
+
+@test "a fenced machine's close archives no thread" {
+  threaded_task 172800 172800
+  mkdir -p "$HOME/.local/state/agent-team"
+  echo '{"since": "2026-10-22T14:00:00Z", "holder": "laptop", "epoch": 2}' >"$HOME/.local/state/agent-team/fenced"
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-close: keeps T1's thread 1563000000000000001 in view: home-pc is fenced since 2026-10-22T14:00:00Z (holder seen laptop, epoch 2): a fenced machine archives no thread; the coordinator on the holder does."
+  assert_equal "$(archived_threads)" ""
 }

@@ -105,6 +105,8 @@
 # coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/threads.sh
+source "$TEAM_LIB/threads.sh"
 why=$(worker_refusal "" "closes no task") && die "$why"
 
 usage="usage: team-close T<n> [--keep-worktree] [--stop-busy] [--worktree <path>]..., or team-close T<n> --ticket <NN>"
@@ -711,14 +713,17 @@ done
 
 # The arguments as a JSON list.
 json_list() { jq -cn '$ARGS.positional' --args "$@"; }
+# The task's Discord threads, its thread and interview thread, which closed names for the archive's rule.
+threads=$(jq -c '[.[] | select(.event | IN("thread", "interview-thread")) | .discord_thread | strings] | unique' <<<"$events")
 kept_paths=()
 for wt in "${kept[@]}"; do kept_paths+=("$(jq -r .worktree <<<"$wt")"); done
 note=''
 [[ -n $opened_project ]] || note=legacy
 ledger_append "$(jq -cn --arg task "$task" --argjson archive "$(json_list "${archived[@]}")" \
   --argjson returned "$(json_list "${returned[@]}")" --argjson kept "$(json_list "${kept_paths[@]}")" --arg note "$note" \
+  --argjson threads "$threads" \
   '{ts: (now | todate), task: $task, event: "closed", archive: $archive, returned: $returned, kept: $kept}
-    + if $note == "" then {} else {note: $note} end')"
+    + (if $threads == [] then {} else {threads: $threads} end) + if $note == "" then {} else {note: $note} end')"
 
 jq -n --arg task "$task" --argjson stopped "$(json_list "${stopped[@]}")" --argjson removed "$(json_list "${removed[@]}")" \
   --argjson archive "$(json_list "${archived[@]}")" --argjson returned "$(json_list "${returned[@]}")" \
@@ -726,3 +731,28 @@ jq -n --arg task "$task" --argjson stopped "$(json_list "${stopped[@]}")" --argj
   '{task: $task, stopped: $stopped, removed: $removed, archive: $archive, returned: $returned, kept: $kept}'
 ledger_push
 refresh_inbox
+
+# Archive each of the task's threads the rule allows now (bin/lib/threads.sh), with waiting.md just
+# brought up to date, saying so on stderr; one it keeps, or cannot archive now, is left to the
+# heartbeat's team-thread archive, and none of it fails the close.
+later="the heartbeat archives it once the rule allows (team-thread archive)"
+for id in $(jq -r '.[]' <<<"$threads"); do
+  what="$task's $(jq -r --arg id "$id" 'if any(.[]; .event == "thread" and .discord_thread == $id) then "thread" else "interview thread" end' <<<"$events") $id"
+  if why=$(lease_refusal "archives no thread; the coordinator on the holder does."); then
+    echo "team-close: keeps $what in view: $why" >&2
+  elif ! discord_token >/dev/null; then
+    echo "team-close: keeps $what in view: no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env; $later" >&2
+  elif [[ -z ${THREAD_WAITING:-} ]] && ! thread_waiting 2>"$scratch/waiting"; then
+    echo "team-close: keeps $what in view: $(<"$scratch/waiting"); $later" >&2
+  elif ! channel=$(thread_read "$id" 2>"$scratch/thread") || ! jq -e '.thread_metadata | type == "object"' <<<"$channel" >/dev/null 2>&1; then
+    echo "team-close: keeps $what in view: Discord could not be read: $(grep -m 1 . "$scratch/thread" || echo "its answer is no thread"); $later" >&2
+  elif jq -e '.thread_metadata.archived == true' <<<"$channel" >/dev/null; then
+    continue
+  elif why=$(thread_hold "$id" "$task" "$(jq -r '.last_message_id // empty | tostring' <<<"$channel")"); then
+    echo "team-close: keeps $what in view: $why; $later" >&2
+  elif thread_archive "$id" 2>"$scratch/thread"; then
+    echo "team-close: archived $what" >&2
+  else
+    echo "team-close: keeps $what in view: Discord refused archiving it: $(grep -m 1 . "$scratch/thread" || echo "no reason given"); $later" >&2
+  fi
+done
