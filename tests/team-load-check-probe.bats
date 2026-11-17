@@ -47,6 +47,8 @@ case $1 in
     fi
     [[ -e $STUB_FIXTURES/undone-$role ]] || echo done >".scratch/probe-done-$role.txt"
     touch "$STUB_FIXTURES/launched-$role"
+    # What a test has the session do once it runs, a script.
+    [[ ! -f $STUB_FIXTURES/session-does ]] || bash "$STUB_FIXTURES/session-does"
     echo "Started background session $id ($2). Attach with: claude attach $id"
     ;;
   agents)
@@ -107,12 +109,13 @@ attempts() {
 # block of the data file's first hook whose message holds the attempt's marker, on the call in the
 # worktree, or a hook's block naming no marker for an attempt that has none; rule: a deny rule,
 # file-rule's shape for a file tool; script: the script's own refusal, run for the role; kernel:
-# it ran with the kernel's refusal as its result, a background attempt's call made with
-# run_in_background; refused: auto mode, or for the assistant, in bypass mode, a deny rule), or
+# it ran with the kernel's refusal as its result, after its marker when it has one, a background
+# attempt's call made with run_in_background; refused: auto mode, or for the assistant, in bypass mode, a deny rule), or
 # for an attempt named, one call per outcome given: hook, other-hook (a block by another hook's
-# message), script (the script's own refusal), none (a call with no result), skip (no call at
-# all), as-<text> (a call that ran and printed <text>, which a login attempt does by default with
-# the worker login), or any outcome tool_result takes (ran, failed, rule, file-rule, automode, no-verdict,
+# message), script (the script's own refusal), no-marker (a kernel attempt's refusal after its
+# marker's name with no value), none (a call with no result), skip (no call at all), as-<text> (a
+# call that ran and printed <text>, which a login attempt does by default with the worker login),
+# or any outcome tool_result takes (ran, failed, rule, file-rule, automode, no-verdict,
 # safety-check, user-rejected). A
 # Write's or Read's relative input is made by its absolute path in the worktree, as Claude Code
 # records it.
@@ -161,7 +164,8 @@ probe_transcript() {
           [[ $result == *"$marker"* ]] || { echo "probe_transcript: bin/ refused $id without its marker" >&2; return 1; }
           echo "$result" ;;
         none) ;;
-        refused-by-kernel) tool_result "toolu_$role$n" ran "PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
+        refused-by-kernel) tool_result "toolu_$role$n" ran "${marker:+$marker$'\n'}PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
+        no-marker) tool_result "toolu_$role$n" ran "${marker%=*}="$'\n'"PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
         *) tool_result "toolu_$role$n" "$outcome" ;;
       esac
     done
@@ -272,7 +276,7 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   local role attempt call hook canary
   # No hook a role holds refuses either call, so the kernel is what refuses the removal: the
   # planner's and the reviewer's scratch-only-edits, command-guard, and every role's lease-fence.
-  for attempt in kernel-delete kernel-delete-background; do
+  for attempt in kernel-delete kernel-delete-background kernel-shell; do
     call=$(jq -c --arg id "$attempt" --arg canary "$BATS_TEST_TMPDIR/outside" '.attempts[] | select(.id == $id)
       | {command: (.input | split("@CANARY@") | join($canary)), description: "probe"}' "$(data)")
     for hook in scratch-only-edits command-guard lease-fence; do
@@ -290,7 +294,7 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
     canary=$(head -n 1 "$BATS_TEST_TMPDIR/canary-$role")
     assert_equal "$(basename "$canary")" "$role"
     [[ $canary != "$code"/* ]]
-    assert_equal "$(sed 1d "$BATS_TEST_TMPDIR/canary-$role")" "$(printf '%s\n' kernel-delete kernel-delete-background)"
+    assert_equal "$(sed 1d "$BATS_TEST_TMPDIR/canary-$role")" "$(printf '%s\n' kernel-delete kernel-delete-background kernel-shell)"
     assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash: python3 -c 'import os; os.rmdir(\"$canary/kernel-delete\")'"
     assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash, with run_in_background true: python3 -c 'import os; os.rmdir(\"$canary/kernel-delete-background\")'"
     # The canary directory is removed at the end, by its path.
@@ -337,15 +341,52 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   assert_contains "$output" "FAIL builder kernel-delete: never attempted"
 }
 
-@test "the probe removes the T0 session tmp its sessions made, a directory of this user's, and leaves a link there" {
-  local tmp=$TEAM_SYSTEM_ROOT/tmp/agent-team-T0
-  mkdir -p "$tmp/sub" "$TEAM_SYSTEM_ROOT/tmp/agent-team-T1" "$BATS_TEST_TMPDIR/kept"
-  run_bin -0 team-load-check --probe
+@test "the probe removes the T0 session tmp and session directories its sessions made, each a directory of this user's, and leaves a link there, naming the session directories' one" {
+  local tmp=$TEAM_SYSTEM_ROOT/tmp/agent-team-T0 dirs=$HOME/.config/agent-team/confine
+  mkdir -p "$tmp/sub" "$TEAM_SYSTEM_ROOT/tmp/agent-team-T1" "$BATS_TEST_TMPDIR/kept" "$dirs/T0/builder.agent-team" "$dirs/T1/builder.x"
+  : >"$dirs/T0/builder.agent-team/session.json"
+  chmod 400 "$dirs/T0/builder.agent-team/session.json"
+  : >"$BATS_TEST_TMPDIR/kept/file"
+  run_bin -0 --separate-stderr team-load-check --probe
   [[ ! -e $tmp && -d $TEAM_SYSTEM_ROOT/tmp/agent-team-T1 ]]
+  [[ ! -e $dirs/T0 && -d $dirs/T1/builder.x ]]
+  [[ $stderr != *"session directories"* ]]
+  # A link where each would be is left with what it names; the session directories' one is made
+  # by the time the sessions are done, since confine-session refuses to write a session directory
+  # through a link.
   ln -s "$BATS_TEST_TMPDIR/kept" "$tmp"
+  printf 'rm -rf %q && ln -s %q %q\n' "${dirs:?}/T0" "$BATS_TEST_TMPDIR/kept" "$dirs/T0" >"$STUB_FIXTURES/session-does"
   rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -0 --separate-stderr team-load-check --probe --role builder
+  [[ -L $tmp && -L $dirs/T0 && -f $BATS_TEST_TMPDIR/kept/file ]]
+  assert_contains "$stderr" "team-load-check: left $dirs/T0, which is no directory of this user's, where T0's session directories would be"
+}
+
+@test "kernel-shell passes when its result holds the marker and the kernel's refusal, and fails without the marker as a shell that is not the confined one" {
+  assert_equal "$(jq -c '.attempts[] | select(.id == "kernel-shell") | [.roles, .expect, .marker, .background]' "$(data)")" \
+    '[["planner","builder","reviewer"],"kernel","confine-shell=1",null]'
   run_bin -0 team-load-check --probe
-  [[ -L $tmp && -d $BATS_TEST_TMPDIR/kept ]]
+  local role
+  for role in planner builder reviewer; do
+    assert_contains "$output" "PASS $role kernel-shell: kernel refused it"
+    assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash: python3 -c 'import os; print(\"confine-shell=\" + os.environ.get(\"AGENT_TEAM_CONFINE_SHELL\", \"\")); os.rmdir(\"$(head -n 1 "$BATS_TEST_TMPDIR/canary-$role")/kernel-shell\")'"
+  done
+  # A session whose shell is not the program confine-session wrote prints no value: the prefix
+  # alone confined the call, after a shell of the user's.
+  probe_transcript builder kernel-shell=no-marker
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "FAIL builder kernel-shell: expected kernel, got the session's shell is not the confined one"
+  assert_contains "$output" "PASS builder kernel-delete: kernel refused it"
+  assert_contains "$output" "PASS planner kernel-shell: kernel refused it"
+  # Its canary gone, it is the removal that is named; with neither marker nor refusal, the shell.
+  probe_transcript builder kernel-shell=no-marker
+  probe_transcript planner kernel-shell=ran
+  echo kernel-shell >"$STUB_FIXTURES/uncanary-builder"
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -1 team-load-check --probe
+  assert_contains "$output" "FAIL builder kernel-shell: expected kernel, got ran (the canary was removed)"
+  assert_contains "$output" "FAIL planner kernel-shell: expected kernel, got the session's shell is not the confined one"
 }
 
 @test "each session's prompt is the probe's text, then its role's attempts as numbered lines in the data file's order" {

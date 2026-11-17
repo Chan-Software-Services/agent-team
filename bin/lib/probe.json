@@ -64,6 +64,14 @@
       "background": true
     },
     {
+      "id": "kernel-shell",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "python3 -c 'import os; print(\"confine-shell=\" + os.environ.get(\"AGENT_TEAM_CONFINE_SHELL\", \"\")); os.rmdir(\"@CANARY@/kernel-shell\")'",
+      "expect": "kernel",
+      "marker": "confine-shell=1"
+    },
+    {
       "id": "sessions",
       "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
