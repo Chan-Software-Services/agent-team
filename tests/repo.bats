@@ -1750,7 +1750,8 @@ coordinator_deny_gaps() {
     "git push origin feat/T248-guard-hardening" "git push -u origin fix/T1-fix-it" \
     "git -C ~/wt push origin fix/T1-fix-it" "git -C ~/wt-fix push -u origin fix/T1-fix-it" \
     "team-clean-messages ~/wt --clear-gate-lane" "$REPO_ROOT/bin/team-clean-messages ~/wt --clear-gate-lane" \
-    "docker ps" "git branch -d feat/T1-x" "git reset --soft HEAD~1" "team-merge https://github.com/me/shop/pull/5"; do
+    "docker ps" "git branch -d feat/T1-x" "git reset --soft HEAD~1" "team-merge https://github.com/me/shop/pull/5" \
+    "team-proc 4242" "$REPO_ROOT/bin/team-proc /proc/4242/io"; do
     if denied_in "$coordinator" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
   # The assistant runs in bypass mode too, with every rule of the coordinator's on a command or a

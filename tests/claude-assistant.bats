@@ -368,7 +368,7 @@ assert_nothing_written() {
     "cat ~/.claude/channels/discord-assistant/inbox/a.png" \
     "team-state" "team-lease status" "team-lease check" "team-timers health" "team-timers status --json" \
     "team-config diff" "team-secrets check" "team-stack ls" "team-capacity status" "team-doctor" \
-    "claude agents" "claude --version" "grep -rn claude-coordinator bin"; do
+    "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }
