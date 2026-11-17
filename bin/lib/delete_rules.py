@@ -58,9 +58,9 @@ unquoted brace lists expanded):
   - a path under /proc or /dev is unread, since /proc/self and /dev/fd name the guard's own
     process there.
 A relative operand is checked against every directory the command may be in when it runs. In a
-plain sequence (command_text.plain_sequence: no group, substitution, compound command, function,
-background job, ! or coproc, and no string, find -exec, script or sourced file run, so each
-command runs in its place) of which the walk reads every command, those are the input's cwd and
+plain sequence (command_text.plain_sequence: no pipe, group, substitution, compound command,
+function, background job, ! or coproc, and no string, find -exec, script or sourced file run, so
+each command runs in its place) of which the walk reads every command, those are the input's cwd and
 each cd or pushd target before the delete, in order: one joined to the delete by && alone, and
 to what stands before it in its list by && too (a || before it skips it when what precedes
 succeeds), is where it runs; one that begins its and-or list, with one operand, whose target is a

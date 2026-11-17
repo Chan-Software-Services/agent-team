@@ -183,7 +183,8 @@ refuses_wrapped() {
     "$CD_WAY" "cd $OUT; true || cd $JOB/tmp && rm -rf x" "cd $OUT; true && false || cd $JOB/tmp && rm -rf x"
   passes "cd $OUT; true || true && cd $JOB/tmp && rm -rf x"
   # A cd beginning its list fails on a directory that is there with a second operand or an option it
-  # does not take, and pushd -n moves nothing: each adds its directory, && after it or not.
+  # does not take, and pushd -n moves nothing: each adds its directory, and the option and pushd -n
+  # forms with && after them too, where a second operand's failure runs no delete.
   refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
     "$CD_WAY" "cd $OUT; cd $JOB/tmp extra; rm -rf x" "cd $OUT; cd -Z $JOB/tmp; rm -rf x" \
     "cd $OUT; cd -@ $JOB/tmp; rm -rf x" "cd $OUT; pushd -n $JOB/tmp && rm -rf x" "cd $OUT; pushd -n $JOB/tmp; rm -rf x"
