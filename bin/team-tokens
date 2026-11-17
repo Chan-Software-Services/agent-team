@@ -1873,8 +1873,9 @@ def build_report(opts):
         )
     report["outcomes"]["reviewer_models"] = reviewer_models
 
-    # The window's builder launches, but T0's, by the model each launched on (default: none
-    # named), so a builder-model trial's tasks compare with the baseline's (sops/model-trials.md).
+    # The window's builder launches, but T0's, by the model each launched on (default: one that
+    # logged default, or none before launches logged each model), so a builder-model trial's
+    # tasks compare with the baseline's (sops/model-trials.md).
     builder_models = []
     for model, ls in sorted(group([e for e in events if e.get("event") == "launch" and e.get("role") == "builder" and e.get("task") != "T0"],
                                   lambda e: e["model"] if isinstance(e.get("model"), str) else "default").items()):

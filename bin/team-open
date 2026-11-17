@@ -61,8 +61,8 @@
 # (team-project's models) at the open is the task's, and with neither it is default, the settings'
 # word. opened and the printed facts carry it as builder_model, and team-worker launches every
 # builder of the task on it, in each of its projects' worktrees and its relaunches among them,
-# until a builder's team-worker --model switches it, so a later edit of the registry changes no
-# open task's builders. It goes only with a new task (a usage error with --add, --resume or
+# until a builder's team-worker --model switches it, so a later edit of the registry changes the
+# builders of no task it opened. It goes only with a new task (a usage error with --add, --resume or
 # --ticket).
 # Prints the task's facts as JSON; the project's other open tasks go to stderr, each with the files
 # its branch changes against the base (git diff --name-only origin/<base>...<branch>, origin's
