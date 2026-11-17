@@ -49,6 +49,23 @@ load helpers/merge
   assert_equal "$status" 0
 }
 
+@test "team-merge runs every gh call on the owner login, whatever login its session names" {
+  # The stub gh logs, beside each call, the login variables it ran with, "unset" for one it did not
+  # have, then answers as stub_gh does.
+  cat - "$STUB_FIXTURES/gh.sh" >"$STUB_FIXTURES/gh.next" <<'EOF'
+printf '%s GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n' "$1 $2" "${GH_CONFIG_DIR-unset}" \
+  "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"
+EOF
+  mv "$STUB_FIXTURES/gh.next" "$STUB_FIXTURES/gh.sh"
+  GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN=session-token GITHUB_TOKEN=session-token \
+    run_bin -0 team-merge T14
+  assert_equal "$(merged_events | wc -l)" 1
+  # Each gh call, the merge among them, ran with all three unset.
+  assert_equal "$(grep -c '^pr merge ' "$STUB_CALLS/gh.env")" 1
+  assert_equal "$(wc -l <"$STUB_CALLS/gh.env")" "$(stub_calls gh | wc -l)"
+  assert_equal "$(grep -v ' GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>$' "$STUB_CALLS/gh.env")" ""
+}
+
 # The task's opened event names the story <id>, as team-open --story logs it: story_of <id>
 story_of() {
   jq -c --arg s "$1" 'if .event == "opened" then .story = $s else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l"
@@ -398,6 +415,15 @@ proj_moved() {
   [[ $stderr != *"not clean"* ]]
   # A pass after it holds, as before.
   review "$head" pass
+  run_bin -0 team-merge T14
+  assert_equal "$(merged_events | jq -r .head)" "$head"
+}
+
+@test "a clean merge of the base after Daniel's word holds though another repository's review logged after the word found something" {
+  moved_head base
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "launch", role: "reviewer", session: "r0000009", project: "other"}'
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "review", verdict: "findings", head: "1234567"}'
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T14", event: "done", role: "reviewer", session: "r0000009"}'
   run_bin -0 team-merge T14
   assert_equal "$(merged_events | jq -r .head)" "$head"
 }
@@ -971,4 +997,29 @@ app_case() {
   jq '.protection.required_status_checks = {contexts: ["lint"], checks: [{context: "lint", app_id: 15368},
     {context: "deploy", app_id: 15368}]}' "$gh_dir/branch.json" >"$gh_dir/branch.next" && mv "$gh_dir/branch.next" "$gh_dir/branch.json"
   refused "required check deploy is missing on the head"
+}
+
+@test "a check a ruleset of the base requires is required as the protection's are, and a base whose rules cannot be read merges nothing" {
+  pinned --ruleset none
+  jq '.[0].parameters.required_status_checks += [{context: "deploy", integration_id: 15368}]' "$gh_dir/rules.json" \
+    >"$gh_dir/rules.next" && mv "$gh_dir/rules.next" "$gh_dir/rules.json"
+  refused "required check deploy is missing on the head"
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  rm "$gh_dir/rules.json"
+  refused "GitHub cannot be read: gh api repos/owner/proj/rules/branches/dev: cat: "
+  : >"$STUB_CALLS/gh.log"
+  green_pr
+  pinned --ruleset none
+  rm "$gh_dir/ruleset-42.json"
+  refused "GitHub cannot be read: gh api repos/owner/proj/rulesets/42: cat: "
+}
+
+@test "a base GitHub calls unprotected has no rules read, so a private repository whose rulesets GitHub refuses to read still merges" {
+  echo '{"name": "dev", "protected": false, "protection": {"enabled": false,
+    "required_status_checks": {"enforcement_level": "off", "contexts": [], "checks": []}}}' >"$gh_dir/branch.json"
+  rm "$gh_dir/rules.json"
+  run_bin -0 team-merge T14
+  assert_equal "$(merged_events | jq -r .event)" merged
+  assert_equal "$(stub_calls gh | jq -c 'select(.[1] // "" | test("/rules/|/rulesets/"))')" ""
 }

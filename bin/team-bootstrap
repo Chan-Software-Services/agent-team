@@ -24,12 +24,16 @@
 #              warns, narrows the team home's fetch to dev and lease (git remote set-branches
 #              origin dev lease) and deletes origin's other remote-tracking branches it keeps
 #              (git branch -r -d), local config and refs only, so its wip/* and salvage/* are
-#              never downloaded; then, while the team home line passes, fetches the team home
-#              (git fetch origin; one that fails is said, and the history read as last fetched)
-#              and asks the doctor for its team home history line alone: a team home that shares
-#              no history with origin's dev, a clone from before a rewrite of the records, stops
-#              the run as Daniel's re-clone (sops/records-rewrite.md step 10), so no later stage
-#              reads the old records.
+#              never downloaded; then, while the team home login line warns or fails, gives the
+#              team home's own credential.https://github.com.helper exactly two values, an empty
+#              one and the gh that command -v gh finds as git-credential with GH_CONFIG_DIR,
+#              GH_TOKEN and GITHUB_TOKEN unset, so its git reaches the records on the owner
+#              login from a session on the worker login; then, while the team home line passes,
+#              fetches the team home (git fetch origin; one that fails is said, and the history
+#              read as last fetched) and asks the doctor for its team home history line alone: a
+#              team home that shares no history with origin's dev, a clone from before a rewrite
+#              of the records, stops the run as Daniel's re-clone (sops/records-rewrite.md step
+#              10), so no later stage reads the old records.
 #   packages   The failing tool lines whose fix is an OS package: on Arch one
 #              `sudo pacman -S --needed --noconfirm` for them all; on macOS `brew install` for
 #              each formula or cask Homebrew lacks (`brew list --versions`) and `brew upgrade`
@@ -38,18 +42,25 @@
 #   tools      Every other failing tool line, by its fix in bin/lib/tools.lock: nvm (installed
 #              first when missing) with Node and the global npm tools, Bun, Claude Code, the
 #              treehouse release archive for this OS and CPU, no-mistakes built from Daniel's
-#              fork at its pinned commit (with the packages stage's Go and make), mongodump and
-#              mongorestore from MongoDB's Database Tools archive for this OS and CPU (into
-#              ~/.local/bin, no sudo), the 1Password CLI, opencode; then the gate's opencode
-#              wrapper, ~/.no-mistakes/bin/opencode-gate, while the gate-agent line asks for it
-#              (on any gate but a Claude one), and
+#              fork at its pinned commit (with the packages stage's Go and make), rustup and then
+#              the Rust toolchain rust-toolchain.toml pins (its tool rust-toolchain line's fix, after
+#              rustup's in the doctor's order), cargo-nextest, sccache and cargo-deny from their
+#              release archives into ~/.cargo/bin, mongodump, mongorestore and mongoimport from
+#              MongoDB's Database Tools archive for this OS and CPU (into ~/.local/bin, no sudo),
+#              the 1Password CLI, opencode; then the gate's opencode wrapper,
+#              ~/.no-mistakes/bin/opencode-gate, while the gate-agent line asks for it (on any gate
+#              but a Claude one), and
 #              agent_path_override.opencode in ~/.no-mistakes/config.yaml set to its full path,
 #              that key alone, the file's mode kept and none of it printed (a missing config.yaml
 #              is team-secrets restore's, and its agent, opencode or claude with its flags,
 #              Daniel's step); then servers/install, while the servers line fails.
-#              A Claude Code newer than its pin only warns, and is left. ~/.local/bin and
-#              ~/.no-mistakes/bin, which no installer puts on PATH, get one line each in the
-#              shell's rc file (~/.zshrc or ~/.bashrc) when PATH lacks them.
+#              Once the tool lines' fixes have run, a rustup with no default toolchain gets the
+#              channel rust-toolchain.toml pins as its default (rustup default <channel>), so cargo
+#              and rustc work outside the checkout too; a default already set is left.
+#              A Claude Code or rustup newer than its pin only warns, and is left. ~/.local/bin,
+#              ~/.no-mistakes/bin and ~/.cargo/bin, which no installer puts on PATH (rustup's runs
+#              with --no-modify-path), get one line each in the shell's rc file (~/.zshrc or
+#              ~/.bashrc) when PATH lacks them.
 #   projects   Each registered project with a failing checkout, origin, task dir or gate line:
 #              cloned from https://github.com/<repo>.git to its registry path, that exact origin
 #              (treehouse names its pool from it, so a treehouse project whose origin names a
@@ -70,7 +81,8 @@
 #              command (the machine's name, the team home's setting once ~/agent-team-records is
 #              there, the team home's re-clone while its history line fails, logins, Docker
 #              access, the Docker veth sysctl, the 1Password app and team-secrets restore (each
-#              failing secret with its reason, and the gate's config.yaml while it is missing),
+#              failing secret with its reason, the worker login's file while the worker login
+#              line names that step, and the gate's config.yaml while it is missing),
 #              #coordinator's group in the Discord plugin's access.json letting in only Daniel,
 #              the gate's config.yaml running the gate on its opencode wrapper, trust in the team
 #              home, where the coordinator starts, and in each project root, Chrome, then the
@@ -112,7 +124,7 @@ NVM_VERSION=v0.40.3
 MACOS_PYTHON=python@3.12
 # The directories the tools stage installs into that no installer puts on PATH itself, for the
 # rc file of Daniel's shell; the library puts them on every script's PATH.
-RC_DIRS=("$HOME/.local/bin" "$HOME/.no-mistakes/bin")
+RC_DIRS=("$HOME/.local/bin" "$HOME/.no-mistakes/bin" "$HOME/.cargo/bin")
 usage="usage: team-bootstrap [--name <name>] [--home <path>] [--stage <stage>] [--dry-run]"
 
 args=("$@") name='' home='' only='' dry=0
@@ -274,6 +286,7 @@ stage_machine() {
   # Every stage after this one reads the team home.
   [[ -n $TEAM_HOME || -n $home ]] || daniel "$(clone_home)"
   stage_home_fetch
+  stage_home_login
   stage_home_history
 }
 
@@ -301,6 +314,26 @@ stage_home_fetch() {
       grep -vxE 'origin/(HEAD|dev|lease)' || true)
     ((${#kept[@]} == 0)) || act "git -C $home_q branch -r -d ${kept[*]}"
   fi
+}
+
+# The team home's own credential helpers for github.com, while the doctor's team home login line
+# warns or fails: exactly the two values owner_git_helpers prints for the gh that command -v gh finds, so
+# the team home's git traffic is the owner login's from any session, the worker login on or off.
+# Nothing is said when the line passes, or when the doctor left it out, the team home line failing.
+stage_home_login() {
+  [[ -n $(lines '^team home login$' 'WARN FAIL') ]] || return 0
+  local gh key=credential.https://github.com.helper home_q value command
+  if ! gh=$(command -v gh); then
+    say "gh is not installed, so the team home's git cannot ask it for github.com yet: team-bootstrap again once the packages stage installs it"
+    return 0
+  fi
+  home_q=$(printf %q "$TEAM_HOME")
+  # unset-all exits 5 when there is no value to unset.
+  command="{ git -C $home_q config --local --unset-all $key || [ \$? = 5 ]; }"
+  while IFS= read -r value; do
+    command+=" && git -C $home_q config --local --add $key ${value@Q}"
+  done < <(owner_git_helpers "$gh")
+  act "$command"
 }
 
 # The team home's history, while the doctor's team home line passes: the team home fetched (dev
@@ -436,6 +469,7 @@ stage_tools() {
   # The pinned MCP servers (servers/install), after the Node they install with.
   while IFS=$'\t' read -r check verdict reason fix; do todo+=("$fix"); done < <(lines '^servers$')
   if ((${#todo[@]} + ${#commands[@]} == 0)); then
+    rust_default
     if ((gate)); then name_gate_wrapper; else say "done: every tool is at its pin or above its minimum"; fi
     return
   fi
@@ -458,6 +492,7 @@ stage_tools() {
       daniel "in your own terminal run $(tilde "$self") --stage tools, which installs ${names[*]} with sudo and asks for your password; then team-bootstrap again"
     fi
   fi
+  rust_default
   ((!gate)) || name_gate_wrapper
 
   # The rc file of Daniel's shell, for the directories PATH lacked when this run started.
@@ -475,6 +510,22 @@ stage_tools() {
       act "printf '%s\\n' $(printf %q "$line") >>$(printf %q "$file")" "add $(tilde "$dir") to PATH in $(tilde "$file")"
     fi
   done
+}
+
+# rustup's default toolchain set to the channel the code checkout's rust-toolchain.toml pins when
+# rustup has none (rustup-init runs with --default-toolchain none), so the cargo and rustc of
+# ~/.cargo/bin, first on PATH, work outside the checkout too; a default already set is left. A
+# rustup not yet installed has none, which only a dry run gets to; a toolchain list that fails is
+# the doctor's tool rust-toolchain line's to name.
+rust_default() {
+  local toml rc=0 list channel
+  toml=$(dirname "$bin")/rust-toolchain.toml
+  [[ -f $toml ]] || return 0
+  list=$(cd / && RUSTUP_AUTO_INSTALL=0 bounded 30 rustup toolchain list 2>/dev/null </dev/null) || rc=$?
+  if ((rc == 127 && !dry || rc && rc != 127)); then return 0; fi
+  ! grep -qE '\((.+, )?default(, .+)?\)$' <<<"$list" || return 0
+  channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toml")
+  act "rustup default $channel"
 }
 
 # Point ~/.no-mistakes/config.yaml's agent_path_override.opencode at the gate's wrapper by its full
@@ -674,6 +725,11 @@ stage_check() {
   step '^1password$' WARN
   secrets=$(lines '^secret ' | awk -F'\t' '{ sub(/^secret /, "", $1); print $1 ": " $3 }' | paste -sd ';' - | sed 's/;/; /g')
   mapfile -t -O "${#covered[@]}" covered < <(lines '^secret ' | cut -f1)
+  # A worker login whose file is not on this machine is the secrets step's too, named once.
+  if IFS=$'\t' read -r _ _ reason fix < <(lines '^worker login$') && [[ $fix == "$WORKER_LOGIN_RESTORE" ]]; then
+    covered+=("worker login")
+    if passes '^secret worker-github-login$'; then secrets+="${secrets:+; }worker-github-login: $reason"; fi
+  fi
   [[ -z $secrets ]] ||
     steps+=("secrets: with the 1Password app signed in and its CLI integration on, in your own terminal, not through an agent: $(tilde "$bin/team-secrets") restore ($secrets)")
   # A missing or empty access.json is the secrets step's.

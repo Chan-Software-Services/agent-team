@@ -49,6 +49,82 @@
         "idempotentHint": false,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "rehearse-migrations",
+      "description": "Rehearse a release's migrations on a dump under ~/conventioner-backups: build the back-end of Chan-Software-Services/Conventioner at the commit named, restore the dump into a throwaway local MongoDB, and run each migration script against it, in order, in a container with no route to production or the internet: with --dry-run first when the script takes one, stopping at a dry run that wrote anything or a run that exited non-zero, and naming the steps not run. Answers each run's exit code and time and, per collection, the counts before and after and the ids of the documents it added, removed or changed, with the top-level fields it changed; never a document, and never a line of a script's output, which goes to logs in the dump's folder for Daniel to read. Removes the MongoDB, the network and the image at the end on every path. Runs only in a checkout of that repository, through the machine's heavy-run lock, waiting up to 20 minutes for it, and answers that the machine is busy when it is still held.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$",
+            "description": "The commit of the project's repository whose migrations to rehearse: a commit sha, a branch or a tag, the release's own sha by preference."
+          },
+          "migrations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_]+\\.py$",
+              "maxLength": 100
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "The migration scripts to run, in the release's order: each a file's name under back-end/migrations/ at that commit (migrate_phase.py)."
+          },
+          "backup": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{6}Z$",
+            "description": "The backup's name, its UTC start as list-backups gives it (2026-11-08T142305Z); the newest verified backup when left out."
+          }
+        },
+        "required": [
+          "ref",
+          "migrations"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "prepare-undo",
+      "description": "Prepare, for Daniel to run, the command that puts one document or one collection of conventioner back as a dump under ~/conventioner-backups holds it, and say what it would change on production now: for one document, whether production's is the same, changed (naming the top-level fields) or gone, or was created since the dump; for a collection, the counts in production and in the dump, the ids the restore would put back, revert and lose, and the index names it would add or drop. Reads production through the read user and writes nothing there; never runs the command, a mongoimport or mongorestore that takes Daniel's own connection string at a read -rs prompt. Writes the document to import and the full lists in the dump's folder, never into the answer.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "backup": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{6}Z$",
+            "description": "The backup's name, its UTC start as list-backups gives it (2026-11-08T142305Z)."
+          },
+          "collection": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$",
+            "description": "The collection to put back, one the backup holds, as backup and list-backups name them (markets)."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[!-~](?:[ -~]{0,198}[!-~])?$",
+            "description": "One document to put back, by its id as this toolkit's answers print it (a UUID, an ObjectId's hex, an integer or sha256:<12 hex>), or by its _id's hex or UUID; the whole collection when left out."
+          }
+        },
+        "required": [
+          "backup",
+          "collection"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
     }
   ]
 }

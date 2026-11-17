@@ -62,7 +62,7 @@ slots = [
 # would flatten upstream's history, and the next update from upstream would conflict on everything.
 # Upstream's no-mistakes-required.yml fails any PR not raised through a gate, so GitHub's CI on the
 # fork is information; team-merge runs the fork's own checks on the PR's head instead.
-repo = "chanjdaniel/no-mistakes"
+repo = "Chan-Software-Services/no-mistakes"
 path = "Documents/projects/personal/no-mistakes"
 base = "main"
 delivery = "direct-pr"

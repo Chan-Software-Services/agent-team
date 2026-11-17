@@ -86,7 +86,7 @@ row_of() {
 
 @test "record refuses a drill the registry lacks, naming the known ones, and a drill its workflow's import records" {
   run_bin -1 team-drill record handof --verdict pass
-  assert_equal "$output" "team-drill: no drill 'handof'; the drills are handoff, steal, load-check-planner, load-check-ops-prod-write, load-check-ops-vercel-read, compaction, bootstrap-arch, bootstrap-macos, load-check-probe, parallel-tickets, assistant"
+  assert_equal "$output" "team-drill: no drill 'handof'; the drills are handoff, steal, load-check-planner, load-check-ops-prod-write, load-check-ops-vercel-read, compaction, bootstrap-arch, bootstrap-macos, load-check-probe, parallel-tickets, merge-queue, assistant"
   run_bin -1 team-drill record bootstrap-arch --verdict pass
   assert_equal "$output" "team-drill: bootstrap-arch runs as the Bootstrap workflow's job bootstrap-arch, whose run team-drill import <run id> records"
   [[ ! -e $RECORD ]]
@@ -156,13 +156,14 @@ bootstrap-arch                                                               due
 bootstrap-macos                                                              due: never ran
 load-check-probe                                                             due: never ran
 parallel-tickets                                                             due: never ran
+merge-queue                                                                  due: never ran
 assistant                                                                    due: never ran"
   run_bin -0 team-drill status --json
   assert_equal "$(jq -c '{schema, max_age_days, malformed}' <<<"$output")" '{"schema":"team-drill/1","max_age_days":30,"malformed":0}'
   assert_equal "$(jq -c '.drills[0]' <<<"$output")" \
     '{"drill":"handoff","by":"daniel","what":"The team moves to a second machine and back, with one trivial task at work.","last":null,"age_days":null,"due":["never"],"changed_by":null}'
   assert_equal "$(jq -r '[.drills[] | "\(.drill):\(.by):\(.due | join(","))"] | join(" ")' <<<"$output")" \
-    "handoff:daniel:never steal:daniel:never load-check-planner:coordinator:never load-check-ops-prod-write:daniel:never load-check-ops-vercel-read:daniel:never compaction:coordinator:never bootstrap-arch:coordinator:never bootstrap-macos:coordinator:never load-check-probe:coordinator:never parallel-tickets:coordinator:never assistant:daniel:never"
+    "handoff:daniel:never steal:daniel:never load-check-planner:coordinator:never load-check-ops-prod-write:daniel:never load-check-ops-vercel-read:daniel:never compaction:coordinator:never bootstrap-arch:coordinator:never bootstrap-macos:coordinator:never load-check-probe:coordinator:never parallel-tickets:coordinator:never merge-queue:coordinator:never assistant:daniel:never"
 }
 
 @test "T287: parallel-tickets is the coordinator's drill of a phase's tickets built at once, proving team-next, team-open and team-close, and a run is recorded by hand" {
@@ -531,4 +532,11 @@ team-drill: bootstrap-macos of run https://github.com/owner/agent-team/actions/r
   assert_equal "${stderr%%: \{*}" "team-drill: run 4243 gives bootstrap-arch a line that is no drill record, so nothing is written"
   assert_contains "$stderr" '"commit":null'
   [[ ! -e $RECORD ]]
+}
+
+@test "merge-queue is the coordinator's drill of two PRs landed through a merge queue, proving the landing's scripts and the drill, and its run is recorded" {
+  assert_equal "$(jq -c '.drills[] | select(.name == "merge-queue") | {by, proves, workflow_job}' "$REPO_ROOT/bin/lib/drills.json")" \
+    '{"by":"coordinator","proves":["bin/team-land","bin/team-merge","bin/team-review-check","bin/team-review-status","bin/team-ci-wait","tests/merge-queue-drill"],"workflow_job":null}'
+  run_bin -0 team-drill record merge-queue --verdict pass --detail "11 of 11 checks passed on org/scratch PRs #8 and #9; CodeQL reported on 2 of 2 trial commits"
+  assert_equal "$(tail -1 "$RECORD" | jq -c '{drill, verdict}')" '{"drill":"merge-queue","verdict":"pass"}'
 }

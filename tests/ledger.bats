@@ -429,6 +429,18 @@ rerun_of() {
     '{"event": "merged", "pr": 7, "url": "https://github.com/o/q/pull/7", "merge": "m1", "head": "d4e5f6a7", "by": "Daniel"}')" "null"
 }
 
+@test "failed_ci_after and round_wait read a failed ci of the repo's PRs, or of any PR with no repo given, \"\" or null alike" {
+  local review='{"event": "review", "verdict": "pass", "head": "a1b2c3d4", "sent_back": []}'
+  local failed='{"event": "ci", "url": "https://github.com/o/p/pull/5", "head": "a1b2c3d4", "outcome": "failed"}'
+  local call
+  for call in 'failed_ci_after(0; "o/p")' 'failed_ci_after(0; "")' 'failed_ci_after(0; null)' \
+    'round_wait(null; null) | .ci' 'round_wait(""; "") | .ci'; do
+    assert_equal "$(printf '%s\n' "$review" "$failed" | jq -L "$REPO_ROOT/bin/lib" -sc "include \"ledger\"; $call")" 1
+  done
+  # Another repo's PR is none of this one's.
+  assert_equal "$(printf '%s\n' "$review" "$failed" | jq -L "$REPO_ROOT/bin/lib" -sc 'include "ledger"; failed_ci_after(0; "o/q")')" null
+}
+
 @test "merge_authority gives the per-head word and then the default word, each with its ledger reasons and facts, and the first that holds" {
   local pass='{"event": "review", "verdict": "pass", "head": "a1b2c3d4", "findings": {"security": 0, "real-data": 0}, "guarded": []}'
   local coordinator='{"event": "plan-approved", "by": "coordinator", "plan": {"tasks/T1/plan.md": "cd34"}, "scope": ["src/"]}'

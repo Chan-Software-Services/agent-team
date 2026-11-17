@@ -366,6 +366,31 @@ $RANKED"
   assert_equal "$(waiting_items_shown)" "Nothing waits on you."
 }
 
+@test "a PR whose per-head word stands through a passing review of a new head is left out, and a review that found something after the word lists it" {
+  opened T4 "Four" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T4","event":"pr","url":"https://github.com/owner/proj/pull/4","head":"abc1234def"}' \
+    '{"task":"T4","event":"review","head":"abc1234def","verdict":"pass"}' \
+    '{"task":"T4","event":"merge-approved","url":"https://github.com/owner/proj/pull/4/","discord_message":"1564000000000000004","head":"abc1234def"}'
+  opened T6 "Six" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T6","event":"pr","url":"https://github.com/owner/proj/pull/6","head":"6666666aaa"}' \
+    '{"task":"T6","event":"review","head":"6666666aaa","verdict":"pass"}' \
+    '{"task":"T6","event":"merge-approved","url":"https://github.com/owner/proj/pull/6","discord_message":"1564000000000000006","head":"6666666aaa"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "Nothing waits on you."
+
+  # A merge of the base moves each head on: T4's re-review passes, so the word stands; T6's finds
+  # something before it passes, which ends the word, so T6 waits on Daniel's word again.
+  log_events '{"task":"T4","event":"pr","url":"https://github.com/owner/proj/pull/4","head":"4444444bbb"}' \
+    '{"task":"T4","event":"review","head":"4444444bbb","verdict":"pass"}' \
+    '{"task":"T6","event":"pr","url":"https://github.com/owner/proj/pull/6","head":"7777777bbb"}' \
+    '{"task":"T6","event":"review","head":"7777777bbb","verdict":"findings","sent_back":["1"]}' \
+    '{"task":"T6","event":"pr","url":"https://github.com/owner/proj/pull/6","head":"8888888ccc"}' \
+    '{"task":"T6","event":"review","head":"8888888ccc","verdict":"pass"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "- **1** T6 Six: ready to merge <https://github.com/owner/proj/pull/6> - unblocks 2 (1 task, 1 PR)
+$RANKED"
+}
+
 @test "an item keeps its number while it stands, and a new item takes the lowest number no standing item holds" {
   opened T3 "Three" >>"$TEAM_HOME/ledger.jsonl"
   log_events '{"task":"T3","event":"thread","discord_thread":"3333"}' \
@@ -868,6 +893,56 @@ $RANKED"
     "findings":{"blocking":0,"correctness":0,"security":0,"real-data":0,"note-change":0,"note-before":0}}'
   run_bin -0 team-inbox
   assert_equal "$(waiting_items_shown | grep 'pull/5')" "- **3** T5 Task T5: ready to merge <https://github.com/owner/conv/pull/5> - unblocks 2 (1 task, 1 PR)"
+}
+
+@test "a PR in the merge queue is left out of the PRs ready to merge, until the queue drops it" {
+  registry
+  ready_pr T7 proj 7
+  ready_pr T8 conv 8
+  # Listed while no word covers it on the ledger, as a PR whose default word was withdrawn since
+  # team-merge queued it would be.
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+  log_events '{"task":"T7","event":"queued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","project":"proj"}'
+  run_bin -0 --separate-stderr team-inbox
+  assert_equal "$stderr" ""
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 0
+  assert_equal "$(waiting_items_shown | grep -c 'pull/8')" 1
+  log_events '{"task":"T7","event":"dequeued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","reason":"GitHub gives no reason"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+}
+
+@test "a PR the merge queue dropped for a failure of its own is not listed as ready to merge, until a head is logged after the drop" {
+  registry
+  ready_pr T7 proj 7
+  log_events '{"task":"T7","event":"queued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","project":"proj"}' \
+    '{"task":"T7","event":"dequeued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","reason":"GitHub gives no reason",
+      "failed":[{"name":"test","class":"pr","kind":"check","link":"","step":""}]}'
+  # The round is the builder's: Daniel's word on the head that failed its trial merge is not asked for.
+  run_bin -0 --separate-stderr team-inbox
+  assert_equal "$stderr" ""
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 0
+  # The fixed head, reviewed and passed, waits on the word again.
+  log_events '{"task":"T7","event":"pr","url":"https://github.com/owner/proj/pull/7","head":"bcd2345efa"}' \
+    '{"task":"T7","event":"review","head":"bcd2345efa","verdict":"pass","guarded":[],
+      "findings":{"blocking":0,"correctness":0,"security":0,"real-data":0,"note-change":0,"note-before":0}}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+}
+
+@test "a PR whose queued names a head it has since moved past is listed as ready to merge again, with no dequeued logged" {
+  registry
+  ready_pr T7 proj 7
+  log_events '{"task":"T7","event":"queued","url":"https://github.com/owner/proj/pull/7","head":"abc1234def","project":"proj"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 0
+  # A push took it out of the queue while no team-merge waited; its new head is reviewed and passed.
+  log_events '{"task":"T7","event":"pr","url":"https://github.com/owner/proj/pull/7","head":"bcd2345efa"}' \
+    '{"task":"T7","event":"review","head":"bcd2345efa","verdict":"pass","guarded":[],
+      "findings":{"blocking":0,"correctness":0,"security":0,"real-data":0,"note-change":0,"note-before":0}}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
 }
 
 @test "the team's own project's PR is listed whatever approval it has, by its repo or its path as well as by its name" {
