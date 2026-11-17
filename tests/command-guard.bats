@@ -781,6 +781,12 @@ passes() {
   mv -f "$lib/command_rules.py.new" "$lib/command_rules.py"
   table 'git status'
   assert_equal "$status:$output:$stderr" "1::ops-launch: ZeroDivisionError: division by zero"
+  # One that recurses past Python's limit is named by that limit, never by its bare RecursionError.
+  awk '/^if __name__/ { print "def deeper(n):\n    return deeper(n + 1)\n\nROWS = (Row(\"ops-launch\", lambda command, context: deeper(0), \"x\"),) + ROWS[1:]\n" } { print }' \
+    "$REPO_ROOT/bin/lib/command_rules.py" >"$lib/command_rules.py.new"
+  mv -f "$lib/command_rules.py.new" "$lib/command_rules.py"
+  table 'git status'
+  assert_equal "$status:$output:$stderr" "1::ops-launch: RecursionError: a reading nested deeper than Python's recursion limit of 1000 frames"
 }
 
 @test "a command the reader cannot walk is refused, naming command_rules.py's error" {

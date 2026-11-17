@@ -40,9 +40,11 @@ unquoted brace lists expanded):
   - a leading ~ or ~/ is HOME; ~user, ~+ and ~- are unread;
   - $HOME and $CLAUDE_JOB_DIR (each also as ${...}) are the hook's environment, an unset one
     empty; $CLAUDE_PROJECT_DIR is both the hook's value and empty, every one of which must pass,
-    since the Bash tool's shell does not set it, though hooks get it; $PWD is each candidate
-    directory below; any of them is unread when the call names it (above) otherwise than as a use
-    ($X, ${X}, ${X:-y}), as an assignment, read, unset or a word of prose does;
+    since the Bash tool's shell does not set it, though hooks get it; $PWD is each directory
+    the command may be in (below) where Bash expands it: in an operand where the delete runs, in a
+    variable's value where the command assigning it runs; any of them is unread when the call
+    names it (above) otherwise than as a use ($X, ${X}, ${X:-y}), as an assignment, read, unset or
+    a word of prose does;
   - a variable the command assigns is each value it is given, every one of which must pass: its
     first mention in the command's text is an assignment (X=...) and every other one the call names
     (above) an assignment or a use, and each value comes from a bare assignment or one of export,
@@ -58,9 +60,10 @@ unquoted brace lists expanded):
   - a path under /proc or /dev is unread, since /proc/self and /dev/fd name the guard's own
     process there.
 A relative operand is checked against every directory the command may be in when it runs. In a
-plain sequence (command_text.plain_sequence: no pipe, group, substitution, compound command,
-function, background job, ! or coproc, and no string, find -exec, script or sourced file run, so
-each command runs in its place) of which the walk reads every command, those are the input's cwd and
+plain sequence (command_text.plain_sequence: no group, substitution, compound command, function,
+background job, ! or coproc, each pipeline's commands simple ones, and no string, find -exec,
+script or sourced file run, so each command runs in its place) of which the walk reads every
+command, those are the input's cwd and
 each cd or pushd target before the delete, in order: one joined to the delete by && alone, and
 to what stands before it in its list by && too (a || before it skips it when what precedes
 succeeds), is where it runs; one that begins its and-or list, with one operand, whose target is a
@@ -69,16 +72,18 @@ before it in the call and no || after it in the delete's own list (whose failure
 delete), is taken as run, so it alone is where the call is; either is the builtin by its bare
 name, behind no wrapper but a bare command or builtin (behind env, nice, sudo, time and the other
 external wrappers, or by a path, a cd program may run in a child), and takes only options by which
-it goes to its target (cd's -L, -P and -e, none of pushd's, whose -n moves nothing); any other
-adds its target to the directories before it. In any other call they are the cwd and each cd or
-pushd target anywhere in it. cd alone is HOME; each target is resolved as an operand is, a
-relative one against every directory so far, both as the shell's logical cd reads it, from each
-path its logical PWD may hold there (a link's own path, before the link is followed), and as the
-file system does. A cd -, popd, pushd with no directory or a +N or
--N, a cd to an unread target, a relative cd target while CDPATH is set or named, env's -C or
---chdir and sudo's -D or --chdir (in a plain sequence, those before the delete and on its own
-wrappers) make every relative operand unread, and so do a call with no cwd and one that names
-cdable_vars, under which cd follows a variable of the name it is given.
+it goes to its target (cd's -L, -P and -e, none of pushd's, whose -n moves nothing), and stands
+in no pipeline of more than one command, where it runs in a subshell (the last one, under
+lastpipe, maybe in the shell); any other adds its target to the directories before it. In any
+other call they are the cwd and each cd or pushd target anywhere in it. cd alone is HOME; each
+target is resolved as an operand is, a relative one against every directory so far, both as the
+shell's logical cd reads it, from each path its logical PWD may hold there (a link's own path,
+before the link is followed), and as the file system does. A cd -, popd, pushd with no directory
+or a +N or -N, a cd to an unread target (one that reads $PWD, or a variable set from it where the
+directories that cd is among are still being read, a cycle), a relative cd target while CDPATH is
+set or named, env's -C or --chdir and sudo's -D or --chdir (in a plain sequence, those before the
+delete and on its own wrappers) make every relative operand unread, and so do a call with no cwd
+and one that names cdable_vars, under which cd follows a variable of the name it is given.
 A refusal outside or of a kept path, of a relative operand read from a cd's directory, says so
 after its reason: "<operand> is relative, read from <directory>, where <the cd> leaves the call"
 ("may leave" when the call may be elsewhere then), and names the way through first: write the
@@ -202,6 +207,31 @@ class Unread(Exception):
     """An operand, a value or a directory the guard cannot read before the command runs."""
 
 
+# The readings of a call's directories in progress (_candidates and _ordered), innermost last.
+_READING = []
+
+
+def _reading(function):
+    """function, a reading of the directories a call may be in, guarded: asked again for the same
+    call (and command) while that one is read, as a cd to a path set from $PWD asks for the
+    directories that cd is among, it is a cycle the guard cannot follow (Unread). Each reading's
+    own readings are those of the cds before its command, which the one around it has read
+    already, so they nest no deeper as the call grows."""
+
+    @functools.wraps(function)
+    def read(*key):
+        key = (function.__name__,) + key
+        if key in _READING:
+            raise Unread
+        _READING.append(key)
+        try:
+            return function(*key[1:])
+        finally:
+            _READING.pop()
+
+    return read
+
+
 def _mentions(name, text):
     """Each mention of the variable name in the text, as (is it a use, is it an assignment)."""
     for mention in re.finditer(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", text):
@@ -263,9 +293,9 @@ def _walked(context):
 
 @functools.lru_cache(maxsize=None)
 def _assigned(name, context):
-    """The values the command gives the variable, or None when it may hold another: its first
-    mention not an assignment, a mention that is neither a use nor an assignment, an assignment
-    before a command on its line, a nameref, or no value found."""
+    """The values the command gives the variable, each with the command that assigns it, or None
+    when it may hold another: its first mention not an assignment, a mention that is neither a use
+    nor an assignment, an assignment before a command on its line, a nameref, or no value found."""
     mentions = list(_mentions(name, _spelled(context)))
     if not mentions or not mentions[0][1] or any(not used and not assigns for used, assigns in mentions):
         return None
@@ -276,13 +306,13 @@ def _assigned(name, context):
         given = [word[len(prefix) :] for word in command.assignments if word.startswith(prefix)]
         if given and command.words:
             return None
-        values += given
+        values += [(value, command) for value in given]
         if command.words and command_name(command.words[0]) in DECLARERS:
             args = command.words[1:]
             named = [word[len(prefix) :] for word in args if word.startswith(prefix)]
             if named and any(re.fullmatch(r"[-+][A-Za-z]*n[A-Za-z]*", word) for word in args):
                 return None
-            values += named
+            values += [(value, command) for value in named]
     return tuple(dict.fromkeys(values)) or None
 
 
@@ -340,7 +370,8 @@ def _tilde(text, context):
 
 def _values(name, context, depth, at=None):
     """Each value $name may hold where the command runs; at, the command whose directories $PWD
-    is (None: every directory the call may be in)."""
+    is (None: every directory the call may be in), and in an assigned value, the command that
+    assigns it, since Bash expands it there."""
     if name in KNOWN:
         value = _environment(name, context)
         return [value, ""] if name in HOOK_ONLY and value else [value]
@@ -352,8 +383,8 @@ def _values(name, context, depth, at=None):
     if values is None or depth >= MAX_DEPTH:
         raise Unread
     out = []
-    for value in values:
-        out += _value(value, context, depth + 1, at)
+    for value, assigning in values:
+        out += _value(value, context, depth + 1, assigning)
     return out
 
 
@@ -421,8 +452,9 @@ def _mktemp(text, context, depth, at=None):
 
 
 def _substitute(text, context, depth, at=None):
-    """The text with each $NAME and ${NAME} it holds replaced by each value it may hold."""
-    results, at = [""], 0
+    """The text with each $NAME and ${NAME} it holds replaced by each value it may hold, $PWD by
+    the directories of the command at."""
+    results, end = [""], 0
     for reference in REFERENCE.finditer(text):
         # An IFS the command sets may split a value where a blank would not.
         if _rebound("IFS", context):
@@ -430,12 +462,12 @@ def _substitute(text, context, depth, at=None):
         values = _values(reference.group(1) or reference.group(2), context, depth, at)
         if any(re.search(r"\s", value) for value in values):
             raise Unread
-        literal = text[at : reference.start()]
+        literal = text[end : reference.start()]
         results = [result + literal + value for result in results for value in values]
         if len(results) > MAX_PATHS:
             raise Unread
-        at = reference.end()
-    results = [result + text[at:] for result in results]
+        end = reference.end()
+    results = [result + text[end:] for result in results]
     if any(UNREAD_TEXT.search(result) for result in results):
         raise Unread
     return results
@@ -503,10 +535,12 @@ def _cd_text(command):
     return " ".join(command.words)
 
 
+@functools.lru_cache(maxsize=None)
 def _reached(target, command, bases, context):
     """The Bases of one cd target from each of bases: an absolute one alone, a relative one from
     each, both as the shell's logical cd reads it, from each path the base's PWD may hold, and as
-    the file system does; Unread when the guard cannot follow it."""
+    the file system does; Unread when the guard cannot follow it. Read once per call for each set
+    of bases, since each command's reading rereads the cds before it."""
     # $PWD in a cd target would read the directories being found.
     if any("PWD" in reference.groups() for reference in REFERENCE.finditer(target)):
         raise Unread
@@ -522,7 +556,7 @@ def _reached(target, command, bases, context):
             for logical in base.logicals():
                 joined = os.path.normpath(os.path.join(logical, path))
                 readings.setdefault(os.path.realpath(joined), []).append(joined)
-    return [Base(resolved, _cd_text(command), False, tuple(dict.fromkeys(paths))) for resolved, paths in readings.items()]
+    return tuple(Base(resolved, _cd_text(command), False, tuple(dict.fromkeys(paths))) for resolved, paths in readings.items())
 
 
 def _merged(bases, more, sure):
@@ -538,6 +572,7 @@ def _merged(bases, more, sure):
 
 
 @functools.lru_cache(maxsize=None)
+@_reading
 def _candidates(context):
     """Each directory the call may be in when it runs a relative delete, as Bases: its cwd and
     each cd target anywhere in it, each relative one from every directory found so far; Unread
@@ -552,11 +587,11 @@ def _candidates(context):
     absolute = [(t, c) for t, c in targets if all(p.startswith("/") for p in _expand(t, context))]
     relative = [(t, c) for t, c in targets if (t, c) not in absolute]
     for target, command in absolute:
-        found = _merged(found, _reached(target, command, found, context), False)
+        found = _merged(found, _reached(target, command, tuple(found), context), False)
     for _ in relative:
         for base in list(found):
             for target, command in relative:
-                found = _merged(found, _reached(target, command, [base], context), False)
+                found = _merged(found, _reached(target, command, (base,), context), False)
     return tuple(found)
 
 
@@ -595,13 +630,16 @@ def _moves(command):
 
 
 @functools.lru_cache(maxsize=None)
+@_reading
 def _ordered(context, index):
     """The Bases of the plain sequence's command at index, from the cwd and each cd before it in
     order: a cd joined to it by && alone, and to what stands before it in its list by && too, or one
     that begins its and-or list, with one operand, and whose target is a directory it may enter
     from every Base now, with no command that may take a directory away before it and no || after
     it in the command's own list, each taking only options by which it goes there (_goes), is
-    where the call is (sure); any other adds its target to the Bases."""
+    where the call is (sure); a cd in a pipeline of more than one command, which runs in a subshell
+    (the last one, under lastpipe, maybe in the shell), and any other add its target to the
+    Bases."""
     if context.cwd is None or _named("cdable_vars", context):
         raise Unread
     sequence = _sequence(context)
@@ -616,11 +654,12 @@ def _ordered(context, index):
             continue
         reached = []
         for target in targets:
-            reached += _reached(target, command, bases, context)
+            reached += _reached(target, command, tuple(bases), context)
         between = [separator for _, separator in sequence[q:index]]
         # In the delete's own list, a || after the cd may run the delete because the cd failed.
         failed = ";" not in between and "||" in between
         before = sequence[q - 1][1] if q else ";"
+        piped = "|" in (before, sequence[q][1])
         # (a || cd X) && rm skips the cd when a succeeds, so only a cd after ; or && is sure by &&.
         anded = before != "||" and all(separator == "&&" for separator in between) and _goes(command, None)
         run = (
@@ -628,7 +667,7 @@ def _ordered(context, index):
             and _goes(command, 1)
             and all(os.path.isdir(b.path) and os.access(b.path, os.X_OK) for b in reached)
         )
-        sure = anded or (run and not failed and not any(_moves(c) for c, _ in sequence[:q]))
+        sure = not piped and (anded or (run and not failed and not any(_moves(c) for c, _ in sequence[:q])))
         bases = _merged(bases, reached, sure)
     return tuple(bases)
 
