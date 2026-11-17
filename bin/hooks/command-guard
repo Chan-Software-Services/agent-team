@@ -40,8 +40,8 @@
 # path, or a path it cannot read before it runs; bin/lib/delete_rules.py), and last any other
 # command run with its environment emptied, which drops the session's GitHub login.
 # The hook refuses with that row's reason, and its allowed way when it names one, and for a call of
-# more than one line a second line naming the line the refused command stands on, and a heredoc
-# that ended before it ("It stands on line <n> of the call: <the line>...", command_rules.py's
+# more than one line a second line naming the line the refused command stands on when one holds
+# it, and a heredoc that ended before it ("It stands on line <n> of the call: <the line>...", command_rules.py's
 # where);
 # command_rules.py's header holds each row's wording, what the guard does not see, and in its
 # Contract paragraph what the kill and delete rows promise and what they leave to a kernel layer.

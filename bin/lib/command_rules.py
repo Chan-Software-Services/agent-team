@@ -30,8 +30,8 @@ runs the refused command, else the first holding each of its words (one outside 
 first), and, after a heredoc's closing line, "; the heredoc opened on line <n> (<its operator and
 marker>) ended at line <n>, so Bash runs the lines after it as commands", with ", and line <n> is
 <marker> again: that heredoc may have ended earlier than you meant" when a later line is its
-closing line again, ending in a full stop; null for a call of one line. It prints nothing
-when no row refuses, and exits 0
+closing line again, ending in a full stop; null for a call of one line, or when no line of it
+holds the refused command. It prints nothing when no row refuses, and exits 0
 either way. Any error of its own exits 1 with one line on stderr, "command_rules.py: <ErrorType>:
 <message>", or "<row id>: <ErrorType>: <message>" when a row raised, so the hook refuses: a guard
 that cannot decide refuses.
