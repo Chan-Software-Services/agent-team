@@ -196,12 +196,13 @@ take_reading() {
   # The team and gate stacks, from team-stack, while the rest is read; Docker not answering in
   # time leaves them out. timeout runs it in a process group of its own, so a signal that stops
   # this run (the heartbeat's own time limit), or this run's end before it is waited for, is
-  # passed on to it, and through it to what it started.
+  # passed on to it, and through it to what it started. Each trap goes on past a kill that fails,
+  # since the listing may have ended already, and set -e would end the trap before its removal.
   TEAM_HOME=$TEAM_HOME timeout --kill-after=5 "${TEAM_READING_DOCKER_SECONDS:-30}" \
     "${TEAM_LIB%/*}/team-stack" ls --json >"$work/stacks.json" 2>/dev/null &
   stack_pid=$!
-  trap 'kill -TERM "$stack_pid" 2>/dev/null; exit 143' TERM INT HUP
-  trap '[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null; rm -rf "$work"' EXIT
+  trap 'kill -TERM "$stack_pid" 2>/dev/null || true; exit 143' TERM INT HUP
+  trap '[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null || true; rm -rf "$work"' EXIT
 
   reading_context
   case $(uname -s) in

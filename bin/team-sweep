@@ -260,6 +260,10 @@
 # TEAM_SWEEP_NOW (a UTC time, as 2026-11-15T10:00:00Z) stands for now where an assistant-handoff's
 # wait is counted, and nowhere else, the tests' seam; a due item's day is team-current's own
 # (TEAM_CURRENT_NOW).
+# Every temporary file a run makes, a look's and its background views', the scripts those run
+# included (their TMPDIR, but team-current's), is in one directory of the run under TMPDIR, which
+# it removes at its end in every mode, by TERM, INT or HUP too, once it has sent TERM to every
+# process below the views still running and waited for them; only a KILL leaves it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/error-view.sh
@@ -295,6 +299,51 @@ esac
 ledger=$TEAM_HOME/ledger.jsonl
 [[ -e $ledger ]] || ledger=/dev/null
 
+# The run's directory, as the header says. The views still running when the run ends are its own
+# background jobs that bash has not yet reaped (jobs -r: an ended job bash has reaped is left out,
+# since the kernel may have given its pid to another process), so none is another process's: every
+# process below each, the command it runs and what that runs in turn (a script's own background
+# reads, which it does not wait for when TERM ends it), is sent TERM, so it ends by its own traps,
+# and each view, which then ends in a moment, is waited for, so none writes into the directory
+# while it is removed. A view that has ended needs neither, and its children are no longer its own.
+# Each view runs with the directory as its TMPDIR, so a script it runs that TERM ends before its
+# trap is set, its mktemp made, leaves its scratch where the run removes it; but for team-current's
+# two, which keep the caller's TMPDIR, since team-current check judges an item's where against it
+# as a temp root, and neither makes scratch.
+# The main shell itself runs no process that writes into the directory: it makes its files with
+# run_file, which forks nothing, and every read that writes one (a view, the activity, the
+# registry's) runs as a view, since a command substitution is no job, so the end could neither
+# stop it nor wait for it, and a file it made while the directory was removed would stay.
+run_tmp=$(mktemp -d)
+end_run() {
+  local -a views below
+  mapfile -t views < <(jobs -rp)
+  if ((${#views[@]})); then
+    mapfile -t below < <(ps -A -o pid=,ppid= | awk -v views="${views[*]}" '
+      { parent[$1] = $2 }
+      END {
+        n = split(views, v, " "); for (i = 1; i <= n; i++) mark[v[i]] = 1
+        do { more = 0; for (p in parent) if (!(p in mark) && (parent[p] in mark)) { mark[p] = 1; print p; more = 1 } } while (more)
+      }')
+    ((${#below[@]} == 0)) || kill -TERM "${below[@]}" 2>/dev/null || true
+    wait "${views[@]}" 2>/dev/null || true
+  fi
+  rm -rf "$run_tmp"
+}
+trap end_run EXIT
+
+# A new empty file of the run, named for what it holds, its path in <var>: run_file <var> <name>
+# The shell makes it itself, with noclobber, so no process of the run's main shell writes into the
+# run's directory while end_run removes it.
+run_file() {
+  local - run_file_path run_file_tries=0
+  set -C
+  until run_file_path=$run_tmp/$2.$RANDOM$RANDOM && { : >"$run_file_path"; } 2>/dev/null; do
+    ((++run_file_tries < 100)) || die "cannot make a file in $run_tmp"
+  done
+  printf -v "$1" %s "$run_file_path"
+}
+
 # The quiet time from which session-activity may read a session's transcripts: the default stall
 # limit, since no session quieter than that is stalled.
 parse_after=$(ledger_jq 'stall_limits.default' -nr)
@@ -306,7 +355,7 @@ parse_after=$(ledger_jq 'stall_limits.default' -nr)
 # still come.
 session_activity() {
   local out errors status=0 reason
-  errors=$(mktemp)
+  run_file errors activity.err
   out=$("$TEAM_LIB/session-activity" --parse-after "$parse_after" <<<"$1" 2>"$errors") || status=$?
   if ((status)); then
     reason=$(grep . "$errors" | tail -n 1) || reason="session-activity failed with exit $status and no reason given"
@@ -327,7 +376,8 @@ session_activity() {
 # fails: level_plan <file>
 level_plan() {
   local out err line
-  out=$(mktemp) err=$(mktemp)
+  run_file out plan.out
+  run_file err plan.err
   if TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-capacity" plan --json --sessions "$1" >"$out" 2>"$err" </dev/null; then
     jq -c . "$out"
   else
@@ -347,7 +397,8 @@ HEALTH_TIMEOUT=10
 health_view() {
   local out err rc=0 line
   if ! machine_name >/dev/null 2>&1; then echo '{}'; return; fi
-  out=$(mktemp) err=$(mktemp)
+  run_file out health.out
+  run_file err health.err
   TEAM_HOME=$TEAM_HOME bounded "$HEALTH_TIMEOUT" "$(dirname "$TEAM_LIB")/team-timers" health --json >"$out" 2>"$err" </dev/null || rc=$?
   if ! jq -ce 'select(type == "object" and .schema == "team-health/1" and (.problems | type) == "array")' "$out" 2>/dev/null; then
     if ((rc == 124)); then
@@ -366,7 +417,8 @@ health_view() {
 # <args>...
 script_view() {
   local schema=$1 script=$2 out err rc=0
-  out=$(mktemp) err=$(mktemp)
+  run_file out "$script.out"
+  run_file err "$script.err"
   TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/$script" "${@:3}" >"$out" 2>"$err" </dev/null || rc=$?
   if ((rc > 1)) || ! jq -ce --arg schema "$schema" 'select(type == "object" and .schema == $schema)' "$out" 2>/dev/null; then
     error_view "$err" "$script $3 $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no $schema view"; fi)"
@@ -379,7 +431,8 @@ script_view() {
 # directory) when it fails or prints no list: handoffs_view
 handoffs_view() {
   local out err rc=0
-  out=$(mktemp) err=$(mktemp)
+  run_file out handoffs.out
+  run_file err handoffs.err
   TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-assistant" list --open --to coordinator --json >"$out" 2>"$err" </dev/null || rc=$?
   if ((rc)) || ! jq -ce 'select(type == "array")' "$out" 2>/dev/null; then
     error_view "$err" "team-assistant list $(if ((rc)); then echo "exited $rc with no reason given"; else echo "printed no list"; fi)"
@@ -394,7 +447,7 @@ handoffs_view() {
 own_covered() {
   local found err
   if ! ledger_jq 'ledger_events | default_may_hold' -nRe "$ledger" >/dev/null; then echo '{"projects": [], "app": null}'; return; fi
-  err=$(mktemp)
+  run_file err own.err
   if found=$(own_projects 2>"$err"); then
     printf '%s\n' "$found"
   else
@@ -408,18 +461,18 @@ own_covered() {
 # stow plan and the live sessions' transcripts; fails with the reason on stderr when the session
 # list cannot be read, and with the sweep's exit code when its jq fails.
 look() {
-  local sessions plan activity plan_file own health plan_pid health_pid queue current due handoffs
-  local queue_pid='' current_pid='' due_pid='' handoffs_pid='' found landing rc=0
+  local sessions plan activity plan_file own health plan_pid health_pid activity_pid own_pid queue current
+  local due handoffs queue_pid='' current_pid='' due_pid='' handoffs_pid='' found landing rc=0
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
-  plan_file=$(mktemp)
+  run_file plan_file plan
   printf '%s\n' "$sessions" >"$plan_file.sessions"
   echo null >"$plan_file.queue"
   echo null >"$plan_file.current"
   echo null >"$plan_file.due"
   echo null >"$plan_file.handoffs"
-  level_plan "$plan_file.sessions" >"$plan_file" &
+  TMPDIR=$run_tmp level_plan "$plan_file.sessions" >"$plan_file" &
   plan_pid=$!
-  health_view >"$plan_file.health" &
+  TMPDIR=$run_tmp health_view >"$plan_file.health" &
   health_pid=$!
   if [[ -f $TEAM_HOME/tasks/current.md ]]; then
     script_view team-current-check/1 team-current check --json >"$plan_file.current" &
@@ -428,14 +481,17 @@ look() {
     due_pid=$!
   fi
   if [[ -f $TEAM_HOME/assistant/handoffs.jsonl ]]; then
-    handoffs_view >"$plan_file.handoffs" &
+    TMPDIR=$run_tmp handoffs_view >"$plan_file.handoffs" &
     handoffs_pid=$!
   fi
-  activity=$(session_activity "$sessions")
+  TMPDIR=$run_tmp session_activity "$sessions" >"$plan_file.activity" &
+  activity_pid=$!
+  TMPDIR=$run_tmp own_covered >"$plan_file.own" &
+  own_pid=$!
   wait "$plan_pid" || true
   # The queue reads the plan just written, beside the ledger pass below.
   if [[ -d $TEAM_HOME/tasks/queued ]]; then
-    script_view team-queue/1 team-queue list --json --plan "$plan_file" >"$plan_file.queue" &
+    TMPDIR=$run_tmp script_view team-queue/1 team-queue list --json --plan "$plan_file" >"$plan_file.queue" &
     queue_pid=$!
   fi
   wait "$health_pid" || true
@@ -443,7 +499,12 @@ look() {
   health=$(cat "$plan_file.health")
   [[ -n $plan ]] || plan='{"error": "team-capacity plan printed nothing"}'
   [[ -n $health ]] || health='{"error": "team-timers health printed nothing"}'
-  own=$(own_covered)
+  wait "$activity_pid" || true
+  wait "$own_pid" || true
+  activity=$(cat "$plan_file.activity")
+  own=$(cat "$plan_file.own")
+  [[ -n $activity ]] || activity='{"error": "session-activity printed nothing"}'
+  [[ -n $own ]] || own=null
   landing=$(merge_locks_held)
   found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self; $landing)' -nRc \
     --argjson sessions "$sessions" --argjson plan "$plan" --argjson activity "$activity" --argjson own "$own" \
@@ -456,8 +517,8 @@ look() {
   current=$(cat "$plan_file.current")
   due=$(cat "$plan_file.due")
   handoffs=$(cat "$plan_file.handoffs")
-  rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.queue" "$plan_file.current" \
-    "$plan_file.due" "$plan_file.handoffs"
+  rm -f "$plan_file" "$plan_file.sessions" "$plan_file.health" "$plan_file.activity" "$plan_file.own" \
+    "$plan_file.queue" "$plan_file.current" "$plan_file.due" "$plan_file.handoffs"
   # A failed sweep fails the look with its exit code, once its scripts are waited for and its
   # files gone: --wait calls it as a condition, where set -e stops nothing.
   ((rc == 0)) || return "$rc"
@@ -503,8 +564,7 @@ look_failure() {
 wait_for_finding() {
   local look_n=0 failing_since='' key first=1 status started changed
   local -A initial=() since=() now=()
-  err=$(mktemp)
-  trap 'rm -f "$err"' EXIT
+  run_file err look.err
   started=$(code_sums)
   while :; do
     if look 2>"$err"; then
