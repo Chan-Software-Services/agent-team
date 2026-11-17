@@ -64,9 +64,9 @@
 # the environment it was run in (the sandbox's is the scripts' alone): pass when it exits 0, every
 # check passed, else fail; the detail "<passed> of <checks> checks passed on <repo> PRs #<a> and
 # #<b>; every required check reported on <n> of <m> trial commits; the roll-up CodeQL on <k>"
-# once it reached its checks, else the step that failed. A record team-drill refuses prints "merge-queue-drill: not recorded: <team-drill's
-# first error line>" on stderr and leaves the drill's exit status as it was. The sandbox is
-# removed either way.
+# once it reached its checks, else the step that failed. A record team-drill refuses prints
+# "merge-queue-drill: not recorded: <team-drill's first error line>" on stderr and leaves the
+# drill's exit status as it was. The sandbox is removed either way.
 #
 # Usage: tests/merge-queue-drill --setup <repo>
 #        tests/merge-queue-drill <repo>
