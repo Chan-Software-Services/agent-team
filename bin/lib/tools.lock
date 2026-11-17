@@ -139,7 +139,7 @@
         }
       },
       "fork": {
-        "repo": "chanjdaniel/no-mistakes",
+        "repo": "Chan-Software-Services/no-mistakes",
         "commit": "a544ba66594682fb8a0594de77f45ed519a41381",
         "version": "1.84.0-36-ga544ba6"
       },
