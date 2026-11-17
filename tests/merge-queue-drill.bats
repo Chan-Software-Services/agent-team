@@ -719,6 +719,11 @@ FAIL PR #9's trial commit $mb reported success for every check dev requires (che
   # A lint met by its status alone passes.
   rm "$GH_DIR"/pr-* "$GH_DIR"/entry-* "$GH_DIR"/started-* "$GH_DIR"/runs-pr-* "$GH_DIR/statuses-pr-9.json" "$GH_DIR/land-9" "$TEAM_HOME/drills.jsonl"
   echo '{"state": "success", "statuses": [{"context": "lint", "state": "success"}]}' >"$GH_DIR/statuses-pr-9.json"
+  # The first run's PR #8 landed runs/<stamp>-a.txt on dev, and the stub queue ends at once, so a
+  # second run in the same second would name the same file and commit nothing: wait for the next.
+  local second
+  second=$(date -u +%s)
+  while [[ $(date -u +%s) == "$second" ]]; do sleep 0.1; done
   run -0 "$drill" org/scratch
   assert_contains "$output" "PASS PR #8's trial commit $(short pr-8.merge) reported success for every check dev requires (check, Analyze (actions), agent-review, lint)"
   assert_contains "$output" "PASS PR #9's trial commit $(short pr-9.merge) reported success for every check dev requires (check, Analyze (actions), agent-review, lint)"
