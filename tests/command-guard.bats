@@ -1124,6 +1124,7 @@ gh-axi label create|gh-axi label create --name x --color fff
 gh-axi repo fork|gh-axi repo fork
 gh-axi issue subissue add|gh-axi issue subissue add 1 2
 gh-axi pr checkout|gh-axi pr checkout 5
+gh issue develop|gh issue develop 5 --list
 COMMANDS
   # A group the guard knows no read of: a user alias, an extension, gh co, copilot, preview, setup.
   while IFS='|' read -r name command; do
@@ -1132,6 +1133,8 @@ COMMANDS
 gh rc|gh rc v1
 gh p|gh p repos/o/r/issues
 gh co|gh co 5
+gh ext|gh ext list
+gh cs|gh cs list
 gh copilot|gh copilot
 gh preview|gh preview prompter
 gh-axi setup|gh-axi setup hooks
