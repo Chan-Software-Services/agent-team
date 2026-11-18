@@ -2459,10 +2459,10 @@ def checks_waits_to_arm:
 # that stands. The Production line, after them, is team-uptime's status line, or "Production
 # unreadable: <error>", and there is none when no project has a check. The denials line follows it,
 # "Denials gone past in the last day: <n>: T<n> <role> <what>: <why>; ...", cut at 200 columns, and
-# there is none with no denial. The queue's line ends it, cut at 200: "Queue: <r> ready, <w>
-# waiting, <o> opened; <the room's line>; next: <the top ready item> (<project>, priority <p>,
-# <size>): <its summary>", "Queue: nothing ready; <w> waiting, <o> opened; <the room's line>", or
-# "Queue unreadable: <error>", and none with no queue.
+# there is none with no denial; each newline in it is a space. The queue's line ends it, cut at
+# 200: "Queue: <r> ready, <w> waiting, <o> opened; <the room's line>; next: <the top ready item>
+# (<project>, priority <p>, <size>): <its summary>", "Queue: nothing ready; <w> waiting, <o>
+# opened; <the room's line>", or "Queue unreadable: <error>", and none with no queue.
 def snapshot_text:
   def section($title; $lines; $columns):
     if $lines == [] then "\($title): none" else "\($title) (\($lines | length)):", ($lines[] | "  " + . | clip($columns)) end;
@@ -2480,7 +2480,7 @@ def snapshot_text:
   ((.denials // []) as $denials
    | if $denials == [] then empty
      else "Denials gone past in the last day: \($denials | length): "
-       + ([$denials[] | "\(.task) \(.role) \(.what): \(.why)"] | join("; ")) | clip(200) end),
+       + ([$denials[] | "\(.task) \(.role) \(.what): \(.why)" | gsub("\\s*\n\\s*"; " ")] | join("; ")) | clip(200) end),
   section("Live team sessions";
     [.sessions[] | session_text + if .logged then "" else " (no launch of it in the ledger)" end]),
   section("Stray sessions";

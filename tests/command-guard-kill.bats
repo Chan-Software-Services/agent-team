@@ -46,6 +46,8 @@ ended() {
 }
 
 KILL_WAY="find your own process's PID (pgrep -af <pattern>, or the \$! you noted when you started it) and kill that literal PID in a call of its own, which passes when the process is yours and its working directory is inside your worktree or your job's tmp"
+# shellcheck disable=SC2016 # the allowed way names $CLAUDE_JOB_DIR as the worker writes it
+TMUX_WAY='run a tmux server of your own on a socket inside your job'"'"'s tmp, and kill only that one, by its socket: tmux -S "$CLAUDE_JOB_DIR/tmp/<name>.sock" kill-server'
 READ_WAY="read the PID first (pgrep -af, ps -o pid,args), then kill that literal PID in a call of its own; your own jobs (\$!, %1, \$(jobs -p)) pass as they are"
 BY_NAME="which reaches every task's processes and the team's own sessions"
 UNREAD="a PID the guard cannot read before it runs (a variable or a substitution)"
@@ -64,7 +66,7 @@ refuses() {
   shift 2
   for command; do
     guard -2 "$command"
-    [[ $stderr == "Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: do not reach it another way." ]] ||
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: do not reach it another way." ]] ||
       { printf 'not refused with: %s\ncommand: %s\nstderr: %s\n' "$reason" "$command" "$stderr" >&2; return 1; }
   done
 }
@@ -109,15 +111,33 @@ refuses_wrapped() {
     "fuser -v -k -n tcp 8080"
 }
 
-@test "tmux's kill-* is refused, with or without -L or -S" {
+@test "tmux's kill-* is refused, on the default socket, a -L name or a -S path outside the roots" {
   local word
   for word in kill-server kill-session kill-window kill-pane; do
-    refuses_wrapped "tmux $word, which reaches other sessions' terminals and the team's own" "$KILL_WAY" "tmux $word"
-    refuses "tmux $word, which reaches other sessions' terminals and the team's own" "$KILL_WAY" \
+    refuses_wrapped "tmux $word, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" "tmux $word"
+    refuses "tmux $word, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" \
       "tmux -L work $word" "tmux -S /tmp/sock $word -t x"
   done
-  refuses "tmux killp, which reaches other sessions' terminals and the team's own" "$KILL_WAY" "tmux killp -t 1"
-  refuses "tmux killw, which reaches other sessions' terminals and the team's own" "$KILL_WAY" "tmux killw"
+  refuses "tmux killp, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" "tmux killp -t 1"
+  refuses "tmux killw, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" "tmux killw"
+  # The report's section B: a private server on a -L name says nothing of whose it is.
+  # shellcheck disable=SC2016
+  refuses "tmux kill-server, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" \
+    'S=t437look$$; tmux -L $S kill-server' "tmux -S $OUT/t.sock kill-server" \
+    "tmux -S $WT/../outside/t.sock kill-server" 'tmux -S "$X/t.sock" kill-server' "tmux -S t.sock kill-server" \
+    "tmux -S $JOB/tmp/t.sock -S /tmp/t.sock kill-server" "tmux -S $JOB/tmp kill-server" "tmux -S $WT kill-server"
+  refuses "tmux kill-session, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" \
+    "tmux -L t441 kill-session -t look"
+}
+
+@test "tmux's kill-* passes on a -S socket inside the worktree or the job's tmp" {
+  # shellcheck disable=SC2016
+  passes 'tmux -S "$CLAUDE_JOB_DIR/tmp/look.sock" kill-server' "tmux -S $JOB/tmp/t.sock kill-session -t look" \
+    'SOCK=$CLAUDE_JOB_DIR/tmp/x.sock; tmux -S "$SOCK" kill-server' "tmux -uS $WT/src/t.sock kill-server" \
+    "tmux -S$JOB/tmp/t.sock kill-pane -t 1" "cd $WT && tmux -S src/t.sock kill-server" \
+    "tmux -L work -S $JOB/tmp/t.sock kill-server" "tmux -S $JOB/tmp/t.sock new -d \\; kill-window"
+  # shellcheck disable=SC2016
+  passes 'bash -c '"'"'tmux -S "$CLAUDE_JOB_DIR/tmp/look.sock" kill-server'"'"
 }
 
 @test "a kill of PIDs read from input is refused: xargs kill, parallel kill and find -exec kill" {
@@ -183,7 +203,7 @@ refuses_wrapped() {
   AGENT_TEAM_ROLE=assistant guard -2 "pkill -f vite"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
   # A row with no allowed way keeps its suffix, with a role or without.
-  local today="Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
+  local today="Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
   AGENT_TEAM_ROLE=builder guard -2 "team-inbox"
   assert_equal "$stderr" "$today"
   guard -2 "team-inbox"
@@ -192,7 +212,7 @@ refuses_wrapped() {
 
 @test "a kill comes after the existing rows, so a call with both names the earlier row" {
   guard -2 "pkill -f x; team-inbox"
-  assert_equal "$stderr" "Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
+  assert_equal "$stderr" "Blocked by command-guard: the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved); a guardrail, so report it as BLOCKED and do not reach it another way."
   guard -2 "kill \$P; pkill x"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
 }
@@ -329,7 +349,7 @@ print(kill_rules.proof(int(sys.argv[2]), (sys.argv[3], sys.argv[4])))
     "printf 'pk%sll -f vite\\n' i > x.sh; bash x.sh" "printf '\\x70kill -f vite\\n' > x.sh; bash x.sh" \
     "echo -e '\\x70kill -f vite' > x.sh; bash x.sh"
   refuses "a kill by name or pattern (killall), $BY_NAME" "$KILL_WAY" "k\\illall node" "{killall,node}"
-  refuses "tmux kill-server, which reaches other sessions' terminals and the team's own" "$KILL_WAY" \
+  refuses "tmux kill-server, which reaches other sessions' terminals and the team's own" "$TMUX_WAY" \
     "tm''ux kill-server" "{tmux,kill-server}"
   passes "echo {pkill,x}" "printf 'pk%sll -f vite\\n' i > notes.md" "echo \$'\\x70kill' > notes.md"
 }

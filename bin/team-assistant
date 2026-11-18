@@ -8,6 +8,7 @@
 #        team-assistant answer H<n> --file <text> [--task T<n>]
 #        team-assistant list [--open] [--to assistant|coordinator] [--json]
 #        team-assistant thread <title> [--from <message id>]
+#        team-assistant thread --close <thread id>
 # Run by the assistant (AGENT_TEAM_ROLE=assistant) and the coordinator (coordinator, or none set:
 # Daniel's own shell); any other role is refused, "a <role> session cannot hand off: that is the
 # assistant's and the coordinator's" ("an" before a role starting with a vowel, as "an ops
@@ -62,13 +63,31 @@
 # thread, the assistant's alone, opens a public thread under #assistant (POST
 # channels/<ASSISTANT_CHANNEL>/threads, type 11), or from Daniel's message <message id> there
 # (POST channels/<ASSISTANT_CHANNEL>/messages/<id>/threads), named <title> cut at 100
-# characters, archived after 7 days without a message (auto_archive_duration 10080); adds its id
-# to the thread cache, ~/.local/state/agent-team/assistant-threads, and prints it.
+# characters, with auto_archive_duration 1440 (THREAD_ARCHIVE_MINUTES in bin/lib/threads.sh), so a
+# quiet one leaves the channel list after a day; adds its id to the thread cache,
+# ~/.local/state/agent-team/assistant-threads, and prints it.
+#
+# thread --close, the assistant's alone too, closes the topic of thread <thread id>, a thread
+# whose parent is #assistant (read from Discord, assistant_thread_of) that the bot opened (its
+# owner_id the bot's user, GET users/@me; thread_bot in bin/lib/threads.sh): it appends {ts, thread,
+# event: "closed", by: "assistant"} to the team home's assistant/topics.jsonl, unless a close of
+# it is there, and commits and pushes it alone as "chore: topic <id> closed" (a commit or push that
+# fails is one line on stderr, "the close of topic <id> is not on origin yet (<why>); the next
+# checkpoint pushes it", and the close stands). Then it archives the thread when bin/lib/threads.sh's
+# rule allows it now (thread_settle: waiting.json names nothing of it, and its last message is a day old),
+# printing "closed <id>; archived its thread"; else it prints "closed <id>; its thread stays in
+# view: <why>; the heartbeat archives it once the rule allows (team-thread archive)", the
+# heartbeat's threads step archiving it later ("closed <id> already" when the close was there; "its
+# thread is archived already" when it is). A thread that is no topic of the assistant's (under
+# another channel, or opened by someone else, as a thread Daniel opened there), or that Discord
+# cannot read, is refused, recording nothing.
 # Exit codes: 0 done, 1 refused, 2 a malformed command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/threads.sh
+source "$TEAM_LIB/threads.sh"
 
-USAGE="usage: team-assistant send <kind> --file <body> [--task T<n>] [--daniel <message id> --channel <channel id>] [--report <path>] | show H<n> | answer H<n> --file <text> [--task T<n>] | list [--open] [--to assistant|coordinator] [--json] | thread <title> [--from <message id>]"
+USAGE="usage: team-assistant send <kind> --file <body> [--task T<n>] [--daniel <message id> --channel <channel id>] [--report <path>] | show H<n> | answer H<n> --file <text> [--task T<n>] | list [--open] [--to assistant|coordinator] [--json] | thread <title> [--from <message id>] | thread --close <thread id>"
 rel_dir=assistant/handoffs
 log_rel=assistant/handoffs.jsonl
 log=$TEAM_HOME/$log_rel
@@ -200,6 +219,46 @@ options() {
     printf -v "${1#--}" '%s' "$2"
     shift 2
   done
+}
+
+# Close the topic of thread <id>: record the close in assistant/topics.jsonl, committed and
+# pushed, then archive its thread when the rule allows it now (bin/lib/threads.sh), printing what
+# became of it: close_topic <id>
+close_topic() {
+  local id=$1 channel already='' rel=assistant/topics.jsonl reason state bot owner outcome
+  [[ ${AGENT_TEAM_ROLE:-} == assistant ]] ||
+    die "thread is the assistant's alone: it opens and closes the assistant's topic threads under #assistant"
+  lease_check "closes no topic: the assistant on the holder does"
+  [[ -n $ASSISTANT_CHANNEL ]] ||
+    die "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so no topic under #assistant can close"
+  channel=$(thread_read "$id" 2>"$scratch/error") ||
+    die "cannot read the thread $id from Discord: $(grep -m 1 . "$scratch/error" || echo "no reason given")"
+  assistant_thread_of "$channel" ||
+    die "$id is no thread under #assistant ($ASSISTANT_CHANNEL), so it is no topic of the assistant's"
+  # A topic is a thread the bot opened (team-assistant thread), never one Daniel opened there.
+  bot=$(thread_bot 2>"$scratch/error") ||
+    die "cannot read the bot's user from Discord: $(grep -m 1 . "$scratch/error" || echo "no reason given")"
+  owner=$(jq -r '.owner_id // "" | tostring' <<<"$channel")
+  [[ $owner == "$bot" ]] ||
+    die "$id was opened by user ${owner:-unknown}, not by the bot ($bot), so it is no topic of the assistant's"
+  if jq -e --arg id "$id" 'select(.event == "closed" and .thread == $id)' "$TEAM_HOME/$rel" 2>/dev/null | grep -q .; then
+    already=' already'
+  else
+    mkdir -p "$TEAM_HOME/assistant"
+    jq -cn --arg id "$id" '{ts: (now | todate), thread: $id, event: "closed", by: "assistant"}' >>"$TEAM_HOME/$rel"
+    NET_ERR=$scratch/net
+    if ! commit_records "chore: topic $id closed" "$rel" >/dev/null 2>"$scratch/commit"; then
+      reason=$(grep -m 1 . "$scratch/commit" | sed 's/^team-assistant: //' || true)
+      echo "${0##*/}: the close of topic $id is not on origin yet (${reason:-commit_records failed with no reason}); the next checkpoint pushes it" >&2
+    fi
+  fi
+  if outcome=$(thread_settle "$id" "" "$channel"); then
+    state="archived its thread"
+    [[ $outcome != "archived already" ]] || state="its thread is archived already"
+  else
+    state="its thread stays in view: $outcome"
+  fi
+  echo "closed $id$already; $state"
 }
 
 (($#)) || usage_error "$USAGE"
@@ -380,6 +439,11 @@ case $command in
     ;;
 
   thread)
+    if [[ ${1:-} == --close ]]; then
+      (($# == 2)) && [[ $2 =~ $ID_RE ]] || usage_error "$USAGE"
+      close_topic "$2"
+      exit 0
+    fi
     (($# == 1 || $# == 3)) || usage_error "$USAGE"
     title=$1 from=''
     if (($# == 3)); then
@@ -388,16 +452,16 @@ case $command in
     fi
     [[ $title =~ [^[:space:]] && $title != *$'\n'* ]] || usage_error "$USAGE"
     [[ ${AGENT_TEAM_ROLE:-} == assistant ]] ||
-      die "thread is the assistant's alone: it opens the assistant's topic threads under #assistant"
+      die "thread is the assistant's alone: it opens and closes the assistant's topic threads under #assistant"
     lease_check "opens no thread: the assistant on the holder does"
     [[ -n $ASSISTANT_CHANNEL ]] ||
       die "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so no thread can open under #assistant"
     if [[ -n $from ]]; then
       path=channels/$ASSISTANT_CHANNEL/messages/$from/threads
-      body=$(jq -cn --arg name "$title" '{name: $name[0:100], auto_archive_duration: 10080}')
+      body=$(jq -cn --arg name "$title" '{name: $name[0:100], auto_archive_duration: $archive}' --argjson archive "$THREAD_ARCHIVE_MINUTES")
     else
       path=channels/$ASSISTANT_CHANNEL/threads
-      body=$(jq -cn --arg name "$title" '{name: $name[0:100], type: 11, auto_archive_duration: 10080}')
+      body=$(jq -cn --arg name "$title" '{name: $name[0:100], type: 11, auto_archive_duration: $archive}' --argjson archive "$THREAD_ARCHIVE_MINUTES")
     fi
     reply=$(discord_api "$path" -X POST -H "Content-Type: application/json" -d "$body" 2>"$scratch/error") ||
       die "Discord opened no thread under #assistant: $(grep -m 1 . "$scratch/error" || echo "no reason given")"

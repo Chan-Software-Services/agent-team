@@ -71,13 +71,23 @@
 # refs/remotes/team-home/ (team-open --resume's) in the project's primary checkout, one that
 # cannot be deleted, or an origin that cannot be read, reported on stderr with the command that
 # deletes it, failing nothing; and
-# closed with archive, returned and kept. Prints {task, stopped, removed, archive, returned, kept},
+# closed with archive, returned and kept, and threads, the task's Discord thread and interview
+# thread (the thread and interview-thread events' ids, left out when it has none), which
+# team-thread archive reads. Prints {task, stopped, removed, archive, returned, kept},
 # removed naming the ops session team-ops-end ended first.
 # Then the ledger, its closed and worktree-returned lines with it, is committed and pushed to the
 # team home's origin at once (ledger_push in bin/lib/team.sh, which says on stderr when it is not
 # on origin yet, the task staying closed).
-# Last, team-inbox takes the task's asks, PRs, interview and walk out of the team home's waiting.md;
+# Then team-inbox takes the task's asks, PRs, interview and walk out of the team home's waiting.md;
 # when that fails, a line on stderr says so, and the task stays closed.
+# Last, each of the task's threads is archived when bin/lib/threads.sh's rule allows it now
+# (thread_settle: waiting.json, as new as the ledger, names nothing of it, and its last message is
+# a day old), "team-close: archived T7's thread <id>" ("T7's interview thread <id>") on stderr,
+# nothing said for one Discord has archived already; one kept is "team-close: keeps T7's thread
+# <id> in view: <why>", the why saying the heartbeat's team-thread archive archives it once the
+# rule allows, as for no token, a thread Discord cannot read, a waiting.json older than the ledger
+# (the inbox refresh failed) or an archive Discord refused, and a fenced machine keeps each,
+# archiving none. None of it fails the close.
 # A legacy task (events but no opened) has no worktrees in the ledger: its sessions are stopped
 # and removed and closed carries the note legacy. --worktree names a slot it still holds; the
 # path must be a trusted slot of a project in projects.toml, appear in one of the task's launch
@@ -107,6 +117,8 @@
 # coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/threads.sh
+source "$TEAM_LIB/threads.sh"
 why=$(worker_refusal "" "closes no task") && die "$why"
 
 usage="usage: team-close T<n> [--keep-worktree] [--stop-busy] [--worktree <path>]..., or team-close T<n> --ticket <NN>"
@@ -727,14 +739,17 @@ done
 
 # The arguments as a JSON list.
 json_list() { jq -cn '$ARGS.positional' --args "$@"; }
+# The task's Discord threads, its thread and interview thread, which closed names for the archive's rule.
+threads=$(jq -c '[.[] | select(.event | IN("thread", "interview-thread")) | .discord_thread | strings] | unique' <<<"$events")
 kept_paths=()
 for wt in "${kept[@]}"; do kept_paths+=("$(jq -r .worktree <<<"$wt")"); done
 note=''
 [[ -n $opened_project ]] || note=legacy
 ledger_append "$(jq -cn --arg task "$task" --argjson archive "$(json_list "${archived[@]}")" \
   --argjson returned "$(json_list "${returned[@]}")" --argjson kept "$(json_list "${kept_paths[@]}")" --arg note "$note" \
+  --argjson threads "$threads" \
   '{ts: (now | todate), task: $task, event: "closed", archive: $archive, returned: $returned, kept: $kept}
-    + if $note == "" then {} else {note: $note} end')"
+    + (if $threads == [] then {} else {threads: $threads} end) + if $note == "" then {} else {note: $note} end')"
 
 jq -n --arg task "$task" --argjson stopped "$(json_list "${stopped[@]}")" --argjson removed "$(json_list "${removed[@]}")" \
   --argjson archive "$(json_list "${archived[@]}")" --argjson returned "$(json_list "${returned[@]}")" \
@@ -742,3 +757,15 @@ jq -n --arg task "$task" --argjson stopped "$(json_list "${stopped[@]}")" --argj
   '{task: $task, stopped: $stopped, removed: $removed, archive: $archive, returned: $returned, kept: $kept}'
 ledger_push
 refresh_inbox
+
+# Archive each of the task's threads the rule allows now (thread_settle in bin/lib/threads.sh), with
+# waiting.md just brought up to date, saying so on stderr; one it keeps, or cannot archive now, is
+# left to the heartbeat's team-thread archive, and none of it fails the close.
+for id in $(jq -r '.[]' <<<"$threads"); do
+  what="$task's $(jq -r --arg id "$id" 'if any(.[]; .event == "thread" and .discord_thread == $id) then "thread" else "interview thread" end' <<<"$events") $id"
+  if outcome=$(thread_settle "$id" "$task"); then
+    [[ $outcome == "archived already" ]] || echo "team-close: archived $what" >&2
+  else
+    echo "team-close: keeps $what in view: $outcome" >&2
+  fi
+done
