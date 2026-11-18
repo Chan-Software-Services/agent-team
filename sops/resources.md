@@ -145,7 +145,8 @@ With ids, a call that fails saying a process is gone (`No such process`, a short
 An id listed under a name that is no team session fails at once, since a name does not change.
 A session it still cannot place is a warning, and the launch stands.
 `place` with no ids, the heartbeat's and the doctor's fix, waits for nothing and retries a failed call once, so the heartbeat's `capacity` step stays within its time limit.
-Once all of a scope's processes end, systemd removes the scope.
+Once all of a scope's processes end, systemd removes the scope, failed or not: `place` starts it with `CollectMode` `inactive-or-failed`, since a scope the kernel kills for memory ends `failed` (`Result=oom-kill`) and would otherwise stay loaded until a `reset-failed`.
+Checked on home-pc on 2026-11-17 with throwaway scopes in a slice of their own, each around a process that outgrew a 64 MiB `MemoryMax`: the one without the property stayed listed `loaded failed`, and the one with it was unloaded (`LoadState=not-found`).
 
 The assumptions, checked on home-pc on 2026-11-01 (T175 build note `01-cgroups.md`): the user manager's cgroup delegates `cpu`, `memory` and `pids`; systemd is 262; Docker's cgroup driver is `systemd` on cgroup v2; the claude daemon was started from a Konsole tab, and every session it starts sits in that tab's scope under `user@1000.service`; and Daniel's own run of the probe moved such a process into `agent-team-probe.scope`.
 The tests use a stub for the `busctl` call; a worker probes the user manager only with throwaway scopes of its own outside `agent-team.slice`, and a live check of a team session's placement is Daniel's or the coordinator's.
