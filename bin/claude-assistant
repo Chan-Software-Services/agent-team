@@ -25,15 +25,15 @@
 # check, a stack's start or stop, a timer's change, a config apply and the rest), command by
 # command, as each act script but team-heavy does itself (assistant_refusal), so it still reads
 # each script's file and runs its --help; its assistant-github-write row holds every gh and gh-axi
-# call but a read (gh api with a writing method, a body, a field with no GET, a GraphQL mutation
-# or a $ in a query, and any group's subcommand outside its reads), so it still reads GitHub; and
-# its assistant-thread-cache row holds a call naming the thread cache that is no plain list of
-# readers (a redirection, tee, cp, rm, sed -i, an interpreter, a wrapper, an assignment, a loop
-# and the rest), so it still reads the cache, whose Edit its settings deny. Its memory is the team
-# home's memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in the
-# team home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP config,
-# ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny every
-# server `claude mcp list` names in the team home but the Discord plugin's, as
+# call but a read (gh api with a writing method, a body, a field with no GET or HEAD, a GraphQL
+# mutation or a $ in a query, and any group's subcommand outside its reads), so it still reads
+# GitHub; and its assistant-thread-cache row holds a call naming the thread cache that is no plain
+# list of readers (a redirection, tee, cp, rm, sed -i, an interpreter, a wrapper, an assignment, a
+# loop and the rest), so it still reads the cache, whose Edit its settings deny. Its memory is the
+# team home's memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in
+# the team home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP
+# config, ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny
+# every server `claude mcp list` names in the team home but the Discord plugin's, as
 # claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
 # bin/lib/worker-login names one, by its settings' env, as the coordinator's does. It runs on the
 # user settings' model at their effort, with their Remote Control, as the coordinator does, and
