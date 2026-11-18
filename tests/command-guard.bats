@@ -1292,6 +1292,9 @@ sort|sort -uo @ /tmp/ids
 sort|sort --compress-program=/tmp/x @
 sort|sort --comp=/tmp/x @
 sort|sort --out @ /tmp/ids
+sort|sort -T /tmp @
+sort|sort --temporary-directory=/tmp @
+dd|dd if=@ of=/dev/stdout
 python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
 perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
 node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
@@ -1329,7 +1332,7 @@ NONREADERS
   # and with no assignment before it or on its own, since a PATH may find another; time passes
   # only with no option but -p or --, since the external time's -o writes the file it names.
   refuses_as assistant "$CACHE (/tmp/x/cat, which is no plain reader of it, in a call naming it)" "" \
-    "/tmp/x/cat $state/assistant-threads" "echo $state/assistant-threads | xargs /tmp/x/cat"
+    "/tmp/x/cat $state/assistant-threads"
   # shellcheck disable=SC2016 # the command as an agent types it
   refuses_as assistant "$CACHE (PATH=/tmp/x:\$PATH, an assignment in a call naming it)" "" \
     "PATH=/tmp/x:\$PATH cat $state/assistant-threads"
@@ -1340,7 +1343,59 @@ NONREADERS
   refuses_as assistant "$CACHE (/usr/bin/time, which is no plain reader of it, in a call naming it)" "" \
     "/usr/bin/time -o $state/assistant-threads true"
   refuses_as assistant "$CACHE (time, which is no plain reader of it, in a call naming it)" "" \
-    "time -o $state/assistant-threads true" "time --output=$state/assistant-threads true"
+    "time -o $state/assistant-threads true" "time --output=$state/assistant-threads true" \
+    "time cat $state/assistant-threads" "time -p cat $state/assistant-threads"
+  # No wrapper runs a reader, since the walk takes the word after a wrapper's option it does not
+  # know as that option's value, so the program it runs may stand among the wrapper's own words.
+  refuses_as assistant "$CACHE (xargs, which is no plain reader of it, in a call naming it)" "" \
+    "echo $state/assistant-threads | xargs -r /tmp/x/cat" "echo $state/assistant-threads | xargs -0 python3 -c 'import sys'" \
+    "echo $state/assistant-threads | xargs cat" "echo $state/assistant-threads | xargs /tmp/x/cat"
+  refuses_as assistant "$CACHE (timeout, which is no plain reader of it, in a call naming it)" "" \
+    "timeout --foreground python3 -c \"open('$state/assistant-threads','a')\"" "timeout 5 cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (env, which is no plain reader of it, in a call naming it)" "" \
+    "env -i python3 -c \"open('$state/assistant-threads','a')\"" "env grep -x 1 $state/assistant-threads"
+  refuses_as assistant "$CACHE (nice, which is no plain reader of it, in a call naming it)" "" \
+    "nice --adjustment=5 python3 -c \"open('$state/assistant-threads','a')\""
+  refuses_as assistant "$CACHE (command, which is no plain reader of it, in a call naming it)" "" \
+    "command cat $state/assistant-threads"
+  # No builtin that assigns a variable: read and printf -v may set PATH, and cd sets PWD.
+  refuses_as assistant "$CACHE (read, which is no plain reader of it, in a call naming it)" "" \
+    "read -r PATH <<<'/tmp/x'; cat $state/assistant-threads" \
+    "while read -r id; do echo \"\$id\"; done <$state/assistant-threads"
+  refuses_as assistant "$CACHE (printf, which is no plain reader of it, in a call naming it)" "" \
+    "printf -v PATH /tmp/x; cat $state/assistant-threads" "printf '%s\\n' x $state/assistant-threads"
+  refuses_as assistant "$CACHE (builtin, which is no plain reader of it, in a call naming it)" "" \
+    "builtin read PATH <<<'/tmp/x'; cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (cd, which is no plain reader of it, in a call naming it)" "" \
+    "cd /tmp && cat $state/assistant-threads"
+  # An arithmetic expansion or a named fd assigns a variable too.
+  refuses_as assistant "$CACHE (an arithmetic expansion, which may assign a variable, in a call naming it)" "" \
+    "echo \$((PATH=5)); cat $state/assistant-threads" "echo \$[PATH=5]; cat $state/assistant-threads" \
+    "(( PATH = 5 )); cat $state/assistant-threads"
+  refuses_as assistant "$CACHE ({PATH}</dev/null, a redirection that assigns a variable, in a call naming it)" "" \
+    "{PATH}</dev/null cat $state/assistant-threads"
+  # A redirection writes only to /dev/null.
+  refuses_as assistant "$CACHE (>/dev/stdout, a write in a call naming it)" "" "cat $state/assistant-threads >/dev/stdout"
+  # The readers are joined by pipes, &&, || and ; alone: no group, subshell, loop, function,
+  # substitution, background or ! may change where or how a bare name runs.
+  refuses_as assistant "$CACHE (a call naming it that is no plain list of readers joined by |, &&, || or ;)" "" \
+    "(cat $state/assistant-threads)" "{ cat $state/assistant-threads; }" \
+    "cat() { head; }; cat $state/assistant-threads" "cat $state/assistant-threads &" "! cat $state/assistant-threads" \
+    "cat \$(echo $state)/assistant-threads" \
+    "cat $state/assistant-threads | (head)" "coproc cat $state/assistant-threads" "cat <(head $state/assistant-threads)" \
+    "cat $state/assistant-threads > >(head)"
+  # The walk reads a \${...} expansion, which may assign (\${PATH:=...}), as a command of its own.
+  refuses_as assistant "$CACHE (PATH:=/tmp/x, which is no plain reader of it, in a call naming it)" "" \
+    ": \${PATH:=/tmp/x}; cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (for, which is no plain reader of it, in a call naming it)" "" \
+    "for x in 1; do cat $state/assistant-threads; done"
+  refuses_as assistant "$CACHE ([[, which is no plain reader of it, in a call naming it)" "" \
+    "[[ -s $state/assistant-threads ]] && cat $state/assistant-threads"
+  # A command a heredoc's body runs is read as one written plainly.
+  refuses_as assistant "$CACHE (\$(rm /tmp/x), which is no plain reader of it, in a call naming it)" "" "cat <<IDS
+\$(rm /tmp/x)
+IDS
+cat $state/assistant-threads"
 }
 
 @test "the assistant's reads of the thread cache pass, and a worker's and a gate agent's writes of it are judged as before" {
@@ -1350,10 +1405,11 @@ NONREADERS
   for command in 'grep -rn assistant-threads bin' "cat $state/assistant-threads" "wc -l $state/assistant-threads" \
     "jq -R . $state/assistant-threads" "sed -n 1p $state/assistant-threads" "sed -e s/i/x/ $state/assistant-threads" \
     "wc -l <$state/assistant-threads" "cat < $state/assistant-threads" \
-    "while read -r id; do echo \"\$id\"; done <$state/assistant-threads" "grep -c . $state/assistant-threads 2>/dev/null" \
+    "grep -c . $state/assistant-threads 2>/dev/null" \
     "dd if=$state/assistant-threads of=/dev/null" "head -n 3 $state/assistant-threads | wc -l" \
-    "env grep -x 1 $state/assistant-threads" "time -p cat $state/assistant-threads" "time cat $state/assistant-threads" \
-    "command cat $state/assistant-threads" "echo tee assistant-threads" "sed -n '1,3p;\$p' $state/assistant-threads" \
+    "echo tee assistant-threads" "grep -l assistant-threads bin/claude-assistant" \
+    "cat $state/assistant-threads && head -n 1 $state/assistant-threads || wc -l $state/assistant-threads; ls $state" \
+    "grep -c . $state/assistant-threads 2>&1 | head -n 1" "grep -rn assistant-threads bin | head -5 | wc -l" "sed -n '1,3p;\$p' $state/assistant-threads" \
     "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
     "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" \
     "grep -rn assistant-threads bin | cut -c1-200" "sort -u $state/assistant-threads | tr -d x | nl" \

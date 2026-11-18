@@ -116,7 +116,9 @@ plain_sequence(text) gives the text's Commands in the order Bash runs them, each
 separator after it (&&, ||, ; for a semicolon or a newline, or nothing at the end), when every
 pipeline of it is at its top level and of one segment, none holds a group, substitution, compound
 command or function, none is sent to the background or run after ! or coproc, and no command of it
-runs a string, a find -exec, a script file or a sourced file; else None.
+runs a string, a find -exec, a script file or a sourced file; else None. plain_sequence(text,
+pipes=True) takes a pipeline of any number of segments too, each one simple command, its
+separator | before the next.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -1609,29 +1611,41 @@ def commands(text):
 UNPLAIN = frozenset(("!", "coproc"))
 
 
-def plain_sequence(text):
+def plain_sequence(text, pipes=False):
     """The text's simple commands in the order Bash runs them, each with the separator after it
-    ("&&", "||", ";" for a semicolon or a newline, "" at the end), when the text is a plain
-    sequence: each pipeline of it at its top level and of one segment, holding no group,
+    ("&&", "||", ";" for a semicolon or a newline, "|" before a pipe's next segment, "" at the
+    end), when the text is a plain sequence: each pipeline of it at its top level and of one
+    segment (with pipes, of any number, each one simple command), holding no group,
     substitution, compound command or function, none sent to the background (&) or run after !
     or coproc, and no command of it running a string, a find -exec, a script file or a sourced
     file; else None. So no command of it runs out of its place or in another shell."""
     reading = read_command(text)
-    if any(parent is not None or len(segments) != 1 for parent, segments in reading.pipelines):
+    if any(parent is not None or not segments or (len(segments) != 1 and not pipes)
+           for parent, segments in reading.pipelines):
         return None
     bodies = {h.body[0]: h.end for h in reading.heredocs}
     found = []
-    for _, ((start, end),) in reading.pipelines:
-        simple = _segment_commands(text, start, end, bodies, reading.subscripts)
+    for _, segments in reading.pipelines:
+        end = segments[-1][1]
         if text.startswith("&", end) and not text.startswith("&&", end):
             return None
-        if not simple:
-            continue
-        walked = list(_walk(simple[0], text, 0, (), DIRECT))
-        if len(simple) != 1 or len(walked) != 1 or text[start:end].split(None, 1)[0] in UNPLAIN:
+        first = text[segments[0][0] : end].split(None, 1)
+        if first and first[0] in UNPLAIN:
             return None
-        separator = text[end : end + 2] if text.startswith(("&&", "||"), end) else ";" if end < len(text) else ""
-        found.append((walked[0], separator))
+        for k, (start, stop) in enumerate(segments):
+            simple = _segment_commands(text, start, stop, bodies, reading.subscripts)
+            if not simple:
+                if len(segments) != 1:
+                    return None
+                continue
+            walked = list(_walk(simple[0], text, 0, (), DIRECT))
+            if len(simple) != 1 or len(walked) != 1:
+                return None
+            if k + 1 < len(segments):
+                separator = "|"
+            else:
+                separator = text[end : end + 2] if text.startswith(("&&", "||"), end) else ";" if end < len(text) else ""
+            found.append((walked[0], separator))
     return tuple(found)
 
 

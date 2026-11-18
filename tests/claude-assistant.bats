@@ -398,8 +398,7 @@ assert_nothing_written() {
     "gh release list" "gh release view v1" "gh secret list" "gh variable list" "gh variable get X" \
     "gh-axi release list" "gh-axi secret list" "gh-axi variable list" "grep -rn assistant-threads bin" \
     "cat ~/.local/state/agent-team/assistant-threads" "wc -l ~/.local/state/agent-team/assistant-threads" \
-    "jq -R . ~/.local/state/agent-team/assistant-threads" "sed -n 1p ~/.local/state/agent-team/assistant-threads" \
-    "while read -r id; do echo \"\$id\"; done < ~/.local/state/agent-team/assistant-threads"; do
+    "jq -R . ~/.local/state/agent-team/assistant-threads" "sed -n 1p ~/.local/state/agent-team/assistant-threads"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }
