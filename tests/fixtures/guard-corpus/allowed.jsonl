@@ -156,3 +156,9 @@
 {"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end && rm -rf test-results playwright-report && cd .."}, "local": true}
 {"roles": ["builder", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end; npx playwright test --reporter=line; cd ..; rm -rf front-end/test-results"}, "local": true}
 {"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "tmux -S @JOB@/tmp/look.sock new-session -d -s look 'npm run dev'; tmux -S @JOB@/tmp/look.sock capture-pane -p -t look; tmux -S @JOB@/tmp/look.sock kill-server"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "sed -n 1,40p bin/team-load-check | head -20"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "grep -rn toolkit bin/claude-coordinator bin/claude-assistant"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "wc -l bin/team-checkpoint bin/team-review-comment"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-load-check --help"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-stow --help | head -30"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "for s in team-handoff team-resume team-checkpoint team-review-comment team-records-rewrite team-ops-end claude-coordinator; do @TEAM_CODE@/bin/$s --help | head -3; done"}, "local": true}

@@ -69,6 +69,16 @@ The rows, in order:
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
     none, or team-thread with a task id (T and digits) as its first word (team-thread wait T<n>
     passes, which each role's settings allow or deny).
+  assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts,
+    which its deny rules held by any call naming the script until this row: team-checkpoint,
+    team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
+    team-review-comment, team-stow and claude-coordinator with any words; team-capacity install
+    or place, team-config apply or capture, team-heavy run, team-lease take, renew or release,
+    team-secrets restore or save, team-stack down, seed, stop or up and team-timers disable,
+    enable or run, any of those among the words before a --; either kind passing with a first
+    word --help or -h, which the library answers before the script does anything. Reason: the
+    coordinator's acts, which an assistant session never runs (<the act and its subcommand>); its
+    --help and a read of its file pass.
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -432,6 +442,48 @@ def _coordinator(command, context):
     return _named(COORDINATOR)(command, context) or _named({"team-thread"}, _thread)(command, context)
 
 
+# The coordinator's acts, which an assistant session never runs: the whole scripts, refused with
+# any arguments, and the scripts whose listed subcommands act, refused when one of them is among
+# the words before a --. Either passes with a first word --help or -h, which the library answers
+# with the script's header before the script does anything.
+ASSISTANT_WHOLE_ACTS = frozenset((
+    "team-checkpoint", "team-handoff", "team-load-check", "team-ops-end", "team-records-rewrite", "team-resume",
+    "team-review-comment", "team-stow", "claude-coordinator",
+))
+ASSISTANT_SUBCOMMAND_ACTS = {
+    "team-capacity": ("install", "place"),
+    "team-config": ("apply", "capture"),
+    "team-heavy": ("run",),
+    "team-lease": ("take", "renew", "release"),
+    "team-secrets": ("restore", "save"),
+    "team-stack": ("down", "seed", "stop", "up"),
+    "team-timers": ("disable", "enable", "run"),
+}
+HELP = ("--help", "-h")
+ACTS_REASON = (
+    "the coordinator's acts, which an assistant session never runs ({}); its --help and a read of its file pass"
+)
+
+
+def _assistant_act(command, context):
+    """The assistant's run of one of the coordinator's acts, the reason naming it and its
+    subcommand; any other role's call is not this row's."""
+    if context is None or context.role != "assistant":
+        return None
+    for words in heads(command):
+        if not words:
+            continue
+        name, args = command_name(words[0]), list(words[1:])
+        if args[:1] and args[0] in HELP:
+            continue
+        if name in ASSISTANT_WHOLE_ACTS:
+            return ACTS_REASON.format(name)
+        acting = next((word for word in _before_end(args) if word in ASSISTANT_SUBCOMMAND_ACTS.get(name, ())), None)
+        if acting is not None:
+            return ACTS_REASON.format(f"{name} {acting}")
+    return None
+
+
 def _upload(command, context):
     return outbound.uploads_outside(command)
 
@@ -563,6 +615,7 @@ ROWS = (
         _coordinator,
         "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
     ),
+    Row("assistant-acts", _assistant_act, None),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),

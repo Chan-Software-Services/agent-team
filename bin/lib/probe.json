@@ -418,6 +418,22 @@
       "roles": ["assistant"],
       "tool": "Bash",
       "input": "team-lease take --load-check-probe",
+      "expect": "hook",
+      "marker": "the coordinator's acts"
+    },
+    {
+      "id": "act-run",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-stow --load-check-probe",
+      "expect": "hook",
+      "marker": "the coordinator's acts"
+    },
+    {
+      "id": "land",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "team-land --help",
       "expect": "rule",
       "family": "coordinator-scripts"
     },
@@ -572,7 +588,7 @@
     },
     {
       "family": "coordinator-scripts",
-      "rules": "^Bash\\((\\*/)?(claude-coordinator|team-(capacity|checkpoint|config|handoff|heavy|land|lease|load-check|ops-end|records-rewrite|resume|review-comment|secrets|stack|stow|timers)) "
+      "rules": "^Bash\\((\\*/)?team-land \\*\\*\\)$"
     },
     {
       "family": "daniels-channel",

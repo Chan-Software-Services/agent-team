@@ -309,13 +309,8 @@ assert_nothing_written() {
   assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
 }
 
-@test "its settings deny every rule of the coordinator's, the Discord token and access files, and the coordinator's acts" {
-  local settings=$REPO_ROOT/assistant.settings.json command rule
-  # Each script rule has its path spelling too, as the claude rules have.
-  while IFS= read -r rule; do
-    jq -e --arg r "Bash(*/${rule#Bash(}" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
-      { echo "no path spelling of $rule" >&2; return 1; }
-  done < <(jq -r '.permissions.deny[] | select(test("^Bash\\((team-|claude-coordinator )"))' "$settings")
+@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts" {
+  local settings=$REPO_ROOT/assistant.settings.json command
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
   # assistant's command-guard hook holds instead, command by command.
@@ -333,18 +328,8 @@ assert_nothing_written() {
     "gh-axi pr edit 5 --title x" "gh issue create --title x" "gh-axi issue comment 3 --body x" \
     "gh release create v1" "gh repo delete x/y" "gh repo edit --visibility public" \
     "gh api -X POST repos/o/r/issues" "gh api repos/o/r/issues --method POST" "gh api repos/o/r/issues -f title=x" \
-    "gh api repos/o/r/issues -F title=x" "gh secret set X" \
-    "team-handoff laptop" "team-resume" "$REPO_ROOT/bin/team-resume --wait" "team-lease take" "team-lease release" \
-    "team-lease take --steal" "team-timers run" "team-timers disable" "team-stow T1" "team-checkpoint" \
-    "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
-    "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
-    "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
-    "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
-    "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
-    "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
-    "$REPO_ROOT/bin/team-review-comment https://github.com/o/r/pull/5 x.md" "team-load-check --probe --role assistant" \
-    "~/agent-team/bin/team-load-check" "team-heavy run -- git push" "$REPO_ROOT/bin/team-heavy run --label x -- sh -c x" \
-    "claude stop 0a1b2c3d" "claude rm 0a1b2c3d" "claude attach coordinator" "claude --bg --name x go" \
+    "gh api repos/o/r/issues -F title=x" "gh secret set X" "team-lease take --steal" "team-land T1" \
+    "$REPO_ROOT/bin/team-land https://github.com/o/r/pull/5" "claude stop 0a1b2c3d" "claude rm 0a1b2c3d" "claude attach coordinator" "claude --bg --name x go" \
     "claude -p hi" "claude --model opus --print hi" "$HOME/.local/bin/claude stop x" \
     "sudo pacman -S jq" "op read op://x/y" "cat /proc/1/environ"; do
     denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
@@ -357,6 +342,23 @@ assert_nothing_written() {
       '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
     assert_contains "$stderr" "Blocked by command-guard: a cd into ~/.config/agent-team or the Discord bot's directories"
   done
+  # A run of the coordinator's acts: its command-guard hook's assistant-acts row refuses it, command
+  # by command, where its deny rules refused any call naming the script.
+  # shellcheck disable=SC2088
+  for command in "team-handoff laptop" "team-resume" "$REPO_ROOT/bin/team-resume --wait" "team-lease take" \
+    "team-lease release" "team-timers run" "team-timers disable" "team-stow T1" "team-checkpoint" \
+    "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
+    "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
+    "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
+    "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
+    "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
+    "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
+    "$REPO_ROOT/bin/team-review-comment https://github.com/o/r/pull/5 x.md" "team-load-check --probe --role assistant" \
+    "~/agent-team/bin/team-load-check" "team-heavy run -- git push" "$REPO_ROOT/bin/team-heavy run --label x -- sh -c x"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: the coordinator's acts, which an assistant session never runs ("
+  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -368,7 +370,12 @@ assert_nothing_written() {
     "cat ~/.claude/channels/discord-assistant/inbox/a.png" \
     "team-state" "team-lease status" "team-lease check" "team-timers health" "team-timers status --json" \
     "team-config diff" "team-secrets check" "team-stack ls" "team-capacity status" "team-doctor" \
-    "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup"; do
+    "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup" \
+    "sed -n 1,40p bin/team-load-check | head -20" "grep -rn toolkit bin/claude-coordinator bin/claude-assistant" \
+    "wc -l bin/team-checkpoint bin/team-review-comment" "team-load-check --help" "team-timers watch --once" \
+    "bin/team-stow --help" "bin/team-handoff --help" "bin/team-resume --help" "bin/team-checkpoint --help" \
+    "bin/team-review-comment --help" "bin/team-records-rewrite --help" "bin/team-ops-end --help" \
+    "bin/claude-coordinator --help"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }

@@ -4,8 +4,9 @@
 # coordinator's commands where a command starts, in place of the deny rules that matched their
 # names anywhere in a call's text, a change of the session's GitHub login, and a curl or wget upload
 # of a file or body to a host outside the team's own, and a worker's or the assistant's force push
-# or cd into the team's keys' directories, naming the line a refusal of a call of several lines
-# stands on. Every command those rules refused when run is still refused (a test per rule),
+# or cd into the team's keys' directories, and the assistant's run of the coordinator's acts in
+# place of its deny rules that matched any call naming the script, naming the line a refusal of a
+# call of several lines stands on. Every command those rules refused when run is still refused (a test per rule),
 # and the reads, searches, diffs, commits and file writes that only name them pass, the hook and
 # the worker deny list both.
 
@@ -873,4 +874,106 @@ passes() {
   # A gate agent never had those deny rules, so the rows leave it as it was.
   guard -0 "git push --force-with-lease origin feat/T1-x"
   guard -0 "cd ~/.config/agent-team"
+}
+
+# The coordinator's acts, which the assistant's deny rules held by any call naming the script
+# until its assistant-acts row took them over, command by command.
+ACTS="the coordinator's acts, which an assistant session never runs"
+ACTS_TAIL="its --help and a read of its file pass"
+
+@test "the assistant's run of each of the coordinator's acts is refused, naming the act, by any spelling" {
+  local command act
+  # Each whole-name act with arguments or none, and each act's subcommand.
+  while IFS='|' read -r act command; do
+    refuses_as assistant "$ACTS ($act); $ACTS_TAIL" "" "$command"
+  done <<'COMMANDS'
+team-checkpoint|team-checkpoint
+team-checkpoint|team-checkpoint --force
+team-handoff|team-handoff laptop
+team-load-check|team-load-check --probe --role assistant
+team-load-check|team-load-check
+team-ops-end|team-ops-end T1
+team-records-rewrite|team-records-rewrite --plan
+team-resume|team-resume
+team-resume|team-resume --wait
+team-review-comment|team-review-comment https://github.com/o/r/pull/5 x.md
+team-stow|team-stow T1
+team-stow|bin/team-stow --load-check-probe
+claude-coordinator|claude-coordinator
+claude-coordinator|claude-coordinator --prompt x
+team-capacity install|team-capacity install
+team-capacity place|team-capacity place T1 builder 4242
+team-config apply|team-config apply
+team-config capture|team-config capture
+team-heavy run|team-heavy run -- git status
+team-heavy run|team-heavy --label x run -- sh -c x
+team-lease take|team-lease take
+team-lease renew|team-lease renew
+team-lease release|team-lease release
+team-secrets restore|team-secrets restore
+team-secrets save|team-secrets save discord-bot-env
+team-stack down|team-stack down
+team-stack seed|team-stack seed
+team-stack stop|team-stack stop
+team-stack up|team-stack up --worktree ~/wt
+team-timers disable|team-timers disable
+team-timers enable|team-timers enable
+team-timers run|team-timers run
+COMMANDS
+  # By a path, a variable directory, a quoted name, a wrapper, a shell's string, eval and xargs.
+  # shellcheck disable=SC2016,SC2088 # the command as an agent types it
+  refuses_as assistant "$ACTS (team-stow); $ACTS_TAIL" "" "$REPO_ROOT/bin/team-stow T1" '~/agent-team/bin/team-stow T1' \
+    '$B/team-stow T1' '"team-stow" T1' 'env FOO=1 team-stow T1' 'nohup team-stow T1 &' "bash -c 'team-stow T1'" \
+    "eval 'team-stow T1'" 'echo T1 | xargs team-stow' 'git status; team-stow T1' 'timeout 60 bin/team-stow T1'
+  # shellcheck disable=SC2016
+  refuses_as assistant "$ACTS (team-lease take); $ACTS_TAIL" "" '$B/team-lease take' "bash -c 'team-lease take'" \
+    "eval 'bin/team-lease take'" 'env A=1 ~/agent-team/bin/team-lease take --load-check-probe'
+  # A --help that is not the first word reaches the act, since the library answers only a first one.
+  refuses_as assistant "$ACTS (team-stow); $ACTS_TAIL" "" 'team-stow T1 --help' 'team-stow T1 -h'
+  refuses_as assistant "$ACTS (team-heavy run); $ACTS_TAIL" "" 'team-heavy run --help' 'team-heavy run -- --help'
+}
+
+@test "the assistant's --help of an act, its other subcommands and a read of its file pass, and a worker's acts are judged as before" {
+  local command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  for command in 'team-stow --help' 'team-stow --help T1' 'team-stow -h' 'bin/team-load-check --help' 'team-load-check --help' \
+    "$REPO_ROOT/bin/team-handoff --help" 'bin/team-resume -h' 'team-checkpoint --help' 'team-review-comment --help' \
+    'team-records-rewrite --help' 'team-ops-end --help' 'claude-coordinator --help' '$B/team-stow --help' \
+    'team-timers watch --once' 'team-timers watch' 'team-timers health' 'team-timers status --json' 'team-stack ls' \
+    'team-stack --help' 'team-lease status' 'team-lease check' 'team-capacity status' 'team-config diff' \
+    'team-secrets check' 'team-heavy --help' 'team-heavy --help run' 'team-stack --help up' 'team-heavy status -- run' \
+    'sed -n 1,40p bin/team-load-check | head -20' 'grep -rn toolkit bin/claude-coordinator bin/claude-assistant' \
+    'wc -l bin/team-checkpoint bin/team-review-comment' 'cat bin/team-stow' 'grep -n take bin/team-lease' \
+    "git log --oneline -- bin/team-stack" "grep -rn 'team-stack up' sops" 'git commit -m "fix: team-stow T1 says so"'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # A worker's same calls are not the row's: each passes the guard as it did.
+  for role in builder planner reviewer; do
+    for command in 'team-stow T1' 'team-handoff laptop' 'team-resume --wait' 'claude-coordinator' 'team-stack up' \
+      'team-lease take' 'team-heavy run -- tests/run' 'team-timers run' 'team-load-check --probe --role builder'; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+  # And a gate agent's, which has no role.
+  guard -0 'team-stow T1'
+  guard -0 'team-stack up'
+}
+
+@test "the acts' names go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local word
+  for word in team-checkpoint team-handoff team-ops-end team-records-rewrite team-resume team-review-comment team-stow \
+    claude-coordinator team-capacity team-config team-heavy team-lease team-secrets team-stack team-timers; do
+    AGENT_TEAM_ROLE=builder guard -0 "$word x"
+    assert_equal "$stderr" ""
+    guard -0 "$word x"
+    AGENT_TEAM_ROLE=assistant guard -2 "$word x"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "the assistant's $word passed the fast path: $stderr" >&2; return 1; }
+  done
+  # An assistant's call naming none of them still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'git status && team-state T7'
 }
