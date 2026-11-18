@@ -277,9 +277,9 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
 @test "the assistant's role says it reads what the coordinator reads, but the secret files, /proc and the Discord state, and that its guard refuses an act or a GitHub write by the rows" {
   local body
   body=$(section assistant 'What you do')
-  grep -qxF -- '- Read the files and run the read-only views the coordinator does: the team scripts'"'"' files and their `--help` (but `team-land`'"'"'s), `team-queue list` and `index --check`, `team-log --check` and `--check-lifecycle`, `team-inbox --item <n>`, `gh` reads and GraphQL queries.' <<<"$body"
+  grep -qxF -- '- Read the files and run the read-only views the coordinator does: the team scripts'"'"' files and their `--help` (but `team-land`'"'"'s), `team-queue list` and `index --check`, `team-log --check` and `--check-lifecycle`, `team-inbox --item <n>`, `gh` reads and GraphQL queries with their values written in (no `$`).' <<<"$body"
   grep -qxF -- '- The secret files, `/proc` and the Discord state files stay closed to you.' <<<"$body"
-  grep -qxF -- '- Your command guard refuses a run of the coordinator'"'"'s acts (a hand-off, a stow, a resume, a lease change, a load check, a stack'"'"'s start or stop) and a GitHub write by `gh api`, `release`, `secret` or `variable`, each refusal naming what it read, and your settings deny the `pr`, `issue` and `repo` writes, so a read never becomes an act.' <<<"$body"
+  grep -qxF -- '- Your command guard and the act scripts themselves refuse a run of the coordinator'"'"'s acts (a hand-off, a stow, a resume, a lease change, a load check, a stack'"'"'s start or stop), and your guard every `gh` or `gh-axi` call but a read, each refusal naming what it read, so a read never becomes an act.' <<<"$body"
 }
 
 @test "the assistant's role names the four words that never relay through it, and sends them to #coordinator or the task's thread" {
