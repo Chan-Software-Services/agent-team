@@ -40,8 +40,8 @@
 # body, a field with no GET or HEAD, or a GraphQL call that is no query it can read; any other
 # group or subcommand that is no read, an unknown group among them), the assistant's call naming
 # the thread cache the Discord guard trusts that may write it (a redirection anywhere but
-# /dev/null, stdout or stderr, a writer such as tee, cp, rm or sed -i, or any command that is no
-# plain reader such as cat, grep or jq), an upload of a file or body to a host outside the team's own (as
+# /dev/null, stdout or stderr, a writer such as tee, cp, rm or sed -i, an assignment, or any
+# command that is no plain reader such as cat, grep or jq by its bare name), an upload of a file or body to a host outside the team's own (as
 # bin/lib/outbound.py reads it), a worker's or the assistant's force push or cd into the team's
 # keys' or the Discord bot's directories, a kill that reaches what is not the session's own (by name or
 # pattern, tmux's kill-*, of PIDs read from input, of a PID it cannot read, of a process group, of

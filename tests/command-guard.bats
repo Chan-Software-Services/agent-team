@@ -1311,6 +1311,22 @@ NONREADERS
   # Behind a wrapper that is no plain one, the wrapper is refused.
   refuses_as assistant "$CACHE (flock, which is no plain reader of it, in a call naming it)" "" \
     "flock $state/assistant-threads cat /tmp/x"
+  # A reader or wrapper passes only by its bare name, since a path may name another program of it,
+  # and with no assignment before it or on its own, since a PATH may find another; time passes
+  # only with no option but -p or --, since the external time's -o writes the file it names.
+  refuses_as assistant "$CACHE (/tmp/x/cat, which is no plain reader of it, in a call naming it)" "" \
+    "/tmp/x/cat $state/assistant-threads" "echo $state/assistant-threads | xargs /tmp/x/cat"
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE (PATH=/tmp/x:\$PATH, an assignment in a call naming it)" "" \
+    "PATH=/tmp/x:\$PATH cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (PATH=/tmp/x, an assignment in a call naming it)" "" \
+    "PATH=/tmp/x; cat $state/assistant-threads" "env PATH=/tmp/x cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (LC_ALL=C, an assignment in a call naming it)" "" \
+    "env LC_ALL=C grep -x 1 $state/assistant-threads"
+  refuses_as assistant "$CACHE (/usr/bin/time, which is no plain reader of it, in a call naming it)" "" \
+    "/usr/bin/time -o $state/assistant-threads true"
+  refuses_as assistant "$CACHE (time, which is no plain reader of it, in a call naming it)" "" \
+    "time -o $state/assistant-threads true" "time --output=$state/assistant-threads true"
 }
 
 @test "the assistant's reads of the thread cache pass, and a worker's and a gate agent's writes of it are judged as before" {
@@ -1322,7 +1338,8 @@ NONREADERS
     "wc -l <$state/assistant-threads" "cat < $state/assistant-threads" \
     "while read -r id; do echo \"\$id\"; done <$state/assistant-threads" "grep -c . $state/assistant-threads 2>/dev/null" \
     "dd if=$state/assistant-threads of=/dev/null" "head -n 3 $state/assistant-threads | wc -l" \
-    "env LC_ALL=C grep -x 1 $state/assistant-threads" "echo tee assistant-threads" "sed -n '1,3p;\$p' $state/assistant-threads" \
+    "env grep -x 1 $state/assistant-threads" "time -p cat $state/assistant-threads" "time cat $state/assistant-threads" \
+    "command cat $state/assistant-threads" "echo tee assistant-threads" "sed -n '1,3p;\$p' $state/assistant-threads" \
     "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
     "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" \
     "grep -rn assistant-threads bin | cut -c1-200" "sort -u $state/assistant-threads | tr -d x | nl" \

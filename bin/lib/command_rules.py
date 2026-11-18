@@ -113,13 +113,16 @@ The rows, in order:
     command among them (command_text.call_redirections); by a writer naming it (tee, cp, mv,
     install, ln, rsync, truncate, rm, unlink, shred, touch, chmod or chown, by a word or an
     option's value after its =, dd's of= value, and sed, perl or ruby with -i or --in-place); and
-    by any command that is no plain reader (CACHE_READERS: cat, grep, head, tail, wc, jq, diff and
-    the like; dd writing to no file; sed with only plain options and a plain script, no w, W or e)
-    or that runs behind a wrapper other than env, timeout, nice, command, builtin, xargs or time,
-    so an interpreter's program, sort -o, curl -o, a source of the library and a shell string are
-    refused. Reason: the thread cache the Discord guard trusts, which only the scripts and hooks
-    write (<the path as written, its quotes removed; the redirection and its target; or the
-    command that is no plain reader>).
+    by any command that is no plain reader by its bare name (CACHE_READERS: cat, grep, head,
+    tail, wc, jq, diff and the like; dd writing to no file; sed with only plain options and a
+    plain script, no w, W or e) or that runs behind a wrapper other than env, timeout, nice,
+    command, builtin, xargs or time by its bare name, time with no option but -p or --, so an
+    interpreter's program, sort -o, curl -o, a reader by a path, a source of the library and a
+    shell string are refused; and by any assignment, before a command or on its own, since a
+    PATH may find another program of a reader's name. Reason: the thread cache the Discord guard
+    trusts, which only the scripts and hooks write (<the path as written, its quotes removed; the
+    redirection and its target; the command that is no plain reader, as written; or the
+    assignment>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -856,14 +859,27 @@ def _plain_sed(args):
     )
 
 
+def _plain_wrapper(wrapper):
+    """Whether a wrapper only runs its command: a plain one by its bare name, and time with no
+    option but -p or --, since the external time's -o writes the file it names."""
+    if not wrapper:
+        return True
+    if wrapper[0] not in CACHE_WRAPPERS:
+        return False
+    return wrapper[0] != "time" or all(word in ("-p", "--") for word in wrapper[1:])
+
+
 def _plain_reader(found):
-    """Whether a walked command only reads: behind plain wrappers alone, a reader (dd writing to
-    no file, sed with a plain script) or no command at all."""
-    if any(wrapper and command_name(wrapper[0]) not in CACHE_WRAPPERS for wrapper in found.wrappers):
+    """Whether a walked command only reads: with no assignment before it or on its own, behind
+    plain wrappers alone, a reader by its bare name (dd writing to no file, sed with a plain
+    script) or no command at all; a path or a PATH may run another program of a reader's name."""
+    if found.assignments or not all(_plain_wrapper(wrapper) for wrapper in found.wrappers):
         return False
     if not found.words:
         return True
-    name, args = command_name(found.words[0]), list(found.words[1:])
+    if "/" in found.words[0]:
+        return False
+    name, args = found.words[0], list(found.words[1:])
     if name == "dd":
         return all(word[3:] in QUIET_TARGETS for word in args if word.startswith("of="))
     if name == "sed":
@@ -898,10 +914,11 @@ def _cache_call(command, context):
                 return CACHE_REASON.format(path), tuple(words)
     for found in walked:
         if not _plain_reader(found):
-            ran = next((wrapper for wrapper in found.wrappers if wrapper and command_name(wrapper[0]) not in CACHE_WRAPPERS),
-                       found.words)
-            name = command_name(ran[0])
-            return CACHE_REASON.format(f"{name}, which is no plain reader of it, in a call naming it"), tuple(ran[:1])
+            if found.assignments:
+                assignment = found.assignments[0]
+                return CACHE_REASON.format(f"{assignment}, an assignment in a call naming it"), (assignment,)
+            ran = next((wrapper for wrapper in found.wrappers if not _plain_wrapper(wrapper)), found.words)
+            return CACHE_REASON.format(f"{ran[0]}, which is no plain reader of it, in a call naming it"), tuple(ran[:1])
     return None
 
 
