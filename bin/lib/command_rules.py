@@ -84,24 +84,24 @@ The rows, in order:
     --help and a read of its file pass. Each act but team-heavy run also refuses the assistant
     itself (assistant_refusal in bin/lib/team.sh), where the walk cannot read a call.
   assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
-    rules held by any gh api call with a field and any release, secret or variable call until
-    this row, and every other group's write, which no deny rule held. gh api (after gh's own options, as cobra finds its command) with a last -X or
-    --method (joined too, any case) other than GET or HEAD, with --input, or with a field (-f,
-    -F, --field, --raw-field, joined too) and no method, its endpoint being its first word that is
-    no option and no option's value; but for the endpoint graphql, whose fields pass, whatever the
-    method, only as a query: a query field (and every one) whose value begins with no @, holds no
-    $ or backtick (a GraphQL variable reads as the shell's expansion, the walk having dropped the
-    quotes) and has no mutation or subscription as a whole name. Any other gh or gh-axi call
-    whose group (the first word that is no option and no option's value, a long option without =
-    and a two-character short one taking the next word, but --help and -h) and subcommand are
-    not among the reads GITHUB_READS lists for each: a group it lists no read of (a user alias,
-    an extension, gh co, copilot, preview, gh-axi setup and update but its --check), a subcommand
-    outside its group's reads, a subcommand's own outside its reads (repo deploy-key, repo
-    autolink, gh-axi issue subissue), and gh auth status with -t or --show-token, which prints
-    the token. gh alone, a group with no subcommand and the groups that read with any words
-    (search, browse, status, licenses, completion, help, version) pass. Reason: a GitHub write,
-    which an assistant session never makes (<the method, the body, the field, the mutation, the
-    query it cannot read, or the group and subcommand>).
+    rules held by any gh api call with a field and any release, secret or variable call until this
+    row, and every other group's write, which no deny rule held. gh api (after gh's own options,
+    as cobra finds its command) with a last -X or --method (joined too, any case) other than GET
+    or HEAD, with --input, or with a field (-f, -F, --field, --raw-field, joined too) and no
+    method, its endpoint being its first word that is no option and no option's value; but for the
+    endpoint graphql, whose fields pass, whatever the method, only as a query: a query field (and
+    every one) whose value begins with no @, holds no $ or backtick (a GraphQL variable reads as
+    the shell's expansion, the walk having dropped the quotes) and has no mutation or subscription
+    as a whole name. Any other gh or gh-axi call whose group (the first word that is no option and
+    no option's value, a long option without = and a two-character short one taking the next word,
+    but --help and -h) and subcommand are not among the reads GITHUB_READS lists for each: a group
+    it lists no read of (a user alias, an extension, gh co, copilot, preview, gh-axi setup and
+    update but its --check), a subcommand outside its group's reads, a subcommand's own outside
+    its reads (repo deploy-key, repo autolink, gh-axi issue subissue), and gh auth status with -t
+    or --show-token, which prints the token. gh alone, a group with no subcommand and the groups
+    that read with any words (search, browse, status, licenses, completion, help, version) pass.
+    Reason: a GitHub write, which an assistant session never makes (<the method, the body, the
+    field, the mutation, the query it cannot read, or the group and subcommand>).
   assistant-thread-cache, for the assistant alone: a call naming the thread cache the Discord
     guard trusts (assistant-threads, as written or with its quotes and backslashes removed, or
     the library's ASSISTANT_THREADS or assistant_thread_keep), which its deny rule refused
