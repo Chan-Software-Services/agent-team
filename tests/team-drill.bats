@@ -290,25 +290,29 @@ STUB
 }
 
 RUN_SHA=4fa41cbdca1c00e9c4a87381d191429410a02307
+# The day the runs ran, yesterday by the real clock: team-drill status, which has no clock seam,
+# reads a record over 30 days old as due, so a fixed day would turn these tests' statuses old.
+RUN_DAY=$(date -u -d yesterday +%F)
 
 # run_json <id> <status> <workflow> [<job>=<conclusion>]...: run <id> of <workflow>, which ran on
-# RUN_SHA and was last updated at 10:40; each job's id is 9<index><id>, and a completed run's job
-# completed at 10:3<index>.
+# RUN_SHA and was last updated at 10:40 on RUN_DAY; each job's id is 9<index><id>, and a completed
+# run's job completed at 10:3<index>.
 run_json() {
   local id=$1 state=$2 workflow=$3 jobs='[]' spec i=0
   shift 3
   for spec; do
     jobs=$(jq -c --arg name "${spec%%=*}" --arg conclusion "${spec#*=}" --argjson id "9$i$id" \
-      --arg state "$state" --arg at "2026-11-10T10:3${i}:00Z" \
+      --arg state "$state" --arg at "${RUN_DAY}T10:3${i}:00Z" --arg day "$RUN_DAY" \
       '. + [{name: $name, databaseId: $id, status: $state, conclusion: $conclusion,
-        startedAt: "2026-11-10T10:00:00Z", completedAt: (if $state == "completed" then $at else "0001-01-01T00:00:00Z" end),
+        startedAt: "\($day)T10:00:00Z", completedAt: (if $state == "completed" then $at else "0001-01-01T00:00:00Z" end),
         url: "https://github.com/owner/agent-team/actions/runs/\($id)/job/\($id)"}]' <<<"$jobs")
     i=$((i + 1))
   done
   jq -n --argjson id "$id" --arg state "$state" --arg workflow "$workflow" --arg sha "$RUN_SHA" --argjson jobs "$jobs" \
+    --arg day "$RUN_DAY" \
     '{status: $state, conclusion: (if $state == "completed" then "success" else "" end), headSha: $sha,
       url: "https://github.com/owner/agent-team/actions/runs/\($id)", workflowName: $workflow,
-      updatedAt: "2026-11-10T10:40:00Z", jobs: $jobs}' >"$STUB_FIXTURES/run-$id.json"
+      updatedAt: "\($day)T10:40:00Z", jobs: $jobs}' >"$STUB_FIXTURES/run-$id.json"
 }
 
 # job_log <job id> <job> <text>...: the job's log as gh prints it, one line per <text>, each after
@@ -318,7 +322,7 @@ job_log() {
   local id=$1 job=$2 text bom=$'\xef\xbb\xbf'
   shift 2
   for text; do
-    printf '%s\t%s\t%s2026-11-10T10:29:59.1234567Z %s\n' "$job" "Run tests/bootstrap-drill $job" "$bom" "$text"
+    printf '%s\t%s\t%s%sT10:29:59.1234567Z %s\n' "$job" "Run tests/bootstrap-drill $job" "$bom" "$RUN_DAY" "$text"
     bom=''
   done >"$STUB_FIXTURES/log-$id"
 }
@@ -348,9 +352,9 @@ lines_of() {
 team-drill: recorded bootstrap-macos pass on ci-macos at ${head:0:7}"
   assert_equal "$stderr" ""
   assert_equal "$(lines_of bootstrap-arch)" \
-    "{\"at\":\"2026-11-10T10:31:00Z\",\"drill\":\"bootstrap-arch\",\"machine\":\"ci-arch\",\"commit\":\"$head\",\"dirty\":false,\"claude\":\"2.1.322\",\"verdict\":\"pass\",\"detail\":\"\",\"run\":\"https://github.com/owner/agent-team/actions/runs/4242\"}"
+    "{\"at\":\"${RUN_DAY}T10:31:00Z\",\"drill\":\"bootstrap-arch\",\"machine\":\"ci-arch\",\"commit\":\"$head\",\"dirty\":false,\"claude\":\"2.1.322\",\"verdict\":\"pass\",\"detail\":\"\",\"run\":\"https://github.com/owner/agent-team/actions/runs/4242\"}"
   assert_equal "$(lines_of bootstrap-macos)" \
-    "{\"at\":\"2026-11-10T10:30:00Z\",\"drill\":\"bootstrap-macos\",\"machine\":\"ci-macos\",\"commit\":\"$head\",\"dirty\":false,\"claude\":\"2.1.321\",\"verdict\":\"pass\",\"detail\":\"\",\"run\":\"https://github.com/owner/agent-team/actions/runs/4242\"}"
+    "{\"at\":\"${RUN_DAY}T10:30:00Z\",\"drill\":\"bootstrap-macos\",\"machine\":\"ci-macos\",\"commit\":\"$head\",\"dirty\":false,\"claude\":\"2.1.321\",\"verdict\":\"pass\",\"detail\":\"\",\"run\":\"https://github.com/owner/agent-team/actions/runs/4242\"}"
   assert_equal "$(stub_calls gh)" '["run","view","4242","--json","status,conclusion,headSha,url,workflowName,updatedAt,jobs"]
 ["run","view","4242","--log","--job","914242"]
 ["run","view","4242","--log","--job","904242"]'
@@ -387,7 +391,7 @@ team-drill: recorded bootstrap-macos pass on ci-macos at ${head:0:7}"
   assert_equal "$output" "team-drill: recorded bootstrap-arch fail on ci-arch at ${RUN_SHA:0:7}
 team-drill: recorded bootstrap-macos fail on ci-macos at ${RUN_SHA:0:7}"
   assert_equal "$(lines_of bootstrap-arch | jq -c 'del(.run)')" \
-    "{\"at\":\"2026-11-10T10:30:00Z\",\"drill\":\"bootstrap-arch\",\"machine\":\"ci-arch\",\"commit\":\"$RUN_SHA\",\"dirty\":false,\"claude\":null,\"verdict\":\"fail\",\"detail\":\"the job ended failure with no record line\"}"
+    "{\"at\":\"${RUN_DAY}T10:30:00Z\",\"drill\":\"bootstrap-arch\",\"machine\":\"ci-arch\",\"commit\":\"$RUN_SHA\",\"dirty\":false,\"claude\":null,\"verdict\":\"fail\",\"detail\":\"the job ended failure with no record line\"}"
   assert_equal "$(lines_of bootstrap-macos | jq -c '{machine, commit, claude, detail}')" \
     "{\"machine\":\"ci-macos\",\"commit\":\"$RUN_SHA\",\"claude\":null,\"detail\":\"the job ended success with no record line\"}"
   # Each other malformed line is no record line either.
@@ -426,7 +430,7 @@ team-drill: recorded bootstrap-macos fail on ci-macos at ${RUN_SHA:0:7}"
   job_log 904250 bootstrap-macos "$(drill_record ci-macos pass)"
   run_bin -0 team-drill import 4250
   assert_equal "$(lines_of bootstrap-arch | jq -c 'del(.run)')" \
-    "{\"at\":\"2026-11-10T10:40:00Z\",\"drill\":\"bootstrap-arch\",\"machine\":\"ci-arch\",\"commit\":\"$RUN_SHA\",\"dirty\":false,\"claude\":null,\"verdict\":\"fail\",\"detail\":\"the run has no job bootstrap-arch\"}"
+    "{\"at\":\"${RUN_DAY}T10:40:00Z\",\"drill\":\"bootstrap-arch\",\"machine\":\"ci-arch\",\"commit\":\"$RUN_SHA\",\"dirty\":false,\"claude\":null,\"verdict\":\"fail\",\"detail\":\"the run has no job bootstrap-arch\"}"
   assert_equal "$(lines_of bootstrap-macos | jq -r .verdict)" pass
 }
 
