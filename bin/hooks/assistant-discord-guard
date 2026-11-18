@@ -10,7 +10,8 @@
 #     in the thread cache, ~/.local/state/agent-team/assistant-threads (ASSISTANT_THREADS), which
 #     team-assistant thread writes too; a channel that is neither is not kept, and is read again
 #     on its next call. The cache is trusted only because the assistant cannot write it: its
-#     settings deny the Edit tool and any Bash call naming the file.
+#     settings deny the Edit tool, and its command guard's assistant-thread-cache row any Bash
+#     call that writes the file.
 #   reply's files pass only when each, an absolute path, resolves (symlinks followed) to a file
 #     under ~/.local/state/agent-team/assistant-files/ or the team home's assistant/, so a link
 #     there into ~/.claude/channels/ or the records attaches nothing.

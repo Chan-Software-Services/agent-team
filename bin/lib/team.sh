@@ -1882,8 +1882,8 @@ daniel_message() {
 # The assistant's thread cache: the ids of the threads under #assistant found so far, one
 # known-good id per line, which the assistant's Discord guard passes without asking Discord and
 # its digest lists. It is trusted only because the assistant cannot write it: its settings deny
-# the Edit tool and any Bash call naming the file (assistant.settings.json), so only the scripts
-# and hooks below add to it.
+# the Edit tool (assistant.settings.json) and its command guard's assistant-thread-cache row any
+# Bash call that writes the file, so only the scripts and hooks below add to it.
 # shellcheck disable=SC2034 # read by the scripts that source this library
 ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
 
