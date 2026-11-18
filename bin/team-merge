@@ -97,9 +97,9 @@
 # the queue is taken out of it (GraphQL's dequeuePullRequest; dequeue_pr in bin/lib/team.sh) and
 # dequeued logged with the reasons, since a trial commit that carries agent-review lands whatever
 # this run says, unless every reason is one that cannot be told now, which leaves it queued and says
-# so: GitHub unread, a conflict GitHub has not worked out yet for a PR in no queue, the plan's files
-# unread, the head not fetched for the local checks, and local checks that could not run
-# (team-checks exit 75), each
+# so: GitHub unread, a conflict GitHub has not worked out yet for a PR in no queue or whose queue
+# entry could not be read, the plan's files unread, the head not fetched for the local checks, and
+# local checks that could not run (team-checks exit 75), each
 # classed where it is made; every other reason is a refusal that stands, a Discord message that
 # cannot be read back and a head not fetched to check a word among them, which fails closed at the
 # cost of a second enqueue. A PR GitHub does not let out is said, nothing logged; and a queued that
@@ -256,7 +256,7 @@ method=$(team_project "$project" merge_method)
 head_reasons=() default_reasons=() merge_reasons=()
 # The reasons that cannot be told now, a set keyed by each such reason, which later puts it in
 # where it is made, never by reading its text: GitHub unread, a conflict GitHub has not worked out
-# for a PR in no queue, the plan's files unread, a head that cannot be fetched for the local checks, and local checks
+# for a PR in no queue or whose queue entry could not be read, the plan's files unread, a head that cannot be fetched for the local checks, and local checks
 # that could not start (team-checks exit 75). A run again may find each gone, so a refusal on these
 # alone leaves a queued PR in the queue; every other reason is a refusal that stands.
 declare -A untold_reasons=()
