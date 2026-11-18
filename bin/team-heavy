@@ -18,8 +18,9 @@
 #         Conventioner's scripts/e2e-lock.sh takes the same file with its own form, "<who> since
 #         <time>", which status reads as a holder too.
 #         A shared flock on the file, which status and team-capacity's reading take for an
-#         instant to see whether a run holds it, is no holder: a run refused while one is held
-#         waits up to 5 seconds for it to go, saying nothing, whatever its --wait.
+#         instant to see whether a run holds it, as a starting run does when it is refused, is no
+#         holder: a run refused while one is held waits up to 5 seconds for it to go, saying
+#         nothing, whatever its --wait.
 #         While another run holds the lock, it says once on stderr that it waits and for whom,
 #         waits up to --wait minutes (default 180, or TEAM_HEAVY_WAIT_MINUTES, a number of 0 or
 #         more; 0 does not wait),
@@ -116,9 +117,9 @@ held() {
 }
 
 # Take the lock on descriptor <fd> without waiting for a run: succeed with it, or fail while a run
-# holds it. A reader's shared lock (held's, team-capacity's reading) also refuses the exclusive
-# one, for an instant, so a refusal while a shared lock is still granted waits up to
-# READER_SECONDS for the readers to go.
+# holds it. A reader's shared lock (held's, team-capacity's reading, and a starting run's own
+# probe) also refuses the exclusive one, for an instant, so a refusal while a shared lock is
+# still granted waits up to READER_SECONDS for the readers to go.
 take_lock() {
   local probe rc=0
   flock -n -x "$1" && return 0
