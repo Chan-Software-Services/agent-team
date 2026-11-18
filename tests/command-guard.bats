@@ -25,7 +25,7 @@ UPLOAD="an upload to a host outside the team's own; a file's contents never go t
 LOGIN_EMPTIED="a session's GitHub login is its settings' (a command run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c)"
 EMPTIED="a worker's role and task are its settings' (a team script run with its environment emptied, by env -i, env --ignore-environment, env - or exec -c)"
 STEAL="a lease steal is Daniel's word, through the coordinator (team-lease or team-resume with --steal)"
-COORDINATOR="the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)"
+COORDINATOR="the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved)"
 
 # A code checkout of its own for the hook, whose bin a test may change: copied_checkout
 copied_checkout() {
@@ -94,7 +94,7 @@ passes() {
   # The bare-name prefix rules stay, a second layer on the coordinator's commands.
   assert_equal "$(jq -c '[.permissions.deny[] | select(test("team-(ask|answer|inbox|thread|run-approved)"))]' \
     "$REPO_ROOT/settings/worker.json")" \
-    '["Bash(team-ask *)","Bash(team-answer *)","Bash(team-inbox)","Bash(team-inbox *)","Bash(team-thread T*)","Bash(team-run-approved *)"]'
+    '["Bash(team-ask *)","Bash(team-answer *)","Bash(team-inbox)","Bash(team-inbox *)","Bash(team-thread T*)","Bash(team-thread archive*)","Bash(team-run-approved *)"]'
 }
 
 # The commands below are reads, searches, diffs, commits and file writes of the kind the old deny
@@ -574,7 +574,7 @@ passes() {
 
 # Rules Bash(*/bin/team-ask *), Bash(*/bin/team-answer *), Bash(*/bin/team-inbox),
 # Bash(*/bin/team-inbox *), Bash(*/bin/team-thread T*) and Bash(*/bin/team-run-approved *), and
-# the bare names their prefix rules deny too.
+# the bare names their prefix rules deny too, with team-thread archive, which came after them.
 @test "the coordinator's commands are refused where a command starts, by path, behind a wrapper or in a shell's string" {
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   refuses "$COORDINATOR" '~/agent-team/bin/team-ask T1 q --file f' 'bash bin/team-run-approved x' \
@@ -582,7 +582,8 @@ passes() {
     "bash -c 'team-inbox --post'" 'bin/team-ask --help' 'team-ask --help' '/home/me/agent-team/bin/team-inbox' \
     'cd x && team-answer T1 "yes"' "team-thread 'T12' x y" 'echo "$(team-inbox)"' \
     'nohup ~/agent-team/bin/team-run-approved T1 &' $'bash <<\'EOF\'\nteam-ask T1 q --file f\nEOF' \
-    'source ~/agent-team/bin/team-ask T1 q --file f' '. bin/team-inbox'
+    'source ~/agent-team/bin/team-ask T1 q --file f' '. bin/team-inbox' 'team-thread archive' \
+    '~/agent-team/bin/team-thread archive --all --dry-run' "bash -c 'team-thread archive --all'"
 }
 
 # trap's action runs as code, as eval's string does; git rebase's --exec is not walked.
@@ -595,7 +596,7 @@ passes() {
 
 @test "a read, search or file write naming a steal or the coordinator's commands, team-thread wait and team-lease with no --steal pass" {
   passes "grep -rn 'team-lease.*--steal' bin/" 'team-resume --help' 'sed -n 1,40p bin/team-run-approved' \
-    'git grep -n team-ask' 'team-thread wait T1' 'team-thread wait T1 --after 123' 'team-lease take' 'team-lease status --json' \
+    'git grep -n team-ask' 'team-thread wait T1' 'team-thread --help' "grep -n 'team-thread archive' bin/team-timers" 'team-thread wait T1 --after 123' 'team-lease take' 'team-lease status --json' \
     "git log -S'team-run-approved' --oneline" 'git diff origin/dev -- bin/team-inbox bin/team-answer' \
     'git commit -m "fix: team-ask refuses a worker"' "grep -rn 'team-thread T' tests/" 'wc -l bin/team-thread' \
     'tests/vendor/bats-core/bin/bats tests/team-ask.bats -f "a worker"' "sed -n '/--steal/p' bin/team-lease" \
