@@ -15,7 +15,7 @@ setup() {
   assert_equal "$hits" ""
 }
 
-# The lines of a CLAUDE.md's Layout section, from "## Layout" to the next heading, that break its
+# The lines of a LAYOUT.md's Layout section, from "## Layout" to the next heading, that break its
 # rule of one thing per line, in alphabetical lists, as "<line>: <reason>": a table row, a line
 # over 300 characters, or a bullet whose first name (in backticks, in any case) sorts before the
 # bullet above it in the same list: layout_breaks <file>
@@ -34,9 +34,29 @@ layout_breaks() {
     }' "$1"
 }
 
-@test "CLAUDE.md's Layout section is a list with one thing per line, alphabetical within each list" {
-  grep -qx '## Layout' "$REPO_ROOT/CLAUDE.md"
-  assert_equal "$(layout_breaks "$REPO_ROOT/CLAUDE.md")" ""
+@test "LAYOUT.md's Layout section is a list with one thing per line, alphabetical within each list" {
+  grep -qx '## Layout' "$REPO_ROOT/LAYOUT.md"
+  assert_equal "$(layout_breaks "$REPO_ROOT/LAYOUT.md")" ""
+}
+
+# Every session of this repository loads CLAUDE.md whole before it reads its task, so its size is
+# held: a lookup lives in LAYOUT.md, tests/README.md or a header, behind a pointer.
+@test "CLAUDE.md is at most 12,000 bytes, and points to LAYOUT.md and tests/README.md, each with its condition first" {
+  assert_equal "$(over_cap "$REPO_ROOT/CLAUDE.md" 12000 CLAUDE.md "LAYOUT.md, tests/README.md, a script's header")" ""
+  grep -qE '^Before locating where something lives, or when adding, moving or removing a path, read `LAYOUT\.md`' "$REPO_ROOT/CLAUDE.md"
+  grep -qxF 'Before writing or changing a test, a test helper or a CI job, read `tests/README.md`.' "$REPO_ROOT/CLAUDE.md"
+  [[ -f $REPO_ROOT/LAYOUT.md && -f $REPO_ROOT/tests/README.md ]]
+  if grep -n -e '^## Layout$' -e '^| ' "$REPO_ROOT/CLAUDE.md"; then
+    echo "CLAUDE.md holds a Layout section or a table, which live in LAYOUT.md" >&2
+    return 1
+  fi
+}
+
+@test "a file over its cap is named with its bytes and the cap, and one at its cap passes" {
+  printf '%0100d' 0 >"$BATS_TEST_TMPDIR/CLAUDE.md"
+  assert_equal "$(over_cap "$BATS_TEST_TMPDIR/CLAUDE.md" 100 CLAUDE.md "LAYOUT.md, a header")" ""
+  assert_equal "$(over_cap "$BATS_TEST_TMPDIR/CLAUDE.md" 99 roles/builder.md "the brief, a SOP, a skill")" \
+    "roles/builder.md is 100 bytes, over its cap of 99: move material behind a pointer (the brief, a SOP, a skill), and never raise the cap without Daniel's word"
 }
 
 @test "a table row, a line over 300 characters and a bullet out of order in the Layout section are named" {
@@ -44,8 +64,8 @@ layout_breaks() {
   long=$(printf 'x%.0s' {1..300})
   printf '%s\n' '# Repo' '| a | b |' '## Layout' '' '| Path | What |' "- \`$long\`: x" '- `bin/`: x' \
     '  - `lib/`: x' '    - `zz`: x' '  - `hooks/`: x' '    - `aa`: x' '- `LICENSE`: x' '- `docs/`: x' '## Next' '| a | b |' \
-    >"$BATS_TEST_TMPDIR/CLAUDE.md"
-  assert_equal "$(layout_breaks "$BATS_TEST_TMPDIR/CLAUDE.md")" "$(
+    >"$BATS_TEST_TMPDIR/LAYOUT.md"
+  assert_equal "$(layout_breaks "$BATS_TEST_TMPDIR/LAYOUT.md")" "$(
     printf '%s\n' '5: a table row' '6: 307 characters' '10: hooks/ after lib/' '13: docs/ after license'
   )"
 }
@@ -214,10 +234,10 @@ usage/home-pc/time/2026-10-26.jsonl"
 
 # A record file at the team home's root that must hold across machines is in every list that
 # keeps it: the records, which both commits that carry it there (team-checkpoint's last and
-# team-handoff's) take whole, naming no paths of their own, and CLAUDE.md's table of the team home.
+# team-handoff's) take whole, naming no paths of their own, and LAYOUT.md's table of the team home.
 # team-checkpoint's first commit, of the ledger files by name, is a command substitution, never
 # one of these lines.
-@test "the ledger, the level record, the drill record and the waiting list's two files are records, committed by team-checkpoint and team-handoff, and in CLAUDE.md's table" {
+@test "the ledger, the level record, the drill record and the waiting list's two files are records, committed by team-checkpoint and team-handoff, and in LAYOUT.md's table" {
   local file script calls
   for script in team-checkpoint team-handoff; do
     calls=$(grep -E '^[[:space:]]*(records_by_group=1 )?commit_records ' "$REPO_ROOT/bin/$script")
@@ -229,7 +249,7 @@ usage/home-pc/time/2026-10-26.jsonl"
   done
   for file in ledger.jsonl level.jsonl drills.jsonl waiting.md waiting.json; do
     grep -qxF "$file" "$REPO_ROOT/bin/lib/records" || { echo "$file is not in bin/lib/records" >&2; return 1; }
-    grep -qF "| \`$file\` |" "$REPO_ROOT/CLAUDE.md" || { echo "$file is not in CLAUDE.md's team-home table" >&2; return 1; }
+    grep -qF "| \`$file\` |" "$REPO_ROOT/LAYOUT.md" || { echo "$file is not in LAYOUT.md's team-home table" >&2; return 1; }
   done
 }
 
