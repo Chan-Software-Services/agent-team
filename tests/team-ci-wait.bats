@@ -24,6 +24,8 @@ setup() {
   pr OPEN "$head"
   head_runs 0
   running 0 0
+  # dev is unprotected, so --merge-group's read of its rules reads the branch alone.
+  answer 0 branch '{"protected": false}'
 }
 
 # answer <look> <what> <answer>: from look <look> on, gh answers <what> (view, checks, runs, running,
@@ -98,6 +100,18 @@ head_runs() {
        updated_at: "2026-10-30T18:52:11Z", display_title: "OUTPUT-MARKER"}]}' --args "$@")"
 }
 
+# rules_require <context>[:<integration id>]...: dev protected by the active ruleset 41 alone, which
+# requires each context, from the App of <integration id> when given, with no bypass actor, as
+# base_rules reads them (branches/dev, rules/branches/dev, rulesets/41).
+rules_require() {
+  answer 0 branch '{"protected": true}'
+  answer 0 rules "$(jq -cn '[{type: "required_status_checks", ruleset_id: 41, ruleset_source_type: "Repository",
+    parameters: {strict_required_status_checks_policy: false, required_status_checks: [$ARGS.positional[]
+      | (rindex(":")) as $i | if $i != null and (.[$i + 1:] | test("^[0-9]+$"))
+        then {context: .[:$i], integration_id: (.[$i + 1:] | tonumber)} else {context: .} end]}}]' --args "$@")"
+  answer 0 ruleset-41 '{"id": 41, "name": "dev", "bypass_actors": []}'
+}
+
 # gh answers each read (the PR, its head's check runs and statuses, the head's runs, the
 # repository's runs in progress, a run, a run's jobs, a job) from the latest answer at or before the
 # current look, in gh api -i's form through tests/helpers/github-api.bash, a 304 when the read
@@ -130,6 +144,9 @@ case "${args[*]}" in
   "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${GITHUB_ENDPOINT%/jobs*} what=jobs-${what##*/} ;;
   "api repos/owner/proj/actions/runs/"*) what=run-${GITHUB_ENDPOINT##*/} ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${GITHUB_ENDPOINT##*/} ;;
+  "api repos/owner/proj/branches/dev") what=branch ;;
+  "api repos/owner/proj/rules/branches/dev --paginate") what=rules ;;
+  "api repos/owner/proj/rulesets/"*) what=ruleset-${GITHUB_ENDPOINT##*/} ;;
   *) echo "unplanned gh call: ${args[*]}" >&2; exit 1 ;;
 esac
 # A PR's head's check runs and statuses come from its planned checks, when the test planned some.
@@ -1614,14 +1631,78 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   assert_contains "$text_output" "team-ci-wait: the checks on 5e5e5e5 did not pass:"
   assert_contains "$text_output" "rerun it with gh run rerun 7001 --job 97003 --repo owner/proj"
   [[ $text_output != *OUTPUT-MARKER* ]]
-  # Every check passed, but a required one never reported on the trial commit; agent-review is
-  # never required here, as on a head.
+  # Every check passed, but a required one never reported on the trial commit, which is the rules'
+  # (no workflow makes it there), not the PR's; agent-review is never required here, as on a head.
   echo 0 >"$GH_DIR/look"
   check_runs 0 "$(check_run test completed success 7001)"
   statuses 0
   both --merge-group "$trial" "$url"
   assert_equal "$status" 1
-  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","pr","missing"]]'
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","rules","missing"]]'
+  assert_contains "$text_output" "
+  rules: data was not reported on the trial commit, though the project requires it: no workflow makes it on a merge queue's trial commit"
+}
+
+# T464: Conventioner's registry lists no required_checks, and its dev's rules require CodeQL's
+# Analyze jobs, which a workflow with no merge_group trigger never makes on a trial commit.
+@test "--merge-group holds every check the base's rules require on the trial commit but agent-review, and one never reported there is the rules', read once" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  rules_require test:15368 "Analyze (python):15368" agent-review:5727451
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed success 7001)" "$(check_run agent-review completed success)"
+  statuses 0
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217, on its trial commit, at 5e5e5e5
+team-ci-wait: the checks on 5e5e5e5 did not pass:
+  rules: Analyze (python) was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" \
+    '["failed",[{"name":"Analyze (python)","class":"rules","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]]'
+  # The rules are read once a wait, at its start, however many looks it takes: two waits, two reads.
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rules/branches/dev --paginate' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rulesets/41' "$GH_DIR/calls")" 2
+  # Once it reports, the wait passes; agent-review, which the rules require too, is team-land's to
+  # post, so a trial commit without it is not held for it.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run test completed success 7001)" "$(check_run "Analyze (python)" completed success 7002)"
+  both --merge-group "$trial" --no-agent-review "$url"
+  assert_equal "$status" 0
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" '["passed",[]]'
+}
+
+@test "--merge-group goes on with the registry's required checks alone when the base's rules cannot be read, saying so on one line" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  sed -i 's/^required_checks = .*/required_checks = ["test"]/' "$TEAM_HOME/projects.toml"
+  answer 0 branch fail
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed success 7001)"
+  statuses 0
+  line="team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  run_bin --separate-stderr team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 0
+  assert_equal "$stderr" "$line"
+  assert_equal "${lines[-1]}" "team-ci-wait: every check passed on 5e5e5e5: test passed"
+  # The registry's checks are still held, and --json's stdout stays one object.
+  echo 0 >"$GH_DIR/look"
+  sed -i 's/^required_checks = .*/required_checks = ["test", "data"]/' "$TEAM_HOME/projects.toml"
+  answer 0 rules fail
+  answer 0 branch '{"protected": true}'
+  run_bin --separate-stderr team-ci-wait --json --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held: gh api repos/owner/proj/rules/branches/dev: error connecting to api.github.com"
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","rules","missing"]]'
+}
+
+@test "a PR's head reads no rules, and a required check missing there stays the PR's" {
+  rules_require test build
+  required test build
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin team-ci-wait --json "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["build","pr","missing"]]'
+  if grep -E 'branches/dev|rulesets/' "$GH_DIR/calls"; then return 1; fi
 }
 
 @test "--merge-group ends as other-head once the entry is on another trial commit or the PR left the queue, and as closed once it merged" {
