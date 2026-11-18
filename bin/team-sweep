@@ -46,7 +46,8 @@
 #                  blocked, waiting, paused) and does not name the builder's session, and a
 #                  resumed with no brief after one (no review, ask, answer or builder's launch),
 #                  which Claude Code calls blocked for a last summary that says it waits on the
-#                  merge, and which is idle with a ledger event since its launch
+#                  merge, and which is idle with a ledger event since its launch; nor one, but a
+#                  ticket's builder, that a later builder launch of its worktree superseded
 #   silent         a live, idle session of an open task, not parked, with no ledger event for the
 #                  task after that session's latest launch but denied ones (one waiting for input
 #                  is not also silent); a ticket's builder by its own events: none since its

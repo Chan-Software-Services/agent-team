@@ -1461,6 +1461,31 @@ finished: stopped T9-builder 44444444: its work is handed on"
   # own, logged none: the stops are the finished step's, whatever the level.
 }
 
+@test "the finished step stops a builder a later builder launch of its worktree superseded, though Claude Code calls it blocked, and leaves one at a prompt" {
+  local wt1=$HOME/slots/proj/1 wt2=$HOME/slots/proj/2
+  # T9's first builder delivered its pr, and a later builder of its worktree has taken it; idle,
+  # Claude Code calls it blocked for its last summary, with no dialog open. T8's has a dialog open.
+  log_events <<LINES
+launch T9 builder 21212121 $wt1
+T9 {event: "pr", url: "https://github.com/o/r/pull/1", head: "abc1234"}
+launch T9 reviewer 31313131 $wt1
+launch T9 builder 41414141 $wt1
+launch T8 builder 51515151 $wt2
+launch T8 builder 61616161 $wt2
+LINES
+  cat >"$STUB_FIXTURES/agents.json" <<'JSON'
+[{"id": "21212121", "name": "T9-builder", "status": "idle", "state": "blocked"},
+ {"id": "31313131", "name": "T9-reviewer", "status": "busy"},
+ {"id": "41414141", "name": "T9-builder", "status": "busy"},
+ {"id": "51515151", "name": "T8-builder", "status": "idle", "state": "blocked", "waitingFor": "dialog open"},
+ {"id": "61616161", "name": "T8-builder", "status": "busy"}]
+JSON
+  finished_stub
+  run_bin -0 team-timers run
+  assert_equal "$(grep ' finished: ' <<<"$output" | cut -d ' ' -f 2-)" "finished: stopped T9-builder 21212121: its work is handed on"
+  assert_equal "$(stops)" 21212121
+}
+
 @test "the finished step stops nothing off the lease or offline" {
   make_machine laptop
   on_machine laptop finished_workers

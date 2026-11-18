@@ -2955,6 +2955,47 @@ LINES
   assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
 }
 
+@test "a builder busy at a later builder's launch, then idle summary-blocked, is handed on: the sweep names no waiting-input, and the next launch stops it" {
+  # The later launch waits on the busy builder whose pr is out and leaves it, for the heartbeat's
+  # finished step to stop once it is idle; Claude Code may then call it blocked for its last
+  # summary, with no dialog open, and the later builder has taken its worktree.
+  export TEAM_WORKER_IDLE_SECONDS=1
+  open_task T9
+  log_lines <<LINES
+launch T9 builder 2f2f2f2f $wt1
+T9 {event: "pr", url: "https://github.com/owner/proj/pull/5", head: "1234567"}
+launch T9 reviewer 7e7e7e7e $wt1
+LINES
+  local reviewer='{"id": "7e7e7e7e", "name": "T9-reviewer", "status": "busy", "state": "working"}'
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"busy\"}, $reviewer]" >"$STUB_FIXTURES/agents.json"
+  stop_stub
+  run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+  assert_equal "$output" 9a8b7c6d
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: still busy 1 s after its work was handed on"
+  local later='{"id": "9a8b7c6d", "name": "T9-builder", "status": "busy", "state": "working"}'
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"idle\", \"state\": \"blocked\"}, $reviewer, $later]" \
+    >"$STUB_FIXTURES/agents.json"
+  run_bin -0 team-sweep
+  [[ $output != *waiting-input* ]]
+  # A dialog open is still waiting for input, named by the sweep and left by a launch.
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"idle\", \"state\": \"blocked\", \"waitingFor\": \"dialog open\"}, $reviewer, $later]" \
+    >"$STUB_FIXTURES/agents.json"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/superseded.jsonl"
+  run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  cp "$BATS_TEST_TMPDIR/superseded.jsonl" "$TEAM_HOME/ledger.jsonl"
+  : >"$STUB_CALLS/claude.log"
+  # Summary-blocked, it is stopped by a launch of its worktree's next builder.
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"idle\", \"state\": \"blocked\"}, $reviewer]" >"$STUB_FIXTURES/agents.json"
+  run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+  assert_equal "$(stops)" 2f2f2f2f
+  assert_contains "$stderr" "team-worker: stopped T9-builder 2f2f2f2f: its work is handed on"
+}
+
 @test "a paused for any reason but stowed leaves an idle reviewer, a resumed after it too" {
   open_task T9
   log_lines <<LINES

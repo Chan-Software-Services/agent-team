@@ -374,13 +374,17 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   launch T12 builder 5fcd3daf
   run_bin -1 team-sweep
   assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
-  # A later builder's launch after the pr is work asked of the task again.
+  # A later builder's launch of its worktree after the pr hands it on: the later builder holds
+  # the work, so its summary-blocked state is no prompt, while a dialog open still is.
   : >"$TEAM_HOME/ledger.jsonl"
   opened T12
   launch T12 builder 5fcd3daf
   event T12 pr '{url: "https://github.com/owner/proj/pull/5", head: "1234567"}'
   launch T12 builder 6a6a6a6a
   sessions "$(session 5fcd3daf T12-builder idle blocked)" "$(session 6a6a6a6a T12-builder busy working)"
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  sessions "$(session 5fcd3daf T12-builder waiting blocked)" "$(session 6a6a6a6a T12-builder busy working)"
   run_bin -1 team-sweep
   assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
 }

@@ -1078,25 +1078,38 @@ def delivered($launch):
               elif effect == "resume" then .brief == null and any($after[:$k][]; effect == "park")
               else (.session | type) == "string" and .session != $launch.session end)));
 
+# Whether the builder of the launch $launch, in the task's own worktree (no ticket), is
+# superseded, over the task's events after that launch: a later builder launch of the same
+# worktree, by its path on this machine (local_path's, $home the home directory), has taken its
+# work, one builder holding a worktree's work at a time. A ticket builder keeps its own rule
+# (ends_launch's ticket-done).
+def superseded($launch; $home):
+  ($launch.worktree | local_path($home)) as $wt
+  | $launch.role == "builder" and ($launch.ticket | type) != "string"
+    and any(.[]; .event == "launch" and .role == "builder" and (.worktree | local_path($home)) == $wt);
+
 # Whether a live session (an entry of claude agents --json) waits for input, given whether its
-# launch's builder delivered ($delivered, delivered's): its state is blocked, but for a builder
-# that delivered with no dialog open (its status idle, no waitingFor), since Claude Code also
-# calls a session blocked when its last turn's summary says it waits on someone, as a builder's
-# does after its PR ("awaiting the merge word"). The sweep's waiting-input (task_findings) and
+# launch's builder is done with its work ($done: delivered's, or superseded's): its state is
+# blocked, but for such a builder with no dialog open (its status idle, no waitingFor), since
+# Claude Code also calls a session blocked when its last turn's summary says it waits on
+# someone, as a builder's does after its PR ("awaiting the merge word"), and nobody answers a
+# builder whose worktree a later one has taken. The sweep's waiting-input (task_findings) and
 # the launcher's stop of finished sessions (launch_states) both read it, so they cannot differ.
-def waits_for_input($delivered):
-  .state == "blocked" and ((.status == "idle" and .waitingFor == null and $delivered) | not);
+def waits_for_input($done):
+  .state == "blocked" and ((.status == "idle" and .waitingFor == null and $done) | not);
 
 # The task's launches whose sessions a new launch of <role> may stop, over its events as an array,
-# each {session, role, worktree (local_path's), stowed, delivered, handed_on}; <role> "" stands
-# for no new launch (the heartbeat's stow plan, over every open task). delivered is whether a
-# builder's launch delivered with nothing asked of it since (delivered's), which launch_states
-# reads. They are every planner and reviewer, and every builder when the new worker is a builder
+# each {session, role, worktree (local_path's), stowed, delivered, superseded, handed_on}; <role>
+# "" stands for no new launch (the heartbeat's stow plan, over every open task). delivered is
+# whether a builder's launch delivered with nothing asked of it since (delivered's), and
+# superseded whether a later builder launch of its worktree follows it (superseded's), both of
+# which launch_states reads. They are every planner and reviewer, and every builder when the new worker is a builder
 # (team-worker keeps those of its own worktree, one builder holding a worktree's work at a time),
 # or with no new launch every builder that a later logged builder launch of its worktree follows,
 # and every ticket builder (a launch with a ticket) that its ticket's ticket-done follows. Handed
 # on is a launch the ledger follows with a done of its session, or for a builder what else ends it
-# (ends_launch: its ticket's ticket-done for a ticket builder, else a pr or any ticket-done), or
+# (ends_launch: its ticket's ticket-done for a ticket builder, else a pr or any ticket-done) or
+# supersedes it (superseded: a later builder launch of its worktree, but for a ticket builder), or
 # with a paused whose cause is stow (park_cause: "stowed", "stowed, handoff written") and then a
 # logged launch of its role and worktree (a stow carries no session, so it hands on only to the
 # fresh worker that resumes the work, and a resumed does not undo it); stowed is whether such a
@@ -1115,25 +1128,28 @@ def handed_on_launches($role; $home):
                    or ($l.ticket != null and .event == "ticket-done" and .ticket == $l.ticket))
                  else $role == "builder" end))
      | [range($i + 1; $events | length) | select($events[.] | .event == "paused" and park_cause == "stow")] as $stows
+     | ($events[$i + 1:] | superseded($l; $home)) as $superseded
      | {session, role, worktree: $wt, stowed: ($stows != []), delivered: ($events[$i + 1:] | delivered($l)),
-        handed_on: (any($events[$i + 1:][]; (.event == "done" and .session == $l.session)
+        superseded: $superseded,
+        handed_on: ($superseded
+          or any($events[$i + 1:][]; (.event == "done" and .session == $l.session)
             or ($l.role == "builder" and .event != "done" and ends_launch($l)))
           or any($stows[] as $k | $events[$k + 1:][]; .event == "launch" and .role == $l.role
             and (.worktree | local_path($home)) == $wt))}];
 
 # The live sessions of handed_on_launches' launches, given the session list <sessions>, each
 # {session, role, worktree, state, handed_on}: state "busy", "waiting for input" (waits_for_input,
-# as the sweep reads it, so a builder idle after the pr it delivered is not), "no status",
+# as the sweep reads it, so a builder idle after the pr it delivered, or superseded, is not), "no status",
 # "status <its status>" for one that is not idle, "handed-on" for an idle one whose work is handed
 # on (the one to stop), "stowed" for an idle one a stow followed, else "idle with no event of its
 # own since its launch"; handed_on is the launch's, whatever its state, so team-worker can wait
 # for a busy one whose work is handed on.
 def launch_states($sessions):
   [.[] | live_session(.session; $sessions) as $live | select($live != null)
-   | .delivered as $delivered
+   | (.delivered or .superseded) as $done
    | {session, role, worktree, handed_on,
       state: (if $live.status == "busy" then "busy"
-              elif $live | waits_for_input($delivered) then "waiting for input"
+              elif $live | waits_for_input($done) then "waiting for input"
               elif $live.status == null then "no status"
               elif $live.status != "idle" then "status \($live.status)"
               elif .handed_on then "handed-on"
@@ -1949,8 +1965,8 @@ def waiting_on:
 # for input is not also called silent; stalled is a busy session, not waiting for input, whose
 # transcripts have gone unwritten past its limit (stall_limits).
 # A session waits for input as waits_for_input says, which the launcher's launch_states reads
-# too: a builder that delivered with no dialog open does not, and it is idle with an event since
-# its launch.
+# too: a builder that delivered, or that a later builder launch of its worktree superseded, with
+# no dialog open does not, and it is idle with an event since its launch.
 # A live session is at work while it is busy, waiting for input, or idle with no ledger event
 # since its launch (silent); idle with an event since, it has handed the next step back to the
 # coordinator, so a task with no session at work is no-worker however many are live. A ticket
@@ -1979,7 +1995,7 @@ def task_findings($sessions; $activity):
       | . + if ($l.ticket | type) == "string" then
           {ended: any($since[]; ends_launch($l)), quiet: (any($since[]; .session == $l.session or .ticket == $l.ticket) | not)}
         else {ended: false, quiet: (.i == $count - 1)} end
-      | . + {prompted: (.live | waits_for_input($since | delivered($l)))}]
+      | . + {prompted: (.live | waits_for_input($since | delivered($l) or superseded($l; $home)))}]
      | unique_by(.short) | sort_by(.i)) as $live
   | ($live | map(select(.prompted or .live.status != "idle" or .quiet
       or ((.launch.ticket | type) == "string" and (.ended | not))))) as $at_work
