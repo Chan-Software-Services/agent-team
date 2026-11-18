@@ -61,11 +61,11 @@ chat=$(jq -er --arg f "$field" '.tool_input | objects | .[$f] | strings' <<<"$in
 [[ $chat =~ ^[1-9][0-9]{0,19}$ ]] ||
   block "'$chat' is not a Discord channel id; the assistant reaches only #assistant ($ASSISTANT_CHANNEL) and its threads."
 if [[ $chat != "$ASSISTANT_CHANNEL" ]] && ! grep -qxF -- "$chat" "$ASSISTANT_THREADS" 2>/dev/null; then
-  # Discord's reason, kept by hand: an EXIT trap here would take the place of team_guard's.
-  err=$(mktemp) rc=0
+  rc=0
+  team_mktemp err
   channel=$(discord_api "channels/$chat" 2>"$err") || rc=$?
   reason=$(grep -m1 . "$err" || echo "no reason given")
-  rm -f "$err"
+  team_tmp_rm "$err"
   ((rc == 0)) ||
     block "assistant-discord-guard could not read channel $chat from Discord ($reason), so it cannot tell whether it is a thread of #assistant; $CANNOT"
   parent=$(jq -r 'if type == "object" then (.parent_id // "none") | tostring else "unreadable" end' <<<"$channel" 2>/dev/null) ||

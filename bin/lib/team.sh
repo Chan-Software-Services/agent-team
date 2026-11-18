@@ -19,7 +19,8 @@
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
-# It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays.
+# It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays,
+# and bin/lib/temp-files.sh, whose header lists its own: team_mktemp, team_tmp_add, team_tmp_rm and team_exit_trap.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
 # shellcheck shell=bash
@@ -46,6 +47,9 @@ fi
 
 # shellcheck source=bin/lib/platform.sh
 source "$(dirname "${BASH_SOURCE[0]}")/platform.sh"
+# Temporary files that go however the script ends, and the script's own exit action beside them.
+# shellcheck source=bin/lib/temp-files.sh
+source "$(dirname "${BASH_SOURCE[0]}")/temp-files.sh"
 
 # The team home, where the records live: TEAM_HOME when set; else the first line of
 # ~/.config/agent-team/home, a path relative to HOME unless it is absolute; never the code
