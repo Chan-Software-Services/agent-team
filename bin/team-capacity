@@ -370,6 +370,9 @@
 # line, a process it does not list counting by its resident memory;
 # TEAM_READING_CPUS the CPU count in place of nproc's; and TEAM_READING_DOCKER_SECONDS the 30
 # seconds team-stack ls is given.
+# An assistant session is refused install and place, the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its other subcommands and --help
+# still answer.
 set -euo pipefail
 # jobs needs no team home, as tests/run on CI or a fresh clone.
 # shellcheck disable=SC2034 # read by bin/lib/team.sh
@@ -385,6 +388,7 @@ USAGE="usage: team-capacity install | place [--quiet] [<session id>...] | check 
 [[ $# -ge 1 ]] || usage_error "$USAGE"
 command=$1
 shift
+if [[ $command == @(install|place) ]] && why=$(assistant_refusal "runs no team-capacity $command"); then die "$why"; fi
 json=0 verbose=0 ids=() quiet=0 holding=0 heartbeat=enabled stored=0 dry_run=false kind='' task='' name='' seed=null sessions_file='' freed=()
 release_id=''
 case $command in

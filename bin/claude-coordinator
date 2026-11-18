@@ -73,8 +73,11 @@
 #   --prompt  the session's first prompt, in place of "You are the coordinator. Daniel talks to
 #             you on Discord. Wait for their messages." (team-resume names its report and the
 #             resume skill in it)
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no claude-coordinator") && die "$why"
 # shellcheck source=bin/lib/launch.sh
 source "$TEAM_LIB/launch.sh"
 

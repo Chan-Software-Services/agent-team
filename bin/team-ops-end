@@ -29,8 +29,11 @@
 # no full uuid, or when claude rm fails. Prints each path it deleted as "deleted <path>", then
 # "ended <task>-ops (<id>)". An MCP log it cannot read is named on stderr and kept, and it fails
 # once it has deleted the rest.
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no team-ops-end") && die "$why"
 
 [[ $# -eq 1 ]] || usage_error "usage: team-ops-end <task>"
 task=$1

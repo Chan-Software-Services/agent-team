@@ -229,6 +229,9 @@
 # Exit 0 done, 1 refused or failed (Docker not answering, with its reason, but for sweep),
 # 2 usage error, 75 try again later (no room for the stack when its wait ran out, the reason
 # being team-capacity's: no room, or its capacity.lock still held after 2 minutes).
+# An assistant session is refused down, seed, stop and up, the coordinator's acts (assistant_refusal
+# in bin/lib/team.sh, beside command-guard's assistant-acts row); its other subcommands and --help
+# still answer.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
@@ -236,6 +239,7 @@ LS_USAGE="usage: team-stack ls [--all] [--json]"
 
 (($#)) || usage_error "usage: team-stack ls|up|env|seed|stop|down|sweep|reap [options]; team-stack --help says more"
 SUBCOMMAND=$1
+if [[ $SUBCOMMAND == @(down|seed|stop|up) ]] && why=$(assistant_refusal "runs no team-stack $SUBCOMMAND"); then die "$why"; fi
 case $SUBCOMMAND in
   ls | up | env | seed | stop | down | sweep | reap) ;;
   *) usage_error "unknown subcommand '$SUBCOMMAND'; the subcommands are: ls, up, env, seed, stop, down, sweep, reap" ;;

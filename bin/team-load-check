@@ -304,8 +304,11 @@
 # prod-write, and otherwise the toolkits, sorted, joined with - (inventory-vercel-read.txt,
 # inventory-prod-read-vercel-read.txt, inventory-prod-mongo.txt, inventory-prod-mongo-prod-read.txt,
 # inventory-prod-mongo-prod-read-prod-write.txt).
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no team-load-check") && die "$why"
 
 home=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 usage="usage: team-load-check [--toolkit <name>]... | team-load-check --context [--role <role>] [--toolkit <name>]... | team-load-check --probe [--role <role>] | team-load-check --role ops --worktree <path> --request <link> --toolkit <name>..."
