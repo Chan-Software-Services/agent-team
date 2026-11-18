@@ -8,7 +8,9 @@
 # run's exit code.
 # The names it may remove are the lines of bin/lib/tmp-leftovers, read from this checkout, a
 # task's session tmp and scratch once the ledger says the task is not open, and a gate session's
-# tmp a day old; inside a session tmp under /tmp, only the list's.
+# tmp a day old; inside a session tmp under /tmp, only the list's. A run's list of its temporary
+# paths (team-temp.<pid>.<random>, a line of the list) goes alone, as a regular file whose pid is
+# no live process of this user's, never the paths it names.
 # After the sweep, a run reads the /tmp root's file system and judges the notice of the tmp source
 # (bin/lib/notice.jq, through bin/lib/notices.sh, which team-janitor sources first): wanted while a
 # memory file system is at least 50% full, or 45% once it stands, posted to #coordinator, reminded
@@ -168,9 +170,11 @@ tmp_rooted() {
 # Write the process text, what this user's processes name under a root, to $TMP_WORK/processes,
 # one name per line: each process's working directory, open files, command line and environment,
 # but for this run's own process and its children, and only the lines that name a path under a
-# root. It fails, saying why on stderr, when they cannot be read.
+# root; and the pids of this user's processes, this run's own among them, to $TMP_WORK/pids, one per
+# line. It fails, saying why on stderr, when they cannot be read.
 tmp_read_processes() {
   local tmp_out=$TMP_WORK/processes tmp_failed=$TMP_WORK/processes.failed tmp_self=$$ tmp_rc=0
+  local tmp_pids=$TMP_WORK/pids
   if [[ ${TEAM_KERNEL:-$(uname -s)} == Darwin ]]; then
     # lsof prints p<pid>, then f<descriptor> and n<name>, per open file, the working directory
     # among them; ps one process per line, its command line then its whole environment, which is
@@ -181,7 +185,7 @@ tmp_read_processes() {
         awk -v self="$tmp_self" '/^p/ { skip = ($0 == "p" self) } /^n/ && !skip { print substr($0, 2) }' ||
         echo "lsof failed: $(tmp_last_line "$TMP_WORK/processes.err")" >"$tmp_failed"
       ps -x -E -ww -o pid=,ppid=,command= 2>"$TMP_WORK/processes.err" |
-        awk -v self="$tmp_self" '$1 != self && $2 != self {
+        awk -v self="$tmp_self" -v pids="$tmp_pids" '{ print $1 >pids } $1 != self && $2 != self {
           line = $0
           while (match(substr(line, 2), / [A-Za-z_][A-Za-z0-9_]*=/)) {
             print substr(line, 1, RSTART)
@@ -192,14 +196,16 @@ tmp_read_processes() {
         echo "ps failed: $(tmp_last_line "$TMP_WORK/processes.err")" >"$tmp_failed"
     } | tmp_rooted >"$tmp_out" || tmp_rc=$?
   else
-    local tmp_proc tmp_pid tmp_stat tmp_links=() tmp_files=()
+    local tmp_proc tmp_pid tmp_stat tmp_links=() tmp_files=() tmp_live_pids=()
     if [[ ! -r /proc/$tmp_self/cmdline ]]; then
       echo "/proc holds no readable processes" >&2
       return 1
     fi
     for tmp_proc in /proc/[0-9]*; do
       tmp_pid=${tmp_proc#/proc/}
-      [[ -O $tmp_proc && $tmp_pid != "$tmp_self" ]] || continue
+      [[ -O $tmp_proc ]] || continue
+      tmp_live_pids+=("$tmp_pid")
+      [[ $tmp_pid != "$tmp_self" ]] || continue
       # The parent is the second field after the command's name, which may itself hold a ")".
       tmp_stat=''
       { IFS= read -r -d '' tmp_stat <"$tmp_proc/stat" || true; } 2>/dev/null
@@ -210,6 +216,7 @@ tmp_read_processes() {
       tmp_links+=("$tmp_proc/cwd" "$tmp_proc"/fd/*)
       tmp_files+=("$tmp_proc/cmdline" "$tmp_proc/environ")
     done
+    printf '%s\n' "${tmp_live_pids[@]}" >"$tmp_pids"
     {
       if ((${#tmp_links[@]})); then
         # A process or file that ended since is a missing link, which fails no read.
@@ -282,9 +289,24 @@ tmp_record() {
   fi
 }
 
+# Whether <path>, of <type> (stat's %F), is a run's list of its temporary paths to keep: a name of
+# bin/lib/temp-files.sh's, team-temp.<pid>.<random>, that is not a regular file, or whose pid is not
+# a number as $$ is, or is one of this user's processes. A dead run's list is removed alone, never
+# the paths it names, since a list in a shared TMPDIR is anyone's to write: tmp_list_kept <path> <type>
+tmp_list_kept() {
+  local tmp_name=${1##*/} tmp_pid
+  [[ $tmp_name == team-temp.* ]] || return 1
+  [[ $2 == 'regular file' || $2 == 'regular empty file' ]] || return 0
+  tmp_pid=${tmp_name#team-temp.}
+  tmp_pid=${tmp_pid%%.*}
+  [[ $tmp_pid =~ ^[1-9][0-9]*$ && -s $TMP_WORK/pids ]] || return 0
+  grep -Fxq -- "$tmp_pid" "$TMP_WORK/pids"
+}
+
 # Remove the candidate <path> unless a process names it or <alias>, or it no longer passes the
-# rules, or it went with a directory removed before it, and say so; <parent> is the session tmp it
-# is inside, empty for an entry of a root: tmp_remove <path> <alias> <minutes> <why> <parent>
+# rules, or it is a run's list to keep, or it went with a directory removed before it, and say so;
+# <parent> is the session tmp it is inside, empty for an entry of a root:
+# tmp_remove <path> <alias> <minutes> <why> <parent>
 tmp_remove() {
   local tmp_path=$1 tmp_minutes=$3 tmp_why=$4 tmp_parent=$5 tmp_stat tmp_type tmp_owner tmp_modified tmp_kb
   local tmp_line tmp_gone
@@ -301,6 +323,7 @@ tmp_remove() {
   tmp_stat=$(stat -c '%F|%u|%Y' -- "$tmp_path" 2>/dev/null) || return 0
   IFS='|' read -r tmp_type tmp_owner tmp_modified <<<"$tmp_stat"
   tmp_removable "$tmp_type" "$tmp_owner" "$tmp_modified" "$tmp_minutes" || return 0
+  ! tmp_list_kept "$tmp_path" "$tmp_type" || return 0
   tmp_kb=$(du -sk -- "$tmp_path" 2>/dev/null) || true
   tmp_kb=${tmp_kb%%[!0-9]*}
   tmp_line="$tmp_path ($(tmp_size "${tmp_kb:-0}"), untouched $(tmp_age $((tmp_now - tmp_modified))); $tmp_why)"
