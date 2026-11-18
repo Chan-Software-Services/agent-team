@@ -78,7 +78,8 @@
 # A run GitHub does not list yet holds nothing, so a reading of no check, or of every check passed,
 # counts only once it has stood for 2 minutes of looks (SETTLE_SECONDS), with no run open and no
 # new check listed: until then any of these restarts it. The project's required_checks are read
-# through team-project, and one still not listed when that reading has stood is a failure.
+# through team-project (with --merge-group, beside the base's rules, below), and one still not
+# listed when that reading has stood is a failure.
 # agent-review is never among them here, since a reviewer sets it at its verdict, apart from CI.
 # Before each look, while the team holds offline (offline_hold), it ends at once with exit 75 and
 # the hold's text.
@@ -106,6 +107,7 @@
 #   check passed or skipped, for 2 minutes of looks,
 #   and every required check listed
 #   the same, with a required check not listed         exit 1, naming each such check as the PR's
+#                                                      (on a trial commit, as the rules')
 #   no check pending but stuck or queued ones, no      exit 1, naming each failed, cancelled,
 #   workflow run open but a queued one's, and at       stuck or queued check in its class (below)
 #   least one failed, cancelled, stuck or queued
@@ -135,7 +137,8 @@
 # its link) is never queued, and is waited on until it concludes or the deadline; agent-review is
 # a check like any other, unless --no-agent-review leaves it out.
 # A failure's text keeps the first line, "the checks on <short> did not pass:", and gives each
-# check its own line, led by its class, the PR's first, then infrastructure, then roll-ups:
+# check its own line, led by its class, the PR's first, then rules, then infrastructure, then
+# roll-ups:
 #   roll-up         a failed or cancelled check R beside a check of the same workflow run (the run
 #                   id in their Actions links), failed, cancelled, stuck or queued, whose name is R
 #                   then "-shard" or " shard" (test beside test-shards (2), e2e beside e2e shard
@@ -147,9 +150,13 @@
 #                   Complete job) or a stock action's (Run actions/..., Post Run actions/...); and
 #                   each queued or stuck check: each line names its link and the gh run rerun (for
 #                   a queued one, gh run cancel first) to run before running team-ci-wait again
+#   rules           with --merge-group, a required check not listed on the trial commit: "rules:
+#                   <name> was not reported on the trial commit, though <base>'s rules require it
+#                   (or the project requires it, for one of the registry's alone): no workflow
+#                   makes it on a merge queue's trial commit", which no change of the PR's fixes
 #   the PR's        every other: a failed step of the project's own, a cancel after a step ran, a
-#                   required check not listed, a check from outside Actions, and a check whose job
-#                   could not be read, so said
+#                   required check not listed on a PR's head, a check from outside Actions, and a
+#                   check whose job could not be read, so said
 # Every class is a failure, since the head is not green.
 # --look ends at the first readable look whose head is <sha>, keeping the grace for a push: it
 # prints no starting line, and its text names each failed or cancelled check, classed as above, then
@@ -169,7 +176,7 @@
 # limit past a look's grace, or the deadline with no readable look), offline, and with --look
 # pending; head the PR's head at the last readable look, null before
 # one; text what the end prints without --json, the starting line left out; failures each failure
-# of a failed end, in the text's order, as {name, class (pr, infrastructure or rollup), kind
+# of a failed end, in the text's order, as {name, class (pr, rules, infrastructure or rollup), kind
 # (failed, cancelled, missing, never-started, setup, queued, stuck or rollup), state (the check's,
 # lowercase, null for a missing one), link, run, job (the Actions run and job ids as numbers, else
 # null), step (the first failing step's name, else null), rerun (the command its line gives, else
@@ -180,8 +187,13 @@
 # reads the PR's state and its queue entry's head commit (gh api graphql, through gh_call, one
 # GraphQL point a look, never cached) in place of pulls/<n>, and the rest as a PR's look does, at
 # the trial commit: its check runs and statuses and its workflow runs, with the repository's runs
-# in progress. There is no grace, since the caller read the trial commit
-# from the entry. Once the entry's head commit is no longer <trial sha> (the queue rebuilt the
+# in progress. There is no grace, since the caller read the trial commit from the entry. Before
+# its first look it reads the base's rules once (base_rules in bin/lib/team.sh, for the project's
+# base on the PR's repository, on the login it runs on), and holds every context they require but
+# agent-review, which team-land posts itself, as required beside the registry's required_checks; a
+# read that fails prints one line on stderr, "team-ci-wait: <base>'s rules on <repo> could not be
+# read, so only the registry's required checks are held: <its first error line>", and the wait
+# goes on with those. Once the entry's head commit is no longer <trial sha> (the queue rebuilt the
 # entry onto another trial commit, landed it or dropped it), the wait ends at that look: on a
 # merged or closed PR as on a head; when a check of the trial commit failed, as a failure, exit 1,
 # the cancelled and pending checks of that look left out, since the queue cancels the rest of a
@@ -309,6 +321,7 @@ else
   whose="the PR's" again="run team-ci-wait again" again_wait="$again to wait on them" again_unread="$again to wait"
 fi
 required=$(team_project "$project" required_checks)
+base=$(team_project "$project" base)
 # The workflow whose run carries the required checks, when the project names one.
 branch_ci=$(team_project "$project" branch_ci)
 # Whom the reader logs each request for.
@@ -539,8 +552,8 @@ CLASSES='
 
 # report <missing>: sets text to the text of a wait that ends on a failure: today's first line, then
 # a line for each check the last readable look did not pass, classed, and each required check in
-# the JSON array <missing>, the PR's (with --run, the branch's) first, then infrastructure, then
-# roll-ups; and writes those
+# the JSON array <missing> (with --merge-group, each of class rules), the PR's (with --run, the
+# branch's) first, then rules, then infrastructure, then roll-ups; and writes those
 # failures, in that order, to $dir/failures as --json gives them. It reads the Actions job of each
 # failed or cancelled check that is not a roll-up, once; one it cannot read stays the PR's.
 report() {
@@ -556,10 +569,15 @@ report() {
   jq -c --argjson stuck "$stuck_json" --argjson queued "$queued_json" --argjson missing "$1" --arg repo "$repo" \
     --arg queued_span "$(span "$QUEUED_SECONDS")" --arg whose "$whose" --arg again "$again" \
     --arg unreported "$([[ -n $run_id ]] || echo " for $(span "$SETTLE_SECONDS")")" \
+    --arg base "$base" --argjson group "$([[ -n $group ]] && echo true || echo false)" --argjson rules "$rules_required" \
     --argjson jobs "$(jq -s 'add // {}' "$dir/jobs")" "$CLASSES"'
-    [classed, ($missing[] | {name: ., class: "pr", kind: "missing", state: null, link: null, run: null, job: null,
-       step: null, rerun: null, line: "\($whose): \(.) was not reported\($unreported), and the project requires it"})]
-    | sort_by({pr: 0, infrastructure: 1, rollup: 2}[.class])' "$dir/look" >"$dir/classed"
+    [classed, ($missing[] | {name: ., class: (if $group then "rules" else "pr" end), kind: "missing", state: null,
+       link: null, run: null, job: null, step: null, rerun: null,
+       line: (if $group then "rules: \(.) was not reported on the trial commit, though "
+           + (if IN($rules[]) then "\($base)\u0027s rules require" else "the project requires" end)
+           + " it: no workflow makes it on a merge queue\u0027s trial commit"
+         else "\($whose): \(.) was not reported\($unreported), and the project requires it" end)})]
+    | sort_by({pr: 0, rules: 1, infrastructure: 2, rollup: 3}[.class])' "$dir/look" >"$dir/classed"
   jq 'map(del(.line))' "$dir/classed" >"$dir/failures"
   text="team-ci-wait: the checks on ${head:0:7} did not pass:"$'\n'$(jq -r '.[] | "  " + .line' "$dir/classed")
 }
@@ -654,6 +672,22 @@ sleep_limit() {
   sleep "$seconds"
   elapsed=$((elapsed + seconds))
 }
+# hold_rules: with --merge-group, read the base's rules (base_rules, on the login this runs on),
+# once, at the wait's start, and add every context they require but agent-review, which team-land
+# posts itself, to the required checks, keeping those in rules_required; a read that fails is said
+# on one line on stderr, and the registry's required checks alone are held.
+rules_required='[]' rules_read=false
+hold_rules() {
+  local rules
+  rules_read=true
+  if rules=$(base_rules "$repo" "$base" 2>"$dir/rules.error"); then
+    rules_required=$(jq -c '[.required[].context | select(. != "agent-review")] | unique' <<<"$rules")
+    required=$(jq -c --argjson rules "$rules_required" '. + ($rules - .)' <<<"$required")
+  else
+    echo "team-ci-wait: $base's rules on $repo could not be read, so only the registry's required checks are held: $(grep -m1 . "$dir/rules.error" || echo "no reason given")" >&2
+  fi
+}
+
 # The stuck and queued clocks, which tick keeps by nameref, and the names that ran theirs out.
 # shellcheck disable=SC2034
 declare -A stuck_looks=() queued_looks=()
@@ -663,6 +697,7 @@ while :; do
     finish offline 75 "team-ci-wait: $hold"
   fi
   sleep_limit
+  [[ -z $group ]] || $rules_read || hold_rules
   read_rc=0
   read_look || read_rc=$?
   if ((read_rc == 0)); then
