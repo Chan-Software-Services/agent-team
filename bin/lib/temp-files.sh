@@ -17,6 +17,9 @@
 #   team_tmp_rm <path>...
 #                       removes each path now, recursively: the end of a file a function made for
 #                       one call, in a script that runs on.
+#   team_tmp_clean
+#                       removes every listed path and the list now, in the script's main shell:
+#                       a script about to end by exec, which runs no EXIT trap, calls it first.
 #   team_exit_trap <action> | team_exit_trap -
 #                       sets the shell's own exit action, as trap <action> EXIT would, or clears
 #                       it; the library's one EXIT trap runs it, then removes the paths. Every
@@ -34,7 +37,7 @@
 # script set before it sourced this file (hooks/denial-log's, the library's team_guard_exit) is
 # taken as its exit action. A subshell that calls team_exit_trap has an EXIT trap of its own, which
 # runs that action alone and removes nothing.
-# A script that ends by exec runs no EXIT trap, so it removes what it made before the exec.
+# A script that ends by exec runs no EXIT trap, so it calls team_tmp_clean before the exec.
 # shellcheck shell=bash
 
 # The run's list of paths and the exit action, with the shell (its BASHPID) the action is for.
@@ -79,8 +82,8 @@ _team_tmp_set=$(trap -p EXIT)
 unset _team_tmp_set
 trap _team_exit EXIT
 
-# Remove the run's paths and its list, in the main shell; never fails.
-_team_tmp_clean() {
+# The run's paths and its list removed, in the main shell; never fails.
+team_tmp_clean() {
   local _tl_paths=() _tl_path _tl_there=()
   [[ $BASHPID == "$$" && -f $_team_tmp_list ]] || return 0
   mapfile -t _tl_paths <"$_team_tmp_list" 2>/dev/null || true
@@ -103,11 +106,11 @@ _team_exit() {
     # shellcheck disable=SC2317,SC2329 # called by the action
     exit() {
       local _te_code=${1-$?}
-      _team_tmp_clean
+      team_tmp_clean
       builtin exit "$_te_code"
     }
     set -E
-    trap '[[ $- != *e* ]] || _team_tmp_clean' ERR
+    trap '[[ $- != *e* ]] || team_tmp_clean' ERR
     if ((_te_status)); then
       _team_tmp_status "$_te_status" || eval "$_team_exit_action"
     else
@@ -115,5 +118,5 @@ _team_exit() {
       eval "$_team_exit_action"
     fi
   fi
-  _team_tmp_clean
+  team_tmp_clean
 }

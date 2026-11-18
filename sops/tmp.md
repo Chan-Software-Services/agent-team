@@ -31,7 +31,7 @@ An entry is removed only when every rule holds, each checked again on the entry 
 A directory is made writable first (`chmod -R`, which changes no link), so a read-only tree such as a Go module cache goes too, then removed with `rm -rf --one-file-system`; a file with `rm -f`.
 A removal that fails is said on stderr, the rest of the run goes on, and the run exits 1.
 Mktemp's default names (`tmp.XXXXXXXXXX`) are never removed: any program makes them, so they are not provably the team's, and a leak of them is fixed where it is made.
-The team's scripts make theirs with `team_mktemp` (`bin/lib/temp-files.sh`), whose one exit handler removes them however the script ends, on TERM, HUP and INT too, so only a kill no trap sees (KILL) leaves one.
+The team's scripts make theirs with `team_mktemp` (`bin/lib/temp-files.sh`), whose one exit handler removes them however the script ends, on TERM, HUP and INT too, so only a kill no trap sees (KILL) leaves one; a script that ends by `exec`, which runs no EXIT trap, removes them first with `team_tmp_clean`.
 
 ## The list, and adding a line
 

@@ -20,7 +20,7 @@
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays,
-# and bin/lib/temp-files.sh, whose header lists its own: team_mktemp, team_tmp_add, team_tmp_rm and team_exit_trap.
+# and bin/lib/temp-files.sh, whose header lists its own: team_mktemp, team_tmp_add, team_tmp_rm, team_tmp_clean and team_exit_trap.
 # Exit codes: 0 done, 1 refused or a check failed, 2 usage error, 75 try again later; a guard hook
 # that sets team_guard (below) exits 2 for every exit of its but 0.
 # shellcheck shell=bash

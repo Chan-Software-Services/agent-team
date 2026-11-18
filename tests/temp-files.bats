@@ -139,6 +139,16 @@ EOF
   assert_equal "$(leftovers)" ""
 }
 
+@test "a script that ends by exec removes its files first with team_tmp_clean" {
+  script <<EOF
+$MAKE
+team_tmp_clean
+exec true
+EOF
+  run -0 "$BATS_TEST_TMPDIR/s.sh"
+  assert_equal "$(leftovers)" ""
+}
+
 @test "team_mktemp fails as mktemp does" {
   script <<'EOF'
 x=$(team_mktemp "$OUT/no-such-dir/t.XXXXXX" 2>/dev/null) || echo "failed '$x'" >"$OUT/said"

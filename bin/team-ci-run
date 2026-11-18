@@ -235,5 +235,5 @@ run_url=https://github.com/$repo/actions/runs/$run_id
 echo "team-ci-run: waiting on $run_url ($event, $how) of $short"
 # The wait takes over from here, so its end is this command's: the looks' files go first, since
 # an exec runs no EXIT trap.
-team_tmp_rm "$dir"
+team_tmp_clean
 TEAM_HOME=$TEAM_HOME exec "$(dirname "$TEAM_LIB")/team-ci-wait" --run "$run_url" "$sha"

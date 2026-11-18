@@ -443,6 +443,8 @@ stage_packages() {
   ((${#cask_upgrade[@]} == 0)) || act "brew upgrade --cask $(unique "${cask_upgrade[@]}")"
   if [[ -n $PLATFORM_PROBLEM && -z ${TEAM_BOOTSTRAP_AGAIN:-} ]] && ((!dry)); then
     say "Homebrew's GNU tools are installed: starting again under them"
+    # The exec runs no EXIT trap, so this run's files go first; the new run makes its own.
+    team_tmp_clean
     TEAM_BOOTSTRAP_AGAIN=1 exec "$self" "${args[@]}"
   fi
 }
