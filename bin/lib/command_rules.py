@@ -81,32 +81,43 @@ The rows, in order:
     enable or run, any of those among the words before a --; either kind passing with a first
     word --help or -h, which the library answers before the script does anything. Reason: the
     coordinator's acts, which an assistant session never runs (<the act and its subcommand>); its
-    --help and a read of its file pass.
+    --help and a read of its file pass. Each act but team-heavy run also refuses the assistant
+    itself (assistant_refusal in bin/lib/team.sh), where the walk cannot read a call.
   assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
     rules held by any gh api call with a field and any release, secret or variable call until
     this row. gh api (after gh's own options, as cobra finds its command) with a last -X or
     --method (joined too, any case) other than GET or HEAD, with --input, or with a field (-f,
     -F, --field, --raw-field, joined too) and no method, its endpoint being its first word that is
     no option and no option's value; but for the endpoint graphql, whose fields pass, whatever the
-    method, only as a query: a query field (and every one) whose value begins with neither @ nor $,
-    holds no $(, ${ or backtick, and has no mutation or subscription as a whole name. gh's or
-    gh-axi's release, secret or variable with a subcommand (the group's first word that is no
-    option and no option's value, a long option without = and a two-character short one taking the
-    next word, but --help and -h) other than a read: release list, ls, view, download, verify or
-    verify-asset; secret list or ls; variable list, ls or get. A group with no subcommand passes.
-    Reason: a GitHub write, which an assistant session never makes (<the method, the body, the
-    field, the mutation, the query it cannot read, or the group and subcommand>).
-  assistant-thread-cache, for the assistant alone: a write of the thread cache the Discord guard
-    trusts, a path whose basename begins assistant-threads, which its deny rule held by any call
-    naming it until this row. As the target of a redirection that writes (>, >>, >|, &>, &>>, <>,
-    and >& to no fd, with an fd before it), in any of the texts the walk reads, a bare one with
-    no command among them (its call test, command_text.call_redirections); or among the words of
-    a writer: tee, cp, mv, install, ln, rsync, truncate, rm, unlink, shred, touch, chmod and chown
-    (a word, or an option's value after its =), dd's of= value, and sed, perl or ruby with -i
-    (alone, joined as -i.bak, or among a short cluster's flags before one taking a value, as
-    -pi) or --in-place. A read passes: cat, grep, jq, sed -n, a redirection from it (<). Reason:
-    the thread cache the Discord guard trusts, which only the scripts and hooks write (<the path
-    as written, its quotes removed>).
+    method, only as a query: a query field (and every one) whose value begins with no @, holds no
+    $ or backtick (a GraphQL variable reads as the shell's expansion, the walk having dropped the
+    quotes) and has no mutation or subscription as a whole name. Any other gh or gh-axi call
+    whose group (the first word that is no option and no option's value, a long option without =
+    and a two-character short one taking the next word, but --help and -h) and subcommand are
+    not among the reads GITHUB_READS lists for each: a group it lists no read of (a user alias,
+    an extension, gh co, copilot, preview, gh-axi setup and update but its --check), a subcommand
+    outside its group's reads, a subcommand's own outside its reads (repo deploy-key, repo
+    autolink, gh-axi issue subissue), and gh auth status with -t or --show-token, which prints
+    the token. gh alone, a group with no subcommand and the groups that read with any words
+    (search, browse, status, licenses, completion, help, version) pass. Reason: a GitHub write,
+    which an assistant session never makes (<the method, the body, the field, the mutation, the
+    query it cannot read, or the group and subcommand>).
+  assistant-thread-cache, for the assistant alone: a call naming the thread cache the Discord
+    guard trusts (assistant-threads, as written or with its quotes and backslashes removed, or
+    the library's ASSISTANT_THREADS or assistant_thread_keep), which its deny rule refused
+    whatever it ran until this row, unless it only reads it: refused by a redirection that
+    writes (>, >>, >|, &>, &>>, <>, and >& to no fd, with an fd before it) anywhere but
+    /dev/null, /dev/stdout or /dev/stderr, in any of the texts the walk reads, a bare one with no
+    command among them (command_text.call_redirections); by a writer naming it (tee, cp, mv,
+    install, ln, rsync, truncate, rm, unlink, shred, touch, chmod or chown, by a word or an
+    option's value after its =, dd's of= value, and sed, perl or ruby with -i or --in-place); and
+    by any command that is no plain reader (CACHE_READERS: cat, grep, head, tail, wc, jq, diff and
+    the like; dd writing to no file; sed with only plain options and a plain script, no w, W or e)
+    or that runs behind a wrapper other than env, timeout, nice, command, builtin, xargs or time,
+    so an interpreter's program, sort -o, curl -o, a source of the library and a shell string are
+    refused. Reason: the thread cache the Discord guard trusts, which only the scripts and hooks
+    write (<the path as written, its quotes removed; the redirection and its target; or the
+    command that is no plain reader>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -143,8 +154,8 @@ neither reads no process or file for it.
 A row reads every command the walk yields, a shell's script file and a sourced one among them (a
 file named team-worker that bash runs is team-worker), but for the upload and delete rows, which
 read no file's name as curl or rm. A row with a call test (assistant-thread-cache) runs it first,
-on the call's command, for what no command holds (a redirection), its where being the first line
-holding the refused path.
+on the call's command, for what no one command holds (a redirection, the call's name of the
+cache), its where being the first line holding the refused path or command.
 Contract: the kill and delete rows refuse the forms an agent writes when it means no harm, each
 form tests/command-guard-kill.bats and tests/command-guard-delete.bats hold, plainly spelled, run
 directly or through the walk's wrappers and strings (bash -c, eval, a heredoc or here-string a
@@ -549,11 +560,47 @@ API_FIELDS = frozenset(("-f", "-F", "--raw-field", "--field"))
 API_LONG = {"-X": "--method", "-H": "--header", "-f": "--raw-field", "-F": "--field", "-q": "--jq",
             "-t": "--template", "-p": "--preview"}
 API_READS = frozenset(("GET", "HEAD"))
-# The reads of gh's groups that would write otherwise, their aliases (ls) among them.
+# The reads of gh's and gh-axi's groups, each group's subcommands that only read (ls where list
+# is one, as gh aliases it), a subcommand's own reads where it is a group too (None: any words
+# after it), and ANY_READ for a group all of whose subcommands read; any other group or
+# subcommand is a write, an unknown group (a user alias, an extension) among them.
+ANY_READ = "any"
+
+
+def _reads(*subcommands, **groups):
+    table = {sub: None for sub in subcommands}
+    if "list" in table:
+        table["ls"] = None
+    table.update({sub.replace("_", "-"): frozenset(reads) for sub, reads in groups.items()})
+    return table
+
+
 GITHUB_READS = {
-    "release": frozenset(("list", "ls", "view", "download", "verify", "verify-asset")),
-    "secret": frozenset(("list", "ls")),
-    "variable": frozenset(("list", "ls", "get")),
+    "gh": {
+        "auth": _reads("status"), "codespace": _reads("list", "view", "logs"), "discussion": _reads("list", "view"),
+        "gist": _reads("list", "view", "clone"), "issue": _reads("list", "status", "view"), "org": _reads("list"),
+        "pr": _reads("list", "status", "checks", "diff", "view"),
+        "project": _reads("list", "view", "field-list", "item-list"),
+        "release": _reads("list", "view", "download", "verify", "verify-asset"),
+        "repo": _reads("list", "view", "clone", "gitignore", "license", "read-dir", "read-file",
+                       autolink=("list", "ls", "view"), deploy_key=("list", "ls")),
+        "skill": _reads("list", "search", "preview"), "cache": _reads("list"),
+        "run": _reads("list", "view", "watch", "download"), "workflow": _reads("list", "view"),
+        "agent-task": _reads("list", "view"), "alias": _reads("list"),
+        "attestation": _reads("download", "trusted-root", "verify"), "config": _reads("get", "list"),
+        "extension": _reads("list", "search"), "gpg-key": _reads("list"), "ssh-key": _reads("list"),
+        "label": _reads("list"), "ruleset": _reads("check", "list", "view"), "search": ANY_READ,
+        "secret": _reads("list"), "variable": _reads("list", "get"),
+        # The commands with no subcommand, each a read with any words.
+        "browse": ANY_READ, "status": ANY_READ, "licenses": ANY_READ, "completion": ANY_READ, "help": ANY_READ,
+        "version": ANY_READ,
+    },
+    "gh-axi": {
+        "issue": _reads("list", "view", subissue=("list",)), "pr": _reads("list", "view", "checks", "diff"),
+        "run": _reads("list", "view", "watch", "download"), "workflow": _reads("list", "view"),
+        "release": _reads("list", "view", "download"), "repo": _reads("view", "list"), "label": _reads("list"),
+        "secret": _reads("list"), "variable": _reads("list"), "search": ANY_READ,
+    },
 }
 # GraphQL's operation keywords that write or stream, as whole names (case-sensitive, as GraphQL's are).
 GRAPHQL_WRITES = re.compile(r"(?<![_0-9A-Za-z])(?:mutation|subscription)(?![_0-9A-Za-z])")
@@ -623,8 +670,13 @@ def _graphql_write(fields):
     if not queries:
         return "gh api graphql with a field but no query"
     for query in queries:
-        if query.lstrip()[:1] in ("@", "$") or any(part in query for part in ("$(", "${", "`")):
-            return "a GraphQL query from a file, stdin or an expansion the guard cannot read"
+        if query.lstrip()[:1] == "@":
+            return "a GraphQL query from a file or stdin the guard cannot read"
+    # The walk drops a word's quotes, so a GraphQL variable ($n in single quotes) and the shell's
+    # expansion ($M in double quotes) read alike: neither passes.
+    for query in queries:
+        if "$" in query or "`" in query:
+            return "a GraphQL query holding a $ or a backtick, which may be a shell expansion: write its values into the query"
     if any(GRAPHQL_WRITES.search(query) for query in queries):
         return "a GraphQL mutation or subscription"
     return None
@@ -659,8 +711,32 @@ def _github_write(command, context):
             write = _api_write(args[found[0] + 1 :])
             if write is not None:
                 return GITHUB_REASON.format(write)
-        elif group in GITHUB_READS and len(found) > 1 and args[found[1]] not in GITHUB_READS[group]:
-            return GITHUB_REASON.format(f"{name} {group} {args[found[1]]}")
+        elif group is not None and (write := _group_write(name, args, found)) is not None:
+            return GITHUB_REASON.format(write)
+    return None
+
+
+def _group_write(name, args, found):
+    """What makes a gh or gh-axi call past its group no read, or None: a group the guard knows no
+    read of, a subcommand (or a subcommand's own) outside its reads, gh auth status showing the
+    token, and gh-axi update but its --check. A group with no subcommand prints its help."""
+    group = args[found[0]]
+    if name == "gh-axi" and group == "update":
+        return None if "--check" in args else f"{name} update, a command the guard knows no read of"
+    reads = GITHUB_READS[name].get(group)
+    if reads is None:
+        return f"{name} {group}, a command the guard knows no read of"
+    if reads == ANY_READ or len(found) < 2:
+        return None
+    sub = args[found[1]]
+    if sub not in reads:
+        return f"{name} {group} {sub}"
+    if reads[sub] is not None and len(found) > 2 and args[found[2]] not in reads[sub]:
+        return f"{name} {group} {sub} {args[found[2]]}"
+    shows = any(word == "-t" or word.startswith("--show-token") or re.fullmatch(r"-[A-Za-z]*t[A-Za-z]*", word)
+                for word in args[found[1] + 1 :])
+    if (name, group, sub) == ("gh", "auth", "status") and shows:
+        return "gh auth status --show-token, which prints the token"
     return None
 
 
@@ -720,11 +796,13 @@ def _cache_writes(name, args):
 # The library's names of the cache, which a call sourcing it may write by: its variable and the
 # function that adds an id.
 CACHE_NAMES = re.compile(r"assistant-threads|ASSISTANT_THREADS|assistant_thread_keep")
-# The commands that only read what they are given, and the wrappers that only run one, which a
-# call naming the cache may run; the targets a redirection in it may write.
+# The commands that only read what they are given or filter text, and the wrappers that only run
+# one, which a call naming the cache may run (sort too, but with -o, --output or
+# --compress-program); the targets a redirection in it may write.
 CACHE_READERS = frozenset((
     "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "jq", "diff", "cmp", "stat", "ls", "sha256sum", "sha1sum",
-    "md5sum", "echo", "printf", "true", "false", "test", "[", "cd", "pwd", "read", ":",
+    "md5sum", "sha512sum", "echo", "printf", "true", "false", "test", "[", "cd", "pwd", "read", ":", "cut", "tr", "nl",
+    "paste", "column", "fold", "rev", "basename", "dirname", "realpath", "readlink", "od", "hexdump",
 ))
 CACHE_WRAPPERS = frozenset(("env", "timeout", "nice", "command", "builtin", "xargs", "time"))
 QUIET_TARGETS = frozenset(("/dev/null", "/dev/stdout", "/dev/stderr"))
@@ -788,6 +866,9 @@ def _plain_reader(found):
         return all(word[3:] in QUIET_TARGETS for word in args if word.startswith("of="))
     if name == "sed":
         return _plain_sed(args)
+    if name == "sort":
+        # sort writes a file by -o or --output, and runs a program by --compress-program.
+        return not any(word.startswith(("--o", "--c")) or re.fullmatch(r"-[A-Za-z]*o.*", word) for word in args)
     return name in CACHE_READERS
 
 

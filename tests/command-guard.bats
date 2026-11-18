@@ -1011,8 +1011,9 @@ GITHUB_METHOD="$GITHUB (gh api --method POST)"
 GITHUB_INPUT="$GITHUB (gh api --input, a request body)"
 GITHUB_FIELD="$GITHUB (gh api with a field and no --method GET or HEAD, which sends a POST)"
 GITHUB_MUTATION="$GITHUB (a GraphQL mutation or subscription)"
-GITHUB_UNREAD="$GITHUB (a GraphQL query from a file, stdin or an expansion the guard cannot read)"
+GITHUB_UNREAD="$GITHUB (a GraphQL query from a file or stdin the guard cannot read)"
 GITHUB_NO_QUERY="$GITHUB (gh api graphql with a field but no query)"
+GITHUB_DOLLAR="$GITHUB (a GraphQL query holding a \$ or a backtick, which may be a shell expansion: write its values into the query)"
 
 @test "the assistant's GitHub writes by gh api, release, secret and variable are refused, naming what it read, by any spelling" {
   local command role
@@ -1036,8 +1037,17 @@ GITHUB_NO_QUERY="$GITHUB (gh api graphql with a field but no query)"
     "gh api -X GET graphql -f query='mutation{x}'"
   # shellcheck disable=SC2016
   refuses_as assistant "$GITHUB_UNREAD" "" 'gh api graphql -f query=@q.graphql' 'gh api graphql -F query=@-' \
-    'gh api graphql -f query="$(cat q.graphql)"' 'gh api graphql -f query="$Q"' 'gh api graphql -f query="${Q}"' \
-    'gh api graphql -f query=`cat q`' "gh api graphql -f query='{viewer{login}}' -F query=@q.graphql"
+    "gh api graphql -f query='{viewer{login}}' -F query=@q.graphql" 'gh api graphql --raw-field=query=@/tmp/q'
+  # A $ or a backtick anywhere in a query may be the shell's, which the walk cannot tell from a
+  # GraphQL variable, so both are refused: a comma or a comment line before an expansion too.
+  # shellcheck disable=SC2016
+  refuses_as assistant "$GITHUB_DOLLAR" "" 'gh api graphql -f query="$(cat q.graphql)"' 'gh api graphql -f query="$Q"' \
+    'gh api graphql -f query="${Q}"' 'gh api graphql -f query=`cat q`' \
+    "M='mutation{addStar(input:{starrableId:\"x\"}){clientMutationId}}'; gh api graphql -f query=\",\$M\"" \
+    'gh api graphql -f query="{viewer{login}}
+# x
+$M"' "gh api graphql -F query='query(\$n:Int!){viewer{repositories(first:\$n){nodes{name}}}}' -F n=5" \
+    'gh api graphql -f query="{viewer{login}}`printf x`"'
   refuses_as assistant "$GITHUB_NO_QUERY" "" 'gh api graphql -F owner=o' 'gh api graphql -f "query[]=x"'
   # Each writing subcommand of the three groups, by gh and gh-axi, with -R before it too.
   while IFS='|' read -r group command; do
@@ -1064,13 +1074,80 @@ COMMANDS
   refuses_as assistant "$GITHUB (gh release create)" "" 'gh release create v1 --notes --help' 'gh release create --help'
 }
 
+@test "the assistant's gh call is refused unless it is one of gh's reads, an unknown group and an alias among the refused" {
+  local name
+  # Each group's writes, which no deny rule of the assistant's held, by gh and gh-axi where it has them.
+  while IFS='|' read -r name command; do
+    refuses_as assistant "$GITHUB ($name)" "" "$command" "bash -c '$command'" "env A=1 $command"
+  done <<'COMMANDS'
+gh gist create|gh gist create --public /tmp/x
+gh workflow run|gh workflow run ci.yml
+gh workflow enable|gh workflow enable ci.yml
+gh workflow disable|gh workflow disable ci.yml
+gh run rerun|gh run rerun 1
+gh run cancel|gh run cancel 1
+gh run delete|gh run delete 1
+gh label create|gh label create x
+gh label edit|gh label edit x
+gh label delete|gh label delete x
+gh cache delete|gh cache delete --all
+gh repo fork|gh repo fork o/r
+gh repo rename|gh repo rename x
+gh repo archive|gh repo archive o/r
+gh repo sync|gh repo sync
+gh repo deploy-key add|gh repo deploy-key add key.pub
+gh repo autolink create|gh repo autolink create x y
+gh pr lock|gh pr lock 5
+gh pr update-branch|gh pr update-branch 5
+gh pr checkout|gh pr checkout 5
+gh issue delete|gh issue delete 5
+gh issue transfer|gh issue transfer 5 o/r
+gh issue lock|gh issue lock 5
+gh alias set|gh alias set rc 'release create'
+gh alias import|gh alias import aliases.yml
+gh alias delete|gh alias delete rc
+gh repo set-default|gh repo set-default o/r
+gh auth token|gh auth token
+gh auth login|gh auth login --with-token
+gh auth logout|gh auth logout
+gh auth switch|gh auth switch
+gh auth refresh|gh auth refresh -s repo
+gh auth setup-git|gh auth setup-git
+gh config set|gh config set editor vi
+gh config clear-cache|gh config clear-cache
+gh skill install|gh skill install x
+gh extension install|gh extension install o/gh-x
+gh extension exec|gh extension exec x
+gh-axi workflow run|gh-axi workflow run ci.yml --ref main
+gh-axi run rerun|gh-axi run rerun 1
+gh-axi label create|gh-axi label create --name x --color fff
+gh-axi repo fork|gh-axi repo fork
+gh-axi issue subissue add|gh-axi issue subissue add 1 2
+gh-axi pr checkout|gh-axi pr checkout 5
+COMMANDS
+  # A group the guard knows no read of: a user alias, an extension, gh co, copilot, preview, setup.
+  while IFS='|' read -r name command; do
+    refuses_as assistant "$GITHUB ($name, a command the guard knows no read of)" "" "$command"
+  done <<'UNKNOWN'
+gh rc|gh rc v1
+gh p|gh p repos/o/r/issues
+gh co|gh co 5
+gh copilot|gh copilot
+gh preview|gh preview prompter
+gh-axi setup|gh-axi setup hooks
+gh-axi update|gh-axi update
+UNKNOWN
+  # gh auth status prints the token with -t or --show-token.
+  refuses_as assistant "$GITHUB (gh auth status --show-token, which prints the token)" "" 'gh auth status -t' \
+    'gh auth status --show-token' 'gh auth status -at'
+}
+
 @test "the assistant's GitHub reads pass, and a worker's and a gate agent's GitHub calls are judged as before" {
   local command role
   # shellcheck disable=SC2016 # the command as an agent types it
   for command in 'gh api repos/o/r/pulls' 'gh api -X GET search/issues -f q=x' 'gh api --method HEAD repos/o/r' \
     'gh api --method=get repos/o/r/pulls -F per_page=100' 'gh api -X GET search/issues -f q=repo:o/r' \
     "gh api graphql -f query='{viewer{login}}'" "gh api graphql -f query='{viewer{login}}' -F n=5" \
-    "gh api graphql -F query='query(\$n:Int!){viewer{repositories(first:\$n){nodes{name}}}}' -F n=5" \
     "gh api graphql -f query='
 query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' 'gh api --paginate repos/o/r/pulls -q .[].number' \
     'gh api --method GET rate_limit -F probe=1 --jq .resources.core.limit' 'gh api -H Accept:x repos/o/r' \
@@ -1079,6 +1156,16 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
     'gh secret list -R o/r' 'gh variable list' 'gh variable ls' 'gh variable get X' 'gh release' 'gh secret' 'gh variable' \
     'gh release --help' 'gh secret --help' 'gh variable -h' 'gh release -R o/r' 'gh-axi release list' \
     'gh-axi secret list' 'gh-axi variable list' 'gh-axi release view v1' 'gh pr view 5' 'gh pr list' 'gh run view 1 --log' \
+    'gh' 'gh --help' 'gh pr --help' 'gh auth status' 'gh browse --no-browser' 'gh status' 'gh licenses' 'gh completion -s bash' \
+    'gh codespace list' 'gh discussion view 1' 'gh gist view x' 'gh gist clone x' 'gh issue list' 'gh issue status' \
+    'gh issue view 5 --comments' 'gh org list' 'gh pr status' 'gh pr checks 5' 'gh pr diff 5' 'gh project item-list 1' \
+    'gh repo view o/r' 'gh repo clone o/r /tmp/r' 'gh repo read-file README.md' 'gh repo autolink list' \
+    'gh repo deploy-key list' 'gh skill search x' 'gh cache list' 'gh run list' 'gh run watch 1' 'gh run download 1' \
+    'gh workflow view ci.yml' 'gh agent-task list' 'gh alias list' 'gh attestation verify a.tgz -o o' 'gh config get editor' \
+    'gh extension list' 'gh gpg-key list' 'gh ssh-key list' 'gh label list' 'gh ruleset check main' 'gh search prs x' \
+    'gh search code x --limit 5' 'gh-axi' 'gh-axi --help' 'gh-axi issue list --state open' 'gh-axi issue subissue list 1' \
+    'gh-axi pr checks 5' 'gh-axi run view 1 --log' 'gh-axi workflow list' 'gh-axi repo view' 'gh-axi label list' \
+    'gh-axi search issues x' 'gh-axi update --check' \
     "grep -rn 'gh secret set' sops" 'git commit -m "fix: gh api -X POST is refused"' 'echo gh release create'; do
     AGENT_TEAM_ROLE=assistant guard -0 "$command"
     assert_equal "$stderr" ""
@@ -1087,18 +1174,20 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
   for role in builder planner reviewer ops ""; do
     for command in 'gh api -X POST repos/o/r/issues' 'gh api repos/o/r/issues -f title=x' 'gh api --input body.json x' \
       "gh api graphql -f query='mutation{x}'" 'gh api graphql -f query=@q.graphql' 'gh release create v1' \
-      'gh secret set X' 'gh variable delete X' 'gh-axi release upload v1 a'; do
+      'gh secret set X' 'gh variable delete X' 'gh-axi release upload v1 a' 'gh gist create /tmp/x' 'gh alias set p api' \
+      'gh pr checkout 5' 'gh auth status -t' 'gh co 5'; do
       AGENT_TEAM_ROLE=$role guard -0 "$command"
       assert_equal "$stderr" ""
     done
   done
 }
 
-@test "gh's GitHub groups go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
+@test "every gh and gh-axi call goes to Python past the fast path only for the assistant, so fails closed there when Python fails" {
   printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
   chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
   local command
-  for command in 'gh api x' 'gh release list' 'gh secret list' 'gh variable list' 'gh-axi release list' 'g""h api x'; do
+  for command in 'gh api x' 'gh release list' 'gh secret list' 'gh variable list' 'gh-axi release list' 'g""h api x' \
+    'gh pr view 5' 'gh gist create x' 'gh co 5' 'bin/gh alias set p api' 'gh-axi workflow run ci'; do
     AGENT_TEAM_ROLE=builder guard -0 "$command"
     assert_equal "$stderr" ""
     guard -0 "$command"
@@ -1106,8 +1195,8 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
     [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
       { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
   done
-  # An assistant's gh call naming none of them still exits at once.
-  AGENT_TEAM_ROLE=assistant guard -0 'gh pr view 5'
+  # An assistant's call naming gh only inside a word still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'cat high.txt github.md'
 }
 
 # A write of the thread cache the Discord guard trusts, which the assistant's deny rule held by any
@@ -1184,6 +1273,9 @@ echo x >>$state/assistant-threads"
     refuses_as assistant "$CACHE ($name, which is no plain reader of it, in a call naming it)" "" "${command//@/$state/assistant-threads}"
   done <<'NONREADERS'
 sort|sort -u -o @ @ /tmp/ids
+sort|sort --output=@ /tmp/ids
+sort|sort -uo @ /tmp/ids
+sort|sort --compress-program=/tmp/x @
 python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
 perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
 node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
@@ -1230,7 +1322,9 @@ NONREADERS
     "dd if=$state/assistant-threads of=/dev/null" "head -n 3 $state/assistant-threads | wc -l" \
     "env LC_ALL=C grep -x 1 $state/assistant-threads" "echo tee assistant-threads" "sed -n '1,3p;\$p' $state/assistant-threads" \
     "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
-    "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2"; do
+    "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" \
+    "grep -rn assistant-threads bin | cut -c1-200" "sort -u $state/assistant-threads | tr -d x | nl" \
+    "sort -k1,1n -t, $state/assistant-threads"; do
     AGENT_TEAM_ROLE=assistant guard -0 "$command"
     assert_equal "$stderr" ""
   done
