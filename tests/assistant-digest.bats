@@ -96,8 +96,7 @@ $(catch_up_line)"
   handoff H1 note assistant coordinator answered
   handoff H2 task assistant coordinator
   handoff H3 walkthrough coordinator assistant
-  # The clock pinned before the item's review date, so the list marks it not DUE whatever today is.
-  TEAM_CURRENT_NOW=2026-11-15T12:00:00Z DISCORD_STATE_DIR=$HOME/.claude/channels/discord start
+  DISCORD_STATE_DIR=$HOME/.claude/channels/discord start
   assert_equal "$stderr" ""
   # The hold is offline_hold's assistant text, the one the lease-fence hook blocks with.
   assert_equal "$output" "GitHub is unreachable (since $(date -d 2026-11-14T09:00:00Z +%H:%M)); the team is holding: keep talking with Daniel, and touch no GitHub (no gh, gh-axi or git push) until your Bash calls stop being held.
