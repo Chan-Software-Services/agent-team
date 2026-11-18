@@ -621,31 +621,50 @@ SCRIPT
   assert_equal "$(line_of 'checkout site')" "FAIL checkout site: ~/projects/${site##*/} is a worktree of ~/projects/Conventioner, not a primary checkout; fix: move it aside, then git clone https://github.com/owner/site.git ~/projects/${site##*/}"
 }
 
-# queue_on <repo> [method=<MERGE|SQUASH|REBASE>] [strict=true] [classic=true] [pin=<app id>]: main
-# of <repo> on GitHub with ruleset 9 (main), a merge queue of that method (MERGE) beside the
-# required check test from GitHub Actions and, with pin, agent-review from that App; strict turns
-# the ruleset's strict rule on, and classic leaves classic protection, requiring test, beside it.
+# queue_on <repo> [method=<MERGE|SQUASH|REBASE>] [strict=true] [classic=true] [pin=<app id>]
+# [build=<n>] [merge=<n>] [timeout=<minutes>] [checks=<context>[:<integration id>];...]: main of
+# <repo> on GitHub with ruleset 9 (main), a merge queue of that method (MERGE) building at most
+# build entries at once (2), merging at most merge (5), with that check timeout (120), beside the
+# required checks named (test from GitHub Actions, each with no integration id when none is given)
+# and, with pin, agent-review from that App; strict turns the ruleset's strict rule on, and classic
+# leaves classic protection, requiring test, beside it.
 queue_on() {
-  local dir=$STUB_FIXTURES/github/$1 method=MERGE strict=false classic=false pin='' setting
+  local dir=$STUB_FIXTURES/github/$1 method=MERGE strict=false classic=false pin='' build=2 merge=5 timeout=120 checks='test:15368' setting
   for setting in "${@:2}"; do
     case $setting in
       method=*) method=${setting#*=} ;;
       strict=*) strict=${setting#*=} ;;
       classic=*) classic=${setting#*=} ;;
       pin=*) pin=${setting#*=} ;;
+      build=*) build=${setting#*=} ;;
+      merge=*) merge=${setting#*=} ;;
+      timeout=*) timeout=${setting#*=} ;;
+      checks=*) checks=${setting#*=} ;;
     esac
   done
   mkdir -p "$dir"
-  jq -n --arg method "$method" --argjson strict "$strict" --arg pin "$pin" '[
+  jq -n --arg method "$method" --argjson strict "$strict" --arg pin "$pin" --arg checks "$checks" \
+    --argjson build "$build" --argjson merge "$merge" --argjson timeout "$timeout" '[
     {type: "required_status_checks", ruleset_id: 9, parameters: {strict_required_status_checks_policy: $strict,
-      required_status_checks: ([{context: "test", integration_id: 15368}]
+      required_status_checks: ([$checks | split(";")[] | capture("^(?<context>.*?)(:(?<id>[0-9]+))?$")
+          | {context} + if .id == null then {} else {integration_id: (.id | tonumber)} end]
         + if $pin == "" then [] else [{context: "agent-review", integration_id: ($pin | tonumber)}] end)}},
-    {type: "merge_queue", ruleset_id: 9, parameters: {merge_method: $method, grouping_strategy: "ALLGREEN"}}]' >"$dir/rules.json"
+    {type: "merge_queue", ruleset_id: 9, parameters: {merge_method: $method, grouping_strategy: "ALLGREEN",
+      max_entries_to_build: $build, max_entries_to_merge: $merge, min_entries_to_merge: 1,
+      min_entries_to_merge_wait_minutes: 0, check_response_timeout_minutes: $timeout}}]' >"$dir/rules.json"
   echo '{"id": 9, "name": "main", "enforcement": "active", "bypass_actors": []}' >"$dir/ruleset-9.json"
   jq -n --argjson classic "$classic" '{name: "main", protected: true, protection: {enabled: $classic,
     required_status_checks: {enforcement_level: (if $classic then "everyone" else "off" end),
       contexts: (if $classic then ["test"] else [] end), checks: (if $classic then [{context: "test", app_id: 15368}] else [] end)}}}' \
     >"$dir/branch.json"
+}
+
+# default_setup <repo> <configured|not-configured>: <repo>'s CodeQL default setup on GitHub, as
+# repos/<repo>/code-scanning/default-setup answers.
+default_setup() {
+  mkdir -p "$STUB_FIXTURES/github/$1"
+  jq -n --arg state "$2" '{state: $state, languages: (if $state == "configured" then ["actions", "python"] else [] end),
+    query_suite: "default", updated_at: "2026-11-17T12:00:00Z", schedule: "weekly"}' >"$STUB_FIXTURES/github/$1/default-setup.json"
 }
 
 @test "the merge queue line passes saying no base has a queue, and names nothing of an unprotected base or a protected one with none" {
@@ -668,39 +687,41 @@ queue_on() {
 @test "the merge queue line passes naming each project whose base has a queue, the team's own with the App's pin" {
   only_checks 113-merge-queue.sh
   tools_at arch
-  queue_on owner/site
+  queue_on owner/site build=1 merge=3 timeout=90
   run_bin -0 team-doctor
-  assert_equal "$output" "PASS merge queue: site (main on owner/site): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$output" "PASS merge queue: site (main on owner/site: merge, build 1, merge 3, timeout 90 min): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
   # The team's own project with the App off needs no pin; with it on, the pin is named.
   register agent-team Chan-Software-Services/agent-team direct-pr git
   queue_on Chan-Software-Services/agent-team
   run_bin -0 team-doctor
-  assert_equal "$output" "PASS merge queue: site (main on owner/site), agent-team (main on Chan-Software-Services/agent-team): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$output" "PASS merge queue: site (main on owner/site: merge, build 1, merge 3, timeout 90 min), agent-team (main on Chan-Software-Services/agent-team: merge, build 2, merge 5, timeout 120 min): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
   review_app_on
   queue_on Chan-Software-Services/agent-team pin=123456
   run_bin -0 team-doctor
-  assert_equal "$output" "PASS merge queue: site (main on owner/site), agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$output" "PASS merge queue: site (main on owner/site: merge, build 1, merge 3, timeout 90 min), agent-team (main on Chan-Software-Services/agent-team: merge, build 2, merge 5, timeout 120 min, agent-review pinned to the reviewer App 123456): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
   # A registry still naming a moved repo's old owner reads the repo where it is now, never
   # through GitHub's redirect of the old name.
   sed -i 's#^repo = "Chan-Software-Services/agent-team"#repo = "chanjdaniel/agent-team"#' "$TEAM_HOME/projects.toml"
   : >"$STUB_CALLS/gh.log"
   run_bin -0 team-doctor
-  assert_contains "$output" "agent-team (main on Chan-Software-Services/agent-team, agent-review pinned to the reviewer App 123456)"
+  assert_contains "$output" "agent-team (main on Chan-Software-Services/agent-team: merge, build 2, merge 5, timeout 120 min, agent-review pinned to the reviewer App 123456)"
   assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c chanjdaniel || true)" 0
 }
 
 @test "the merge queue line reads each base's rules on the owner login, whatever GitHub login the doctor's session names" {
   only_checks 113-merge-queue.sh
   tools_at arch
-  queue_on owner/site
+  # A required Analyze check has the default setup read too, on the same login.
+  queue_on owner/site 'checks=test:15368;Analyze (actions):15368'
   # The stub gh logs the three login variables of each call before it answers.
   { printf '%s\n' 'printf "GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n" "${GH_CONFIG_DIR-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"'
     cat "$STUB_FIXTURES/gh.sh"; } >"$STUB_FIXTURES/gh.sh.new"
   mv "$STUB_FIXTURES/gh.sh.new" "$STUB_FIXTURES/gh.sh"
   GH_CONFIG_DIR=$HOME/.config/agent-team/gh-worker GH_TOKEN=fixture-session-token GITHUB_TOKEN=fixture-session-token \
     run_bin -0 team-doctor
-  assert_equal "$output" "PASS merge queue: site (main on owner/site): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  assert_equal "$output" "PASS merge queue: site (main on owner/site: merge, build 2, merge 5, timeout 120 min): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
   assert_equal "$(sort -u "$STUB_CALLS/gh.env")" "GH_CONFIG_DIR=<unset> GH_TOKEN=<unset> GITHUB_TOKEN=<unset>"
+  assert_equal "$(stub_calls gh | jq -r 'select(.[1] | endswith("/default-setup")) | .[1]')" "repos/owner/site/code-scanning/default-setup"
 }
 
 @test "the merge queue line fails on a queue whose merge method is not the registry's, a strict rule, or classic protection beside it, the first of them" {
@@ -740,6 +761,81 @@ queue_on() {
   queue_on Chan-Software-Services/Conventioner strict=true
   run_bin -1 team-doctor
   assert_equal "$output" "FAIL merge queue: main's merge queue on Chan-Software-Services/Conventioner stands beside a strict rule, which holds each PR until its branch is up to date with main; $reason; fix: Daniel takes step 6 of sops/merging.md on Chan-Software-Services/Conventioner, the strict rule off in main's ruleset, and its classic protection removed; $fix"
+}
+
+@test "the merge queue line fails on a queue requiring the roll-up CodeQL from GitHub Advanced Security or no integration, after the classic problems and before the App's pin" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  local reason="main's merge queue on owner/site requires the code scanning roll-up CodeQL, which GitHub posts only on a pull request, never on a trial commit"
+  local fix="Daniel takes step 6 of sops/merging.md on owner/site, the CodeQL workflow's Analyze (<language>) checks required in its place, and a code_scanning rule, in main's ruleset"
+  queue_on owner/site 'checks=test:15368;CodeQL:57789'
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: $reason; fix: $fix"
+  # A context with no integration id is met by GitHub Advanced Security's roll-up too.
+  queue_on owner/site 'checks=test:15368;CodeQL'
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: $reason; fix: $fix"
+  # A check named CodeQL from another App, a workflow's own job, is not the roll-up.
+  queue_on owner/site 'checks=test:15368;CodeQL:15368'
+  run_bin -0 team-doctor
+  assert_equal "$output" "PASS merge queue: site (main on owner/site: merge, build 2, merge 5, timeout 120 min): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  # Classic protection beside the queue is named first.
+  queue_on owner/site 'checks=test:15368;CodeQL:57789' classic=true
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on owner/site stands beside main's classic protection, which the ruleset replaces; fix: Daniel takes step 6 of sops/merging.md on owner/site, main's classic protection removed"
+  # And the roll-up before the team's own missing pin.
+  register agent-team Chan-Software-Services/agent-team direct-pr git
+  review_app_on
+  queue_on owner/site
+  queue_on Chan-Software-Services/agent-team 'checks=test:15368;CodeQL:57789'
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on Chan-Software-Services/agent-team requires the code scanning roll-up CodeQL, which GitHub posts only on a pull request, never on a trial commit; fix: Daniel takes step 6 of sops/merging.md on Chan-Software-Services/agent-team, the CodeQL workflow's Analyze (<language>) checks required in its place, and a code_scanning rule, in main's ruleset"
+}
+
+@test "the merge queue line fails on a queue requiring Analyze checks while CodeQL's default setup is configured, read only for such a base" {
+  only_checks 113-merge-queue.sh
+  tools_at arch
+  local pass="PASS merge queue: site (main on owner/site: merge, build 2, merge 5, timeout 120 min): each queue merges with the registry's merge_method, with no strict rule and no classic protection beside it"
+  # A base requiring no Analyze check has no default setup read, configured or not.
+  queue_on owner/site
+  default_setup owner/site configured
+  run_bin -0 team-doctor
+  assert_equal "$output" "$pass"
+  assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c default-setup || true)" 0
+  # Nor has a base with no queue, though it requires one.
+  queue_on Chan-Software-Services/Conventioner 'checks=Analyze (python):15368'
+  jq 'map(select(.type != "merge_queue"))' "$STUB_FIXTURES/github/Chan-Software-Services/Conventioner/rules.json" >"$BATS_TEST_TMPDIR/rules.json"
+  mv "$BATS_TEST_TMPDIR/rules.json" "$STUB_FIXTURES/github/Chan-Software-Services/Conventioner/rules.json"
+  default_setup Chan-Software-Services/Conventioner configured
+  run_bin -0 team-doctor
+  assert_equal "$output" "$pass"
+  assert_equal "$(stub_calls gh | jq -r '.[1]' | grep -c default-setup || true)" 0
+
+  # A base requiring them, with the default setup configured, fails naming each.
+  queue_on owner/site 'checks=test:15368;Analyze (python):15368;Analyze (actions):15368'
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on owner/site requires Analyze (actions), Analyze (python) while CodeQL's default setup is configured, which runs nothing on a trial commit and refuses the workflow's uploads; fix: Daniel takes step 6 of sops/merging.md on owner/site, CodeQL's default setup turned off on owner/site"
+  # With it off, the base passes.
+  default_setup owner/site not-configured
+  run_bin -0 team-doctor
+  assert_equal "$output" "$pass"
+  # The roll-up is named before it, and it before the team's own missing pin.
+  default_setup owner/site configured
+  queue_on owner/site 'checks=Analyze (actions):15368;CodeQL:57789'
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on owner/site requires the code scanning roll-up CodeQL, which GitHub posts only on a pull request, never on a trial commit; fix: Daniel takes step 6 of sops/merging.md on owner/site, the CodeQL workflow's Analyze (<language>) checks required in its place, and a code_scanning rule, in main's ruleset"
+  queue_on owner/site
+  register agent-team Chan-Software-Services/agent-team direct-pr git
+  review_app_on
+  queue_on Chan-Software-Services/agent-team 'checks=Analyze (actions):15368'
+  default_setup Chan-Software-Services/agent-team configured
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: main's merge queue on Chan-Software-Services/agent-team requires Analyze (actions) while CodeQL's default setup is configured, which runs nothing on a trial commit and refuses the workflow's uploads; fix: Daniel takes step 6 of sops/merging.md on Chan-Software-Services/agent-team, CodeQL's default setup turned off on Chan-Software-Services/agent-team"
+
+  # A default setup GitHub cannot read is the base's cannot-be-read failure.
+  echo "HTTP 403: Resource not accessible by integration" >"$STUB_FIXTURES/github/Chan-Software-Services/agent-team/default-setup.err"
+  run_bin -1 team-doctor
+  assert_equal "$output" "FAIL merge queue: Chan-Software-Services/agent-team's CodeQL default setup cannot be read from GitHub: gh api repos/Chan-Software-Services/agent-team/code-scanning/default-setup: HTTP 403: Resource not accessible by integration; fix: the github login line's fix, then run team-doctor again"
 }
 
 @test "the merge queue line fails on a base GitHub cannot read, and reads nothing while the registry is refused" {
