@@ -1175,16 +1175,62 @@ echo x >>$state/assistant-threads"
   assert_equal "${stderr#*$'\n'}" "It stands on line 2 of the call: echo x >>$state/assistant-threads."
 }
 
+@test "the assistant's call naming the thread cache is refused unless each command of it is a plain reader with no write" {
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  local state='~/.local/state/agent-team' command
+  # A command that is no plain reader, in a call naming the cache, is refused by its name, as the
+  # deny rule *assistant-threads* refused any call naming it: each writes it by its own program.
+  while IFS='|' read -r name command; do
+    refuses_as assistant "$CACHE ($name, which is no plain reader of it, in a call naming it)" "" "${command//@/$state/assistant-threads}"
+  done <<'NONREADERS'
+sort|sort -u -o @ @ /tmp/ids
+python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
+perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
+node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
+awk|awk '{print >> "@"}' /tmp/ids
+curl|curl -o @ https://example.com/ids
+wget|wget -O @ https://example.com/ids
+tar|tar -xf /tmp/ids.tar -C ~/.local/state/agent-team assistant-threads
+perl|perl -ne print @
+bash|bash -c 'cat @'
+git|git commit -m 'test: rm assistant-threads is refused'
+source|source ~/agent-team/bin/lib/team.sh && assistant_thread_keep 1571000000000000303
+.|. ~/agent-team/bin/lib/team.sh; assistant_thread_keep 1571000000000000303
+NONREADERS
+  # sed reads only with a plain script: a w, W or e command or flag writes or runs.
+  refuses_as assistant "$CACHE (sed, which is no plain reader of it, in a call naming it)" "" \
+    "sed -n 'w $state/assistant-threads' /tmp/ids" "sed -n -e 1p -e 'W $state/assistant-threads' /tmp/ids" \
+    "sed 's/x/y/w $state/assistant-threads' /tmp/ids" "sed -f /tmp/script $state/assistant-threads" \
+    "sed '1e touch /tmp/x' $state/assistant-threads"
+  # A redirection in a call naming the cache writes only to /dev/null, stdout or stderr, since its
+  # target may be the cache by a variable or a link.
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE (>>\$f, a write in a call naming it)" "" \
+    "f=$state/assistant-threads; echo 1571000000000000303 >>\"\$f\""
+  refuses_as assistant "$CACHE (>/tmp/count, a write in a call naming it)" "" "grep -c . $state/assistant-threads >/tmp/count"
+  # The library's names of the cache name it too: its variable and the function that writes it.
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE (>>\$ASSISTANT_THREADS, a write in a call naming it)" "" \
+    'source ~/agent-team/bin/lib/team.sh; echo 1571000000000000303 >>"$ASSISTANT_THREADS"'
+  refuses_as assistant "$CACHE (assistant_thread_keep, which is no plain reader of it, in a call naming it)" "" \
+    'assistant_thread_keep 1571000000000000303 2>/dev/null'
+  # Behind a wrapper that is no plain one, the wrapper is refused.
+  refuses_as assistant "$CACHE (flock, which is no plain reader of it, in a call naming it)" "" \
+    "flock $state/assistant-threads cat /tmp/x"
+}
+
 @test "the assistant's reads of the thread cache pass, and a worker's and a gate agent's writes of it are judged as before" {
   # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
   local state='~/.local/state/agent-team' command role
   # shellcheck disable=SC2016 # the command as an agent types it
   for command in 'grep -rn assistant-threads bin' "cat $state/assistant-threads" "wc -l $state/assistant-threads" \
     "jq -R . $state/assistant-threads" "sed -n 1p $state/assistant-threads" "sed -e s/i/x/ $state/assistant-threads" \
-    "perl -ne print $state/assistant-threads" "wc -l <$state/assistant-threads" "cat < $state/assistant-threads" \
-    "while read -r id; do echo \"\$id\"; done <$state/assistant-threads" "grep -c . $state/assistant-threads >/tmp/count" \
-    "dd if=$state/assistant-threads of=/dev/null" "bash -c 'cat $state/assistant-threads'" \
-    "git commit -m 'test: rm assistant-threads is refused'" "echo tee assistant-threads"; do
+    "wc -l <$state/assistant-threads" "cat < $state/assistant-threads" \
+    "while read -r id; do echo \"\$id\"; done <$state/assistant-threads" "grep -c . $state/assistant-threads 2>/dev/null" \
+    "dd if=$state/assistant-threads of=/dev/null" "head -n 3 $state/assistant-threads | wc -l" \
+    "env LC_ALL=C grep -x 1 $state/assistant-threads" "echo tee assistant-threads" "sed -n '1,3p;\$p' $state/assistant-threads" \
+    "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
+    "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2"; do
     AGENT_TEAM_ROLE=assistant guard -0 "$command"
     assert_equal "$stderr" ""
   done

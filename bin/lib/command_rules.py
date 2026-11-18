@@ -717,27 +717,107 @@ def _cache_writes(name, args):
     return next(found, None)
 
 
-def _thread_cache(command, context):
-    """The assistant's write of the thread cache by a writer, the reason naming the path; any
-    other role's call is not this row's."""
-    if context is None or context.role != "assistant":
-        return None
-    for words in heads(command):
-        if words and (path := _cache_writes(command_name(words[0]), list(words[1:]))) is not None:
-            return CACHE_REASON.format(path)
-    return None
+# The library's names of the cache, which a call sourcing it may write by: its variable and the
+# function that adds an id.
+CACHE_NAMES = re.compile(r"assistant-threads|ASSISTANT_THREADS|assistant_thread_keep")
+# The commands that only read what they are given, and the wrappers that only run one, which a
+# call naming the cache may run; the targets a redirection in it may write.
+CACHE_READERS = frozenset((
+    "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "jq", "diff", "cmp", "stat", "ls", "sha256sum", "sha1sum",
+    "md5sum", "echo", "printf", "true", "false", "test", "[", "cd", "pwd", "read", ":",
+))
+CACHE_WRAPPERS = frozenset(("env", "timeout", "nice", "command", "builtin", "xargs", "time"))
+QUIET_TARGETS = frozenset(("/dev/null", "/dev/stdout", "/dev/stderr"))
+# sed's options a plain reading takes, and the script it reads with: one command a part (split on
+# ;), an address or range, then p, q, Q, =, d, l, n or N, or s/.../.../ with g, p, i, I or a number,
+# so no w, W or e command or flag writes or runs.
+SED_PLAIN_OPTIONS = frozenset((
+    "-n", "--quiet", "--silent", "-E", "-r", "--regexp-extended", "-s", "--separate", "-z", "--null-data", "-u",
+    "--unbuffered", "--posix",
+))
+SED_ADDRESS = r"(?:[0-9]+|\$|/(?:[^/\\]|\\.)*/)"
+SED_PLAIN = re.compile(
+    rf"(?:{SED_ADDRESS}(?:,{SED_ADDRESS})?)?!?(?:[pqQ=dlnN]|s/(?:[^/\\]|\\.)*/(?:[^/\\]|\\.)*/[gpiI0-9]*)"
+)
 
 
-def _cache_redirect(command, context):
-    """The assistant's redirection into the thread cache, anywhere the call's walk reads one (a
-    bare one with no command too), as its reason and the target, or None."""
-    if context is None or context.role != "assistant":
+def _names_cache(text):
+    """Whether a call's text names the thread cache, as written or with its quotes and
+    backslashes removed, as the hook's fast path reads it."""
+    return any(CACHE_NAMES.search(form) for form in (text, re.sub(r"['\"\\]", "", text.replace("\\\n", ""))))
+
+
+def _plain_sed(args):
+    """Whether sed's words read only: no option but the plain ones and -e, and each script plain."""
+    scripts, k = [], 0
+    while k < len(args):
+        word = args[k]
+        if word in ("-e", "--expression"):
+            if k + 1 >= len(args):
+                return False
+            scripts.append(args[k + 1])
+            k += 2
+            continue
+        if word.startswith("--expression="):
+            scripts.append(word.partition("=")[2])
+        elif word.startswith("-e") and not word.startswith("--"):
+            scripts.append(word[2:])
+        elif word.startswith("-") and word != "-" and word not in SED_PLAIN_OPTIONS:
+            return False
+        k += 1
+    if not scripts:
+        script = next((word for word in args if not word.startswith("-") or word == "-"), None)
+        if script is None:
+            return False
+        scripts.append(script)
+    return all(
+        "\n" not in script and all(SED_PLAIN.fullmatch(part.strip()) for part in script.split(";"))
+        for script in scripts
+    )
+
+
+def _plain_reader(found):
+    """Whether a walked command only reads: behind plain wrappers alone, a reader (dd writing to
+    no file, sed with a plain script) or no command at all."""
+    if any(wrapper and command_name(wrapper[0]) not in CACHE_WRAPPERS for wrapper in found.wrappers):
+        return False
+    if not found.words:
+        return True
+    name, args = command_name(found.words[0]), list(found.words[1:])
+    if name == "dd":
+        return all(word[3:] in QUIET_TARGETS for word in args if word.startswith("of="))
+    if name == "sed":
+        return _plain_sed(args)
+    return name in CACHE_READERS
+
+
+def _cache_call(command, context):
+    """The assistant's call naming the thread cache that may write it, as its reason and the words
+    of its refused line, or None: a redirection that writes anywhere but /dev/null, stdout or
+    stderr (the cache's path when it names it), a writer naming it (that path), or any command
+    that is no plain reader (its name). Any other role's call, and one naming no cache, is not
+    this row's."""
+    if context is None or context.role != "assistant" or not _names_cache(command):
         return None
     for operator, target in call_redirections(command):
-        operator = re.sub(r"^(?:[0-9]+|\{\w+\})", "", operator)
-        writes = operator in WRITE_REDIRECTS or (operator == ">&" and not re.fullmatch(r"[0-9]*-?", target))
-        if writes and command_name(target).startswith(THREAD_CACHE):
+        bare = re.sub(r"^(?:[0-9]+|\{\w+\})", "", operator)
+        writes = bare in WRITE_REDIRECTS or (bare == ">&" and not re.fullmatch(r"[0-9]*-?", target))
+        if not writes or target in QUIET_TARGETS:
+            continue
+        if command_name(target).startswith(THREAD_CACHE):
             return CACHE_REASON.format(target), (target,)
+        return CACHE_REASON.format(f"{operator}{target}, a write in a call naming it"), (target,)
+    walked = call_commands(command)
+    for found in walked:
+        for words in heads(found):
+            if words and (path := _cache_writes(command_name(words[0]), list(words[1:]))) is not None:
+                return CACHE_REASON.format(path), tuple(words)
+    for found in walked:
+        if not _plain_reader(found):
+            ran = next((wrapper for wrapper in found.wrappers if wrapper and command_name(wrapper[0]) not in CACHE_WRAPPERS),
+                       found.words)
+            name = command_name(ran[0])
+            return CACHE_REASON.format(f"{name}, which is no plain reader of it, in a call naming it"), tuple(ran[:1])
     return None
 
 
@@ -874,7 +954,7 @@ ROWS = (
     ),
     Row("assistant-acts", _assistant_act, None),
     Row("assistant-github-write", _github_write, None),
-    Row("assistant-thread-cache", _thread_cache, None, call=_cache_redirect),
+    Row("assistant-thread-cache", lambda command, context: None, None, call=_cache_call),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),

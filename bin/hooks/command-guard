@@ -105,7 +105,7 @@ text=$command$'\n'${stripped//[\'\"\\]/}
 # assistant-thread-cache row reads; a worker's fast path never reads them.
 assistant_words=
 [[ ${AGENT_TEAM_ROLE:-} != assistant ]] ||
-  assistant_words='team-(checkpoint|handoff|ops-end|records-rewrite|resume|review-comment|stow|capacity|config|heavy|lease|secrets|stack|timers)|claude-coordinator|gh.*(api|release|secret|variable)|assistant-threads'
+  assistant_words='team-(checkpoint|handoff|ops-end|records-rewrite|resume|review-comment|stow|capacity|config|heavy|lease|secrets|stack|timers)|claude-coordinator|gh.*(api|release|secret|variable)|assistant-threads|ASSISTANT_THREADS|assistant_thread_keep'
 [[ $text == *team-worker* || $text == *team-load-check* || $text == *ui-capture* ||
   $text == *AGENT_TEAM_* || $text == *GH_CONFIG_DIR* || $text == *GH_TOKEN* || $text == *GITHUB_TOKEN* ||
   $text == *--steal* || $text == *team-ask* || $text == *team-answer* ||
