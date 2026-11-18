@@ -53,8 +53,9 @@
       "inbox": true,
       "writer": "team-close",
       "push": true,
-      "about": "a legacy task's lists are empty; the hand-written legacy closes before strict_from have none",
-      "required": {"archive": "array", "returned": "array", "kept": "array"}
+      "about": "a legacy task's lists are empty; the hand-written legacy closes before strict_from have none; threads: the task's Discord threads (its thread and interview thread), which the close leaves to the archive's rule (bin/lib/threads.sh), absent for a task with none and on the closes from before the rule",
+      "required": {"archive": "array", "returned": "array", "kept": "array"},
+      "optional": {"threads": "array"}
     },
     "merged": {
       "inbox": true,
