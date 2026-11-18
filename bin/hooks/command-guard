@@ -40,9 +40,9 @@
 # query it can read; any other group or subcommand that is no read, an unknown group among them),
 # the assistant's call naming the thread cache the Discord guard trusts that may do more than read
 # it (a redirection that writes anywhere but /dev/null, a writer such as tee, cp, rm or sed -i, an
-# assignment, a wrapper, any command that is no plain reader such as cat, grep or jq by its bare
-# name, or anything but a plain list of them joined by |, &&, || and ;), an upload of a file or
-# body to a host outside the team's own (as bin/lib/outbound.py reads it), a worker's or the
+# assignment, a heredoc, a wrapper, any command that is no plain reader such as cat, grep or jq
+# by its bare name, or anything but a plain list of them joined by |, &&, || and ;), an upload of a
+# file or body to a host outside the team's own (as bin/lib/outbound.py reads it), a worker's or the
 # assistant's force push or cd into the team's keys' or the Discord bot's directories, a kill that
 # reaches what is not the session's own (by name or pattern, tmux's kill-*, of PIDs read from
 # input, of a PID it cannot read, of a process group, of a literal PID whose process is not proven

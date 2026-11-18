@@ -840,19 +840,25 @@ def _cache_writes(name, args):
 CACHE_NAMES = re.compile(r"assistant-threads|ASSISTANT_THREADS|assistant_thread_keep")
 # The commands that only read what they are given or filter text, none with an option that writes a
 # file, runs a program or assigns a variable, which a call naming the cache may run by its bare
-# name (dd too, writing to no file, sed with a plain script, and sort with no -o, --output or
-# --compress-program); no wrapper and no builtin that assigns (read, printf -v, cd) is one; the
-# one target an output redirection in it may write.
+# name (dd too, writing to no file, sed with a plain script, sort with no -o, --output,
+# --compress-program or -T, and diff with no -l or --paginate, which runs pr); no wrapper and no
+# builtin that assigns (read, printf -v, cd) is one; the one target an output redirection in it
+# may write.
 CACHE_READERS = frozenset((
     "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "jq", "diff", "cmp", "stat", "ls", "sha256sum", "sha1sum",
     "md5sum", "sha512sum", "echo", "true", "false", "test", "[", "pwd", ":", "cut", "tr", "nl", "paste", "column",
     "fold", "rev", "basename", "dirname", "realpath", "readlink", "od", "hexdump",
 ))
 QUIET_TARGETS = frozenset(("/dev/null",))
-# The input redirections, the fd before them aside, which a call naming the cache may make.
-READ_REDIRECTS = frozenset(("<", "<<", "<<-", "<<<"))
+# The input redirections, the fd before them aside, which a call naming the cache may make: no
+# heredoc, whose body the walk does not read in full, and a here-string only with a word holding
+# no $ or backtick, since the walk does not read a substitution in a double-quoted one.
+READ_REDIRECTS = frozenset(("<", "<<<"))
+HEREDOCS = frozenset(("<<", "<<-"))
 # An arithmetic expansion or command, which may assign a variable: $((, $[ or ((.
 ARITHMETIC = re.compile(r"\$\[|\(\(")
+# A parameter expansion, which may assign a variable (${name:=word}).
+PARAMETER = re.compile(r"\$\{")
 PLAIN_LIST = "a call naming it that is no plain list of readers joined by |, &&, || or ;"
 # sed's options a plain reading takes, and the script it reads with: one command a part (split on
 # ;), an address or range, then p, q, Q, =, d, l, n or N, or s/.../.../ with g, p, i, I or a number,
@@ -904,9 +910,9 @@ def _plain_sed(args):
 
 def _plain_reader(found):
     """Whether a walked command only reads: a reader by its bare name (dd writing to no file, sed
-    with a plain script, sort writing no file and running no program), behind no wrapper, with no
-    assignment before it and with a name at all; a path, a PATH or a wrapper's option may run
-    another program than a reader's name says."""
+    with a plain script, sort and diff writing no file and running no program), behind no
+    wrapper, with no assignment before it and with a name at all; a path, a PATH or a wrapper's
+    option may run another program than a reader's name says."""
     if found.assignments or found.wrappers or not found.words or "/" in found.words[0]:
         return False
     name, args = found.words[0], list(found.words[1:])
@@ -920,6 +926,11 @@ def _plain_reader(found):
         # prefix getopt_long takes (--o, --t, --co).
         return not any(word.startswith(("--o", "--t", "--co")) or re.fullmatch(r"-[A-Za-z]*[oT].*", word)
                        for word in args)
+    if name == "diff":
+        # diff runs pr by -l or --paginate, named by any prefix getopt_long takes (--pag) or in a
+        # short cluster (-ul).
+        return not any((word.startswith("--") and len(word) > 2 and "paginate".startswith(word[2:].partition("=")[0]))
+                       or re.fullmatch(r"-[A-Za-z]*l.*", word) for word in args)
     return name in CACHE_READERS
 
 
@@ -927,11 +938,13 @@ def _cache_call(command, context):
     """The assistant's call naming the thread cache that may do more than read it, as its reason
     and the words of its refused line, or None: a redirection that writes anywhere but /dev/null
     (the cache's path when it names it), a named fd's (which assigns its variable) or any other
-    but an input one or an fd's duplication, a writer naming it (that path), any command that is
-    no plain reader (its name, or its assignment), an arithmetic expansion (which may assign), and
-    a call that is no plain list of commands joined by pipes, &&, || and ; with no code part but
-    its own text (command_text.plain_sequence with pipes, and code_parts). Any other role's call,
-    and one naming no cache, is not this row's."""
+    but an input one or an fd's duplication, a heredoc, a here-string whose word holds a $ or a
+    backtick (each holding text the walk does not read in full), a writer naming it (that path),
+    any command that is no plain reader (its name, or its assignment), an arithmetic or parameter
+    expansion anywhere in its text (which may assign), and a call that is no plain list of
+    commands joined by pipes, &&, || and ; with no code part but its own text
+    (command_text.plain_sequence with pipes, and code_parts). Any other role's call, and one
+    naming no cache, is not this row's."""
     if context is None or context.role != "assistant" or not _names_cache(command):
         return None
     for operator, target in call_redirections(command):
@@ -947,6 +960,14 @@ def _cache_call(command, context):
             return CACHE_REASON.format(f"{operator}{target}, a redirection that assigns a variable, in a call naming it"), (
                 target,
             )
+        if bare in HEREDOCS:
+            return CACHE_REASON.format(
+                f"{operator}{target}, a heredoc, whose body the walk does not read in full, in a call naming it"
+            ), (target,)
+        if bare == "<<<" and re.search(r"[$`]", target):
+            return CACHE_REASON.format(
+                f"{operator}{target}, a here-string whose word the walk does not read in full, in a call naming it"
+            ), (target,)
         if not writes and not duplicates and bare not in READ_REDIRECTS:
             return CACHE_REASON.format(f"{operator}{target}, a redirection in a call naming it"), (target,)
     walked = call_commands(command)
@@ -965,6 +986,8 @@ def _cache_call(command, context):
             return CACHE_REASON.format(f"{ran[0]}, which is no plain reader of it, in a call naming it"), tuple(ran[:1])
     if ARITHMETIC.search(command):
         return CACHE_REASON.format("an arithmetic expansion, which may assign a variable, in a call naming it"), ()
+    if PARAMETER.search(command):
+        return CACHE_REASON.format("a parameter expansion, which may assign a variable, in a call naming it"), ()
     if len(code_parts(command)) != 1 or plain_sequence(command, pipes=True) is None:
         return CACHE_REASON.format(PLAIN_LIST), ()
     return None

@@ -1295,6 +1295,10 @@ sort|sort --out @ /tmp/ids
 sort|sort -T /tmp @
 sort|sort --temporary-directory=/tmp @
 dd|dd if=@ of=/dev/stdout
+diff|diff -l @ /tmp/ids
+diff|diff -ul @ /tmp/ids
+diff|diff --paginate @ /tmp/ids
+diff|diff --pag @ /tmp/ids
 python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
 perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
 node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
@@ -1391,11 +1395,39 @@ NONREADERS
     "for x in 1; do cat $state/assistant-threads; done"
   refuses_as assistant "$CACHE ([[, which is no plain reader of it, in a call naming it)" "" \
     "[[ -s $state/assistant-threads ]] && cat $state/assistant-threads"
-  # A command a heredoc's body runs is read as one written plainly.
-  refuses_as assistant "$CACHE (\$(rm /tmp/x), which is no plain reader of it, in a call naming it)" "" "cat <<IDS
+  # The walk does not read a heredoc's body in full, and an unquoted one expands \${...}, which may
+  # assign (\${BASH_CMDS[cat]:=...} changes what a later bare cat runs), so no heredoc passes, on
+  # any marker.
+  refuses_as assistant "$CACHE (<<IDS, a heredoc, whose body the walk does not read in full, in a call naming it)" "" \
+    ": <<IDS
+\${BASH_CMDS[cat]:=/tmp/x/cat}
+IDS
+cat $state/assistant-threads" ": <<'IDS'
+\${BASH_CMDS[cat]:=/tmp/x/cat}
+IDS
+cat $state/assistant-threads" "cat <<IDS
 \$(rm /tmp/x)
 IDS
+cat $state/assistant-threads" "cat <<\"IDS\"
+1571000000000000101
+IDS
 cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (<<-IDS, a heredoc, whose body the walk does not read in full, in a call naming it)" "" \
+    "true <<-IDS
+	1571000000000000101
+	IDS
+cat $state/assistant-threads"
+  # A here-string passes only with a word the walk reads in full, one with no \$ or backtick: the
+  # walk does not read a substitution in a double-quoted one.
+  refuses_as assistant "$CACHE (<<<\$(rm /tmp/x), a here-string whose word the walk does not read in full, in a call naming it)" "" \
+    "cat <<<\"\$(rm /tmp/x)\"; cat $state/assistant-threads" "cat <<< \"\$(rm /tmp/x)\" $state/assistant-threads"
+  refuses_as assistant "$CACHE (<<<\`rm /tmp/x\`, a here-string whose word the walk does not read in full, in a call naming it)" "" \
+    "cat <<<\"\`rm /tmp/x\`\"; cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (<<<\${BASH_CMDS[cat]:=/tmp/x/cat}, a here-string whose word the walk does not read in full, in a call naming it)" "" \
+    "cat <<<\"\${BASH_CMDS[cat]:=/tmp/x/cat}\"; cat $state/assistant-threads"
+  # A \${ anywhere in the call's text is refused, as the arithmetic forms are, since one may assign.
+  refuses_as assistant "$CACHE (a parameter expansion, which may assign a variable, in a call naming it)" "" \
+    "grep -c '\${x}' $state/assistant-threads"
 }
 
 @test "the assistant's reads of the thread cache pass, and a worker's and a gate agent's writes of it are judged as before" {
@@ -1411,7 +1443,8 @@ cat $state/assistant-threads"
     "cat $state/assistant-threads && head -n 1 $state/assistant-threads || wc -l $state/assistant-threads; ls $state" \
     "grep -c . $state/assistant-threads 2>&1 | head -n 1" "grep -rn assistant-threads bin | head -5 | wc -l" "sed -n '1,3p;\$p' $state/assistant-threads" \
     "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
-    "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" \
+    "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" "diff -u $state/assistant-threads /tmp/ids" \
+    "wc -l <<<'1571000000000000101'; cat $state/assistant-threads" \
     "grep -rn assistant-threads bin | cut -c1-200" "sort -u $state/assistant-threads | tr -d x | nl" \
     "sort -k1,1n -t, $state/assistant-threads" "sort --check $state/assistant-threads"; do
     AGENT_TEAM_ROLE=assistant guard -0 "$command"
