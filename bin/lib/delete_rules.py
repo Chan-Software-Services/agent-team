@@ -636,12 +636,12 @@ def reachable(context):
     found = [Base(context.cwd)]
     for target, command in targets:
         if kinds[target]:
-            found = _merged(found, reached(target, command, found), False)
+            found = _merged(found, reached(target, command, tuple(found)), False)
     relative = [(t, c) for t, c in targets if kinds[t] is False]
     for _ in relative:
         for base in list(found):
             for target, command in relative:
-                found = _merged(found, reached(target, command, [base]), False)
+                found = _merged(found, reached(target, command, (base,)), False)
     return tuple(found)
 
 
