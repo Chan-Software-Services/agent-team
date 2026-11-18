@@ -246,8 +246,9 @@
 #                     after 180 s").
 #              quota  On the holder, after the uptime step: first team-quota usage --if-due, which
 #                     reads each model's own week (Fable's) from Claude Code at most every 10
-#                     minutes (bin/team-quota's header), each line it prints logged ("quota: model
-#                     windows not read: Claude Code gave no get_usage answer within 45 s"), one
+#                     minutes, less a minute of slack (bin/team-quota's header), each line it
+#                     prints logged ("quota: model windows not read: Claude Code gave no
+#                     get_usage answer within 45 s"), one
 #                     stopped after 60 s, killed 10 s later, logged "quota: usage read timed out
 #                     after 60 s", and one that finds another read running logged not at all; it
 #                     never fails the step or posts, since the status's note and team-doctor's
@@ -1422,10 +1423,10 @@ now as $now
 '
 
 # The usage read, first in the quota step: this checkout's team-quota usage --if-due, which reads
-# the model windows from Claude Code at most every 10 minutes and prints a line only when its
-# outcome changes; each line it prints, on stdout or stderr, logged as "quota: <line>", one stopped
-# after QUOTA_USAGE_TIMEOUT logged as "quota: usage read timed out after <s> s", and an exit 75
-# (another read holds its lock) logged not at all. It never fails the step: the status's note and
+# the model windows from Claude Code at most every 10 minutes, less a minute of slack, and prints a
+# line only when its outcome changes; each line it prints, on stdout or stderr, logged as "quota:
+# <line>", one stopped after QUOTA_USAGE_TIMEOUT logged as "quota: usage read timed out after <s>
+# s", and an exit 75 (another read holds its lock) logged not at all. It never fails the step: the status's note and
 # the doctor's quota model line carry a broken reader.
 quota_usage_read() {
   local rc=0 out line

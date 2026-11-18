@@ -156,8 +156,8 @@ QUOTA_MODEL_FRESH_MINUTES=30
 # room for a slow start.
 QUOTA_USAGE_SECONDS=${TEAM_QUOTA_USAGE_SECONDS:-45}
 QUOTA_USAGE_KILL_SECONDS=5
-# usage --if-due reads at most this often: Fable's week moves about a percent in that time, and
-# Claude Code's endpoint is asked no more than by /usage opened by hand.
+# usage --if-due reads at most this often, less QUOTA_USAGE_SLACK_SECONDS: Fable's week moves about
+# a percent in that time, and Claude Code's endpoint is asked no more than by /usage opened by hand.
 QUOTA_USAGE_EVERY_MINUTES=10
 # Less this much, the heartbeat's slack: it runs every 5 minutes, each run up to a minute late and
 # its quota step later or earlier in it, so the run 10 minutes after a read may find it a few
@@ -402,8 +402,8 @@ quota_usage() {
     --argjson slack "$QUOTA_USAGE_SLACK_SECONDS" "$DUE_JQ") != true ]]; then
     exit 0
   fi
-  # The attempt's at is when it began, so the next one is due 10 minutes after this one's start,
-  # however long Claude Code takes.
+  # The attempt's at is when it began, so the next one is due 10 minutes, less the heartbeat's
+  # minute of slack, after this one's start, however long Claude Code takes.
   at=$(date -u +%FT%TZ)
   result=$(usage_exchange "$lock" | LC_ALL=C jq -c "$USAGE_JQ")
   if [[ $(jq -r 'has("reading")' <<<"$result") == true ]]; then

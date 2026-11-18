@@ -2,7 +2,8 @@
 # team-doctor: one PASS, WARN or FAIL line per thing this machine needs, on the machine
 # tests/helpers/doctor.bash builds: every tool a version stub, the OS a stubbed uname.
 # This file: the quota model line, whether team-quota status holds a fresh model window, read
-# from a fake team-quota in the test's own code checkout printing a status object.
+# mostly from a fake team-quota in the test's own code checkout printing a status object, and once
+# from the real one.
 
 load helpers/common
 load helpers/doctor
