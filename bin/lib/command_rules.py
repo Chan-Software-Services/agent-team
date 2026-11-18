@@ -99,7 +99,9 @@ The rows, in order:
     GITHUB_READS lists for each: a group it lists no read of (a user alias, an extension, gh co,
     copilot, preview, gh-axi setup and update but its --check), a subcommand outside its group's
     reads, a subcommand's own outside its reads (repo deploy-key, repo autolink, gh-axi issue
-    subissue), and gh auth status with -t or --show-token, which prints the token. gh alone, a
+    subissue), gh auth status with -t or --show-token, which prints the token, gh config get of a
+    key gh config list does not name (GH_CONFIG_KEYS; a host's oauth_token is its token), and gh
+    repo clone or gh gist clone with words after --, which it passes to git clone. gh alone, a
     group with no subcommand and the groups that read with any words (search, browse, status,
     licenses, completion, help, version) pass. Reason: a GitHub write, which an assistant session
     never makes (<the method, the body, the field, the mutation, the query it cannot read, or the
@@ -607,6 +609,13 @@ GITHUB_READS = {
         "secret": _reads("list"), "variable": _reads("list"), "search": ANY_READ,
     },
 }
+# The keys gh config get may read, those gh config list names (gh 2.103): any other is a host's
+# key of its hosts file, oauth_token among them, which gh config get -h <host> prints as the token.
+GH_CONFIG_KEYS = frozenset((
+    "api_host", "git_protocol", "editor", "prompt", "prefer_editor_prompt", "expiring_credentials", "pager",
+    "http_unix_socket", "browser", "clipboard", "color_labels", "accessible_colors", "accessible_prompter", "spinner",
+    "telemetry",
+))
 # GraphQL's operation keywords that write or stream, as whole names (case-sensitive, as GraphQL's are).
 GRAPHQL_WRITES = re.compile(r"(?<![_0-9A-Za-z])(?:mutation|subscription)(?![_0-9A-Za-z])")
 GITHUB_REASON = "a GitHub write, which an assistant session never makes ({})"
@@ -742,6 +751,27 @@ def _group_write(name, args, found):
                 for word in args[found[1] + 1 :])
     if (name, group, sub) == ("gh", "auth", "status") and shows:
         return "gh auth status --show-token, which prints the token"
+    after = list(args[found[1] + 1 :])
+    if (name, group, sub) == ("gh", "config", "get"):
+        key = _config_key(after)
+        return None if key is None or key in GH_CONFIG_KEYS else f"gh config get {key}, a key gh config list does not name"
+    if name == "gh" and sub == "clone" and "--" in after and after.index("--") + 1 < len(after):
+        return f"gh {group} clone with words after --, which it passes to git clone"
+    return None
+
+
+def _config_key(args):
+    """The first word gh config get takes as its key among its words after get, or None: a word
+    that is no option and no value of its -h or --host."""
+    k = 0
+    while k < len(args):
+        word = args[k]
+        if word in ("-h", "--host"):
+            k += 2
+            continue
+        if not word.startswith("-"):
+            return word
+        k += 1
     return None
 
 

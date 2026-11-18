@@ -1140,6 +1140,16 @@ UNKNOWN
   # gh auth status prints the token with -t or --show-token.
   refuses_as assistant "$GITHUB (gh auth status --show-token, which prints the token)" "" 'gh auth status -t' \
     'gh auth status --show-token' 'gh auth status -at'
+  # gh config get reads only the keys gh config list names: a host's oauth_token is its token.
+  refuses_as assistant "$GITHUB (gh config get oauth_token, a key gh config list does not name)" "" \
+    'gh config get -h github.com oauth_token' 'gh config get oauth_token' 'gh config get --host=github.com oauth_token' \
+    'bash -c "gh config get -h github.com oauth_token"'
+  refuses_as assistant "$GITHUB (gh config get user, a key gh config list does not name)" "" 'gh config get -h github.com user'
+  # A clone passes the words after its -- to git clone, whose -c may make git run a program.
+  refuses_as assistant "$GITHUB (gh repo clone with words after --, which it passes to git clone)" "" \
+    'gh repo clone example-org/example-repo -- -c core.fsmonitor=x' 'gh repo clone o/r /tmp/r -- --depth 1'
+  refuses_as assistant "$GITHUB (gh gist clone with words after --, which it passes to git clone)" "" \
+    'gh gist clone x -- -c core.fsmonitor=x'
 }
 
 @test "the assistant's GitHub reads pass, and a worker's and a gate agent's GitHub calls are judged as before" {
@@ -1162,6 +1172,7 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
     'gh repo view o/r' 'gh repo clone o/r /tmp/r' 'gh repo read-file README.md' 'gh repo autolink list' \
     'gh repo deploy-key list' 'gh skill search x' 'gh cache list' 'gh run list' 'gh run watch 1' 'gh run download 1' \
     'gh workflow view ci.yml' 'gh agent-task list' 'gh alias list' 'gh attestation verify a.tgz -o o' 'gh config get editor' \
+    'gh config get -h github.com git_protocol' 'gh config get --host github.com pager' 'gh repo clone o/r /tmp/r --' \
     'gh extension list' 'gh gpg-key list' 'gh ssh-key list' 'gh label list' 'gh ruleset check main' 'gh search prs x' \
     'gh search code x --limit 5' 'gh-axi' 'gh-axi --help' 'gh-axi issue list --state open' 'gh-axi issue subissue list 1' \
     'gh-axi pr checks 5' 'gh-axi run view 1 --log' 'gh-axi workflow list' 'gh-axi repo view' 'gh-axi label list' \
