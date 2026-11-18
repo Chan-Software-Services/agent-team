@@ -294,7 +294,7 @@ So one spike in Daniel's use never stows a task, and a change Daniel makes takes
 
 While it is confirmed, the plan's steps, in order, each with what it frees (the reservations it ends, the spike allowance taken again over the sessions left):
 
-1. stop each finished session: idle, its work handed on, by the rule `team-worker` stops a task's own sessions by (`handed_on_launches` in `bin/lib/ledger.jq`), over every open task; with no new launch, a builder counts only once a later builder has launched in its worktree (its work handed on, as for `team-worker`, by a `ticket-done`, `pr` or `done` after its launch), since a builder whose PR is open still takes the review's findings;
+1. stop each finished session: idle, its work handed on, by the rule `team-worker` stops a task's own sessions by (`handed_on_launches` in `bin/lib/ledger.jq`), over every open task; with no new launch, a builder counts only once a later builder has launched in its worktree, since a builder whose PR is open still takes the review's findings, and that launch hands its work on, as for `team-worker` (a ticket builder's only by its ticket's `ticket-done` or a `done` of its session), even when Claude Code calls it blocked for a last summary with no dialog open;
 2. stop each running team stack of an open task (its worktree's own, kind `dev`) that no busy session, Daniel's own included, works in, and whose task's walk does not count now;
 3. stow the open tasks with a live worker or a reservation left, the most recently opened first (its work the least invested) and any whose walk counts now after every other, until what is left fits; at none, every one, a walk's included; a task whose `stowing` stands is never named, and what it holds counts as freed.
 

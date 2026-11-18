@@ -83,7 +83,8 @@
 # new worker is a builder: one builder holds a worktree's work at a time, so a ticket builder's
 # launch stops only an earlier builder of its own ticket worktree) once the ledger follows
 # its launch with a done of its session, or for a builder a pr or ticket-done (a ticket builder
-# only its own ticket's ticket-done, and no pr), or with a paused
+# only its own ticket's ticket-done, and no pr) or, but for a ticket builder, a later logged
+# builder launch of its worktree, which has taken its work, or with a paused
 # reason=stowed and then a launch of its role and worktree (this one or a later logged one: the
 # fresh worker that resumes the work); so a reviewer is handed on by the done the coordinator logs
 # beside its review, a stow never hands on another role's or worktree's worker, and a paused for
@@ -101,7 +102,8 @@
 # waiting for input is as team-sweep's waiting-input reads it: a session whose state is blocked,
 # but never a builder idle with no dialog open (no waitingFor) after the pr it delivered, with
 # nothing asked of it since, which Claude Code calls blocked for a last summary that says it
-# waits on the merge, and which its pr hands on, so it is stopped. team-close still removes
+# waits on the merge, and which its pr hands on, so it is stopped, nor one that a later logged
+# builder launch of its worktree superseded, which that launch hands on. team-close still removes
 # every session at the close. Each stop and each session left is said on stderr; a stop that
 # fails, or a session list that cannot be read, is a warning, and the launch goes on. T0 stops
 # nothing.
