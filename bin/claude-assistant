@@ -18,20 +18,20 @@
 # force push and a cd into ~/.config/agent-team), so deny rules stop the plain spelling of a force
 # push, a push to dev or main, git reset --hard, git clean, git branch -D, a Docker prune and a
 # merge outside team-merge, by the workers' own rules and its own git push * (tests/repo.bats
-# holds the three together), and besides them the Discord token and both
-# access files, any git push and git commit, the gh pr and gh issue writes they name, gh repo
-# create, delete and edit, team-land, and starting or stopping a session. Its command-guard hook's assistant-acts row refuses its run of
-# the coordinator's acts (a hand-off, a stow, a resume, a lease change, a load check, a stack's
-# start or stop, a timer's change, a config apply and the rest), command by command, as each act
-# script but team-heavy does itself (assistant_refusal), so it still reads each script's file and
-# runs its --help; its assistant-github-write row holds every gh and gh-axi call but a read (gh
-# api with a writing method, a body, a field with no GET, a GraphQL mutation or a $ in a query, and
-# any group's subcommand outside its reads), so it still reads GitHub; and its
-# assistant-thread-cache row holds a call naming the thread cache that is no plain read (a
-# redirection, tee, cp, rm, sed -i, an interpreter and the rest), so it still reads the cache,
-# whose Edit its settings deny. Its memory is the team home's
-# memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in the team
-# home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP config,
+# holds the three together), and besides them the Discord token and both access files, any git
+# push and git commit, the gh pr and gh issue writes they name, gh repo create, delete and edit,
+# team-land, and starting or stopping a session. Its command-guard hook's assistant-acts row
+# refuses its run of the coordinator's acts (a hand-off, a stow, a resume, a lease change, a load
+# check, a stack's start or stop, a timer's change, a config apply and the rest), command by
+# command, as each act script but team-heavy does itself (assistant_refusal), so it still reads
+# each script's file and runs its --help; its assistant-github-write row holds every gh and gh-axi
+# call but a read (gh api with a writing method, a body, a field with no GET, a GraphQL mutation
+# or a $ in a query, and any group's subcommand outside its reads), so it still reads GitHub; and
+# its assistant-thread-cache row holds a call naming the thread cache that is no plain list of
+# readers (a redirection, tee, cp, rm, sed -i, an interpreter, a wrapper, an assignment, a loop
+# and the rest), so it still reads the cache, whose Edit its settings deny. Its memory is the team
+# home's memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in the
+# team home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP config,
 # ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny every
 # server `claude mcp list` names in the team home but the Discord plugin's, as
 # claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
