@@ -6,8 +6,9 @@ Usage: python3 -I command_text.py              (the command on stdin; prints the
 
 bin/lib/command_rules.py, the rule table bin/hooks/command-guard runs, imports call_commands,
 each simple command a call runs (code_parts, blank_heredocs and commands, the walk, together),
-and call_redirections, each redirection it makes in the same texts, from it, with heads and the other readings of where a command's name may stand, as
-bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does; its kill rows, kill_rules.py, import command_name,
+from it, with heads and the other readings of where a command's name may stand, as
+bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does, and call_redirections, each
+redirection it makes in the same texts; its kill rows, kill_rules.py, import command_name,
 heads_behind and short_cluster, and its delete rows, delete_rules.py, those with the walk, simple_commands,
 plain_sequence (a call's commands in the order they run, below), find's FIND_EXEC, SHELLS, the
 option readers and unquoted; outbound.py imports commands and the
