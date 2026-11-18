@@ -198,7 +198,49 @@ CACHES=(.cache/claude-cli-nodejs Library/Caches/claude-cli-nodejs)
   passes $'cat > notes.md <<\'EOF\'\ncat ~/.claude/history.jsonl\nEOF'
   passes 'cat "$UNSET_SOMEWHERE/.claude/history.jsonl"'
   passes 'cat "$(cat path.txt)"'
-  passes 'cat ~nobody/.claude/history.jsonl'
+  passes 'cat ~no-such-login-here/.claude/history.jsonl'
+}
+
+@test "a glob whose literal start lies above a place is judged by each place it may reach" {
+  local name="~/.claude/jobs" up=${HOME%/*}
+  whole "cat ~/.cl*/history.jsonl" "~/.cl*/history.jsonl" "~/.claude/history.jsonl"
+  whole "cat ~/.[c]laude/paste-cache/1.txt" "~/.[c]laude/paste-cache/1.txt" "~/.claude/paste-cache"
+  others "cat $up/*/.claude/jobs/$OTHER_JOB/state.json" "$up/*/.claude/jobs/$OTHER_JOB/state.json" "$name" "$JOBS_OWNS"
+  others "tail ${temp%/*}/claude-*/-home-wt/$OTHER/tasks/b1.output" "${temp%/*}/claude-*/-home-wt/$OTHER/tasks/b1.output" "$temp" "$TEMP_OWNS"
+  others "cat $up/*/.claude/**/state.json" "$up/*/.claude/**/state.json" "~/.claude/projects" "$PROJECTS_OWNS"
+  # A glob matching a keyed place's root or the config directory is too wide, as naming it is.
+  wide "ls -d ~/.cl*" "~/.cl*" "~/.claude/projects"
+  wide "ls ${temp%/*}/*" "${temp%/*}/*" "$temp"
+  passes "cat $up/*/.claude/jobs/$JOB/state.json"
+  passes "ls ~/* $up/*/wt/src"
+  passes "ls ~/.cl*/skills"
+}
+
+@test "a word the shell resolves without running anything is read as it resolves it: ~login, a \$'...' escape and a brace range" {
+  local login owner_home
+  login=$(id -un)
+  owner_home=$(python3 -I -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
+  whole "cat \$'$config/history.json\\x6c'" "$config/history.jsonl" "~/.claude/history.jsonl"
+  whole "cat ~/.claude/histor{y..y}.jsonl" "~/.claude/history.jsonl" "~/.claude/history.jsonl"
+  # The config directory, as a path only, under the login's own home directory, which ~login names.
+  export CLAUDE_CONFIG_DIR=$owner_home/.claude-records-guard-absent
+  whole "cat ~$login/.claude-records-guard-absent/history.jsonl" "~$login/.claude-records-guard-absent/history.jsonl" "~/.claude/history.jsonl"
+}
+
+@test "a cd the guard cannot follow leaves the call judged from its cwd and each cd it can follow" {
+  whole "pushd ~ && cat .claude/history.jsonl; popd" ".claude/history.jsonl" "~/.claude/history.jsonl"
+  others "cd ~ && cat .claude/jobs/$OTHER_JOB/state.json; cd -" ".claude/jobs/$OTHER_JOB/state.json" "~/.claude/jobs" "$JOBS_OWNS"
+  whole 'cd "$(cat dir.txt)"; cat ../.claude/history.jsonl' "../.claude/history.jsonl" "~/.claude/history.jsonl"
+  passes "cd ~ && cat .claude/jobs/$JOB/state.json; cd -"
+}
+
+@test "a word holding a blank is judged as a path when the path it names exists" {
+  mkdir -p "$HOME/a b"
+  touch "$config/history.jsonl" "$jobs/$OTHER_JOB/tmp/my notes.md" "$jobs/$JOB/tmp/my notes.md"
+  whole "cat '$HOME/a b/../.claude/history.jsonl'" "$HOME/a b/../.claude/history.jsonl" "~/.claude/history.jsonl"
+  others "cat \"\$HOME/.claude/jobs/$OTHER_JOB/tmp/my notes.md\"" "\$HOME/.claude/jobs/$OTHER_JOB/tmp/my notes.md" "~/.claude/jobs" "$JOBS_OWNS"
+  passes "cat \"\$HOME/.claude/jobs/$JOB/tmp/my notes.md\""
+  passes 'git commit -m "~/.claude/history.jsonl is every session'"'"'s"'
 }
 
 @test "a team script run by name passes whatever it reads, judged by the call's text alone" {

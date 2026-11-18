@@ -5,8 +5,9 @@ Each row is its id, its test over one command_text.Command and the call's contex
 reason when it refuses (with an allowed way of its own, (reason, allowed)) and None when it passes,
 and its allowed way, as kill_rules.py's are.
 bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
-operand, below: expand (a word as the paths the shell may make of it), candidates (the
-directories a relative one is read against, as Bases) and Unread, which either raises.
+operand, below: expand (a word as the paths the shell may make of it), reachable (the
+directories a relative one is read against, as Bases, those of candidates or, past a cd it cannot
+follow, the rest) and Unread, which either raises.
 A recursive delete passes only when every path it deletes resolves strictly inside a root (the
 worktree or the job tmp), is no kept path (a root or the worktree's .scratch/task) nor a directory
 holding one, and is no repository's .git; and when no operand holds a variable it leaves empty,
@@ -560,6 +561,45 @@ def candidates(context):
         for base in list(found):
             for target, command in relative:
                 found = _merged(found, _reached(target, command, [base], context), False)
+    return tuple(found)
+
+
+@functools.lru_cache(maxsize=None)
+def reachable(context):
+    """candidates, or, when a cd cannot be followed, the cwd and each cd target that can be, each
+    relative one from every directory found so far, for a reader that judges a relative path from
+    every directory the call may be in (session_records.py), so a cd it cannot follow leaves the
+    others judged; Unread with no cwd or past MAX_CANDIDATES directories."""
+    try:
+        return candidates(context)
+    except Unread:
+        pass
+    if context.cwd is None:
+        raise Unread
+
+    def reached(target, command, bases):
+        try:
+            return _reached(target, command, bases, context)
+        except Unread:
+            return []
+
+    def absolute(target):
+        try:
+            return all(p.startswith("/") for p in expand(target, context))
+        except Unread:
+            return None
+
+    targets = [(t, command) for command in _walked(context) for t in _cd_targets(command) if t is not None]
+    kinds = {target: absolute(target) for target, _ in targets}
+    found = [Base(context.cwd)]
+    for target, command in targets:
+        if kinds[target]:
+            found = _merged(found, reached(target, command, found), False)
+    relative = [(t, c) for t, c in targets if kinds[t] is False]
+    for _ in relative:
+        for base in list(found):
+            for target, command in relative:
+                found = _merged(found, reached(target, command, [base]), False)
     return tuple(found)
 
 

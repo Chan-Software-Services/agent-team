@@ -21,8 +21,10 @@ reading of an operand, in a Context of command_rules', as the hook's header says
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
+import pwd
 import re
 import sys
 from dataclasses import dataclass
@@ -31,8 +33,8 @@ from typing import Callable, Optional
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_rules import Context  # noqa: E402
-from command_text import call_commands, command_name, redirection_targets  # noqa: E402
-from delete_rules import Unread, candidates, expand  # noqa: E402
+from command_text import call_commands, redirection_targets  # noqa: E402
+from delete_rules import Unread, expand, reachable  # noqa: E402
 
 # A UUID's shape, 8-4-4-4-12 lowercase hex.
 UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.ASCII)
@@ -42,6 +44,9 @@ UNREADABLE = "its input is not a hook call it can read, and a guard that cannot 
 # The tools whose paths are judged, the file tools' and Bash's; any other passes unread.
 FILE_TOOLS = ("Read", "Grep", "Glob")
 BASH = "Bash"
+# A glob's special characters, and a leading ~login with what follows it.
+GLOB = re.compile(r"[*?\[]")
+LOGIN = re.compile(r"~([A-Za-z0-9._][A-Za-z0-9._-]*)(?=/|$)")
 # A word that gives a value after its first =: an assignment, a name=value operand (dd's if=) or
 # a long option's --name=value.
 VALUED = re.compile(r"-{0,2}[A-Za-z_][A-Za-z0-9_.-]*(?:\[.*\])?\+?=", re.DOTALL)
@@ -215,13 +220,75 @@ def judge_bash(real, word, table, config):
     return None
 
 
-def glob_start(path):
-    """A path's literal start when it holds a glob, cut as a Glob pattern's is (literal_start), a
-    relative one with no directory before its glob being the directory it runs in."""
-    start = literal_start(path)
-    if not path.startswith("/") and start == "/":
-        return "."
-    return start
+def component_matches(pattern, name):
+    """Whether one component of a glob matches one name, as Bash's pathname expansion matches it:
+    a name starting with . only by a pattern starting with . (no dotglob), ** as *, and a [^...]
+    as [!...]."""
+    if name.startswith(".") and not pattern.startswith("."):
+        return False
+    pattern = "*" if pattern == "**" else pattern.replace("[^", "[!")
+    return fnmatch.fnmatchcase(name, pattern)
+
+
+def reaches(pattern, names):
+    """Each remainder of a glob's components once they have matched every one of names, in
+    order: ** matching no name or any number, a component with no glob character only itself."""
+    if not names:
+        return [tuple(pattern)]
+    if not pattern:
+        return []
+    first, out = pattern[0], []
+    if first == "**":
+        out += reaches(pattern[1:], names)
+        if component_matches(first, names[0]):
+            out += reaches(pattern, names[1:])
+    elif component_matches(first, names[0]):
+        out += reaches(pattern[1:], names[1:])
+    return out
+
+
+def judge_glob(path, word, table, config):
+    """A Bash command's refusal for an absolute path holding a glob, or None: judged by its literal
+    start (its components before the first that holds a glob, resolved), and, from a start above a
+    place, by each place the glob's components may reach (the place's root and what lies under
+    it, as judge_bash judges them, a glob character left in a name never naming a session's own
+    entry) and by the config directory when it may match that alone."""
+    parts = path.split("/")
+    k = next(i for i, part in enumerate(parts) if GLOB.search(part))
+    start = os.path.realpath("/".join(parts[:k]) or "/")
+    found = judge_bash(start, word, table, config)
+    if found:
+        return found
+    rest = [part for part in os.path.normpath("/".join(parts[k:])).split("/") if part not in ("", ".")]
+    while rest and rest[0] == "..":
+        start, rest = os.path.dirname(start), rest[1:]
+    config_root, fold = config
+    targets = [(place.root, place.fold) for place in table] + [(config_root, fold)]
+    for root, folded in targets:
+        at = start.lower() if folded else start
+        if relation(at, root) != "above":
+            continue
+        names = root[len(at.rstrip("/")) + 1:].split("/")
+        pattern = [part.lower() for part in rest] if folded else rest
+        for remainder in reaches(pattern, names):
+            if root == config_root and remainder:
+                continue
+            found = judge_bash("/".join((root,) + remainder), word, table, config)
+            if found:
+                return found
+    return None
+
+
+def logins(word):
+    """The word with a leading ~login read as that login's home directory, as Bash reads it, when
+    the login is one; else as it stands."""
+    match = LOGIN.match(word)
+    if not match:
+        return word
+    try:
+        return pwd.getpwnam(match.group(1)).pw_dir + word[match.end():]
+    except KeyError:
+        return word
 
 
 def bash_words(command):
@@ -252,23 +319,30 @@ def decide_bash(call, env, table, config):
     if not isinstance(command, str):
         return UNREADABLE
     context = Context(call, env)
-    # A word holding a blank is no path but where a root holds one: a longer string that mentions
-    # a path (a message, a pattern) passes.
+    # A word holding a blank is no path but where a root holds one or the path it names exists: a
+    # longer string that mentions a path (a message, a pattern) passes.
     blanks = any(re.search(r"\s", place.root) for place in table)
     seen = set()
     pairs = [pair for found in call_commands(command) for pair in bash_words(found)]
     pairs += [(target, target) for target in redirection_targets(command)]
     for shown, word in pairs:
-        if not word or (shown, word) in seen or (re.search(r"\s", word) and not blanks):
+        if not word or (shown, word) in seen:
             continue
         seen.add((shown, word))
+        blank = bool(re.search(r"\s", word)) and not blanks
         try:
-            paths = [path for path in expand(word, context) if path]
+            # A word the walk decoded ($'...') or range-expanded is read as Bash made it.
+            paths = [path for path in expand(logins(str(word)), context) if path]
             for path in paths:
-                path = glob_start(path) if re.search(r"[*?\[{]", path) else path
-                bases = [""] if path.startswith("/") else [base.path for base in candidates(context)]
+                bases = [""] if path.startswith("/") else [base.path for base in reachable(context)]
                 for base in bases:
-                    found = judge_bash(os.path.realpath(os.path.join(base, path)), shown, table, config)
+                    joined = os.path.join(base, path)
+                    if GLOB.search(path) and not blank:
+                        found = judge_glob(joined, shown, table, config)
+                    elif blank and not os.path.lexists(os.path.realpath(joined)):
+                        found = None
+                    else:
+                        found = judge_bash(os.path.realpath(joined), shown, table, config)
                     if found:
                         return found
         except Unread:

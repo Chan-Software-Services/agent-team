@@ -58,15 +58,23 @@
 # each word after its name; of such a word of the form <name>=<value> or
 # --<option>=<value>, the value after its first = as well as the whole word; and the target of each
 # redirection the call makes, in either direction (command_text.redirection_targets). A word
-# holding a blank is no path, unless a place's root holds one, so a longer string that mentions a
-# path (a commit message, a pattern, a heredoc's body no shell reads) passes; a word that is
-# exactly such a path is refused whatever the command does with it.
+# holding a blank is no path, unless a place's root holds one or the path it names exists, so a
+# longer string that mentions a path (a commit message, a pattern, a heredoc's body no shell
+# reads) passes; a word that is exactly such a path is refused whatever the command does with it.
 # A word becomes paths as bin/lib/delete_rules.py's header says an operand is resolved, by the same
 # code: a leading ~, $HOME, $CLAUDE_JOB_DIR, a variable the same command sets, a brace list, a
 # relative path against the cwd and each directory a cd or pushd of the call names, a .. and a
-# symlink are resolved before the decision. A word that expands to several paths is refused when
-# any one is; a word holding a glob is judged by its literal start, cut as a Glob pattern's is; a
-# word the reading cannot resolve before the command runs passes. That is the command guard's
+# symlink are resolved before the decision; beside it, a leading ~login is read as that login's
+# home directory, a word the walk decoded ($'...') or made from a brace range is read as Bash made
+# it, and a cd the reading cannot follow (cd -, popd, a computed target) leaves a relative path
+# judged from the cwd and each cd it can follow (delete_rules.reachable). A word that expands to
+# several paths is refused when any one is. A word holding a glob is judged by its literal start
+# (its components before the first holding * ? or [, resolved) and, from a start above a place,
+# by each place its components may reach, matched as Bash matches them (a name starting with .
+# only by a component starting with ., ** as any number of components): the place's root and what
+# lies under it are judged as below, a glob character in a name never naming a session's own
+# entry, and a glob that may match the config directory alone is too wide. A word the reading
+# cannot resolve before the command runs passes. That is the command guard's
 # kind of guard, a speed bump on the paths a command spells, whose contract
 # bin/lib/command_rules.py's header states.
 # The rule for one path, against each place in order: in a keyed place it passes as the session's
