@@ -569,8 +569,7 @@ tmp_main() {
     fi
   fi
 
-  TMP_WORK=$(mktemp -d)
-  trap 'rm -rf "$TMP_WORK"' EXIT
+  TMP_WORK=$(team_mktemp -d)
 
   for tmp_named_root in "${TEAM_SYSTEM_ROOT:-}/tmp" "${TEAM_SYSTEM_ROOT:-}/var/tmp"; do
     [[ -d $tmp_named_root ]] || continue

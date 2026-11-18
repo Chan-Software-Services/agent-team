@@ -61,6 +61,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `session-activity`: how long each live session's transcripts have gone unwritten, and the tool calls still running in a quiet one, for `team-sweep`'s stalled finding.
     - `stack.jq`: `team-stack`'s owner classes, Docker's sizes, the reaper's rules and the `stack.json` settings, with the keys no longer read since the level's budget admits a stack.
     - `stow.sh`: `team-stow`'s steps, which `team-handoff` takes through `team-stow`: each task's branches checked and pushed, its `stowing` logged, its sessions stopped, its ops session ended, its `stowed` logged, or its `stow-failed` when a later step refuses it or the run stops.
+    - `temp-files.sh`: the temporary files and directories a script makes with `team_mktemp`, its `mktemp`, removed by the one EXIT trap however the script ends, a signal included, after the script's own exit action (`team_exit_trap`); sourced by `team.sh`, and alone by `confine-session`.
     - `threads.sh`: the archive of the team's Discord threads, sourced by `team-thread`, `team-close`, `team-assistant` and `lease-fence`: the 1-day idle time, the rule (archived only once a current `waiting.json` names nothing of it and its last message is a day old) and its one-thread pass.
     - `ticket_graph.py`: draws a task's ticket list, as `team-tickets --json` prints it, as the self-contained HTML page of its dependency graph that `team-tickets --html` writes.
     - `time.jq`: `team-time`'s split of each task's time into phases, and its counts.
@@ -127,6 +128,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `discord-threads.bash`: the fake Discord of the thread archive's tests, its threads, the bot's user, their archiving and the team home's `waiting.json`.
     - `docker.bash`: the opt-in stub `docker`.
     - `shell_source.py`: the lexer of the tests' shell source that `tests/guard-paths` and `tests/bound-kills` share.
+    - `signals.bash`: a script ended by TERM, HUP or INT in the middle of a stub's call, for the tests that show it leaves no temporary file.
   - `tests/merge-queue-drill`: run by hand by the coordinator, since it merges real PRs; it lands two PRs at once through a scratch repository's merge queue with `team-land` in a sandbox team home, checks each trial commit, and records its run.
   - `tests/merge-queue-drill.bats`: dry-runs `tests/merge-queue-drill` on a stub `gh`, a stub `team-land` and a bare repository.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
@@ -251,6 +253,7 @@ It holds:
 - The code checkout is the directory above `bin/` (`~/agent-team`): code (roles, settings, templates, plugins, hooks, toolkits) comes from the script's own checkout, never from the team home.
   In settings files and a toolkit's `.mcp.json`, `@TEAM_CODE@` names the code checkout, `@TASK_DIR@` the team home's `tasks/T<n>/` and `@WORKTREE@` the session's worktree by its real path; `team-worker` fills them in, and `claude-coordinator` fills `@TEAM_CODE@`.
 - Exit codes: 0 done, 1 refused or a check failed (`die`), 2 a malformed command line (`usage_error`), 75 try again later.
+- A temporary file or directory is made with `team_mktemp` (`bin/lib/temp-files.sh`), never a bare `mktemp`, and a script's own exit action is set with `team_exit_trap`, never `trap ... EXIT` once the library is sourced, since the library's one EXIT trap removes the files on every end, a signal included; `tests/repo.bats` holds both.
 - The ledger changes only through the library's `ledger_append`, which checks each event against `bin/lib/ledger-contract.json` and that the script is its kind's writer, or one of them, and, under the ledger's lock, a `refusing_writers` script's event against the task's state by `bin/lib/lifecycle.json`; a new kind or field goes in the contract first.
   A kind the contract marks `"push": true` (Daniel's word or an outside fact) is committed and pushed the moment it is logged by the library's `ledger_push`, which each of its writers calls once after its last event, as `tests/repo.bats` holds.
 - The registry is read only through `team-project`; a new key goes in its key lists and in its header, which documents every key.

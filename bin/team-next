@@ -1013,12 +1013,12 @@ log_events() {
 # that starts with <prefix> (with an empty prefix, its last line that is not blank), or nothing.
 sibling_said() {
   local prefix=$1 err
-  err=$(mktemp)
+  err=$(team_mktemp)
   rc=0
   out=$(sibling "${@:2}" 2>"$err") || rc=$?
   cat -- "$err" >&2
   said=$(awk -v p="$prefix" 'NF && (p == "" || index($0, p) == 1) { l = $0 } END { print l }' "$err")
-  rm -f -- "$err"
+  team_tmp_rm "$err"
 }
 
 # return_ticket <NN> <worktree>: ticket NN's worktree returned through team-close --ticket, its
@@ -1330,14 +1330,14 @@ base_due() {
   dirty=$(changed_files "$wt" untracked)
   [[ -z $dirty ]] ||
     die "$why the task worktree $wt has uncommitted changes ($dirty), so $branch is not brought to origin/$base and $stop: commit or remove them, then run team-next $task --fill again"
-  NET_ERR=$(mktemp)
+  NET_ERR=$(team_mktemp)
   origin_git -C "$wt" fetch -q --no-write-fetch-head origin "+refs/heads/$base:refs/remotes/origin/$base" || rc=$?
   if ((rc != 0)); then
     echo "${0##*/}: $why origin's $base cannot be fetched into $wt ($(origin_reason "$rc")), so $branch is not brought to it and $stop: run team-next $task --fill again once it can be" >&2
-    rm -f -- "$NET_ERR"
+    team_tmp_rm "$NET_ERR"
     exit 75
   fi
-  rm -f -- "$NET_ERR"
+  team_tmp_rm "$NET_ERR"
   head=$(git -C "$wt" rev-parse HEAD)
   onto=$(git -C "$wt" rev-parse "refs/remotes/origin/$base")
   ! git -C "$wt" merge-base --is-ancestor "$onto" HEAD || return 0
@@ -1569,10 +1569,10 @@ if [[ $handoff == verdict ]]; then
         posted=failure check_sha=$reviewed summary="$task's review of $short found findings"
         if [[ $verdict == pass ]]; then posted=success summary="$task's review of $short passed"; fi
         if [[ $same == true ]]; then check_sha=$live_head; fi
-        errors=$(mktemp)
+        errors=$(team_mktemp)
         if ! run=$(sibling team-review-check "$pr_url" "$check_sha" "$posted" "$summary" 2>"$errors"); then
           why=$(grep . "$errors" | tail -n 1) || why=''
-          rm -f -- "$errors"
+          team_tmp_rm "$errors"
           # A check run's id on stdout: the check was posted, and only its token's revoke failed.
           if [[ $run =~ ^[1-9][0-9]*$ ]]; then
             echo "posted agent-review $posted on $short as the reviewer App's check run $run, but ${why#team-review-check: }"
@@ -1585,7 +1585,7 @@ if [[ $handoff == verdict ]]; then
             exit 1
           fi
         else
-          rm -f -- "$errors"
+          team_tmp_rm "$errors"
           echo "posted agent-review $posted on $short as the reviewer App's check run $run"
         fi
       fi

@@ -1,4 +1,4 @@
-# Temporary files and directories that go when the shell that made them exits, however it ends:
+# Temporary files and directories that go when the script that made them exits, however it ends:
 # normally, on an error under set -e, by exit or die, or on a signal (TERM and HUP end a script
 # through its EXIT trap, and so does INT once the command it waits on has ended by it). Sourced
 # by bin/lib/team.sh, so every script that sources the library has it; a script with no library
@@ -7,94 +7,87 @@
 #   source "$(dirname "${BASH_SOURCE[0]}")/temp-files.sh"
 #
 # It provides:
-#   team_mktemp <name> [<mktemp argument>...]
-#                       runs mktemp with the arguments (-d for a directory, a template beside an
-#                       atomic write's target), sets the variable <name> to its path, and has the
-#                       path removed when this shell exits; fails as mktemp does, setting nothing.
+#   team_mktemp [<mktemp argument>...]
+#                       mktemp itself, used as it is (path=$(team_mktemp -d), a template beside an
+#                       atomic write's target), whose path is removed when the script exits; it
+#                       fails as mktemp does, or when the path cannot be listed, leaving nothing.
 #   team_tmp_add <path>...
-#                       has each path removed when this shell exits too: a name built on one
-#                       team_mktemp made (<path>.error).
+#                       has each path removed when the script exits too: a name built on one
+#                       team_mktemp made (<path>.error), or a file a command is about to write.
 #   team_tmp_rm <path>...
-#                       removes each path now, recursively, and forgets it: the end of a file a
-#                       function made for one call, in a script that runs on.
+#                       removes each path now, recursively: the end of a file a function made for
+#                       one call, in a script that runs on.
 #   team_exit_trap <action> | team_exit_trap -
-#                       sets this shell's own exit action, as trap <action> EXIT would, or clears
+#                       sets the shell's own exit action, as trap <action> EXIT would, or clears
 #                       it; the library's one EXIT trap runs it, then removes the paths. Every
 #                       script that sources the library sets its exit action so, never with a
 #                       trap of its own on EXIT, which would take the place of the removal.
+# The paths are the script's, its main shell's: each is a line of the run's list, a file in TMPDIR
+# made at the first path (team-temp.<pid>.<random>), which a subshell appends to as the main shell
+# does, so a $(...) or a background job may make one, and the main shell's EXIT trap removes them
+# all, then the list. A path that is gone already (an atomic write's file, moved into place) is
+# left alone.
 # The EXIT trap runs the action as a trap of its own would run it: $? its exit status, under the
 # script's errexit, and an exit in it (die's included) ends the shell with that status; the
 # paths are removed after the action, or, when the action exits or a command in it fails under
-# errexit, before the shell ends, so an action may read a file team_mktemp made. An EXIT trap a
-# script set before its first team_mktemp or team_exit_trap (before sourcing the library, as
-# hooks/denial-log does, or the library's team_guard_exit) is taken as its exit action.
-# Each shell has its own paths and action: a subshell, a $(...) among them, that calls
-# team_mktemp or team_exit_trap starts with none and gets its own EXIT trap, so its files go when
-# it ends, and it never removes its parent's nor runs its parent's action.
+# errexit, before the shell ends, so an action may read a file team_mktemp made. An EXIT trap the
+# script set before it sourced this file (hooks/denial-log's, the library's team_guard_exit) is
+# taken as its exit action. A subshell that calls team_exit_trap has an EXIT trap of its own, which
+# runs that action alone and removes nothing.
 # A script that ends by exec runs no EXIT trap, so it removes what it made before the exec.
 # shellcheck shell=bash
 
-# The shell (its BASHPID) the paths and the action below belong to, and they.
-_team_tmp_shell='' _team_exit_action=''
-_team_tmp_paths=()
+# The run's list of paths and the exit action, with the shell (its BASHPID) the action is for.
+_team_tmp_list=${TMPDIR:-/tmp}/team-temp.$$.$RANDOM$RANDOM$RANDOM
+_team_exit_action='' _team_exit_shell=$BASHPID
 
 team_mktemp() {
   local _tm_path
-  _tm_path=$(mktemp "${@:2}") || return
-  _team_tmp_claim
-  _team_tmp_paths+=("$_tm_path")
-  printf -v "$1" %s "$_tm_path"
+  _tm_path=$(mktemp "$@") || return
+  if ! printf '%s\n' "$_tm_path" >>"$_team_tmp_list"; then
+    rm -rf -- "$_tm_path"
+    return 1
+  fi
+  printf '%s\n' "$_tm_path"
 }
 
 team_tmp_add() {
-  _team_tmp_claim
-  _team_tmp_paths+=("$@")
+  (($# == 0)) || printf '%s\n' "$@" >>"$_team_tmp_list"
 }
 
 team_tmp_rm() {
-  local _tr_path _tr_keep=() _tr_gone
-  (($#)) || return 0
-  rm -rf -- "$@"
-  [[ $_team_tmp_shell == "$BASHPID" ]] || return 0
-  for _tr_path in "${_team_tmp_paths[@]}"; do
-    for _tr_gone; do [[ $_tr_path != "$_tr_gone" ]] || continue 2; done
-    _tr_keep+=("$_tr_path")
-  done
-  _team_tmp_paths=("${_tr_keep[@]}")
+  local _tr_path _tr_there=()
+  for _tr_path; do [[ -z $_tr_path || ! (-e $_tr_path || -L $_tr_path) ]] || _tr_there+=("$_tr_path"); done
+  ((${#_tr_there[@]} == 0)) || rm -rf -- "${_tr_there[@]}"
 }
 
 team_exit_trap() {
-  _team_tmp_claim
   if [[ $1 == - ]]; then _team_exit_action=''; else _team_exit_action=$1; fi
-}
-
-# Make this shell the owner of the paths and the action, with the one EXIT trap: a subshell's
-# first call starts with none of its parent's, and the script's own first call takes an EXIT
-# trap already set as its action (trap -p, which in a subshell would name the parent's).
-_team_tmp_claim() {
-  local _tc_set
-  [[ $_team_tmp_shell != "$BASHPID" ]] || return 0
-  _team_tmp_paths=() _team_exit_action=''
-  if [[ $BASHPID == "$$" ]]; then
-    _tc_set=$(trap -p EXIT)
-    # trap -p prints the command as trap would read it back: trap -- '<action>' EXIT.
-    [[ -z $_tc_set ]] || eval "_team_tmp_adopt ${_tc_set#trap }"
+  if [[ $_team_exit_shell != "$BASHPID" ]]; then
+    _team_exit_shell=$BASHPID
+    trap _team_exit EXIT
   fi
-  _team_tmp_shell=$BASHPID
-  trap _team_exit EXIT
 }
 
+# Take the EXIT trap a script set before it sourced this file as its action (trap -p prints it as
+# trap would read it back: trap -- '<action>' EXIT), then set the one EXIT trap.
 _team_tmp_adopt() {
   _team_exit_action=$2
 }
+_team_tmp_set=$(trap -p EXIT)
+[[ -z $_team_tmp_set ]] || eval "_team_tmp_adopt ${_team_tmp_set#trap }"
+unset _team_tmp_set
+trap _team_exit EXIT
 
-# Remove this shell's paths, once; never fails.
+# Remove the run's paths and its list, in the main shell; never fails.
 _team_tmp_clean() {
-  [[ $_team_tmp_shell == "$BASHPID" ]] || return 0
-  ((${#_team_tmp_paths[@]})) || return 0
-  local _tl_paths=("${_team_tmp_paths[@]}")
-  _team_tmp_paths=()
-  rm -rf -- "${_tl_paths[@]}" 2>/dev/null || true
+  local _tl_paths=() _tl_path _tl_there=()
+  [[ $BASHPID == "$$" && -f $_team_tmp_list ]] || return 0
+  mapfile -t _tl_paths <"$_team_tmp_list" 2>/dev/null || true
+  for _tl_path in "${_tl_paths[@]}"; do
+    [[ -z $_tl_path || ! (-e $_tl_path || -L $_tl_path) ]] || _tl_there+=("$_tl_path")
+  done
+  rm -rf -- "${_tl_there[@]}" "$_team_tmp_list" 2>/dev/null || true
 }
 
 _team_tmp_status() {
@@ -106,7 +99,7 @@ _team_tmp_status() {
 # (with errtrace, inside the functions the action calls too), since the shell ends there.
 _team_exit() {
   local _te_status=$?
-  if [[ $_team_tmp_shell == "$BASHPID" && -n $_team_exit_action ]]; then
+  if [[ $_team_exit_shell == "$BASHPID" && -n $_team_exit_action ]]; then
     # shellcheck disable=SC2317,SC2329 # called by the action
     exit() {
       local _te_code=${1-$?}

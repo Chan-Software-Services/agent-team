@@ -155,8 +155,7 @@ case $(uname -s) in
   *) die "no resource levels on $(uname -s)" ;;
 esac
 
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+work=$(team_mktemp -d)
 
 # The level record's {records, broken} (level_records), refusing a line that is not a record.
 read_record() {

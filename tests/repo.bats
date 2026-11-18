@@ -3277,6 +3277,38 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   assert_equal "$found" ""
 }
 
+# The shell code of bin/: each script, each sourced file (.sh) and each doctor check, but the
+# vendored code.
+bin_shell_files() {
+  local file
+  while IFS= read -r file; do
+    [[ $file != bin/lib/vendor/* ]] || continue
+    if [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; }; then echo "$file"; fi
+  done < <(git -C "${REPO_ROOT:?}" ls-files bin)
+}
+
+# bin/lib/temp-files.sh owns the one EXIT trap of every shell that sources it, which removes the
+# files team_mktemp made, so a file made with a bare mktemp, or an EXIT trap set after the
+# library (or temp-files.sh) is sourced, would leave a file when a signal ends the script.
+@test "every script under bin/ makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
+  local file upto found
+  cd "$REPO_ROOT"
+  # An EXIT trap before the line that sources the library is the one it takes as the exit action.
+  found=$(while IFS= read -r file; do
+    [[ $file != bin/lib/temp-files.sh ]] || continue
+    upto=$(grep -nE '^[^#]*source .*/(team|temp-files)\.sh"' "$file" | head -n 1 | cut -d: -f1)
+    awk -v file="$file" -v upto="${upto:-0}" '
+      /^[[:space:]]*#/ { next }
+      /\$\(mktemp|`mktemp/ { print file ":" FNR ": a bare mktemp: " $0 }
+      FNR > upto && /(^|[;&|({[:space:]])trap( [^#]*)? (EXIT|0)([;)[:space:]]|$)/ { print file ":" FNR ": an EXIT trap: " $0 }
+    ' "$file"
+  done < <(bin_shell_files))
+  assert_equal "$found" ""
+  # The walk reads the scripts it holds to.
+  bin_shell_files | grep -qx bin/team-merge
+  bin_shell_files | grep -qx bin/lib/threads.sh
+}
+
 # T281: a test's git -C "$TEAM_HOME" with TEAM_HOME empty ran in the code checkout and switched its
 # branch; ${TEAM_HOME:?} stops the line instead.
 @test "no test runs git or rm -r on an unguarded path variable" {

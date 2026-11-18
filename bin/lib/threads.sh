@@ -124,7 +124,7 @@ thread_bot() {
 
 thread_archive() {
   local tries=0 headers status retry
-  team_mktemp headers
+  headers=$(team_mktemp)
   team_tmp_add "$headers.error"
   while true; do
     tries=$((tries + 1))
@@ -155,7 +155,7 @@ thread_settle() {
     echo "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env; $THREAD_LATER"
     return 1
   fi
-  team_mktemp error
+  error=$(team_mktemp)
   if [[ -z $channel ]] && ! channel=$(thread_read "$id" 2>"$error"); then
     channel=''
   fi

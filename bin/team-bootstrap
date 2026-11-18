@@ -152,8 +152,7 @@ bin=$(dirname "$TEAM_LIB")
 self=$bin/team-bootstrap
 state=$HOME/.local/state/agent-team
 log=$state/bootstrap.log
-err=$(mktemp) gate_tmp=''
-trap 'rm -f "$err" ${gate_tmp:+"$gate_tmp"}' EXIT
+err=$(team_mktemp)
 terminal=0
 if [[ -t 0 && -t 1 ]]; then terminal=1; fi
 # Daniel's shell's PATH, before the library put the tool directories on it.
@@ -547,16 +546,14 @@ name_gate_wrapper() {
   # A link (team-config's, say) keeps pointing at the file it names.
   target=$(realpath -- "$config")
   [[ ! -s $target || -z $(tail -c1 -- "$target" | tr -d '\n') ]] || eol=0
-  gate_tmp=$(mktemp "$(dirname "$target")/.config.yaml.XXXXXX")
+  gate_tmp=$(team_mktemp "$(dirname "$target")/.config.yaml.XXXXXX")
   if ! awk -v set="$wrapper" -v eol="$eol" -f "$bin/lib/gate-config.awk" "$target" >"$gate_tmp"; then
-    rm -f -- "$gate_tmp"
-    gate_tmp=''
+    team_tmp_rm "$gate_tmp"
     daniel "set $setting to $wrapper by hand: its agent_path_override is in a form team-bootstrap does not edit (a flow mapping over several lines, or a scalar); then team-bootstrap again"
     return
   fi
   chmod --reference="$target" -- "$gate_tmp"
   mv -f -- "$gate_tmp" "$target"
-  gate_tmp=''
   changed=1
   say "set $setting to $wrapper, that key alone"
 }

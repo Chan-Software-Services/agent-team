@@ -115,8 +115,7 @@ state=$HOME/.local/state/agent-team
 last=$state/last-checkpoint
 # The worktrees the last checkpoint skipped at its deadline, "<task> <project>" a line, taken first.
 first=$state/checkpoint-first
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 NET_ERR=$scratch/err
 failed=0
 

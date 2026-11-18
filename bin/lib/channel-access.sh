@@ -39,15 +39,15 @@ declare -A CHANNEL_BITS=([Add Reactions]=6 [View Channel]=10 [Send Messages]=11 
 # each <name>=<filter> is read from it into <name> (json_vars).
 channel_get() {
   local ok='' err
-  err=$(mktemp)
+  err=$(team_mktemp)
   if channel_reply=$(discord_api "$1" --max-time 20 2>"$err") &&
     json_vars ok='type == "object" or type == "array"' "${@:2}" <<<"$channel_reply" 2>/dev/null && [[ $ok == true ]]; then
-    rm -f "$err"
+    team_tmp_rm "$err"
     return 0
   fi
   channel_path=$1
   channel_why=$(grep -m1 . "$err" || echo "no JSON in its answer")
-  rm -f "$err"
+  team_tmp_rm "$err"
   channel_access_result=unanswered
   [[ $channel_why != *"(22)"* ]] || channel_access_result=refused
   return 1

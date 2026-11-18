@@ -88,8 +88,7 @@ base=$(team_project "$project" base) || exit 1
 [[ $branch != main ]] || die "main is no task's branch: CI runs on a task's or a ticket's branch only"
 repo=$(canonical_repo "$(team_project "$project" repo)") || exit 1
 
-dir=$(mktemp -d)
-trap 'rm -rf "$dir"' EXIT
+dir=$(team_mktemp -d)
 # The reader's log names what each request was for.
 GH_FOR="$repo $branch"
 
@@ -234,8 +233,7 @@ done
 
 run_url=https://github.com/$repo/actions/runs/$run_id
 echo "team-ci-run: waiting on $run_url ($event, $how) of $short"
-# The wait takes over from here, so its end is this command's: nothing is left to clean up but
-# the looks' files.
-rm -rf "$dir"
-trap - EXIT
+# The wait takes over from here, so its end is this command's: the looks' files go first, since
+# an exec runs no EXIT trap.
+team_tmp_rm "$dir"
 TEAM_HOME=$TEAM_HOME exec "$(dirname "$TEAM_LIB")/team-ci-wait" --run "$run_url" "$sha"

@@ -62,7 +62,7 @@ chat=$(jq -er --arg f "$field" '.tool_input | objects | .[$f] | strings' <<<"$in
   block "'$chat' is not a Discord channel id; the assistant reaches only #assistant ($ASSISTANT_CHANNEL) and its threads."
 if [[ $chat != "$ASSISTANT_CHANNEL" ]] && ! grep -qxF -- "$chat" "$ASSISTANT_THREADS" 2>/dev/null; then
   rc=0
-  team_mktemp err
+  err=$(team_mktemp)
   channel=$(discord_api "channels/$chat" 2>"$err") || rc=$?
   reason=$(grep -m1 . "$err" || echo "no reason given")
   team_tmp_rm "$err"

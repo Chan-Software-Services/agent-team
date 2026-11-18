@@ -775,19 +775,18 @@ fi
 # The admission is the launch's until its launch event is logged: the exit handler releases it on
 # every end before then (a failed step, die, TERM, HUP or INT), so a launch that dies after its
 # admission frees its room at once; only a KILL leaves it to its 10 minutes.
-admission='' admit_errors=''
+admission=''
 release_admission() {
   local out
   if [[ -n $admission ]] &&
     ! out=$(TEAM_HOME=$TEAM_HOME "$code/bin/team-capacity" release "$admission" 2>&1 >/dev/null); then
     echo "team-worker: warning: could not release admission $admission: $(grep . <<<"$out" | tail -n 1 || echo "team-capacity release failed"); it ends 10 minutes after it was made" >&2
   fi
-  [[ -z $admit_errors ]] || rm -f -- "$admit_errors"
 }
-trap release_admission EXIT
+team_exit_trap release_admission
 if [[ $task != T0 && $role != ops ]]; then
   rc=0
-  admit_errors=$(mktemp)
+  admit_errors=$(team_mktemp)
   admit_out=$(TEAM_HOME=$TEAM_HOME "$code/bin/team-capacity" admit --kind "session:$role" --task "$task" ${freed[@]+"${freed[@]}"} 2>"$admit_errors") || rc=$?
   admit_err=$(<"$admit_errors")
   if ((rc == 75)); then
@@ -1020,8 +1019,8 @@ else
   prompts=$HOME/.local/state/agent-team/prompts/$task
   mkdir -p "$prompts"
   system_prompt=$prompts/$stem.md
-  tmp=$(mktemp "$system_prompt.XXXXXX")
-  write_system_prompt >"$tmp" || { rm -f -- "$tmp"; die "could not write $task-$role's system prompt $system_prompt"; }
+  tmp=$(team_mktemp "$system_prompt.XXXXXX")
+  write_system_prompt >"$tmp" || die "could not write $task-$role's system prompt $system_prompt"
   mv -f -- "$tmp" "$system_prompt"
 fi
 

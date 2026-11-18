@@ -177,8 +177,7 @@ take_reading() {
   flock -w 60 "$sample_fd" || die "another reading is still being taken after 60 seconds"
   now=$(date +%s)
   stack_pid=''
-  work=$(mktemp -d)
-  trap 'rm -rf "$work"' EXIT
+  work=$(team_mktemp -d)
   # The stored readings, read once: whether the newest is within 60 seconds, the newest (the
   # prior reading), then the lines kept, those of the last 24 hours that are readings.
   if [[ -e $readings ]]; then
@@ -197,12 +196,12 @@ take_reading() {
   # time leaves them out. timeout runs it in a process group of its own, so a signal that stops
   # this run (the heartbeat's own time limit), or this run's end before it is waited for, is
   # passed on to it, and through it to what it started. Each trap goes on past a kill that fails,
-  # since the listing may have ended already, and set -e would end the trap before its removal.
+  # since the listing may have ended already, and set -e would end the trap there.
   TEAM_HOME=$TEAM_HOME timeout --kill-after=5 "${TEAM_READING_DOCKER_SECONDS:-30}" \
     "${TEAM_LIB%/*}/team-stack" ls --json >"$work/stacks.json" 2>/dev/null &
   stack_pid=$!
   trap 'kill -TERM "$stack_pid" 2>/dev/null || true; exit 143' TERM INT HUP
-  trap '[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+  team_exit_trap '[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null || true'
 
   reading_context
   case $(uname -s) in

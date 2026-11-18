@@ -47,9 +47,6 @@ fi
 
 # shellcheck source=bin/lib/platform.sh
 source "$(dirname "${BASH_SOURCE[0]}")/platform.sh"
-# Temporary files that go however the script ends, and the script's own exit action beside them.
-# shellcheck source=bin/lib/temp-files.sh
-source "$(dirname "${BASH_SOURCE[0]}")/temp-files.sh"
 
 # The team home, where the records live: TEAM_HOME when set; else the first line of
 # ~/.config/agent-team/home, a path relative to HOME unless it is absolute; never the code
@@ -81,6 +78,9 @@ TEAM_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # The GitHub logins, the worker login's and the owner's: where each lives and how a script runs gh on it.
 # shellcheck source=bin/lib/github-login.sh
 source "$TEAM_LIB/github-login.sh"
+# Temporary files that go however the script ends, and the script's own exit action beside them.
+# shellcheck source=bin/lib/temp-files.sh
+source "$TEAM_LIB/temp-files.sh"
 # The extensions of an image, an extended regular expression's alternatives matched in any case:
 # the records hook refuses them (data-check) and a task's archive leaves them out
 # (archive_left_out), so a screenshot never reaches the team home's history.
@@ -323,13 +323,14 @@ ledger_push() {
     echo "${0##*/}: the ledger is not on origin yet ($why)" >&2
     return 0
   fi
-  err=$(mktemp) || return 0
+  err=$(team_mktemp) || return 0
+  team_tmp_add "$err.net"
   if ! (NET_ERR=$err.net NET_TIMEOUT=20 commit_records "chore: ledger ${LEDGER_TASKS[*]} ${LEDGER_KINDS[*]}" ledger.jsonl \
     >/dev/null 2>"$err"); then
     why=$({ grep -m1 . "$err" || true; } | sed -E "s/^${0##*/}: team home: //; s/^committed [0-9a-f]+ [^;]*; //; s/:$//")
     echo "${0##*/}: the ledger is not on origin yet (${why:-commit_records failed with no reason}); the next checkpoint pushes it" >&2
   fi
-  rm -f "$err" "$err.net"
+  team_tmp_rm "$err" "$err.net"
   return 0
 }
 
@@ -395,7 +396,8 @@ live_sessions() {
 # registry it cannot read, so no cost estimates) is dropped: machine_level
 machine_level() {
   local out err line
-  out=$(mktemp) err=$(mktemp)
+  out=$(team_mktemp)
+  err=$(team_mktemp)
   if TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-level" status --stored --json >"$out" 2>"$err" </dev/null &&
     jq -ce 'select(.schema == "team-level/1")' "$out" 2>/dev/null; then
     :
@@ -403,7 +405,7 @@ machine_level() {
     line=$(grep . "$err" | tail -n 1) || line="team-level failed with no reason given"
     jq -cn --arg error "${line//"$HOME/"/"~/"}" '{error: $error}'
   fi
-  rm -f "$out" "$err"
+  team_tmp_rm "$out" "$err"
 }
 
 # A task's open worktrees (opened and added, minus returned), one compact
@@ -737,7 +739,8 @@ archive_task_dir() {
     echo "$dir is empty, so nothing was archived from $2"
     return 1
   fi
-  rules=$(mktemp) err=$(mktemp)
+  rules=$(team_mktemp)
+  err=$(team_mktemp)
   while IFS=$'\t' read -r -d '' why path; do
     echo "left out of $3: $path ($why)"
     rsync_rule "$path" >>"$rules"
@@ -746,10 +749,10 @@ archive_task_dir() {
     ! rsync -a --delete --delete-excluded --from0 --exclude-from="$rules" -- "$dir/" "$TEAM_HOME/$3/" 2>"$err"; then
     reason=$(grep -m1 . "$err" || echo "no reason given")
     echo "cannot mirror $dir into $3: $reason" >&2
-    rm -f "$rules" "$err"
+    team_tmp_rm "$rules" "$err"
     return 2
   fi
-  rm -f "$rules" "$err"
+  team_tmp_rm "$rules" "$err"
 }
 
 # Print this machine's team name, the first line of ~/.config/agent-team/machine (lower-case
@@ -1359,13 +1362,13 @@ worktree_tree() {
   local wt=$1 index copy tree='' rc=0 option inert=()
   index=$(git -C "$wt" rev-parse --path-format=absolute --git-path index) || return 1
   while IFS= read -r option; do inert+=(-c "$option"); done < <(inert_config "$wt")
-  copy=$(mktemp) || return 1
+  copy=$(team_mktemp) || return 1
   # A copy of the real index keeps what git knows of each file's state; with none, HEAD's.
   if [[ -f $index ]]; then cp "$index" "$copy"; else GIT_INDEX_FILE=$copy git "${inert[@]}" -C "$wt" read-tree HEAD; fi &&
     GIT_INDEX_FILE=$copy git "${inert[@]}" -C "$wt" add -A &&
     snapshot_left_out "$wt" | GIT_INDEX_FILE=$copy git "${inert[@]}" -C "$wt" update-index --force-remove --stdin &&
     tree=$(GIT_INDEX_FILE=$copy git "${inert[@]}" -C "$wt" write-tree) || rc=1
-  rm -f "$copy"
+  team_tmp_rm "$copy"
   ((rc == 0)) || return 1
   printf '%s\n' "$tree"
 }
@@ -1855,7 +1858,7 @@ daniel_message() {
     echo "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env, so $what cannot be checked" >&2
     return 1
   }
-  miss=$(mktemp)
+  miss=$(team_mktemp)
   for place in "${@:3}"; do
     if reply=$(discord_api "channels/${place##* }/messages/$message" 2>"$miss") &&
       jq -e --arg m "$message" 'type == "object" and .id == $m and (.author.id | type) == "string"' <<<"$reply" >/dev/null 2>&1; then
@@ -1864,7 +1867,7 @@ daniel_message() {
     fi
     misses+=("$(grep -m1 . "$miss" || echo "not that message")")
   done
-  rm -f "$miss"
+  team_tmp_rm "$miss"
   if [[ -z $found ]]; then
     tried=$(printf '%s\n' "${@:3}" | sed '$!s/$/ or/' | paste -sd ' ')
     echo "Discord message $message cannot be fetched from $tried: $(printf '%s\n' "${misses[@]}" | sort -u | paste -sd ';' | sed 's/;/; /g')" >&2
@@ -1919,13 +1922,13 @@ assistant_place() {
     echo "#assistant $channel"
     return 0
   fi
-  error=$(mktemp)
+  error=$(team_mktemp)
   if ! reply=$(discord_api "channels/$channel" 2>"$error"); then
     echo "channel $channel cannot be read from Discord, so it is not known to be under #assistant ($ASSISTANT_CHANNEL): $(grep -m1 . "$error" || echo "no reason given")" >&2
-    rm -f "$error"
+    team_tmp_rm "$error"
     return 1
   fi
-  rm -f "$error"
+  team_tmp_rm "$error"
   assistant_thread_of "$reply" || {
     echo "channel $channel is neither #assistant ($ASSISTANT_CHANNEL) nor a thread under it, so Daniel's word there is not for the assistant" >&2
     return 1
@@ -2215,8 +2218,9 @@ github() {
 # github does: base_rules <repo> <base>
 base_rules() (
   local rules_repo=$1 rules_base=$2 rules_dir rules_id rules_rc rules_ids
-  rules_dir=$(mktemp -d) || exit 1
-  trap 'rm -rf "$rules_dir"' EXIT
+  rules_dir=$(team_mktemp -d) || exit 1
+  # The subshell's own end removes it, so a caller that runs on keeps none.
+  team_exit_trap 'rm -rf "$rules_dir"'
   read_rules() {
     local rules_name=$1 rules_path=$2
     rules_rc=0
@@ -2252,7 +2256,7 @@ base_rules() (
 # git failure prints git's first error line and returns 2: base_merge <checkout> <head> <base ref>
 base_merge() {
   local out err rc=0
-  err=$(mktemp)
+  err=$(team_mktemp)
   out=$(git -C "$1" merge-tree --write-tree --name-only --no-messages "$2" "$3" 2>"$err") || rc=$?
   # A conflict's output starts with the tree; a commit git cannot read exits 1 too, with none.
   if ((rc == 1)) && [[ ! ${out%%$'\n'*} =~ ^[0-9a-f]{40,64}$ ]]; then rc=2; fi
@@ -2261,7 +2265,7 @@ base_merge() {
     1) sed '1d;/^$/d' <<<"$out" ;;
     *) grep -m1 . "$err" || echo "git merge-tree failed (exit $rc)" ;;
   esac
-  rm -f "$err"
+  team_tmp_rm "$err"
   ((rc <= 1)) || return 2
   return "$rc"
 }
@@ -2318,9 +2322,9 @@ clean_base_merges() {
 # cannot be read prints why and returns 2: queue_commit_problems <project> <repo> <number> <sha>
 queue_commit_problems() {
   local queue_project=$1 queue_repo=$2 queue_number=$3 queue_sha=$4 queue_dir queue_rc=0 queue_out
-  queue_dir=$(mktemp -d) || return 2
+  queue_dir=$(team_mktemp -d) || return 2
   queue_out=$(queue_commit_proof "$queue_dir") || queue_rc=$?
-  rm -rf "$queue_dir"
+  team_tmp_rm "$queue_dir"
   printf '%s\n' "$queue_out"
   return "$queue_rc"
 }
@@ -2742,8 +2746,9 @@ task_state_json() (
     fi
   fi
   if [[ $pr != null ]]; then
-    dir=$(mktemp -d) || exit 1
-    trap 'rm -rf "$dir"' EXIT
+    dir=$(team_mktemp -d) || exit 1
+    # The subshell's own end removes it, so a caller that runs on keeps none.
+    team_exit_trap 'rm -rf "$dir"'
     pr=$(pr_part "$events" "$pr" "$dir") || exit 1
     authority=$(pr_merge_authority "$events" "$state" "$pr" "$dir") || exit 1
     in_queue=$(ledger_jq 'queue_state($url) | if .state? == "queued" then {since, head} else null end' -c \

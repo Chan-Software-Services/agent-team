@@ -84,8 +84,7 @@ state=$HOME/.local/state/agent-team
 progress=$state/handoff.json
 record=$state/lease.json
 mkdir -p "$state"
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 NET_ERR=$scratch/net-err
 err=$scratch/err
 
