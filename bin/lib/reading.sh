@@ -171,7 +171,8 @@ macos_memory() {
 take_reading() {
   local dir=$1 build=$2 readings=$1/readings.jsonl snapshot=$1/procs.tsv
   local os meminfo memory total available cpus age=null snapshot_read=/dev/null stacks=null line fresh slots provider primary held_count
-  local caller_action=$_team_exit_action
+  local caller_action
+  caller_action=$(team_exit_action)
   local -a paths=() resolved=() registered=()
   mkdir -p "$dir"
   exec {sample_fd}>>"$dir/sample.lock"

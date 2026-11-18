@@ -25,6 +25,10 @@
 #                       it; the library's one EXIT trap runs it, then removes the paths. Every
 #                       script that sources the library sets its exit action so, never with a
 #                       trap of its own on EXIT, which would take the place of the removal.
+#   team_exit_action
+#                       prints the shell's exit action, nothing when it has none: a library
+#                       function that sets one of its own while it runs (take_reading) runs its
+#                       caller's in it, and gives it back.
 # The paths are the script's, its main shell's: each is a line of the run's list, a file in TMPDIR
 # made at the first path (team-temp.<pid>.<random>), which a subshell appends to as the main shell
 # does, so a $(...) or a background job may make one, and the main shell's EXIT trap removes them
@@ -70,6 +74,10 @@ team_exit_trap() {
     _team_exit_shell=$BASHPID
     trap _team_exit EXIT
   fi
+}
+
+team_exit_action() {
+  printf '%s' "$_team_exit_action"
 }
 
 # Take the EXIT trap a script set before it sourced this file as its action (trap -p prints it as
