@@ -2273,19 +2273,20 @@ merge_judged() {
 # driver of the project's or the user's own, where base_merge runs each one <checkout> registers:
 # judged by git merge-tree in a bare repository made for it and removed after, which reads
 # <checkout>'s objects (as its alternate), never writes them, and sees no git configuration but
-# its own, so a path whose attribute names such a driver is merged as text. It prints and returns
+# its own, made from no template directory, so a path whose attribute names such a driver is
+# merged as text. It prints and returns
 # as base_merge does, a repository that cannot be made among the failures that return 2:
 # host_merge <checkout> <head> <base ref>
 host_merge() {
   local host_objects host_dir host_rc=0
-  local -a host_git=(env -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG GIT_CONFIG_GLOBAL=/dev/null
-    GIT_CONFIG_NOSYSTEM=1 git)
+  local -a host_git=(env -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG -u GIT_TEMPLATE_DIR -u GIT_ATTR_SOURCE
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 git)
   if ! host_objects=$(git -C "$1" rev-parse --path-format=absolute --git-path objects 2>/dev/null) || [[ ! -d $host_objects ]]; then
     echo "the objects of $1 cannot be found"
     return 2
   fi
   host_dir=$(mktemp -d) || return 2
-  if "${host_git[@]}" init -q --bare "$host_dir/repo" 2>/dev/null &&
+  if "${host_git[@]}" init -q --bare --template= "$host_dir/repo" 2>/dev/null &&
     printf '%s\n' "$host_objects" >"$host_dir/repo/objects/info/alternates"; then
     merge_judged "$2" "$3" "${host_git[@]}" --git-dir="$host_dir/repo" || host_rc=$?
   else

@@ -245,6 +245,13 @@ SH
   queue_entry "$trial"
   run_bin -0 team-review-status --merge-group "$URL" "$trial"
   assert_equal "$output" "agent-review success on Owner/Proj@$trial"
+  # A template directory that registers the driver, and names it for the path, reaches no proof.
+  local template=$BATS_TEST_TMPDIR/template
+  mkdir -p "$template/info"
+  printf '[merge "keep-theirs"]\n\tdriver = cp %%B %%A\n' >"$template/config"
+  echo 'docs/*.md merge=keep-theirs' >"$template/info/attributes"
+  GIT_TEMPLATE_DIR=$template run_bin -0 team-review-status --merge-group "$URL" "$trial"
+  assert_equal "$output" "agent-review success on Owner/Proj@$trial"
   # The proof moves no ref of the primary checkout and changes no file of it.
   assert_equal "$(git -C "${QUEUE_PRIMARY:?}" status --porcelain)" ""
   assert_equal "$(git -C "${QUEUE_PRIMARY:?}" for-each-ref --format='%(refname)' | grep -c queue || true)" 0
