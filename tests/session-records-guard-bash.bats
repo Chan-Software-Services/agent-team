@@ -214,6 +214,12 @@ CACHES=(.cache/claude-cli-nodejs Library/Caches/claude-cli-nodejs)
   passes "cat $up/*/.claude/jobs/$JOB/state.json"
   passes "ls ~/* $up/*/wt/src"
   passes "ls ~/.cl*/skills"
+  # On a volume that folds case, a glob reaches a place whose path holds an upper-case letter, in
+  # either case.
+  mkdir -p "$HOME/Upper"
+  export SESSION_RECORDS_FOLD_CASE=1 CLAUDE_CONFIG_DIR=$HOME/Upper/.claude
+  whole "cat $HOME/Upper/.cl*/history.jsonl" "$HOME/Upper/.cl*/history.jsonl" "~/.claude/history.jsonl"
+  whole "cat $HOME/upper/.cl*/history.jsonl" "$HOME/upper/.cl*/history.jsonl" "~/.claude/history.jsonl"
 }
 
 # deep <command> <word> <name> [cwd]: refused as a recursive reader rooted above the config
@@ -240,6 +246,14 @@ deep() {
   deep "rsync -a ~/ $wt/copy" "~/" "$name"
   deep "rsync $up/* $wt/copy" "$up/*" "$name"
   deep "timeout 60 grep -rl needle ~" "~" "$name"
+  # An option that takes no value is never read as a longer one that does.
+  deep "rsync -a --partial ~/ $wt/copy" "~/" "$name"
+  deep "rsync -a --backup ~/ $wt/copy" "~/" "$name"
+  deep "grep -r --binary needle ~" "~" "$name"
+  deep "rg --ignore needle ~" "~" "$name"
+  # tar's -C with its directory joined to it.
+  deep "tar -C$HOME -cf - ." "-C$HOME" "$name"
+  deep "tar -C$tmp -cf - ." "-C$tmp" "$temp"
   deep "cd ~ && grep -rn needle ." "." "$name"
   deep "cd ~ && rg needle" "." "$name"
   deep "cd / && find -name x" "." "$name"

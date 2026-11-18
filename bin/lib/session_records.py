@@ -53,18 +53,20 @@ LOGIN = re.compile(r"~([A-Za-z0-9._][A-Za-z0-9._-]*)(?=/|$)")
 VALUED = re.compile(r"-{0,2}[A-Za-z_][A-Za-z0-9_.-]*(?:\[.*\])?\+?=", re.DOTALL)
 
 # The recursive readers' options read as getopt_long reads them: of each, the short options that
-# take a value, and its long options, those that take one first.
+# take a value, and its long options, those that take one first; the rest of a reader's long
+# options holds each that takes none and is a prefix of one that does, so it is never read as that
+# one.
 GREP_SHORTS = set("ABCDdefm")
 GREP_VALUED = {"after-context", "before-context", "binary-files", "context", "devices", "directories", "exclude",
                "exclude-dir", "exclude-from", "file", "group-separator", "include", "label", "max-count", "regexp"}
-GREP_LONGS = GREP_VALUED | {"recursive", "dereference-recursive"}
+GREP_LONGS = GREP_VALUED | {"binary", "dereference-recursive", "recursive"}
 RG_SHORTS = set("ABCEMTdefgjmrt")
 RG_VALUED = {"after-context", "before-context", "color", "colors", "context", "context-separator", "dfa-size-limit",
              "encoding", "engine", "field-context-separator", "field-match-separator", "file", "glob", "iglob",
              "ignore-file", "max-columns", "max-count", "max-depth", "max-filesize", "path-separator", "pre",
              "pre-glob", "regex-size-limit", "regexp", "replace", "sort", "sortr", "threads", "type", "type-add",
              "type-clear", "type-not"}
-RG_LONGS = RG_VALUED | {"files", "type-list"}
+RG_LONGS = RG_VALUED | {"files", "ignore", "type-list"}
 CP_SHORTS = set("St")
 CP_VALUED = {"suffix", "target-directory"}
 CP_LONGS = CP_VALUED | {"archive", "recursive"}
@@ -73,6 +75,9 @@ RSYNC_VALUED = {"backup-dir", "block-size", "chmod", "chown", "compare-dest", "c
                 "files-from", "filter", "include", "include-from", "link-dest", "log-file", "out-format",
                 "partial-dir", "password-file", "remote-option", "rsh", "rsync-path", "suffix", "temp-dir",
                 "timeout"}
+RSYNC_LONGS = RSYNC_VALUED | {"backup", "partial"}
+# tar's short options that take a value, of which -C names the directory it reads from.
+TAR_SHORTS = set("bCfFgHIKLNTVX")
 
 
 @dataclass(frozen=True)
@@ -296,7 +301,8 @@ def judge_glob(path, word, table, config):
         return found
     start, rest = glob_parts(path)
     config_root, fold = config
-    targets = [(place.root, place.fold) for place in table] + [(config_root, fold)]
+    targets = [(place.root.lower() if place.fold else place.root, place.fold) for place in table]
+    targets.append((config_root, fold))
     for root, folded in targets:
         at = start.lower() if folded else start
         if relation(at, root) != "above":
@@ -370,12 +376,14 @@ def searched(found, operands, patterns):
 
 def recursive_roots(command):
     """The words a recursive reader is rooted at, of one walked command: grep's paths with -r, -R or
-    -d recurse, rg's and find's (each "." with none), every word of tar's, and the sources of cp's
-    with -r, -R or -a and of rsync's (every operand but the last, the destination, unless cp's -t
-    names it); [] for any other command. A word of the form <name>=<value> gives its value too."""
+    -d recurse, rg's and find's (each "." with none), every word of tar's and the directory of its
+    -C<dir>, and the sources of cp's with -r, -R or -a and of rsync's (every operand but the last,
+    the destination, unless cp's -t names it), each as (the word shown, the word read); [] for any
+    other command. A word of the form <name>=<value> gives its value too."""
     if not command.words:
         return []
     name, args = command_name(command.words[0]), list(command.words[1:])
+    pairs = []
     if name == "grep":
         found, operands = options(args, GREP_SHORTS, GREP_VALUED, GREP_LONGS)
         if not any(option in ("r", "R", "recursive", "dereference-recursive")
@@ -389,10 +397,15 @@ def recursive_roots(command):
         roots = [path for path in find_paths(args) if path != "{}"] or ["."]
     elif name == "tar":
         roots = args
+        for word in args:
+            if word.startswith("-") and not word.startswith("--"):
+                _, flag, joined = short_cluster(word, TAR_SHORTS)
+                if flag == "C" and joined:
+                    pairs.append((word, joined))
     elif name in ("cp", "rsync"):
         cp = name == "cp"
         found, operands = options(args, *((CP_SHORTS, CP_VALUED, CP_LONGS) if cp else
-                                          (RSYNC_SHORTS, RSYNC_VALUED, RSYNC_VALUED)))
+                                          (RSYNC_SHORTS, RSYNC_VALUED, RSYNC_LONGS)))
         names = {option for option, _ in found}
         if cp and not names & {"r", "R", "a", "recursive", "archive"}:
             return []
@@ -400,7 +413,6 @@ def recursive_roots(command):
         roots = operands if targeted or len(operands) < 2 else operands[:-1]
     else:
         return []
-    pairs = []
     for word in roots:
         pairs.append((word, word))
         if VALUED.match(word):

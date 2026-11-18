@@ -94,9 +94,11 @@
 # through every session's records there. Its roots, each read as a path is above: grep's paths
 # with -r, -R, --recursive, --dereference-recursive or -d recurse, and rg's, past the pattern
 # (its first operand, unless -e, -f, --files or --type-list says there is none in the operands);
-# find's start paths; every word of tar's, in every mode; and the sources of cp's with -r, -R or
-# -a (every operand but the last, unless -t names the destination) and of rsync's (every operand
-# but the last); grep, rg and find with no path take ".", the directory the command runs in. A
+# find's start paths; every word of tar's, in every mode, and the directory of its -C<dir>; and
+# the sources of cp's with -r, -R or -a (every operand but the last, unless -t names the
+# destination) and of rsync's (every operand but the last); grep, rg and find with no path take
+# ".", the directory the command runs in. A long option that takes no value is never read as a
+# longer one that does (grep's --binary, rg's --ignore, rsync's --partial and --backup). A
 # root holding a glob is refused when the glob may match a directory above one. Its message
 # names the config directory's first place when the root lies above the config directory, else
 # the temporary directory:
