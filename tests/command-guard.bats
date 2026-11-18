@@ -1276,6 +1276,8 @@ sort|sort -u -o @ @ /tmp/ids
 sort|sort --output=@ /tmp/ids
 sort|sort -uo @ /tmp/ids
 sort|sort --compress-program=/tmp/x @
+sort|sort --comp=/tmp/x @
+sort|sort --out @ /tmp/ids
 python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
 perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
 node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
@@ -1324,7 +1326,7 @@ NONREADERS
     "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
     "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" \
     "grep -rn assistant-threads bin | cut -c1-200" "sort -u $state/assistant-threads | tr -d x | nl" \
-    "sort -k1,1n -t, $state/assistant-threads"; do
+    "sort -k1,1n -t, $state/assistant-threads" "sort --check $state/assistant-threads"; do
     AGENT_TEAM_ROLE=assistant guard -0 "$command"
     assert_equal "$stderr" ""
   done
