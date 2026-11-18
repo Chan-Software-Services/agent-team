@@ -96,7 +96,7 @@ $(catch_up_line)"
   handoff H1 note assistant coordinator answered
   handoff H2 task assistant coordinator
   handoff H3 walkthrough coordinator assistant
-  # Today pinned before the item's review date, so it is never DUE whatever day the test runs.
+  # A clock before the item's review date, so the list shows it unmarked whatever day the test runs.
   TEAM_CURRENT_NOW=2026-11-15T12:00:00Z DISCORD_STATE_DIR=$HOME/.claude/channels/discord start
   assert_equal "$stderr" ""
   # The hold is offline_hold's assistant text, the one the lease-fence hook blocks with.
