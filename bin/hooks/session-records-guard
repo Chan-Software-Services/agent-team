@@ -81,12 +81,29 @@
 # own entry or under it, and any other is refused; a place refused whole, itself included, is
 # refused; a keyed place's root, or the config directory itself, which names the first place, is
 # refused as too wide; anything else passes, the directories above the config directory and the
-# temporary directory among them. Case folds as for the file tools. The first refusal in the
-# walk's order is reported, the redirections' targets after every command's words:
+# temporary directory among them but as a recursive reader's root, below. Case folds as for the
+# file tools. The first refusal in the walk's order is reported, the redirections' targets after
+# every command's words:
 #   a Bash command naming <word>: under <name> a session reads only <what it owns>, and this is another session's.
 #   a Bash command naming <word>: <name> holds every session's records, and a worker session reads none of it.
 #   a Bash command naming <word> would reach every session's records under <name>; name a narrower path.
 # each with the word as the walk read it, its quotes removed.
+#
+# A recursive reader is also refused when it is rooted above the config directory or the
+# temporary directory (the home directory, /home, /, the OS temp dir), since its walk passes
+# through every session's records there. Its roots, each read as a path is above: grep's paths
+# with -r, -R, --recursive, --dereference-recursive or -d recurse, and rg's, past the pattern
+# (its first operand, unless -e, -f, --files or --type-list says there is none in the operands);
+# find's start paths; every word of tar's, in every mode; and the sources of cp's with -r, -R or
+# -a (every operand but the last, unless -t names the destination) and of rsync's (every operand
+# but the last); grep, rg and find with no path take ".", the directory the command runs in. A
+# root holding a glob is refused when the glob may match a directory above one. Its message
+# names the config directory's first place when the root lies above the config directory, else
+# the temporary directory:
+#   a Bash command reading <word> recursively would reach every session's records under <name>; name a narrower path.
+# What the call spells is all it reads: a symlink the same call makes, a path inside a program's
+# own string (a URL, python3 -c), any other program that walks a tree (ls -R, du, zip -r) and a
+# path computed when the command runs are outside this rule.
 #
 # A path is compared with a root as text, both in lower case when the root's volume folds case,
 # as a Mac's default one does, so a name in another case is the same path there. The volume folds

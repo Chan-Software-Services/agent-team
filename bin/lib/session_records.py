@@ -16,7 +16,8 @@ judged, the rule for one path, and every message. A place keyed by a session or 
 session reach its own entry and refuses every other; a place not keyed that way is refused whole.
 Read, Grep and Glob are judged by judge_file, Bash by decide_bash: the words its commands spell,
 read through command_text's walk and its redirections' targets, each resolved by delete_rules'
-reading of an operand, in a Context of command_rules', as the hook's header says.
+reading of an operand, in a Context of command_rules', as the hook's header says, and the roots of
+a recursive reader (recursive_roots), refused above the config or the temporary directory.
 """
 
 from __future__ import annotations
@@ -33,8 +34,8 @@ from typing import Callable, Optional
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_rules import Context  # noqa: E402
-from command_text import call_commands, redirection_targets  # noqa: E402
-from delete_rules import Unread, expand, reachable  # noqa: E402
+from command_text import call_commands, command_name, long_options, redirection_targets, short_cluster  # noqa: E402
+from delete_rules import Unread, expand, find_paths, reachable  # noqa: E402
 
 # A UUID's shape, 8-4-4-4-12 lowercase hex.
 UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.ASCII)
@@ -50,6 +51,28 @@ LOGIN = re.compile(r"~([A-Za-z0-9._][A-Za-z0-9._-]*)(?=/|$)")
 # A word that gives a value after its first =: an assignment, a name=value operand (dd's if=) or
 # a long option's --name=value.
 VALUED = re.compile(r"-{0,2}[A-Za-z_][A-Za-z0-9_.-]*(?:\[.*\])?\+?=", re.DOTALL)
+
+# The recursive readers' options read as getopt_long reads them: of each, the short options that
+# take a value, and its long options, those that take one first.
+GREP_SHORTS = set("ABCDdefm")
+GREP_VALUED = {"after-context", "before-context", "binary-files", "context", "devices", "directories", "exclude",
+               "exclude-dir", "exclude-from", "file", "group-separator", "include", "label", "max-count", "regexp"}
+GREP_LONGS = GREP_VALUED | {"recursive", "dereference-recursive"}
+RG_SHORTS = set("ABCEMTdefgjmrt")
+RG_VALUED = {"after-context", "before-context", "color", "colors", "context", "context-separator", "dfa-size-limit",
+             "encoding", "engine", "field-context-separator", "field-match-separator", "file", "glob", "iglob",
+             "ignore-file", "max-columns", "max-count", "max-depth", "max-filesize", "path-separator", "pre",
+             "pre-glob", "regex-size-limit", "regexp", "replace", "sort", "sortr", "threads", "type", "type-add",
+             "type-clear", "type-not"}
+RG_LONGS = RG_VALUED | {"files", "type-list"}
+CP_SHORTS = set("St")
+CP_VALUED = {"suffix", "target-directory"}
+CP_LONGS = CP_VALUED | {"archive", "recursive"}
+RSYNC_SHORTS = set("BMTef")
+RSYNC_VALUED = {"backup-dir", "block-size", "chmod", "chown", "compare-dest", "copy-dest", "exclude", "exclude-from",
+                "files-from", "filter", "include", "include-from", "link-dest", "log-file", "out-format",
+                "partial-dir", "password-file", "remote-option", "rsh", "rsync-path", "suffix", "temp-dir",
+                "timeout"}
 
 
 @dataclass(frozen=True)
@@ -200,7 +223,8 @@ def judge_bash(real, word, table, config):
     but as the session's own entry or under it, refused whole in or at a place not keyed, and
     refused as too wide at a keyed place's root or at the config directory (config, resolved and
     folded as its volume folds, with the fold), which names the first row; any other passes, the
-    directories above the config directory and the temporary directory among them."""
+    directories above the config directory and the temporary directory among them, which only
+    judge_recursive refuses."""
     subject = f"a Bash command naming {word}"
     for place in table:
         at, root = place.fit(real)
@@ -247,6 +271,18 @@ def reaches(pattern, names):
     return out
 
 
+def glob_parts(path):
+    """An absolute path holding a glob as its literal start (its components before the first that
+    holds a glob, resolved) and the glob's components after it, a leading .. taken off the start."""
+    parts = path.split("/")
+    k = next(i for i, part in enumerate(parts) if GLOB.search(part))
+    start = os.path.realpath("/".join(parts[:k]) or "/")
+    rest = [part for part in os.path.normpath("/".join(parts[k:])).split("/") if part not in ("", ".")]
+    while rest and rest[0] == "..":
+        start, rest = os.path.dirname(start), rest[1:]
+    return start, rest
+
+
 def judge_glob(path, word, table, config):
     """A Bash command's refusal for an absolute path holding a glob, or None: judged by its literal
     start (its components before the first that holds a glob, resolved), and, from a start above a
@@ -255,13 +291,10 @@ def judge_glob(path, word, table, config):
     entry) and by the config directory when it may match that alone."""
     parts = path.split("/")
     k = next(i for i, part in enumerate(parts) if GLOB.search(part))
-    start = os.path.realpath("/".join(parts[:k]) or "/")
-    found = judge_bash(start, word, table, config)
+    found = judge_bash(os.path.realpath("/".join(parts[:k]) or "/"), word, table, config)
     if found:
         return found
-    rest = [part for part in os.path.normpath("/".join(parts[k:])).split("/") if part not in ("", ".")]
-    while rest and rest[0] == "..":
-        start, rest = os.path.dirname(start), rest[1:]
+    start, rest = glob_parts(path)
     config_root, fold = config
     targets = [(place.root, place.fold) for place in table] + [(config_root, fold)]
     for root, folded in targets:
@@ -277,6 +310,102 @@ def judge_glob(path, word, table, config):
             if found:
                 return found
     return None
+
+
+def judge_recursive(path, word, globbed, guarded):
+    """A recursive reader's refusal for one resolved path it is rooted at, or None: refused when the
+    path lies above a guarded root (the config directory or the temporary directory, each
+    (root, fold, the name a refusal shows)), so its walk would pass through every session's
+    records there, or, for a path holding a glob, when the glob may match a directory above one."""
+    start, rest = glob_parts(path) if globbed else (os.path.realpath(path), [])
+    for root, fold, name in guarded:
+        at = start.lower() if fold else start
+        if relation(at, root) != "above":
+            continue
+        names = root[len(at.rstrip("/")) + 1:].split("/")
+        pattern = [part.lower() for part in rest] if fold else rest
+        # The start itself, with no glob, or each directory between it and the root the glob may match.
+        if not rest or any(all(left == "**" for left in remainder)
+                           for k in range(1, len(names)) for remainder in reaches(pattern, names[:k])):
+            return (f"a Bash command reading {word} recursively would reach every session's records under {name}; "
+                    "name a narrower path.")
+    return None
+
+
+def options(args, shorts, valued, longs):
+    """A command's words after its name read as getopt_long reads them, operands anywhere: its
+    options, each as (its name, its value or None), and its operands, every word after a -- among
+    them; shorts and valued are the short and long options that take a value, longs every long one."""
+    found, operands, k = [], [], 0
+    while k < len(args):
+        word, k = args[k], k + 1
+        if word == "--":
+            operands += args[k:]
+            break
+        if word.startswith("--"):
+            name, eq, value = word[2:].partition("=")
+            named = long_options(name, longs)
+            name = next(iter(named)) if len(named) == 1 else name
+            if name in valued and not eq and k < len(args):
+                value, k = args[k], k + 1
+            found.append((name, value if eq or name in valued else None))
+        elif word.startswith("-") and word != "-":
+            flags, flag, joined = short_cluster(word, shorts)
+            found += [(f, None) for f in flags]
+            if flag:
+                if not joined and k < len(args):
+                    joined, k = args[k], k + 1
+                found.append((flag, joined))
+        else:
+            operands.append(word)
+    return found, operands
+
+
+def searched(found, operands, patterns):
+    """The paths a search reads, past its pattern: every operand when an option in patterns gave it
+    one, else all but its first; its working directory, ".", with none."""
+    paths = operands if any(name in patterns for name, _ in found) else operands[1:]
+    return paths or ["."]
+
+
+def recursive_roots(command):
+    """The words a recursive reader is rooted at, of one walked command: grep's paths with -r, -R or
+    -d recurse, rg's and find's (each "." with none), every word of tar's, and the sources of cp's
+    with -r, -R or -a and of rsync's (every operand but the last, the destination, unless cp's -t
+    names it); [] for any other command. A word of the form <name>=<value> gives its value too."""
+    if not command.words:
+        return []
+    name, args = command_name(command.words[0]), list(command.words[1:])
+    if name == "grep":
+        found, operands = options(args, GREP_SHORTS, GREP_VALUED, GREP_LONGS)
+        if not any(option in ("r", "R", "recursive", "dereference-recursive")
+                   or (option in ("d", "directories") and value == "recurse") for option, value in found):
+            return []
+        roots = searched(found, operands, ("e", "f", "regexp", "file"))
+    elif name == "rg":
+        found, operands = options(args, RG_SHORTS, RG_VALUED, RG_LONGS)
+        roots = searched(found, operands, ("e", "f", "regexp", "file", "files", "type-list"))
+    elif name == "find":
+        roots = [path for path in find_paths(args) if path != "{}"] or ["."]
+    elif name == "tar":
+        roots = args
+    elif name in ("cp", "rsync"):
+        cp = name == "cp"
+        found, operands = options(args, *((CP_SHORTS, CP_VALUED, CP_LONGS) if cp else
+                                          (RSYNC_SHORTS, RSYNC_VALUED, RSYNC_VALUED)))
+        names = {option for option, _ in found}
+        if cp and not names & {"r", "R", "a", "recursive", "archive"}:
+            return []
+        targeted = cp and names & {"t", "target-directory"}
+        roots = operands if targeted or len(operands) < 2 else operands[:-1]
+    else:
+        return []
+    pairs = []
+    for word in roots:
+        pairs.append((word, word))
+        if VALUED.match(word):
+            pairs.append((word, word.partition("=")[2]))
+    return pairs
 
 
 def logins(word):
@@ -311,9 +440,10 @@ def bash_words(command):
     return found
 
 
-def decide_bash(call, env, table, config):
+def decide_bash(call, env, table, config, guarded):
     """A Bash call's refusal, or None: the first path, in the walk's order, one of its commands
-    names (bash_words, then each redirection's target) that a place refuses (judge_bash)."""
+    names (bash_words, then each redirection's target) that a place refuses (judge_bash), or a
+    recursive reader is rooted at above a guarded root (recursive_roots, judge_recursive)."""
     tool_input = call.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str):
@@ -323,12 +453,15 @@ def decide_bash(call, env, table, config):
     # longer string that mentions a path (a message, a pattern) passes.
     blanks = any(re.search(r"\s", place.root) for place in table)
     seen = set()
-    pairs = [pair for found in call_commands(command) for pair in bash_words(found)]
-    pairs += [(target, target) for target in redirection_targets(command)]
-    for shown, word in pairs:
-        if not word or (shown, word) in seen:
+    pairs = []
+    for found in call_commands(command):
+        pairs += [(shown, word, False) for shown, word in bash_words(found)]
+        pairs += [(shown, word, True) for shown, word in recursive_roots(found)]
+    pairs += [(target, target, False) for target in redirection_targets(command)]
+    for shown, word, recursive in pairs:
+        if not word or (shown, word, recursive) in seen:
             continue
-        seen.add((shown, word))
+        seen.add((shown, word, recursive))
         blank = bool(re.search(r"\s", word)) and not blanks
         try:
             # A word the walk decoded ($'...') or range-expanded is read as Bash made it.
@@ -337,10 +470,12 @@ def decide_bash(call, env, table, config):
                 bases = [""] if path.startswith("/") else [base.path for base in reachable(context)]
                 for base in bases:
                     joined = os.path.join(base, path)
-                    if GLOB.search(path) and not blank:
-                        found = judge_glob(joined, shown, table, config)
-                    elif blank and not os.path.lexists(os.path.realpath(joined)):
+                    if blank and not os.path.lexists(os.path.realpath(joined)):
                         found = None
+                    elif recursive:
+                        found = judge_recursive(joined, shown, bool(GLOB.search(path)) and not blank, guarded)
+                    elif GLOB.search(path) and not blank:
+                        found = judge_glob(joined, shown, table, config)
                     else:
                         found = judge_bash(os.path.realpath(joined), shown, table, config)
                     if found:
@@ -385,7 +520,11 @@ def decide(raw, env):
     if tool == BASH:
         config = os.path.realpath(config_directory(env))
         fold = folds(config, env)
-        return decide_bash(call, env, table, (config.lower() if fold else config, fold))
+        config = (config.lower() if fold else config, fold)
+        temp = next(place for place in table if place.name == place.root)
+        # The roots a recursive reader may not be rooted above, each as judge_recursive takes it.
+        guarded = [config + (table[0].name,), (temp.root.lower() if temp.fold else temp.root, temp.fold, temp.name)]
+        return decide_bash(call, env, table, config, guarded)
     cwd = call.get("cwd")
     cwd = os.path.realpath(cwd if isinstance(cwd, str) and cwd else os.getcwd())
     home = env.get("HOME") or os.path.expanduser("~")

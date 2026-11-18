@@ -216,6 +216,59 @@ CACHES=(.cache/claude-cli-nodejs Library/Caches/claude-cli-nodejs)
   passes "ls ~/.cl*/skills"
 }
 
+# deep <command> <word> <name> [cwd]: refused as a recursive reader rooted above the config
+# directory or the temporary directory.
+deep() {
+  refused "$1" "a Bash command reading $2 recursively would reach every session's records under $3; name a narrower path." "${4:-}"
+}
+
+@test "a recursive reader rooted above the config directory or the temporary directory is refused" {
+  local name="~/.claude/projects" tmp=${temp%/*} up=${HOME%/*}
+  deep "grep -r needle ~" "~" "$name"
+  deep "grep -Rn needle \$HOME" '$HOME' "$name"
+  deep "grep --recursive -e needle -- $up" "$up" "$name"
+  deep "grep -d recurse needle /" "/" "$name"
+  deep "rg needle ~/" "~/" "$name"
+  deep "rg -i -g '*.json' needle $wt ~" "~" "$name"
+  deep "rg --files $tmp" "$tmp" "$temp"
+  deep "find ~ -name history.jsonl -exec cat {} +" "~" "$name"
+  deep "find -L / -name x" "/" "$name"
+  deep "tar -C ~ -cf - ." "~" "$name"
+  deep "tar -czf $wt/x.tgz --directory=$tmp ." "--directory=$tmp" "$temp"
+  deep "cp -r ~ $wt/copy" "~" "$name"
+  deep "cp -a $tmp $wt/copy" "$tmp" "$temp"
+  deep "rsync -a ~/ $wt/copy" "~/" "$name"
+  deep "rsync $up/* $wt/copy" "$up/*" "$name"
+  deep "timeout 60 grep -rl needle ~" "~" "$name"
+  deep "cd ~ && grep -rn needle ." "." "$name"
+  deep "cd ~ && rg needle" "." "$name"
+  deep "cd / && find -name x" "." "$name"
+  export SESSION_RECORDS_FOLD_CASE=1
+  deep "grep -r needle ${HOME^^}" "${HOME^^}" "$name"
+}
+
+@test "a search of the worktree, a project or the job's own tmp passes, as do non-recursive readers and a copy into the home directory" {
+  export CLAUDE_JOB_DIR=$jobs/$JOB
+  mkdir -p "$HOME/project/src"
+  passes "grep -rn needle ."
+  passes "grep -rn /tmp src"
+  passes "grep -r -e ~ src"
+  passes "rg needle src && rg --files"
+  passes "rg -g '!*.lock' -t py needle $HOME/project"
+  passes "find . -name '*.sh' -newer $HOME/project/src"
+  passes "find $HOME/project -path '/home/*' -print"
+  passes 'find "$CLAUDE_JOB_DIR/tmp" -name x'
+  passes 'grep -r needle "$CLAUDE_JOB_DIR/tmp"'
+  passes 'tar -C "$CLAUDE_JOB_DIR/tmp" -cf - .'
+  passes "cp -r src $HOME/project && cp -r src ~ && rsync -a src/ /tmp"
+  passes "cp -r -t ~ src"
+  passes "rsync -a $HOME/project/ $CLAUDE_CODE_TMPDIR/copy"
+  passes "rg needle ${HOME%/*}/*/project"
+  passes "grep needle ~/notes.md && cp ~/notes.md /tmp/x && ls -R src"
+  passes "cd $HOME/project && grep -rn needle ."
+  passes "ls ~ /tmp / && du -sh ~/.cache"
+}
+
 @test "a word the shell resolves without running anything is read as it resolves it: ~login, a \$'...' escape and a brace range" {
   local login owner_home
   login=$(id -un)

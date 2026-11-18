@@ -7,7 +7,8 @@ and its allowed way, as kill_rules.py's are.
 bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
 operand, below: expand (a word as the paths the shell may make of it), reachable (the
 directories a relative one is read against, as Bases, those of candidates or, past a cd it cannot
-follow, the rest) and Unread, which either raises.
+follow, the rest) and Unread, which either raises, and find_paths (find's start paths among its
+words).
 A recursive delete passes only when every path it deletes resolves strictly inside a root (the
 worktree or the job tmp), is no kept path (a root or the worktree's .scratch/task) nor a directory
 holding one, and is no repository's .git; and when no operand holds a variable it leaves empty,
@@ -827,7 +828,7 @@ def _rm(args):
     return recursive, operands
 
 
-def _starts(args):
+def find_paths(args):
     """find's start paths among its words after its name: past its leading options and a -- that
     ends them, its words before the first that starts with -, ( or !, a {} among them."""
     k = 0
@@ -856,9 +857,9 @@ def _holds(args, option):
 
 
 def _find_starts(args, context, at=None):
-    """The verdicts on find's start paths: each of _starts', and its -files0-from list's, which the
-    guard cannot read before it runs (with no root, outside)."""
-    starts = _starts(args)
+    """The verdicts on find's start paths: each of find_paths', and its -files0-from list's, which
+    the guard cannot read before it runs (with no root, outside)."""
+    starts = find_paths(args)
     # With none, not even a {} that xargs or -exec fills or a -files0-from list, find takes the
     # directory it runs in.
     found = [] if starts or _holds(args, "-files0-from") else [(EMPTY if context.roots else OUTSIDE, NO_START, None)]
