@@ -19,8 +19,8 @@
 # push, a push to dev or main, git reset --hard, git clean, git branch -D, a Docker prune and a
 # merge outside team-merge, by the workers' own rules and its own git push * (tests/repo.bats
 # holds the three together), and besides them the Discord token and both
-# access files, any git push and git commit, GitHub's pr, issue and repo writes, team-land, and
-# starting or stopping a session. Its command-guard hook's assistant-acts row refuses its run of
+# access files, any git push and git commit, the gh pr and gh issue writes they name, gh repo
+# create, delete and edit, team-land, and starting or stopping a session. Its command-guard hook's assistant-acts row refuses its run of
 # the coordinator's acts (a hand-off, a stow, a resume, a lease change, a load check, a stack's
 # start or stop, a timer's change, a config apply and the rest), command by command, as each act
 # script but team-heavy does itself (assistant_refusal), so it still reads each script's file and
