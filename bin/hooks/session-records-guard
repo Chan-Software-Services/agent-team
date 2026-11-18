@@ -105,7 +105,9 @@
 #   a Bash command reading <word> recursively would reach every session's records under <name>; name a narrower path.
 # What the call spells is all it reads: a symlink the same call makes, a path inside a program's
 # own string (a URL, python3 -c), any other program that walks a tree (ls -R, du, zip -r) and a
-# path computed when the command runs are outside this rule.
+# path computed when the command runs are outside this rule; and on a Mac, bsdtar's -H and -L
+# take no value, so a cluster such as tar -cLC<dir> is read as GNU tar reads it and its directory
+# is not judged.
 #
 # A path is compared with a root as text, both in lower case when the root's volume folds case,
 # as a Mac's default one does, so a name in another case is the same path there. The volume folds

@@ -17,7 +17,9 @@ session reach its own entry and refuses every other; a place not keyed that way 
 Read, Grep and Glob are judged by judge_file, Bash by decide_bash: the words its commands spell,
 read through command_text's walk and its redirections' targets, each resolved by delete_rules'
 reading of an operand, in a Context of command_rules', as the hook's header says, and the roots of
-a recursive reader (recursive_roots), refused above the config or the temporary directory.
+a recursive reader (recursive_roots), refused above the config or the temporary directory; the
+hook's header lists the shapes that rule does not reach, among them, on a Mac, a tar cluster such
+as tar -cLC<dir>, since bsdtar's -H and -L take no value and it is read as GNU tar reads it.
 """
 
 from __future__ import annotations
@@ -76,7 +78,9 @@ RSYNC_VALUED = {"backup-dir", "block-size", "chmod", "chown", "compare-dest", "c
                 "partial-dir", "password-file", "remote-option", "rsh", "rsync-path", "suffix", "temp-dir",
                 "timeout"}
 RSYNC_LONGS = RSYNC_VALUED | {"backup", "partial"}
-# tar's short options that take a value, of which -C names the directory it reads from.
+# tar's short options that take a value, as GNU tar's are, of which -C names the directory it
+# reads from. A limit kept: on a Mac, bsdtar's -H and -L take no value, so a cluster such as
+# tar -cLC<dir> is read as GNU tar reads it and its directory is not judged.
 TAR_SHORTS = set("bCfFgHIKLNTVX")
 
 
