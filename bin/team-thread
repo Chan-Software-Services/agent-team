@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Open a task's Discord thread under #coordinator and record it in the ledger, or its interview
-# thread under the interview channel, or wait in that thread for Daniel's next messages.
+# thread under the interview channel, or wait in that thread for Daniel's next messages, or archive
+# the threads whose work is done.
 # Every task has a thread; bin/team-worker refuses to launch a worker for a task without it.
-# Discord archives either thread after 3 days with no messages.
+# Each thread opens with auto_archive_duration 1440 (THREAD_ARCHIVE_MINUTES in bin/lib/threads.sh),
+# which Discord now reads only as how long a quiet thread stays in the channel list: it archives
+# no thread on idle time, so the team archives its own (archive, below).
 #
 # Usage: team-thread <task> <project> <title>
 #        team-thread T<n> --interview
 #        team-thread wait T<n> [--after <message id>]
+#        team-thread archive [--all] [--dry-run]
 #   <task> <project> <title>  Opens the task's thread under #coordinator, named "T<n> · <project>
 #             · <title>", logs it as thread and prints its id; one already logged is printed
 #             without calling Discord.
@@ -44,6 +48,30 @@
 #             walk-note, its id and the time, never its words, which keeps the walk counting
 #             (walk_holds in bin/lib/ledger.jq); a line that cannot be logged is said on stderr, and
 #             the messages still print.
+#   archive   Archives each of the team's threads whose work is done that bin/lib/threads.sh's rule
+#             allows: the team home's waiting.json (what waiting.md lists, its owed replies
+#             included) names nothing of it, by its task or its id, and its last message is at
+#             least a day old. Its work is done when a task's closed event names it (team-close
+#             logs the task's thread and interview thread as threads, and archives each the rule
+#             allows then) or the assistant closed its topic (team-assistant thread --close, in
+#             the team home's assistant/topics.jsonl); --all adds every thread and interview
+#             thread of each closed task, the closes from before the rule among them. It reads
+#             the guild's active threads once (GET guilds/<guild>/threads/active, the guild
+#             #coordinator's) and sets each archived (PATCH channels/<id>, archived true), printing
+#             "archived <id> T7's thread: <its name>" ("T7's interview thread", "the assistant's
+#             topic") for each, in id order; one Discord refuses is a line on stderr, "team-thread:
+#             could not archive <id> <what>: <why>", the rest still archived, and the exit 1.
+#             --dry-run archives nothing: it prints "would archive <id> <what>: <its name>" for
+#             each the rule allows, "keeps <id> <what>: <why>" for each it holds ("item 3 of
+#             waiting.md waits on Daniel in it", "a reply owed to Daniel in waiting.md is of it",
+#             "its last message is 5 h old, under a day"), and last "would archive <n> threads,
+#             keeps <n>" ("1 thread" for one). With no thread whose work is done it asks Discord
+#             nothing and needs no waiting.json, exiting 0. The heartbeat's threads step runs it
+#             with neither option. Otherwise a waiting.json that is missing, cannot be read or is
+#             older than the ledger or a list team-inbox reads (thread_waiting) archives nothing
+#             (exit 1), as does a Discord that cannot be read; in a worker session it is refused
+#             (worker_refusal), and on a machine that is fenced or that lost the lease
+#             (lease_refusal), as a post is.
 # --interview and wait refuse on a machine that is fenced or that lost the lease (lease_refusal,
 # checked before each read), and with no interview channel set; wait ends with the hold's
 # message (offline_hold) when the team holds offline. In a worker session only a planner's wait
@@ -53,6 +81,8 @@
 # team holds offline.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/threads.sh
+source "$TEAM_LIB/threads.sh"
 
 # A read's interval, the longest backoff and the most one read may take, in seconds.
 POLL_SECONDS=5
@@ -65,9 +95,7 @@ MAX_IMAGE=$((20 * 1024 * 1024))
 CDN_LINK='^https://(cdn\.discordapp\.com|media\.discordapp\.net)/[^[:space:][:cntrl:]]+$'
 FETCH_TIMEOUT=60
 FETCH_RETRIES_TIMEOUT=120
-# Minutes with no message before Discord archives a thread: 3 days (it allows 60, 1440, 4320 or 10080).
-ARCHIVE_MINUTES=4320
-USAGE="usage: team-thread <task> <project> <title> | team-thread T<n> --interview | team-thread wait T<n> [--after <message id>]"
+USAGE="usage: team-thread <task> <project> <title> | team-thread T<n> --interview | team-thread wait T<n> [--after <message id>] | team-thread archive [--all] [--dry-run]"
 NO_CHANNEL="no interview channel is set: Daniel makes it (manual-steps.md), and a PR sets its id as INTERVIEW_CHANNEL in bin/lib/team.sh"
 
 # Fail with why this machine must not <does>, if it must not: fenced <does>
@@ -86,7 +114,7 @@ open_thread() {
     return 0
   fi
   discord_token >/dev/null || die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
-  body=$(jq -cn --arg name "$4" --argjson archive "$ARCHIVE_MINUTES" \
+  body=$(jq -cn --arg name "$4" --argjson archive "$THREAD_ARCHIVE_MINUTES" \
     '{name: $name[0:100], type: 11, auto_archive_duration: $archive}')
   id=$(discord_api "channels/$3/threads" -X POST -H "Content-Type: application/json" \
     -d "$body" | jq -r .id 2>/dev/null || true)
@@ -265,6 +293,84 @@ if [[ ${1:-} == wait ]]; then
     fi
     sleep "$POLL_SECONDS"
   done
+fi
+
+if [[ ${1:-} == archive ]]; then
+  shift
+  all=false dry=''
+  while (($#)); do
+    case $1 in
+      --all) all=true ;;
+      --dry-run) dry=1 ;;
+      *) usage_error "$USAGE" ;;
+    esac
+    shift
+  done
+  if why=$(worker_refusal "" "archives no Discord thread"); then die "$why"; fi
+  fenced "$THREAD_FENCE"
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+
+  # The threads whose work is done, as {"<id>": {task, what}}: each a closed event names (a close
+  # under the rule), with --all every thread and interview thread of a closed task, and each topic
+  # the assistant closed (team-assistant thread --close).
+  ledger_jq 'ledger_events | by_task | [to_entries[] | .key as $task | .value as $events
+      | select(any($events[]; .event == "closed"))
+      | [$events[] | select(.event == "closed") | .threads // [] | .[] | strings] as $named
+      | $events[] | select(.event | IN("thread", "interview-thread"))
+      | (.discord_thread | strings) as $id | select($all or ($named | index($id)))
+      | {key: $id, value: {task: $task,
+          what: "\($task)\($q)s \(if .event == "thread" then "thread" else "interview thread" end)"}}]
+    | from_entries' -nRc --argjson all "$all" --arg q "'" "$TEAM_HOME/ledger.jsonl" >"$scratch/done"
+  topics=$TEAM_HOME/assistant/topics.jsonl
+  if [[ -e $topics ]]; then
+    jq -nRc --slurpfile ended "$scratch/done" --arg q "'" '$ended[0] + ([inputs | fromjson? | objects
+      | select(.event == "closed") | .thread | strings | {key: ., value: {task: "", what: "the assistant\($q)s topic"}}]
+      | from_entries)' "$topics" >"$scratch/all"
+    mv -f "$scratch/all" "$scratch/done"
+  fi
+  # With no thread whose work is done, there is nothing to ask Discord.
+  if [[ $(<"$scratch/done") == '{}' ]]; then
+    [[ -z $dry ]] || echo "would archive 0 threads, keeps 0"
+    exit 0
+  fi
+  discord_token >/dev/null || die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
+  thread_waiting 2>"$scratch/error" || die "archives no thread: $(<"$scratch/error")"
+
+  # The guild's active threads, read once, among them those of the work done.
+  guild=$(discord_api "channels/$COORDINATOR_CHANNEL" --max-time "$THREAD_CALL_SECONDS" 2>"$scratch/error" |
+    jq -r 'objects | .guild_id | strings' 2>/dev/null) || guild=''
+  [[ $guild =~ ^[0-9]+$ ]] ||
+    die "cannot read #coordinator's guild from Discord: $(grep -m 1 . "$scratch/error" || echo "its answer names none")"
+  discord_api "guilds/$guild/threads/active" --max-time "$THREAD_CALL_SECONDS" >"$scratch/active" 2>"$scratch/error" ||
+    die "cannot read the guild's active threads from Discord: $(grep -m 1 . "$scratch/error" || echo "no reason given")"
+  jq -r --slurpfile ended "$scratch/done" '.threads // empty | .[]
+    | select(.thread_metadata.archived != true and (.id | type) == "string") | . as $t | $ended[0][.id] // empty
+    | [$t.id, (.task | select(. != "") // "-"), .what, ($t.last_message_id // "-" | tostring), ($t.name // "" | gsub("[\t\n]"; " "))]
+    | @tsv' \
+    "$scratch/active" 2>"$scratch/error" | sort -n >"$scratch/found" ||
+    die "cannot read the guild's active threads from Discord's answer: $(grep -m 1 . "$scratch/error" || echo "no reason given")"
+
+  failed=0 would=0 keeps=0
+  while IFS=$'\t' read -r id task what last name; do
+    # A field read from the list as "-" is empty: a topic has no task, and a thread with no message no last.
+    [[ $task != - ]] || task=''
+    [[ $last != - ]] || last=''
+    if why=$(thread_hold "$id" "$task" "$last"); then
+      keeps=$((keeps + 1))
+      [[ -z $dry ]] || echo "keeps $id $what: $why"
+    elif [[ -n $dry ]]; then
+      would=$((would + 1))
+      echo "would archive $id $what: $name"
+    elif thread_archive "$id" 2>"$scratch/error"; then
+      echo "archived $id $what: $name"
+    else
+      failed=1
+      echo "team-thread: could not archive $id $what: $(grep -m 1 . "$scratch/error" || echo "no reason given")" >&2
+    fi
+  done <"$scratch/found"
+  [[ -z $dry ]] || echo "would archive $would thread$( ((would == 1)) || echo s), keeps $keeps"
+  exit "$failed"
 fi
 
 if [[ $# -eq 2 && $2 == --interview ]]; then
