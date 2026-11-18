@@ -535,12 +535,18 @@ def _cd_text(command):
     return " ".join(command.words)
 
 
-@functools.lru_cache(maxsize=None)
 def _reached(target, command, bases, context):
     """The Bases of one cd target from each of bases: an absolute one alone, a relative one from
     each, both as the shell's logical cd reads it, from each path the base's PWD may hold, and as
     the file system does; Unread when the guard cannot follow it. Read once per call for each set
-    of bases, since each command's reading rereads the cds before it."""
+    of bases, since each command's reading rereads the cds before it, keyed by the target as
+    written too, since a word decoded from $'...' or made by a brace range equals its text."""
+    return _reached_from(target, getattr(target, "written", None), command, bases, context)
+
+
+@functools.lru_cache(maxsize=None)
+def _reached_from(target, written, command, bases, context):
+    """_reached, by its target and how that target was written (None when as it is)."""
     # $PWD in a cd target would read the directories being found.
     if any("PWD" in reference.groups() for reference in REFERENCE.finditer(target)):
         raise Unread
