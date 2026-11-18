@@ -232,7 +232,7 @@ no_land_call() {
   assert_equal "$(dequeues)" "pr=PR_kwDOtest5"
   assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
   no_land_call
-  # In no queue, nothing proves the merge yet: today's line, exit 75, and nothing enqueued.
+  # In no queue, nothing proves the merge yet: today's line, exit 75 with --holds and 1 without, and nothing enqueued.
   in_queue no
   run_bin -75 --separate-stderr team-merge T14 --holds "$head"
   assert_contains "$stderr" "  GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
