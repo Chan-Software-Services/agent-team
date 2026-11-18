@@ -333,11 +333,23 @@ path_without() {
   at=$(ago 1) day=$(date -u -d "$at" +%F)
   reading laptop "$at" 61
   usage_reading laptop "$(ago 20)" 96 "$(day_file laptop "$(date -u -d "$day - 1 day" +%F)T23:59:00Z")"
-  # And the file before it is not read: only a machine's latest two day files.
+  # And the file before it, though its reading is newer, gives way: the walk stops at the newest
+  # day file holding a model reading.
   usage_reading laptop "$(ago 10)" 50 "$(day_file laptop "$(date -u -d "$day - 2 days" +%F)T12:00:00Z")"
   run_bin -0 team-quota status --json
   assert_equal "$(jq -c '{windows: (.windows | map({name, used})), model_age_minutes}' <<<"$output")" \
     '{"windows":[{"name":"seven_day","used":61},{"name":"model:Fable","used":96}],"model_age_minutes":20}'
+  # With the latest two day files holding status line readings alone, a fresh usage reading in the
+  # file before them is not read: the walk stops at two files, not at the first holding a reading.
+  rm -r "${TEAM_HOME:?}/usage"
+  reading laptop "$at" 61
+  reading laptop "$(date -u -d "$day - 1 day" +%F)T23:59:00Z" 60
+  usage_reading laptop "$(ago 10)" 50 "$(day_file laptop "$(date -u -d "$day - 2 days" +%F)T12:00:00Z")"
+  run_bin -0 team-quota status --json
+  assert_equal "$(jq -c '{windows: (.windows | map({name, used})), model_reading}' <<<"$output")" \
+    '{"windows":[{"name":"seven_day","used":61}],"model_reading":null}'
+  assert_equal "$(jq -r '.model_note' <<<"$output")" \
+    "model windows: none read yet (team-quota usage reads them from Claude Code, every 10 minutes on the heartbeat); a rule on a model's week falls back to seven_day"
 }
 
 @test "each answer usage cannot take records no reading, keeps the last good one and gives the spec's why" {
