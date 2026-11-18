@@ -278,7 +278,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   local body
   body=$(section assistant 'What you do')
   grep -qxF -- '- Read the files and run the read-only views the coordinator does: the team scripts'"'"' files and their `--help` (but `team-land`'"'"'s), `team-queue list` and `index --check`, `team-log --check` and `--check-lifecycle`, `team-inbox --item <n>`, `gh` reads and GraphQL queries with their values written in (no `$`).' <<<"$body"
-  grep -qxF -- '- The secret files, `/proc` and the Discord state files stay closed to you.' <<<"$body"
+  grep -qxF -- '- The secret files, the Discord state files, `/proc` to the Read tool and every process'"'"'s `/proc/<pid>/environ` stay closed to you.' <<<"$body"
   grep -qxF -- '- Your command guard and the act scripts themselves refuse a run of the coordinator'"'"'s acts (a hand-off, a stow, a resume, a lease change, a load check, a stack'"'"'s start or stop), and your guard every `gh` or `gh-axi` call but a read, each refusal naming what it read, so a read never becomes an act.' <<<"$body"
 }
 
