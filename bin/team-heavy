@@ -17,6 +17,9 @@
 #         the command's words and the directory it runs in (~ for the home directory).
 #         Conventioner's scripts/e2e-lock.sh takes the same file with its own form, "<who> since
 #         <time>", which status reads as a holder too.
+#         A shared flock on the file, which status and team-capacity's reading take for an
+#         instant to see whether a run holds it, is no holder: a run refused while one is held
+#         waits up to 5 seconds for it to go, saying nothing, whatever its --wait.
 #         While another run holds the lock, it says once on stderr that it waits and for whom,
 #         waits up to --wait minutes (default 180, or TEAM_HEAVY_WAIT_MINUTES, a number of 0 or
 #         more; 0 does not wait),
@@ -60,7 +63,8 @@
 #         group and scope, with no sample of its own: a nested heavy command, tests/run as a local
 #         check in team-checks say, would otherwise wait for itself.
 # status  "held by <the holder's line>" ("held by another run" before it wrote one) or "free",
-#         exit 0 either way; it waits for nothing and takes no lock a run would wait for.
+#         exit 0 either way; it waits for nothing, and the shared flock it takes for an instant
+#         to read the lock is no holder to a run (see run).
 # stop    Ends the running command's whole tree (never a Docker container it started, which rootful
 #         Docker keeps outside its scope and group: a team stack goes with its task's stack, by
 #         team-stack, and any other container stays, listed in team-janitor's report as not the
@@ -88,6 +92,7 @@ COSTS=$HOME/.local/state/agent-team/capacity/costs.jsonl
 KILL_SECONDS=${TEAM_HEAVY_KILL_SECONDS:-10}
 RECHECK_SECONDS=${TEAM_HEAVY_RECHECK_SECONDS:-30}
 SAMPLE_SECONDS=10
+READER_SECONDS=5
 # A holder line of team-heavy's own form: its label, pid and task (team-capacity's
 # HEAVY_HOLDER_FORM is the same, which tests/team-capacity.bats holds).
 HOLDER_FORM='^(.*) \(pid ([0-9]+)(, (T[0-9]+))?\) since '
@@ -108,6 +113,20 @@ held() {
   flock -n -s "$fd" || rc=1
   exec {fd}<&-
   ((rc))
+}
+
+# Take the lock on descriptor <fd> without waiting for a run: succeed with it, or fail while a run
+# holds it. A reader's shared lock (held's, team-capacity's reading) also refuses the exclusive
+# one, for an instant, so a refusal while a shared lock is still granted waits up to
+# READER_SECONDS for the readers to go.
+take_lock() {
+  local probe rc=0
+  flock -n -x "$1" && return 0
+  exec {probe}<"$LOCK"
+  flock -n -s "$probe" || rc=1
+  exec {probe}<&-
+  ((rc == 0)) || return 1
+  flock -w "$READER_SECONDS" -x "$1"
 }
 
 cmd_status() {
@@ -344,7 +363,7 @@ cmd_run() {
   deadline=$((EPOCHSECONDS + wait_seconds))
   # Take the lock, then ask for room; with none, let the lock go and ask again within the wait.
   while :; do
-    if ! flock -n -x "$fd"; then
+    if ! take_lock "$fd"; then
       ((wait_seconds > 0)) || { echo "${0##*/}: the heavy-run lock is held by $(holder)" >&2 && exit 75; }
       if [[ -z $said_lock ]]; then
         echo "${0##*/}: waiting up to $wait minutes for the heavy-run lock, held by $(holder)" >&2
