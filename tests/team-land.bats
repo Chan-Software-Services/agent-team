@@ -91,7 +91,9 @@ job() {
 # gh answers team-land's read of the PR and team-ci-wait's read of its entry (one answer, pr), an
 # enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables
 # kept in $GH_DIR/dequeues), a trial commit's check runs, no
-# status and no workflow run of it, a job, and a status POST, each from the latest answer at or
+# status and no workflow run of it, a job, team-ci-wait's read of dev's rules (branch, rules and
+# ruleset-<id>, planned by rules_require; with none planned the read fails, and team-ci-wait holds
+# the registry's checks alone), and a status POST, each from the latest answer at or
 # before the current look; team-ci-wait's REST reads (gh api -i, through bin/lib/github-api.sh) in
 # gh api -i's form through tests/helpers/github-api.bash. Each call is one line of $GH_DIR/calls,
 # with -i and an -H header left out. Anything unplanned fails.
@@ -139,6 +141,9 @@ case "$1 $2" in
   "api repos/owner/proj/actions/runs?head_sha="*) answer '{"total_count": 0, "workflow_runs": []}' ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") answer '{"total_count": 0, "workflow_runs": []}' ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${2##*/} ;;
+  "api repos/owner/proj/branches/dev") what=branch ;;
+  "api repos/owner/proj/rules/branches/dev") what=rules ;;
+  "api repos/owner/proj/rulesets/"*) what=ruleset-${2##*/} ;;
   *) echo "unplanned gh call: $*" >&2; exit 1 ;;
 esac
 m=$n
@@ -151,6 +156,25 @@ case $body in
 esac
 answer "$body"
 EOF
+}
+
+# rules_require <context>...: dev protected by the active ruleset 41 alone, which requires those
+# checks, as base_rules reads them.
+rules_require() {
+  answer 0 branch '{"protected": true}'
+  answer 0 rules "$(jq -cn '[{type: "required_status_checks", ruleset_id: 41, ruleset_source_type: "Repository",
+    parameters: {strict_required_status_checks_policy: false, required_status_checks: [$ARGS.positional[] | {context: .}]}}]' \
+    --args "$@")"
+  answer 0 ruleset-41 '{"id": 41, "name": "dev", "bypass_actors": []}'
+}
+
+# ci_wait_ends <failure>...: team-ci-wait is the logging stub, each wait ending failed with those
+# failures, each {name, class, kind, link, step}, and a line for each.
+ci_wait_ends() {
+  shared_make stub "$REPO_ROOT/tests/helpers/stub"
+  ln -f "$BATS_RUN_TMPDIR/shared/stub" "$CODE_CHECKOUT/bin/team-ci-wait"
+  stub_reply team-ci-wait "$(jq -cs '{schema: "team-ci-wait/1", outcome: "failed", failures: .,
+    text: (["team-ci-wait: the checks did not pass:"] + map("  \(.class): \(.name)") | join("\n"))}' <<<"$*")" 1
 }
 
 # The stub sleep moves on to the next look, and the reader's clock on by its seconds, and, after
@@ -313,6 +337,56 @@ team-land: $url merged as 0e0e0e0
   assert_equal "$(ended_at)" 2
   assert_equal "$(jq -c '[.[0, 2], (.[3] | map(.name))]' <<<"$(end_json)")" \
     '["dequeued","failed checks; enqueuing a1b2c3d once more failed: Pull request is not mergeable",["test"]]'
+}
+
+@test "a check dev's rules require that never reports on the trial commit takes the PR out of the queue at once, never enqueued again" {
+  rules_require test "Analyze (python)"
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  trial_checks 1 "$t1" "$(check_run test completed success)"
+  # The queue would drop it only at the check's timeout; team-land does not wait for that.
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(end_json)" '["dequeued",null,"Analyze (python) never reported on the trial commit, which dev'"'"'s rules require",[{"name":"Analyze (python)","class":"rules","kind":"missing","link":null,"step":null}]]'
+  assert_contains "$output" "  rules: Analyze (python) was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
+  assert_contains "$output" "team-land: took $url out of the merge queue: Analyze (python) never reported on the trial commit, which dev's rules require"
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
+  assert_equal "$(enqueues)" "-f pr=PR_kwDOtest5 -f head=$head"
+  # The header says the drop and its next step.
+  run_bin -0 team-land --help
+  output=$(tr -s ' \n#' ' ' <<<"$output")
+  assert_contains "$output" "a wait that ends with any rules failure, whatever else failed, has the PR taken out of the queue at once"
+  assert_contains "$output" "A rules drop is never enqueued again: the next step is the base's rules or the workflow's merge_group trigger, which team-merge names."
+}
+
+@test "a rules failure beside others takes the PR out at once, and a drop of rules and infrastructure is never enqueued again" {
+  # rules beside a failure of the PR's own: out at once, every failure kept.
+  ci_wait_ends '{"name": "test", "class": "pr", "kind": "failed", "link": "https://ci.example.invalid/test", "step": "Run tests"}' \
+    '{"name": "CodeQL", "class": "rules", "kind": "missing", "link": null, "step": null}' \
+    '{"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null}'
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 1
+  assert_equal "$(end_json | jq -c '[.[0], .[2], [.[3][] | .class]]')" '["dequeued","CodeQL and Analyze (python) never reported on the trial commit, which dev'"'"'s rules require",["pr","rules","rules"]]'
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
+  # rules beside infrastructure, with a dequeue GitHub refuses: tried again at each look, and when
+  # the queue drops the PR meanwhile it is not enqueued again, as infrastructure alone would be.
+  echo 0 >"$GH_DIR/look"
+  rm "$GH_DIR"/enqueues "$GH_DIR"/dequeues "$GH_DIR"/pr.*
+  ci_wait_ends '{"name": "data", "class": "infrastructure", "kind": "setup", "link": "https://ci.example.invalid/data", "step": "Set up job"}' \
+    '{"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null}'
+  answer 0 dequeue "refuse: Pull request cannot be dequeued now"
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  pr_at 3 OPEN '' RMQE_1 "failed checks"
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(end_json | jq -c '[.[0], .[2], [.[3][] | .class]]')" '["dequeued","failed checks; Analyze (python) never reported on the trial commit, which dev'"'"'s rules require",["infrastructure","rules"]]'
+  assert_equal "$(dequeues | wc -l)" 2
+  assert_equal "$(enqueues)" "-f pr=PR_kwDOtest5 -f head=$head"
+  [[ $output != *"enqueued $url at a1b2c3d once more"* ]]
 }
 
 @test "a PR already in the queue is waited on with no second enqueue, and one already merged ends merged at once" {
