@@ -171,6 +171,7 @@ macos_memory() {
 take_reading() {
   local dir=$1 build=$2 readings=$1/readings.jsonl snapshot=$1/procs.tsv
   local os meminfo memory total available cpus age=null snapshot_read=/dev/null stacks=null line fresh slots provider primary held_count
+  local caller_action=$_team_exit_action
   local -a paths=() resolved=() registered=()
   mkdir -p "$dir"
   exec {sample_fd}>>"$dir/sample.lock"
@@ -196,12 +197,25 @@ take_reading() {
   # time leaves them out. timeout runs it in a process group of its own, so a signal that stops
   # this run (the heartbeat's own time limit), or this run's end before it is waited for, is
   # passed on to it, and through it to what it started. Each trap goes on past a kill that fails,
-  # since the listing may have ended already, and set -e would end the trap there.
+  # since the listing may have ended already, and set -e would end the trap there. The exit
+  # action runs the caller's after the kill, and is the caller's alone again once the listing is
+  # waited for.
   TEAM_HOME=$TEAM_HOME timeout --kill-after=5 "${TEAM_READING_DOCKER_SECONDS:-30}" \
     "${TEAM_LIB%/*}/team-stack" ls --json >"$work/stacks.json" 2>/dev/null &
   stack_pid=$!
   trap 'kill -TERM "$stack_pid" 2>/dev/null || true; exit 143' TERM INT HUP
-  team_exit_trap '[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null || true'
+  if [[ -n $caller_action ]]; then
+    # The caller's action sees the script's exit status as $?, as its own trap would.
+    team_exit_trap 'reading_status=$?
+[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null || true
+if ((reading_status)); then (exit "$reading_status") || {
+'"$caller_action"'
+}; else
+'"$caller_action"'
+fi'
+  else
+    team_exit_trap '[[ -z $stack_pid ]] || kill -TERM "$stack_pid" 2>/dev/null || true'
+  fi
 
   reading_context
   case $(uname -s) in
@@ -261,6 +275,7 @@ take_reading() {
   if wait "$stack_pid"; then stacks=$(jq -c . "$work/stacks.json"); fi
   stack_pid=''
   trap - TERM INT HUP
+  team_exit_trap "${caller_action:--}"
 
   jq -nc --arg at "$(date -u -d "@$now" +%FT%TZ)" --argjson total "$total" \
     --argjson available "$available" --argjson cpus "$cpus" --slurpfile procs "$work/procs.json" \
