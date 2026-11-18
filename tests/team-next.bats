@@ -1340,6 +1340,41 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   [[ $output != *"run team-merge"* ]]
 }
 
+@test "--ci on a PR the merge queue dropped for a check the base's rules require prints the rules step, never the merge line nor the merge-base step, until it is queued again" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 0
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7"
+  # A rules failure beside one of the PR's own: the rules step alone, naming only the rules checks.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "Analyze (actions) and e2e never reported on the trial commit, which main'"'"'s rules require",
+      failed: [{name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}, {name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"},
+        {name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  local rules_step="merge rules: $url never reported Analyze (actions) and e2e on the merge queue's trial commit, which dropped it at 2026-10-23T10:00:00Z; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T7 again"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$rules_step"
+  [[ $output != *"run team-merge T7 for"* ]]
+  [[ $output != *"merge base:"* ]]
+  [[ $output != *"merge ask:"* ]]
+  # Behind its base too: still the rules step, no catch-up and no merge-base brief.
+  pr_on_github "$sha" 3
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$rules_step"
+  [[ $output != *"merge base:"* ]]
+  # Queued again once the rules are fixed: the merge line is back.
+  pr_on_github "$sha" 0
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T11:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url"
+  [[ $output != *"merge rules:"* ]]
+}
+
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {
   # The branch is not on origin, so the fetch fails.
   reviewing "$sha"
