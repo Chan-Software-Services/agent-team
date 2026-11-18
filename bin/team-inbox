@@ -65,7 +65,10 @@
 # with no other head logged since, by a pr event of the PR or by any review of the task) is left out
 # too, since team-merge is landing it, and so is one the queue dropped for a failure of its own on
 # the trial merge until a pr event of it or a review of the task follows the drop (queue_state's
-# round_due), since the round is the builder's and no word is asked on the head that failed. While
+# round_due), since the round is the builder's and no word is asked on the head that failed, and so
+# is one the queue dropped for a check the base's rules require and no workflow made on the trial
+# commit until a queued, a pr event of it or a review of the task follows the drop (queue_state's
+# rules_due), since the fix is the base's rules or a workflow, as team-sweep's trial-rules says. While
 # the reviewer App is off (no bin/lib/review-app), the team's own project's ready PRs are listed,
 # since they merge only on the per-head word.
 # While a withdrawal of the default word stands (the latest merge-default-withdrawn or

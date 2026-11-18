@@ -75,7 +75,7 @@
     "dequeued": {
       "inbox": true,
       "writer": "team-merge",
-      "about": "the merge queue dropped the PR unmerged, team-merge or team-land took it out, it never joined, or its queued stood for a PR found in no queue or merged at another head: url is the PR's; head the full sha that was enqueued, the standing queued's when team-merge ends one for a PR that left the queue unwatched; reason GitHub's reason for the removal or why it was not enqueued, as team-land gives it, or team-merge's own: the reasons it refused the merge on, or how it found the PR out of the queue; failed the failures team-ci-wait classed on the dropped trial commit, each {name, class, kind, link, step}, as a ci event carries them, absent when it classed none",
+      "about": "the merge queue dropped the PR unmerged, team-merge or team-land took it out, it never joined, or its queued stood for a PR found in no queue or merged at another head: url is the PR's; head the full sha that was enqueued, the standing queued's when team-merge ends one for a PR that left the queue unwatched; reason GitHub's reason for the removal or why it was not enqueued, as team-land gives it, or team-merge's own: the reasons it refused the merge on, or how it found the PR out of the queue; failed the failures team-ci-wait classed on the dropped trial commit, each {name, class, kind, link, step, and source on a rules failure}, the first five as a ci event carries them, absent when it classed none",
       "required": {"url": "string", "head": "string", "reason": "string"},
       "optional": {"failed": "array"}
     },
