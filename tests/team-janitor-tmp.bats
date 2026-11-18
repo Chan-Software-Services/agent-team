@@ -293,10 +293,10 @@ removed $VAR_ROOT/nm-cli-home-4 (0 MB, untouched 2 h; no-mistakes)"
   started
   running "$!" "sleep 301"
   # The run's scratch in a directory of the test's, kept as a killed run would leave it: the EXIT
-  # trap's removal of it fails, whose exit code is then the run's.
+  # trap's removal of it fails, which changes nothing of the run's own exit.
   mkdir "$BATS_TEST_TMPDIR/run-tmp"
   fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
-  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -5 team-janitor tmp
+  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -0 team-janitor tmp
   assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
   local text
   text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)
@@ -322,7 +322,7 @@ n$TMP_ROOT/nm-cli-home-7"
   mkdir "$BATS_TEST_TMPDIR/run-tmp"
   fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
   unset TEAM_PATH_FIRST
-  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -5 team-janitor tmp
+  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -0 team-janitor tmp
   assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
   [[ -d $TMP_ROOT/nm-cli-home-7 && -d $TMP_ROOT/bats-run-AbC123 && -d $VAR_ROOT/nm-cli-home-4 ]]
   local text
