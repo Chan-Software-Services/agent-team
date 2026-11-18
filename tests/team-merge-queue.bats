@@ -112,7 +112,8 @@ no_land_call() {
     event: "dequeued", url: $url, head: $h, reason: $reason,
     failed: [{name: "Analyze (python)", class: "rules", kind: "missing", link: null, step: null}]}')"
   assert_contains "$stderr" "team-merge: the merge queue dropped PR #5, which is not merged: Analyze (python) never reported on the trial commit, which dev's rules require"
-  assert_contains "$stderr" "  Analyze (python) was not reported on the trial merge"
+  assert_contains "$stderr" "  Analyze (python) was not reported on the trial merge, which dev's rules require
+"
   [[ $stderr != *"Analyze (python) failed"* ]]
   assert_contains "$stderr" "$rules_step"
   [[ $stderr != *builder-merge-base* && $stderr != *"once what dropped it is fixed"* ]]
@@ -126,9 +127,28 @@ no_land_call() {
   run_bin -1 --separate-stderr team-merge T14
   assert_equal "$(queue_events | tail -n 1 | jq -c '[.event, [.failed[].class]]')" '["dequeued",["pr","rules"]]'
   assert_contains "$stderr" "  test failed on the trial merge (Run tests): https://github.com/owner/proj/actions/runs/1/job/2"
-  assert_contains "$stderr" "  Analyze (python) was not reported on the trial merge"
+  assert_contains "$stderr" "  Analyze (python) was not reported on the trial merge, which dev's rules require
+"
   assert_contains "$stderr" "$rules_step"
   [[ $stderr != *builder-merge-base* ]]
+  # A check the project's required_checks alone require is said as theirs, and the step names them
+  # in place of team-doctor and the ruleset; beside one the rules require, it names both.
+  merge_again
+  queue_rule
+  land dequeued "data never reported on the trial commit, which the project's required_checks require" \
+    '[{"name": "data", "class": "rules", "kind": "missing", "link": null, "step": null, "source": "required_checks"}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_equal "$(queue_events | tail -n 1 | jq -c '[.event, .failed[].source]')" '["dequeued","required_checks"]'
+  assert_contains "$stderr" "  data was not reported on the trial merge, which the project's required_checks require"
+  assert_contains "$stderr" "  the project's required_checks require a check no workflow makes on a trial commit: fix the workflow's merge_group trigger or the project's required_checks in the registry, then run team-merge T14 again"
+  [[ $stderr != *team-doctor* && $stderr != *ruleset* ]]
+  merge_again
+  queue_rule
+  land dequeued "Analyze (python) never reported on the trial commit, which dev's rules require; data never reported on the trial commit, which the project's required_checks require" \
+    '[{"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null, "source": "rules"},
+      {"name": "data", "class": "rules", "kind": "missing", "link": null, "step": null, "source": "required_checks"}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  the base's rules and the project's required_checks require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or the project's required_checks in the registry or ask Daniel to change owner/proj's ruleset, then run team-merge T14 again"
   TEAM_HOME=$TEAM_HOME run "$REPO_ROOT/bin/team-log" --check
   assert_equal "$status" 0
 }
@@ -604,5 +624,5 @@ SH
   assert_contains "$output" "Exit 0"
   assert_contains "$output" "75"
   # The rules drop and its next step.
-  assert_contains "$(tr -s ' \n' ' ' <<<"$output")" "with a rules failure (a check the base's rules require that never reported on the trial commit, each said as \"<name> was not reported on the trial merge\"), to run team-doctor (its merge queue line)"
+  assert_contains "$(tr -s ' \n' ' ' <<<"$output")" "with a rules failure (a check the base's rules or the project's required_checks require that never reported on the trial commit, each said as \"<name> was not reported on the trial merge, which <base>'s rules require\", or \"which the project's required_checks require\" for one they alone require), to run team-doctor (its merge queue line)"
 }

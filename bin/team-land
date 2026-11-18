@@ -44,8 +44,10 @@
 #   a wait that ends with any rules failure, whatever else failed, has the PR taken out of the
 #   queue at once, rather than left to the check's timeout, since no trial commit will make that
 #   check, and ends it, dequeued, its reason "<names> never reported on the trial commit, which
-#   <base>'s rules require"; while GitHub does not let it out, it is tried again at each look,
-#   and a drop by the queue meanwhile ends it the same way, that reason after GitHub's;
+#   <base>'s rules require", or for the checks the project's required_checks alone require
+#   (team-ci-wait's source) "..., which the project's required_checks require", a clause for each
+#   (rules_reason in bin/lib/ledger.jq); while GitHub does not let it out, it is tried again at
+#   each look, and a drop by the queue meanwhile ends it the same way, that reason after GitHub's;
 #   a merged PR ends it, merged, when its head is still <head>; merged at another head, it ends
 #   refused, naming both;
 #   a PR that left the queue unmerged was dropped: its latest removal (RemovedFromMergeQueueEvent)
@@ -53,10 +55,11 @@
 #   looks, it is taken as dropped with no reason given. When team-ci-wait classed failures on the
 #   trial commit and none is the PR's own or rules (infrastructure, and the roll-ups of such), it
 #   enqueues the same head once more, once per run; else it ends, dequeued. A rules drop is never
-#   enqueued again: the next step is the base's rules or the workflow's merge_group trigger, which
-#   team-merge names.
+#   enqueued again: the next step is the base's rules, the project's required_checks or the
+#   workflow's merge_group trigger, which team-merge names.
 # It prints what it does as it goes, each line starting "team-land: " with the text of a
-# team-ci-wait end indented under its line, and on its last line one JSON object, {schema:
+# team-ci-wait end indented under its line, then each line that wait printed on stderr (as that
+# the base's rules could not be read), and on its last line one JSON object, {schema:
 # "team-land/1", outcome, url, head, merge, reason, failed}:
 #   outcome  merged, dequeued, waiting or refused
 #   url      the PR's, its repo at the end of its moves
@@ -67,7 +70,8 @@
 #            agent-review that could not be posted on the last trial commit, or why this run took
 #            the PR out of the queue; when waiting or refused, why
 #   failed   the failures team-ci-wait classed on the dropped trial commit, each {name, class,
-#            kind, link, step}, as the ledger's ci event carries them; [] on any other end
+#            kind, link, step, and source on a rules failure}, as the ledger's ci event carries
+#            them; [] on any other end
 # Exit 0 merged; 1 dequeued or refused; 2 a malformed command line; 75 waiting: the deadline, 4
 # hours from its start (TEAM_LAND_DEADLINE_SECONDS replaces its seconds), came with the PR left in
 # the queue (or, as its reason then says, not shown in it, or GitHub unread at the last look), or
@@ -247,16 +251,14 @@ ci_wait() {
     return 0
   fi
   if [[ $ci_outcome == failed ]]; then
-    jq -c '.failures | map({name, class, kind, link, step})' <<<"$out" >"$dir/failed"
+    jq -c '.failures | map({name, class, kind, link, step} + if .source then {source} else {} end)' <<<"$out" >"$dir/failed"
   fi
   note "the checks of the trial commit ${1:0:7}: $ci_outcome"
   jq -r '.text' <<<"$out" | sed 's/^/  /'
+  # What the wait said on stderr beside its result, as that the base's rules could not be read.
+  grep . "$dir/ci.stderr" | sed 's/^/  /' || true
   # A required check no workflow makes on a trial commit: the PR comes out of the queue at once.
-  rules_drop=$(jq -r --arg base "$base" 'reduce (.[] | select(.class == "rules") | .name) as $n ([];
-      if IN(.[]; $n) then . else . + [$n] end)
-    | select(length > 0)
-    | (if length == 1 then .[0] else (.[:-1] | join(", ")) + " and " + .[-1] end)
-      + " never reported on the trial commit, which \($base)\u0027s rules require"' "$dir/failed")
+  rules_drop=$(ledger_jq 'rules_reason($base; "the trial commit")' -r --arg base "$base" "$dir/failed") || rules_drop=''
 }
 
 # The end of a drop, with GitHub's reason and what this run adds to it.

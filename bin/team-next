@@ -332,12 +332,14 @@
 # enqueue the same failing head again. A PR the merge queue dropped for a check the base's rules
 # require that no run made on the trial commit, with no pr event of its URL and no review of the
 # task since (queue_state's rules_due), gets the rules step team-merge names instead, even beside a
-# failure of its own and whatever its base: "merge rules: <url> never reported <checks> on the merge
-# queue's trial commit, which dropped it at <ts>; the base's rules require a check no workflow makes
-# on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger
-# or ask Daniel to change <repo>'s ruleset, then run team-merge T<n> again", never the merge line
-# nor the merge-base step, since the trial merge cannot be judged until every required check runs
-# there.
+# failure of its own and whatever its base: "merge rules: <url> was dropped by the merge queue at
+# <ts>: <checks> never reported on its trial commit, which <base>'s rules require; the base's rules
+# require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix
+# the workflow's merge_group trigger or ask Daniel to change <repo>'s ruleset, then run team-merge
+# T<n> again", a check the project's required_checks alone require said as theirs, in its own
+# clause, and the step as team-merge words it for them (rules_reason and rules_step in
+# bin/lib/ledger.jq), never the merge line nor the merge-base step, since the trial merge cannot
+# be judged until every required check runs there.
 # The churn rule: when this review sent back a finding its widening= marks (one in what the last
 # fix added), the task's previous review in the verdict's project (project_reviews: the latest
 # made there before this one, on a rerun the latest before the line that holds it, another
@@ -559,13 +561,13 @@ merge_line() {
   # commit, with no pr event of it and no review of the task since (queue_state's rules_due): the
   # trial merge cannot be judged until every required check runs there, so the rules step alone,
   # as team-merge names it, even beside a failure of the PR's own or behind its base.
+  repo=${url#https://github.com/}
+  repo=${repo%%/pull/*}
   rules=$(task_event_array "$task" | ledger_jq 'queue_state($url) | select(.rules_due? == true)
-    | "never reported \([.failed[] | select(.class == "rules") | .name] | name_list) on the merge queue'"'"'s trial commit, which dropped it at \(.since)"' \
-    -r --arg url "${url%/}") || exit 1
+    | "was dropped by the merge queue at \(.since): \(.failed | rules_reason($base | select(. != "" and . != "null") // null; "its trial commit")); \(.failed | rules_step($repo; $task))"' \
+    -r --arg url "${url%/}" --arg base "$base" --arg repo "$repo" --arg task "$task") || exit 1
   if [[ -n $rules ]]; then
-    repo=${url#https://github.com/}
-    repo=${repo%%/pull/*}
-    echo "merge rules: $url $rules; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change $repo's ruleset, then run team-merge $task again"
+    echo "merge rules: $url $rules"
     return 0
   fi
   # A PR the merge queue dropped for a failure of its own on the trial merge, with no pr event of

@@ -1355,7 +1355,7 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
       failed: [{name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}, {name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"},
         {name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}' \
     >>"$TEAM_HOME/ledger.jsonl"
-  local rules_step="merge rules: $url never reported Analyze (actions) and e2e on the merge queue's trial commit, which dropped it at 2026-10-23T10:00:00Z; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T7 again"
+  local rules_step="merge rules: $url was dropped by the merge queue at 2026-10-23T10:00:00Z: Analyze (actions) and e2e never reported on its trial commit, which main's rules require; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T7 again"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_equal "$(tail -n 1 <<<"$output")" "$rules_step"
   [[ $output != *"run team-merge T7 for"* ]]
@@ -1373,6 +1373,13 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url"
   [[ $output != *"merge rules:"* ]]
+  # A check the project's required_checks alone require is said as theirs, with team-merge's step
+  # for them.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T12:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "",
+      failed: [{name: "data", class: "rules", kind: "missing", link: "", step: "", source: "required_checks"}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "merge rules: $url was dropped by the merge queue at 2026-10-23T12:00:00Z: data never reported on its trial commit, which the project's required_checks require; the project's required_checks require a check no workflow makes on a trial commit: fix the workflow's merge_group trigger or the project's required_checks in the registry, then run team-merge T7 again"
 }
 
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {

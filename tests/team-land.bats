@@ -31,6 +31,8 @@ setup() {
   stub_sleep
   answer 0 enqueue '{"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}'
   answer 0 dequeue '{"data": {"dequeuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}'
+  # dev is unprotected, so team-ci-wait's read of its rules reads the branch alone.
+  answer 0 branch '{"protected": false}'
 }
 
 # poster <script> <stdout> [<status>]: the project's poster of agent-review is the logging stub,
@@ -89,14 +91,14 @@ job() {
 }
 
 # gh answers team-land's read of the PR and team-ci-wait's read of its entry (one answer, pr), an
-# enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables
-# kept in $GH_DIR/dequeues), a trial commit's check runs, no
-# status and no workflow run of it, a job, team-ci-wait's read of dev's rules (branch, rules and
-# ruleset-<id>, planned by rules_require; with none planned the read fails, and team-ci-wait holds
-# the registry's checks alone), and a status POST, each from the latest answer at or
-# before the current look; team-ci-wait's REST reads (gh api -i, through bin/lib/github-api.sh) in
-# gh api -i's form through tests/helpers/github-api.bash. Each call is one line of $GH_DIR/calls,
-# with -i and an -H header left out. Anything unplanned fails.
+# enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables kept
+# in $GH_DIR/dequeues), a trial commit's check runs, no status and no workflow run of it, a job,
+# team-ci-wait's read of dev's rules (branch, rules and ruleset-<id>: setup's unprotected dev, else
+# planned by rules_require; with none planned the read fails, and team-ci-wait holds the registry's
+# checks alone), and a status POST, each from the latest answer at or before the current look;
+# team-ci-wait's REST reads (gh api -i, through bin/lib/github-api.sh) in gh api -i's form through
+# tests/helpers/github-api.bash. Each call is one line of $GH_DIR/calls, with -i and an -H header
+# left out. Anything unplanned fails.
 land_gh() {
   stub_script gh <<'EOF'
 source "$GITHUB_STUB_HELPER"
@@ -347,7 +349,7 @@ team-land: $url merged as 0e0e0e0
   # The queue would drop it only at the check's timeout; team-land does not wait for that.
   run_bin team-land "$url" "$head"
   assert_equal "$status" 1
-  assert_equal "$(end_json)" '["dequeued",null,"Analyze (python) never reported on the trial commit, which dev'"'"'s rules require",[{"name":"Analyze (python)","class":"rules","kind":"missing","link":null,"step":null}]]'
+  assert_equal "$(end_json)" '["dequeued",null,"Analyze (python) never reported on the trial commit, which dev'"'"'s rules require",[{"name":"Analyze (python)","class":"rules","kind":"missing","link":null,"step":null,"source":"rules"}]]'
   assert_contains "$output" "  rules: Analyze (python) was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
   assert_contains "$output" "team-land: took $url out of the merge queue: Analyze (python) never reported on the trial commit, which dev's rules require"
   assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
@@ -356,7 +358,35 @@ team-land: $url merged as 0e0e0e0
   run_bin -0 team-land --help
   output=$(tr -s ' \n#' ' ' <<<"$output")
   assert_contains "$output" "a wait that ends with any rules failure, whatever else failed, has the PR taken out of the queue at once"
-  assert_contains "$output" "A rules drop is never enqueued again: the next step is the base's rules or the workflow's merge_group trigger, which team-merge names."
+  assert_contains "$output" "A rules drop is never enqueued again: the next step is the base's rules, the project's required_checks or the workflow's merge_group trigger, which team-merge names."
+  assert_contains "$output" "then each line that wait printed on stderr (as that the base's rules could not be read)"
+}
+
+@test "through the real team-ci-wait, a required check never reported beside a failed one takes the PR out with both, and one the project alone requires is said as its, with the rules read's failure" {
+  rules_require test "Analyze (python)"
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  trial_checks 1 "$t1" "$(check_run test completed failure 7001 97001)"
+  job 97001 "Set up job=success" "Run tests=failure"
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(end_json)" '["dequeued",null,"Analyze (python) never reported on the trial commit, which dev'"'"'s rules require",[{"name":"test","class":"pr","kind":"failed","link":"https://github.com/owner/proj/actions/runs/7001/job/97001","step":"Run tests"},{"name":"Analyze (python)","class":"rules","kind":"missing","link":null,"step":null,"source":"rules"}]]'
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
+  assert_equal "$(enqueues)" "-f pr=PR_kwDOtest5 -f head=$head"
+  # The rules cannot be read, and the registry requires data, which no check lists: the wait's
+  # stderr line is said under its result, and data is the project's required_checks'.
+  echo 0 >"$GH_DIR/look"
+  rm "$GH_DIR"/enqueues "$GH_DIR"/dequeues "$GH_DIR"/pr.* "$GH_DIR"/branch.* "$GH_DIR"/rules.* "$GH_DIR"/ruleset-41.*
+  sed -i 's/^required_checks = .*/required_checks = ["data"]/' "$TEAM_HOME/projects.toml"
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  trial_checks 1 "$t1" "$(check_run test completed success)"
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(end_json)" '["dequeued",null,"data never reported on the trial commit, which the project'"'"'s required_checks require",[{"name":"data","class":"rules","kind":"missing","link":null,"step":null,"source":"required_checks"}]]'
+  assert_contains "$output" "
+  team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held: gh api repos/owner/proj/branches/dev: "
+  assert_equal "$(dequeues)" "-f pr=PR_kwDOtest5"
 }
 
 @test "a rules failure beside others takes the PR out at once, and a drop of rules and infrastructure is never enqueued again" {

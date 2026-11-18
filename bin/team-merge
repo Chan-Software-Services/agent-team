@@ -115,11 +115,16 @@
 #             reason, and failed, the failures on the trial commit, when there are any), unless
 #             another team-merge logged one meanwhile and team-land names no failures, and it is
 #             exit 1 naming the reason, each failure and the next step: with a rules failure (a
-#             check the base's rules require that never reported on the trial commit, each said
-#             as "<name> was not reported on the trial merge"), to run team-doctor (its merge
-#             queue line), fix the workflow's merge_group trigger or ask Daniel to change the
-#             repository's ruleset, then run team-merge again, even beside a failure of the PR's
-#             own, since the trial merge cannot be judged until every required check runs there;
+#             check the base's rules or the project's required_checks require that never
+#             reported on the trial commit, each said as "<name> was not reported on the trial
+#             merge, which <base>'s rules require", or "which the project's required_checks
+#             require" for one they alone require), to run team-doctor (its merge queue line),
+#             fix the workflow's merge_group trigger or ask Daniel to change the repository's
+#             ruleset, then run team-merge again, the project's required_checks named among what
+#             requires it and what to fix for such a check, and team-doctor and the ruleset left
+#             out with no check the rules require (rules_step in bin/lib/ledger.jq), even beside a
+#             failure of the PR's own, since the trial merge cannot be judged until every
+#             required check runs there;
 #             else with a failure of the PR's own, the builder-merge-base brief, since the trial
 #             merge failed what the head passed; else to run team-merge again once what dropped
 #             it is fixed;
@@ -826,7 +831,8 @@ if [[ -n $landing ]]; then
       fi
       {
         echo "team-merge: the merge queue dropped PR #$number, which is not merged: $reason"
-        jq -r '.failed // [] | .[] | if .class == "rules" then "  \(.name) was not reported on the trial merge"
+        jq -r --arg base "$base" '.failed // [] | .[] | if .class == "rules" then "  \(.name) was not reported on the trial merge, which "
+            + (if (.source // "rules") == "rules" then "\($base)\u0027s rules require" else "the project\u0027s required_checks require" end)
           else "  \(.name) failed on the trial merge"
             + (if .class == "pr" then "" else " as \(.class)" end)
             + (if (.step // "") == "" then "" else " (\(.step))" end)
@@ -834,7 +840,7 @@ if [[ -n $landing ]]; then
         # A rules drop comes first: the trial merge cannot be judged until every required check
         # runs there, so even beside a failure of the PR's own it is no merge-base round.
         if jq -e 'any(.failed // [] | .[]; .class == "rules")' <<<"$landed_as" >/dev/null; then
-          echo "  the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change $repo's ruleset, then run team-merge $task again"
+          echo "  $(ledger_jq '.failed // [] | rules_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
         elif jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
           echo "  the trial merge failed what the head ${head:0:7} passed: render team-brief $task builder-merge-base for the builder, then a rereview"
         else

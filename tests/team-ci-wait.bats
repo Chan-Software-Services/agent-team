@@ -1622,12 +1622,14 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   statuses 0 CodeQL:error
   job 0 97002 runner-1 "Set up job=success" "Run tests=failure"
   job 0 97003 runner-2 "Set up job=failure"
+  # data, which the project requires, is listed by no check: it is named too, as the rules', once
+  # the reading has stood for the settle.
   both --merge-group "$trial" "$url"
   assert_equal "$status" 1
-  assert_equal "$(ended_at)" 0
+  assert_equal "$(ended_at)" 4
   assert_equal "$(jq -c '[.outcome, .head]' <<<"$output")" "[\"failed\",\"$trial\"]"
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .state, .step]]' <<<"$output")" \
-    '[["test-shards (2)","pr","failed","failure","Run tests"],["CodeQL","pr","failed","error",null],["toolkits","infrastructure","setup","timed_out","Set up job"],["test","rollup","rollup","failure",null]]'
+    '[["test-shards (2)","pr","failed","failure","Run tests"],["CodeQL","pr","failed","error",null],["data","rules","missing",null,null],["toolkits","infrastructure","setup","timed_out","Set up job"],["test","rollup","rollup","failure",null]]'
   assert_contains "$text_output" "team-ci-wait: the checks on 5e5e5e5 did not pass:"
   assert_contains "$text_output" "rerun it with gh run rerun 7001 --job 97003 --repo owner/proj"
   [[ $text_output != *OUTPUT-MARKER* ]]
@@ -1638,7 +1640,7 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
   statuses 0
   both --merge-group "$trial" "$url"
   assert_equal "$status" 1
-  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","rules","missing"]]'
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .source]]' <<<"$output")" '[["data","rules","missing","required_checks"]]'
   assert_contains "$text_output" "
   rules: data was not reported on the trial commit, though the project requires it: no workflow makes it on a merge queue's trial commit"
 }
@@ -1658,7 +1660,7 @@ team-ci-wait: every check passed on 5e5e5e5: test passed, agent-review passed, d
 team-ci-wait: the checks on 5e5e5e5 did not pass:
   rules: Analyze (python) was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
   assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" \
-    '["failed",[{"name":"Analyze (python)","class":"rules","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]]'
+    '["failed",[{"name":"Analyze (python)","class":"rules","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"rules"}]]'
   # The rules are read once a wait, at its start, however many looks it takes: two waits, two reads.
   assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
   assert_equal "$(grep -cFx 'api repos/owner/proj/rules/branches/dev --paginate' "$GH_DIR/calls")" 2
@@ -1768,6 +1770,56 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
     '[["test","infrastructure","setup","Run actions/checkout@v4"]]'
   # The cancelled job is never read.
   if grep -F "actions/jobs/97002" "$GH_DIR/calls"; then return 1; fi
+}
+
+# A trial commit where a check failed and a check the base's rules require never reported: both are
+# named, the missing one the rules', once the reading has stood for the settle, since GitHub may
+# list a check's run late; and once the queue gave the commit up, a cancelled or pending required
+# check counts as reported.
+@test "--merge-group names a required check never reported beside a failed one, once the reading stood for the settle" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  rules_require test "Analyze (python)"
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed failure 7001 97001)"
+  statuses 0
+  job 0 97001 runner-1 "Set up job=success" "Run tests=failure"
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind])]' <<<"$output")" \
+    '["failed",["test","pr","failed"],["Analyze (python)","rules","missing"]]'
+  assert_contains "$text_output" "
+  rules: Analyze (python) was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
+  # Listed late, while the reading stands: it is waited on, and only the failed check is named.
+  echo 0 >"$GH_DIR/look"
+  check_runs 2 "$(check_run test completed failure 7001 97001)" "$(check_run "Analyze (python)" in_progress '' 7002)"
+  workflow_run 2 7002 in_progress
+  head_runs 2 7002:CodeQL:in_progress
+  check_runs 4 "$(check_run test completed failure 7001 97001)" "$(check_run "Analyze (python)" completed success 7002)"
+  head_runs 4
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind])]' <<<"$output")" '["failed",["test","pr","failed"]]'
+  # The queue gave the commit up: the cancelled required check is reported, the missing one is not.
+  echo 0 >"$GH_DIR/look"
+  rm "$GH_DIR"/check-runs.* "$GH_DIR"/runs.* "$GH_DIR"/run-7002.*
+  head_runs 0
+  rules_require test data "Analyze (python)"
+  entry 0 OPEN
+  check_runs 0 "$(check_run test completed failure 7001 97001)" "$(check_run data completed cancelled 7001 97002)"
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind])]' <<<"$output")" \
+    '["failed",["test","pr","failed"],["Analyze (python)","rules","missing"]]'
+  # With nothing missing, a failed end is at once, as before.
+  echo 0 >"$GH_DIR/look"
+  rules_require test data
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["test","pr","failed"]]'
 }
 
 @test "--merge-group keeps the deadline and the unreadable limit, each exit 75" {

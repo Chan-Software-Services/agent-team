@@ -1193,6 +1193,21 @@ rules_drop() {
   event T3 pr "{url: \"$url\", head: \"b2c3d4e\"}"
   run_bin team-sweep
   assert_equal "$(grep -c trial-rules <<<"$output")" 0
+  # A check the project's required_checks alone require is said as theirs, and its next step
+  # names neither team-doctor nor Daniel.
+  event T3 review '{verdict: "pass", head: "b2c3d4e5f6", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "queued", url: $url, head: "b2c3d4e5f6", project: "other"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:30:00Z", task: "T3", event: "dequeued", url: $url, head: "b2c3d4e5f6", reason: "data never reported on the trial commit, which the project'"'"'s required_checks require",
+    failed: [{name: "data", class: "rules", kind: "missing", link: "", step: "", source: "required_checks"}]}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep trial-rules <<<"$output")" "T3 trial-rules: data never reported on the trial commit of $url, which the project's required_checks require; next: run team-merge T3 once the project's required_checks or the workflow are fixed"
+  # Beside one the rules require, each is said as what requires it.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:31:00Z", task: "T3", event: "queued", url: $url, head: "b2c3d4e5f6", project: "other"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T06:00:00Z", task: "T3", event: "dequeued", url: $url, head: "b2c3d4e5f6", reason: "",
+    failed: [{name: "data", class: "rules", kind: "missing", link: "", step: "", source: "required_checks"},
+      {name: "lint", class: "rules", kind: "missing", link: "", step: "", source: "rules"}]}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep trial-rules <<<"$output")" "T3 trial-rules: lint never reported on the trial commit of $url, which dev's rules require; data never reported on the trial commit of $url, which the project's required_checks require; next: run team-doctor and tell Daniel; run team-merge T3 once the rules, the project's required_checks or the workflow are fixed"
   no_github
 }
 
