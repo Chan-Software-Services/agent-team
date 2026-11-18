@@ -309,7 +309,7 @@ assert_nothing_written() {
   assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
 }
 
-@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts" {
+@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts and GitHub's writes" {
   local settings=$REPO_ROOT/assistant.settings.json command
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
@@ -326,9 +326,7 @@ assert_nothing_written() {
     "git -C ~/agent-team-records push origin main" "git commit -m x" "git -C ~/agent-team-records commit -m x" \
     "gh pr create --fill" "gh pr merge 5" "gh pr comment 5 --body x" "gh pr review 5 --approve" "gh pr ready 5" \
     "gh-axi pr edit 5 --title x" "gh issue create --title x" "gh-axi issue comment 3 --body x" \
-    "gh release create v1" "gh repo delete x/y" "gh repo edit --visibility public" \
-    "gh api -X POST repos/o/r/issues" "gh api repos/o/r/issues --method POST" "gh api repos/o/r/issues -f title=x" \
-    "gh api repos/o/r/issues -F title=x" "gh secret set X" "team-lease take --steal" "team-land T1" \
+    "gh repo delete x/y" "gh repo edit --visibility public" "team-lease take --steal" "team-land T1" \
     "$REPO_ROOT/bin/team-land https://github.com/o/r/pull/5" "claude stop 0a1b2c3d" "claude rm 0a1b2c3d" "claude attach coordinator" "claude --bg --name x go" \
     "claude -p hi" "claude --model opus --print hi" "$HOME/.local/bin/claude stop x" \
     "sudo pacman -S jq" "op read op://x/y" "cat /proc/1/environ"; do
@@ -359,6 +357,17 @@ assert_nothing_written() {
       '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
     assert_contains "$stderr" "Blocked by command-guard: the coordinator's acts, which an assistant session never runs ("
   done
+  # A GitHub write by gh api, release, secret or variable: its assistant-github-write row refuses
+  # it, command by command, where its deny rules refused any gh api call with a field and any call
+  # of the three groups.
+  for command in "gh api -X POST repos/o/r/issues" "gh api repos/o/r/issues --method POST" \
+    "gh api repos/o/r/issues -f title=x" "gh api repos/o/r/issues -F title=x" "gh api --input body.json x" \
+    "gh api graphql -f query='mutation{x}'" "gh release create v1" "gh secret set X" "gh variable delete X" \
+    "gh-axi release upload v1 a.tgz" "gh-axi secret set X" "gh-axi variable set X"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: a GitHub write, which an assistant session never makes ("
+  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -375,7 +384,10 @@ assert_nothing_written() {
     "wc -l bin/team-checkpoint bin/team-review-comment" "team-load-check --help" "team-timers watch --once" \
     "bin/team-stow --help" "bin/team-handoff --help" "bin/team-resume --help" "bin/team-checkpoint --help" \
     "bin/team-review-comment --help" "bin/team-records-rewrite --help" "bin/team-ops-end --help" \
-    "bin/claude-coordinator --help"; do
+    "bin/claude-coordinator --help" "gh api -X GET search/issues -f q=repo:o/r" \
+    "gh api --method GET repos/o/r/pulls -F per_page=100" "gh api graphql -f query='{viewer{login}}'" \
+    "gh release list" "gh release view v1" "gh secret list" "gh variable list" "gh variable get X" \
+    "gh-axi release list" "gh-axi secret list" "gh-axi variable list"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }

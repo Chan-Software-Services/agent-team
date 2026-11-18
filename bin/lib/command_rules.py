@@ -82,6 +82,20 @@ The rows, in order:
     word --help or -h, which the library answers before the script does anything. Reason: the
     coordinator's acts, which an assistant session never runs (<the act and its subcommand>); its
     --help and a read of its file pass.
+  assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
+    rules held by any gh api call with a field and any release, secret or variable call until
+    this row. gh api (after gh's own options, as cobra finds its command) with a last -X or
+    --method (joined too, any case) other than GET or HEAD, with --input, or with a field (-f,
+    -F, --field, --raw-field, joined too) and no method, its endpoint being its first word that is
+    no option and no option's value; but for the endpoint graphql, whose fields pass, whatever the
+    method, only as a query: a query field (and every one) whose value begins with neither @ nor $,
+    holds no $(, ${ or backtick, and has no mutation or subscription as a whole name. gh's or
+    gh-axi's release, secret or variable with a subcommand (the group's first word that is no
+    option and no option's value, a long option without = and a two-character short one taking the
+    next word, but --help and -h) other than a read: release list, ls, view, download, verify or
+    verify-asset; secret list or ls; variable list, ls or get. A group with no subcommand passes.
+    Reason: a GitHub write, which an assistant session never makes (<the method, the body, the
+    field, the mutation, the query it cannot read, or the group and subcommand>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -505,6 +519,133 @@ def _assistant_act(command, context):
     return None
 
 
+# The GitHub CLIs whose writes an assistant session never makes, and gh api's options: those that
+# take a value (joined, or the next word), its fields among them, and its methods that only read.
+GITHUB_CLIS = frozenset(("gh", "gh-axi"))
+API_VALUED_SHORT = "XHfFqtp"
+API_VALUED_LONG = frozenset((
+    "--method", "--header", "--raw-field", "--field", "--input", "--jq", "--template", "--hostname", "--cache",
+    "--preview",
+))
+API_FIELDS = frozenset(("-f", "-F", "--raw-field", "--field"))
+API_LONG = {"-X": "--method", "-H": "--header", "-f": "--raw-field", "-F": "--field", "-q": "--jq",
+            "-t": "--template", "-p": "--preview"}
+API_READS = frozenset(("GET", "HEAD"))
+# The reads of gh's groups that would write otherwise, their aliases (ls) among them.
+GITHUB_READS = {
+    "release": frozenset(("list", "ls", "view", "download", "verify", "verify-asset")),
+    "secret": frozenset(("list", "ls")),
+    "variable": frozenset(("list", "ls", "get")),
+}
+# GraphQL's operation keywords that write or stream, as whole names (case-sensitive, as GraphQL's are).
+GRAPHQL_WRITES = re.compile(r"(?<![_0-9A-Za-z])(?:mutation|subscription)(?![_0-9A-Za-z])")
+GITHUB_REASON = "a GitHub write, which an assistant session never makes ({})"
+
+
+def _cobra_commands(args):
+    """Where the words gh reads as its command and subcommands stand, as cobra finds them: every
+    word that is no option and no option's value, up to a --, a long option without = and a short
+    one of two characters taking the next word as its value, but for --help and -h."""
+    found, k = [], 0
+    while k < len(args):
+        word = args[k]
+        if word == "--":
+            break
+        if word.startswith("-") and word not in ("--help", "-h"):
+            k += 2 if (word.startswith("--") and "=" not in word) or len(word) == 2 else 1
+            continue
+        if not word.startswith("-"):
+            found.append(k)
+        k += 1
+    return found
+
+
+def _api_options(args):
+    """gh api's words read as gh reads them: its last method (upper case, "" when it has no value)
+    or None, whether it has --input, its fields' key=value texts and its endpoint, its first word
+    that is no option and no option's value."""
+    method, has_input, fields, endpoint, k = None, False, [], None, 0
+    while k < len(args):
+        word = args[k]
+        k += 1
+        if word == "--":
+            endpoint = endpoint if endpoint is not None else (args[k] if k < len(args) else None)
+            break
+        if not word.startswith("-") or word == "-":
+            endpoint = word if endpoint is None else endpoint
+            continue
+        if word.startswith("--"):
+            name, joined, value = word.partition("=")
+            if name not in API_VALUED_LONG:
+                continue
+            if not joined:
+                value = args[k] if k < len(args) else ""
+                k += 1
+        else:
+            _, flag, value = short_cluster(word, API_VALUED_SHORT)
+            if flag is None:
+                continue
+            name = API_LONG[f"-{flag}"]
+            if not value:
+                value = args[k] if k < len(args) else ""
+                k += 1
+        if name == "--method":
+            method = value.upper()
+        elif name == "--input":
+            has_input = True
+        elif name in API_FIELDS:
+            fields.append(value)
+    return method, has_input, fields, endpoint
+
+
+def _graphql_write(fields):
+    """Why a GraphQL call's fields are no query the guard can read, or None for a query: a literal
+    query field holding neither mutation nor subscription."""
+    queries = [value.partition("=")[2] for value in fields if value.partition("=")[0] == "query"]
+    if not queries:
+        return "gh api graphql with a field but no query"
+    for query in queries:
+        if query.lstrip()[:1] in ("@", "$") or any(part in query for part in ("$(", "${", "`")):
+            return "a GraphQL query from a file, stdin or an expansion the guard cannot read"
+    if any(GRAPHQL_WRITES.search(query) for query in queries):
+        return "a GraphQL mutation or subscription"
+    return None
+
+
+def _api_write(args):
+    """What makes gh api's words a write, or None for a read."""
+    method, has_input, fields, endpoint = _api_options(args)
+    if method is not None and method not in API_READS:
+        return f"gh api --method {method}"
+    if has_input:
+        return "gh api --input, a request body"
+    if endpoint == "graphql" and fields:
+        return _graphql_write(fields)
+    if fields and method is None:
+        return "gh api with a field and no --method GET or HEAD, which sends a POST"
+    return None
+
+
+def _github_write(command, context):
+    """The assistant's GitHub write by gh or gh-axi, the reason naming what it read; any other
+    role's call is not this row's."""
+    if context is None or context.role != "assistant":
+        return None
+    for words in heads(command):
+        if not words or command_name(words[0]) not in GITHUB_CLIS:
+            continue
+        name, args = command_name(words[0]), list(words[1:])
+        found = _cobra_commands(args)
+        group = args[found[0]] if found else None
+        if group == "api":
+            write = _api_write(args[found[0] + 1 :])
+            if write is not None:
+                return GITHUB_REASON.format(write)
+        elif group in GITHUB_READS and len(found) > 1 and args[found[1]] not in GITHUB_READS[group]:
+            return GITHUB_REASON.format(f"{name} {group} {args[found[1]]}")
+    return None
+
+
 def _upload(command, context):
     return outbound.uploads_outside(command)
 
@@ -637,6 +778,7 @@ ROWS = (
         "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
     ),
     Row("assistant-acts", _assistant_act, None),
+    Row("assistant-github-write", _github_write, None),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),

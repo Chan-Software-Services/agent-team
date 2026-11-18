@@ -168,3 +168,9 @@
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-queue list"}, "local": true}
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-queue index --check; echo \"exit $?\""}, "local": true}
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-log --check && @TEAM_CODE@/bin/team-log --check-lifecycle | tail -3"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh api -X GET search/issues -f q=repo:example-org/example-repo --jq '.items[].number' | head -5"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh api --method GET repos/example-org/example-repo/pulls -F per_page=100 --jq 'length'"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh api graphql -f query='query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pullRequests(states: OPEN) { totalCount } } }' -F owner=example-org -F name=example-repo"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh release list --repo example-org/example-repo --limit 5; gh release view v1.2.0 --repo example-org/example-repo"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh secret list --repo example-org/example-repo && gh variable list --repo example-org/example-repo && gh variable get EXAMPLE_FLAG --repo example-org/example-repo"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh-axi release list; gh-axi secret list; gh-axi variable list"}}

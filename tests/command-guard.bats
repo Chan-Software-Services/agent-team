@@ -5,7 +5,8 @@
 # names anywhere in a call's text, a change of the session's GitHub login, and a curl or wget upload
 # of a file or body to a host outside the team's own, and a worker's or the assistant's force push
 # or cd into the team's keys' directories, and the assistant's run of the coordinator's acts in
-# place of its deny rules that matched any call naming the script, naming the line a refusal of a
+# place of its deny rules that matched any call naming the script, and its GitHub writes by gh api,
+# release, secret and variable in place of its deny rules that matched their reads too, naming the line a refusal of a
 # call of several lines stands on. Every command those rules refused when run is still refused (a test per rule),
 # and the reads, searches, diffs, commits and file writes that only name them pass, the hook and
 # the worker deny list both.
@@ -999,4 +1000,111 @@ COMMANDS
       'team-inbox --item 3' 'bin/team-inbox --item 3'
   done
   refuses "$COORDINATOR" 'team-inbox --help' 'team-inbox --item 3' 'team-ask -h'
+}
+
+# GitHub's writes by gh api, gh release, gh secret and gh variable, which the assistant's deny
+# rules held by any call with a field or naming the group until its assistant-github-write row
+# took them over, command by command.
+GITHUB="a GitHub write, which an assistant session never makes"
+GITHUB_METHOD="$GITHUB (gh api --method POST)"
+GITHUB_INPUT="$GITHUB (gh api --input, a request body)"
+GITHUB_FIELD="$GITHUB (gh api with a field and no --method GET or HEAD, which sends a POST)"
+GITHUB_MUTATION="$GITHUB (a GraphQL mutation or subscription)"
+GITHUB_UNREAD="$GITHUB (a GraphQL query from a file, stdin or an expansion the guard cannot read)"
+GITHUB_NO_QUERY="$GITHUB (gh api graphql with a field but no query)"
+
+@test "the assistant's GitHub writes by gh api, release, secret and variable are refused, naming what it read, by any spelling" {
+  local command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$GITHUB_METHOD" "" 'gh api -X POST repos/o/r/issues' 'gh api -XPOST repos/o/r/issues' \
+    'gh api --method=POST repos/o/r/issues' 'gh api repos/o/r/issues --method post' 'gh api -iX POST repos/o/r/issues' \
+    'gh api -X GET -X POST repos/o/r/issues' 'gh -R o/r api -X POST x' 'bin/gh api -X post x' "bash -c 'gh api -X POST x'" \
+    'env A=1 gh api -X POST x' 'echo x | xargs gh api -X POST' '"gh" api -X POST x' 'gh-axi api -X POST x'
+  refuses_as assistant "$GITHUB (gh api --method PATCH)" "" 'gh api -XPATCH repos/o/r/issues/1'
+  refuses_as assistant "$GITHUB (gh api --method DELETE)" "" 'gh api --method=DELETE repos/o/r/git/refs/heads/x'
+  refuses_as assistant "$GITHUB (gh api --method PUT)" "" 'gh api --method put repos/o/r/pulls/5/merge' 'gh api -X Put x'
+  refuses_as assistant "$GITHUB_INPUT" "" 'gh api repos/o/r/issues --input body.json' 'gh api --input=- x' \
+    'gh api -X GET x --input body.json' 'gh api graphql --input q.json'
+  refuses_as assistant "$GITHUB_FIELD" "" 'gh api repos/o/r/issues -f title=x' 'gh api repos/o/r/issues -F x=1' \
+    'gh api repos/o/r/issues --field x=1' 'gh api repos/o/r/issues --raw-field=title=x' 'gh api -ftitle=x repos/o/r/issues' \
+    'gh api -Fx=1 x' 'gh api https://api.github.com/graphql -f query={viewer{login}}' 'gh api /graphql -f query={viewer{login}}'
+  # shellcheck disable=SC2016
+  refuses_as assistant "$GITHUB_MUTATION" "" "gh api graphql -f query='mutation{addStar(input:{starrableId:\"x\"}){clientMutationId}}'" \
+    "gh api graphql -f query='subscription{x}'" "gh api graphql -F query='mutation M { x }'" \
+    "gh api graphql -f query='{viewer{login}} mutation{x}'" "gh api graphql --raw-field 'query=mutation{x}'" \
+    "gh api -X GET graphql -f query='mutation{x}'"
+  # shellcheck disable=SC2016
+  refuses_as assistant "$GITHUB_UNREAD" "" 'gh api graphql -f query=@q.graphql' 'gh api graphql -F query=@-' \
+    'gh api graphql -f query="$(cat q.graphql)"' 'gh api graphql -f query="$Q"' 'gh api graphql -f query="${Q}"' \
+    'gh api graphql -f query=`cat q`' "gh api graphql -f query='{viewer{login}}' -F query=@q.graphql"
+  refuses_as assistant "$GITHUB_NO_QUERY" "" 'gh api graphql -F owner=o' 'gh api graphql -f "query[]=x"'
+  # Each writing subcommand of the three groups, by gh and gh-axi, with -R before it too.
+  while IFS='|' read -r group command; do
+    for role in gh gh-axi; do
+      refuses_as assistant "$GITHUB ($role $group $command)" "" "$role $group $command x" \
+        "$role $group -R o/r $command x" "$role $group --repo o/r $command" "$role $group --repo=o/r $command" \
+        "$role $group -Ro/r $command" "$role -R o/r $group $command x"
+    done
+  done <<'COMMANDS'
+release|create
+release|edit
+release|delete
+release|upload
+release|delete-asset
+secret|set
+secret|delete
+secret|remove
+variable|set
+variable|delete
+COMMANDS
+  # An option's value is never read as the subcommand, as gh reads them.
+  refuses_as assistant "$GITHUB (gh secret set)" "" 'gh secret --org list set X' 'gh secret --env=x set X'
+  # A --help past the subcommand may be an option's value (--notes --help), so only a group's own passes.
+  refuses_as assistant "$GITHUB (gh release create)" "" 'gh release create v1 --notes --help' 'gh release create --help'
+}
+
+@test "the assistant's GitHub reads pass, and a worker's and a gate agent's GitHub calls are judged as before" {
+  local command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  for command in 'gh api repos/o/r/pulls' 'gh api -X GET search/issues -f q=x' 'gh api --method HEAD repos/o/r' \
+    'gh api --method=get repos/o/r/pulls -F per_page=100' 'gh api -X GET search/issues -f q=repo:o/r' \
+    "gh api graphql -f query='{viewer{login}}'" "gh api graphql -f query='{viewer{login}}' -F n=5" \
+    "gh api graphql -F query='query(\$n:Int!){viewer{repositories(first:\$n){nodes{name}}}}' -F n=5" \
+    "gh api graphql -f query='
+query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' 'gh api --paginate repos/o/r/pulls -q .[].number' \
+    'gh api --method GET rate_limit -F probe=1 --jq .resources.core.limit' 'gh api -H Accept:x repos/o/r' \
+    'gh release list' 'gh release ls' 'gh release view v1' 'gh release download v1 -p "*.tgz"' 'gh release verify v1' \
+    'gh release verify-asset v1 a.tgz' 'gh release -R o/r list' 'gh release --repo=o/r view v1' 'gh secret list' 'gh secret ls' \
+    'gh secret list -R o/r' 'gh variable list' 'gh variable ls' 'gh variable get X' 'gh release' 'gh secret' 'gh variable' \
+    'gh release --help' 'gh secret --help' 'gh variable -h' 'gh release -R o/r' 'gh-axi release list' \
+    'gh-axi secret list' 'gh-axi variable list' 'gh-axi release view v1' 'gh pr view 5' 'gh pr list' 'gh run view 1 --log' \
+    "grep -rn 'gh secret set' sops" 'git commit -m "fix: gh api -X POST is refused"' 'echo gh release create'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # A worker's and a gate agent's GitHub calls are not the row's: each passes the guard as it did.
+  for role in builder planner reviewer ops ""; do
+    for command in 'gh api -X POST repos/o/r/issues' 'gh api repos/o/r/issues -f title=x' 'gh api --input body.json x' \
+      "gh api graphql -f query='mutation{x}'" 'gh api graphql -f query=@q.graphql' 'gh release create v1' \
+      'gh secret set X' 'gh variable delete X' 'gh-axi release upload v1 a'; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+}
+
+@test "gh's GitHub groups go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local command
+  for command in 'gh api x' 'gh release list' 'gh secret list' 'gh variable list' 'gh-axi release list' 'g""h api x'; do
+    AGENT_TEAM_ROLE=builder guard -0 "$command"
+    assert_equal "$stderr" ""
+    guard -0 "$command"
+    AGENT_TEAM_ROLE=assistant guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
+  done
+  # An assistant's gh call naming none of them still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'gh pr view 5'
 }

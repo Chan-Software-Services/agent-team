@@ -19,11 +19,13 @@
 # push, a push to dev or main, git reset --hard, git clean, git branch -D, a Docker prune and a
 # merge outside team-merge, by the workers' own rules and its own git push * (tests/repo.bats
 # holds the three together), and besides them the Discord token and both
-# access files, any git push and git commit, GitHub's writes, team-land, and starting or stopping
-# a session. Its command-guard hook's assistant-acts row refuses its run of the coordinator's acts
-# (a hand-off, a stow, a resume, a lease change, a load check, a stack's start or stop, a timer's
-# change, a config apply and the rest), command by command, so it still reads each script's file
-# and runs its --help. Its memory is the team home's
+# access files, any git push and git commit, GitHub's pr, issue and repo writes, team-land, and
+# starting or stopping a session. Its command-guard hook's assistant-acts row refuses its run of
+# the coordinator's acts (a hand-off, a stow, a resume, a lease change, a load check, a stack's
+# start or stop, a timer's change, a config apply and the rest), command by command, so it still
+# reads each script's file and runs its --help; and its assistant-github-write row holds GitHub's
+# writes by gh api (a writing method, a body, a field with no GET, a GraphQL mutation), release,
+# secret and variable, so it still reads GitHub through them. Its memory is the team home's
 # memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in the team
 # home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP config,
 # ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny every

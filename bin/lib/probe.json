@@ -462,6 +462,30 @@
       "family": "github-writes"
     },
     {
+      "id": "github-post",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api -X POST rate_limit",
+      "expect": "hook",
+      "marker": "a GitHub write"
+    },
+    {
+      "id": "github-mutation",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api graphql -f query='mutation{__typename}'",
+      "expect": "hook",
+      "marker": "a GitHub write"
+    },
+    {
+      "id": "secret-set",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh secret set LOAD_CHECK_PROBE_ABSENT --body x --repo load-check-probe/absent",
+      "expect": "hook",
+      "marker": "a GitHub write"
+    },
+    {
       "id": "thread-cache",
       "roles": ["assistant"],
       "tool": "Bash",
@@ -627,7 +651,7 @@
     },
     {
       "family": "github-writes",
-      "rules": "^Bash\\((gh|gh-axi) (pr (close|comment|create|edit|ready|reopen|review)\\*\\)$|issue |release|repo |secret|variable|api\\* -[-A-Za-z]+\\*\\)$)"
+      "rules": "^Bash\\((gh|gh-axi) (pr (close|comment|create|edit|ready|reopen|review)|issue (close|comment|create|edit|reopen)|repo (create|delete|edit))\\*\\)$"
     },
     {
       "family": "hooks-path",
