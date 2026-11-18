@@ -139,6 +139,26 @@ EOF
   assert_equal "$(leftovers)" ""
 }
 
+@test "a path the exit handler cannot remove is named on stderr, and the script keeps its exit status" {
+  for end in true:0 'exit 3:3'; do
+    script <<EOF
+dir=\$(team_mktemp -d)
+inner=\$(team_mktemp "\$dir/inner.XXXXXX")
+gone=\$(team_mktemp)
+printf '%s\n' "\$dir" "\$inner" >"\$OUT/paths"
+chmod 500 "\$dir"
+${end%:*}
+EOF
+    run "$BATS_TEST_TMPDIR/s.sh"
+    mapfile -t paths <"$out/paths"
+    chmod 700 "${paths[0]}"
+    assert_equal "$end:$status:$output" "$end:${end##*:}:s.sh: could not remove ${paths[0]}
+s.sh: could not remove ${paths[1]}"
+    rm -rf -- "${paths[0]}"
+    assert_equal "$(leftovers)" ""
+  done
+}
+
 @test "a script that ends by exec removes its files first with team_tmp_clean" {
   script <<EOF
 $MAKE

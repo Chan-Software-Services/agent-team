@@ -297,7 +297,9 @@ removed $VAR_ROOT/nm-cli-home-4 (0 MB, untouched 2 h; no-mistakes)"
   mkdir "$BATS_TEST_TMPDIR/run-tmp"
   fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
   TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -0 team-janitor tmp
-  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  # The exit handler names on stderr each of its paths it could not remove: the scratch and the list.
+  assert_equal "$(grep -v '^team-janitor: could not remove ' <<<"$output")" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  assert_equal "$(grep -c "^team-janitor: could not remove $BATS_TEST_TMPDIR/run-tmp/\(tmp\.\|team-temp\.\)" <<<"$output")" 2
   local text
   text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)
   [[ -f $text ]]
@@ -323,7 +325,9 @@ n$TMP_ROOT/nm-cli-home-7"
   fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
   unset TEAM_PATH_FIRST
   TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -0 team-janitor tmp
-  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  # The exit handler names on stderr each of its paths it could not remove: the scratch and the list.
+  assert_equal "$(grep -v '^team-janitor: could not remove ' <<<"$output")" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  assert_equal "$(grep -c "^team-janitor: could not remove $BATS_TEST_TMPDIR/run-tmp/\(tmp\.\|team-temp\.\)" <<<"$output")" 2
   [[ -d $TMP_ROOT/nm-cli-home-7 && -d $TMP_ROOT/bats-run-AbC123 && -d $VAR_ROOT/nm-cli-home-4 ]]
   local text
   text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)

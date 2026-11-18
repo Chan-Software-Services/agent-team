@@ -82,7 +82,8 @@ _team_tmp_set=$(trap -p EXIT)
 unset _team_tmp_set
 trap _team_exit EXIT
 
-# The run's paths and its list removed, in the main shell; never fails.
+# The run's paths and its list removed, in the main shell; never fails, and names on stderr each
+# path still there after the removal (one it cannot remove: a read-only tree, say).
 team_tmp_clean() {
   local _tl_paths=() _tl_path _tl_there=()
   [[ $BASHPID == "$$" && -f $_team_tmp_list ]] || return 0
@@ -90,7 +91,11 @@ team_tmp_clean() {
   for _tl_path in "${_tl_paths[@]}"; do
     [[ -z $_tl_path || ! (-e $_tl_path || -L $_tl_path) ]] || _tl_there+=("$_tl_path")
   done
-  rm -rf -- "${_tl_there[@]}" "$_team_tmp_list" 2>/dev/null || true
+  _tl_there+=("$_team_tmp_list")
+  rm -rf -- "${_tl_there[@]}" 2>/dev/null || true
+  for _tl_path in "${_tl_there[@]}"; do
+    [[ ! (-e $_tl_path || -L $_tl_path) ]] || echo "${0##*/}: could not remove $_tl_path" >&2 || true
+  done
 }
 
 _team_tmp_status() {
