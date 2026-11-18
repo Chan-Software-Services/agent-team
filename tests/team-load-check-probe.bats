@@ -625,11 +625,13 @@ FAIL builder unrefused: expected refused, got no-verdict"
   assert_contains "$output" "PASS assistant land: rule refused it"
   assert_contains "$output" "PASS assistant discord-token: rule refused it"
   assert_contains "$output" "PASS assistant upload: hook refused it"
+  assert_contains "$output" "PASS assistant thread-cache-write: hook refused it"
   assert_contains "$output" "PASS assistant lease-steal: refused by rule"
   # And its reads, each of which ran and printed its marker.
   assert_contains "$output" "PASS assistant read-launchers: ran"
   assert_contains "$output" "PASS assistant act-help: ran"
   assert_contains "$output" "PASS assistant log-check: ran"
+  assert_contains "$output" "PASS assistant thread-cache: ran"
   [[ $output != *"assistant write-outside"* && $output != *"assistant sessions:"* ]]
   # Bypass mode has no autoMode to read, and the session ran in the worktree with the assistant's
   # settings and role prompt, no Discord channel.

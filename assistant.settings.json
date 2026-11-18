@@ -260,7 +260,6 @@
       "Bash(*discord/access.json*)",
       "Bash(*discord-assistant/.env*)",
       "Bash(*discord-assistant/access.json*)",
-      "Bash(*assistant-threads*)",
       "Bash(git push *)",
       "Bash(git -C * push)",
       "Bash(git -C * push *)",

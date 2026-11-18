@@ -6,7 +6,7 @@ Usage: python3 -I command_text.py              (the command on stdin; prints the
 
 bin/lib/command_rules.py, the rule table bin/hooks/command-guard runs, imports call_commands,
 each simple command a call runs (code_parts, blank_heredocs and commands, the walk, together),
-from it, with heads and the other readings of where a command's name may stand, as
+and call_redirections, each redirection it makes in the same texts, from it, with heads and the other readings of where a command's name may stand, as
 bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does; its kill rows, kill_rules.py, import command_name,
 heads_behind and short_cluster, and its delete rows, delete_rules.py, those with the walk, simple_commands,
 plain_sequence (a call's commands in the order they run, below), find's FIND_EXEC, SHELLS, the
@@ -1644,6 +1644,29 @@ def call_commands(command):
     walked = [found for part in code_parts(command) for found in commands(blank_heredocs(part))]
     walked += commands(command)
     return walked
+
+
+def redirections(text):
+    """Each redirection of the text with a word as its target, in every pipeline segment of it,
+    those in its groups and substitutions too, as its operator (the fd before it included) and
+    that word, its quotes removed (_segment_commands' redirects)."""
+    reading = read_command(text)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    found = []
+    for _, segments in reading.pipelines:
+        for start, end in segments:
+            _segment_commands(text, start, end, bodies, reading.subscripts, found)
+    return found
+
+
+def call_redirections(command):
+    """Each redirection a Bash call's command makes, for a guard that reads every one, from the
+    same texts call_commands walks: each of its code parts, each heredoc a part still opens
+    blanked, then the command's own text, so a redirection in a string a shell, eval or a pipe
+    into a shell runs is read as one written plainly."""
+    return [found for part in code_parts(command) for found in redirections(blank_heredocs(part))] + redirections(
+        command
+    )
 
 
 # What runs the command after it, past its options, as a reading of where a command starts takes

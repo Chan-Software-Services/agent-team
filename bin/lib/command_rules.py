@@ -96,6 +96,17 @@ The rows, in order:
     verify-asset; secret list or ls; variable list, ls or get. A group with no subcommand passes.
     Reason: a GitHub write, which an assistant session never makes (<the method, the body, the
     field, the mutation, the query it cannot read, or the group and subcommand>).
+  assistant-thread-cache, for the assistant alone: a write of the thread cache the Discord guard
+    trusts, a path whose basename begins assistant-threads, which its deny rule held by any call
+    naming it until this row. As the target of a redirection that writes (>, >>, >|, &>, &>>, <>,
+    and >& to no fd, with an fd before it), in any of the texts the walk reads, a bare one with
+    no command among them (its call test, command_text.call_redirections); or among the words of
+    a writer: tee, cp, mv, install, ln, rsync, truncate, rm, unlink, shred, touch, chmod and chown
+    (a word, or an option's value after its =), dd's of= value, and sed, perl or ruby with -i
+    (alone, joined as -i.bak, or among a short cluster's flags before one taking a value, as
+    -pi) or --in-place. A read passes: cat, grep, jq, sed -n, a redirection from it (<). Reason:
+    the thread cache the Discord guard trusts, which only the scripts and hooks write (<the path
+    as written, its quotes removed>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -127,10 +138,13 @@ The rows, in order:
     Reason: a session's GitHub login is its settings', as for the login rows.
 Each row is given the call's context (Context): the command's text, the hook input's cwd, the
 worktree, the job tmp, the roots, the kept paths and the role, each read on a row's first use of
-it; only the kill and delete rows use it, so a call with neither reads no process or file for it.
+it; only the kill and delete rows read the process table or a file from it, so a call with
+neither reads no process or file for it.
 A row reads every command the walk yields, a shell's script file and a sourced one among them (a
 file named team-worker that bash runs is team-worker), but for the upload and delete rows, which
-read no file's name as curl or rm.
+read no file's name as curl or rm. A row with a call test (assistant-thread-cache) runs it first,
+on the call's command, for what no command holds (a redirection), its where being the first line
+holding the refused path.
 Contract: the kill and delete rows refuse the forms an agent writes when it means no harm, each
 form tests/command-guard-kill.bats and tests/command-guard-delete.bats hold, plainly spelled, run
 directly or through the walk's wrappers and strings (bash -c, eval, a heredoc or here-string a
@@ -174,8 +188,8 @@ from typing import Callable
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    ASSIGNMENT, call_commands, command_name, commands, from_wrappers, has_blank, heads, leads, read_command,
-    short_cluster,
+    ASSIGNMENT, DIRECT, Command, call_commands, call_redirections, command_name, commands, from_wrappers, has_blank,
+    heads, leads, read_command, short_cluster,
 )
 import delete_rules  # noqa: E402
 import kill_rules  # noqa: E402
@@ -212,12 +226,16 @@ EMPTIES = {
 class Row:
     """A rule: its id, its test over one Command and the call's context, which refuses by
     returning True (the row's reason), a reason of its own, or a reason and an allowed way of its
-    own as a tuple, its reason and its allowed way (None: the refusal names none)."""
+    own as a tuple, its reason and its allowed way (None: the refusal names none); and, for a row
+    that reads what no Command holds, its call test over the call's command and context, run
+    before its test, which refuses by returning its reason and the words to find the refused line
+    by, or None."""
 
     id: str
     test: Callable
     reason: str | None
     allowed: str | None = None
+    call: Callable | None = None
 
 
 # A session id's first 8 characters, which name a background session's job directory.
@@ -646,6 +664,83 @@ def _github_write(command, context):
     return None
 
 
+# The thread cache the Discord guard trusts (ASSISTANT_THREADS in bin/lib/team.sh), by the start
+# of a path's basename, as the deny rule *assistant-threads* this row took over matched any spelling.
+THREAD_CACHE = "assistant-threads"
+# The redirection operators that write their target, the fd before them aside; >& writes one only
+# when its target is no fd.
+WRITE_REDIRECTS = frozenset((">", ">>", ">|", "&>", "&>>", "<>"))
+# The commands that write, make, move, link, remove or change a file their words name.
+CACHE_WRITERS = frozenset(("tee", "cp", "mv", "install", "ln", "rsync", "truncate", "rm", "unlink", "shred", "touch",
+                           "chmod", "chown"))
+# The editors that write their files in place with -i or --in-place, each with its short options
+# that take the rest of their word as their value, so an i in it is no flag.
+IN_PLACE_EDITORS = {"sed": "efl", "perl": "eEIMmxdD", "ruby": "eIrxCEFKTW0"}
+CACHE_REASON = "the thread cache the Discord guard trusts, which only the scripts and hooks write ({})"
+
+
+def _cache(word):
+    """Whether a word, or an option's value joined to it by =, names the thread cache."""
+    return any(command_name(path).startswith(THREAD_CACHE) for path in (word, word.rpartition("=")[2]))
+
+
+def _in_place(name, args):
+    """Whether an editor's words edit its files in place: --in-place (by a prefix, joined value
+    too) or i among a short cluster's flags before one taking a value (-i, -i.bak, -pi, -ni)."""
+    for word in args:
+        if word == "--":
+            return False
+        if word.startswith("--"):
+            option = word[2:].partition("=")[0]
+            if option.startswith("i") and "in-place".startswith(option):
+                return True
+        elif word.startswith("-"):
+            for flag in word[1:]:
+                if flag == "i":
+                    return True
+                if flag in IN_PLACE_EDITORS[name]:
+                    break
+    return False
+
+
+def _cache_writes(name, args):
+    """The word naming the thread cache among a writer's words, or None: dd's of= value, an
+    in-place editor's words, and any other writer's words."""
+    if name == "dd":
+        found = (word[3:] for word in args if word.startswith("of=") and _cache(word[3:]))
+    elif name in IN_PLACE_EDITORS:
+        found = (word for word in args if _in_place(name, args) and _cache(word))
+    elif name in CACHE_WRITERS:
+        found = (word for word in args if _cache(word))
+    else:
+        return None
+    return next(found, None)
+
+
+def _thread_cache(command, context):
+    """The assistant's write of the thread cache by a writer, the reason naming the path; any
+    other role's call is not this row's."""
+    if context is None or context.role != "assistant":
+        return None
+    for words in heads(command):
+        if words and (path := _cache_writes(command_name(words[0]), list(words[1:]))) is not None:
+            return CACHE_REASON.format(path)
+    return None
+
+
+def _cache_redirect(command, context):
+    """The assistant's redirection into the thread cache, anywhere the call's walk reads one (a
+    bare one with no command too), as its reason and the target, or None."""
+    if context is None or context.role != "assistant":
+        return None
+    for operator, target in call_redirections(command):
+        operator = re.sub(r"^(?:[0-9]+|\{\w+\})", "", operator)
+        writes = operator in WRITE_REDIRECTS or (operator == ">&" and not re.fullmatch(r"[0-9]*-?", target))
+        if writes and command_name(target).startswith(THREAD_CACHE):
+            return CACHE_REASON.format(target), (target,)
+    return None
+
+
 def _upload(command, context):
     return outbound.uploads_outside(command)
 
@@ -779,6 +874,7 @@ ROWS = (
     ),
     Row("assistant-acts", _assistant_act, None),
     Row("assistant-github-write", _github_write, None),
+    Row("assistant-thread-cache", _thread_cache, None, call=_cache_redirect),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),
@@ -864,6 +960,17 @@ def refusal(command, context=None):
     allowed way, or None; each row is given the call's context."""
     walked = call_commands(command)
     for row in ROWS:
+        try:
+            refused = row.call(command, context) if row.call is not None else None
+        except Exception as error:  # noqa: BLE001 - named, then refused by the caller
+            raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
+        if refused:
+            # The refused line is the first holding the call test's words.
+            reason, words = refused
+            return {
+                "rule": row.id, "reason": reason, "allowed": row.allowed,
+                "where": where(Command((), words, (), DIRECT), command),
+            }
         for found in walked:
             try:
                 refused = row.test(found, context)

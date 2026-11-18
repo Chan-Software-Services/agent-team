@@ -309,7 +309,7 @@ assert_nothing_written() {
   assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
 }
 
-@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts and GitHub's writes" {
+@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts, GitHub's writes and the thread cache's writes" {
   local settings=$REPO_ROOT/assistant.settings.json command
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
@@ -320,8 +320,6 @@ assert_nothing_written() {
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
     "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels && cat discord/.env" \
-    "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
-    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
     "git push" "git push origin main" "git push -u origin x" "git -C ~/agent-team-records push" \
     "git -C ~/agent-team-records push origin main" "git commit -m x" "git -C ~/agent-team-records commit -m x" \
     "gh pr create --fill" "gh pr merge 5" "gh pr comment 5 --body x" "gh pr review 5 --approve" "gh pr ready 5" \
@@ -368,6 +366,17 @@ assert_nothing_written() {
       '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
     assert_contains "$stderr" "Blocked by command-guard: a GitHub write, which an assistant session never makes ("
   done
+  # A write of the thread cache the Discord guard trusts: its assistant-thread-cache row refuses it,
+  # command by command, where its deny rule refused any call naming the cache.
+  # shellcheck disable=SC2088
+  for command in "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
+    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
+    "cp /tmp/x ~/.local/state/agent-team/assistant-threads" "rm ~/.local/state/agent-team/assistant-threads" \
+    "ls 2>~/.local/state/agent-team/assistant-threads"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: the thread cache the Discord guard trusts, which only the scripts and hooks write ("
+  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -387,7 +396,10 @@ assert_nothing_written() {
     "bin/claude-coordinator --help" "gh api -X GET search/issues -f q=repo:o/r" \
     "gh api --method GET repos/o/r/pulls -F per_page=100" "gh api graphql -f query='{viewer{login}}'" \
     "gh release list" "gh release view v1" "gh secret list" "gh variable list" "gh variable get X" \
-    "gh-axi release list" "gh-axi secret list" "gh-axi variable list"; do
+    "gh-axi release list" "gh-axi secret list" "gh-axi variable list" "grep -rn assistant-threads bin" \
+    "cat ~/.local/state/agent-team/assistant-threads" "wc -l ~/.local/state/agent-team/assistant-threads" \
+    "jq -R . ~/.local/state/agent-team/assistant-threads" "sed -n 1p ~/.local/state/agent-team/assistant-threads" \
+    "while read -r id; do echo \"\$id\"; done < ~/.local/state/agent-team/assistant-threads"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }

@@ -490,8 +490,16 @@
       "roles": ["assistant"],
       "tool": "Bash",
       "input": "cat ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
-      "expect": "rule",
-      "family": "thread-cache"
+      "expect": "allowed",
+      "marker": "No such file"
+    },
+    {
+      "id": "thread-cache-write",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "sed -i -n p ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
+      "expect": "hook",
+      "marker": "the thread cache"
     },
     {
       "id": "read-launchers",
@@ -730,10 +738,6 @@
     {
       "family": "sudo",
       "rules": "^Bash\\(sudo( \\*)?\\)$"
-    },
-    {
-      "family": "thread-cache",
-      "rules": "^Bash\\(.*assistant-threads"
     },
     {
       "family": "undo-ready",

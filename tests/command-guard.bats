@@ -1108,3 +1108,112 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
   # An assistant's gh call naming none of them still exits at once.
   AGENT_TEAM_ROLE=assistant guard -0 'gh pr view 5'
 }
+
+# A write of the thread cache the Discord guard trusts, which the assistant's deny rule held by any
+# call naming it until its assistant-thread-cache row took it over, command by command.
+CACHE="the thread cache the Discord guard trusts, which only the scripts and hooks write"
+
+@test "the assistant's write of the thread cache is refused, by a redirection or a writer, naming the path as written" {
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  local state='~/.local/state/agent-team' writer
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE ($state/assistant-threads)" "" "echo 1571000000000000101 >>$state/assistant-threads" \
+    "echo x >$state/assistant-threads" "echo x >|$state/assistant-threads" "echo x 1>>$state/assistant-threads" \
+    "grep x y 2>$state/assistant-threads" "ls &>$state/assistant-threads" "ls &>>$state/assistant-threads" \
+    "ls >&$state/assistant-threads" "exec 3<>$state/assistant-threads" ">$state/assistant-threads" \
+    ": > $state/assistant-threads" "cat x > \"$state/assistant-threads\"" "bash -c 'echo x >> $state/assistant-threads'" \
+    "bash -c \"ls 2> $state/assistant-threads\"" "eval 'echo x >$state/assistant-threads'" \
+    "echo 'echo x >$state/assistant-threads' | bash" "{ echo x; } >>$state/assistant-threads" \
+    "(echo x) >$state/assistant-threads" "cat >$state/assistant-threads <<'IDS'
+1571000000000000101
+IDS"
+  refuses_as assistant "$CACHE (assistant-threads)" "" "cd $state && tee -a assistant-threads" \
+    "cd $state && echo x >assistant-threads"
+  refuses_as assistant "$CACHE (\$HOME/.local/state/agent-team/assistant-threads)" "" \
+    'sed -i 1d $HOME/.local/state/agent-team/assistant-threads'
+  # Each writer, plainly, through bash -c and behind a wrapper.
+  while IFS='|' read -r writer; do
+    refuses_as assistant "$CACHE ($state/assistant-threads)" "" "${writer//@/$state/assistant-threads}" \
+      "bash -c '${writer//@/$state/assistant-threads}'" "env A=1 ${writer//@/$state/assistant-threads}"
+  done <<'WRITERS'
+tee @
+tee -a /tmp/x @
+cp /tmp/x @
+cp @ /tmp/x
+mv /tmp/x @
+mv @ /tmp/x
+install -m 600 /tmp/x @
+ln -sf /tmp/x @
+rsync /tmp/x @
+dd if=/tmp/x of=@
+truncate -s 0 @
+rm @
+rm -f @
+unlink @
+shred -u @
+touch @
+chmod 666 @
+chown me @
+sed -i 1d @
+sed -i.bak 1d @
+sed -ni p @
+sed --in-place 1d @
+sed --in-place=.bak 1d @
+perl -pi -e s/x/y/ @
+perl -i.bak -pe s/x/y/ @
+ruby -pi -e 1 @
+WRITERS
+  # A name past the basename's start (the probe's absent file) and a path in quotes.
+  refuses_as assistant "$CACHE ($state/assistant-threads.load-check-probe-absent)" "" \
+    "sed -i -n p $state/assistant-threads.load-check-probe-absent"
+  refuses_as assistant "$CACHE (/home/me/.local/state/agent-team/assistant-threads)" "" \
+    "rm '/home/me/.local/state/agent-team/assistant-threads'" "echo x | xargs -I{} cp {} /home/me/.local/state/agent-team/assistant-threads"
+  # A redirection's refusal names the line it stands on, as a command's does.
+  AGENT_TEAM_ROLE=assistant guard -2 "cd /tmp
+echo x >>$state/assistant-threads"
+  assert_equal "${stderr#*$'\n'}" "It stands on line 2 of the call: echo x >>$state/assistant-threads."
+}
+
+@test "the assistant's reads of the thread cache pass, and a worker's and a gate agent's writes of it are judged as before" {
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  local state='~/.local/state/agent-team' command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  for command in 'grep -rn assistant-threads bin' "cat $state/assistant-threads" "wc -l $state/assistant-threads" \
+    "jq -R . $state/assistant-threads" "sed -n 1p $state/assistant-threads" "sed -e s/i/x/ $state/assistant-threads" \
+    "perl -ne print $state/assistant-threads" "wc -l <$state/assistant-threads" "cat < $state/assistant-threads" \
+    "while read -r id; do echo \"\$id\"; done <$state/assistant-threads" "grep -c . $state/assistant-threads >/tmp/count" \
+    "dd if=$state/assistant-threads of=/dev/null" "bash -c 'cat $state/assistant-threads'" \
+    "git commit -m 'test: rm assistant-threads is refused'" "echo tee assistant-threads"; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # A worker's and a gate agent's are not the row's: each passes the guard as it did.
+  for role in builder planner reviewer ops ""; do
+    for command in "echo 1571000000000000101 >>$state/assistant-threads" "cd $state && tee -a assistant-threads" \
+      "sed -i 1d $state/assistant-threads" "cp /tmp/x $state/assistant-threads" "rm $state/assistant-threads" \
+      "truncate -s 0 $state/assistant-threads" "dd if=/tmp/x of=$state/assistant-threads" \
+      "perl -pi -e s/x/y/ $state/assistant-threads" "ls 2>$state/assistant-threads" "ls &>$state/assistant-threads" \
+      "bash -c 'mv /tmp/x $state/assistant-threads'"; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+}
+
+@test "the thread cache's name goes to Python past the fast path only for the assistant, so fails closed there when Python fails" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local command
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  for command in 'cp /tmp/x ~/.local/state/agent-team/assistant-threads' 'tee -a assistant-threads' \
+    'sed -i 1d assistant-"threads"' 'truncate -s 0 assistant\-threads'; do
+    AGENT_TEAM_ROLE=builder guard -0 "$command"
+    assert_equal "$stderr" ""
+    guard -0 "$command"
+    AGENT_TEAM_ROLE=assistant guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
+  done
+  # An assistant's call naming no trigger still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'cp /tmp/x /tmp/y'
+}
