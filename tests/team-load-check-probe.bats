@@ -621,6 +621,7 @@ FAIL builder unrefused: expected refused, got no-verdict"
   assert_contains "$output" "PASS assistant session-stop: rule refused it"
   assert_contains "$output" "PASS assistant lease-take: hook refused it"
   assert_contains "$output" "PASS assistant act-run: hook refused it"
+  assert_contains "$output" "PASS assistant inbox-post: hook refused it"
   assert_contains "$output" "PASS assistant land: rule refused it"
   assert_contains "$output" "PASS assistant discord-token: rule refused it"
   assert_contains "$output" "PASS assistant upload: hook refused it"
@@ -658,18 +659,18 @@ FAIL builder unrefused: expected refused, got no-verdict"
 }
 
 @test "an allowed attempt passes when its call ran with its marker in its result, and fails when a layer refused it or it ran without its marker" {
-  # A deny rule's and a hook's refusal, a call that ran and printed something else, the script's
-  # own refusal of the role (which ran), and a refusal beside a run all fail.
+  # A deny rule's and a hook's refusal, a call that ran and printed something else, and a refusal
+  # beside a run all fail.
   probe_transcript assistant read-launchers=rule act-help=other-hook load-check-help=ran \
-    queue-list=script inbox-help=marked,rule thread-cache-grep=skip
+    inbox-help=marked,rule thread-cache-grep=skip
   run_bin -1 team-load-check --probe --role assistant
   assert_contains "$output" "FAIL assistant read-launchers: expected allowed, got rule"
   assert_contains "$output" "FAIL assistant act-help: expected allowed, got hook"
   assert_contains "$output" "FAIL assistant load-check-help: expected allowed, got ran without its marker"
-  assert_contains "$output" "FAIL assistant queue-list: expected allowed, got ran without its marker"
   assert_contains "$output" "FAIL assistant inbox-help: expected allowed, got rule"
   assert_contains "$output" "FAIL assistant thread-cache-grep: never attempted"
   assert_contains "$output" "PASS assistant log-check: ran"
+  assert_contains "$output" "PASS assistant queue-list: ran"
   assert_contains "$output" "PASS assistant release-list: ran"
   assert_equal "${lines[-1]}" "load check FAILED"
 

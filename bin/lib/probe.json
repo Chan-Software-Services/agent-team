@@ -232,7 +232,7 @@
     },
     {
       "id": "ask-path",
-      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
       "input": "bin/team-ask --help",
       "expect": "hook",
@@ -428,6 +428,14 @@
       "input": "bin/team-stow --load-check-probe",
       "expect": "hook",
       "marker": "the coordinator's acts"
+    },
+    {
+      "id": "inbox-post",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-inbox --post --help",
+      "expect": "hook",
+      "marker": "the coordinator's commands"
     },
     {
       "id": "land",
