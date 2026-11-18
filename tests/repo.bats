@@ -3287,6 +3287,21 @@ bin_shell_files() {
   done < <(git -C "${REPO_ROOT:?}" ls-files bin)
 }
 
+# Each line of <file>... that runs a bare mktemp, as <file>:<line>: a bare mktemp: <text>: mktemp
+# as a command word, at the line's start or after $(, a backtick, ;, &, |, ( or {, past
+# assignments, command, builtin, env, exec, time, !, then, do and else; never in a comment, nor in
+# a case pattern that names it (scratch-only-edits' reader of other commands: "mktemp)", or
+# "a | mktemp |" with no $( before it): bare_mktemps <file>...
+bare_mktemps() {
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*([A-Za-z0-9_.*-]+[[:space:]]*\|[[:space:]]*)*mktemp[[:space:]]*[|)]/ { next }
+    /(^|[;&|({`]|\$\()[[:space:]]*(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|command|builtin|env|exec|time|!|then|do|else)[[:space:]]+)*mktemp([[:space:];&|)`]|$)/ {
+      print FILENAME ":" FNR ": a bare mktemp: " $0
+    }
+  ' "$@"
+}
+
 # bin/lib/temp-files.sh owns the one EXIT trap of every shell that sources it, which removes the
 # files team_mktemp made, so a file made with a bare mktemp, or an EXIT trap set after the
 # library (or temp-files.sh) is sourced, would leave a file when a signal ends the script.
@@ -3297,9 +3312,9 @@ bin_shell_files() {
   found=$(while IFS= read -r file; do
     [[ $file != bin/lib/temp-files.sh ]] || continue
     upto=$(grep -nE '^[^#]*source .*/(team|temp-files)\.sh"' "$file" | head -n 1 | cut -d: -f1)
+    bare_mktemps "$file"
     awk -v file="$file" -v upto="${upto:-0}" '
       /^[[:space:]]*#/ { next }
-      /\$\(mktemp|`mktemp/ { print file ":" FNR ": a bare mktemp: " $0 }
       FNR > upto && /(^|[;&|({[:space:]])trap( [^#]*)? (EXIT|0)([;)[:space:]]|$)/ { print file ":" FNR ": an EXIT trap: " $0 }
     ' "$file"
   done < <(bin_shell_files))
@@ -3307,6 +3322,38 @@ bin_shell_files() {
   # The walk reads the scripts it holds to.
   bin_shell_files | grep -qx bin/team-merge
   bin_shell_files | grep -qx bin/lib/threads.sh
+}
+
+@test "the bare-mktemp check finds mktemp as a command word in each form a script may run it, and leaves a name, a text and a case pattern" {
+  local planted=$BATS_TEST_TMPDIR/planted.sh
+  cat >"$planted" <<'PLANTED'
+a=$(mktemp)
+a=$( mktemp -d)
+a=$(command mktemp)
+a=$(TMPDIR=/x mktemp)
+a=`mktemp`
+mktemp >"$f"
+  mktemp -d "$d/x.XXXXXX"
+true && mktemp
+false || mktemp
+x; mktemp
+if true; then mktemp; fi
+for i in 1; do mktemp; done
+(mktemp)
+{ mktemp; }
+env TMPDIR=/x mktemp
+a=$(team_mktemp)
+a=$(team_mktemp -d)
+# mktemp in a comment
+echo "made with mktemp -d"
+echo 'mktemp'
+x=mktemp.out
+f() { :; } # then mktemp
+     cd | pushd | tee | mktemp | basename | \
+     mktemp) MK[e]=1 ;;
+PLANTED
+  run bare_mktemps "$planted"
+  assert_equal "$(cut -d: -f2 <<<"$output" | paste -sd ' ')" "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15"
 }
 
 # T281: a test's git -C "$TEAM_HOME" with TEAM_HOME empty ran in the code checkout and switched its
