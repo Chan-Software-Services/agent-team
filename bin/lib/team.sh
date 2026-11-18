@@ -906,7 +906,7 @@ lease_refusal() {
 # team-queue list and index --check, team-log --check and --check-lifecycle), which reads what the
 # coordinator reads and writes nothing; a call passes one or the other. Worker settings
 # deny most of the same commands by their bare name, and command-guard refuses team-ask,
-# team-answer, team-inbox, team-thread T<n> and team-run-approved by any path where a command
+# team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved by any path where a command
 # starts; this holds where both miss a spelling:
 # worker_refusal <task or ""> <does> [--interview | --read]
 worker_refusal() {

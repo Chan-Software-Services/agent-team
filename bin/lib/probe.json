@@ -632,7 +632,7 @@
     },
     {
       "family": "daniels-channel",
-      "rules": "team-(ask|answer|inbox|run-approved)|team-thread T",
+      "rules": "team-(ask|answer|inbox|run-approved)|team-thread (T|archive)",
       "unprobed": "command-guard refuses every command these prefix rules match, and which layer refuses first is Claude Code's order, so the refused attempt daniels-channel and the hook attempt ask-path prove the refusal"
     },
     {

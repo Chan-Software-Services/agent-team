@@ -67,11 +67,11 @@ The rows, in order:
   lease-steal: team-lease or team-resume with --steal among its words before its --. Reason: a
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
-    none, or team-thread with a task id (T and digits) as its first word (team-thread wait T<n>
-    passes, which each role's settings allow or deny); for the assistant alone (AGENT_TEAM_ROLE
-    assistant), the coordinator's read forms pass: any of the four with a first word --help or -h,
-    which the library answers before the script does anything, and team-inbox --item <n> with no
-    other word, which reads waiting.json alone.
+    none, or team-thread with a task id (T and digits) or archive as its first word (team-thread
+    wait T<n> passes, which each role's settings allow or deny); for the assistant alone
+    (AGENT_TEAM_ROLE assistant), the coordinator's read forms pass: any of the four with a first
+    word --help or -h, which the library answers before the script does anything, and team-inbox
+    --item <n> with no other word, which reads waiting.json alone.
   assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts,
     which its deny rules held by any call naming the script until this row: team-checkpoint,
     team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
@@ -470,7 +470,7 @@ def _steal(args):
 
 
 def _thread(args):
-    return bool(args) and TASK_ID.fullmatch(args[0]) is not None
+    return bool(args) and (TASK_ID.fullmatch(args[0]) is not None or args[0] == "archive")
 
 
 # The first words the library answers with the calling script's header before the script does anything.
@@ -870,7 +870,7 @@ ROWS = (
     Row(
         "coordinator-commands",
         _coordinator,
-        "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n> and team-run-approved)",
+        "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved)",
     ),
     Row("assistant-acts", _assistant_act, None),
     Row("assistant-github-write", _github_write, None),

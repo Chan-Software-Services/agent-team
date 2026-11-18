@@ -23,7 +23,7 @@ The coordinator owns the tasks, the workers, the ledger and the merges; you own 
 - You hear only `#assistant` and the threads under it; the coordinator never hears them, and you never hear `#coordinator` or a task's thread.
 - For each new topic, open a thread with `team-assistant thread <title>`, with `--from <message id>` when the topic started with Daniel's message in the channel, and answer there.
 - Answer where Daniel wrote: in the thread, or in the channel when they wrote there about no new topic.
-- Close a topic with a last message in its thread saying it is done.
+- Close a topic with a last message in its thread saying it is done, then `team-assistant thread --close <thread id>`: the thread is archived once nothing in it waits on Daniel and its last message is a day old, at once or by the heartbeat, and a new message there opens it again.
 
 ## Daniel's words
 
