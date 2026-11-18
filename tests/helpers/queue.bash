@@ -7,18 +7,38 @@
 # the base nor a trial commit until a script fetches them. Sets QUEUE_ORIGIN, QUEUE_PRIMARY,
 # QUEUE_HEAD (the PR's head), QUEUE_BASE (origin's dev, the queue entry's base) and GH_DIR, whose
 # files queue_gh's gh answers from, with the PR in no queue yet.
+# With QUEUE_DRIVER set, the project merges docs/list.md with a merge driver of its own, which its
+# .gitattributes names and the primary checkout's and the user's git configuration both register:
+# the driver keeps the PR's file whole, and the PR and the base each change another end of that
+# file, so the driver's merge of the two and a text merge are both clean and give two trees.
 queue_repo() {
+  local changed=src/other.py
   QUEUE_PRIMARY=$(make_repo "$1" dev)
   QUEUE_ORIGIN=$BATS_TEST_TMPDIR/origin/$1.git
+  if [[ -n ${QUEUE_DRIVER:-} ]]; then
+    changed=docs/list.md
+    mkdir -p "$QUEUE_PRIMARY/docs"
+    seq 1 9 >"$QUEUE_PRIMARY/docs/list.md"
+    echo 'docs/*.md merge=keep-theirs' >"$QUEUE_PRIMARY/.gitattributes"
+    git -C "${QUEUE_PRIMARY:?}" add .gitattributes docs/list.md
+    git -C "${QUEUE_PRIMARY:?}" commit -q -m "docs: a list its own driver merges"
+    git -C "${QUEUE_PRIMARY:?}" push -q origin dev
+    git -C "${QUEUE_PRIMARY:?}" config merge.keep-theirs.driver 'cp %B %A'
+    git config --global merge.keep-theirs.driver 'cp %B %A'
+  fi
   git -C "${QUEUE_PRIMARY:?}" checkout -q -b feat/T9-tooling
   mkdir -p "$QUEUE_PRIMARY/src"
   echo tool >"$QUEUE_PRIMARY/src/tool.py"
   git -C "${QUEUE_PRIMARY:?}" add src/tool.py
+  if [[ -n ${QUEUE_DRIVER:-} ]]; then
+    sed -i '1s/.*/one/' "$QUEUE_PRIMARY/docs/list.md"
+    git -C "${QUEUE_PRIMARY:?}" add docs/list.md
+  fi
   git -C "${QUEUE_PRIMARY:?}" commit -q -m "feat: the tool"
   git -C "${QUEUE_PRIMARY:?}" push -q origin feat/T9-tooling
   git -C "${QUEUE_PRIMARY:?}" checkout -q dev
   QUEUE_HEAD=$(git -C "${QUEUE_PRIMARY:?}" rev-parse feat/T9-tooling)
-  QUEUE_BASE=$(push_to_dev "$QUEUE_ORIGIN" src/other.py)
+  QUEUE_BASE=$(push_to_dev "$QUEUE_ORIGIN" "$changed")
   export GH_DIR=$BATS_TEST_TMPDIR/gh
   mkdir -p "$GH_DIR"
   echo '{"check_runs": []}' >"$GH_DIR/runs.json"
@@ -28,7 +48,8 @@ queue_repo() {
 
 # trial_commit <first parent> <second parent or ''> [<tree-ish>]: a commit of those parents on
 # origin, made in a clone of its own and pushed to a branch of the queue's, as GitHub builds a
-# trial commit; its tree is the clean merge of the two unless <tree-ish> gives another. Prints it.
+# trial commit; its tree is the clean text merge of the two, made with no merge driver of the
+# user's configuration, unless <tree-ish> gives another. Prints it.
 trial_commit() {
   local clone=$BATS_TEST_TMPDIR/queue-clone tree sha
   local -a parents=(-p "$1")
@@ -38,7 +59,7 @@ trial_commit() {
   if [[ -n ${3:-} ]]; then
     tree=$(git -C "${clone:?}" rev-parse "$3^{tree}")
   else
-    tree=$(git -C "${clone:?}" merge-tree --write-tree "$1" "$2")
+    tree=$(GIT_CONFIG_GLOBAL=/dev/null git -C "${clone:?}" merge-tree --write-tree "$1" "$2")
   fi
   sha=$(git -C "${clone:?}" commit-tree "$tree" "${parents[@]}" -m "Merge pull request #5")
   git -C "${clone:?}" push -q origin "$sha:refs/heads/gh-readonly-queue/dev/pr-5-$sha"

@@ -17,7 +17,8 @@
 # (pr_task in bin/lib/team.sh), a trial commit queue_commit_problems in bin/lib/team.sh names a
 # problem with (not the head commit of the PR's queue entry, read from GitHub at the call, an
 # entry that is UNMERGEABLE, a commit that is not exactly the PR's head merged cleanly onto a
-# commit holding the entry's base, a project whose merge_method is not merge) or cannot read, and
+# commit holding the entry's base, as GitHub merges, with no merge driver of the project's own, a
+# project whose merge_method is not merge) or cannot read, and
 # a PR's head whose latest review in the task's ledger is not a pass (review_refusal there); on
 # such a refusal team-land takes the PR out of the queue. What could not be read or set now (the
 # entry, the commit, the ledger, a status GitHub refuses) is exit 75 there, to try again.

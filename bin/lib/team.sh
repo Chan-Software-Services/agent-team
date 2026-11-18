@@ -16,7 +16,7 @@
 # pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays.
@@ -2247,19 +2247,53 @@ base_rules() (
 # its tree's id; a conflict prints the conflicted paths, one per line, and returns 1; any other
 # git failure prints git's first error line and returns 2: base_merge <checkout> <head> <base ref>
 base_merge() {
-  local out err rc=0
-  err=$(mktemp)
-  out=$(git -C "$1" merge-tree --write-tree --name-only --no-messages "$2" "$3" 2>"$err") || rc=$?
+  merge_judged "$2" "$3" git -C "$1"
+}
+
+# base_merge's reading of git merge-tree, run as <git command>... on the two commits, and its
+# output and return: merge_judged <head> <base ref> <git command>...
+merge_judged() {
+  local judged_ours=$1 judged_theirs=$2 judged_out judged_err judged_rc=0
+  shift 2
+  judged_err=$(mktemp)
+  judged_out=$("$@" merge-tree --write-tree --name-only --no-messages "$judged_ours" "$judged_theirs" 2>"$judged_err") || judged_rc=$?
   # A conflict's output starts with the tree; a commit git cannot read exits 1 too, with none.
-  if ((rc == 1)) && [[ ! ${out%%$'\n'*} =~ ^[0-9a-f]{40,64}$ ]]; then rc=2; fi
-  case $rc in
-    0) printf '%s\n' "$out" ;;
-    1) sed '1d;/^$/d' <<<"$out" ;;
-    *) grep -m1 . "$err" || echo "git merge-tree failed (exit $rc)" ;;
+  if ((judged_rc == 1)) && [[ ! ${judged_out%%$'\n'*} =~ ^[0-9a-f]{40,64}$ ]]; then judged_rc=2; fi
+  case $judged_rc in
+    0) printf '%s\n' "$judged_out" ;;
+    1) sed '1d;/^$/d' <<<"$judged_out" ;;
+    *) grep -m1 . "$judged_err" || echo "git merge-tree failed (exit $judged_rc)" ;;
   esac
-  rm -f "$err"
-  ((rc <= 1)) || return 2
-  return "$rc"
+  rm -f "$judged_err"
+  ((judged_rc <= 1)) || return 2
+  return "$judged_rc"
+}
+
+# The merge of <base ref> into <head> as the base's host makes it, a merge that runs no merge
+# driver of the project's or the user's own, where base_merge runs each one <checkout> registers:
+# judged by git merge-tree in a bare repository made for it and removed after, which reads
+# <checkout>'s objects (as its alternate), never writes them, and sees no git configuration but
+# its own, so a path whose attribute names such a driver is merged as text. It prints and returns
+# as base_merge does, a repository that cannot be made among the failures that return 2:
+# host_merge <checkout> <head> <base ref>
+host_merge() {
+  local host_objects host_dir host_rc=0
+  local -a host_git=(env -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG GIT_CONFIG_GLOBAL=/dev/null
+    GIT_CONFIG_NOSYSTEM=1 git)
+  if ! host_objects=$(git -C "$1" rev-parse --path-format=absolute --git-path objects 2>/dev/null) || [[ ! -d $host_objects ]]; then
+    echo "the objects of $1 cannot be found"
+    return 2
+  fi
+  host_dir=$(mktemp -d) || return 2
+  if "${host_git[@]}" init -q --bare "$host_dir/repo" 2>/dev/null &&
+    printf '%s\n' "$host_objects" >"$host_dir/repo/objects/info/alternates"; then
+    merge_judged "$2" "$3" "${host_git[@]}" --git-dir="$host_dir/repo" || host_rc=$?
+  else
+    echo "no repository could be made to merge in"
+    host_rc=2
+  fi
+  rm -rf "${host_dir:?}"
+  return "$host_rc"
 }
 
 # Whether <head> adds to <from> only clean merges of the base, judged in <checkout> (the caller has
@@ -2309,7 +2343,8 @@ clean_base_merges() {
 # and returns 0. Else it prints the first problem, one line, and returns 1: <sha> is not the
 # entry's headCommit (or the PR has no entry); the entry is UNMERGEABLE; <sha> has not exactly two
 # parents; its second parent is not the PR's head; its first parent does not hold the entry's
-# baseCommit; its tree is not the clean merge of its parents (base_merge); the project's
+# baseCommit; its tree is not the clean merge of its parents as GitHub makes it, with no merge
+# driver of the project's own (host_merge); the project's
 # merge_method is not merge, since the proof is of a merge commit. An entry or a commit that
 # cannot be read prints why and returns 2: queue_commit_problems <project> <repo> <number> <sha>
 queue_commit_problems() {
@@ -2382,7 +2417,7 @@ queue_commit_proof() {
     echo "$short merges the head onto ${parents[0]:0:7}, which does not hold the queue entry's base ${base:0:7}"
     return 1
   fi
-  tree=$(base_merge "$primary" "${parents[0]}" "${parents[1]}") || rc=$?
+  tree=$(host_merge "$primary" "${parents[0]}" "${parents[1]}") || rc=$?
   if ((rc == 1)); then
     echo "$short is no clean merge: ${head:0:7} conflicts with ${parents[0]:0:7}"
     return 1
