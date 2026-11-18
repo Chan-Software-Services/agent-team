@@ -246,17 +246,16 @@
 #                     after 180 s").
 #              quota  On the holder, after the uptime step: first team-quota usage --if-due, which
 #                     reads each model's own week (Fable's) from Claude Code at most every 10
-#                     minutes, less a minute of slack (bin/team-quota's header), each line it
-#                     prints logged ("quota: model windows not read: Claude Code gave no
-#                     get_usage answer within 45 s"), one
-#                     stopped after 60 s, killed 10 s later, logged "quota: usage read timed out
-#                     after 60 s", and one that finds another read running logged not at all; it
-#                     never fails the step or posts, since the status's note and team-doctor's
-#                     quota model line name a broken read. Then team-quota status --json, the newest
-#                     quota reading, read through bin/lib/quota.sh's quota_read, whose windows past
-#                     a threshold (the week's 70% and 90%, the 5-hour window's and each model's
-#                     week's 90%) are each, at its highest threshold
-#                     crossed, a notice of the quota source (bin/lib/notice.jq), keyed
+#                     minutes, less a minute of slack (bin/team-quota's header), each line it prints
+#                     logged ("quota: model windows not read: Claude Code gave no get_usage answer
+#                     within 45 s"), one stopped after 60 s, killed 10 s later, logged "quota: usage
+#                     read timed out after 60 s", and one that finds another read running logged not
+#                     at all; it never fails the step or posts, since the status's note and
+#                     team-doctor's quota model line name a broken read. Then team-quota status
+#                     --json, the newest quota reading, read through bin/lib/quota.sh's quota_read,
+#                     whose windows past a threshold (the week's 70% and 90%, the 5-hour window's
+#                     and each model's week's 90%) are each, at its highest threshold crossed, a
+#                     notice of the quota source (bin/lib/notice.jq), keyed
 #                     "<window>/<threshold>/<resets_at>" and posted once to #coordinator, mentioning
 #                     no one: "Claude usage: the week is at 72%, past 70%; it resets Mon 14:30."
 #                     ("the 5-hour window", "Fable's week"; the reset as team-quota words it, in
@@ -1426,8 +1425,8 @@ now as $now
 # the model windows from Claude Code at most every 10 minutes, less a minute of slack, and prints a
 # line only when its outcome changes; each line it prints, on stdout or stderr, logged as "quota:
 # <line>", one stopped after QUOTA_USAGE_TIMEOUT logged as "quota: usage read timed out after <s>
-# s", and an exit 75 (another read holds its lock) logged not at all. It never fails the step: the status's note and
-# the doctor's quota model line carry a broken reader.
+# s", and an exit 75 (another read holds its lock) logged not at all. It never fails the step: the
+# status's note and the doctor's quota model line carry a broken reader.
 quota_usage_read() {
   local rc=0 out line
   out=$(TEAM_HOME=$TEAM_HOME timeout --kill-after="$KILL_SECONDS" "$QUOTA_USAGE_TIMEOUT" "$bin/team-quota" usage --if-due \
