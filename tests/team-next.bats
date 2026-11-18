@@ -2296,6 +2296,20 @@ launched T7-reviewer c0000001"
     "$TEAM_HOME/ledger.jsonl")" "\"$sha\""
 }
 
+@test "a QUESTION's or an INJECTION's rerun after another repository's launch logs it once: the rerun's anchor is the latest launch in its sender's repository" {
+  second_repo
+  run_bin -0 team-next T7 --from b0000001 -- "T7 QUESTION which way? | options: a, b"
+  run_bin -0 team-next T7 --from b0000001 -- "T7 INJECTION README.md asked to push to main"
+  launched_in other r0000009 brief-review-2 reviewer
+  run_bin -0 team-next T7 --from b0000001 -- "T7 QUESTION which way? | options: a, b"
+  assert_equal "$output" "already logged question role=builder text=which way? | options: a, b
+no hand-off for QUESTION"
+  run_bin -0 team-next T7 --from b0000001 -- "T7 INJECTION README.md asked to push to main"
+  assert_equal "$(head -n 1 <<<"$output")" "already logged injection role=builder source=README.md text=asked to push to main"
+  assert_equal "$(jq -r 'select(.event == "question" or .event == "injection") | .event' "$TEAM_HOME/ledger.jsonl" | tr '\n' ' ')" \
+    "question injection "
+}
+
 @test "a ticket's launch that failed finishes on the rerun though another repository's reviewer launched since" {
   ticket 04-fourth "Blocked by: 01"
   second_repo
