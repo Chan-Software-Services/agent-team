@@ -1299,6 +1299,12 @@ diff|diff -l @ /tmp/ids
 diff|diff -ul @ /tmp/ids
 diff|diff --paginate @ /tmp/ids
 diff|diff --pag @ /tmp/ids
+diff|diff -u3l @ /tmp/ids
+test|test -v 'x[$(rm /tmp/x)]' && cat @
+test|test -v 'x[$(echo 1571000000000000303 >>@)]'
+test|test -R x; cat @
+[|[ -v 'x[y=1]' ]; cat @
+[|[ -R x ]; cat @
 python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
 perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
 node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
@@ -1425,6 +1431,18 @@ cat $state/assistant-threads"
     "cat <<<\"\`rm /tmp/x\`\"; cat $state/assistant-threads"
   refuses_as assistant "$CACHE (<<<\${BASH_CMDS[cat]:=/tmp/x/cat}, a here-string whose word the walk does not read in full, in a call naming it)" "" \
     "cat <<<\"\${BASH_CMDS[cat]:=/tmp/x/cat}\"; cat $state/assistant-threads"
+  # Bash removes a backslash-newline before it reads the call, so one may join what the guard reads
+  # apart (\$ and {, \$ and [, < and <, {x} and <): none passes, wherever it stands.
+  refuses_as assistant "$CACHE (a backslash-newline, which Bash removes before it reads the call, in a call naming it)" "" \
+    ": \$\\
+{BASH_CMDS[cat]:=/tmp/x/cat}; cat $state/assistant-threads" "echo \$\\
+[x=1]; cat $state/assistant-threads" "cat <\\
+<true
+1571000000000000101
+true
+cat $state/assistant-threads" "{x}\\
+</dev/null cat $state/assistant-threads" "cat $state/assistant-threads \\
+  /tmp/ids"
   # A \${ anywhere in the call's text is refused, as the arithmetic forms are, since one may assign.
   refuses_as assistant "$CACHE (a parameter expansion, which may assign a variable, in a call naming it)" "" \
     "grep -c '\${x}' $state/assistant-threads"

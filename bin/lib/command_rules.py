@@ -111,29 +111,32 @@ The rows, in order:
     library's ASSISTANT_THREADS or assistant_thread_keep), which its deny rule refused whatever it
     ran until this row, unless it only reads it: unless it is a plain list of readers, each by its
     bare name, joined by pipes, &&, || and ; alone, in any of the texts the walk reads. Refused by
-    a redirection that writes (>, >>, >|, &>, &>>, <>, and >& to no fd, with an fd before it)
-    anywhere but /dev/null, a bare one with no command among them
-    (command_text.call_redirections), a named fd's ({NAME}<, which assigns NAME), a heredoc (<<,
-    <<-), whose body the walk does not read in full, a here-string (<<<) whose word holds a $ or a
-    backtick, and any other but a file's input (<), a here-string or an fd's duplication; by a
-    writer naming it (tee, cp, mv, install, ln, rsync, truncate, rm, unlink, shred, touch, chmod
-    or chown, by a word or an option's value after its =, dd's of= value, and sed, perl or ruby
-    with -i or --in-place); by any command that is no plain reader by its bare name
-    (CACHE_READERS: cat, grep, head, tail, wc, jq, diff and the like, none with an option that
-    writes a file, runs a program or assigns a variable but those named here; dd writing to no
-    file; sed with only plain options and a plain script, no w, W or e; sort with no -o, -T or
-    --compress-program; diff with no -l or --paginate, which runs pr), so a wrapper (env, timeout,
-    nice, xargs, time and the rest, whose option may stand before the program it runs), a builtin
-    that assigns (read, printf, cd, declare, let), an interpreter's program, a reader by a path, a
-    source of the library and a shell string are refused; by any assignment, before a command or
-    on its own, since a PATH may find another program of a reader's name; by an arithmetic
-    expansion or command ($((, $[, (()) or a parameter expansion (${) anywhere in its text, which
-    may assign; and by a call that is no plain list of commands (command_text.plain_sequence with
-    pipes: no group, subshell, loop, function, substitution, background or !; and no code part but
-    the call's own text, command_text.code_parts). Reason: the thread cache the Discord guard
-    trusts, which only the scripts and hooks write (<the path as written, its quotes removed; the
-    redirection and its target; the command that is no plain reader, as written; the assignment;
-    the arithmetic or parameter expansion; or a call that is no plain list of readers>).
+    a backslash-newline anywhere in it, which Bash removes before it reads the call, so one may
+    join what the row reads apart ($ and {, < and <); by a redirection that writes (>, >>, >|, &>,
+    &>>, <>, and >& to no fd, with an fd before it) anywhere but /dev/null, a bare one with no
+    command among them (command_text.call_redirections), a named fd's ({NAME}<, which assigns
+    NAME), a heredoc (<<, <<-), whose body the walk does not read in full, a here-string (<<<)
+    whose word holds a $ or a backtick, and any other but a file's input (<), a here-string or an
+    fd's duplication; by a writer naming it (tee, cp, mv, install, ln, rsync, truncate, rm,
+    unlink, shred, touch, chmod or chown, by a word or an option's value after its =, dd's of=
+    value, and sed, perl or ruby with -i or --in-place); by any command that is no plain reader by
+    its bare name (CACHE_READERS: cat, grep, head, tail, wc, jq, diff and the like, none with an
+    option that writes a file, runs a program or assigns a variable but those named here; dd
+    writing to no file; sed with only plain options and a plain script, no w, W or e; sort with no
+    -o, -T or --compress-program; diff with no -l or --paginate, which runs pr; test and [ with no
+    -v, which evaluates a subscript, or -R), so a wrapper (env, timeout, nice, xargs, time and the
+    rest, whose option may stand before the program it runs), a builtin that assigns (read,
+    printf, cd, declare, let), an interpreter's program, a reader by a path, a source of the
+    library and a shell string are refused; by any assignment, before a command or on its own,
+    since a PATH may find another program of a reader's name; by an arithmetic expansion or
+    command ($((, $[, (()) or a parameter expansion (${) anywhere in its text, which may assign;
+    and by a call that is no plain list of commands (command_text.plain_sequence with pipes: no
+    group, subshell, loop, function, substitution, background or !; and no code part but the
+    call's own text, command_text.code_parts). Reason: the thread cache the Discord guard trusts,
+    which only the scripts and hooks write (<the path as written, its quotes removed; the
+    backslash-newline; the redirection and its target; the command that is no plain reader, as
+    written; the assignment; the arithmetic or parameter expansion; or a call that is no plain
+    list of readers>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -843,9 +846,9 @@ CACHE_NAMES = re.compile(r"assistant-threads|ASSISTANT_THREADS|assistant_thread_
 # The commands that only read what they are given or filter text, none with an option that writes a
 # file, runs a program or assigns a variable, which a call naming the cache may run by its bare
 # name (dd too, writing to no file, sed with a plain script, sort with no -o, --output,
-# --compress-program or -T, and diff with no -l or --paginate, which runs pr); no wrapper and no
-# builtin that assigns (read, printf -v, cd) is one; the one target an output redirection in it
-# may write.
+# --compress-program or -T, diff with no -l or --paginate, which runs pr, and test and [ with no
+# -v, which evaluates a NAME[subscript] word's subscript, or -R); no wrapper and no builtin that
+# assigns (read, printf -v, cd) is one; the one target an output redirection in it may write.
 CACHE_READERS = frozenset((
     "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "jq", "diff", "cmp", "stat", "ls", "sha256sum", "sha1sum",
     "md5sum", "sha512sum", "echo", "true", "false", "test", "[", "pwd", ":", "cut", "tr", "nl", "paste", "column",
@@ -861,6 +864,9 @@ HEREDOCS = frozenset(("<<", "<<-"))
 ARITHMETIC = re.compile(r"\$\[|\(\(")
 # A parameter expansion, which may assign a variable (${name:=word}).
 PARAMETER = re.compile(r"\$\{")
+# A backslash-newline, which Bash removes before it forms a token, so one joins what the row's
+# searches of the text and the walk read apart ($ and {, < and <).
+CONTINUATION = "\\\n"
 PLAIN_LIST = "a call naming it that is no plain list of readers joined by |, &&, || or ;"
 # sed's options a plain reading takes, and the script it reads with: one command a part (split on
 # ;), an address or range, then p, q, Q, =, d, l, n or N, or s/.../.../ with g, p, i, I or a number,
@@ -912,9 +918,10 @@ def _plain_sed(args):
 
 def _plain_reader(found):
     """Whether a walked command only reads: a reader by its bare name (dd writing to no file, sed
-    with a plain script, sort and diff writing no file and running no program), behind no
-    wrapper, with no assignment before it and with a name at all; a path, a PATH or a wrapper's
-    option may run another program than a reader's name says."""
+    with a plain script, sort and diff writing no file and running no program, test and [
+    evaluating no subscript), behind no wrapper, with no assignment before it and with a name at
+    all; a path, a PATH or a wrapper's option may run another program than a reader's name
+    says."""
     if found.assignments or found.wrappers or not found.words or "/" in found.words[0]:
         return False
     name, args = found.words[0], list(found.words[1:])
@@ -930,15 +937,21 @@ def _plain_reader(found):
                        for word in args)
     if name == "diff":
         # diff runs pr by -l or --paginate, named by any prefix getopt_long takes (--pag) or in a
-        # short cluster (-ul).
+        # short cluster, whose options may be digits too (-ul, -u3l).
         return not any((word.startswith("--") and len(word) > 2 and "paginate".startswith(word[2:].partition("=")[0]))
-                       or re.fullmatch(r"-[A-Za-z]*l.*", word) for word in args)
+                       or re.fullmatch(r"-[A-Za-z0-9]*l.*", word) for word in args)
+    if name in ("test", "["):
+        # test's -v evaluates a NAME[subscript] word's subscript as arithmetic, after expanding
+        # it, so it may run a command or assign a variable; -R, which takes a variable's name too,
+        # is refused beside it.
+        return not any(word in ("-v", "-R") for word in args)
     return name in CACHE_READERS
 
 
 def _cache_call(command, context):
     """The assistant's call naming the thread cache that may do more than read it, as its reason
-    and the words of its refused line, or None: a redirection that writes anywhere but /dev/null
+    and the words of its refused line, or None: a backslash-newline anywhere in it (which Bash
+    removes before it reads the call), a redirection that writes anywhere but /dev/null
     (the cache's path when it names it), a named fd's (which assigns its variable) or any other
     but an input one or an fd's duplication, a heredoc, a here-string whose word holds a $ or a
     backtick (each holding text the walk does not read in full), a writer naming it (that path),
@@ -949,6 +962,8 @@ def _cache_call(command, context):
     naming no cache, is not this row's."""
     if context is None or context.role != "assistant" or not _names_cache(command):
         return None
+    if CONTINUATION in command:
+        return CACHE_REASON.format("a backslash-newline, which Bash removes before it reads the call, in a call naming it"), ()
     for operator, target in call_redirections(command):
         named = re.match(r"\{\w+\}", operator)
         bare = re.sub(r"^(?:[0-9]+|\{\w+\})", "", operator)
