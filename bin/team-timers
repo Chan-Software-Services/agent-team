@@ -306,7 +306,20 @@
 #                     waiting.json it could not read and numbered afresh ("numbers the list afresh,
 #                     since waiting.json cannot be read: <why>", on a failure too, which the
 #                     line after it names), and a failure, and a failure never fails the run.
-#              finished  On the holder, after the inbox step, every run, whatever the level and
+#              threads  On the holder, after the inbox step, so it reads the waiting.json that
+#                     step wrote: team-thread archive, which archives each Discord thread of a
+#                     task closed under the rule (team-close names its threads on closed) and of
+#                     each topic the assistant closed, once waiting.json names nothing of it and
+#                     its last message is a day old (bin/lib/threads.sh), and asks Discord nothing
+#                     when there is none (bin/team-thread's header says how). Each line it prints
+#                     is logged ("threads: archived 1563... T7's thread: T7 · agent-team ·
+#                     <title>"), and a quiet run logs nothing. It is stopped after 120 s, killed
+#                     10 s later ("threads: failed: timed out after 120 s"), and a pass that fails
+#                     (Discord unreadable, an archive it refused, a waiting.json it cannot read or
+#                     that is older than the ledger or a list team-inbox reads, as after an inbox
+#                     step that failed once one of them changed) fails its
+#                     own step alone, never the run, so 12 runs in a row are the step-threads alert.
+#              finished  On the holder, after the threads step, every run, whatever the level and
 #                     budget: claude stop (30 s, killed 10 s later) of each finished session of
 #                     every open task, the idle live session of a launch whose work is handed on
 #                     (plan_tasks' finished in bin/lib/ledger.jq, the predicate team-worker and the
@@ -355,8 +368,8 @@
 #            or Docker never holds the run's lock for good: the checkpoint is stopped after 300 s,
 #            the current step (whose pr conditions ask GitHub) after 120 s, the queue step (whose
 #            commit pushes) after 60 s, the uptime step after 180 s, the quota step after 60 s, the
-#            github step's read after 20 s, the tmp step after 120 s, each reading and the place
-#            after 60 s, the level step, the sweep and the pack after 300 s and the janitor after
+#            github step's read after 20 s, the tmp step and the threads step after 120 s, each
+#            reading and the place after 60 s, the level step, the sweep and the pack after 300 s and the janitor after
 #            1200 s, each logged as "<step>: failed: timed out after <n> s" (the quota step's as
 #            "quota: failed: team-quota status timed out after 60 s"; a janitor stopped so wrote no
 #            report, so the next run starts it again),
@@ -415,13 +428,15 @@
 # TEAM_TIMERS_CHECKPOINT_SECONDS, TEAM_TIMERS_QUEUE_SECONDS, TEAM_TIMERS_CURRENT_SECONDS,
 # TEAM_TIMERS_FINISHED_SECONDS, TEAM_TIMERS_FINISHED_CALL_SECONDS,
 # TEAM_TIMERS_COORDINATOR_SWEEP_SECONDS, TEAM_TIMERS_UPTIME_SECONDS, TEAM_TIMERS_QUOTA_SECONDS,
-# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_CAPACITY_SECONDS,
+# TEAM_TIMERS_GITHUB_SECONDS, TEAM_TIMERS_TMP_SECONDS, TEAM_TIMERS_THREADS_SECONDS,
+# TEAM_TIMERS_CAPACITY_SECONDS,
 # TEAM_TIMERS_LEVEL_SECONDS, TEAM_TIMERS_SWEEP_SECONDS, TEAM_TIMERS_JANITOR_SECONDS,
 # TEAM_TIMERS_RUN_SECONDS, TEAM_TIMERS_LOCK_SECONDS and TEAM_TIMERS_KILL_SECONDS replace the
 # checkpoint step's 300 s, the queue step's 60 s, the current step's 120 s, the finished step's 90 s
 # after which no stop starts, its 30 s for each call (the back step's and the coordinator step's
 # session lists' too), the coordinator step's 60 s for its sweep, the uptime step's 180 s, the quota
-# step's 60 s, the github step's 20 s, the tmp step's 120 s, the capacity step's 60 s for each of
+# step's 60 s, the github step's 20 s, the tmp step's and the threads step's 120 s, the capacity
+# step's 60 s for each of
 # its commands, the level step's 300 s, the sweep's 300 s, the janitor's 1200 s, the run's 4200 s,
 # enable's 60 s wait for the run's lock and the 10 s after a time limit at which a command still
 # running is killed, TEAM_TIMERS_FAILURES_DAYS the failures log's 30 days, and
@@ -456,13 +471,14 @@ INBOX_TIMEOUT=120
 # (CURRENT_TIMEOUT), the queue step 60 (QUEUE_TIMEOUT), the coordinator step's session list 30
 # (FINISHED_CALL_TIMEOUT) and sweep 60 (COORDINATOR_SWEEP_TIMEOUT), the uptime step 180
 # (UPTIME_TIMEOUT), the quota step 60 (QUOTA_TIMEOUT), the github step 20 (GITHUB_TIMEOUT), the tmp
-# step 120 (TMP_TIMEOUT), the inbox step 120 (INBOX_TIMEOUT above), the finished step 120 (its
+# step 120 (TMP_TIMEOUT), the inbox step 120 (INBOX_TIMEOUT above), the threads step 120
+# (THREADS_TIMEOUT), the finished step 120 (its
 # session list and each stop 30 s, FINISHED_CALL_TIMEOUT, and no stop started once FINISHED_TIMEOUT
 # has passed, so at most 90 s and one last stop's 30), the capacity step's sample and place 60 each,
-# the level step 300, the sweep 300, the pack 300 and the janitor 1200. That is 3410 s in all, 3580
-# s with the kills (10 s each for the other steps' sixteen commands and the finished step's last
-# stop), about 60 minutes. The lease step leaves a lease unrenewed only under 14 minutes old, so a
-# run that hits every limit ends with it about 74 minutes old, past the lease's hour (team-lease's
+# the level step 300, the sweep 300, the pack 300 and the janitor 1200. That is 3530 s in all, 3710
+# s with the kills (10 s each for the other steps' seventeen commands and the finished step's last
+# stop), about 62 minutes. The lease step leaves a lease unrenewed only under 14 minutes old, so a
+# run that hits every limit ends with it about 76 minutes old, past the lease's hour (team-lease's
 # TTL_MINUTES), and the next run starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS
 # later, and renews behind its read of origin. A lease past its ttl is stale, which changes only
 # what team-lease take says on another machine (stale, not fresh): the holder still holds it, and
@@ -483,6 +499,7 @@ UPTIME_TIMEOUT=${TEAM_TIMERS_UPTIME_SECONDS:-180}
 QUOTA_TIMEOUT=${TEAM_TIMERS_QUOTA_SECONDS:-60}
 GITHUB_TIMEOUT=${TEAM_TIMERS_GITHUB_SECONDS:-20}
 TMP_TIMEOUT=${TEAM_TIMERS_TMP_SECONDS:-120}
+THREADS_TIMEOUT=${TEAM_TIMERS_THREADS_SECONDS:-120}
 CAPACITY_TIMEOUT=${TEAM_TIMERS_CAPACITY_SECONDS:-60}
 LEVEL_TIMEOUT=${TEAM_TIMERS_LEVEL_SECONDS:-300}
 SWEEP_TIMEOUT=${TEAM_TIMERS_SWEEP_SECONDS:-300}
@@ -1559,7 +1576,16 @@ inbox_step() {
   esac
 }
 
-# The finished step, on the holder after the inbox step, every run, whatever the level and budget:
+# The threads step, on the holder after the inbox step, so it reads the waiting.json that step
+# wrote, and archives nothing on one older than what it reads (thread_waiting in
+# bin/lib/threads.sh), as after an inbox step that failed: team-thread archive (THREADS_TIMEOUT,
+# killed KILL_SECONDS later), each line it prints logged; a pass that fails or is stopped fails
+# this step alone, never the run, since Discord may be down.
+threads_step() {
+  run_step --fails-no-run threads "$THREADS_TIMEOUT" team-thread archive
+}
+
+# The finished step, on the holder after the threads step, every run, whatever the level and budget:
 # claude stop of each finished session of every open task but a planner whose plan is not approved
 # yet, as the header's finished says, each call killed 10 s after its time limit, as run_step's
 # are. Never fails the run: a stop that fails, a session list or ledger that cannot be read, and
@@ -1957,6 +1983,7 @@ run_heartbeat() {
     github_step
     run_step tmp "$TMP_TIMEOUT" team-janitor tmp
     inbox_step
+    threads_step
     finished_step
     capacity_step
     level_step
