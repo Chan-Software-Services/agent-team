@@ -44,7 +44,8 @@
 # <hand-off> hand-off; approve the plan again first (step 3 of the manual)").
 # Then it logs, through team-log, each of the message's events that the ledger does not already
 # hold since the sending worker's launch (the session its events name, else the task's latest
-# launch): a ticket-done of the same ticket, a done of the same session and report (an ops
+# launch in the PR's project for a PR, so another repository's launch since does not move it, and
+# the task's latest launch for any other message): a ticket-done of the same ticket, a done of the same session and report (an ops
 # session's: of the same report_chars, its relay aside), a pr of the
 # same url and head, a review of the same head and verdict, any other event with the same fields;
 # so a rerun never logs one twice. Each line it prints is one step: "logged <event> <key=value>..."
@@ -872,6 +873,30 @@ if [[ -z $fill ]]; then
   parsed="[${parsed%,}]"
 fi
 
+# pr_url_project <url>: the project of the task's open worktree whose repo holds the PR <url>, or
+# nothing. The PR's repo and each project's repo, owner/name, are compared in canonical form (a
+# moved repo under its new owner), so the URL and the registry may name either owner.
+pr_url_project() {
+  local p r repo projects found=''
+  [[ $1 =~ ^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+/?$ ]] || return 0
+  repo=$(canonical_repo "${BASH_REMATCH[1]}") || exit 1
+  projects=$(ledger_jq 'reduce (open_worktrees(.[]; $home) | .project | tostring) as $p ([]; if IN(.[]; $p) then . else . + [$p] end)
+    | .[]' -r <<<"$events") || exit 1
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    r=$(team_project "$p" repo) || exit 1
+    r=$(canonical_repo "$r") || exit 1
+    [[ ${r,,} != "${repo,,}" ]] || found=$p
+  done <<<"$projects"
+  if [[ -n $found ]]; then echo "$found"; fi
+}
+
+# The project of the PR a PR message names (pr_url_project), or nothing: the rerun's anchor below
+# and the review hand-off's project.
+message_pr_url=$(jq -r 'map(select(.event == "pr")) | first | .url // empty' <<<"$parsed")
+message_pr_project=''
+if [[ -n $message_pr_url ]]; then message_pr_project=$(pr_url_project "$message_pr_url") || exit 1; fi
+
 # same($p): whether the event is the parsed event $p, as a rerun finds it logged.
 same_def='def same($p): .event == $p.event and
   if $p.event == "ticket-done" then .ticket == $p.ticket
@@ -888,7 +913,9 @@ same_def='def same($p): .event == $p.event and
 # - back: the findings a pass counts that go back before the merge, as text, or nothing.
 # - held: which of the message's events the ledger holds since the sender's launch, each as
 #   {event, at}, at the index of the event that holds it, or null; anchor is the sender's launch's
-#   index.
+#   index. A message that names no session anchors on the task's latest launch in $anchor_project
+#   (launch_in in bin/lib/ledger.jq), the PR's project for a PR, so another repository's launch
+#   since does not log its pr again, and on its latest launch of any project with "".
 # - briefs: the briefs the task's launches read, one name a line (brief_launched).
 # - sender_wt, launch_project, sender_ticket, sender_session: the worktree, as a local path, the
 #   project, the ticket (a ticket worktree's builder's) and the session of the launch of the session
@@ -900,7 +927,9 @@ launch_def='def sender_launch: ($parsed | map(select(.event == "done" or .event 
   | . + {worktree: (.worktree | local_path($home))};'
 held_prog="$same_def"' . as $events
   | ([$parsed[] | .session | strings] | first) as $session
-  | ([to_entries[] | select(.value.event == "launch" and ($session == null or .value.session == $session)) | .key] | last // -1) as $anchor
+  | ([to_entries[] | select(.value.event == "launch"
+      and if $session == null then .value | launch_in($anchor_project) else .value.session == $session end) | .key]
+    | last // -1) as $anchor
   | {anchor: $anchor,
      events: [$parsed[] | . as $p
        | {event: $p, at: ([range($anchor + 1; $events | length) | select($events[.] | same($p))] | first)}]}'
@@ -932,7 +961,7 @@ json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3
   sender_ticket="$launch_def sender_launch | .ticket // empty" sender_session="$launch_def sender_launch | .session // empty" \
   review='$parsed | map(select(.event == "review")) | first | tojson' \
   phase_merged="$phase_def"' phase_start as $k | if $k == 0 then empty else .[$k - 1].ts end' \
-  -- --arg message "$message" --argjson parsed "$parsed" <<<"$events"
+  -- --arg message "$message" --argjson parsed "$parsed" --arg anchor_project "$message_pr_project" <<<"$events"
 
 # Whether a launch of the task read brief-<name>: brief_launched <name>
 brief_launched() {
@@ -1662,33 +1691,20 @@ fi
 
 if [[ $handoff == review ]]; then
   # In one jq run: the event the hand-off follows (key: the pr of a PR, else the builder's done),
-  # its url and head; the head the done reports; and the projects of the task's open worktrees,
-  # one a line.
+  # its url and head; and the head the done reports.
   key_event='done'
   [[ $kind != PR ]] || key_event='pr'
-  url='' head='' reported='' projects=''
+  url='' head='' reported=''
   json_vars --ledger url='$parsed | map(select(.event == $k)) | first | .url | tostring' \
     head='$parsed | map(select(.event == $k)) | first | .head | tostring' \
     reported='$parsed | map(select(.event == "done")) | first | .report | select(. != null) | [splits("\\s+")]
       | if .[0] == "merged" then .[2] else .[1] end | tostring' \
-    projects='reduce (open_worktrees(.[]; $home) | .project | tostring) as $p ([]; if IN(.[]; $p) then . else . + [$p] end)
-      | join("\n")' \
     -- --argjson parsed "$parsed" --arg k "$key_event" <<<"$events"
 
-  # The hand-off's project: for a PR, the open worktree's whose repo holds it; else the sending
-  # builder's launch's.
+  # The hand-off's project: for a PR, the open worktree's whose repo holds it (pr_url_project);
+  # else the sending builder's launch's.
   if [[ $kind == PR ]]; then
-    # The PR's repo and each open worktree's project's, owner/name, compared in canonical form (a
-    # moved repo under its new owner), so the URL and the registry may name either owner.
-    [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+/?$ ]]
-    repo=$(canonical_repo "${BASH_REMATCH[1]}") || exit 1
-    project=''
-    while IFS= read -r p; do
-      [[ -n $p ]] || continue
-      r=$(team_project "$p" repo) || exit 1
-      r=$(canonical_repo "$r") || exit 1
-      [[ ${r,,} != "${repo,,}" ]] || project=$p
-    done <<<"$projects"
+    project=$message_pr_project
     [[ -n $project ]] || die "$url is in no repo of $task's open worktrees"
   else
     project=$launch_project
@@ -1887,7 +1903,7 @@ integrate() {
   fi
   # The ledger as it is under the lock, so a DONE integrated meanwhile is a rerun here.
   events=$(task_event_array "$task")
-  held=$(ledger_jq "$held_prog" -c --argjson parsed "$parsed" <<<"$events")
+  held=$(ledger_jq "$held_prog" -c --argjson parsed "$parsed" --arg anchor_project "" <<<"$events")
   if ! jq -e 'any(.events[]; .event.event == "ticket-done" and .at != null)' <<<"$held" >/dev/null; then
     ticket_line=$(ledger_jq '[open_worktrees(.[]; $home) | select(.project == $p and (.ticket == $t or .ticket == null))]
       | [(map(select(.ticket == $t)) | last), (map(select(.ticket == null)) | last)]

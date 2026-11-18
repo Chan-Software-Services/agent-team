@@ -2283,6 +2283,19 @@ launched T7-reviewer c0000001"
   assert_equal "$(bg_calls | wc -l)" 2
 }
 
+@test "a PR's rerun after another repository's launch logs its pr once: the rerun's anchor is the latest launch in the PR's own repository" {
+  second_repo
+  on_github 9 "$sha"
+  # proj's PR is logged and its reviewer's launch fails; other's reviewer launches after it.
+  touch "$STUB_FIXTURES/fail-once"
+  run_bin -1 team-next T7 --from b0000001 --checks "$(checks)" -- "T7 PR $url"
+  other_reviewing
+  run_bin -0 --separate-stderr team-next T7 --from b0000001 --checks "$(checks)" -- "T7 PR $url"
+  assert_contains "$output" "already logged pr url=$url head=$sha"
+  assert_equal "$(jq -c --arg url "$url" --arg h "$sha" 'select(.event == "pr" and .url == $url and .head == $h) | .head' \
+    "$TEAM_HOME/ledger.jsonl")" "\"$sha\""
+}
+
 @test "a ticket's launch that failed finishes on the rerun though another repository's reviewer launched since" {
   ticket 04-fourth "Blocked by: 01"
   second_repo
