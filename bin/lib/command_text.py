@@ -13,9 +13,10 @@ heads_behind and short_cluster, and its delete rows, delete_rules.py, those with
 plain_sequence (a call's commands in the order they run, below), find's FIND_EXEC, SHELLS, the
 option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
-bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands and
-redirection_targets, each file the call redirects from or to over the same parts, which
---redirections prints as one JSON string a line.
+bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands,
+command_name, the option readers long_options and short_cluster, and redirection_targets, each
+file the call redirects from or to over the same parts, which --redirections prints as one JSON
+string a line.
 It reads the command far enough to know its quotes ('...', "..." and $'...'), backslashes, comments,
 arithmetic ($[, and $(( or (( whose two closing parentheses are adjacent, matched as Bash's
 parse_matched_pair does, past quotes, backticks and a $(...) read by this scan: ((cmd) ) is two
