@@ -448,6 +448,37 @@ age_probe() {
   done
 }
 
+@test "team-thread archive is blocked for every role when fenced or when origin names another holder, and passes on the holder" {
+  local command archives=("team-thread archive" "/home/x/agent-team/bin/team-thread archive --all --dry-run"
+    "cd wt && team-thread  archive --dry-run" $'team-log T7 note\nteam-thread archive')
+  local others=("team-thread T7 conventioner 'archive it'" "echo team-thread archive" "grep -rn 'team-thread archive' bin")
+  for command in "${archives[@]}" "${others[@]}"; do
+    bash_call -0 "$command"
+    coordinator_call -0 "$command"
+  done
+  # The team holding offline is no fence: archiving reaches Discord, never GitHub.
+  mkdir -p "$state"
+  echo '{"since": "2026-10-22T13:05:00Z", "posted": true}' >"$state/offline"
+  for command in "${archives[@]}"; do bash_call -0 "$command"; done
+  rm "$state/offline"
+
+  steal_lease laptop home-pc
+  age_probe 61
+  for command in "${archives[@]}"; do
+    bash_call -2 "$command"
+    assert_equal "$stderr" "Blocked: home-pc no longer holds the lease: origin names laptop (held, epoch 2): a machine that lost the lease archives no thread; the coordinator on the holder does."
+    coordinator_call -2 "$command"
+  done
+  for command in "${others[@]}"; do bash_call -0 "$command"; done
+
+  fence
+  for command in "${archives[@]}"; do
+    bash_call -2 "$command"
+    assert_equal "$stderr" "Blocked: home-pc is fenced since 2026-10-22T14:00:00Z (holder seen laptop, epoch 2): a fenced machine archives no thread; the coordinator on the holder does."
+    coordinator_call -2 "$command"
+  done
+}
+
 # The hook on the assistant's Bash call <command>, with --assistant: assistant_call <status> <command>
 assistant_call() {
   run_bin "$1" --separate-stderr hooks/lease-fence --assistant <<<"$(jq -cn --arg c "$2" \

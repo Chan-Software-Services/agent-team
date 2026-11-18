@@ -28,6 +28,7 @@ The classes:
   post: team-post, team-ask or team-inbox.
   answer: team-answer.
   wait: team-thread with wait as its first word.
+  archive: team-thread with archive as its first word.
   ci_wait: team-ci-wait or team-ci-run.
 Where eval is given a substitution, whose output it runs (eval "$(cat <<EOF ... EOF)"), each line
 of that word is read as a command too, a heredoc's body lines among them, once: an eval in such a
@@ -72,7 +73,7 @@ NAMED = {
     "team-ci-wait": "ci_wait",
     "team-ci-run": "ci_wait",
 }
-CLASSES = ("push", "gh", "team_write", "assistant_write", "post", "answer", "wait", "ci_wait")
+CLASSES = ("push", "gh", "team_write", "assistant_write", "post", "answer", "wait", "archive", "ci_wait")
 
 
 def _git_command(args):
@@ -91,7 +92,7 @@ def class_of(words):
     if name == "git":
         return "push" if _git_command(args) == "push" else None
     if name == "team-thread":
-        return "wait" if args[:1] == ["wait"] else None
+        return {"wait": "wait", "archive": "archive"}.get(args[0]) if args else None
     return NAMED.get(name)
 
 
