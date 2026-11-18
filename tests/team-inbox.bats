@@ -931,6 +931,34 @@ $RANKED"
   assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
 }
 
+@test "a PR the merge queue dropped for a check the base's rules require is not listed as ready to merge, until it is queued again, and Daniel's word on its head still stands" {
+  registry
+  ready_pr T7 proj 7
+  ready_pr T8 proj 8
+  # T8 has Daniel's per-head word; T7 none, so it waits on one.
+  log_events '{"task":"T8","event":"merge-approved","url":"https://github.com/owner/proj/pull/8","discord_message":"1564000000000000008","head":"abc1234def"}'
+  local pr
+  for pr in 7 8; do
+    log_events "{\"task\":\"T$pr\",\"event\":\"queued\",\"url\":\"https://github.com/owner/proj/pull/$pr\",\"head\":\"abc1234def\",\"project\":\"proj\"}" \
+      "{\"task\":\"T$pr\",\"event\":\"dequeued\",\"url\":\"https://github.com/owner/proj/pull/$pr\",\"head\":\"abc1234def\",
+        \"reason\":\"Analyze (python) never reported on the trial commit, which main's rules require\",
+        \"failed\":[{\"name\":\"Analyze (python)\",\"class\":\"rules\",\"kind\":\"missing\",\"link\":\"\",\"step\":\"\"}]}"
+  done
+  # The fix is the base's rules or a workflow: no word is asked on the PR until it is queued again.
+  run_bin -0 --separate-stderr team-inbox
+  assert_equal "$stderr" ""
+  assert_equal "$(waiting_items_shown | grep -c 'pull/[78]')" 0
+  # Queued again once the rules are fixed and dropped for no failure of its own, T7 waits on the
+  # word again, while Daniel's word on T8's same head still stands.
+  for pr in 7 8; do
+    log_events "{\"task\":\"T$pr\",\"event\":\"queued\",\"url\":\"https://github.com/owner/proj/pull/$pr\",\"head\":\"abc1234def\",\"project\":\"proj\"}" \
+      "{\"task\":\"T$pr\",\"event\":\"dequeued\",\"url\":\"https://github.com/owner/proj/pull/$pr\",\"head\":\"abc1234def\",\"reason\":\"GitHub gives no reason\"}"
+  done
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | grep -c 'pull/7')" 1
+  assert_equal "$(waiting_items_shown | grep -c 'pull/8')" 0
+}
+
 @test "a PR whose queued names a head it has since moved past is listed as ready to merge again, with no dequeued logged" {
   registry
   ready_pr T7 proj 7
