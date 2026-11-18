@@ -1132,8 +1132,9 @@ due() {
   no_github
 }
 
-# A dequeued of PR 5 at 03:30 whose failed holds a rules failure of Analyze (python) and one of the
-# PR's own, test: the queue's trial commit missed a check the base's rules require.
+# A dequeued of PR 5 at 03:30 whose failed holds rules failures of Analyze (python) and
+# Analyze (actions) and one of the PR's own, test: the queue's trial commit missed checks the
+# base's rules require.
 rules_drop() {
   ledger_line --arg url https://github.com/owner/proj/pull/5 '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5",
     reason: "Analyze (python) never reported on the trial commit, which main'"'"'s rules require",

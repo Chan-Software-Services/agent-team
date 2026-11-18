@@ -2607,7 +2607,7 @@ def word_stands($pr):
 # (trial_failed_prs: the round is the builder's, and no word is asked on the head that failed its
 # trial merge), nor for a check the base's rules require and no workflow made on the trial commit
 # (trial_rules_prs: the fix is the base's rules or a workflow, and no word is asked until it is
-# queued again), whose per-head word does not stand (word_stands), and whose default word does not
+# queued again, or a pr event of it or a review of the task follows), whose per-head word does not stand (word_stands), and whose default word does not
 # hold on the ledger
 # (default_holds over $withdrawals, default_events', and $own, own_projects' {projects, app}, the
 # team's own and the reviewer App; with $own null, as when the registry cannot be read, none holds).
