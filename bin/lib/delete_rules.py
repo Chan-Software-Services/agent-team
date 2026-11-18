@@ -6,7 +6,7 @@ reason when it refuses (with an allowed way of its own, (reason, allowed)) and N
 and its allowed way, as kill_rules.py's are.
 bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
 operand, below: expand (a word as the paths the shell may make of it), reachable (the
-directories a relative one is read against, as Bases, those of candidates or, past a cd it cannot
+directories a relative one is read against, as Bases, those of _candidates or, past a cd it cannot
 follow, the rest) and Unread, which either raises, and find_paths (find's start paths among its
 words).
 A recursive delete passes only when every path it deletes resolves strictly inside a root (the
@@ -543,7 +543,7 @@ def _merged(bases, more, sure):
 
 
 @functools.lru_cache(maxsize=None)
-def candidates(context):
+def _candidates(context):
     """Each directory the call may be in when it runs a relative delete, as Bases: its cwd and
     each cd target anywhere in it, each relative one from every directory found so far; Unread
     when one cannot be followed."""
@@ -567,12 +567,12 @@ def candidates(context):
 
 @functools.lru_cache(maxsize=None)
 def reachable(context):
-    """candidates, or, when a cd cannot be followed, the cwd and each cd target that can be, each
+    """_candidates, or, when a cd cannot be followed, the cwd and each cd target that can be, each
     relative one from every directory found so far, for a reader that judges a relative path from
     every directory the call may be in (session_records.py), so a cd it cannot follow leaves the
     others judged; Unread with no cwd or past MAX_CANDIDATES directories."""
     try:
-        return candidates(context)
+        return _candidates(context)
     except Unread:
         pass
     if context.cwd is None:
@@ -691,11 +691,11 @@ def _sequence(context):
 def _bases(context, at):
     """The Bases a relative path of the command at is read from: in a plain sequence, those of
     each place it stands in it (_ordered); else, or with no command, every directory the call may
-    be in (candidates)."""
+    be in (_candidates)."""
     sequence = _sequence(context) if at is not None else None
     places = [k for k, (command, _) in enumerate(sequence or ()) if command == at]
     if not places:
-        return candidates(context)
+        return _candidates(context)
     if len(places) == 1:
         return _ordered(context, places[0])
     out = []
