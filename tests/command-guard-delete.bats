@@ -209,11 +209,51 @@ refuses_wrapped() {
   passes "cd $OUT/link && rm -rf x" "cd -P $OUT/link && rm -rf x"
   # A call that is no plain sequence keeps every cd target anywhere in it.
   refuses "a recursive delete of $up/sub, $OUTSIDE: sub is relative, read from $up, where cd .. may leave the call" \
-    "$CD_WAY" "{ cd src && rm -rf sub; }; cd .." "cd src && rm -rf sub & cd .." "cd src && rm -rf sub; cd .. | cat" \
+    "$CD_WAY" "{ cd src && rm -rf sub; }; cd .." "cd src && rm -rf sub & cd .." \
     "for d in x; do cd src && rm -rf sub; done; cd .." "f() { cd ..; }; cd src && rm -rf sub" \
     "cd src && rm -rf sub; echo \$(cd ..)" "! cd src && rm -rf sub; cd .."
+  # A pipeline of simple commands keeps the sequence plain, each command in its place, so a cd
+  # after the delete is never read for it.
+  passes "cd src && rm -rf sub; cd .. | cat" "ls | cat; cd src && rm -rf sub; cd .."
+  # A cd in a pipeline of more than one command runs in a subshell (the last one, under lastpipe,
+  # maybe in the shell), so it adds its directory and is never where the call surely is.
+  refuses "a recursive delete of $OUT/x, $OUTSIDE: x is relative, read from $OUT, where cd $OUT may leave the call" \
+    "$CD_WAY" "cd $OUT; true | cd $JOB/tmp && rm -rf x" "cd $OUT; cd $JOB/tmp | cat; rm -rf x" \
+    "cd $OUT; cd $JOB/tmp |& cat && rm -rf x"
+  CWD=$OUT refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "cd $JOB/tmp | true; rm -rf x" \
+    "true | cd $JOB/tmp; rm -rf x"
   # An absolute path passes with any cd beside it.
   passes "cd ..; rm -rf $WT/build; cd /tmp"
+}
+
+# A chained build call: a cd into the worktree, a variable set from $PWD, a delete under it, a
+# mkdir, a tar pipe, and a cd into the deleted path by that variable, which the guard once read in
+# a loop.
+@test "a variable set from \$PWD holds the directories where it is set, and a cd to it is followed" {
+  # shellcheck disable=SC2016 # the call's own variables
+  local bundle='W=$PWD/.scratch/task/work/copy; rm -rf $W/app; mkdir -p $W/app; tar -cf - app | tar -x -C $W/app; cd $W/app && make'
+  passes "cd $WT; $bundle" "$bundle"
+  refuses "a recursive delete of $OUT/.scratch/task/work/copy/app, $OUTSIDE" "$DELETE_WAY" "cd $OUT; $bundle"
+  # $PWD in a value is where the call is when the variable is set, and in an operand where the delete runs.
+  passes "W=\$PWD/build; cd $OUT && rm -rf \$W" "cd $OUT; cd $WT && W=\$PWD/build && rm -rf \$W" \
+    "cd $OUT; cd $WT && rm -rf \"\$PWD/build\""
+  refuses "a recursive delete of $OUT/x, $OUTSIDE" "$DELETE_WAY" "cd $OUT; W=\$PWD/x; cd $WT && rm -rf \$W" \
+    "cd $WT; cd $OUT && rm -rf \"\$PWD/x\"" "cd $OUT; W=\$PWD/x; cd $WT; rm -rf \$W"
+  refuses "a recursive delete of $OUT/tmp.XXXXXXXXXX, $OUTSIDE" "$DELETE_WAY" \
+    "cd $OUT; T=\$(mktemp -d -p \"\$PWD\"); cd $WT && rm -rf \$T"
+  # A cd whose target reads $PWD, directly or by a variable set from it where that cd's own
+  # directories are still being read, is one the guard cannot follow.
+  refuses "a recursive delete of y, $UNREAD" "$UNREAD_WAY" 'cd "${PWD}"; rm -rf y' 'cd $PWD/src; rm -rf y' \
+    'cd "${PWD}/src" | cat; rm -rf y'
+  refuses "a recursive delete of \$W/x, $UNREAD" "$UNREAD_WAY" 'W=$PWD; cd $W/src; W=$PWD/sub; rm -rf $W/x' \
+    '{ W=$PWD/src; cd $W; }; rm -rf $W/x'
+  passes 'W=$PWD/src; cd $W | cat; rm -rf $W/x' 'W=$PWD/src; cd $W && rm -rf $W/x'
+  # A long chain of cds, each to a path set from $PWD after the one before, nests the guard's
+  # readings no deeper, and reads each cd once.
+  local chain='W0=$PWD' k
+  for ((k = 1; k <= 200; k++)); do chain+=" && cd \$W$((k - 1))/src && W$k=\$PWD"; done
+  passes "$chain && rm -rf \$W200/x"
+  refuses "a recursive delete of $OUT/$(printf 'src/%.0s' {1..200})x, $OUTSIDE" "$DELETE_WAY" "cd $OUT && $chain && rm -rf \$W200/x"
 }
 
 @test "the worktree, its .scratch/task, the job's tmp and a directory holding one are refused" {
@@ -275,6 +315,9 @@ refuses_wrapped() {
     "pushd +1; rm -rf x" "pushd && rm -rf x" "cd \$(git rev-parse --show-toplevel) && rm -rf x" \
     "env -C /tmp rm -rf x" "sudo -D /tmp rm -rf x" "env --chdir=/tmp rm -rf x"
   CDPATH=/tmp refuses "a recursive delete of x, $UNREAD" "$UNREAD_WAY" "cd src && rm -rf x"
+  # A decoded or ranged cd target is unread even after a cd to the same text from the same directories.
+  refuses "a recursive delete of y, $UNREAD" "$UNREAD_WAY" "cd $WT; cd \$'\\x73rc'; rm -rf y" \
+    "cd $WT; cd src; cd $WT; cd \$'\\x73rc'; rm -rf y"
   # An absolute path stays readable after any cd.
   passes "cd -; rm -rf $WT/build"
 }

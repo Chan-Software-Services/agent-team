@@ -34,7 +34,8 @@ closing line again, ending in a full stop; null for a call of one line, or when 
 holds the refused command. It prints nothing when no row refuses, and exits 0
 either way. Any error of its own exits 1 with one line on stderr, "command_rules.py: <ErrorType>:
 <message>", or "<row id>: <ErrorType>: <message>" when a row raised, so the hook refuses: a guard
-that cannot decide refuses.
+that cannot decide refuses. A RecursionError's message names Python's recursion limit, which its
+own does not: "RecursionError: a reading nested deeper than Python's recursion limit of <n> frames".
 
 A command's name is its first word's basename, its quotes removed, so a path or a quoted name is
 the name; and as a reading of where a command starts took it, a word past a wrapper's options
@@ -130,7 +131,7 @@ The rows, in order:
     library and a shell string are refused; by any assignment, before a command or on its own,
     since a PATH may find another program of a reader's name; by an arithmetic expansion or
     command ($((, $[, (()) or a parameter expansion (${) anywhere in its text, which may assign;
-    and by a call that is no plain list of commands (command_text.plain_sequence with pipes: no
+    and by a call that is no plain list of commands (command_text.plain_sequence: no
     group, subshell, loop, function, substitution, background or !; and no code part but the
     call's own text, command_text.code_parts). Reason: the thread cache the Discord guard trusts,
     which only the scripts and hooks write (<the path as written, its quotes removed; the
@@ -958,7 +959,7 @@ def _cache_call(command, context):
     any command that is no plain reader (its name, or its assignment), an arithmetic or parameter
     expansion anywhere in its text (which may assign), and a call that is no plain list of
     commands joined by pipes, &&, || and ; with no code part but its own text
-    (command_text.plain_sequence with pipes, and code_parts). Any other role's call, and one
+    (command_text.plain_sequence and code_parts). Any other role's call, and one
     naming no cache, is not this row's."""
     if context is None or context.role != "assistant" or not _names_cache(command):
         return None
@@ -1005,7 +1006,7 @@ def _cache_call(command, context):
         return CACHE_REASON.format("an arithmetic expansion, which may assign a variable, in a call naming it"), ()
     if PARAMETER.search(command):
         return CACHE_REASON.format("a parameter expansion, which may assign a variable, in a call naming it"), ()
-    if len(code_parts(command)) != 1 or plain_sequence(command, pipes=True) is None:
+    if len(code_parts(command)) != 1 or plain_sequence(command) is None:
         return CACHE_REASON.format(PLAIN_LIST), ()
     return None
 
@@ -1224,6 +1225,13 @@ class RowError(Exception):
     """A row that raised, named."""
 
 
+def error_text(error):
+    """An error as "<ErrorType>: <message>", a RecursionError's message naming Python's limit."""
+    if isinstance(error, RecursionError):
+        return f"RecursionError: a reading nested deeper than Python's recursion limit of {sys.getrecursionlimit()} frames"
+    return f"{type(error).__name__}: {error}"
+
+
 def refusal(command, context=None):
     """The first row, in table order, that refuses any command the text runs, with its reason and
     allowed way, or None; each row is given the call's context."""
@@ -1244,7 +1252,7 @@ def refusal(command, context=None):
             try:
                 refused = row.test(found, context)
             except Exception as error:  # noqa: BLE001 - named, then refused by the caller
-                raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
+                raise RowError(f"{row.id}: {error_text(error)}") from error
             if refused:
                 reason, allowed = refused if isinstance(refused, tuple) else (refused, row.allowed)
                 reason = reason if isinstance(reason, str) else row.reason
@@ -1266,7 +1274,7 @@ def main():
         sys.stderr.write(f"{error}\n")
         return 1
     except Exception as error:  # noqa: BLE001 - a guard that cannot decide refuses
-        sys.stderr.write(f"command_rules.py: {type(error).__name__}: {error}\n")
+        sys.stderr.write(f"command_rules.py: {error_text(error)}\n")
         return 1
     if found:
         sys.stdout.write(json.dumps(found, ensure_ascii=False, separators=(",", ":")) + "\n")
