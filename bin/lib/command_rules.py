@@ -85,7 +85,7 @@ The rows, in order:
     itself (assistant_refusal in bin/lib/team.sh), where the walk cannot read a call.
   assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
     rules held by any gh api call with a field and any release, secret or variable call until
-    this row. gh api (after gh's own options, as cobra finds its command) with a last -X or
+    this row, and every other group's write, which no deny rule held. gh api (after gh's own options, as cobra finds its command) with a last -X or
     --method (joined too, any case) other than GET or HEAD, with --input, or with a field (-f,
     -F, --field, --raw-field, joined too) and no method, its endpoint being its first word that is
     no option and no option's value; but for the endpoint graphql, whose fields pass, whatever the
