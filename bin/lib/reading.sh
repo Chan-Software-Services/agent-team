@@ -212,6 +212,7 @@ take_reading() {
 if ((reading_status)); then (exit "$reading_status") || {
 '"$caller_action"'
 }; else
+:
 '"$caller_action"'
 fi'
   else
