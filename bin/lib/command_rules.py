@@ -102,10 +102,10 @@ The rows, in order:
     subissue), gh auth status with -t or --show-token, which prints the token, gh config get of a
     key gh config list does not name (GH_CONFIG_KEYS; a host's oauth_token is its token), and gh
     repo clone or gh gist clone with words after --, which it passes to git clone. gh alone, a
-    group with no subcommand and the groups that read with any words (search, browse, status,
-    licenses, completion, help, version) pass. Reason: a GitHub write, which an assistant session
-    never makes (<the method, the body, the field, the mutation, the query it cannot read, or the
-    group and subcommand>).
+    group GITHUB_READS lists with no subcommand, and the groups that read with any words (search,
+    browse, status, licenses, completion, help, version) pass. Reason: a GitHub write, which an
+    assistant session never makes (<the method, the body, the field, the mutation, the query it
+    cannot read, or the group and subcommand>).
   assistant-thread-cache, for the assistant alone: a call naming the thread cache the Discord
     guard trusts (assistant-threads, as written or with its quotes and backslashes removed, or the
     library's ASSISTANT_THREADS or assistant_thread_keep), which its deny rule refused whatever it
@@ -113,25 +113,27 @@ The rows, in order:
     bare name, joined by pipes, &&, || and ; alone, in any of the texts the walk reads. Refused by
     a redirection that writes (>, >>, >|, &>, &>>, <>, and >& to no fd, with an fd before it)
     anywhere but /dev/null, a bare one with no command among them
-    (command_text.call_redirections), a named fd's ({NAME}<, which assigns NAME), and any other
-    but an input one (<, <<, <<-, <<<) or an fd's duplication; by a writer naming it (tee, cp, mv,
-    install, ln, rsync, truncate, rm, unlink, shred, touch, chmod or chown, by a word or an
-    option's value after its =, dd's of= value, and sed, perl or ruby with -i or --in-place); by
-    any command that is no plain reader by its bare name (CACHE_READERS: cat, grep, head, tail,
-    wc, jq, diff and the like, none with an option that writes a file, runs a program or assigns a
-    variable; dd writing to no file; sed with only plain options and a plain script, no w, W or e;
-    sort with no -o, -T or --compress-program), so a wrapper (env, timeout, nice, xargs, time and
-    the rest, whose option may stand before the program it runs), a builtin that assigns (read,
-    printf, cd, declare, let), an interpreter's program, a reader by a path, a source of the
-    library and a shell string are refused; by any assignment, before a command or on its own,
-    since a PATH may find another program of a reader's name; by an arithmetic expansion or
-    command ($((, $[, ((), which may assign; and by a call that is no plain list of commands
-    (command_text.plain_sequence with pipes: no group, subshell, loop, function, substitution,
-    background or !; and no code part but the call's own text, command_text.code_parts). Reason:
-    the thread cache the Discord guard trusts, which only the scripts and hooks write (<the path
-    as written, its quotes removed; the redirection and its target; the command that is no plain
-    reader, as written; the assignment; the arithmetic; or a call that is no plain list of
-    readers>).
+    (command_text.call_redirections), a named fd's ({NAME}<, which assigns NAME), a heredoc (<<,
+    <<-), whose body the walk does not read in full, a here-string (<<<) whose word holds a $ or a
+    backtick, and any other but a file's input (<), a here-string or an fd's duplication; by a
+    writer naming it (tee, cp, mv, install, ln, rsync, truncate, rm, unlink, shred, touch, chmod
+    or chown, by a word or an option's value after its =, dd's of= value, and sed, perl or ruby
+    with -i or --in-place); by any command that is no plain reader by its bare name
+    (CACHE_READERS: cat, grep, head, tail, wc, jq, diff and the like, none with an option that
+    writes a file, runs a program or assigns a variable but those named here; dd writing to no
+    file; sed with only plain options and a plain script, no w, W or e; sort with no -o, -T or
+    --compress-program; diff with no -l or --paginate, which runs pr), so a wrapper (env, timeout,
+    nice, xargs, time and the rest, whose option may stand before the program it runs), a builtin
+    that assigns (read, printf, cd, declare, let), an interpreter's program, a reader by a path, a
+    source of the library and a shell string are refused; by any assignment, before a command or
+    on its own, since a PATH may find another program of a reader's name; by an arithmetic
+    expansion or command ($((, $[, (()) or a parameter expansion (${) anywhere in its text, which
+    may assign; and by a call that is no plain list of commands (command_text.plain_sequence with
+    pipes: no group, subshell, loop, function, substitution, background or !; and no code part but
+    the call's own text, command_text.code_parts). Reason: the thread cache the Discord guard
+    trusts, which only the scripts and hooks write (<the path as written, its quotes removed; the
+    redirection and its target; the command that is no plain reader, as written; the assignment;
+    the arithmetic or parameter expansion; or a call that is no plain list of readers>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.

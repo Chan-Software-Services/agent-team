@@ -28,8 +28,9 @@
 # call but a read (gh api with a writing method, a body, a field with no GET or HEAD, a GraphQL
 # mutation or a $ in a query, and any group's subcommand outside its reads), so it still reads
 # GitHub; and its assistant-thread-cache row holds a call naming the thread cache that is no plain
-# list of readers (a redirection, tee, cp, rm, sed -i, an interpreter, a wrapper, an assignment, a
-# loop and the rest), so it still reads the cache, whose Edit its settings deny. Its memory is the
+# list of readers (a redirection that writes anywhere but /dev/null, a heredoc, tee, cp, rm,
+# sed -i, an interpreter, a wrapper, an assignment, a loop and the rest), so it still reads the
+# cache, whose Edit its settings deny. Its memory is the
 # team home's memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in
 # the team home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP
 # config, ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny

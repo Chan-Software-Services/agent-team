@@ -1329,12 +1329,12 @@ NONREADERS
     'source ~/agent-team/bin/lib/team.sh; echo 1571000000000000303 >>"$ASSISTANT_THREADS"'
   refuses_as assistant "$CACHE (assistant_thread_keep, which is no plain reader of it, in a call naming it)" "" \
     'assistant_thread_keep 1571000000000000303 2>/dev/null'
-  # Behind a wrapper that is no plain one, the wrapper is refused.
+  # Behind a wrapper, the wrapper is refused.
   refuses_as assistant "$CACHE (flock, which is no plain reader of it, in a call naming it)" "" \
     "flock $state/assistant-threads cat /tmp/x"
-  # A reader or wrapper passes only by its bare name, since a path may name another program of it,
-  # and with no assignment before it or on its own, since a PATH may find another; time passes
-  # only with no option but -p or --, since the external time's -o writes the file it names.
+  # A reader passes only by its bare name, since a path may name another program of it, and with
+  # no assignment before it or on its own, since a PATH may find another; time is refused with any
+  # option or none, as every wrapper is.
   refuses_as assistant "$CACHE (/tmp/x/cat, which is no plain reader of it, in a call naming it)" "" \
     "/tmp/x/cat $state/assistant-threads"
   # shellcheck disable=SC2016 # the command as an agent types it
