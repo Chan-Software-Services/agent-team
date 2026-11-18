@@ -22,8 +22,8 @@
 #   --fill       relaunch each running ticket's stowed or crashed builder, then launch the ready
 #                tickets of the phase being built up to its cap, with no message
 #   --checks     with a review launch, the first review's checks file (the reviewer's checks);
-#                required when the task has no review yet, or none since its latest merged part
-#                (a later phase's first review), refused once it has one
+#                required when the task has no review yet in the PR's project, or none since that
+#                project's latest merged part (a later phase's first review), refused once it has one
 #   --since      with a rereview launch, a file of the coordinator's words, added after the derived
 #                since; refused for the first review and for verify
 #   --template   with a review launch after the first, rereview or verify instead of the rule's
@@ -176,12 +176,15 @@
 # and one logged with no reviewer's done counts in every project), so a task's PRs in two
 # repositories are each reviewed beside the other; for the same reason the "already handed off"
 # refusal reads only a reviewer's launch in that project (launch_in in bin/lib/ledger.jq: one naming
-# no project counts) and a review made there. With no review logged yet, or none since the task's latest
-# merged part (a merged with phases_left, so a later phase's first PR), the brief is
+# no project counts) and a review made there. With no review logged yet, or none since that
+# project's latest merged part (a merged with phases_left in that project, or naming none, so a
+# later phase's first PR; another repository's merged part ends no phase of this one, whose PR's
+# earlier reviews still stand), the brief is
 # team-brief T<n> reviewer --name review (review-<k>, the lowest k from 2, once a launch read the
 # name) with --checks as its checks (refused without one: "T<n> has no review yet", or "no review
 # since its phase merged at <ts>", "so its first reviewer needs --checks <file>, ..."), the
-# PR's url and head (a PR) or the reported head (review-ready; no pr); after one, it is
+# PR's url and head (a PR, which on a gated project team-brief briefs as a review of that PR) or
+# the reported head (review-ready; no pr); after one, it is
 # rereview, or verify when the latest review sent findings back and either counted
 # none but plain notes or reviewed the head this message reports (a round that only edited the PR
 # body), --template choosing instead, and a DONE merged always a rereview; it is named
@@ -905,12 +908,14 @@ held_prog="$same_def"' . as $events
      events: [$parsed[] | . as $p
        | {event: $p, at: ([range($anchor + 1; $events | length) | select($events[.] | same($p))] | first)}]}'
 kind='' back='' held='' briefs='' sender_wt='' launch_project=''
-# The index just past the task's latest merged part (a merged with phases left: a phase's PR
+# The index just past $project's latest merged part (a merged with phases left: a phase's PR
 # merged and the next phase still to build), 0 with none: the reviews from there on are this
-# phase's, so a later phase's first PR is a first review.
-phase_def='def phase_start: ([to_entries[] | select(.value.event == "merged" and (.value.phases_left | type) == "array"
-    and .value.phases_left != []) | .key + 1] | last) // 0;'
-sender_ticket='' sender_session='' review='' phase_merged=''
+# phase's, so a later phase's first PR is a first review. A merged in another project ends no
+# phase of $project's, so its PR's reviews before that merge still stand; one naming no project
+# ends every project's.
+phase_def='def phase_start($project): ([to_entries[] | select(.value.event == "merged" and (.value.phases_left | type) == "array"
+    and .value.phases_left != [] and (.value.project // $project) == $project) | .key + 1] | last) // 0;'
+sender_ticket='' sender_session='' review=''
 json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3]
   | (.[1] // "") as $sub
   | if .[0] == "DONE" and any($parsed[]; .event == "done" and .role == "ops") then "DONE"
@@ -931,7 +936,6 @@ json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3
   launch_project="$launch_def sender_launch | .project // empty" \
   sender_ticket="$launch_def sender_launch | .ticket // empty" sender_session="$launch_def sender_launch | .session // empty" \
   review='$parsed | map(select(.event == "review")) | first | tojson' \
-  phase_merged="$phase_def"' phase_start as $k | if $k == 0 then empty else .[$k - 1].ts end' \
   -- --arg message "$message" --argjson parsed "$parsed" <<<"$events"
 
 # Whether a launch of the task read brief-<name>: brief_launched <name>
@@ -1726,12 +1730,15 @@ if [[ $handoff == review ]]; then
     [[ $kind == "DONE merged" ]] || sets=(--set "head=$head")
   fi
 
-  # The latest review of this phase made in the hand-off's project (project_reviews in
-  # bin/lib/ledger.jq), or null: another repository's review is no review of this PR.
-  latest=$(ledger_jq "$phase_def"' phase_start as $k | . as $events
-    | [project_reviews($project)[] | select(. >= $k)] | last | if . == null then null else $events[.] end' \
-    -c --arg project "$project" <<<"$events")
-  if [[ $latest == null ]]; then
+  # The latest review of the hand-off's project's phase made in that project (project_reviews in
+  # bin/lib/ledger.jq), or null: another repository's review is no review of this PR, and another
+  # repository's merge ends no phase of it; and the time of the merge that started the phase.
+  latest='' phase_merged=''
+  json_vars --ledger latest="$phase_def"' phase_start($project) as $k | . as $events
+      | [project_reviews($project)[] | select(. >= $k)] | last | if . == null then null else $events[.] end' \
+    phase_merged="$phase_def"' phase_start($project) as $k | if $k == 0 then empty else .[$k - 1].ts end' \
+    -- --arg project "$project" <<<"$events"
+  if [[ -z $latest ]]; then
     none="no review yet"
     [[ -z $phase_merged ]] || none="no review since its phase merged at $phase_merged"
     [[ -n $checks ]] || die "$task has $none, so its first reviewer needs --checks <file>, the review's checks"

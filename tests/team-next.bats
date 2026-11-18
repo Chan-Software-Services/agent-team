@@ -2182,6 +2182,59 @@ launched T7-reviewer c0000001"
     "$(jq -cn --arg url "$url" --arg h "$fix" --arg r "$sha" '{template: "rereview", pr: $url, head: $h, reviewed: $r}')"
 }
 
+@test "a merged part in one repository ends that repository's phase alone: the other's PR reported again is re-reviewed from its own reviewed head" {
+  second_repo
+  # proj's PR 9 passed in proj, then other's PR merged with phase 2 left.
+  reviewing "$sha"
+  review_logged pass "$sha" '[]'
+  event 'done' '{role: "reviewer", session: "r0000002"}'
+  other_reviewing
+  review_logged pass "$head_other" '[]'
+  event 'done' '{role: "reviewer", session: "r0000003"}'
+  event merged "$(jq -cn --arg url "$url_other" --arg h "$head_other" \
+    '{pr: 4, merge: "m0", head: $h, by: "team-merge", project: "other", url: $url, phases_left: [2]}')"
+  # A round fixed a red check on proj's PR, which its builder reports again.
+  local fix
+  fix=$(commit fix.txt "test: wait for the hand-out")
+  on_github 9 "$fix"
+  refused "T7 has a review already, so --checks is for its first reviewer only; a rereview takes --since" \
+    T7 --checks "$(checks)" -- "T7 PR $url"
+  run_bin -0 --separate-stderr team-next T7 -- "T7 PR $url"
+  assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
+  assert_equal "$(record rereview-2 | jq -c '{template, pr: .values.pr, head: .values.head, reviewed: .values.reviewed}')" \
+    "$(jq -cn --arg url "$url" --arg h "$fix" --arg r "$sha" '{template: "rereview", pr: $url, head: $h, reviewed: $r}')"
+
+  # other's own merged part did end its phase: its phase 2 PR is a first review, its phase 1
+  # review no longer standing.
+  local url_next=https://github.com/owner/other/pull/5 next
+  next=$(git -C "${wt_other:?}" commit -q --allow-empty -m "feat: phase 2" && git -C "${wt_other:?}" rev-parse HEAD)
+  export NEXT_HEAD=$next
+  stub_script gh <<'SH'
+[[ $1 == pr && $2 == view && $3 == 5 && $4 == --repo && $5 == owner/other ]] || { echo "unexpected gh $*" >&2; exit 1; }
+jq -cn --arg head "$NEXT_HEAD" '{headRefOid: $head, headRefName: "feat/T7-toil"}'
+SH
+  refused "T7 has no review since its phase merged at 2026-11-01T10:00:00Z, so its first reviewer needs --checks <file>, the review's checks" \
+    T7 -- "T7 PR $url_next"
+}
+
+@test "a gated project's PR with no review in its phase is a first review of that PR, which comments on it and sets its status" {
+  sed -i 's/^delivery = "direct-pr"/delivery = "no-mistakes"/' "$TEAM_HOME/projects.toml"
+  on_github 9 "$sha"
+  refused "T7 has no review yet, so its first reviewer needs --checks <file>, the review's checks" T7 -- "T7 PR $url"
+  run_bin -0 --separate-stderr team-next T7 --checks "$(checks)" -- "T7 PR $url"
+  assert_equal "$output" "logged pr url=$url head=$sha
+brief $TEAM_HOME/tasks/T7/brief-review.md
+launched T7-reviewer c0000001"
+  assert_equal "$(record review | jq -c '{template, pr: .values.pr, head: .values.head}')" \
+    "$(jq -cn --arg url "$url" --arg h "$sha" '{template: "reviewer", pr: $url, head: $h}')"
+  local brief
+  brief=$(<"$TEAM_HOME/tasks/T7/brief-review.md")
+  assert_contains "$brief" "/team-review-comment $url .scratch/task/review.md"
+  assert_contains "$brief" "/team-review-status $url $sha <success|failure>"
+  assert_contains "$brief" "- Send \`T7 DONE pass $url findings="
+  [[ $brief != *"There is no PR yet"* && $brief != *"Post nothing to GitHub"* ]]
+}
+
 # reviewed_in <session> <verdict> <head> <sent_back as JSON> [<more review fields as JSON>]: a review
 # of <head> and its reviewer's done, so the review is of the project of <session>'s launch.
 reviewed_in() {
