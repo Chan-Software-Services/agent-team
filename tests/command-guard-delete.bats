@@ -226,13 +226,14 @@ refuses_wrapped() {
   passes "cd ..; rm -rf $WT/build; cd /tmp"
 }
 
-# T469's builder's call: a cd into the worktree, a variable set from $PWD, a delete under it, a
-# pipe, and a cd into the deleted path by that variable, which the guard once read in a loop.
+# A chained build call: a cd into the worktree, a variable set from $PWD, a delete under it, a
+# mkdir, a tar pipe, and a cd into the deleted path by that variable, which the guard once read in
+# a loop.
 @test "a variable set from \$PWD holds the directories where it is set, and a cd to it is followed" {
   # shellcheck disable=SC2016 # the call's own variables
-  local bundle='W=$PWD/.scratch/task/work/bundle; rm -rf $W/fix; mkdir -p $W/fix; tar -C . -cf - --exclude=node_modules --exclude=dist --exclude=.env front-end | tar -x -C $W/fix; ln -s "$PWD/front-end/node_modules" $W/fix/front-end/node_modules; cd $W/fix/front-end && VITE_ALLOW_INSECURE_LOCAL_DEV=true npx vite build >/dev/null 2>&1 && node scripts/bundle-budget.ts'
+  local bundle='W=$PWD/.scratch/task/work/copy; rm -rf $W/app; mkdir -p $W/app; tar -cf - app | tar -x -C $W/app; cd $W/app && make'
   passes "cd $WT; $bundle" "$bundle"
-  refuses "a recursive delete of $OUT/.scratch/task/work/bundle/fix, $OUTSIDE" "$DELETE_WAY" "cd $OUT; $bundle"
+  refuses "a recursive delete of $OUT/.scratch/task/work/copy/app, $OUTSIDE" "$DELETE_WAY" "cd $OUT; $bundle"
   # $PWD in a value is where the call is when the variable is set, and in an operand where the delete runs.
   passes "W=\$PWD/build; cd $OUT && rm -rf \$W" "cd $OUT; cd $WT && W=\$PWD/build && rm -rf \$W" \
     "cd $OUT; cd $WT && rm -rf \"\$PWD/build\""
@@ -314,6 +315,9 @@ refuses_wrapped() {
     "pushd +1; rm -rf x" "pushd && rm -rf x" "cd \$(git rev-parse --show-toplevel) && rm -rf x" \
     "env -C /tmp rm -rf x" "sudo -D /tmp rm -rf x" "env --chdir=/tmp rm -rf x"
   CDPATH=/tmp refuses "a recursive delete of x, $UNREAD" "$UNREAD_WAY" "cd src && rm -rf x"
+  # A decoded or ranged cd target is unread even after a cd to the same text from the same directories.
+  refuses "a recursive delete of y, $UNREAD" "$UNREAD_WAY" "cd $WT; cd \$'\\x73rc'; rm -rf y" \
+    "cd $WT; cd src; cd $WT; cd \$'\\x73rc'; rm -rf y"
   # An absolute path stays readable after any cd.
   passes "cd -; rm -rf $WT/build"
 }
