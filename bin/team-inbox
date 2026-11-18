@@ -133,7 +133,8 @@
 # event of a kind the contract marks inbox, run it at their end (refresh_inbox in
 # bin/lib/team.sh), going on with a line on stderr when it fails; team-timers run runs it every
 # five minutes on the lease holder. It refuses
-# in a worker session (worker_refusal in bin/lib/team.sh), and, but on --item, on a machine that is
+# in a worker session (worker_refusal in bin/lib/team.sh), but --item in the assistant's, which
+# reads waiting.json as the coordinator does, and, but on --item, on a machine that is
 # fenced or lost the lease (lease_refusal); one run at a time holds
 # ~/.local/state/agent-team/inbox.lock, waiting for it at most a minute (TEAM_INBOX_LOCK_SECONDS
 # replaces the 60 s, the tests' seam; 0 does not wait).
@@ -168,7 +169,7 @@ case $#:${1:-} in
 esac
 [[ -z $item || $item =~ ^[1-9][0-9]{0,2}$ ]] || usage_error "$USAGE"
 [[ $LOCK_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_INBOX_LOCK_SECONDS must be a whole number of seconds, not '$LOCK_SECONDS'"
-why=$(worker_refusal "" "edits nothing in Discord") && die "$why"
+why=$(worker_refusal "" "edits nothing in Discord" ${item:+--read}) && die "$why"
 
 # --item reads waiting.json alone: no lock, no Discord and no lease check, which the lease-fence
 # hook makes on a fenced machine.

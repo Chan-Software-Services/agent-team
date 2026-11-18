@@ -196,7 +196,8 @@
 # changes nothing.
 # Refused, exit 1, before it reads or changes anything: a worker session (an AGENT_TEAM_ROLE but
 # coordinator; worker_refusal in bin/lib/team.sh), in every form, --print, --check and
-# --check-lifecycle included; --help still answers.
+# --check-lifecycle included, but the assistant's --check and --check-lifecycle, which read a
+# ledger alone, as the coordinator's do; --help still answers.
 set -euo pipefail
 
 # Printed by --help after the header.
@@ -206,7 +207,10 @@ help_more() {
 }
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
-why=$(worker_refusal "" "runs no team-log") && die "$why"
+# --check and --check-lifecycle read a ledger alone, so the assistant runs them as the coordinator does.
+read_form=()
+[[ ${1:-} != --check && ${1:-} != --check-lifecycle ]] || read_form=(--read)
+why=$(worker_refusal "" "runs no team-log" "${read_form[@]}") && die "$why"
 
 usage="usage: team-log T<n> <event> [key=value | key-file=<path>]... | team-log T<n> --from-message '<message>' [--from <session>] [--sent-back <list>] [--relay <id>] [--print] | team-log --check [<file>] | team-log --check-lifecycle [<file>] | team-log --fix-sent-back [<file>]"
 

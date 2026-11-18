@@ -901,14 +901,18 @@ lease_refusal() {
 # Print why this session may not <does>, which is the coordinator's, or fail when it may: a worker session (its
 # settings' AGENT_TEAM_ROLE names a role other than the coordinator, "an assistant session" for the
 # assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
-# when the caller passes --interview, for the interview thread's post and wait. Worker settings
+# when the caller passes --interview, for the interview thread's post and wait, and the assistant
+# when the caller passes --read, for a read-only form of a coordinator's script (team-inbox --item,
+# team-queue list and index --check, team-log --check and --check-lifecycle), which reads what the
+# coordinator reads and writes nothing; a call passes one or the other. Worker settings
 # deny most of the same commands by their bare name, and command-guard refuses team-ask,
 # team-answer, team-inbox, team-thread T<n> and team-run-approved by any path where a command
 # starts; this holds where both miss a spelling:
-# worker_refusal <task or ""> <does> [--interview]
+# worker_refusal <task or ""> <does> [--interview | --read]
 worker_refusal() {
   local role=${AGENT_TEAM_ROLE:-} own=${AGENT_TEAM_TASK:-}
   [[ -n $role && $role != coordinator ]] || return 1
+  [[ ${3:-} != --read || $role != assistant ]] || return 1
   if [[ ${3:-} == --interview && $role == planner ]]; then
     [[ -z $1 || $1 != "$own" ]] || return 1
     echo "a planner session of ${own:-no task} $2 for $1: a planner talks with Daniel only in its own task's interview thread"

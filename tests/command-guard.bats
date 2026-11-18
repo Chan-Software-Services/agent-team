@@ -977,3 +977,26 @@ COMMANDS
   # An assistant's call naming none of them still exits at once.
   AGENT_TEAM_ROLE=assistant guard -0 'git status && team-state T7'
 }
+
+@test "the assistant's --help of the coordinator's commands and team-inbox --item pass, and every other form is refused to it and every form to a worker" {
+  local command role
+  # shellcheck disable=SC2016,SC2088 # the command as an agent types it
+  for command in 'team-inbox --help' 'team-inbox -h' 'bin/team-inbox --help' 'team-ask --help' 'team-ask -h T1' \
+    'team-answer --help' "$REPO_ROOT/bin/team-answer -h" 'team-run-approved --help' '~/agent-team/bin/team-run-approved -h' \
+    'team-thread --help' 'team-inbox --item 3' 'bin/team-inbox --item 12' '$B/team-inbox --item 3' \
+    "bash -c 'team-inbox --item 3'" 'env A=1 team-inbox --item 3' 'team-inbox --item 3 | head -1'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # Every act of them stays the coordinator's, and so does a --help past the first word.
+  refuses_as assistant "$COORDINATOR" "" 'team-inbox' 'team-inbox --post' 'team-inbox --item 3 --post' \
+    'team-inbox --post --item 3' 'team-inbox --item' 'team-inbox 3 --item' 'team-ask T1 q --file f' 'team-ask T1 --help' \
+    'team-answer T1 a 123' 'team-answer --item 3 123' 'team-run-approved T1 a' 'team-thread T1 agent-team title' \
+    'team-inbox --item 3; team-inbox --post' "bash -c 'team-ask T1 q --file f'" 'bin/team-inbox --post --help'
+  # A worker's and a gate agent's are refused in every form, as before.
+  for role in builder planner reviewer ops; do
+    refuses_as "$role" "$COORDINATOR" "" 'team-inbox --help' 'team-ask --help' 'team-answer -h' 'team-run-approved --help' \
+      'team-inbox --item 3' 'bin/team-inbox --item 3'
+  done
+  refuses "$COORDINATOR" 'team-inbox --help' 'team-inbox --item 3' 'team-ask -h'
+}

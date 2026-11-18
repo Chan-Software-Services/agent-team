@@ -162,3 +162,9 @@
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-load-check --help"}, "local": true}
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-stow --help | head -30"}, "local": true}
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "for s in team-handoff team-resume team-checkpoint team-review-comment team-records-rewrite team-ops-end claude-coordinator; do @TEAM_CODE@/bin/$s --help | head -3; done"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-inbox --help | head -20; @TEAM_CODE@/bin/team-ask --help | head -5"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "team-answer -h | head -3 && team-run-approved --help | head -3"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-inbox --item 3"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-queue list"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-queue index --check; echo \"exit $?\""}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-log --check && @TEAM_CODE@/bin/team-log --check-lifecycle | tail -3"}, "local": true}

@@ -58,13 +58,14 @@ settings_of() {
   esac
 }
 
-# What a <role>'s session has in its environment when a hook runs, with no CLAUDE_CODE_TMPDIR, so
-# session-records-guard and @CLAUDE_TMP@ read the same temporary directory: session <role>
+# What a <role>'s session has in its environment when a hook runs, its settings' AGENT_TEAM_ROLE
+# (a gate agent has none) and no CLAUDE_CODE_TMPDIR, so session-records-guard and @CLAUDE_TMP@
+# read the same temporary directory: session <role>
 session() {
   export CLAUDE_PROJECT_DIR=$WT CLAUDE_JOB_DIR=$JOB AGENT_TEAM_TASK=T12
   unset AGENT_TEAM_ROLE CLAUDE_CODE_TMPDIR
   case $1 in
-    builder | planner | reviewer | ops) export AGENT_TEAM_ROLE=$1 ;;
+    builder | planner | reviewer | ops | coordinator | assistant) export AGENT_TEAM_ROLE=$1 ;;&
     coordinator | assistant) export CLAUDE_PROJECT_DIR=$TEAM_HOME ;;&
     coordinator | assistant | gate) unset AGENT_TEAM_TASK ;;
   esac

@@ -68,7 +68,10 @@ The rows, in order:
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
     none, or team-thread with a task id (T and digits) as its first word (team-thread wait T<n>
-    passes, which each role's settings allow or deny).
+    passes, which each role's settings allow or deny); for the assistant alone (AGENT_TEAM_ROLE
+    assistant), the coordinator's read forms pass: any of the four with a first word --help or -h,
+    which the library answers before the script does anything, and team-inbox --item <n> with no
+    other word, which reads waiting.json alone.
   assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts,
     which its deny rules held by any call naming the script until this row: team-checkpoint,
     team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
@@ -438,8 +441,27 @@ def _thread(args):
     return bool(args) and TASK_ID.fullmatch(args[0]) is not None
 
 
+# The first words the library answers with the calling script's header before the script does anything.
+HELP = ("--help", "-h")
+
+
+def _coordinator_read(name, args):
+    """Whether the words after one of the coordinator's commands are a read the assistant may run:
+    a first --help or -h, or team-inbox --item <n> alone."""
+    return (bool(args) and args[0] in HELP) or (name == "team-inbox" and len(args) == 2 and args[0] == "--item")
+
+
 def _coordinator(command, context):
-    return _named(COORDINATOR)(command, context) or _named({"team-thread"}, _thread)(command, context)
+    reads = context is not None and context.role == "assistant"
+    for words in heads(command):
+        if not words:
+            continue
+        name, args = command_name(words[0]), list(words[1:])
+        if name in COORDINATOR and not (reads and _coordinator_read(name, args)):
+            return True
+        if name == "team-thread" and _thread(args):
+            return True
+    return False
 
 
 # The coordinator's acts, which an assistant session never runs: the whole scripts, refused with
@@ -459,7 +481,6 @@ ASSISTANT_SUBCOMMAND_ACTS = {
     "team-stack": ("down", "seed", "stop", "up"),
     "team-timers": ("disable", "enable", "run"),
 }
-HELP = ("--help", "-h")
 ACTS_REASON = (
     "the coordinator's acts, which an assistant session never runs ({}); its --help and a read of its file pass"
 )

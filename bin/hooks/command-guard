@@ -33,7 +33,8 @@
 # ops launch, the frontend toolkit's capture script, an assignment or an unset of AGENT_TEAM_ROLE
 # or AGENT_TEAM_TASK, an assignment or an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN (the
 # session's GitHub login), a team script run with its environment emptied, a lease steal, the
-# coordinator's commands, the assistant's run of one of the coordinator's acts (any but a first
+# coordinator's commands (but the assistant's first --help or -h of each and its team-inbox --item
+# <n>), the assistant's run of one of the coordinator's acts (any but a first
 # --help or -h), an upload of a file or body to a host outside the team's own (as
 # bin/lib/outbound.py reads it), a worker's or the assistant's force push or cd into the team's
 # keys' or the Discord bot's directories, a kill that reaches what is not the session's own (by name or
