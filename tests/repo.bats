@@ -3289,9 +3289,9 @@ bin_shell_files() {
 
 # Each line of <file>... that runs a bare mktemp, as <file>:<line>: a bare mktemp: <text>: mktemp
 # as a command word, at the line's start or after $(, a backtick, ;, &, |, ( or {, past
-# assignments, command, builtin, env, exec, time, !, then, do and else; never in a comment, nor in
-# a case pattern that names it (scratch-only-edits' reader of other commands: "mktemp)", or
-# "a | mktemp |" with no $( before it): bare_mktemps <file>...
+# assignments, command, builtin, env, exec, time, !, then, do and else; never in a line that is a
+# comment, nor in a case pattern that names it (scratch-only-edits' reader of other commands:
+# "mktemp)", or "a | mktemp |" with no $( before it): bare_mktemps <file>...
 bare_mktemps() {
   awk '
     /^[[:space:]]*#/ { next }

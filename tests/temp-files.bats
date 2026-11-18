@@ -154,7 +154,7 @@ EOF
     chmod 700 "${paths[0]}"
     assert_equal "$end:$status:$output" "$end:${end##*:}:s.sh: could not remove ${paths[0]}
 s.sh: could not remove ${paths[1]}"
-    rm -rf -- "${paths[0]}"
+    rm -rf -- "${paths[0]:?}"
     assert_equal "$(leftovers)" ""
   done
 }
