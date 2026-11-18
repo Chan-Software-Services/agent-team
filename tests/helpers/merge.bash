@@ -586,13 +586,14 @@ queue_rule() {
 }
 
 # PR #5's queue entry as GitHub's GraphQL answers team-merge's read, the PR open, or with merged,
-# out of the queue and merged: in_queue [no|merged]
+# out of the queue and merged, or with a state, its entry in that state and not AWAITING_CHECKS:
+# in_queue [no|merged|<state>]
 in_queue() {
   case ${1:-} in
     no) echo '{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "OPEN", "mergeQueueEntry": null}}}}' ;;
     merged) echo '{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "MERGED", "mergeQueueEntry": null}}}}' ;;
     *) echo '{"data": {"repository": {"pullRequest": {"id": "PR_kwDOtest5", "state": "OPEN",
-      "mergeQueueEntry": {"state": "AWAITING_CHECKS"}}}}}' ;;
+      "mergeQueueEntry": {"state": "'"${1:-AWAITING_CHECKS}"'"}}}}}' ;;
   esac >"$gh_dir/entry.json"
 }
 

@@ -203,17 +203,57 @@ no_land_call() {
   assert_contains "$stderr" "team-merge: PR #5 could not be taken out of the merge queue (gh api graphql: the pull request is locked): remove it from the queue on GitHub"
 }
 
-@test "a PR in the queue that cannot be judged now, GitHub unread or the conflict not worked out, is left in the queue" {
+@test "a PR in the queue whose conflict GitHub has not worked out is waited on, the queue its proof, with nothing more enqueued" {
   with_queue
   was_queued
   in_queue
+  # GitHub leaves mergeable UNKNOWN on a PR that stood in the queue when its base moved.
   pr_field '.mergeable = "UNKNOWN"'
   before=$(queue_events)
+  run_bin -0 --separate-stderr team-merge T14
+  [[ $stderr != *"GitHub has not worked out yet"* ]]
+  assert_equal "$(cat "$gh_dir/land.calls")" "--task T14 $url $head"
+  assert_equal "$(dequeues)" ""
+  assert_equal "$(queue_events)" "$(printf '%s\n' "$before" "$(merged_on_head)")"
+}
+
+@test "a PR whose conflict GitHub has not worked out is refused when its queue entry is UNMERGEABLE, cannot be told in no queue or with the entry unread, and a conflict is refused in the queue too" {
+  with_queue
+  was_queued
+  pr_field '.mergeable = "UNKNOWN"'
+  # The queue could not merge it onto what is ahead of it: a refusal that names the queue.
+  in_queue UNMERGEABLE
+  run_bin -1 --separate-stderr team-merge T14 --holds "$head"
+  assert_contains "$stderr" "  PR #5's entry in dev's merge queue is UNMERGEABLE, and GitHub has not worked out whether PR #5 conflicts with its base"
+  [[ $stderr != *"try again in a minute"* ]]
+  assert_equal "$(dequeues)" ""
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  PR #5's entry in dev's merge queue is UNMERGEABLE, and GitHub has not worked out whether PR #5 conflicts with its base"
+  assert_equal "$(dequeues)" "pr=PR_kwDOtest5"
+  assert_equal "$(queue_events | jq -r .event | paste -sd' ')" "queued dequeued"
+  no_land_call
+  # In no queue, nothing proves the merge yet: today's line, exit 75, and nothing enqueued.
+  in_queue no
+  run_bin -75 --separate-stderr team-merge T14 --holds "$head"
+  assert_contains "$stderr" "  GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
   run_bin -1 --separate-stderr team-merge T14
   assert_contains "$stderr" "  GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
-  assert_contains "$stderr" "team-merge: PR #5 is left in the merge queue, since whether its merge holds cannot be told now"
-  assert_equal "$(dequeues)" ""
-  assert_equal "$(queue_events)" "$before"
+  no_land_call
+  # An entry that cannot be read proves nothing either.
+  echo '{"data": {"repository": null}}' >"$gh_dir/entry.json"
+  run_bin -75 --separate-stderr team-merge T14 --holds "$head"
+  assert_contains "$stderr" "  GitHub cannot be read: PR #5's merge queue entry"
+  assert_contains "$stderr" "  GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
+  # A conflict GitHub did work out refuses wherever the PR stands.
+  was_queued
+  in_queue
+  pr_field '.mergeable = "CONFLICTING"'
+  run_bin -1 --separate-stderr team-merge T14 --holds "$head"
+  assert_contains "$stderr" "  PR #5 conflicts with its base"
+  rm -f "$gh_dir/dequeues"
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  PR #5 conflicts with its base"
+  assert_equal "$(dequeues)" "pr=PR_kwDOtest5"
 }
 
 @test "a PR in the queue whose local checks could not run now is left in the queue, and one whose local checks failed is taken out" {
@@ -315,12 +355,13 @@ no_land_call() {
   # Another head than the PR's.
   run_bin -1 --separate-stderr team-merge T14 --holds 0000000000000000000000000000000000000000
   assert_contains "$stderr" "  PR #5's head is ${head:0:7}, not 0000000, the head --holds names"
-  # Cannot be told now.
+  # A conflict GitHub has not worked out is no reason for a PR in the queue, which is its proof.
   pr_field '.mergeable = "UNKNOWN"'
-  run_bin -75 --separate-stderr team-merge T14 --holds "$head"
-  assert_contains "$stderr" "  GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
+  run_bin -0 --separate-stderr team-merge T14 --pr "$url" --holds "$head"
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
   pr_field '.mergeable = "MERGEABLE"'
-  # GitHub unread, which gives no reason of the word's own.
+  # Cannot be told now: GitHub unread, which gives no reason of the word's own.
   mv "$gh_dir/pr.json" "$gh_dir/pr.kept"
   run_bin -75 --separate-stderr team-merge T14 --holds "$head"
   assert_contains "$stderr" "  GitHub cannot be read: "
