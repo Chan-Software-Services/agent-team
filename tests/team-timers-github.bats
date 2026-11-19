@@ -5,8 +5,9 @@
 # once to #coordinator with the top spenders of the reader's call log and what no log accounts for,
 # and closed with no post once its reset passes. The heartbeat suite's setup, as
 # team-timers-quota.bats has it: home-pc holds the lease on a bare origin, the stub claude lists the
-# coordinator and the assistant, and Discord is the inbox helper's fake. GitHub is
-# helpers/github-api.bash's stub on its own clock, which the step reads as now.
+# coordinator and the assistant, a usage read of the model windows was just taken
+# (usage_read_now), so the quota step starts no Claude Code, and Discord is the inbox helper's
+# fake. GitHub is helpers/github-api.bash's stub on its own clock, which the step reads as now.
 
 load helpers/common
 load helpers/inbox
@@ -17,6 +18,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   stub_reply claude '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   hold_lease home-pc >/dev/null
+  usage_read_now
   fake_service_managers
   stub_command uname
   stub_reply uname Linux

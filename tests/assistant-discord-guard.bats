@@ -6,6 +6,7 @@
 # channels/<id> answers $DISCORD_DIR/channel-<id>.json, a missing one fails as curl -f does.
 
 load helpers/common
+load helpers/signals
 
 ASSISTANT=1570000000000000100
 THREAD=1570000000000000201
@@ -131,6 +132,23 @@ reads() {
   hook -2 react "{\"chat_id\": \"$THREAD\", \"message_id\": \"9\", \"emoji\": \"x\"}"
   assert_equal "$stderr" "Blocked: channel $THREAD is not #assistant ($ASSISTANT) or a thread of it; the assistant reaches only #assistant and its threads."
   [[ ! -e $state/assistant-threads ]]
+}
+
+@test "a Discord read leaves no temporary file, whether it passes, fails or a signal ends the hook" {
+  reply -0 "$THREAD"
+  assert_equal "$(leftovers)" ""
+  reply -2 1570000000000000401
+  assert_equal "$(leftovers)" ""
+  # TERM, HUP or INT while Discord is read: the hook ends by the signal, which blocks the call.
+  stub_script curl <<<"$(stalled "$BATS_TEST_TMPDIR/reading")"
+  SIGNAL_INPUT=$BATS_TEST_TMPDIR/input
+  jq -cn --arg chat 1570000000000000402 '{hook_event_name: "PreToolUse", tool_name: "mcp__plugin_discord_discord__reply",
+    tool_input: {chat_id: $chat, text: "here"}}' >"$SIGNAL_INPUT"
+  for sig in TERM:143 HUP:129 INT:130; do
+    rm -f "$BATS_TEST_TMPDIR/reading"
+    signalled "${sig%:*}" "$BATS_TEST_TMPDIR/reading" "$REPO_ROOT/bin/hooks/assistant-discord-guard"
+    assert_equal "$status:$(leftovers)" "${sig#*:}:"
+  done
 }
 
 @test "a reply attaches files under assistant-files and the team home's assistant/ only, symlinks resolved" {

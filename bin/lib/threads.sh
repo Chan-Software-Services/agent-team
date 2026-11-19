@@ -124,12 +124,13 @@ thread_bot() {
 
 thread_archive() {
   local tries=0 headers status retry
-  headers=$(mktemp)
+  headers=$(team_mktemp)
+  team_tmp_add "$headers.error"
   while true; do
     tries=$((tries + 1))
     if discord_api "channels/$1" -X PATCH -H "Content-Type: application/json" -d '{"archived":true}' \
       --max-time "$THREAD_CALL_SECONDS" -D "$headers" >/dev/null 2>"$headers.error"; then
-      rm -f "$headers" "$headers.error"
+      team_tmp_rm "$headers" "$headers.error"
       return 0
     fi
     status=$(sed -nE 's#^HTTP/[0-9.]+ ([0-9]{3}).*#\1#p' "$headers" | tail -n 1)
@@ -139,7 +140,7 @@ thread_archive() {
       continue
     fi
     grep -m 1 . "$headers.error" >&2 || echo "Discord refused it (HTTP ${status:-unknown})" >&2
-    rm -f "$headers" "$headers.error"
+    team_tmp_rm "$headers" "$headers.error"
     return 1
   done
 }
@@ -154,14 +155,14 @@ thread_settle() {
     echo "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env; $THREAD_LATER"
     return 1
   fi
-  error=$(mktemp)
+  error=$(team_mktemp)
   if [[ -z $channel ]] && ! channel=$(thread_read "$id" 2>"$error"); then
     channel=''
   fi
   if ! jq -e '.thread_metadata | type == "object"' <<<"$channel" >/dev/null 2>&1; then
     why="Discord could not be read: $(grep -m 1 . "$error" || echo "its answer is no thread"); $THREAD_LATER"
   elif jq -e '.thread_metadata.archived == true' <<<"$channel" >/dev/null; then
-    rm -f "$error"
+    team_tmp_rm "$error"
     echo "archived already"
     return 0
   elif ! thread_waiting 2>"$error"; then
@@ -169,13 +170,13 @@ thread_settle() {
   elif why=$(thread_hold "$id" "$task" "$(jq -r '.last_message_id // empty | tostring' <<<"$channel")"); then
     why="$why; $THREAD_LATER"
   elif thread_archive "$id" 2>"$error"; then
-    rm -f "$error"
+    team_tmp_rm "$error"
     echo "archived"
     return 0
   else
     why="Discord refused archiving it: $(grep -m 1 . "$error" || echo "no reason given"); $THREAD_LATER"
   fi
-  rm -f "$error"
+  team_tmp_rm "$error"
   echo "$why"
   return 1
 }

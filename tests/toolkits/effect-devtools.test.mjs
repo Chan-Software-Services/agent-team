@@ -6,7 +6,8 @@
 // registry, a private directory under the test's own XDG_RUNTIME_DIR, so the machine's is never
 // read or written. It shows the server alone, started for a slot with no dev server, reads the
 // checkout's app, and that through the wrapper a slot's server reads and dispatches to the slot's
-// app alone and an empty slot's to none.
+// app alone and an empty slot's to none. And it shows its own dev servers start again when another
+// listener takes the port Vite picked before Vite's server binds it (helpers/take-port.cjs).
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -32,18 +33,43 @@ const slot = join(checkout, ".claude", "worktrees", "1");
 const emptySlot = join(checkout, ".claude", "worktrees", "2");
 mkdirSync(home);
 mkdirSync(xdg, { mode: 0o700 });
-for (const dir of [checkout, slot, emptySlot]) {
+const copyApp = (dir) => {
   mkdirSync(dir, { recursive: true });
   cpSync(fixture, dir, { recursive: true });
   symlinkSync(modules, join(dir, "node_modules"));
+};
+for (const dir of [checkout, slot, emptySlot]) copyApp(dir);
+
+// The line Vite exits with when its server's bind loses the port it picked.
+const LOST_PORT = /^Error: Port \d+ is already in use$/m;
+
+// A Vite dev server of the app in `dir`, its Model's app field `name`, with `env` added to its
+// environment: resolves once it serves its page and its relay's record is in the registry, with
+// the log of each start that lost its port in `lost`.
+// Vite's --port 0 picks a port by binding probes to port 0 and closing them, then binds its server
+// to the port they were handed, so a listener that takes that port in between, as the dev server's
+// own Foldkit relay binding 127.0.0.1:0 meanwhile did in CI, makes it exit naming LOST_PORT.
+// No Vite option binds the port the OS hands it, so a start that loses so is made again, three
+// starts in all. The lost start's relay leaves its record, which the next start's relay removes,
+// as the record of a process no longer running, before it writes its own.
+async function startDevServer(dir, name, env = {}) {
+  const lost = [];
+  for (;;) {
+    const start = await startDevServerOnce(dir, name, env);
+    if (start.app) return { ...start.app, lost };
+    if (!LOST_PORT.test(start.log) || lost.length === 2) {
+      throw new Error(`the dev server in ${dir} did not start:\n${[...lost, start.log].join("\n")}`);
+    }
+    lost.push(start.log);
+  }
 }
 
-// A Vite dev server of the app in `dir`, its Model's app field `name`: resolves once it serves
-// its page and its relay's record is in the registry.
-async function startDevServer(dir, name) {
+// One start of startDevServer's: { app } once it serves its page and its own relay's record, not
+// one a lost start left, is in the registry, or the log of a server that exited or never got there.
+async function startDevServerOnce(dir, name, env) {
   const child = spawn(process.execPath, [join(modules, "vite", "bin", "vite.js"), "--port", "0"], {
     cwd: dir,
-    env: { HOME: home, PATH: process.env.PATH, XDG_RUNTIME_DIR: xdg, VITE_FIXTURE_APP: name, NO_COLOR: "1" },
+    env: { HOME: home, PATH: process.env.PATH, XDG_RUNTIME_DIR: xdg, VITE_FIXTURE_APP: name, NO_COLOR: "1", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";
@@ -58,12 +84,14 @@ async function startDevServer(dir, name) {
   const root = realpathSync(dir);
   for (let i = 0; i < 300; i++) {
     const url = log.match(/Local:\s+(http:\/\/\S+)/)?.[1];
-    if (url && records().some((record) => record.root === root)) return { root, url, close, log: () => log };
+    if (url && records().some((record) => record.root === root && record.pid === child.pid)) {
+      return { app: { root, url, close, log: () => log } };
+    }
     if (child.exitCode !== null) break;
     await sleep(100);
   }
   await close();
-  throw new Error(`the dev server in ${dir} did not start:\n${log}`);
+  return { log };
 }
 
 const records = () => {
@@ -415,6 +443,25 @@ describe("the effect toolkit's Foldkit DevTools MCP server", () => {
     assert.match(section, /secret/);
     assert.match(readme, /foldkit_dispatch_message/);
     assert.match(readme, /tests\/toolkits\/effect-devtools\.test\.mjs/);
+  });
+});
+
+describe("the test's Vite dev servers", () => {
+  test("start on a second try when a listener takes the port Vite picked before its server binds it", async () => {
+    const dir = join(run, "raced");
+    copyApp(dir);
+    const app = await startDevServer(dir, "raced", {
+      NODE_OPTIONS: `--require ${join(repoRoot, "tests", "toolkits", "helpers", "take-port.cjs")}`,
+      TAKE_PORT_ONCE: join(run, "raced-port-taken"),
+    });
+    try {
+      assert.equal(app.lost.length, 1, "the preload did not take the port Vite picked");
+      assert.match(app.lost[0], LOST_PORT);
+      assert.equal((await fetch(app.url)).status, 200);
+      assert.equal(records().filter((record) => record.root === app.root).length, 1, JSON.stringify(records()));
+    } finally {
+      await app.close();
+    }
   });
 });
 

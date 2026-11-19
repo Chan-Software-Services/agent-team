@@ -204,7 +204,7 @@ gh_state_write() {
   shift 2
   { exec {gh_fd}>>"$GITHUB_API_DIR/state.lock"; } 2>/dev/null || return 1
   if flock -w 5 "$gh_fd"; then
-    gh_new=$(mktemp "$gh_file.XXXXXX" 2>/dev/null) || gh_rc=1
+    gh_new=$(team_mktemp "$gh_file.XXXXXX" 2>/dev/null) || gh_rc=1
     if ((gh_rc == 0)); then
       if { if [[ -f $gh_file ]]; then cat "$gh_file"; else echo null; fi; } |
         jq -c "$@" "$gh_program" >"$gh_new" 2>/dev/null; then
@@ -431,7 +431,7 @@ gh_fetch() {
   gh_reason='' gh_new='' gh_kept=true
   if [[ $gh_code == 304 && -n $gh_etag ]]; then
     # Marked fetched now; one that cannot be is still served, and asked again at the next read.
-    { gh_new=$(mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
+    { gh_new=$(team_mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
       jq -c --argjson now "$gh_now_s" '.fetched = $now' "$gh_entry.json" >"$gh_new" 2>/dev/null &&
       mv -f -- "$gh_new" "$gh_entry.json" 2>/dev/null; } || true
   elif [[ $gh_code == 2[0-9][0-9] ]]; then
@@ -441,11 +441,11 @@ gh_fetch() {
       gh_kept=false
     # The entry with no ETag and never fresh first, so a write stopped before its last step never
     # pairs a body with an ETag it did not come with; then the body; then the entry whole.
-    elif ! { gh_new=$(mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
+    elif ! { gh_new=$(team_mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
       gh_entry_json "$gh_endpoint" '' 0 "$gh_code" >"$gh_new" && mv -f -- "$gh_new" "$gh_entry.json" 2>/dev/null &&
-      gh_new=$(mktemp "$gh_entry.body.XXXXXX" 2>/dev/null) && cp -- "$gh_out.body" "$gh_new" 2>/dev/null &&
+      gh_new=$(team_mktemp "$gh_entry.body.XXXXXX" 2>/dev/null) && cp -- "$gh_out.body" "$gh_new" 2>/dev/null &&
       mv -f -- "$gh_new" "$gh_entry.body" 2>/dev/null &&
-      gh_new=$(mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
+      gh_new=$(team_mktemp "$gh_entry.json.XXXXXX" 2>/dev/null) &&
       gh_entry_json "$gh_endpoint" "${gh_h[etag]:-}" "$gh_now_s" "$gh_code" >"$gh_new" &&
       mv -f -- "$gh_new" "$gh_entry.json" 2>/dev/null; }; then
       gh_kept=false

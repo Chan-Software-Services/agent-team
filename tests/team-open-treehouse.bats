@@ -55,7 +55,8 @@ events() {
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" --arg home "$TEAM_HOME" '{
     task: "T1", project: "proj", path: "bug", title: "Rate-limit sign-in",
     branch: "fix/T1-sign-in-limit", base: "main", base_sha: $sha, worktree: $wt,
-    task_dir: "\($wt)/.scratch/task", thread: "1563000000000000001", plan: "\($home)/tasks/T1/plan.md"}')"
+    task_dir: "\($wt)/.scratch/task", thread: "1563000000000000001", plan: "\($home)/tasks/T1/plan.md",
+    builder_model: "default"}')"
   assert_equal "$(git -C "${worktree:?}" rev-parse --abbrev-ref HEAD)" "fix/T1-sign-in-limit"
   assert_equal "$(git -C "${worktree:?}" rev-parse HEAD)" "$base_sha"
   run -128 git -C "${worktree:?}" rev-parse --abbrev-ref '@{upstream}'

@@ -386,8 +386,10 @@ left T8-reviewer 4f2a9c1e: already in agent-team-T8-4f2a9c1e.scope"
   assert_contains "$(cgroup_of 200)" "konsole"
   assert_contains "$(cgroup_of 300)" "konsole"
   assert_contains "$(cgroup_of 500)" "konsole"
-  assert_equal "$(stub_calls busctl | jq -c '.[:11]')" \
-    '["--user","call","org.freedesktop.systemd1","/org/freedesktop/systemd1","org.freedesktop.systemd1.Manager","StartTransientUnit","ssa(sv)a(sa(sv))","agent-team-T7-a1b2c3d4.scope","fail","3","PIDs"]'
+  # The scope unloads once it ends, failed or not, so one the kernel kills for memory leaves no
+  # failed unit behind.
+  assert_equal "$(stub_calls busctl | jq -c .)" \
+    '["--user","call","org.freedesktop.systemd1","/org/freedesktop/systemd1","org.freedesktop.systemd1.Manager","StartTransientUnit","ssa(sv)a(sa(sv))","agent-team-T7-a1b2c3d4.scope","fail","4","PIDs","au","4","100","99","101","102","Slice","s","agent-team-T7.slice","Description","s","agent-team session T7-a1b2c3d4.scope","CollectMode","s","inactive-or-failed","0"]'
 
   # Placed now, so a second run moves nothing.
   : >"$STUB_CALLS/busctl.log"
@@ -990,6 +992,34 @@ team_cpu_of() {
 @test "the reading reads a heavy run's holder line by team-heavy's own form" {
   assert_equal "$(sed -n "s/^HEAVY_HOLDER_FORM=//p" "$REPO_ROOT/bin/team-capacity")" "$(sed -n "s/^HOLDER_FORM=//p" "$REPO_ROOT/bin/team-heavy")"
   [[ -n $(sed -n "s/^HOLDER_FORM=//p" "$REPO_ROOT/bin/team-heavy") ]]
+}
+
+# take_reading is a library function: the exit action it sets while its stack listing runs is its
+# own, beside the action of the script that calls it, which keeps it and sees the script's exit
+# status as $?, on a normal end, when the reading dies while the listing runs (no MemTotal in
+# the machine's meminfo), and when the script ends with status 0 there (its reading_context
+# redefined as exit 0).
+@test "take_reading keeps its caller's exit action, on a normal end and when the reading fails" {
+  sample_machine
+  local caller=$BATS_TEST_TMPDIR/caller acted=$BATS_TEST_TMPDIR/acted end
+  : >"$BATS_TEST_TMPDIR/no-meminfo"
+  for end in "$TEAM_MEMINFO:0:after caller 0" "$BATS_TEST_TMPDIR/no-meminfo:1:caller 1" "$TEAM_MEMINFO:0:caller 0:exits"; do
+    rm -f "$acted"
+    cat >"$caller" <<SCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+source "$REPO_ROOT/bin/lib/team.sh"
+source "\$TEAM_LIB/reading.sh"
+$([[ $end != *:exits ]] || echo 'reading_context() { exit 0; }')
+team_exit_trap 'echo "caller \$?" >>"$acted"'
+build() { echo '{}'; }
+take_reading "$BATS_TEST_TMPDIR/state" build
+echo after >>"$acted"
+SCRIPT
+    chmod +x "$caller"
+    TEAM_HOME=$TEAM_HOME TEAM_MEMINFO=${end%%:*} run "$caller"
+    assert_equal "$end:$status:$(paste -sd ' ' "$acted")" "$end:$(cut -d: -f2 <<<"$end"):$(cut -d: -f3 <<<"$end")"
+  done
 }
 
 @test "sample on macOS: each task's use is its processes' by directory and descent, each session its tree's but its heavy run, and systemd is not asked" {

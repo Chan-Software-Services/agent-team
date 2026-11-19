@@ -26,8 +26,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
 
-errors=$(mktemp)
-trap 'rm -f "$errors"' EXIT
+errors=$(team_mktemp)
 
 event=''
 [[ -t 0 ]] || event=$(cat)

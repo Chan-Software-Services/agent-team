@@ -132,7 +132,7 @@ else
   [[ $head == "$sha" ]] || die "$url moved past $sha: its head is now $head; nothing posted"
 fi
 
-scratch=$(mktemp -d)
+scratch=$(team_mktemp -d)
 token='' posted='' answer=''
 # On every exit once a token is minted, it is revoked; a revoke that fails is said and fails the run,
 # after the check run's id when the post was made. A --merge-group run that fails from here on
@@ -151,10 +151,9 @@ finish() {
     fi
   fi
   [[ -z $group || -n $posted || $status != 1 ]] || status=75
-  rm -rf "$scratch"
   exit "$status"
 }
-trap finish EXIT
+team_exit_trap finish
 
 # GitHub's answer of HTTP <code>, the body held in $answer, as a reason: answered <code>
 answered() {

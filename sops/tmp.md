@@ -27,14 +27,16 @@ An entry is removed only when every rule holds, each checked again on the entry 
 - **Not live**: no process of this user names it, by its full path followed by `/`, a space, a `:`, a line break or the end, in its working directory, its open files (a lock, a pid file), its command line or its environment (`/proc` on Linux, `lsof` and `ps` on macOS).
   The processes are read once, only when an entry passed the rules above; when they cannot be read, nothing is removed and the run exits 1 saying why.
   Each variable of an environment is a line of its own (on macOS each `ps` line is cut at the start of each ` <NAME>=` word), and only the lines that name a path under a root are kept in the run's scratch, so no other value of a process's environment is written there.
+- **A run's list**: a script's list of its temporary paths, `team-temp.<pid>.<random>` (a line of the list, below), names nothing a process holds, so it is kept while it is not a regular file, while its pid is not a number as a shell's `$$` is, and while that pid is a live process of this user (the run's own included); a dead run's list is removed alone, never the paths it names, since a list in a shared `TMPDIR` is anyone's to write.
 
 A directory is made writable first (`chmod -R`, which changes no link), so a read-only tree such as a Go module cache goes too, then removed with `rm -rf --one-file-system`; a file with `rm -f`.
 A removal that fails is said on stderr, the rest of the run goes on, and the run exits 1.
 Mktemp's default names (`tmp.XXXXXXXXXX`) are never removed: any program makes them, so they are not provably the team's, and a leak of them is fixed where it is made.
+The team's scripts make theirs with `team_mktemp` (`bin/lib/temp-files.sh`), whose one exit handler removes them however the script ends, on TERM, HUP and INT too, so only a kill no trap sees (KILL) leaves one, beside the run's list of them, which the sweep removes alone once the run is dead (above); a script that ends by `exec`, which runs no EXIT trap, removes them first with `team_tmp_clean`.
 
 ## The list, and adding a line
 
-`bin/lib/tmp-leftovers` holds the names only the team's test runs make, one line per name: the maker (a project's registry name, or `bats`), one space, then an extended regular expression matched against the whole name, case-sensitively.
+`bin/lib/tmp-leftovers` holds the names only the team's test runs make, and a run's list of its temporary paths, which only the team's scripts make, one line per name: the maker (a project's registry name, or `bats`), one space, then an extended regular expression matched against the whole name, case-sensitively.
 `team-janitor` reads it from its own checkout, so the names the net may remove change only through a reviewed PR, never a records edit.
 
 To add a source, add one line to that file in a PR on this repository:
