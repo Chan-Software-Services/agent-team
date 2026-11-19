@@ -153,6 +153,13 @@
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__react", "input": {"chat_id": "@ASSISTANT_CHANNEL@", "message_id": "1567", "emoji": "👀"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__edit_message", "input": {"chat_id": "@ASSISTANT_THREAD@", "message_id": "1568", "text": "Step 2 is done."}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__download_attachment", "input": {"chat_id": "@ASSISTANT_CHANNEL@", "message_id": "1569"}, "cwd": "@TEAM_HOME@"}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Bash", "input": {"command": "tail -n 40 @JOB@/tmp/test.log"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Bash", "input": {"command": "grep -c '^not ok' \"$CLAUDE_JOB_DIR/tmp/test.log\"; ls -la $CLAUDE_JOB_DIR/tmp"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Bash", "input": {"command": "tail -n 20 @CLAUDE_TMP@/-code/@SESSION@/tasks/b1c2d3e4.output"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Bash", "input": {"command": "head -c 4000 ~/.claude/projects/-code/@SESSION@/tool-results/toolu_01.txt | jq -r '.[0].text' 2>/dev/null | head -50"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Read", "input": {"file_path": "@JOB@/tmp/test.log"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Grep", "input": {"pattern": "not ok", "path": "@JOB@/tmp", "output_mode": "content"}, "local": true}
+{"roles": ["builder", "planner", "reviewer"], "tool": "Bash", "input": {"command": "df -h ~ /tmp @WORKTREE@/README.md"}, "local": true}
 {"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end && rm -rf test-results playwright-report && cd .."}, "local": true}
 {"roles": ["builder", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end; npx playwright test --reporter=line; cd ..; rm -rf front-end/test-results"}, "local": true}
 {"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "tmux -S @JOB@/tmp/look.sock new-session -d -s look 'npm run dev'; tmux -S @JOB@/tmp/look.sock capture-pane -p -t look; tmux -S @JOB@/tmp/look.sock kill-server"}, "local": true}

@@ -1,19 +1,31 @@
 #!/usr/bin/env bash
-# PreToolUse hook on every worker role's Read, Grep and Glob (settings/worker.json): among the
-# session records under ~/.claude/projects and under Claude Code's temporary directory, a session
-# reaches only its own. Exit 2 blocks the call and shows stderr to the agent; exit 0 passes it.
+# PreToolUse hook on every worker role's Read, Grep, Glob and Bash (settings/worker.json): of the
+# session records Claude Code keeps, a session reaches only its own. Exit 2 blocks the call and
+# shows stderr to the agent; exit 0 passes it.
 #
 # Usage: session-records-guard   (the hook's input on stdin)
 #
-# It guards two roots. The first is the projects directory of Claude Code's config directory
-# (CLAUDE_CONFIG_DIR, else ~/.claude), which holds each session's transcript,
-# <project>/<session id>.jsonl, and its session directory, <project>/<session id>/, with its
-# saved tool results and its subagents' transcripts. The second is Claude Code's temporary
-# directory, claude-<uid> in CLAUDE_CODE_TMPDIR, else in the OS temp dir as Node's os.tmpdir()
-# finds it (TMPDIR, else TMP, else TEMP, else /tmp), which holds each session's directory,
-# <project>/<session id>/, with the output of its background Bash calls; that place is read from
-# Claude Code 2.1.325 and confirmed on Linux only. The session's own id is the input's
-# session_id when it has a UUID's shape; with any other value no path under a root is its own.
+# One table, bin/lib/session_records.py's, lists every session-record place, in the order a
+# refusal picks its place by. <config> is Claude Code's config directory (CLAUDE_CONFIG_DIR, else
+# ~/.claude), <temp> its temporary directory, claude-<uid> in CLAUDE_CODE_TMPDIR, else in the OS
+# temp dir as Node's os.tmpdir() finds it (TMPDIR, else TMP, else TEMP, else /tmp), read from
+# Claude Code 2.1.325 and confirmed on Linux only, <sid> the session's id and <job> its job
+# directory's name:
+#   <config>/projects/      transcripts, saved tool results, subagents' transcripts; a session's
+#                           own: <project>/<sid>.jsonl and <project>/<sid>/
+#   <temp>/                 background Bash output, scratchpads; own: <project>/<sid>/
+#   <config>/jobs/          each background session's state, timeline and tmp; own: <job>/, the
+#                           first 8 characters of <sid>, or the last component of CLAUDE_JOB_DIR
+#                           in the hook's environment when it names a directory directly in it
+#   <config>/tasks/         each session's task list; own: <sid>/
+#   <config>/session-env/   each session's environment files; own: <sid>/
+#   <config>/transcripts/, history.jsonl, paste-cache/, sessions/, daemon/, daemon.log and
+#   file-history/, and the CLI cache's ~/.cache/claude-cli-nodejs/ and
+#   ~/Library/Caches/claude-cli-nodejs/: every session's records, none a session's own
+# A refusal names the temporary directory by its path, the cache by those two paths and every other
+# place as ~/.claude/<its name>, wherever the config directory is. Each root is resolved with its
+# symlinks, a missing one allowed. The session's own id is the input's session_id when it has a
+# UUID's shape; with any other value it owns nothing in any place.
 #
 # The paths it judges, each made absolute against the input's cwd, a leading ~ or ~/ read as the
 # home directory, then resolved with its symlinks and its .. (a missing path allowed):
@@ -22,13 +34,80 @@
 #   Glob  its path, or the cwd with none; and, when its pattern starts with / or ~, the pattern's
 #         literal start too: the text before its first * ? [ or {, cut back to its last /, or
 #         the whole pattern when it has none of them
+#   Bash  the paths its commands spell, below
 # Any other tool passes unread.
 #
-# A path that is no root, under none and above none passes. A path under a root passes only as
-# the session's own transcript or own session directory, or something under that directory; any
-# other, a project directory itself included, is refused as another session's. A root or a
-# directory above it is refused for Grep and Glob, whose search would walk every session's
-# records, and passes for Read, which fails on a directory by itself.
+# The rule for one path, against each place in order: a path in none and above none passes. In a
+# keyed place it passes as the session's own entry or under it; any other, a project directory or
+# jobs/pins.json included, is refused as another session's. A place refused whole, or anything
+# under it, is refused for every tool. A keyed place's root, or a directory above any place, is
+# refused for Grep and Glob, whose search would walk every session's records, naming the first
+# place in order whose root is the path or lies under it, and passes for Read, which fails on a
+# directory by itself. The messages, after "Blocked by session-records-guard: ":
+#   <tool> of <path>: under <name> a session reads only <what it owns>, and this is another session's.
+#   <tool> of <path>: <name> holds every session's records, and a worker session reads none of it.
+#   <tool> rooted at <path> would search every session's records under <name>; give it a narrower path.
+# each with the path as the call gave it (a Glob's pattern, when the path is only its literal start).
+#
+# A Bash call is held to the same table: it is refused when a path one of its commands spells lies
+# in a place and is not the session's own. The call's text is read before anything runs, never
+# what a program it starts reads by itself, so a team script is judged by its command line alone.
+# Of each command command_text.call_commands walks (past wrappers, into the strings a shell is
+# given, as bin/lib/command_text.py's header lists), these are judged as paths: the value of each
+# assignment before it; each word of each wrapper it ran behind; its name when the name holds a /;
+# each word after its name; of such a word of the form <name>=<value> or
+# --<option>=<value>, the value after its first = as well as the whole word; and the target of each
+# redirection the call makes, in either direction (command_text.redirection_targets). A word
+# holding a blank is no path, unless a place's root holds one or the path it names exists, so a
+# longer string that mentions a path (a commit message, a pattern, a heredoc's body no shell
+# reads) passes; a word that is exactly such a path is refused whatever the command does with it.
+# A word becomes paths as bin/lib/delete_rules.py's header says an operand is resolved, by the same
+# code: a leading ~, $HOME, $CLAUDE_JOB_DIR, a variable the same command sets, a brace list, a
+# relative path against the cwd and each directory a cd or pushd of the call names, a .. and a
+# symlink are resolved before the decision; beside it, a leading ~login is read as that login's
+# home directory, a word the walk decoded ($'...') or made from a brace range is read as Bash made
+# it, and a cd the reading cannot follow (cd -, popd, a computed target) leaves a relative path
+# judged from the cwd and each cd it can follow (delete_rules.reachable). A word that expands to
+# several paths is refused when any one is. A word holding a glob is judged by its literal start
+# (its components before the first holding * ? or [, resolved) and, from a start above a place,
+# by each place its components may reach, matched as Bash matches them (a name starting with .
+# only by a component starting with ., ** as any number of components): the place's root and what
+# lies under it are judged as below, a glob character in a name never naming a session's own
+# entry, and a glob that may match the config directory alone is too wide. A word the reading
+# cannot resolve before the command runs passes. That is the command guard's
+# kind of guard, a speed bump on the paths a command spells, whose contract
+# bin/lib/command_rules.py's header states.
+# The rule for one path, against each place in order: in a keyed place it passes as the session's
+# own entry or under it, and any other is refused; a place refused whole, itself included, is
+# refused; a keyed place's root, or the config directory itself, which names the first place, is
+# refused as too wide; anything else passes, the directories above the config directory and the
+# temporary directory among them but as a recursive reader's root, below. Case folds as for the
+# file tools. The first refusal in the walk's order is reported, the redirections' targets after
+# every command's words:
+#   a Bash command naming <word>: under <name> a session reads only <what it owns>, and this is another session's.
+#   a Bash command naming <word>: <name> holds every session's records, and a worker session reads none of it.
+#   a Bash command naming <word> would reach every session's records under <name>; name a narrower path.
+# each with the word as the walk read it, its quotes removed.
+#
+# A recursive reader is also refused when it is rooted above the config directory or the
+# temporary directory (the home directory, /home, /, the OS temp dir), since its walk passes
+# through every session's records there. Its roots, each read as a path is above: grep's paths
+# with -r, -R, --recursive, --dereference-recursive or -d recurse, and rg's, past the pattern
+# (its first operand, unless -e, -f, --files or --type-list says there is none in the operands);
+# find's start paths; every word of tar's, in every mode, and the directory of its -C<dir>; and
+# the sources of cp's with -r, -R or -a (every operand but the last, unless -t names the
+# destination) and of rsync's (every operand but the last); grep, rg and find with no path take
+# ".", the directory the command runs in. A long option that takes no value is never read as a
+# longer one that does (grep's --binary, rg's --ignore, rsync's --partial and --backup). A
+# root holding a glob is refused when the glob may match a directory above one. Its message
+# names the config directory's first place when the root lies above the config directory, else
+# the temporary directory:
+#   a Bash command reading <word> recursively would reach every session's records under <name>; name a narrower path.
+# What the call spells is all it reads: a symlink the same call makes, a path inside a program's
+# own string (a URL, python3 -c), any other program that walks a tree (ls -R, du, zip -r) and a
+# path computed when the command runs are outside this rule; and on a Mac, bsdtar's -H and -L
+# take no value, so a cluster such as tar -cLC<dir> is read as GNU tar reads it and its directory
+# is not judged.
 #
 # A path is compared with a root as text, both in lower case when the root's volume folds case,
 # as a Mac's default one does, so a name in another case is the same path there. The volume folds
@@ -38,9 +117,13 @@
 #
 # It reads nothing of the team home, so it decides on a machine that names none. When it cannot
 # decide it refuses, saying so: input that is not a JSON object with a tool_name string, a Read
-# whose file_path is no string or an empty one, a path or pattern that is no string, an argument
-# on its command line, and any command of its own that fails, which ends as an exit 2 naming the
-# hook and the exit code (team_guard in bin/lib/team.sh).
+# whose file_path is no string or an empty one, a path or pattern that is no string, a Bash call
+# whose command is missing or no string ("its input is
+# not a hook call it can read, and a guard that cannot decide refuses."); session_records.py exiting
+# non-zero, or printing what holds no reason ("it could not read the call
+# (bin/lib/session_records.py: <its last line>), and a guard that cannot decide refuses."); an
+# argument on its command line; and any command of its own that fails, which ends as an exit 2
+# naming the hook and the exit code (team_guard in bin/lib/team.sh).
 set -euo pipefail
 # A guard decides or refuses (bin/lib/team.sh), and reads nothing of the team home, so it decides
 # on a machine that names none.
@@ -54,98 +137,12 @@ block() {
   echo "Blocked by session-records-guard: $1" >&2
   exit 2
 }
-cannot_read() {
-  block "its input is not a hook call it can read, and a guard that cannot decide refuses."
+cannot_decide() {
+  block "it could not read the call (bin/lib/session_records.py: ${1##*$'\n'}), and a guard that cannot decide refuses."
 }
 
-# One reading of the input: the tool, the session id and the cwd, each empty unless a string, then
-# the three tool_input fields, each as s<text> for a string, n for none and x for any other type.
-input=$(cat)
-mapfile -d '' -t fields < <(jq --raw-output0 '
-  def field($name): (if type == "object" then .[$name] else null end)
-    | if type == "string" then "s" + . elif . == null then "n" else "x" end;
-  if type == "object" and (.tool_name | type) == "string" then
-    .tool_name, (.session_id | strings) // "", (.cwd | strings) // "",
-    (.tool_input | field("file_path"), field("path"), field("pattern"))
-  else empty end' <<<"$input" 2>/dev/null) || true
-((${#fields[@]} == 6)) || cannot_read
-tool=${fields[0]} session=${fields[1]} cwd=${fields[2]:-$PWD}
-file_path=${fields[3]} path=${fields[4]} pattern=${fields[5]}
-
-case $tool in
-  Read | Grep | Glob) ;;
-  *) exit 0 ;;
-esac
-# A UUID's shape, 8-4-4-4-12 lowercase hex, each digit written out so no locale widens a range.
-hex='[0123456789abcdef]'
-[[ $session =~ ^$hex{8}(-$hex{4}){3}-$hex{12}$ ]] || session=''
-
-# The guarded roots, and each as a refusal names it: the projects directory by its usual name,
-# the temporary directory by its path.
-cwd=$(realpath -m -- "$cwd")
-roots=("$(realpath -m -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects")"
-  "$(realpath -m -- "${CLAUDE_CODE_TMPDIR:-${TMPDIR:-${TMP:-${TEMP:-/tmp}}}}/claude-$(id -u)")")
-# shellcheck disable=SC2088 # the name a refusal shows, never a path
-names=("~/.claude/projects" "${roots[1]}")
-owns=("its own records, its transcript and what lies under its own session directory"
-  "what lies under its own session directory")
-
-# folds <root>: whether the root's volume folds case, so a name in another case is the same path:
-# the seam says so, or the root in upper or lower case is the root's own directory.
-folds() {
-  [[ -z ${SESSION_RECORDS_FOLD_CASE:-} ]] || return 0
-  local recased
-  for recased in "${1^^}" "${1,,}"; do
-    [[ $recased == "$1" || ! $recased -ef $1 ]] || return 0
-  done
-  return 1
-}
-
-# judge <path> [<shown>]: pass, or refuse the call for the path, naming it as the call gave it
-# (<shown>, a Glob's pattern, when the path is only its literal start).
-judge() {
-  local real=$1 given=${2:-$1} n root at rest own
-  case $real in
-    \~) real=$HOME ;;
-    \~/*) real=$HOME/${real#\~/} ;;
-  esac
-  [[ $real == /* ]] || real=$cwd/$real
-  real=$(realpath -m -- "$real")
-  for n in "${!roots[@]}"; do
-    root=${roots[n]} at=$real
-    ! folds "$root" || root=${root,,} at=${at,,}
-    if [[ $at == "$root" || $at == / || $root == "$at"/* ]]; then
-      [[ $tool == Read ]] ||
-        block "$tool rooted at $given would search every session's records under ${names[n]}; give it a narrower path."
-      continue
-    fi
-    [[ $at == "$root"/* ]] || continue
-    # Below the root: <project>/<own>, where <own> is the session's transcript or its directory.
-    rest=${at#"$root"/}
-    if [[ -n $session && $rest == */* ]]; then
-      own=${rest#*/} own=${own%%/*}
-      [[ $own != "$session" && $own != "$session.jsonl" ]] || continue
-    fi
-    block "$tool of $given: under ${names[n]} a session reads only ${owns[n]}, and this is another session's."
-  done
-}
-
-case $tool in
-  Read)
-    [[ $file_path == s?* ]] || cannot_read
-    judge "${file_path#s}"
-    ;;
-  Grep | Glob)
-    [[ $path != x && $pattern != x ]] || cannot_read
-    path=${path#[sn]} pattern=${pattern#[sn]}
-    judge "${path:-$cwd}"
-    if [[ $tool == Glob && ($pattern == /* || $pattern == \~*) ]]; then
-      # The pattern's literal start: all of it when it has no wildcard, else up to its last /
-      # before the first one.
-      literal=${pattern%%[*?\[{]*}
-      [[ $literal == "$pattern" ]] || literal=${literal%/*}
-      judge "${literal:-/}" "$pattern"
-    fi
-    ;;
-esac
-exit 0
+# The table's one line is the refusal; an error of its own is its last line.
+verdict=$(python3 -I "$TEAM_LIB/session_records.py" 2>&1) || cannot_decide "$verdict"
+[[ -n $verdict ]] || exit 0
+reason=$(jq -er '.reason | strings' <<<"$verdict" 2>/dev/null) || cannot_decide "$verdict"
+block "$reason"

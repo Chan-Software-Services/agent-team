@@ -220,14 +220,19 @@ launched() { stub_calls claude | jq -r 'select(.[0] == "--bg") | .[index("--name
   assert_contains "$output" "PASS builder ops-launch: hook refused it"
   assert_contains "$output" "PASS builder sessions: rule refused it"
   assert_contains "$output" "PASS builder upload: hook refused it"
-  # Each role is refused the session records: the file checkpoints and the MCP logs by a deny
-  # rule, and another session's transcript by the session records guard's own block.
-  local role
+  # Each role is refused each probed session-record place by the session records guard's own
+  # block, by Read, and five of them by Bash as well.
+  local role id absent=load-check-probe-absent
   for role in planner builder reviewer; do
-    assert_contains "$output" "PASS $role file-history: rule refused it"
-    assert_contains "$output" "PASS $role mcp-logs: rule refused it"
-    assert_contains "$output" "PASS $role transcripts: hook refused it"
-    assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: Read of $HOME/.claude/projects/load-check-probe-absent/load-check-probe-absent.jsonl: under ~/.claude/projects a session reads only its own records"
+    for id in file-history mcp-logs transcripts job-directory transcripts-directory prompt-history paste-cache \
+      task-lists session-env live-sessions daemon daemon-log job-directory-bash transcripts-directory-bash \
+      prompt-history-bash paste-cache-bash projects-bash; do
+      assert_contains "$output" "PASS $role $id: hook refused it"
+    done
+    assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: Read of $HOME/.claude/projects/$absent/$absent.jsonl: under ~/.claude/projects a session reads only its own records"
+    assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: Read of $HOME/.claude/file-history/$absent/probe: ~/.claude/file-history holds every session's records, and a worker session reads none of it."
+    assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: Read of $HOME/.claude/jobs/$absent/state.json: under ~/.claude/jobs a session reads only what lies in its own job directory, and this is another session's."
+    assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: a Bash command naming ~/.claude/history.jsonl/$absent: ~/.claude/history.jsonl holds every session's records, and a worker session reads none of it."
   done
   # Only the planner and the reviewer write outside .scratch/ by their hook.
   [[ $output != *"builder write-outside"* && $output != *"builder redirect-outside"* ]]
