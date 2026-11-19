@@ -3730,6 +3730,71 @@ full: 2 of phase 1's cap 2 build (02, 03); ready and waiting for a slot: 04"
   run_bin -0 team-log --check
 }
 
+# builder_model <model>: T7's opened event names <model> as its builder model, as team-open
+# --builder-model logs it, and the setup's builder launches ran on it, as team-worker logs them.
+builder_model() {
+  jq -c --arg m "$1" 'if .event == "opened" then .builder_model = $m
+    elif .event == "launch" and .role == "builder" and .model_from == null then .model = $m | .model_from = "task"
+    else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+}
+
+# Each session claude started, by its name, with the --model it was given, if any.
+launch_models() {
+  bg_calls | jq -c '[.[index("--name") + 1], ((index("--model") // empty) as $i | .[$i + 1])]'
+}
+
+# Each launch team-worker logged after the setup's b0000001, its brief and model, and where the
+# model came from.
+logged_models() {
+  jq -c 'select(.event == "launch" and .session != "b0000001") | [.brief, .model, .model_from]' "$TEAM_HOME/ledger.jsonl"
+}
+
+@test "a task's builder model holds through each builder launch team-next makes: the next ticket's, a stow's round, the fill's and its relaunches" {
+  # Before a task kept its builder model, each of these launched with no --model and logged no
+  # model, so the builder fell back to the settings' model.
+  local head
+  head=$(git -C "${wt:?}" rev-parse HEAD)
+  builder_model sonnet
+  run_bin -0 team-next T7 -- "T7 DONE 01 ${head:0:8} done"
+  # The round after a findings review, its builder stowed.
+  reviewing "$head"
+  review_logged findings "$head" '[3]' '{"blocking": 1}'
+  event 'done' '{role: "reviewer", session: "r0000002"}'
+  echo "# review" >"$wt/.scratch/task/review.md"
+  run_bin -0 team-next T7 -- "T7 PAUSED stowed"
+  assert_equal "$(launch_models)" $'["T7-builder","sonnet"]\n["T7-builder","sonnet"]'
+  assert_equal "$(logged_models | jq -c 'select(.[0] != "brief-review")')" \
+    $'["brief-build-02","sonnet","task"]\n["brief-round-1","sonnet","task"]'
+}
+
+@test "a builder launched on --model keeps that model through team-next's next builder launch" {
+  # The setup's builder b0000001 launched on --model fable, which is its task's builder model
+  # from then on, over the opened event's.
+  builder_model sonnet
+  jq -c 'if .event == "launch" and .session == "b0000001" then .model = "fable" | .model_from = "launch" else . end' \
+    "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  local head
+  head=$(git -C "${wt:?}" rev-parse HEAD)
+  run_bin -0 team-next T7 -- "T7 DONE 01 ${head:0:8} done"
+  assert_equal "$(launch_models)" '["T7-builder","fable"]'
+  assert_equal "$(logged_models)" '["brief-build-02","fable","task"]'
+  run_bin -0 team-log --check
+}
+
+@test "a task's builder model holds through --fill's ticket builders and their relaunches after a stow" {
+  builder_model sonnet
+  relaunch_ready
+  stowed_here level
+  run_bin -0 team-next T7 --fill
+  assert_equal "$(launch_models)" \
+    $'["T7-builder-02","sonnet"]\n["T7-builder-03","sonnet"]\n["T7-builder-02","sonnet"]\n["T7-builder-03","sonnet"]'
+  assert_equal "$(logged_models)" \
+    $'["brief-build-02","sonnet","task"]\n["brief-build-03","sonnet","task"]\n["brief-resume-build-02","sonnet","task"]\n["brief-resume-build-03","sonnet","task"]'
+  run_bin -0 team-log --check
+}
+
 @test "T287: --fill relaunches a crashed ticket builder on resume-crash, with the resume report's checkpoint and snapshot" {
   relaunch_ready
   # Both builders ran on laptop, which stopped with no handoff; this machine's resume re-made

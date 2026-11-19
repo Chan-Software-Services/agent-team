@@ -104,7 +104,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `knowledge-graph.md`: a project's knowledge graph.
   - `machine-setup.md`: a new machine, driven by `SETUP.md`.
   - `merging.md`: merging on the per-head word and the default word, the approved plan: their events, the order `team-merge` tries them, what each holds a PR to, the plan approval, the short list, the withdrawals, what never merges, the coordinator's steps and the retired words.
-  - `model-trials.md`: trialling a cheaper model on one role of one project, or a setup change that claims to save tokens: the registry's `models`, the effort check, the paired reviews, a toolkit's arm, the measures and their sources, the baseline by PR size and the note to Daniel.
+  - `model-trials.md`: trialling a cheaper model on one role of one project, or a setup change that claims to save tokens: the registry's `models`, a task's builder model, the effort check, the paired reviews, a toolkit's arm, the measures, their sources, the PR-size baseline and the note to Daniel.
   - `platform-gotchas.md`: general rules about the tools the team runs on, which every brief but the ops one points at in the code checkout, never the team home; the retro proposes keeping it short, and each change Daniel approves lands through a PR on this repository.
   - `portability.md`: moving the team between machines.
   - `records-rewrite.md`: the cutover that rewrites the records repository's history with `team-records-rewrite`, each step Daniel's or the coordinator's.
