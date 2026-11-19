@@ -20,7 +20,9 @@
 # of the planned budget of its resource (github_budget; default 5000, 0 used, its reset an hour
 # after the clock); each counted answer (not a 304, not a refusal) adds one to that budget's used.
 # Each request is one line of $GITHUB_STUB/requests, "<endpoint> <status>", so a test counts the
-# counted and the free ones; a connection failure's status is "none".
+# counted and the free ones; a connection failure's status is "none". A call with GH_CONFIG_DIR
+# set to the worker login's directory, ~/.config/agent-team/gh-worker, is on the worker account:
+# it reads and counts the worker account's budgets, and its request line ends " worker".
 #   github_answer <status> <body> [<resource>]
 #                      the answer, 304 with no body when <status> is 200 and the request's
 #                      If-None-Match is the body's ETag; a body's message is gh's stderr reason.
@@ -35,8 +37,9 @@
 #   github_offline     gh reached no GitHub: its connection error on stderr, nothing on stdout.
 #   github_rate_limit  gh api rate_limit's JSON, every planned budget, unlogged and uncounted.
 # In the test:
-#   github_budget <resource> <limit> <used> [<reset>]
-#                      plans the budget of <resource> (core, graphql).
+#   github_budget [--worker] <resource> <limit> <used> [<reset>]
+#                      plans the budget of <resource> (core, graphql), the worker account's with
+#                      --worker, else the owner's.
 #   github_requests    prints the requests, one "<endpoint> <status>" per line.
 #   github_clock <epoch seconds>
 #                      sets the clock TEAM_GITHUB_CLOCK names, which github_stub_setup exports.
@@ -59,7 +62,22 @@ github_clock() {
 }
 
 github_budget() {
-  echo "$2 $3 ${4:-}" >"$GITHUB_STUB/budget-$1"
+  local account=''
+  [[ $1 != --worker ]] || { account=worker-; shift; }
+  echo "$2 $3 ${4:-}" >"$GITHUB_STUB/budget-$account$1"
+}
+
+# github_account: the budget files' prefix of the call's account, worker- on the worker login.
+github_account() {
+  [[ ${GH_CONFIG_DIR:-} == "$HOME/.config/agent-team/gh-worker" ]] || return 0
+  echo worker-
+}
+
+# github_logged <endpoint> <status>: the request's line, " worker" after it on the worker login.
+github_logged() {
+  local suffix=''
+  [[ -z $(github_account) ]] || suffix=' worker'
+  echo "$1 $2$suffix" >>"$GITHUB_STUB/requests"
 }
 
 github_requests() {
@@ -92,8 +110,9 @@ github_now() {
 
 # github_read_budget <resource>: sets github_limit, github_used and github_reset from the plan.
 github_read_budget() {
-  local line=''
-  [[ ! -e $GITHUB_STUB/budget-$1 ]] || line=$(<"$GITHUB_STUB/budget-$1")
+  local line='' file
+  file=$GITHUB_STUB/budget-$(github_account)$1
+  [[ ! -e $file ]] || line=$(<"$file")
   read -r github_limit github_used github_reset <<<"${line:-5000 0}" || true
   github_limit=${github_limit:-5000} github_used=${github_used:-0}
   [[ -n ${github_reset:-} ]] || github_reset=$(($(github_now) + 3600))
@@ -110,7 +129,7 @@ github_headers() {
 # github_count <resource>: one more used of the resource's budget.
 github_count() {
   github_read_budget "$1"
-  echo "$github_limit $((github_used + 1)) $github_reset" >"$GITHUB_STUB/budget-$1"
+  echo "$github_limit $((github_used + 1)) $github_reset" >"$GITHUB_STUB/budget-$(github_account)$1"
 }
 
 github_status_text() {
@@ -125,14 +144,14 @@ github_answer() {
   local status=$1 body=$2 resource=${3:-core} etag
   etag="W/\"$(printf '%s' "$body" | sha256sum | cut -c1-40)\""
   if [[ $status == 200 && -n $GITHUB_IF_NONE_MATCH && $GITHUB_IF_NONE_MATCH == "$etag" ]]; then
-    echo "$GITHUB_ENDPOINT 304" >>"$GITHUB_STUB/requests"
+    github_logged "$GITHUB_ENDPOINT" 304
     printf 'HTTP/2.0 304 Not Modified\nEtag: %s\r\n' "$etag"
     github_headers "$resource" ''
     printf '\r\n'
     echo "gh: HTTP 304" >&2
     exit 1
   fi
-  echo "$GITHUB_ENDPOINT $status" >>"$GITHUB_STUB/requests"
+  github_logged "$GITHUB_ENDPOINT" "$status"
   github_count "$resource"
   printf 'HTTP/2.0 %s %s\nContent-Type: application/json; charset=utf-8\r\nEtag: %s\r\n' "$status" "$(github_status_text "$status")" "$etag"
   github_headers "$resource" ''
@@ -163,7 +182,7 @@ github_limited() {
       ;;
     *) echo "github_limited: no refusal $1" >&2; exit 1 ;;
   esac
-  echo "$GITHUB_ENDPOINT $status" >>"$GITHUB_STUB/requests"
+  github_logged "$GITHUB_ENDPOINT" "$status"
   printf 'HTTP/2.0 %s %s\nContent-Type: application/json; charset=utf-8\r\n%s' "$status" "$(github_status_text "$status")" "$extra"
   ! $headers || github_headers core "$remaining"
   printf '\r\n%s\n' "$body"
@@ -172,7 +191,7 @@ github_limited() {
 }
 
 github_offline() {
-  echo "${GITHUB_ENDPOINT:-${*:-}} none" >>"$GITHUB_STUB/requests"
+  github_logged "${GITHUB_ENDPOINT:-${*:-}}" none
   echo "error connecting to api.github.com" >&2
   echo "check your internet connection or https://githubstatus.com" >&2
   exit 1

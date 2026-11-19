@@ -43,8 +43,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 json=0
 [[ ${1:-} != --json ]] || json=1
 
-# The run's scratch: err, a command's stderr for first_error, and what a check keeps there.
+# The run's scratch: err, a command's stderr for first_error, and what a check keeps there. A
+# random name holding "zsh", which a confined session's path may not (bin/lib/confine-session), is
+# made again, so the confine line's sandbox session under it is never refused by chance.
 scratch=$(team_mktemp -d)
+while [[ ${scratch##*/} == *zsh* ]]; do
+  team_tmp_rm "$scratch"
+  scratch=$(team_mktemp -d)
+done
 err=$scratch/err
 : >"$err"
 # Each check's check, verdict, reason and fix, in order, for --json.
