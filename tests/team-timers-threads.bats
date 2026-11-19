@@ -2,8 +2,9 @@
 # team-timers' threads step: on the holder after the inbox step and before the finished step, the
 # real team-thread archive, on the fake Discord of helpers/discord-threads. The heartbeat suite's
 # setup: home-pc holds the lease on a bare origin, the stub claude lists the coordinator and the
-# assistant, the service managers are fakes and GitHub is tests/helpers/github-api.bash's
-# heartbeat stub (an idle hour).
+# assistant, a usage read of the model windows was just taken (usage_read_now), so the quota step
+# starts no Claude Code, the service managers are fakes and GitHub is
+# tests/helpers/github-api.bash's heartbeat stub (an idle hour).
 
 load helpers/common
 load helpers/github-api
@@ -14,6 +15,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   stub_reply claude '[{"id": "c0ffee00", "name": "coordinator", "status": "idle"}, {"id": "a5515700", "name": "assistant", "status": "idle"}]'
   hold_lease home-pc >/dev/null
+  usage_read_now
   fake_service_managers
   github_heartbeat_stub
   stub_command uname

@@ -100,8 +100,7 @@ if [[ -n $load_check ]]; then
   mcp=$LAUNCH_STATE/assistant-load-check.mcp.json
   settings=$LAUNCH_STATE/assistant-load-check.settings.json
   mkdir -p "$LAUNCH_STATE"
-  template=$(mktemp "$LAUNCH_STATE/assistant-load-check.template.XXXXXX")
-  trap 'rm -f -- "$template"' EXIT
+  template=$(team_mktemp "$LAUNCH_STATE/assistant-load-check.template.XXXXXX")
   jq '.enabledPlugins["discord@claude-plugins-official"] = false | del(.hooks.Stop, .hooks.SessionStart)
     | .remoteControlAtStartup = false' \
     "$code/assistant.settings.json" >"$template"

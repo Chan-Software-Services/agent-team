@@ -123,8 +123,7 @@ bin=$(dirname "$TEAM_LIB")
 doctor=${TEAM_DOCTOR:-$bin/team-doctor}
 state=$HOME/.local/state/agent-team
 mkdir -p "$state"
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 NET_ERR=$scratch/net-err
 err=$scratch/err
 

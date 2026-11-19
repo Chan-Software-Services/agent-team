@@ -6,6 +6,7 @@
 
 load helpers/common
 load helpers/discord-threads
+load helpers/signals
 
 DAY=86400
 
@@ -115,6 +116,32 @@ archived 1563000000000001001 T10's thread: T10 · agent-team · Old
 archived 1563000000000001002 T10's interview thread: T10 · agent-team · Old"
   # The open task's thread is never the pass's.
   [[ $(archived_threads) != *1563000000000001101* ]]
+}
+
+@test "an archive leaves no temporary file, whether it passes, Discord refuses it or a signal ends the pass" {
+  task_threads T7 rule 1563000000000000701 1563000000000000702
+  thread 1563000000000000701 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
+  thread 1563000000000000702 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
+  touch "$DISCORD_DIR/refuse-1563000000000000702"
+  waiting '[]'
+  run_bin -1 team-thread archive
+  assert_equal "$(archived_threads)" 1563000000000000701
+  assert_equal "$(leftovers)" ""
+  # TERM, HUP or INT while Discord archives a thread: the pass ends by the signal.
+  rm "$DISCORD_DIR/refuse-1563000000000000702"
+  mv "$STUB_FIXTURES/curl.sh" "$STUB_FIXTURES/curl-discord.sh"
+  {
+    echo 'if [[ " $* " == *" PATCH "* ]]; then'
+    stalled "$BATS_TEST_TMPDIR/archiving"
+    echo '  exit 0'
+    echo 'fi'
+    echo 'source "$STUB_FIXTURES/curl-discord.sh"'
+  } | stub_script curl
+  for sig in TERM:143 HUP:129 INT:130; do
+    rm -f "$BATS_TEST_TMPDIR/archiving"
+    signalled "${sig%:*}" "$BATS_TEST_TMPDIR/archiving" "$REPO_ROOT/bin/team-thread" archive
+    assert_equal "$status:$(leftovers)" "${sig#*:}:"
+  done
 }
 
 @test "a waiting.json that is missing or cannot be read archives nothing" {

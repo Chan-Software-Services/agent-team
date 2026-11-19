@@ -88,12 +88,18 @@
 # On a base with a merge queue (base_rules' queue), run it with Bash run_in_background, since it
 # ends only when the queue does. The checks above are the same, a PR behind its base still no reason
 # to refuse, with two more: the project's merge_method is merge, the only one the team proves a
-# trial commit for, and the PR's queue entry can be read. A refusal there reaches the queue: a PR in
+# trial commit for, and the PR's queue entry can be read. For a PR in the queue, a conflict GitHub
+# has not worked out is no reason, since GitHub does not work it out again for a PR that stands in
+# the queue when its base moves: the queue is the proof there, a trial commit built only from a
+# clean merge and proved before agent-review goes on it (queue_commit_problems in bin/lib/team.sh),
+# unless its entry is UNMERGEABLE, which is refused naming the queue; a conflict GitHub did work
+# out is refused in the queue as out of it. A refusal there reaches the queue: a PR in
 # the queue is taken out of it (GraphQL's dequeuePullRequest; dequeue_pr in bin/lib/team.sh) and
 # dequeued logged with the reasons, since a trial commit that carries agent-review lands whatever
 # this run says, unless every reason is one that cannot be told now, which leaves it queued and says
-# so: GitHub unread, a conflict GitHub has not worked out yet, the plan's files unread, the head not
-# fetched for the local checks, and local checks that could not run (team-checks exit 75), each
+# so: GitHub unread, a conflict GitHub has not worked out yet for a PR in no queue or whose queue
+# entry could not be read, the plan's files unread, the head not fetched for the local checks, and
+# local checks that could not run (team-checks exit 75), each
 # classed where it is made; every other reason is a refusal that stands, a Discord message that
 # cannot be read back and a head not fetched to check a word among them, which fails closed at the
 # cost of a second enqueue. A PR GitHub does not let out is said, nothing logged; and a queued that
@@ -114,9 +120,20 @@
 #   dequeued  the queue dropped it, or team-land took it out: dequeued is logged (url, head,
 #             reason, and failed, the failures on the trial commit, when there are any), unless
 #             another team-merge logged one meanwhile and team-land names no failures, and it is
-#             exit 1 naming the reason, each failure and the next step: with a failure of the
-#             PR's own, the builder-merge-base brief, since the trial merge failed what the head
-#             passed, else to run team-merge again once what dropped it is fixed;
+#             exit 1 naming the reason, each failure and the next step: with a rules failure (a
+#             check the base's rules or the project's required_checks require that never
+#             reported on the trial commit, each said as "<name> was not reported on the trial
+#             merge, which <base>'s rules require", or "which the project's required_checks
+#             require" for one they alone require), to run team-doctor (its merge queue line),
+#             fix the workflow's merge_group trigger or ask Daniel to change the repository's
+#             ruleset, then run team-merge again, the project's required_checks named among what
+#             requires it and what to fix for such a check, and team-doctor and the ruleset left
+#             out with no check the rules require (rules_step in bin/lib/ledger.jq), even beside a
+#             failure of the PR's own, since the trial merge cannot be judged until every
+#             required check runs there;
+#             else with a failure of the PR's own, the builder-merge-base brief, since the trial
+#             merge failed what the head passed; else to run team-merge again once what dropped
+#             it is fixed;
 #   waiting   team-land's deadline came, or the team holds offline: it is exit 75, saying to run
 #             team-merge again with run_in_background, and whether the PR, read again, is still
 #             in the queue, merged, or unread; nothing more is logged for those, and a PR in no
@@ -231,8 +248,7 @@ else
     die "$url is not one of $task's pr events:"$'\n'"$(jq -r '.[] | select(.event == "pr") | "  \(.url)"' <<<"$events")"
 fi
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 
 # The PR as team-state sees it: the repo, the project, the head and the checks by bucket.
 facts=$(pr_part "$events" "$pr" "$scratch") || exit 1
@@ -249,8 +265,8 @@ method=$(team_project "$project" merge_method)
 # merge_reasons, the checks every merge gets, whatever the word.
 head_reasons=() default_reasons=() merge_reasons=()
 # The reasons that cannot be told now, a set keyed by each such reason, which later puts it in
-# where it is made, never by reading its text: GitHub unread, a conflict GitHub has not worked out,
-# the plan's files unread, a head that cannot be fetched for the local checks, and local checks
+# where it is made, never by reading its text: GitHub unread, a conflict GitHub has not worked out
+# for a PR in no queue or whose queue entry could not be read, the plan's files unread, a head that cannot be fetched for the local checks, and local checks
 # that could not start (team-checks exit 75). A run again may find each gone, so a refusal on these
 # alone leaves a queued PR in the queue; every other reason is a refusal that stands.
 declare -A untold_reasons=()
@@ -294,11 +310,6 @@ else
   if [[ -z $landed ]]; then
     [[ $state == open ]] || merge_reasons+=("PR #$number is $state, not open")
     [[ $(jq -r .isDraft "$scratch/pr") != true ]] || merge_reasons+=("PR #$number is a draft")
-    case $(jq -r .mergeable "$scratch/pr") in
-      MERGEABLE) ;;
-      CONFLICTING) merge_reasons+=("PR #$number conflicts with its base") ;;
-      *) later merge_reasons "GitHub has not worked out yet whether PR #$number conflicts with its base; try again in a minute" ;;
-    esac
   fi
   # A base with a merge queue lands the PR through it: the team proves a trial commit only as a
   # merge commit, and a PR already in the queue is waited on, never enqueued twice.
@@ -317,6 +328,24 @@ else
     else
       later merge_reasons "GitHub cannot be read: PR #$number's merge queue entry ($(grep -m1 . "$scratch/error" 2>/dev/null || echo "gh api graphql gave no pull request"))"
     fi
+  fi
+  # Whether the PR conflicts with its base, as GitHub worked it out. GitHub does not work it out
+  # again for a PR that stands in the queue when its base moves, so there the queue is the proof:
+  # it builds a trial commit only from a merge that is clean onto what is ahead of the PR, which
+  # queue_commit_problems (bin/lib/team.sh) proves before agent-review goes on it, and an entry
+  # GitHub marks UNMERGEABLE is one it could not merge.
+  if [[ -z $landed ]]; then
+    case $(jq -r .mergeable "$scratch/pr") in
+      MERGEABLE) ;;
+      CONFLICTING) merge_reasons+=("PR #$number conflicts with its base") ;;
+      *)
+        if [[ $entry == UNMERGEABLE ]]; then
+          merge_reasons+=("PR #$number's entry in $base's merge queue is UNMERGEABLE, and GitHub has not worked out whether PR #$number conflicts with its base")
+        elif [[ -z $entry ]]; then
+          later merge_reasons "GitHub has not worked out yet whether PR #$number conflicts with its base; try again in a minute"
+        fi
+        ;;
+    esac
   fi
   [[ $(jq -r .base <<<"$facts") == "$base" ]] || merge_reasons+=("PR #$number targets $(jq -r .base <<<"$facts"), not $project's base $base")
   [[ -z $holds || $holds == "$head" ]] || merge_reasons+=("PR #$number's head is ${head:0:7}, not ${holds:0:7}, the head --holds names")
@@ -820,11 +849,17 @@ if [[ -n $landing ]]; then
       fi
       {
         echo "team-merge: the merge queue dropped PR #$number, which is not merged: $reason"
-        jq -r '.failed // [] | .[] | "  \(.name) failed on the trial merge"
-          + (if .class == "pr" then "" else " as \(.class)" end)
-          + (if (.step // "") == "" then "" else " (\(.step))" end)
-          + (if (.link // "") == "" then "" else ": \(.link)" end)' <<<"$landed_as"
-        if jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
+        jq -r --arg base "$base" '.failed // [] | .[] | if .class == "rules" then "  \(.name) was not reported on the trial merge, which "
+            + (if (.source // "rules") == "rules" then "\($base)\u0027s rules require" else "the project\u0027s required_checks require" end)
+          else "  \(.name) failed on the trial merge"
+            + (if .class == "pr" then "" else " as \(.class)" end)
+            + (if (.step // "") == "" then "" else " (\(.step))" end)
+            + (if (.link // "") == "" then "" else ": \(.link)" end) end' <<<"$landed_as"
+        # A rules drop comes first: the trial merge cannot be judged until every required check
+        # runs there, so even beside a failure of the PR's own it is no merge-base round.
+        if jq -e 'any(.failed // [] | .[]; .class == "rules")' <<<"$landed_as" >/dev/null; then
+          echo "  $(ledger_jq '.failed // [] | rules_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
+        elif jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
           echo "  the trial merge failed what the head ${head:0:7} passed: render team-brief $task builder-merge-base for the builder, then a rereview"
         else
           echo "  run team-merge $task again once what dropped it is fixed"
@@ -881,7 +916,7 @@ else
     die "PR #$number was merged at $(jq -r '.headRefOid[:7]' "$scratch/after"), not at the checked head ${head:0:7}; check it on GitHub"
 fi
 
-trap 'status=$?; rm -rf "$scratch"; ((status == 0)) || echo "team-merge: PR #$number is merged (merge $merge), but its merged event was not logged" >&2' EXIT
+team_exit_trap 'status=$?; ((status == 0)) || echo "team-merge: PR #$number is merged (merge $merge), but its merged event was not logged" >&2'
 ledger_append "$(jq -cn --arg task "$task" --argjson pr "$number" --arg merge "$merge" --arg head "$head" \
   --arg by "$by" --arg project "$project" --arg branch "$branch" --arg message "$message" --arg channel "$channel" \
   --arg url "$url" --arg approval "$word" --argjson checks "$(printf '%s\n' "${local_checks[@]}" | jq -R . | jq -cs 'map(select(. != ""))')" \
@@ -893,7 +928,7 @@ ledger_append "$(jq -cn --arg task "$task" --argjson pr "$number" --arg merge "$
     + if $check_run == null then {} else {check_run: $check_run} end
     + if $checks == [] then {} else {local_checks: $checks} end
     + if $left == null then {} else {phases_left: $left} end')"
-trap 'rm -rf "$scratch"' EXIT
+team_exit_trap -
 jq -n --arg task "$task" --arg url "$url" --arg merge "$merge" --arg head "$head" --arg by "$by" \
   '{task: $task, pr: $url, merge: $merge, head: $head, by: $by}'
 # Pushed now, before the steps that follow, so none of them failing can keep it off origin.

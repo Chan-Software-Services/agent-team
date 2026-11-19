@@ -279,8 +279,7 @@ if [[ ${1:-} == --fix-sent-back ]]; then
       echo "$file: no line's sent_back or before holds a whole number as a string; nothing changed"
       exit 0
     fi
-    fixed=$(mktemp "$file.XXXXXX")
-    trap 'rm -f "$fixed"' EXIT
+    fixed=$(team_mktemp "$file.XXXXXX")
     ledger_jq 'inputs | numbers_fixed($contract)' -nRr <"$file" >"$fixed"
     chmod --reference="$file" "$fixed"
     mv "$fixed" "$file"

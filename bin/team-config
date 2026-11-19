@@ -421,9 +421,7 @@ do_diff() {
 
 do_apply() {
   local item state ours theirs backup='' changed=0 failed=0
-  # Global, so the EXIT trap still sees it.
-  settings=$(mktemp)
-  trap 'rm -f "$settings"' EXIT
+  settings=$(team_mktemp)
   while IFS=$'\t' read -r item state; do
     [[ $state == differs || $state == missing ]] || continue
     case $item in skill-lock.json | plugin* | marketplace*) continue ;; esac

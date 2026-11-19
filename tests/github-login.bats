@@ -150,6 +150,24 @@ worker_dir() {
   assert_equal "$stderr" "library: the worker login team-bot is not on this machine (~/.config/agent-team/gh-worker/hosts.yml is missing): Daniel's team-secrets restore brings it (the secret worker-github-login)"
 }
 
+@test "session_login is worker only with GH_CONFIG_DIR the worker login's directory, else owner, on or off" {
+  worker_login_off
+  library 'session_login'
+  assert_equal "$output" owner
+  GH_CONFIG_DIR=$(worker_dir) library 'session_login'
+  assert_equal "$output" worker
+  GH_CONFIG_DIR=$(worker_dir)// library 'session_login'
+  assert_equal "$output" worker
+  for dir in /elsewhere "$(worker_dir)-old" "" /; do
+    GH_CONFIG_DIR=$dir library 'session_login'
+    assert_equal "$output" owner
+  done
+  worker_login_on
+  library 'session_login; with_worker_login session_login; GH_CONFIG_DIR=$(worker_login_dir) with_owner_login session_login'
+  assert_equal "$output" "$(printf '%s\n' owner worker owner)"
+  assert_equal "$(stub_calls gh)" ""
+}
+
 @test "worker_gh runs gh on the worker login's directory, whatever login the caller has, with its arguments and exit" {
   worker_login_on
   GH_CONFIG_DIR=/elsewhere GH_TOKEN=caller-token GITHUB_TOKEN=caller-token GH_EXIT=3 \

@@ -15,6 +15,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
 - On a project with Effect code, when your session lists `effect-v4`, invoke it before you spec Effect code, and put the installed `effect` version and the check command it gives in the spec.
 - For a research task, write the report your brief asks for, into the same task directory.
 - Explore freely: read code, run commands, run the app and single tests, never a whole suite, which runs only in CI. You may edit files only inside the task directory; a hook blocks everything else.
+  When your task has worktrees in two repositories, the hook also lets you write the `.scratch/task/` of each of your task's other open worktrees (never a ticket worktree's), never its code: when that is the repository's task directory, write each repository's tickets, its own `scope.txt` and a `spec.md` straight into it, where `team-tickets` reads them.
 - The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format (name, description, type, and the fact with its why and how to apply), and name the file in your DONE.
 - Do not commit, push, or open PRs.
 

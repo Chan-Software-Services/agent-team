@@ -25,6 +25,8 @@ Facts are yours to find, never Daniel's: look each one up in the code, the docs 
 
 ## Deliver, in `{{task_dir}}/`
 
+For a task with worktrees in two repositories, each repository's tickets, its own `scope.txt` and a `spec.md` go in that repository's worktree's task directory, where `team-tickets` reads them: your hook lets you write the `.scratch/task/` of each of your task's other worktrees (never a ticket worktree's), never their code.
+
 1. `spec.md`, following `~/.claude/skills/to-spec/SKILL.md` (read and follow it; do not stop to check seams with the user: choose them and state them).
    Its Implementation Decisions name each choice a builder would otherwise make (a library, a file's place, a default, an error's handling, wording users see, which cases a test covers) and how it was made, and end with the line `Left to the builder: none`, or each choice left open and why.
    Between its Implementation Decisions and its Testing Decisions it has a `## Failure modes and assumptions` section, which `team-tickets --check` requires: each way the change can fail that it must handle (a crash mid-step, a rerun, two runs at once, a record or a service missing), with its handling and the test that proves it, and each assumption you could not verify that would change the design if wrong, or `none`; leave out what would change nothing.

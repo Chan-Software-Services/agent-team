@@ -17,6 +17,10 @@
 #                          on stderr, when the file is anything but one login=<a GitHub login>
 #                          line.
 #   worker_login_dir       prints the worker login's gh configuration directory.
+#   session_login          prints the login this session's gh runs on, as the environment says:
+#                          worker when GH_CONFIG_DIR, its trailing slashes cut, is
+#                          worker_login_dir, else owner; it reads no file and runs no gh, and
+#                          tells no token in GH_TOKEN or GITHUB_TOKEN apart.
 #   worker_login_problem   prints why the worker login is not usable on this machine (its
 #                          directory or hosts.yml missing, hosts.yml not a file, empty or not mode
 #                          600), with ~ for the home directory, reading no byte of the file;
@@ -77,6 +81,13 @@ worker_login() {
 # The worker login's gh configuration directory: worker_login_dir
 worker_login_dir() {
   printf '%s\n' "$HOME/.config/agent-team/gh-worker"
+}
+
+# The login this session's gh runs on, worker or owner: session_login
+session_login() {
+  local login_dir=${GH_CONFIG_DIR:-}
+  while [[ $login_dir == */ ]]; do login_dir=${login_dir%/}; done
+  if [[ -n $login_dir && $login_dir == "$(worker_login_dir)" ]]; then echo worker; else echo owner; fi
 }
 
 # Why the worker login is not usable on this machine, from the file's type, size and mode alone:

@@ -555,12 +555,12 @@ lease_check() {
     return
   fi
   echo "load check: leasing a slot of $project (a cold slot's pre-warm can take minutes)"
-  log=$(mktemp)
+  log=$(team_mktemp)
   lease_primary=$primary
   if ! leased=$(cd "$primary" && "$lease" "$holder" 2>"$log" </dev/null); then
     free=$(jq -r 'select(.status == "available") | .path' <<<"$lease_before" | head -n 1)
     if [[ -n $free ]]; then problem="the lease command failed though $free is free: $(grep . "$log" | tail -n 1)"; fi
-    rm -f "$log"
+    team_tmp_rm "$log"
     return_leases || problem="${problem:-the lease command failed}; $lease_left"
     if [[ -n $problem ]]; then
       echo "FAIL lease $project: $problem"
@@ -570,7 +570,7 @@ lease_check() {
     fi
     return
   fi
-  rm -f "$log"
+  team_tmp_rm "$log"
   # Every slot of the pool, the one the lease may just have made included.
   mapfile -t slots < <(pool_slots treehouse "$primary" "${slots[@]}")
   if ! slot=$(pool_slot "$leased" "${slots[@]}"); then
@@ -598,12 +598,12 @@ lease_checks() {
   local project
   # shellcheck disable=SC2329 # invoked by the EXIT trap
   on_lease_exit() { return_leases || echo "load check: $lease_left" >&2; }
-  trap on_lease_exit EXIT
+  team_exit_trap on_lease_exit
   for project in $(team_project --list); do
     [[ $(team_project "$project" | jq -r .pool.provider) == treehouse ]] || continue
     lease_check "$project"
   done
-  trap - EXIT
+  team_exit_trap -
 }
 
 # load_worktree: the lowest free numbered .claude/worktrees/<n> of the code checkout's main
@@ -627,8 +627,6 @@ load_worktree() {
     local id session_tmp=${TEAM_SYSTEM_ROOT:-}/tmp/agent-team-T0 session_dirs=$HOME/.config/agent-team/confine/T0
     for id in "${ids[@]}"; do claude stop "$id" >/dev/null 2>&1 || true; claude rm "$id" >/dev/null 2>&1 || true; done
     [[ -z $wt ]] || remove_load_worktrees "$wt"
-    # The probe's canary directory, by the path mktemp gave.
-    [[ -z $canary ]] || rm -rf -- "${canary:?}" || true
     # The session tmp confine.py made for the sessions this run launched, by its literal path, as
     # team-close removes a task's: only a directory of this user's, never through a link.
     if ((${#ids[@]})) && [[ ! -L $session_tmp && -d $session_tmp && -O $session_tmp ]]; then
@@ -646,7 +644,7 @@ load_worktree() {
   }
   mapfile -t stale < <(stale_load_worktrees)
   remove_load_worktrees "${stale[@]}"
-  trap 'on_exit cleanup' EXIT
+  team_exit_trap 'on_exit cleanup'
 
   wt=$(pool_add_worktree "$main" "" -- --detach --lock --reason "team-load-check $$" "$head") || exit $?
   mkdir -p "$wt/.scratch"
@@ -1248,7 +1246,7 @@ probe_check() {
   git init -q --bare "$wt/.scratch/probe.git"
   # The canary directories the kernel attempts try to remove, outside every root of a session, each
   # role's own, so one role's unconfined removal fails only its own attempt.
-  canary=$(mktemp -d)
+  canary=$(team_mktemp -d)
   for r in "${probe_roles[@]}"; do
     made[$r]=$(probe_attempts "$r")
     while IFS= read -r kernel_id; do
@@ -1585,7 +1583,7 @@ ops_check() {
         echo "FAIL: team-ops-end T0 failed; run it by hand"
     fi
   }
-  trap 'on_exit end_session' EXIT
+  team_exit_trap 'on_exit end_session'
   id=$(TEAM_HOME=$TEAM_HOME "$home/bin/team-worker" T0 ops "$worktree" "${toolkit_args[@]}" --request "$request" -- \
     "$(ops_prompt .scratch/answer.md)")
   record_pending=1
@@ -1635,7 +1633,7 @@ ops_check() {
     fi
   done
 
-  trap 'on_exit true' EXIT
+  team_exit_trap 'on_exit true'
   TEAM_HOME=$TEAM_HOME "$home/bin/team-ops-end" T0 >/dev/null || check_failed "team-ops-end T0 failed; run it by hand"
   if [[ -n $uuid && -n $(transcript_of "$uuid") ]]; then
     check_failed "the session's transcript is still there"

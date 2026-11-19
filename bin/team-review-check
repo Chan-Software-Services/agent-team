@@ -31,7 +31,7 @@
 #   a trial commit queue_commit_problems in bin/lib/team.sh names a problem with: not the head
 #   commit of the PR's queue entry, read from GitHub at the call, an entry that is UNMERGEABLE, a
 #   commit that is not exactly the PR's head merged cleanly onto a commit holding the entry's
-#   base, or a project whose merge_method is not merge; or an entry or commit that cannot be read;
+#   base, as GitHub merges, with no merge driver of the project's own, or a project whose merge_method is not merge; or an entry or commit that cannot be read;
 #   a PR's head whose latest review, read as above, is not a pass;
 #   a PR's head whose latest agent-review check run by the App, read from GitHub, is not a
 #   success, so a trial commit gets the App's check only where the head has it.
@@ -132,7 +132,7 @@ else
   [[ $head == "$sha" ]] || die "$url moved past $sha: its head is now $head; nothing posted"
 fi
 
-scratch=$(mktemp -d)
+scratch=$(team_mktemp -d)
 token='' posted='' answer=''
 # On every exit once a token is minted, it is revoked; a revoke that fails is said and fails the run,
 # after the check run's id when the post was made. A --merge-group run that fails from here on
@@ -151,10 +151,9 @@ finish() {
     fi
   fi
   [[ -z $group || -n $posted || $status != 1 ]] || status=75
-  rm -rf "$scratch"
   exit "$status"
 }
-trap finish EXIT
+team_exit_trap finish
 
 # GitHub's answer of HTTP <code>, the body held in $answer, as a reason: answered <code>
 answered() {
