@@ -64,7 +64,7 @@ guard_is() {
 @test "the guard hooks line runs each guard on a harmless call and fails naming each one that does not pass" {
   only_checks 092-guard-hooks.sh
   tools_at arch
-  local passes="PASS guard hooks: scratch-only-edits, command-guard, lease-fence, lease-fence --coordinator and lease-fence --assistant each pass a harmless Bash call (ls), assistant-discord-guard a read of #assistant, and session-records-guard a Read outside the session records"
+  local passes="PASS guard hooks: scratch-only-edits, command-guard, lease-fence, lease-fence --coordinator, lease-fence --assistant and session-records-guard each pass a harmless Bash call (ls), assistant-discord-guard a read of #assistant, and session-records-guard a Read outside the session records"
   run_bin -0 team-doctor
   assert_equal "$(line_of 'guard hooks')" "$passes"
   # --json gives the line too.
@@ -101,10 +101,19 @@ guard_is() {
   guard_is session-records-guard <<<'[[ $(jq -r .tool_name) != Read ]] || { echo "Blocked by session-records-guard: broken" >&2; exit 2; }'
   run_bin -1 team-doctor
   assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, a read of #assistant, or a Read outside the session records), session-records-guard exited 2 (\"Blocked by session-records-guard: broken\"), so each blocks every call it guards; $fix"
-  # Its real call is a Read of a file in the doctor's scratch directory, by a session that is no UUID.
-  guard_is session-records-guard <<<'jq -e ".tool_name == \"Read\" and .session_id == \"team-doctor\" and (.tool_input.file_path | endswith(\"/session-records-guard-probe\")) and (.cwd as \$cwd | .tool_input.file_path | startswith(\$cwd + \"/\"))" >/dev/null'
+  # One that fails only on the harmless Bash call is named the same way.
+  guard_is session-records-guard <<<'[[ $(jq -r .tool_name) != Bash ]] || { echo "Blocked by session-records-guard: broken on Bash" >&2; exit 2; }'
+  run_bin -1 team-doctor
+  assert_equal "$(line_of 'guard hooks')" "FAIL guard hooks: on a harmless call (ls, a read of #assistant, or a Read outside the session records), session-records-guard exited 2 (\"Blocked by session-records-guard: broken on Bash\"), so each blocks every call it guards; $fix"
+  # Its real calls are the harmless ls and a Read of a file in the doctor's scratch directory, both
+  # by a session that is no UUID.
+  guard_is session-records-guard <<<'jq -c . >>"$BATS_TEST_TMPDIR/records-guard-calls"'
   run_bin -0 team-doctor
   assert_equal "$(line_of 'guard hooks')" "$passes"
+  assert_equal "$(jq -r '.tool_name + " " + .session_id' "$BATS_TEST_TMPDIR/records-guard-calls")" "Bash team-doctor
+Read team-doctor"
+  jq -se '.[0].tool_input.command == "ls" and (.[1] | (.tool_input.file_path | endswith("/session-records-guard-probe"))
+    and (.cwd as $cwd | .tool_input.file_path | startswith($cwd + "/")))' "$BATS_TEST_TMPDIR/records-guard-calls"
 }
 
 @test "the team home line names the team home and what named it: TEAM_HOME or ~/.config/agent-team/home" {

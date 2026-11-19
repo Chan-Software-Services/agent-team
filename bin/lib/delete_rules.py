@@ -4,6 +4,11 @@ bin/lib/command_rules.py appends ROWS to its table after the kill rows (bin/lib/
 Each row is its id, its test over one command_text.Command and the call's context, returning its
 reason when it refuses (with an allowed way of its own, (reason, allowed)) and None when it passes,
 and its allowed way, as kill_rules.py's are.
+bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
+operand, below: expand (a word as the paths the shell may make of it), reachable (the
+directories a relative one is read against, as Bases, those of _candidates or, past a cd it cannot
+follow, the rest) and Unread, which either raises, and find_paths (find's start paths among its
+words).
 A recursive delete passes only when every path it deletes resolves strictly inside a root (the
 worktree or the job tmp), is no kept path (a root or the worktree's .scratch/task) nor a directory
 holding one, and is no repository's .git; and when no operand holds a variable it leaves empty,
@@ -473,7 +478,7 @@ def _substitute(text, context, depth, at=None):
     return results
 
 
-def _expand(word, context, at=None):
+def expand(word, context, at=None):
     """The word as the paths the shell may make of it, relative ones as they stand."""
     # The walk decoded a $'...' escape or expanded a brace range in a word it marks written.
     if "\\" in word or getattr(word, "written", None) is not None:
@@ -551,7 +556,7 @@ def _reached_from(target, written, command, bases, context):
     if any("PWD" in reference.groups() for reference in REFERENCE.finditer(target)):
         raise Unread
     readings = {}
-    for path in _expand(target, context):
+    for path in expand(target, context):
         if not path.startswith("/") and (context.environ.get("CDPATH") or _named("CDPATH", context)):
             raise Unread
         for base in bases if not path.startswith("/") else bases[:1]:
@@ -590,7 +595,7 @@ def _candidates(context):
     if any(target is None for target, _ in targets):
         raise Unread
     found = [Base(context.cwd)]
-    absolute = [(t, c) for t, c in targets if all(p.startswith("/") for p in _expand(t, context))]
+    absolute = [(t, c) for t, c in targets if all(p.startswith("/") for p in expand(t, context))]
     relative = [(t, c) for t, c in targets if (t, c) not in absolute]
     for target, command in absolute:
         found = _merged(found, _reached(target, command, tuple(found), context), False)
@@ -598,6 +603,45 @@ def _candidates(context):
         for base in list(found):
             for target, command in relative:
                 found = _merged(found, _reached(target, command, (base,), context), False)
+    return tuple(found)
+
+
+@functools.lru_cache(maxsize=None)
+def reachable(context):
+    """_candidates, or, when a cd cannot be followed, the cwd and each cd target that can be, each
+    relative one from every directory found so far, for a reader that judges a relative path from
+    every directory the call may be in (session_records.py), so a cd it cannot follow leaves the
+    others judged; Unread with no cwd or past MAX_CANDIDATES directories."""
+    try:
+        return _candidates(context)
+    except Unread:
+        pass
+    if context.cwd is None:
+        raise Unread
+
+    def reached(target, command, bases):
+        try:
+            return _reached(target, command, bases, context)
+        except Unread:
+            return []
+
+    def absolute(target):
+        try:
+            return all(p.startswith("/") for p in expand(target, context))
+        except Unread:
+            return None
+
+    targets = [(t, command) for command in _walked(context) for t in _cd_targets(command) if t is not None]
+    kinds = {target: absolute(target) for target, _ in targets}
+    found = [Base(context.cwd)]
+    for target, command in targets:
+        if kinds[target]:
+            found = _merged(found, reached(target, command, tuple(found)), False)
+    relative = [(t, c) for t, c in targets if kinds[t] is False]
+    for _ in relative:
+        for base in list(found):
+            for target, command in relative:
+                found = _merged(found, reached(target, command, (base,)), False)
     return tuple(found)
 
 
@@ -761,7 +805,7 @@ def _judge(word, opening, context, at=None):
     the cd, and its way through."""
     try:
         paths, empty = [], False
-        for path in _expand(word, context, at):
+        for path in expand(word, context, at):
             if path and not path.startswith("/"):
                 paths += [(os.path.join(base.path, path), base) for base in _bases(context, at)]
             elif path:
@@ -801,7 +845,7 @@ def inside_roots(word, context, at=None):
     cannot read it. The kill rows read tmux's -S socket by it."""
     try:
         paths = []
-        for path in _expand(word, context, at):
+        for path in expand(word, context, at):
             if not path:
                 return False
             paths += [path] if path.startswith("/") else [os.path.join(b.path, path) for b in _bases(context, at)]
@@ -829,7 +873,7 @@ def _rm(args):
     return recursive, operands
 
 
-def _starts(args):
+def find_paths(args):
     """find's start paths among its words after its name: past its leading options and a -- that
     ends them, its words before the first that starts with -, ( or !, a {} among them."""
     k = 0
@@ -858,9 +902,9 @@ def _holds(args, option):
 
 
 def _find_starts(args, context, at=None):
-    """The verdicts on find's start paths: each of _starts', and its -files0-from list's, which the
-    guard cannot read before it runs (with no root, outside)."""
-    starts = _starts(args)
+    """The verdicts on find's start paths: each of find_paths', and its -files0-from list's, which
+    the guard cannot read before it runs (with no root, outside)."""
+    starts = find_paths(args)
     # With none, not even a {} that xargs or -exec fills or a -files0-from list, find takes the
     # directory it runs in.
     found = [] if starts or _holds(args, "-files0-from") else [(EMPTY if context.roots else OUTSIDE, NO_START, None)]
