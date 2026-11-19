@@ -65,7 +65,10 @@
 # with no other head logged since, by a pr event of the PR or by any review of the task) is left out
 # too, since team-merge is landing it, and so is one the queue dropped for a failure of its own on
 # the trial merge until a pr event of it or a review of the task follows the drop (queue_state's
-# round_due), since the round is the builder's and no word is asked on the head that failed. While
+# round_due), since the round is the builder's and no word is asked on the head that failed, and so
+# is one the queue dropped for a check the base's rules require and no workflow made on the trial
+# commit until a queued, a pr event of it or a review of the task follows the drop (queue_state's
+# rules_due), since the fix is the base's rules or a workflow, as team-sweep's trial-rules says. While
 # the reviewer App is off (no bin/lib/review-app), the team's own project's ready PRs are listed,
 # since they merge only on the per-head word.
 # While a withdrawal of the default word stands (the latest merge-default-withdrawn or
@@ -133,7 +136,8 @@
 # event of a kind the contract marks inbox, run it at their end (refresh_inbox in
 # bin/lib/team.sh), going on with a line on stderr when it fails; team-timers run runs it every
 # five minutes on the lease holder. It refuses
-# in a worker session (worker_refusal in bin/lib/team.sh), and, but on --item, on a machine that is
+# in a worker session (worker_refusal in bin/lib/team.sh), but --item in the assistant's, which
+# reads waiting.json as the coordinator does, and, but on --item, on a machine that is
 # fenced or lost the lease (lease_refusal); one run at a time holds
 # ~/.local/state/agent-team/inbox.lock, waiting for it at most a minute (TEAM_INBOX_LOCK_SECONDS
 # replaces the 60 s, the tests' seam; 0 does not wait).
@@ -168,7 +172,7 @@ case $#:${1:-} in
 esac
 [[ -z $item || $item =~ ^[1-9][0-9]{0,2}$ ]] || usage_error "$USAGE"
 [[ $LOCK_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_INBOX_LOCK_SECONDS must be a whole number of seconds, not '$LOCK_SECONDS'"
-why=$(worker_refusal "" "edits nothing in Discord") && die "$why"
+why=$(worker_refusal "" "edits nothing in Discord" ${item:+--read}) && die "$why"
 
 # --item reads waiting.json alone: no lock, no Discord and no lease check, which the lease-fence
 # hook makes on a fenced machine.
@@ -196,8 +200,8 @@ flock "${wait_flag[@]}" "$lock" || {
   exit 75
 }
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"; rm -f "$TEAM_HOME/.waiting.json.$$" "$TEAM_HOME/.waiting.md.$$"' EXIT
+scratch=$(team_mktemp -d)
+team_tmp_add "$TEAM_HOME/.waiting.json.$$" "$TEAM_HOME/.waiting.md.$$"
 
 # Call Discord: call <path> [<curl options>...]; writes the answer to $scratch/answer, or sets
 # STATUS (the HTTP status, empty with no answer) and ERROR (curl's first line, or why no call was

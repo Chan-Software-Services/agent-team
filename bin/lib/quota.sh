@@ -18,7 +18,7 @@ QUOTA_SECONDS=30
 
 quota_read() {
   local quota_seconds=$1 quota_kill=${2:-10} quota_rc=0 quota_out quota_errors
-  quota_errors=$(mktemp)
+  quota_errors=$(team_mktemp)
   quota_out=$(TEAM_HOME=$TEAM_HOME timeout --kill-after="$quota_kill" "$quota_seconds" "${TEAM_LIB%/*}/team-quota" status --json 2>"$quota_errors" </dev/null) || quota_rc=$?
   QUOTA_STATUS=null QUOTA_ERROR=''
   case $quota_rc in
@@ -33,5 +33,5 @@ quota_read() {
       QUOTA_ERROR=${QUOTA_ERROR:-team-quota status exited $quota_rc with no message}
       ;;
   esac
-  rm -f -- "$quota_errors"
+  team_tmp_rm "$quota_errors"
 }

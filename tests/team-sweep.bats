@@ -374,13 +374,17 @@ T5 no-worker: no live session among its 1 launch (latest T5-builder 33333333); n
   launch T12 builder 5fcd3daf
   run_bin -1 team-sweep
   assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
-  # A later builder's launch after the pr is work asked of the task again.
+  # A later builder's launch of its worktree after the pr hands it on: the later builder holds
+  # the work, so its summary-blocked state is no prompt, while a dialog open still is.
   : >"$TEAM_HOME/ledger.jsonl"
   opened T12
   launch T12 builder 5fcd3daf
   event T12 pr '{url: "https://github.com/owner/proj/pull/5", head: "1234567"}'
   launch T12 builder 6a6a6a6a
   sessions "$(session 5fcd3daf T12-builder idle blocked)" "$(session 6a6a6a6a T12-builder busy working)"
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  sessions "$(session 5fcd3daf T12-builder waiting blocked)" "$(session 6a6a6a6a T12-builder busy working)"
   run_bin -1 team-sweep
   assert_contains "$output" "T12 waiting-input: T12-builder 5fcd3daf is waiting for input"
 }
@@ -1129,6 +1133,85 @@ due() {
     failed: [{name: "data", class: "infrastructure", kind: "setup", link: "", step: ""}]}'
   run_bin -1 team-sweep
   assert_equal "$output" "$(due)"
+  no_github
+}
+
+# A dequeued of PR 5 at 03:30 whose failed holds rules failures of Analyze (python) and
+# Analyze (actions) and one of the PR's own, test: the queue's trial commit missed checks the
+# base's rules require.
+rules_drop() {
+  ledger_line --arg url https://github.com/owner/proj/pull/5 '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5",
+    reason: "Analyze (python) never reported on the trial commit, which main'"'"'s rules require",
+    failed: [{name: "test", class: "pr", kind: "failed", link: "https://github.com/owner/proj/actions/runs/1/job/2", step: "Run tests"},
+      {name: "Analyze (python)", class: "rules", kind: "missing", link: "", step: ""},
+      {name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}]}'
+}
+
+@test "trial-rules: a PR the queue dropped for a check the base's rules require and no workflow made, with no merge-due, trial-failed or queue-wait, until it is queued again" {
+  local url=https://github.com/owner/proj/pull/5
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  rules_drop
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 trial-rules: Analyze (python) and Analyze (actions) never reported on the trial commit of $url, which main's rules require; next: run team-doctor and tell Daniel; run team-merge T3 once the rules or the workflow are fixed"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .session, .name])' <<<"$output")" '[["T3","trial-rules",null,null]]'
+  # While a team-merge holds the task's lock, it is that run's to log.
+  local pid
+  pid=$(hold_merge_lock T3)
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  release_merge_lock "$pid"
+  # The fixed rules' team-merge enqueues the same head again: queued, it is queue-wait's, and no
+  # trial-rules.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 queue-wait: PR $url is in the merge queue since 2026-10-22T04:00:00Z with no team-merge waiting on it; next: run team-merge T3 with Bash run_in_background, which goes on waiting and logs how it ends"
+  # The default word still holds on the same head, with no review or pr event since the rules
+  # drop: once the queue drops it for no failure of its own, it is merge-due again.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "GitHub gives no reason"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  no_github
+}
+
+@test "trial-rules: a rules drop of a PR of the task's second project names that project's base, and a pr event of the PR ends it" {
+  local url=https://github.com/owner/other/pull/9
+  opened T3
+  event T3 worktree-added '{project: "other", branch: "feat/T3-work", base: "dev", base_sha: "0123456", worktree: "/w/2"}'
+  launch T3 reviewer 11111111
+  approved T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  event T3 pr "{url: \"$url\", head: \"a1b2c3d\"}"
+  event T3 review '{verdict: "pass", head: "a1b2c3d4e5", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T02:00:00Z", task: "T3", event: "ci", url: $url, head: "a1b2c3d4e5", outcome: "passed"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "other"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "lint never reported on the trial commit, which dev'"'"'s rules require",
+    failed: [{name: "lint", class: "rules", kind: "missing", link: "", step: ""}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 trial-rules: lint never reported on the trial commit of $url, which dev's rules require; next: run team-doctor and tell Daniel; run team-merge T3 once the rules or the workflow are fixed"
+  # A new head of the PR ends it: the drop stood for the head it named.
+  event T3 pr "{url: \"$url\", head: \"b2c3d4e\"}"
+  run_bin team-sweep
+  assert_equal "$(grep -c trial-rules <<<"$output")" 0
+  # A check the project's required_checks alone require is said as theirs, and its next step
+  # names neither team-doctor nor Daniel.
+  event T3 review '{verdict: "pass", head: "b2c3d4e5f6", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "queued", url: $url, head: "b2c3d4e5f6", project: "other"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:30:00Z", task: "T3", event: "dequeued", url: $url, head: "b2c3d4e5f6", reason: "data never reported on the trial commit, which the project'"'"'s required_checks require",
+    failed: [{name: "data", class: "rules", kind: "missing", link: "", step: "", source: "required_checks"}]}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep trial-rules <<<"$output")" "T3 trial-rules: data never reported on the trial commit of $url, which the project's required_checks require; next: run team-merge T3 once the project's required_checks or the workflow are fixed"
+  # Beside one the rules require, each is said as what requires it.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:31:00Z", task: "T3", event: "queued", url: $url, head: "b2c3d4e5f6", project: "other"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T06:00:00Z", task: "T3", event: "dequeued", url: $url, head: "b2c3d4e5f6", reason: "",
+    failed: [{name: "data", class: "rules", kind: "missing", link: "", step: "", source: "required_checks"},
+      {name: "lint", class: "rules", kind: "missing", link: "", step: "", source: "rules"}]}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep trial-rules <<<"$output")" "T3 trial-rules: lint never reported on the trial commit of $url, which dev's rules require; data never reported on the trial commit of $url, which the project's required_checks require; next: run team-doctor and tell Daniel; run team-merge T3 once the rules, the project's required_checks or the workflow are fixed"
   no_github
 }
 

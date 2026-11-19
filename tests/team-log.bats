@@ -202,7 +202,7 @@ TABLE
   )
   actual=$(jq -r '.kinds | to_entries[] | [.key, ([.value.writer] | flatten | join(",")), (.value.required | keys_unsorted[])] | join(" ")' "$CONTRACT")
   assert_equal "$actual" "$expected"
-  assert_equal "$(jq -c '.kinds.launch.optional' "$CONTRACT")" '{"project":"string","branch":"string","machine":"string","model":"string","request":"string","discord_message":"id","brief":"string","template":"string","admission":"string","past_ask":"array","ticket":"string"}'
+  assert_equal "$(jq -c '.kinds.launch.optional' "$CONTRACT")" '{"project":"string","branch":"string","machine":"string","model":"string","model_from":["task","launch","registry","settings","default"],"request":"string","discord_message":"id","brief":"string","template":"string","admission":"string","past_ask":"array","ticket":"string"}'
   assert_equal "$(jq -c '.kinds.review.required.verdict' "$CONTRACT")" '["pass","findings"]'
   assert_equal "$(jq -c '.kinds.answered.optional' "$CONTRACT")" '{"discord_message":"id","item":"number"}'
   assert_equal "$(jq -c '.kinds.asked.optional' "$CONTRACT")" '{"discord_message":"id","script":"string","sha256":"string","tickets":"array"}'
@@ -258,7 +258,7 @@ TABLE
       return 1
     }
   done
-  grep -Eq '^  opened +team-open +project, path, type, title, branch, base, base_sha, worktree; optional story  \(story is the backlog story .*team-merge marks done\)$' <<<"$output"
+  grep -Eq '^  opened +team-open +project, path, type, title, branch, base, base_sha, worktree; optional story, builder_model  \(story is the backlog story .*team-merge marks done; builder_model is the task.s builder model, .*default .*\)$' <<<"$output"
   grep -Eq '^  review +team-log +verdict \(pass\|findings\), head; optional agent_review, sent_back \(list of whole numbers\), findings \(object\), before \(list of whole numbers\), guarded \(list\), widening \(list of whole numbers\), memory  \(verdict: findings whenever sent_back names a finding, whatever the reviewer.s word, .*sent_back: the numbers of the findings sent back .*findings: the count of each kind.*before: the numbers of the plain notes .*guarded: the guarded areas.*widening: the numbers of the new findings that sit in what the last fix added for an earlier finding, so reverting that fix would end them, as a rereview marks them; empty for none; memory: the file in the task directory of the memories.*\)$' <<<"$output"
   local retired
   for retired in merge-preapproved merge-preapproval-withdrawn merge-standing merge-standing-withdrawn; do
@@ -272,7 +272,7 @@ TABLE
   grep -Eq '^  walk-note +team-thread, team-ui +-; optional discord_message \(id\)  \(a message of Daniel.s on the walk that is on.*never its words.*\)$' <<<"$output"
   grep -Eq '^  walk +team-ui +state \(on\|off\); optional thread \(interview\), reseeded \(id\), reseeded_port \(number\)  \(a manual QC walk of the task.*team-ui --walk.*\)$' <<<"$output"
   grep -Eq '^  merge-approved +team-log +url, discord_message \(id\); optional head; pushed at once  \(.*team-log requires head of every new line.*\)$' <<<"$output"
-  grep -Eq '^  launch +team-worker +role, session, worktree, toolkits \(list\); optional project, branch, machine, model, request, discord_message \(id\), brief, template, admission, past_ask \(list\), ticket  \(request is the link to Daniel.s Discord message, on an ops launch, and discord_message its id, a message no other ops launch ran on \(team-worker refuses one that did\), which only an ops launch carries; model is the --model the session launched on, .*; admission is the id of the capacity admission the launch was made on \(team-capacity admit.s first line\), absent on T0, ops and a launch from before 2026-11-11; past_ask is the ids of the open asks the launch went past \(team-worker --past-ask\), which then park nothing, absent when it names none; ticket is the two-digit number of the ticket whose ticket worktree a builder launched in .*\)$' <<<"$output"
+  grep -Eq '^  launch +team-worker +role, session, worktree, toolkits \(list\); optional project, branch, machine, model, model_from \(task\|launch\|registry\|settings\|default\), request, discord_message \(id\), brief, template, admission, past_ask \(list\), ticket  \(request is the link to Daniel.s Discord message, on an ops launch, and discord_message its id, a message no other ops launch ran on \(team-worker refuses one that did\), which only an ops launch carries; model is the model the session was launched on, and model_from where it came from: .*; admission is the id of the capacity admission the launch was made on \(team-capacity admit.s first line\), absent on T0, ops and a launch from before 2026-11-11; past_ask is the ids of the open asks the launch went past \(team-worker --past-ask\), which then park nothing, absent when it names none; ticket is the two-digit number of the ticket whose ticket worktree a builder launched in .*\)$' <<<"$output"
   grep -Eq '^  answered +team-log, team-answer +id, answer; optional discord_message \(id\), item \(number\); pushed at once  \(Daniel.s answer to the asked of its id; .*never logged twice for one ask; item: .*team-answer --item alone\)$' <<<"$output"
   grep -Eq '^  asked +team-log, team-ask +id, text; optional discord_message \(id\), script, sha256, tickets \(list\)  \(a decision put to Daniel, which parks the task by itself until it is answered .*script and sha256: .*together.*team-run-approved.*tickets: .*team-ask --tickets.*\)$' <<<"$output"
   grep -Eq '^  ran +team-run-approved +id, exit \(number\); pushed at once  \(.*\)$' <<<"$output"
@@ -2574,6 +2574,26 @@ ticket_launched() {
   opened_task T14
   AGENT_TEAM_ROLE=coordinator run_bin -0 team-log T14 resumed all=true
   assert_equal "$(logged_after 2)" '{"task":"T14","event":"resumed","all":true}'
+}
+
+@test "--check and --check-lifecycle run in an assistant session as for the coordinator, writing nothing, and every other form is refused to it" {
+  opened_task T14
+  assistant_reads 0 team-log --check
+  assert_equal "$output" "$TEAM_HOME/ledger.jsonl: $(wc -l <"$TEAM_HOME/ledger.jsonl") lines meet the ledger contract"
+  assistant_reads 0 team-log --check "$TEAM_HOME/ledger.jsonl"
+  assistant_reads 0 team-log --check-lifecycle
+  [[ -n $output ]]
+  echo '{"task":"T14"' >"$BATS_TEST_TMPDIR/broken.jsonl"
+  assistant_reads 1 team-log --check "$BATS_TEST_TMPDIR/broken.jsonl"
+  local before
+  before=$(files_state)
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-log T14 resumed all=true
+  assert_equal "$stderr" "team-log: an assistant session runs no team-log: that is the coordinator's; send it your message"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-log T14 --from-message 'T14 DONE 01 abc1234 the ticket' --print
+  assert_equal "$stderr" "team-log: an assistant session runs no team-log: that is the coordinator's; send it your message"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-log --fix-sent-back
+  assert_equal "$stderr" "team-log: an assistant session runs no team-log: that is the coordinator's; send it your message"
+  assert_equal "$(files_state)" "$before"
 }
 
 @test "an event holding an address at a public provider is refused, naming its field and never the value, since the records hook would refuse every later ledger commit" {

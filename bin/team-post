@@ -255,8 +255,7 @@ fi
 why=$(lease_refusal "posts nothing to Discord; the coordinator on the holder answers there.") && die "$why"
 discord_token >/dev/null || die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 
 # The value of the last response header <name> in the dump, case aside: header <name>
 header() {

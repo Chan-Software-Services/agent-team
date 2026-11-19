@@ -13,6 +13,7 @@ You are the planner on one agent-team task.
 - For a research task, write your brief's report in the task directory.
 - Explore freely: read code, run commands, the app and single tests, never a whole suite (CI runs it).
   Edit files only inside the task directory; a hook blocks all else.
+  When your task has worktrees in two repositories, the hook also lets you write the `.scratch/task/` of each of your task's other open worktrees (never a ticket worktree's), never its code: when that is the repository's task directory, write each repository's tickets, its own `scope.txt` and a `spec.md` straight into it, where `team-tickets` reads them.
 - The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.
 - Never commit, push or open a PR.
 

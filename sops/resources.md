@@ -145,7 +145,8 @@ With ids, a call that fails saying a process is gone (`No such process`, a short
 An id listed under a name that is no team session fails at once, since a name does not change.
 A session it still cannot place is a warning, and the launch stands.
 `place` with no ids, the heartbeat's and the doctor's fix, waits for nothing and retries a failed call once, so the heartbeat's `capacity` step stays within its time limit.
-Once all of a scope's processes end, systemd removes the scope.
+Once all of a scope's processes end, systemd removes the scope, failed or not: `place` starts it with `CollectMode` `inactive-or-failed`, since a scope the kernel kills for memory ends `failed` (`Result=oom-kill`) and would otherwise stay loaded until a `reset-failed`.
+Checked on home-pc on 2026-11-17 with throwaway scopes in a slice of their own, each around a process that outgrew a 64 MiB `MemoryMax`: the one without the property stayed listed `loaded failed`, and the one with it was unloaded (`LoadState=not-found`).
 
 The assumptions, checked on home-pc on 2026-11-01 (T175 build note `01-cgroups.md`): the user manager's cgroup delegates `cpu`, `memory` and `pids`; systemd is 262; Docker's cgroup driver is `systemd` on cgroup v2; the claude daemon was started from a Konsole tab, and every session it starts sits in that tab's scope under `user@1000.service`; and Daniel's own run of the probe moved such a process into `agent-team-probe.scope`.
 The tests use a stub for the `busctl` call; a worker probes the user manager only with throwaway scopes of its own outside `agent-team.slice`, and a live check of a team session's placement is Daniel's or the coordinator's.
@@ -294,7 +295,7 @@ So one spike in Daniel's use never stows a task, and a change Daniel makes takes
 
 While it is confirmed, the plan's steps, in order, each with what it frees (the reservations it ends, the spike allowance taken again over the sessions left):
 
-1. stop each finished session: idle, its work handed on, by the rule `team-worker` stops a task's own sessions by (`handed_on_launches` in `bin/lib/ledger.jq`), over every open task; with no new launch, a builder counts only once a later builder has launched in its worktree (its work handed on, as for `team-worker`, by a `ticket-done`, `pr` or `done` after its launch), since a builder whose PR is open still takes the review's findings;
+1. stop each finished session: idle, its work handed on, by the rule `team-worker` stops a task's own sessions by (`handed_on_launches` in `bin/lib/ledger.jq`), over every open task; with no new launch, a builder counts only once a later builder has launched in its worktree, or for a ticket builder once its ticket's `ticket-done` follows, since a builder whose PR is open still takes the review's findings; for a builder with no ticket that later launch hands its work on, even when Claude Code calls it blocked for a last summary with no dialog open, while a ticket builder's is handed on, as for `team-worker`, by its ticket's `ticket-done`, a `done` of its session, or a stow and a later launch of its worktree;
 2. stop each running team stack of an open task (its worktree's own, kind `dev`) that no busy session, Daniel's own included, works in, and whose task's walk does not count now;
 3. stow the open tasks with a live worker or a reservation left, the most recently opened first (its work the least invested) and any whose walk counts now after every other, until what is left fits; at none, every one, a walk's included; a task whose `stowing` stands is never named, and what it holds counts as freed.
 

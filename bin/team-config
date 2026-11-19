@@ -70,6 +70,9 @@
 # Nothing else of ~/.claude is read or copied: not ~/.claude.json, the credentials file, the
 # channels' tokens or the transcripts; of ~/.claude/projects/, only the memory folders.
 # Exit 0 done (diff: no difference), 1 a difference or a refusal, 2 usage error.
+# An assistant session is refused apply and capture, the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its other subcommands and --help
+# still answer.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
@@ -77,6 +80,7 @@ usage="usage: team-config diff [--full] [--json] | apply | capture | own [--json
 [[ $# -ge 1 ]] || usage_error "$usage"
 command=$1
 shift
+if [[ $command == @(apply|capture) ]] && why=$(assistant_refusal "runs no team-config $command"); then die "$why"; fi
 full=0 json=0
 case $command in
   diff)
@@ -417,9 +421,7 @@ do_diff() {
 
 do_apply() {
   local item state ours theirs backup='' changed=0 failed=0
-  # Global, so the EXIT trap still sees it.
-  settings=$(mktemp)
-  trap 'rm -f "$settings"' EXIT
+  settings=$(team_mktemp)
   while IFS=$'\t' read -r item state; do
     [[ $state == differs || $state == missing ]] || continue
     case $item in skill-lock.json | plugin* | marketplace*) continue ;; esac

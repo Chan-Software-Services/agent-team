@@ -34,7 +34,8 @@ closing line again, ending in a full stop; null for a call of one line, or when 
 holds the refused command. It prints nothing when no row refuses, and exits 0
 either way. Any error of its own exits 1 with one line on stderr, "command_rules.py: <ErrorType>:
 <message>", or "<row id>: <ErrorType>: <message>" when a row raised, so the hook refuses: a guard
-that cannot decide refuses.
+that cannot decide refuses. A RecursionError's message names Python's recursion limit, which its
+own does not: "RecursionError: a reading nested deeper than Python's recursion limit of <n> frames".
 
 A command's name is its first word's basename, its quotes removed, so a path or a quoted name is
 the name; and as a reading of where a command starts took it, a word past a wrapper's options
@@ -68,7 +69,75 @@ The rows, in order:
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
     none, or team-thread with a task id (T and digits) or archive as its first word (team-thread
-    wait T<n> passes, which each role's settings allow or deny).
+    wait T<n> passes, which each role's settings allow or deny); for the assistant alone
+    (AGENT_TEAM_ROLE assistant), the coordinator's read forms pass: any of the four with a first
+    word --help or -h, which the library answers before the script does anything, and team-inbox
+    --item <n> with no other word, which reads waiting.json alone.
+  assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts,
+    which its deny rules held by any call naming the script until this row: team-checkpoint,
+    team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
+    team-review-comment, team-stow and claude-coordinator with any words; team-capacity install
+    or place, team-config apply or capture, team-heavy run, team-lease take, renew or release,
+    team-secrets restore or save, team-stack down, seed, stop or up and team-timers disable,
+    enable or run, any of those among the words before a --; either kind passing with a first
+    word --help or -h, which the library answers before the script does anything. Reason: the
+    coordinator's acts, which an assistant session never runs (<the act and its subcommand>); its
+    --help and a read of its file pass. Each act but team-heavy run also refuses the assistant
+    itself (assistant_refusal in bin/lib/team.sh), where the walk cannot read a call.
+  assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
+    rules held by any gh api call with a field and any release, secret or variable call until this
+    row, and the other groups' writes, many of which (gh gist create, gh workflow run) no deny
+    rule held, the pr, issue and repo writes its settings still deny among them. gh api (after
+    gh's own options, as cobra finds its command) with a last -X or --method (joined too, any
+    case) other than GET or HEAD, with --input, or with a field (-f, -F, --field, --raw-field,
+    joined too) and no method, its endpoint being its first word that is no option and no option's
+    value; but for the endpoint graphql, whose fields pass, whatever the method, only as a query:
+    a query field (and every one) whose value begins with no @, holds no $ or backtick (a GraphQL
+    variable reads as the shell's expansion, the walk having dropped the quotes) and has no
+    mutation or subscription as a whole name. Any other gh or gh-axi call whose group (the first
+    word that is no option and no option's value, a long option without = and a two-character
+    short one taking the next word, but --help and -h) and subcommand are not among the reads
+    GITHUB_READS lists for each: a group it lists no read of (a user alias, an extension, gh co,
+    copilot, preview, gh-axi setup and update but its --check), a subcommand outside its group's
+    reads, a subcommand's own outside its reads (repo deploy-key, repo autolink, gh-axi issue
+    subissue), gh auth status with -t or --show-token, which prints the token, gh config get of a
+    key gh config list does not name (GH_CONFIG_KEYS; a host's oauth_token is its token), and gh
+    repo clone or gh gist clone with words after --, which it passes to git clone. gh alone, a
+    group GITHUB_READS lists with no subcommand, and the groups that read with any words (search,
+    browse, status, licenses, completion, help, version) pass. Reason: a GitHub write, which an
+    assistant session never makes (<the method, the body, the field, the mutation, the query it
+    cannot read, or the group and subcommand>).
+  assistant-thread-cache, for the assistant alone: a call naming the thread cache the Discord
+    guard trusts (assistant-threads, as written or with its quotes and backslashes removed, or the
+    library's ASSISTANT_THREADS or assistant_thread_keep), which its deny rule refused whatever it
+    ran until this row, unless it only reads it: unless it is a plain list of readers, each by its
+    bare name, joined by pipes, &&, || and ; alone, in any of the texts the walk reads. Refused by
+    a backslash-newline anywhere in it, which Bash removes before it reads the call, so one may
+    join what the row reads apart ($ and {, < and <); by a redirection that writes (>, >>, >|, &>,
+    &>>, <>, and >& to no fd, with an fd before it) anywhere but /dev/null, a bare one with no
+    command among them (command_text.call_redirections), a named fd's ({NAME}<, which assigns
+    NAME), a heredoc (<<, <<-), whose body the walk does not read in full, a here-string (<<<)
+    whose word holds a $ or a backtick, and any other but a file's input (<), a here-string or an
+    fd's duplication; by a writer naming it (tee, cp, mv, install, ln, rsync, truncate, rm,
+    unlink, shred, touch, chmod or chown, by a word or an option's value after its =, dd's of=
+    value, and sed, perl or ruby with -i or --in-place); by any command that is no plain reader by
+    its bare name (CACHE_READERS: cat, grep, head, tail, wc, jq, diff and the like, none with an
+    option that writes a file, runs a program or assigns a variable but those named here; dd
+    writing to no file; sed with only plain options and a plain script, no w, W or e; sort with no
+    -o, -T or --compress-program; diff with no -l or --paginate, which runs pr; test and [ with no
+    -v, which evaluates a subscript, or -R), so a wrapper (env, timeout, nice, xargs, time and the
+    rest, whose option may stand before the program it runs), a builtin that assigns (read,
+    printf, cd, declare, let), an interpreter's program, a reader by a path, a source of the
+    library and a shell string are refused; by any assignment, before a command or on its own,
+    since a PATH may find another program of a reader's name; by an arithmetic expansion or
+    command ($((, $[, (()) or a parameter expansion (${) anywhere in its text, which may assign;
+    and by a call that is no plain list of commands (command_text.plain_sequence: no
+    group, subshell, loop, function, substitution, background or !; and no code part but the
+    call's own text, command_text.code_parts). Reason: the thread cache the Discord guard trusts,
+    which only the scripts and hooks write (<the path as written, its quotes removed; the
+    backslash-newline; the redirection and its target; the command that is no plain reader, as
+    written; the assignment; the arithmetic or parameter expansion; or a call that is no plain
+    list of readers>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -100,10 +169,13 @@ The rows, in order:
     Reason: a session's GitHub login is its settings', as for the login rows.
 Each row is given the call's context (Context): the command's text, the hook input's cwd, the
 worktree, the job tmp, the roots, the kept paths and the role, each read on a row's first use of
-it; only the kill and delete rows use it, so a call with neither reads no process or file for it.
+it; only the kill and delete rows read the process table or a file from it, so a call with
+neither reads no process or file for it.
 A row reads every command the walk yields, a shell's script file and a sourced one among them (a
 file named team-worker that bash runs is team-worker), but for the upload and delete rows, which
-read no file's name as curl or rm.
+read no file's name as curl or rm. A row with a call test (assistant-thread-cache) runs it first,
+on the call's command, for what no one command holds (a redirection, the call's name of the
+cache), its where being the first line holding the refused path or command.
 Contract: the kill and delete rows refuse the forms an agent writes when it means no harm, each
 form tests/command-guard-kill.bats and tests/command-guard-delete.bats hold, plainly spelled, run
 directly or through the walk's wrappers and strings (bash -c, eval, a heredoc or here-string a
@@ -147,8 +219,8 @@ from typing import Callable
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    ASSIGNMENT, call_commands, command_name, commands, from_wrappers, has_blank, heads, leads, read_command,
-    short_cluster,
+    ASSIGNMENT, DIRECT, Command, call_commands, call_redirections, command_name, commands, from_wrappers, has_blank,
+    code_parts, heads, leads, plain_sequence, read_command, short_cluster,
 )
 import delete_rules  # noqa: E402
 import kill_rules  # noqa: E402
@@ -185,12 +257,16 @@ EMPTIES = {
 class Row:
     """A rule: its id, its test over one Command and the call's context, which refuses by
     returning True (the row's reason), a reason of its own, or a reason and an allowed way of its
-    own as a tuple, its reason and its allowed way (None: the refusal names none)."""
+    own as a tuple, its reason and its allowed way (None: the refusal names none); and, for a row
+    that reads what no Command holds, its call test over the call's command and context, run
+    before its test, which refuses by returning its reason and the words to find the refused line
+    by, or None."""
 
     id: str
     test: Callable
     reason: str | None
     allowed: str | None = None
+    call: Callable | None = None
 
 
 # A session id's first 8 characters, which name a background session's job directory.
@@ -428,8 +504,511 @@ def _thread(args):
     return bool(args) and (TASK_ID.fullmatch(args[0]) is not None or args[0] == "archive")
 
 
+# The first words the library answers with the calling script's header before the script does anything.
+HELP = ("--help", "-h")
+
+
+def _coordinator_read(name, args):
+    """Whether the words after one of the coordinator's commands are a read the assistant may run:
+    a first --help or -h, or team-inbox --item <n> alone."""
+    return (bool(args) and args[0] in HELP) or (name == "team-inbox" and len(args) == 2 and args[0] == "--item")
+
+
 def _coordinator(command, context):
-    return _named(COORDINATOR)(command, context) or _named({"team-thread"}, _thread)(command, context)
+    reads = context is not None and context.role == "assistant"
+    for words in heads(command):
+        if not words:
+            continue
+        name, args = command_name(words[0]), list(words[1:])
+        if name in COORDINATOR and not (reads and _coordinator_read(name, args)):
+            return True
+        if name == "team-thread" and _thread(args):
+            return True
+    return False
+
+
+# The coordinator's acts, which an assistant session never runs: the whole scripts, refused with
+# any arguments, and the scripts whose listed subcommands act, refused when one of them is among
+# the words before a --. Either passes with a first word --help or -h, which the library answers
+# with the script's header before the script does anything.
+ASSISTANT_WHOLE_ACTS = frozenset((
+    "team-checkpoint", "team-handoff", "team-load-check", "team-ops-end", "team-records-rewrite", "team-resume",
+    "team-review-comment", "team-stow", "claude-coordinator",
+))
+ASSISTANT_SUBCOMMAND_ACTS = {
+    "team-capacity": ("install", "place"),
+    "team-config": ("apply", "capture"),
+    "team-heavy": ("run",),
+    "team-lease": ("take", "renew", "release"),
+    "team-secrets": ("restore", "save"),
+    "team-stack": ("down", "seed", "stop", "up"),
+    "team-timers": ("disable", "enable", "run"),
+}
+ACTS_REASON = (
+    "the coordinator's acts, which an assistant session never runs ({}); its --help and a read of its file pass"
+)
+
+
+def _assistant_act(command, context):
+    """The assistant's run of one of the coordinator's acts, the reason naming it and its
+    subcommand; any other role's call is not this row's."""
+    if context is None or context.role != "assistant":
+        return None
+    for words in heads(command):
+        if not words:
+            continue
+        name, args = command_name(words[0]), list(words[1:])
+        if args[:1] and args[0] in HELP:
+            continue
+        if name in ASSISTANT_WHOLE_ACTS:
+            return ACTS_REASON.format(name)
+        acting = next((word for word in _before_end(args) if word in ASSISTANT_SUBCOMMAND_ACTS.get(name, ())), None)
+        if acting is not None:
+            return ACTS_REASON.format(f"{name} {acting}")
+    return None
+
+
+# The GitHub CLIs whose writes an assistant session never makes, and gh api's options: those that
+# take a value (joined, or the next word), its fields among them, and its methods that only read.
+GITHUB_CLIS = frozenset(("gh", "gh-axi"))
+API_VALUED_SHORT = "XHfFqtp"
+API_VALUED_LONG = frozenset((
+    "--method", "--header", "--raw-field", "--field", "--input", "--jq", "--template", "--hostname", "--cache",
+    "--preview",
+))
+API_FIELDS = frozenset(("-f", "-F", "--raw-field", "--field"))
+API_LONG = {"-X": "--method", "-H": "--header", "-f": "--raw-field", "-F": "--field", "-q": "--jq",
+            "-t": "--template", "-p": "--preview"}
+API_READS = frozenset(("GET", "HEAD"))
+# The reads of gh's and gh-axi's groups, each group's subcommands that only read (ls where list
+# is one, as gh aliases it), a subcommand's own reads where it is a group too (None: any words
+# after it), and ANY_READ for a group all of whose subcommands read; any other group or
+# subcommand is a write, an unknown group (a user alias, an extension) among them.
+ANY_READ = "any"
+
+
+def _reads(*subcommands, **groups):
+    table = {sub: None for sub in subcommands}
+    if "list" in table:
+        table["ls"] = None
+    table.update({sub.replace("_", "-"): frozenset(reads) for sub, reads in groups.items()})
+    return table
+
+
+GITHUB_READS = {
+    "gh": {
+        "auth": _reads("status"), "codespace": _reads("list", "view", "logs"), "discussion": _reads("list", "view"),
+        "gist": _reads("list", "view", "clone"), "issue": _reads("list", "status", "view"), "org": _reads("list"),
+        "pr": _reads("list", "status", "checks", "diff", "view"),
+        "project": _reads("list", "view", "field-list", "item-list"),
+        "release": _reads("list", "view", "download", "verify", "verify-asset"),
+        "repo": _reads("list", "view", "clone", "gitignore", "license", "read-dir", "read-file",
+                       autolink=("list", "ls", "view"), deploy_key=("list", "ls")),
+        "skill": _reads("list", "search", "preview"), "cache": _reads("list"),
+        "run": _reads("list", "view", "watch", "download"), "workflow": _reads("list", "view"),
+        "agent-task": _reads("list", "view"), "alias": _reads("list"),
+        "attestation": _reads("download", "trusted-root", "verify"), "config": _reads("get", "list"),
+        "extension": _reads("list", "search"), "gpg-key": _reads("list"), "ssh-key": _reads("list"),
+        "label": _reads("list"), "ruleset": _reads("check", "list", "view"), "search": ANY_READ,
+        "secret": _reads("list"), "variable": _reads("list", "get"),
+        # The commands with no subcommand, each a read with any words.
+        "browse": ANY_READ, "status": ANY_READ, "licenses": ANY_READ, "completion": ANY_READ, "help": ANY_READ,
+        "version": ANY_READ,
+    },
+    "gh-axi": {
+        "issue": _reads("list", "view", subissue=("list",)), "pr": _reads("list", "view", "checks", "diff"),
+        "run": _reads("list", "view", "watch", "download"), "workflow": _reads("list", "view"),
+        "release": _reads("list", "view", "download"), "repo": _reads("view", "list"), "label": _reads("list"),
+        "secret": _reads("list"), "variable": _reads("list"), "search": ANY_READ,
+    },
+}
+# The keys gh config get may read, those gh config list names (gh 2.103): any other is a host's
+# key of its hosts file, oauth_token among them, which gh config get -h <host> prints as the token.
+GH_CONFIG_KEYS = frozenset((
+    "api_host", "git_protocol", "editor", "prompt", "prefer_editor_prompt", "expiring_credentials", "pager",
+    "http_unix_socket", "browser", "clipboard", "color_labels", "accessible_colors", "accessible_prompter", "spinner",
+    "telemetry",
+))
+# GraphQL's operation keywords that write or stream, as whole names (case-sensitive, as GraphQL's are).
+GRAPHQL_WRITES = re.compile(r"(?<![_0-9A-Za-z])(?:mutation|subscription)(?![_0-9A-Za-z])")
+GITHUB_REASON = "a GitHub write, which an assistant session never makes ({})"
+
+
+def _cobra_commands(args):
+    """Where the words gh reads as its command and subcommands stand, as cobra finds them: every
+    word that is no option and no option's value, up to a --, a long option without = and a short
+    one of two characters taking the next word as its value, but for --help and -h."""
+    found, k = [], 0
+    while k < len(args):
+        word = args[k]
+        if word == "--":
+            break
+        if word.startswith("-") and word not in ("--help", "-h"):
+            k += 2 if (word.startswith("--") and "=" not in word) or len(word) == 2 else 1
+            continue
+        if not word.startswith("-"):
+            found.append(k)
+        k += 1
+    return found
+
+
+def _api_options(args):
+    """gh api's words read as gh reads them: its last method (upper case, "" when it has no value)
+    or None, whether it has --input, its fields' key=value texts and its endpoint, its first word
+    that is no option and no option's value."""
+    method, has_input, fields, endpoint, k = None, False, [], None, 0
+    while k < len(args):
+        word = args[k]
+        k += 1
+        if word == "--":
+            endpoint = endpoint if endpoint is not None else (args[k] if k < len(args) else None)
+            break
+        if not word.startswith("-") or word == "-":
+            endpoint = word if endpoint is None else endpoint
+            continue
+        if word.startswith("--"):
+            name, joined, value = word.partition("=")
+            if name not in API_VALUED_LONG:
+                continue
+            if not joined:
+                value = args[k] if k < len(args) else ""
+                k += 1
+        else:
+            _, flag, value = short_cluster(word, API_VALUED_SHORT)
+            if flag is None:
+                continue
+            name = API_LONG[f"-{flag}"]
+            if not value:
+                value = args[k] if k < len(args) else ""
+                k += 1
+        if name == "--method":
+            method = value.upper()
+        elif name == "--input":
+            has_input = True
+        elif name in API_FIELDS:
+            fields.append(value)
+    return method, has_input, fields, endpoint
+
+
+def _graphql_write(fields):
+    """Why a GraphQL call's fields are no query the guard can read, or None for a query: a literal
+    query field holding neither mutation nor subscription."""
+    queries = [value.partition("=")[2] for value in fields if value.partition("=")[0] == "query"]
+    if not queries:
+        return "gh api graphql with a field but no query"
+    for query in queries:
+        if query.lstrip()[:1] == "@":
+            return "a GraphQL query from a file or stdin the guard cannot read"
+    # The walk drops a word's quotes, so a GraphQL variable ($n in single quotes) and the shell's
+    # expansion ($M in double quotes) read alike: neither passes.
+    for query in queries:
+        if "$" in query or "`" in query:
+            return "a GraphQL query holding a $ or a backtick, which may be a shell expansion: write its values into the query"
+    if any(GRAPHQL_WRITES.search(query) for query in queries):
+        return "a GraphQL mutation or subscription"
+    return None
+
+
+def _api_write(args):
+    """What makes gh api's words a write, or None for a read."""
+    method, has_input, fields, endpoint = _api_options(args)
+    if method is not None and method not in API_READS:
+        return f"gh api --method {method}"
+    if has_input:
+        return "gh api --input, a request body"
+    if endpoint == "graphql" and fields:
+        return _graphql_write(fields)
+    if fields and method is None:
+        return "gh api with a field and no --method GET or HEAD, which sends a POST"
+    return None
+
+
+def _github_write(command, context):
+    """The assistant's GitHub write by gh or gh-axi, the reason naming what it read; any other
+    role's call is not this row's."""
+    if context is None or context.role != "assistant":
+        return None
+    for words in heads(command):
+        if not words or command_name(words[0]) not in GITHUB_CLIS:
+            continue
+        name, args = command_name(words[0]), list(words[1:])
+        found = _cobra_commands(args)
+        group = args[found[0]] if found else None
+        if group == "api":
+            write = _api_write(args[found[0] + 1 :])
+            if write is not None:
+                return GITHUB_REASON.format(write)
+        elif group is not None and (write := _group_write(name, args, found)) is not None:
+            return GITHUB_REASON.format(write)
+    return None
+
+
+def _group_write(name, args, found):
+    """What makes a gh or gh-axi call past its group no read, or None: a group the guard knows no
+    read of, a subcommand (or a subcommand's own) outside its reads, gh auth status showing the
+    token, and gh-axi update but its --check. A group with no subcommand prints its help."""
+    group = args[found[0]]
+    if name == "gh-axi" and group == "update":
+        return None if "--check" in args else f"{name} update, a command the guard knows no read of"
+    reads = GITHUB_READS[name].get(group)
+    if reads is None:
+        return f"{name} {group}, a command the guard knows no read of"
+    if reads == ANY_READ or len(found) < 2:
+        return None
+    sub = args[found[1]]
+    if sub not in reads:
+        return f"{name} {group} {sub}"
+    if reads[sub] is not None and len(found) > 2 and args[found[2]] not in reads[sub]:
+        return f"{name} {group} {sub} {args[found[2]]}"
+    shows = any(word == "-t" or word.startswith("--show-token") or re.fullmatch(r"-[A-Za-z]*t[A-Za-z]*", word)
+                for word in args[found[1] + 1 :])
+    if (name, group, sub) == ("gh", "auth", "status") and shows:
+        return "gh auth status --show-token, which prints the token"
+    after = list(args[found[1] + 1 :])
+    if (name, group, sub) == ("gh", "config", "get"):
+        key = _config_key(after)
+        return None if key is None or key in GH_CONFIG_KEYS else f"gh config get {key}, a key gh config list does not name"
+    if name == "gh" and sub == "clone" and "--" in after and after.index("--") + 1 < len(after):
+        return f"gh {group} clone with words after --, which it passes to git clone"
+    return None
+
+
+def _config_key(args):
+    """The first word gh config get takes as its key among its words after get, or None: a word
+    that is no option and no value of its -h or --host."""
+    k = 0
+    while k < len(args):
+        word = args[k]
+        if word in ("-h", "--host"):
+            k += 2
+            continue
+        if not word.startswith("-"):
+            return word
+        k += 1
+    return None
+
+
+# The thread cache the Discord guard trusts (ASSISTANT_THREADS in bin/lib/team.sh), by the start
+# of a path's basename, as the deny rule *assistant-threads* this row took over matched any spelling.
+THREAD_CACHE = "assistant-threads"
+# The redirection operators that write their target, the fd before them aside; >& writes one only
+# when its target is no fd.
+WRITE_REDIRECTS = frozenset((">", ">>", ">|", "&>", "&>>", "<>"))
+# The commands that write, make, move, link, remove or change a file their words name.
+CACHE_WRITERS = frozenset(("tee", "cp", "mv", "install", "ln", "rsync", "truncate", "rm", "unlink", "shred", "touch",
+                           "chmod", "chown"))
+# The editors that write their files in place with -i or --in-place, each with its short options
+# that take the rest of their word as their value, so an i in it is no flag.
+IN_PLACE_EDITORS = {"sed": "efl", "perl": "eEIMmxdD", "ruby": "eIrxCEFKTW0"}
+CACHE_REASON = "the thread cache the Discord guard trusts, which only the scripts and hooks write ({})"
+
+
+def _cache(word):
+    """Whether a word, or an option's value joined to it by =, names the thread cache."""
+    return any(command_name(path).startswith(THREAD_CACHE) for path in (word, word.rpartition("=")[2]))
+
+
+def _in_place(name, args):
+    """Whether an editor's words edit its files in place: --in-place (by a prefix, joined value
+    too) or i among a short cluster's flags before one taking a value (-i, -i.bak, -pi, -ni)."""
+    for word in args:
+        if word == "--":
+            return False
+        if word.startswith("--"):
+            option = word[2:].partition("=")[0]
+            if option.startswith("i") and "in-place".startswith(option):
+                return True
+        elif word.startswith("-"):
+            for flag in word[1:]:
+                if flag == "i":
+                    return True
+                if flag in IN_PLACE_EDITORS[name]:
+                    break
+    return False
+
+
+def _cache_writes(name, args):
+    """The word naming the thread cache among a writer's words, or None: dd's of= value, an
+    in-place editor's words, and any other writer's words."""
+    if name == "dd":
+        found = (word[3:] for word in args if word.startswith("of=") and _cache(word[3:]))
+    elif name in IN_PLACE_EDITORS:
+        found = (word for word in args if _in_place(name, args) and _cache(word))
+    elif name in CACHE_WRITERS:
+        found = (word for word in args if _cache(word))
+    else:
+        return None
+    return next(found, None)
+
+
+# The library's names of the cache, which a call sourcing it may write by: its variable and the
+# function that adds an id.
+CACHE_NAMES = re.compile(r"assistant-threads|ASSISTANT_THREADS|assistant_thread_keep")
+# The commands that only read what they are given or filter text, none with an option that writes a
+# file, runs a program or assigns a variable, which a call naming the cache may run by its bare
+# name (dd too, writing to no file, sed with a plain script, sort with no -o, --output,
+# --compress-program or -T, diff with no -l or --paginate, which runs pr, and test and [ with no
+# -v, which evaluates a NAME[subscript] word's subscript, or -R); no wrapper and no builtin that
+# assigns (read, printf -v, cd) is one; the one target an output redirection in it may write.
+CACHE_READERS = frozenset((
+    "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "jq", "diff", "cmp", "stat", "ls", "sha256sum", "sha1sum",
+    "md5sum", "sha512sum", "echo", "true", "false", "test", "[", "pwd", ":", "cut", "tr", "nl", "paste", "column",
+    "fold", "rev", "basename", "dirname", "realpath", "readlink", "od", "hexdump",
+))
+QUIET_TARGETS = frozenset(("/dev/null",))
+# The input redirections, the fd before them aside, which a call naming the cache may make: no
+# heredoc, whose body the walk does not read in full, and a here-string only with a word holding
+# no $ or backtick, since the walk does not read a substitution in a double-quoted one.
+READ_REDIRECTS = frozenset(("<", "<<<"))
+HEREDOCS = frozenset(("<<", "<<-"))
+# An arithmetic expansion or command, which may assign a variable: $((, $[ or ((.
+ARITHMETIC = re.compile(r"\$\[|\(\(")
+# A parameter expansion, which may assign a variable (${name:=word}).
+PARAMETER = re.compile(r"\$\{")
+# A backslash-newline, which Bash removes before it forms a token, so one joins what the row's
+# searches of the text and the walk read apart ($ and {, < and <).
+CONTINUATION = "\\\n"
+PLAIN_LIST = "a call naming it that is no plain list of readers joined by |, &&, || or ;"
+# sed's options a plain reading takes, and the script it reads with: one command a part (split on
+# ;), an address or range, then p, q, Q, =, d, l, n or N, or s/.../.../ with g, p, i, I or a number,
+# so no w, W or e command or flag writes or runs.
+SED_PLAIN_OPTIONS = frozenset((
+    "-n", "--quiet", "--silent", "-E", "-r", "--regexp-extended", "-s", "--separate", "-z", "--null-data", "-u",
+    "--unbuffered", "--posix",
+))
+SED_ADDRESS = r"(?:[0-9]+|\$|/(?:[^/\\]|\\.)*/)"
+SED_PLAIN = re.compile(
+    rf"(?:{SED_ADDRESS}(?:,{SED_ADDRESS})?)?!?(?:[pqQ=dlnN]|s/(?:[^/\\]|\\.)*/(?:[^/\\]|\\.)*/[gpiI0-9]*)"
+)
+
+
+def _names_cache(text):
+    """Whether a call's text names the thread cache, as written or with its quotes and
+    backslashes removed, as the hook's fast path reads it."""
+    return any(CACHE_NAMES.search(form) for form in (text, re.sub(r"['\"\\]", "", text.replace("\\\n", ""))))
+
+
+def _plain_sed(args):
+    """Whether sed's words read only: no option but the plain ones and -e, and each script plain."""
+    scripts, k = [], 0
+    while k < len(args):
+        word = args[k]
+        if word in ("-e", "--expression"):
+            if k + 1 >= len(args):
+                return False
+            scripts.append(args[k + 1])
+            k += 2
+            continue
+        if word.startswith("--expression="):
+            scripts.append(word.partition("=")[2])
+        elif word.startswith("-e") and not word.startswith("--"):
+            scripts.append(word[2:])
+        elif word.startswith("-") and word != "-" and word not in SED_PLAIN_OPTIONS:
+            return False
+        k += 1
+    if not scripts:
+        script = next((word for word in args if not word.startswith("-") or word == "-"), None)
+        if script is None:
+            return False
+        scripts.append(script)
+    return all(
+        "\n" not in script and all(SED_PLAIN.fullmatch(part.strip()) for part in script.split(";"))
+        for script in scripts
+    )
+
+
+def _plain_reader(found):
+    """Whether a walked command only reads: a reader by its bare name (dd writing to no file, sed
+    with a plain script, sort and diff writing no file and running no program, test and [
+    evaluating no subscript), behind no wrapper, with no assignment before it and with a name at
+    all; a path, a PATH or a wrapper's option may run another program than a reader's name
+    says."""
+    if found.assignments or found.wrappers or not found.words or "/" in found.words[0]:
+        return False
+    name, args = found.words[0], list(found.words[1:])
+    if name == "dd":
+        return all(word[3:] in QUIET_TARGETS for word in args if word.startswith("of="))
+    if name == "sed":
+        return _plain_sed(args)
+    if name == "sort":
+        # sort writes a file by -o or --output, its temporary files by -T or
+        # --temporary-directory, and runs a program by --compress-program, each named by any
+        # prefix getopt_long takes (--o, --t, --co).
+        return not any(word.startswith(("--o", "--t", "--co")) or re.fullmatch(r"-[A-Za-z]*[oT].*", word)
+                       for word in args)
+    if name == "diff":
+        # diff runs pr by -l or --paginate, named by any prefix getopt_long takes (--pag) or in a
+        # short cluster, whose options may be digits too (-ul, -u3l).
+        return not any((word.startswith("--") and len(word) > 2 and "paginate".startswith(word[2:].partition("=")[0]))
+                       or re.fullmatch(r"-[A-Za-z0-9]*l.*", word) for word in args)
+    if name in ("test", "["):
+        # test's -v evaluates a NAME[subscript] word's subscript as arithmetic, after expanding
+        # it, so it may run a command or assign a variable; -R, which takes a variable's name too,
+        # is refused beside it.
+        return not any(word in ("-v", "-R") for word in args)
+    return name in CACHE_READERS
+
+
+def _cache_call(command, context):
+    """The assistant's call naming the thread cache that may do more than read it, as its reason
+    and the words of its refused line, or None: a backslash-newline anywhere in it (which Bash
+    removes before it reads the call), a redirection that writes anywhere but /dev/null
+    (the cache's path when it names it), a named fd's (which assigns its variable) or any other
+    but an input one or an fd's duplication, a heredoc, a here-string whose word holds a $ or a
+    backtick (each holding text the walk does not read in full), a writer naming it (that path),
+    any command that is no plain reader (its name, or its assignment), an arithmetic or parameter
+    expansion anywhere in its text (which may assign), and a call that is no plain list of
+    commands joined by pipes, &&, || and ; with no code part but its own text
+    (command_text.plain_sequence and code_parts). Any other role's call, and one
+    naming no cache, is not this row's."""
+    if context is None or context.role != "assistant" or not _names_cache(command):
+        return None
+    if CONTINUATION in command:
+        return CACHE_REASON.format("a backslash-newline, which Bash removes before it reads the call, in a call naming it"), ()
+    for operator, target in call_redirections(command):
+        named = re.match(r"\{\w+\}", operator)
+        bare = re.sub(r"^(?:[0-9]+|\{\w+\})", "", operator)
+        duplicates = bare in (">&", "<&") and re.fullmatch(r"[0-9]*-?", target)
+        writes = bare in WRITE_REDIRECTS or (bare == ">&" and not duplicates)
+        if writes and target not in QUIET_TARGETS:
+            if command_name(target).startswith(THREAD_CACHE):
+                return CACHE_REASON.format(target), (target,)
+            return CACHE_REASON.format(f"{operator}{target}, a write in a call naming it"), (target,)
+        if named:
+            return CACHE_REASON.format(f"{operator}{target}, a redirection that assigns a variable, in a call naming it"), (
+                target,
+            )
+        if bare in HEREDOCS:
+            return CACHE_REASON.format(
+                f"{operator}{target}, a heredoc, whose body the walk does not read in full, in a call naming it"
+            ), (target,)
+        if bare == "<<<" and re.search(r"[$`]", target):
+            return CACHE_REASON.format(
+                f"{operator}{target}, a here-string whose word the walk does not read in full, in a call naming it"
+            ), (target,)
+        if not writes and not duplicates and bare not in READ_REDIRECTS:
+            return CACHE_REASON.format(f"{operator}{target}, a redirection in a call naming it"), (target,)
+    walked = call_commands(command)
+    for found in walked:
+        for words in heads(found):
+            if words and (path := _cache_writes(command_name(words[0]), list(words[1:]))) is not None:
+                return CACHE_REASON.format(path), tuple(words)
+    for found in walked:
+        if not _plain_reader(found):
+            if found.assignments:
+                assignment = found.assignments[0]
+                return CACHE_REASON.format(f"{assignment}, an assignment in a call naming it"), (assignment,)
+            ran = next((wrapper for wrapper in found.wrappers if wrapper), found.words)
+            if not ran:
+                return CACHE_REASON.format("a command with no name, in a call naming it"), ()
+            return CACHE_REASON.format(f"{ran[0]}, which is no plain reader of it, in a call naming it"), tuple(ran[:1])
+    if ARITHMETIC.search(command):
+        return CACHE_REASON.format("an arithmetic expansion, which may assign a variable, in a call naming it"), ()
+    if PARAMETER.search(command):
+        return CACHE_REASON.format("a parameter expansion, which may assign a variable, in a call naming it"), ()
+    if len(code_parts(command)) != 1 or plain_sequence(command) is None:
+        return CACHE_REASON.format(PLAIN_LIST), ()
+    return None
 
 
 def _upload(command, context):
@@ -563,6 +1142,9 @@ ROWS = (
         _coordinator,
         "the coordinator's commands (team-ask, team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved)",
     ),
+    Row("assistant-acts", _assistant_act, None),
+    Row("assistant-github-write", _github_write, None),
+    Row("assistant-thread-cache", lambda command, context: None, None, call=_cache_call),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),
@@ -643,16 +1225,34 @@ class RowError(Exception):
     """A row that raised, named."""
 
 
+def error_text(error):
+    """An error as "<ErrorType>: <message>", a RecursionError's message naming Python's limit."""
+    if isinstance(error, RecursionError):
+        return f"RecursionError: a reading nested deeper than Python's recursion limit of {sys.getrecursionlimit()} frames"
+    return f"{type(error).__name__}: {error}"
+
+
 def refusal(command, context=None):
     """The first row, in table order, that refuses any command the text runs, with its reason and
     allowed way, or None; each row is given the call's context."""
     walked = call_commands(command)
     for row in ROWS:
+        try:
+            refused = row.call(command, context) if row.call is not None else None
+        except Exception as error:  # noqa: BLE001 - named, then refused by the caller
+            raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
+        if refused:
+            # The refused line is the first holding the call test's words.
+            reason, words = refused
+            return {
+                "rule": row.id, "reason": reason, "allowed": row.allowed,
+                "where": where(Command((), words, (), DIRECT), command),
+            }
         for found in walked:
             try:
                 refused = row.test(found, context)
             except Exception as error:  # noqa: BLE001 - named, then refused by the caller
-                raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
+                raise RowError(f"{row.id}: {error_text(error)}") from error
             if refused:
                 reason, allowed = refused if isinstance(refused, tuple) else (refused, row.allowed)
                 reason = reason if isinstance(reason, str) else row.reason
@@ -674,7 +1274,7 @@ def main():
         sys.stderr.write(f"{error}\n")
         return 1
     except Exception as error:  # noqa: BLE001 - a guard that cannot decide refuses
-        sys.stderr.write(f"command_rules.py: {type(error).__name__}: {error}\n")
+        sys.stderr.write(f"command_rules.py: {error_text(error)}\n")
         return 1
     if found:
         sys.stdout.write(json.dumps(found, ensure_ascii=False, separators=(",", ":")) + "\n")

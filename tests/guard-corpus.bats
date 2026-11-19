@@ -20,7 +20,10 @@
 # CLAUDE_JOB_DIR), @TEAM_HOME@, @TEAM_CODE@ (the code checkout), @ASSISTANT_CHANNEL@ and
 # @ASSISTANT_THREAD@ (the assistant's channel and a thread of it), @SESSION@ (the session's id,
 # which each hook's input carries as its session_id) and @CLAUDE_TMP@ (Claude Code's temporary
-# directory, which holds the output of a session's background Bash calls).
+# directory, which holds the output of a session's background Bash calls). @JOB@, and the paths
+# under @CLAUDE_TMP@ and ~/.claude/projects that hold @SESSION@, name the session's own records,
+# which session-records-guard, on Read, Grep, Glob and Bash (its matcher Read|Grep|Glob|Bash),
+# lets the session reach.
 #
 # To add a case: append a line to allowed.jsonl with the roles that really make the call, and
 # local when it holds; each role must have a hook that sees it, and the last test holds the line
@@ -58,13 +61,14 @@ settings_of() {
   esac
 }
 
-# What a <role>'s session has in its environment when a hook runs, with no CLAUDE_CODE_TMPDIR, so
-# session-records-guard and @CLAUDE_TMP@ read the same temporary directory: session <role>
+# What a <role>'s session has in its environment when a hook runs, its settings' AGENT_TEAM_ROLE
+# (a gate agent has none) and no CLAUDE_CODE_TMPDIR, so session-records-guard and @CLAUDE_TMP@
+# read the same temporary directory: session <role>
 session() {
   export CLAUDE_PROJECT_DIR=$WT CLAUDE_JOB_DIR=$JOB AGENT_TEAM_TASK=T12
   unset AGENT_TEAM_ROLE CLAUDE_CODE_TMPDIR
   case $1 in
-    builder | planner | reviewer | ops) export AGENT_TEAM_ROLE=$1 ;;
+    builder | planner | reviewer | ops | coordinator | assistant) export AGENT_TEAM_ROLE=$1 ;;&
     coordinator | assistant) export CLAUDE_PROJECT_DIR=$TEAM_HOME ;;&
     coordinator | assistant | gate) unset AGENT_TEAM_TASK ;;
   esac

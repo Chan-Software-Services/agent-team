@@ -457,9 +457,6 @@
       "Edit(~/.claude/channels/**)",
       "Bash(*.claude/channels/*.env*)",
       "Bash(*.claude/channels/*access.json*)",
-      "Read(~/.claude/file-history/**)",
-      "Read(~/.cache/claude-cli-nodejs/**)",
-      "Read(~/Library/Caches/claude-cli-nodejs/**)",
       "Read(~/.config/agent-team/review-app*)",
       "Edit(~/.config/agent-team/review-app*)",
       "Bash(*agent-team/review-app*)",
@@ -533,7 +530,7 @@
         ]
       },
       {
-        "matcher": "Read|Grep|Glob",
+        "matcher": "Read|Grep|Glob|Bash",
         "hooks": [
           { "type": "command", "command": "@TEAM_CODE@/bin/hooks/session-records-guard", "args": [], "onFailure": "block", "timeout": 10 }
         ]

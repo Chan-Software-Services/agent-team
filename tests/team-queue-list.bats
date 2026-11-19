@@ -322,6 +322,17 @@ findings() {
 queue"
 }
 
+@test "list runs in an assistant session as for the coordinator, writing nothing" {
+  ready a-one.md 1 S "the first"
+  assistant_reads 0 team-queue list
+  assert_equal "${lines[0]}" "room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  assert_contains "$output" "a-one.md (proj, priority 1, S): the first"
+  assistant_reads 0 team-queue list --json
+  assert_equal "$(jq -r '.ready[0].file' <<<"$output")" a-one.md
+  assistant_reads 0 team-queue list --plan "$STUB_FIXTURES/plan.json"
+  assert_equal "${lines[0]}" "room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+}
+
 @test "list refuses a worker session, and a malformed command line is a usage error" {
   worker_refused team-queue "reads no queue" list
   worker_refused team-queue "reads no queue" list --json

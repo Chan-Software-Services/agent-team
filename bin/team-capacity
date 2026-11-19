@@ -49,7 +49,9 @@
 #          TEAM_CAPACITY_PLACE_SECONDS (30) have passed since its wait began, then is a failure
 #          ("no live session has that id", "its process <pid> is gone"); an id listed as no team
 #          session is one at once. It asks the user manager through busctl --user call
-#          org.freedesktop.systemd1 ... StartTransientUnit with the PIDs, and when that call fails
+#          org.freedesktop.systemd1 ... StartTransientUnit with the PIDs and CollectMode
+#          inactive-or-failed, so the scope unloads once it ends, failed too (killed for memory),
+#          and when that call fails
 #          while the session's process runs, once more at once with its pid from a fresh list and
 #          a fresh tree (a process that ended meanwhile); with ids, while the call says a process
 #          is gone (No such process), again a second apart until the id's seconds have passed.
@@ -370,6 +372,9 @@
 # line, a process it does not list counting by its resident memory;
 # TEAM_READING_CPUS the CPU count in place of nproc's; and TEAM_READING_DOCKER_SECONDS the 30
 # seconds team-stack ls is given.
+# An assistant session is refused install and place, the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its other subcommands and --help
+# still answer.
 set -euo pipefail
 # jobs needs no team home, as tests/run on CI or a fresh clone.
 # shellcheck disable=SC2034 # read by bin/lib/team.sh
@@ -385,6 +390,7 @@ USAGE="usage: team-capacity install | place [--quiet] [<session id>...] | check 
 [[ $# -ge 1 ]] || usage_error "$USAGE"
 command=$1
 shift
+if [[ $command == @(install|place) ]] && why=$(assistant_refusal "runs no team-capacity $command"); then die "$why"; fi
 json=0 verbose=0 ids=() quiet=0 holding=0 heartbeat=enabled stored=0 dry_run=false kind='' task='' name='' seed=null sessions_file='' freed=()
 release_id=''
 case $command in
@@ -682,12 +688,15 @@ session_pids() {
 }
 
 # Ask the user manager to adopt <pid>... into <scope> in <slice>: start_scope <scope> <slice> <pid>...
+# The scope unloads once it ends, failed too (CollectMode), since a scope the kernel kills for
+# memory ends failed (OOMPolicy=stop) and would stay loaded until a reset-failed.
 start_scope() {
   local scope=$1 slice=$2
   shift 2
   busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager \
-    StartTransientUnit 'ssa(sv)a(sa(sv))' "$scope" fail 3 \
-    PIDs au $# "$@" Slice s "$slice" Description s "agent-team session ${scope#agent-team-}" 0
+    StartTransientUnit 'ssa(sv)a(sa(sv))' "$scope" fail 4 \
+    PIDs au $# "$@" Slice s "$slice" Description s "agent-team session ${scope#agent-team-}" \
+    CollectMode s inactive-or-failed 0
 }
 
 # The microseconds since the epoch.
@@ -1414,8 +1423,7 @@ case $command in
   release) release ;;
   sample) sample ;;
   status | costs | admit | check | plan | jobs)
-    work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
+    work=$(team_mktemp -d)
     if [[ $command == jobs ]]; then jobs_count; else "$command"; fi
     ;;
 esac

@@ -54,12 +54,13 @@ thread() {
   ledger_line --arg t "$1" '{ts: (now | todate), task: $t, event: "thread", discord_thread: "1563"}'
 }
 
-# opened <task> <project> <branch> <worktree>: a feature task opened in <worktree>, its plan
-# approved, so its builders and reviewers launch.
+# opened <task> <project> <branch> <worktree> [<more fields as a jq object>]: a feature task opened
+# in <worktree>, its plan approved, so its builders and reviewers launch.
 opened() {
-  ledger_line --arg t "$1" --arg p "$2" --arg b "$3" --arg wt "$4" '{ts: (now | todate), task: $t,
+  local more=${5:-'{}'}
+  ledger_line --arg t "$1" --arg p "$2" --arg b "$3" --arg wt "$4" --argjson more "$more" '{ts: (now | todate), task: $t,
     event: "opened", project: $p, path: "feature", type: "feat", title: "A task", branch: $b,
-    base: "main", base_sha: "0123456", worktree: $wt}'
+    base: "main", base_sha: "0123456", worktree: $wt} + $more'
   ledger_line --arg t "$1" '{ts: (now | todate), task: $t, event: "plan-approved", by: "coordinator"}'
 }
 
@@ -629,7 +630,7 @@ base_link() {
   assert_equal "$(bg_calls | jq -r last)" "Read your brief at $TEAM_HOME/tasks/T7/brief-rereview-3.md"
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "reviewer",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-task", machine: "home-pc", admission: $a,
-    brief: "brief-rereview-3"}')"
+    model: "default", model_from: "default", brief: "brief-rereview-3"}')"
   : >"$TEAM_HOME/ledger.jsonl"
   open_task T7
   # An ops-shaped prompt, the brief's own text, names no brief.
@@ -914,7 +915,7 @@ TOML
     "**Trusted repo**: a worker's working directory is a linked git worktree of one of those repositories, on its task's branch, with origin at that repository on GitHub: github.com/owner/proj"
 }
 
-@test "every role's settings run the fence and command guard hooks on Bash and the session records guard on Read, Grep and Glob; the planner's and reviewer's add the edit hook" {
+@test "every role's settings run the fence and command guard hooks on Bash and the session records guard on Read, Grep, Glob and Bash; the planner's and reviewer's add the edit hook" {
   open_task T7
   local role settings
   for role in planner builder reviewer; do
@@ -923,7 +924,7 @@ TOML
     assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$settings")" \
       "$REPO_ROOT/bin/hooks/lease-fence
 $REPO_ROOT/bin/hooks/command-guard"
-    assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Read|Grep|Glob") | .hooks[].command' "$settings")" \
+    assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Read|Grep|Glob|Bash") | .hooks[].command' "$settings")" \
       "$REPO_ROOT/bin/hooks/session-records-guard"
     if [[ $role == builder ]]; then
       assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 2
@@ -933,9 +934,9 @@ $REPO_ROOT/bin/hooks/command-guard"
       assert_equal "$(jq '.hooks.PreToolUse | length' "$settings")" 3
     fi
     assert_equal "$(jq -r '.permissions.deny | index("Bash(gh pr merge*)") != null' "$settings")" true
-    # No role reads the file checkpoints or Claude Code's cache, on Linux or macOS.
-    assert_equal "$(jq -c '.permissions.deny | map(select(test("file-history|claude-cli-nodejs")))' "$settings")" \
-      '["Read(~/.claude/file-history/**)","Read(~/.cache/claude-cli-nodejs/**)","Read(~/Library/Caches/claude-cli-nodejs/**)"]'
+    # The file checkpoints and Claude Code's cache are the session records guard's, with no deny
+    # rule beside it.
+    assert_equal "$(jq -c '.permissions.deny | map(select(test("file-history|claude-cli-nodejs")))' "$settings")" '[]'
   done
   [[ -x $REPO_ROOT/bin/hooks/scratch-only-edits && -x $REPO_ROOT/bin/hooks/lease-fence && -x $REPO_ROOT/bin/hooks/command-guard &&
     -x $REPO_ROOT/bin/hooks/session-records-guard ]]
@@ -1080,7 +1081,8 @@ session-records-guard block 10"
   cd "$HOME"
   run_bin -0 team-worker T7 builder link/proj/1 -- go
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "builder",
-    session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc", admission: $a}')"
+    session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc", admission: $a,
+    model: "default", model_from: "default"}')"
   run_bin -0 team-log --check
 }
 
@@ -1138,30 +1140,43 @@ session-records-guard block 10"
     "--permission-mode", "auto", "--model", "sonnet", "--name", "T7-reviewer", "Review it"]')"
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "reviewer",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc",
-    admission: $a, model: "sonnet"}')"
+    admission: $a, model: "sonnet", model_from: "registry"}')"
   run_bin -0 team-log --check
 
-  # Each role takes its own line; one the table does not name takes none.
+  # Each role takes its own line; one the table does not name runs on the default, and logs it.
   : >"$STUB_CALLS/claude.log"
   run_bin -0 team-worker T7 builder "$wt1" -- go
   run_bin -0 team-worker T7 planner "$wt1" -- go
   assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg") | [(index("--model") // empty) as $i | .[$i + 1]]')" $'["claude-sonnet-5-5"]\n[]'
-  assert_equal "$(launches | jq -c '[.role, .model]')" $'["reviewer","sonnet"]\n["builder","claude-sonnet-5-5"]\n["planner",null]'
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["reviewer","sonnet","registry"]\n["builder","claude-sonnet-5-5","registry"]\n["planner","default","default"]'
   run_bin -0 team-log --check
 }
 
-@test "the model is the launch worktree's project's: a worktree added from a second project takes that one's" {
-  registry --first 'models = { builder = "sonnet" }' other proj
+@test "the registry's model is the launch worktree's project's, a second project's for its worktree, but a task's builder model holds across its projects" {
+  registry --first 'models = { builder = "sonnet", reviewer = "sonnet" }' other proj
   local other
   other=$(make_repo other)
   git -C "${other:?}" worktree add -q -b chore/T7-two "$HOME/slots/other/1"
+  git -C "${other:?}" worktree add -q -b chore/T8-two "$HOME/slots/other/2"
+  # A task opened before tasks kept a builder model: each worktree's builder reads its project's line.
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   ledger_line --arg wt "$HOME/slots/other/1" '{ts: (now | todate), task: "T7", event: "worktree-added",
     project: "other", branch: "chore/T7-two", base: "main", base_sha: "0123456", worktree: $wt}'
   run_bin -0 team-worker T7 builder "$wt1" -- go
   run_bin -0 team-worker T7 builder "$HOME/slots/other/1" -- go
-  assert_equal "$(launches | jq -c '[.project, .model]')" $'["proj",null]\n["other","sonnet"]'
+  assert_equal "$(launches | jq -c '[.project, .model, .model_from]')" $'["proj","default","default"]\n["other","sonnet","registry"]'
+  # A task that keeps one, default among them, runs its builders on it in every project's
+  # worktree, while its reviewer still reads the worktree's project's line.
+  thread T8
+  opened T8 proj feat/T8-one "$wt2" '{"builder_model": "default"}'
+  ledger_line --arg wt "$HOME/slots/other/2" '{ts: (now | todate), task: "T8", event: "worktree-added",
+    project: "other", branch: "chore/T8-two", base: "main", base_sha: "0123456", worktree: $wt}'
+  run_bin -0 team-worker T8 builder "$HOME/slots/other/2" -- go
+  run_bin -0 team-worker T8 reviewer "$HOME/slots/other/2" -- go
+  assert_equal "$(launches | tail -n 2 | jq -c '[.project, .role, .model, .model_from]')" \
+    $'["other","builder","default","default"]\n["other","reviewer","sonnet","registry"]'
 }
 
 @test "--model launches on the model it names instead of the registry's, and logs it, for T0 too" {
@@ -1170,24 +1185,125 @@ session-records-guard block 10"
   opened T7 proj feat/T7-one "$wt1"
   run_bin -0 team-worker T7 reviewer "$wt1" --model opus -- Review it
   open_task T8
-  run_bin -0 team-worker T8 builder "$wt2" --model 'sonnet[1m]' -- go
+  run_bin -0 team-worker T8 planner "$wt2" --model 'sonnet[1m]' -- go
   run_bin -0 team-worker T0 planner "$wt1" --model haiku -- go
+  run_bin -0 team-worker T0 builder "$wt1" --model haiku -- go
   assert_equal "$(bg_calls | jq -c '[(index("--model") // empty) as $i | .[$i + 1], .[-2], .[-1]]')" \
-    $'["opus","T7-reviewer","Review it"]\n["sonnet[1m]","T8-builder","go"]\n["haiku","T0-planner","go"]'
-  assert_equal "$(launches | jq -c '[.task, .model]')" $'["T7","opus"]\n["T8","sonnet[1m]"]'
+    $'["opus","T7-reviewer","Review it"]\n["sonnet[1m]","T8-planner","go"]\n["haiku","T0-planner","go"]\n["haiku","T0-builder","go"]'
+  assert_equal "$(launches | jq -c '[.task, .model, .model_from]')" $'["T7","opus","launch"]\n["T8","sonnet[1m]","launch"]'
   run_bin -0 team-log --check
 }
 
-@test "with no models key, or for T0, no model is passed or logged" {
+@test "a task's builder model, its opened event's builder_model, is every builder launch's over the registry's" {
+  # Before a task kept its builder model, a builder took its model only from --model or the
+  # registry, so a relaunch fell back to the registry's builder line, or with none to the
+  # settings' model and logged none.
+  registry --first 'models = { builder = "opus", reviewer = "opus" }' proj other
+  thread T7
+  opened T7 proj feat/T7-one "$wt1" '{"builder_model": "sonnet"}'
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  run_bin -0 team-worker T7 builder "$wt1" -- go again
+  # The other roles keep their own: the registry's reviewer line, none for a planner.
+  run_bin -0 team-worker T7 reviewer "$wt1" -- Review it
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(bg_calls | jq -c '[.[index("--name") + 1], ((index("--model") // empty) as $i | .[$i + 1])]')" \
+    $'["T7-builder","sonnet"]\n["T7-builder","sonnet"]\n["T7-reviewer","opus"]\n["T7-planner"]'
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["builder","sonnet","task"]\n["builder","sonnet","task"]\n["reviewer","opus","registry"]\n["planner","default","default"]'
+  run_bin -0 team-log --check
+
+  # A task whose builder model is default names none: its builders run on the settings' word,
+  # whatever the registry's builder line says since its open.
+  thread T8
+  opened T8 proj feat/T8-task "$wt2" '{"builder_model": "default"}'
+  run_bin -0 team-worker T8 builder "$wt2" -- go
+  assert_equal "$(bg_calls | tail -n 1 | jq -c 'index("--model")')" null
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T8","default","default"]'
+}
+
+@test "a task builder's --model becomes its task's builder model: every later builder launch keeps it, until another --model switches it" {
+  registry --first 'models = { builder = "opus" }' proj other
+  thread T7
+  opened T7 proj feat/T7-one "$wt1" '{"builder_model": "sonnet"}'
+  run_bin -0 team-worker T7 builder "$wt1" --model fable -- go
+  run_bin -0 team-worker T7 builder "$wt1" -- relaunched
+  # A reviewer's or a planner's --model is that launch's alone.
+  run_bin -0 team-worker T7 reviewer "$wt1" --model haiku -- Review it
+  run_bin -0 team-worker T7 builder "$wt1" -- a fix round
+  run_bin -0 team-worker T7 builder "$wt1" --model 'sonnet[1m]' -- switched
+  run_bin -0 team-worker T7 builder "$wt1" -- relaunched again
+  # --model default is the way back to the settings' word: no --model passed, the settings' word
+  # logged, and every later builder of the task on it, never the registry's line.
+  run_bin -0 team-worker T7 builder "$wt1" --model default -- back
+  run_bin -0 team-worker T7 builder "$wt1" -- relaunched on the settings
+  assert_equal "$(bg_calls | jq -c '[.[-1], ((index("--model") // empty) as $i | .[$i + 1])]')" \
+    $'["go","fable"]\n["relaunched","fable"]\n["Review it","haiku"]\n["a fix round","fable"]\n["switched","sonnet[1m]"]\n["relaunched again","sonnet[1m]"]\n["back"]\n["relaunched on the settings"]'
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["builder","fable","launch"]\n["builder","fable","task"]\n["reviewer","haiku","launch"]\n["builder","fable","task"]\n["builder","sonnet[1m]","launch"]\n["builder","sonnet[1m]","task"]\n["builder","default","default"]\n["builder","default","default"]'
+  run_bin -0 team-log --check
+  # A planner's or a reviewer's --model default is its launch's alone: the settings' word over
+  # the registry's line.
+  registry --first 'models = { builder = "opus", reviewer = "opus" }' proj other
+  run_bin -0 team-worker T7 reviewer "$wt1" --model default -- Review it
+  assert_equal "$(bg_calls | tail -n 1 | jq -c 'index("--model")')" null
+  assert_equal "$(launches | tail -n 1 | jq -c '[.role, .model, .model_from]')" '["reviewer","default","default"]'
+
+  # A task opened before tasks kept a builder model: its builder launched on --model before
+  # launches logged where a model came from keeps that model too, over the registry's.
+  thread T8
+  opened T8 proj feat/T8-task "$wt2"
+  ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T8", event: "launch", role: "builder",
+    session: "f0000001", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T8-task", machine: "home-pc", model: "fable"}'
+  run_bin -0 team-worker T8 builder "$wt2" -- relaunched
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T8","fable","task"]'
+  # The latest builder launch decides: a legacy one that logged neither a model nor where it came
+  # from ran on the settings' word, so it ends that model, and the next reads the registry again.
+  thread T10
+  opened T10 proj feat/T10-task "$wt2"
+  ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T10", event: "launch", role: "builder",
+    session: "f0000002", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T10-task", machine: "home-pc", model: "fable"}'
+  ledger_line --arg wt "$wt2" '{ts: (now | todate), task: "T10", event: "launch", role: "builder",
+    session: "f0000003", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T10-task", machine: "home-pc"}'
+  run_bin -0 team-worker T10 builder "$wt2" -- go
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T10","opus","registry"]'
+  # With none of those, such a task's builders read the registry at each launch, as before.
+  thread T9
+  opened T9 proj feat/T9-task "$wt1"
+  run_bin -0 team-worker T9 builder "$wt1" -- go
+  assert_equal "$(launches | tail -n 1 | jq -c '[.task, .model, .model_from]')" '["T9","opus","registry"]'
+}
+
+@test "with nothing naming a model, the launch logs the settings' one: --settings' or the user settings' ANTHROPIC_MODEL, then their model, else default" {
   thread T7
   opened T7 proj feat/T7-one "$wt1"
   run_bin -0 team-worker T7 reviewer "$wt1" -- go
-  # T0 reads no model from the registry, whatever it says.
-  registry --first 'models = { reviewer = "sonnet" }' proj other
-  run_bin -0 team-worker T0 reviewer "$wt1" -- go
-  assert_equal "$(bg_calls | jq -c 'index("--model")')" $'null\nnull'
-  assert_equal "$(launches | jq -c '[.task, has("model")]')" '["T7",false]'
+  mkdir -p "$HOME/.claude"
+  echo '{"model": "opus", "effortLevel": "high"}' >"$HOME/.claude/settings.json"
+  run_bin -0 team-worker T7 reviewer "$wt1" -- go
+  echo '{"model": "opus", "env": {"ANTHROPIC_MODEL": "claude-opus-5-5"}}' >"$HOME/.claude/settings.json"
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  # CLAUDE_CONFIG_DIR moves the user settings, as Claude Code reads them.
+  mkdir -p "$BATS_TEST_TMPDIR/config"
+  echo '{"model": "fable"}' >"$BATS_TEST_TMPDIR/config/settings.json"
+  CLAUDE_CONFIG_DIR=$BATS_TEST_TMPDIR/config run_bin -0 team-worker T7 builder "$wt1" -- go
+  # None passes --model: the session takes the settings' word itself.
+  assert_equal "$(bg_calls | jq -c 'index("--model")' | sort -u)" "null"
+  assert_equal "$(launches | jq -c '[.role, .model, .model_from]')" \
+    $'["reviewer","default","default"]\n["reviewer","opus","settings"]\n["planner","claude-opus-5-5","settings"]\n["builder","fable","settings"]'
   run_bin -0 team-log --check
+
+  # T0 reads no model from the registry, whatever it says, nor from a task.
+  registry --first 'models = { builder = "sonnet", reviewer = "sonnet" }' proj other
+  run_bin -0 team-worker T0 reviewer "$wt1" -- go
+  run_bin -0 team-worker T0 builder "$wt1" -- go
+  assert_equal "$(bg_calls | tail -n 2 | jq -c '[.[-2], index("--model")]')" $'["T0-reviewer",null]\n["T0-builder",null]'
+
+  # The settings a role's launch is given (--settings) outrank the user settings, as for Claude Code.
+  fake_checkout
+  jq '.env.ANTHROPIC_MODEL = "haiku"' "$code/settings/planner.json" >"$code/p.json"
+  mv "$code/p.json" "$code/settings/planner.json"
+  run_fake T7 planner "$wt1" -- go
+  assert_equal "$(launches | tail -n 1 | jq -c '[.model, .model_from]')" '["haiku","settings"]'
 }
 
 @test "a project missing from the registry, or a broken registry, refuses the launch: nothing started or logged" {
@@ -2305,7 +2421,8 @@ assert_prod_write_gated() {
   assert_equal "$(stub_calls curl | jq -r '.[-1]')" "https://discord.com/api/v10/channels/$OPS_COORDINATOR/messages/${request##*/}"
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg r "$request" '{task: "T7", event: "launch",
     role: "ops", session: "5b3c0d2f", worktree: $wt, toolkits: ["prod-read"], project: "proj",
-    branch: "feat/T7-one", machine: "home-pc", request: $r, discord_message: ($r | split("/") | last)}')"
+    branch: "feat/T7-one", machine: "home-pc", model: "default", model_from: "default", request: $r,
+    discord_message: ($r | split("/") | last)}')"
   run_bin -0 team-log --check
 }
 
@@ -2501,10 +2618,10 @@ assert_prod_write_gated() {
   assert_equal "$(jq -c .enabledPlugins "$s")" \
     '{"discord@claude-plugins-official":false,"mongodb-atlas@claude-plugins-official":false,"cc-plugin-plugin-authoring@builtin":false,"cc-plugin-easel@builtin":false}'
   # The shared hooks come first (lease-fence on Bash, a tool ops lacks, and the session records
-  # guard on its reads), then the role's own.
+  # guard on its reads and on Bash), then the role's own.
   assert_equal "$(jq -r '.hooks.PreToolUse[] | "\(.matcher) \(.hooks[0].command)"' "$s" | sed -n 1,3p)" \
     "Bash $REPO_ROOT/bin/hooks/lease-fence
-Read|Grep|Glob $REPO_ROOT/bin/hooks/session-records-guard
+Read|Grep|Glob|Bash $REPO_ROOT/bin/hooks/session-records-guard
 Edit|Write|MultiEdit|NotebookEdit $REPO_ROOT/bin/hooks/scratch-only-edits"
   # The ops log goes to the team home's task directory, which is not this checkout's in a test.
   local event
@@ -2639,14 +2756,14 @@ matcher_matches() {
   run_bin -0 team-log --check
 }
 
-@test "an ops launch takes no model, whatever its project's models table names" {
+@test "an ops launch takes no model, whatever its project's models table or its task's builder model names, and logs the settings' one" {
   registry --first 'models = { planner = "sonnet", builder = "sonnet", reviewer = "sonnet" }' proj other
   thread T7
-  opened T7 proj feat/T7-one "$wt1"
+  opened T7 proj feat/T7-one "$wt1" '{"builder_model": "haiku"}'
   ops_stub
   run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- Answer the request
   assert_equal "$(bg_calls | jq -c 'index("--model")')" "null"
-  assert_equal "$(launches | jq -c 'has("model")')" "false"
+  assert_equal "$(launches | jq -c '[.model, .model_from]')" '["default","default"]'
 }
 
 @test "only the ops role is restricted" {
@@ -2953,6 +3070,47 @@ LINES
   assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
   run_bin -1 team-sweep
   assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+}
+
+@test "a builder busy at a later builder's launch, then idle summary-blocked, is handed on: the sweep names no waiting-input, and the next launch stops it" {
+  # The later launch waits on the busy builder whose pr is out and leaves it, for the heartbeat's
+  # finished step to stop once it is idle; Claude Code may then call it blocked for its last
+  # summary, with no dialog open, and the later builder has taken its worktree.
+  export TEAM_WORKER_IDLE_SECONDS=1
+  open_task T9
+  log_lines <<LINES
+launch T9 builder 2f2f2f2f $wt1
+T9 {event: "pr", url: "https://github.com/owner/proj/pull/5", head: "1234567"}
+launch T9 reviewer 7e7e7e7e $wt1
+LINES
+  local reviewer='{"id": "7e7e7e7e", "name": "T9-reviewer", "status": "busy", "state": "working"}'
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"busy\"}, $reviewer]" >"$STUB_FIXTURES/agents.json"
+  stop_stub
+  run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+  assert_equal "$output" 9a8b7c6d
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: still busy 1 s after its work was handed on"
+  local later='{"id": "9a8b7c6d", "name": "T9-builder", "status": "busy", "state": "working"}'
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"idle\", \"state\": \"blocked\"}, $reviewer, $later]" \
+    >"$STUB_FIXTURES/agents.json"
+  run_bin -0 team-sweep
+  [[ $output != *waiting-input* ]]
+  # A dialog open is still waiting for input, named by the sweep and left by a launch.
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"idle\", \"state\": \"blocked\", \"waitingFor\": \"dialog open\"}, $reviewer, $later]" \
+    >"$STUB_FIXTURES/agents.json"
+  run_bin -1 team-sweep
+  assert_contains "$output" "T9 waiting-input: T9-builder 2f2f2f2f is waiting for input"
+  cp "$TEAM_HOME/ledger.jsonl" "$BATS_TEST_TMPDIR/superseded.jsonl"
+  run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+  assert_equal "$(stops)" ""
+  assert_contains "$stderr" "team-worker: left T9-builder 2f2f2f2f: waiting for input"
+  cp "$BATS_TEST_TMPDIR/superseded.jsonl" "$TEAM_HOME/ledger.jsonl"
+  : >"$STUB_CALLS/claude.log"
+  # Summary-blocked, it is stopped by a launch of its worktree's next builder.
+  echo "[{\"id\": \"2f2f2f2f\", \"name\": \"T9-builder\", \"status\": \"idle\", \"state\": \"blocked\"}, $reviewer]" >"$STUB_FIXTURES/agents.json"
+  run_bin -0 --separate-stderr team-worker T9 builder "$wt1" -- go
+  assert_equal "$(stops)" 2f2f2f2f
+  assert_contains "$stderr" "team-worker: stopped T9-builder 2f2f2f2f: its work is handed on"
 }
 
 @test "a paused for any reason but stowed leaves an idle reviewer, a resumed after it too" {
@@ -3408,7 +3566,7 @@ build_brief() {
   assert_equal "$(files --name "$call")" T7-builder-03
   assert_equal "$(launches)" "$(jq -cn --arg wt "$twt" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "builder",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one--03", machine: "home-pc",
-    admission: $a, brief: "brief-build-03", ticket: "03"}')"
+    admission: $a, model: "default", model_from: "default", brief: "brief-build-03", ticket: "03"}')"
   assert_equal "$(files --settings "$call")" "$t/settings.builder.proj--03.json"
   assert_equal "$(files --mcp-config "$call")" "$t/mcp.builder.proj--03.json"
   assert_equal "$(files --append-system-prompt-file "$call")" "$HOME/.local/state/agent-team/prompts/T7/builder.proj--03.md"

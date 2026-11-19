@@ -65,7 +65,7 @@ $(catch_up_line)
 $(twin_line)"
 }
 
-@test "the catch-up step names the thread cache's ids itself, since the assistant's Bash may not read the file" {
+@test "the catch-up step names the thread cache's ids itself, so the assistant need not read the file" {
   mkdir -p "$HOME/.local/state/agent-team"
   printf '%s\n' 1571000000000000101 1571000000000000202 >"$HOME/.local/state/agent-team/assistant-threads"
   start

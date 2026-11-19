@@ -465,6 +465,26 @@ DELETE installation/token"
   assert_equal "$(jq -r .head_sha "$STUB_CALLS/curl.body.3")" "$trial"
 }
 
+@test "--merge-group posts success on a trial commit GitHub built as a text merge, where the project's own merge driver gives another tree, and refuses the driver's" {
+  QUEUE_DRIVER=1 queued_pr
+  local trial driven
+  trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
+  # The driver, in the primary checkout, merges the two to another tree than the trial commit's.
+  git -C "${QUEUE_PRIMARY:?}" fetch -q origin "$trial"
+  driven=$(git -C "${QUEUE_PRIMARY:?}" merge-tree --write-tree "$QUEUE_BASE" "$QUEUE_HEAD")
+  [[ $driven != "$(git -C "${QUEUE_PRIMARY:?}" rev-parse "$trial^{tree}")" ]]
+  # A trial commit with the driver's tree is not the merge GitHub makes.
+  driven=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD" "$driven")
+  queue_entry "$driven"
+  group_refused "$driven" "${driven:0:7} changes more than the merge of its parents"
+  queue_entry "$trial"
+  run_bin -0 team-review-check --merge-group "$URL" "$trial"
+  assert_equal "$output" "4242"
+  # The proof moves no ref of the primary checkout and changes no file of it.
+  assert_equal "$(git -C "${QUEUE_PRIMARY:?}" status --porcelain)" ""
+  assert_equal "$(git -C "${QUEUE_PRIMARY:?}" for-each-ref --format='%(refname)' | grep -c queue || true)" 0
+}
+
 @test "--merge-group refuses a trial commit with any problem, naming the first, and posts nothing" {
   queued_pr
   local clean trial later other

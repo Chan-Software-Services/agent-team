@@ -16,8 +16,8 @@
 #     read that fails is said, and the digest goes on;
 #   - the catch-up step: read #assistant and each thread of its still open back to its own last
 #     message with the plugin's fetch_messages, and answer first what Daniel asked unanswered,
-#     with the ids of the thread cache (ASSISTANT_THREADS in bin/lib/team.sh), which the
-#     assistant's settings keep its Bash from reading;
+#     with the ids of the thread cache (ASSISTANT_THREADS in bin/lib/team.sh), so the
+#     assistant need not read the file;
 #   - on any start but compact (read from the event's JSON on stdin, and when it cannot be read),
 #     one ListAgents call: a row named assistant but this session is a twin to tell Daniel of; a
 #     compaction keeps the process, so it does not.
@@ -26,8 +26,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
 
-errors=$(mktemp)
-trap 'rm -f "$errors"' EXIT
+errors=$(team_mktemp)
 
 event=''
 [[ -t 0 ]] || event=$(cat)
@@ -82,7 +81,7 @@ else
   echo "Your list is empty (team-current list)."
 fi
 
-# The catch-up step, with the thread cache's ids, which the assistant's Bash may not read.
+# The catch-up step, with the thread cache's ids, so the assistant need not read the file.
 known=none
 [[ ! -s $ASSISTANT_THREADS ]] || known=$(grep -E '^[0-9]+$' "$ASSISTANT_THREADS" | paste -sd ' ' | sed 's/ /, /g') || known=none
 echo "Catch up on Discord before anything else: messages sent while no assistant listened are" \

@@ -89,6 +89,21 @@ hold() {
   [[ ! -e $BATS_TEST_TMPDIR/ran ]]
 }
 
+@test "a reader's shared lock, as status and team-capacity's reading take for an instant, is no holder: a run that cannot wait waits it out, saying nothing, and runs" {
+  local lock=$HOME/.local/state/agent-team/heavy.lock
+  mkdir -p "${lock%/*}"
+  # A reader that holds its shared lock for 2 seconds, far longer than a status read's instant, so
+  # the run tries while it is held.
+  bash -c 'exec {fd}<>"$0" && flock -s "$fd" && touch "$1/reading" && sleep 2' "$lock" "$BATS_TEST_TMPDIR" 3>&- &
+  started
+  wait_for "$BATS_TEST_TMPDIR/reading"
+  run_bin -0 team-heavy status
+  assert_equal "$output" free
+  run_bin -0 --separate-stderr team-heavy run --wait 0 -- echo ran
+  assert_equal "$output" ran
+  assert_equal "$(grep -c 'heavy-run lock' <<<"$stderr")" 0
+}
+
 @test "a nested run runs at once, and what a run leaves running does not keep the lock" {
   hold first
   TEAM_HEAVY_HELD=1 run_bin -0 team-heavy run --wait 0 -- echo nested

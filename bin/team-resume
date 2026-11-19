@@ -95,8 +95,11 @@
 # TEAM_RESUME_POLL_SECONDS the seconds between --wait's reads (the tests' seams).
 # Exit 0 done, 1 refused or a step failed (a worktree that could not be re-homed or an assistant
 # that did not start included, after the coordinator starts), 2 usage error, 75 GitHub unreachable or another resume running.
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no team-resume") && die "$why"
 
 # Seconds: the most one call to an origin may take, and --wait's interval.
 NET_TIMEOUT=60
@@ -120,8 +123,7 @@ bin=$(dirname "$TEAM_LIB")
 doctor=${TEAM_DOCTOR:-$bin/team-doctor}
 state=$HOME/.local/state/agent-team
 mkdir -p "$state"
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 NET_ERR=$scratch/net-err
 err=$scratch/err
 

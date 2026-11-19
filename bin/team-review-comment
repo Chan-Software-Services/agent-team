@@ -16,8 +16,11 @@
 # Refused, exit 2 with nothing posted: any other command line; exit 1: a repo no project has, any
 # other file, a file with no Not verified section (saying to add a "## Not verified" list of what
 # the change touches that nothing proved, or none, before its counts), and a comment GitHub refuses.
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no team-review-comment") && die "$why"
 
 [[ $# -eq 2 ]] || usage_error "usage: team-review-comment <pr url> <file>"
 url=$1

@@ -491,6 +491,21 @@ worker_refused() {
   assert_equal "$(files_state)" "$before"
 }
 
+# <script> <arg>... runs in an assistant session, a read the coordinator's commands let it make
+# (worker_refusal's --read), exiting <code> and printing on stdout and stderr what the coordinator's
+# run prints, with no file of the team home (its git state among them) or HOME changed by either
+# run; the assistant's run is bats' last, for the caller's checks: assistant_reads <code> <script> [<arg>...]
+assistant_reads() {
+  local code=$1 script=$2 before printed
+  shift 2
+  before=$(find "$TEAM_HOME" "$HOME" -type f -print0 | sort -z | xargs -0r sha256sum)
+  AGENT_TEAM_ROLE=coordinator run_bin "-$code" --separate-stderr "$script" "$@"
+  printed=$output$'\n--\n'$stderr
+  AGENT_TEAM_ROLE=assistant run_bin "-$code" --separate-stderr "$script" "$@"
+  assert_equal "$output"$'\n--\n'"$stderr" "$printed"
+  assert_equal "$(find "$TEAM_HOME" "$HOME" -type f -print0 | sort -z | xargs -0r sha256sum)" "$before"
+}
+
 # The calls made to stub <cmd>, one JSON array of arguments per line (nothing if never called).
 stub_calls() {
   cat "$STUB_CALLS/$1.log" 2>/dev/null || true
@@ -829,6 +844,17 @@ hold_lease() {
   origin=$(make_team_home "${1:-home-pc}")
   "$REPO_ROOT/bin/team-lease" take >/dev/null
   echo "$origin"
+}
+
+# A usage read of just now in this machine's attempt record, which read no model window, so the
+# heartbeat's quota step finds team-quota usage --if-due not due for 9 minutes (10 less the
+# heartbeat's minute of slack) and starts no headless Claude Code from the sandbox's stub claude:
+# for a test of the heartbeat on the holder that is not about the usage read
+# (tests/team-timers-quota.bats tests the read with a fake).
+usage_read_now() {
+  mkdir -p "$HOME/.local/state/agent-team"
+  jq -cn --arg at "$(date -u +%FT%TZ)" '{at: $at, ok: true, why: null, reading: null}' \
+    >"$HOME/.local/state/agent-team/quota-usage.json"
 }
 
 # A backlog story of <project> in the team home, its front matter as the backlog writes it:

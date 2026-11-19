@@ -53,7 +53,8 @@ advance_origin() {
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" --arg home "$TEAM_HOME" '{
     task: "T1", project: "proj", path: "feature", title: "The team'"'"'s own tooling",
     branch: "feat/T1-team-tooling", base: "main", base_sha: $sha, worktree: $wt,
-    task_dir: "\($wt)/.scratch/task", thread: "1563000000000000001", plan: "\($home)/tasks/T1/plan.md"}')"
+    task_dir: "\($wt)/.scratch/task", thread: "1563000000000000001", plan: "\($home)/tasks/T1/plan.md",
+    builder_model: "default"}')"
 
   assert_equal "$(git -C "${worktree:?}" rev-parse --abbrev-ref HEAD)" "feat/T1-team-tooling"
   assert_equal "$(git -C "${worktree:?}" rev-parse HEAD)" "$base_sha"
@@ -68,7 +69,7 @@ advance_origin() {
   assert_equal "$(events opened | jq -c 'del(.ts)')" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" '{
     task: "T1", event: "opened", project: "proj", path: "feature", type: "feat",
     title: "The team'"'"'s own tooling", branch: "feat/T1-team-tooling", base: "main",
-    base_sha: $sha, worktree: $wt}')"
+    base_sha: $sha, worktree: $wt, builder_model: "default"}')"
   run_bin -0 team-log --check
 }
 
@@ -144,6 +145,36 @@ advance_origin() {
   assert_equal "$(events opened | jq -c 'has("story")' | paste -sd ' ')" "true false"
 }
 
+@test "--builder-model logs the task's builder model on opened, else the registry's builder line at the open, else default; one is refused where it does not fit" {
+  run_bin -0 --separate-stderr team-open --builder-model sonnet proj small fix one "One"
+  assert_equal "$(jq -r .builder_model <<<"$output")" sonnet
+  assert_equal "$(events opened | jq -r .builder_model)" sonnet
+  # With none named, the registry's builder line at the open is the task's, so a later edit of
+  # the table changes no open task's builders.
+  sed -i 's/^toolkits = \[\]$/toolkits = []\nmodels = { builder = "claude-sonnet-5-5", reviewer = "opus" }/' "$TEAM_HOME/projects.toml"
+  run_bin -0 --separate-stderr team-open proj small fix two "Two"
+  assert_equal "$(jq -r .builder_model <<<"$output")" claude-sonnet-5-5
+  # Named, it is the task's over the registry's; with --task and --queued's forms too.
+  run_bin -0 --separate-stderr team-open --task T9 --builder-model opus proj small fix three "Three"
+  sed -i '/^models = /d' "$TEAM_HOME/projects.toml"
+  run_bin -0 --separate-stderr team-open proj small fix four "Four"
+  assert_equal "$(jq -r .builder_model <<<"$output")" default
+  assert_equal "$(events opened | jq -c '[.task, .builder_model]')" \
+    $'["T1","sonnet"]\n["T2","claude-sonnet-5-5"]\n["T9","opus"]\n["T10","default"]'
+  TEAM_HOME=$TEAM_HOME run -0 "$REPO_ROOT/bin/team-log" --check
+
+  local opened
+  opened=$(events opened | wc -l)
+  run_bin -2 team-open --builder-model 'so net' proj small fix five "Five"
+  assert_contains "$output" "--builder-model needs a model alias or name, got 'so net'"
+  run_bin -2 team-open --builder-model
+  run_bin -2 team-open --task T1 --builder-model sonnet --add proj feat more
+  assert_contains "$output" "--builder-model goes only with a new task, not with --add, --resume or --ticket"
+  run_bin -2 team-open --task T1 --builder-model sonnet --resume proj
+  run_bin -2 team-open --task T1 --builder-model sonnet --ticket 01
+  assert_equal "$(events opened | wc -l)" "$opened"
+}
+
 @test "--task refuses a task that is already open" {
   run_bin -0 team-open --task T5 proj feature feat one "One"
   run_bin -1 team-open --task T5 proj feature feat one "One"
@@ -155,7 +186,7 @@ advance_origin() {
 
 @test "malformed arguments are usage errors that change nothing" {
   run_bin -2 team-open proj feature feat slug
-  assert_contains "$output" "usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] <project> <path> <type> <slug> <title...>"
+  assert_contains "$output" "usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] [--builder-model <model>] <project> <path> <type> <slug> <title...>"
   run_bin -2 team-open proj feature feat slug "  "
   run_bin -2 team-open --task
   run_bin -2 team-open --task 13 proj feature feat slug "Title"
@@ -799,7 +830,7 @@ From the queue: \`tasks/queued/fix-the-sign-in-limit.md\`: the summary of fix-th
 @test "--queued goes only with a new task, and takes the file alone or every argument" {
   run_bin -2 team-open --queued
   run_bin -2 team-open --queued a.md proj feature feat slug
-  assert_contains "$output" "usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] --queued <file> [<project> <path> <type> <slug> <title...>]"
+  assert_contains "$output" "usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] [--builder-model <model>] --queued <file> [<project> <path> <type> <slug> <title...>]"
   run_bin -2 team-open --queued a.md --queued b.md
   run_bin -2 team-open --task T1 --queued a.md --add proj feat more
   assert_contains "$output" "--queued goes only with a new task, not with --add, --resume or --ticket"

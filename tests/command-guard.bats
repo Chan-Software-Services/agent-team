@@ -4,8 +4,10 @@
 # coordinator's commands where a command starts, in place of the deny rules that matched their
 # names anywhere in a call's text, a change of the session's GitHub login, and a curl or wget upload
 # of a file or body to a host outside the team's own, and a worker's or the assistant's force push
-# or cd into the team's keys' directories, naming the line a refusal of a call of several lines
-# stands on. Every command those rules refused when run is still refused (a test per rule),
+# or cd into the team's keys' directories, and the assistant's run of the coordinator's acts in
+# place of its deny rules that matched any call naming the script, and its GitHub writes by gh api,
+# release, secret and variable in place of its deny rules that matched their reads too, naming the line a refusal of a
+# call of several lines stands on. Every command those rules refused when run is still refused (a test per rule),
 # and the reads, searches, diffs, commits and file writes that only name them pass, the hook and
 # the worker deny list both.
 
@@ -782,6 +784,12 @@ passes() {
   mv -f "$lib/command_rules.py.new" "$lib/command_rules.py"
   table 'git status'
   assert_equal "$status:$output:$stderr" "1::ops-launch: ZeroDivisionError: division by zero"
+  # One that recurses past Python's limit is named by that limit, never by its bare RecursionError.
+  awk '/^if __name__/ { print "def deeper(n):\n    return deeper(n + 1)\n\nROWS = (Row(\"ops-launch\", lambda command, context: deeper(0), \"x\"),) + ROWS[1:]\n" } { print }' \
+    "$REPO_ROOT/bin/lib/command_rules.py" >"$lib/command_rules.py.new"
+  mv -f "$lib/command_rules.py.new" "$lib/command_rules.py"
+  table 'git status'
+  assert_equal "$status:$output:$stderr" "1::ops-launch: RecursionError: a reading nested deeper than Python's recursion limit of 1000 frames"
 }
 
 @test "a command the reader cannot walk is refused, naming command_rules.py's error" {
@@ -874,4 +882,625 @@ passes() {
   # A gate agent never had those deny rules, so the rows leave it as it was.
   guard -0 "git push --force-with-lease origin feat/T1-x"
   guard -0 "cd ~/.config/agent-team"
+}
+
+# The coordinator's acts, which the assistant's deny rules held by any call naming the script
+# until its assistant-acts row took them over, command by command.
+ACTS="the coordinator's acts, which an assistant session never runs"
+ACTS_TAIL="its --help and a read of its file pass"
+
+@test "the assistant's run of each of the coordinator's acts is refused, naming the act, by any spelling" {
+  local command act
+  # Each whole-name act with arguments or none, and each act's subcommand.
+  while IFS='|' read -r act command; do
+    refuses_as assistant "$ACTS ($act); $ACTS_TAIL" "" "$command"
+  done <<'COMMANDS'
+team-checkpoint|team-checkpoint
+team-checkpoint|team-checkpoint --force
+team-handoff|team-handoff laptop
+team-load-check|team-load-check --probe --role assistant
+team-load-check|team-load-check
+team-ops-end|team-ops-end T1
+team-records-rewrite|team-records-rewrite --plan
+team-resume|team-resume
+team-resume|team-resume --wait
+team-review-comment|team-review-comment https://github.com/o/r/pull/5 x.md
+team-stow|team-stow T1
+team-stow|bin/team-stow --load-check-probe
+claude-coordinator|claude-coordinator
+claude-coordinator|claude-coordinator --prompt x
+team-capacity install|team-capacity install
+team-capacity place|team-capacity place T1 builder 4242
+team-config apply|team-config apply
+team-config capture|team-config capture
+team-heavy run|team-heavy run -- git status
+team-heavy run|team-heavy --label x run -- sh -c x
+team-lease take|team-lease take
+team-lease renew|team-lease renew
+team-lease release|team-lease release
+team-secrets restore|team-secrets restore
+team-secrets save|team-secrets save discord-bot-env
+team-stack down|team-stack down
+team-stack seed|team-stack seed
+team-stack stop|team-stack stop
+team-stack up|team-stack up --worktree ~/wt
+team-timers disable|team-timers disable
+team-timers enable|team-timers enable
+team-timers run|team-timers run
+COMMANDS
+  # By a path, a variable directory, a quoted name, a wrapper, a shell's string, eval and xargs.
+  # shellcheck disable=SC2016,SC2088 # the command as an agent types it
+  refuses_as assistant "$ACTS (team-stow); $ACTS_TAIL" "" "$REPO_ROOT/bin/team-stow T1" '~/agent-team/bin/team-stow T1' \
+    '$B/team-stow T1' '"team-stow" T1' 'env FOO=1 team-stow T1' 'nohup team-stow T1 &' "bash -c 'team-stow T1'" \
+    "eval 'team-stow T1'" 'echo T1 | xargs team-stow' 'git status; team-stow T1' 'timeout 60 bin/team-stow T1'
+  # shellcheck disable=SC2016
+  refuses_as assistant "$ACTS (team-lease take); $ACTS_TAIL" "" '$B/team-lease take' "bash -c 'team-lease take'" \
+    "eval 'bin/team-lease take'" 'env A=1 ~/agent-team/bin/team-lease take --load-check-probe'
+  # A --help that is not the first word reaches the act, since the library answers only a first one.
+  refuses_as assistant "$ACTS (team-stow); $ACTS_TAIL" "" 'team-stow T1 --help' 'team-stow T1 -h'
+  refuses_as assistant "$ACTS (team-heavy run); $ACTS_TAIL" "" 'team-heavy run --help' 'team-heavy run -- --help'
+}
+
+@test "the assistant's --help of an act, its other subcommands and a read of its file pass, and a worker's acts are judged as before" {
+  local command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  for command in 'team-stow --help' 'team-stow --help T1' 'team-stow -h' 'bin/team-load-check --help' 'team-load-check --help' \
+    "$REPO_ROOT/bin/team-handoff --help" 'bin/team-resume -h' 'team-checkpoint --help' 'team-review-comment --help' \
+    'team-records-rewrite --help' 'team-ops-end --help' 'claude-coordinator --help' '$B/team-stow --help' \
+    'team-timers watch --once' 'team-timers watch' 'team-timers health' 'team-timers status --json' 'team-stack ls' \
+    'team-stack --help' 'team-lease status' 'team-lease check' 'team-capacity status' 'team-config diff' \
+    'team-secrets check' 'team-heavy --help' 'team-heavy --help run' 'team-stack --help up' 'team-heavy status -- run' \
+    'sed -n 1,40p bin/team-load-check | head -20' 'grep -rn toolkit bin/claude-coordinator bin/claude-assistant' \
+    'wc -l bin/team-checkpoint bin/team-review-comment' 'cat bin/team-stow' 'grep -n take bin/team-lease' \
+    "git log --oneline -- bin/team-stack" "grep -rn 'team-stack up' sops" 'git commit -m "fix: team-stow T1 says so"'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # A worker's same calls are not the row's: each passes the guard as it did.
+  for role in builder planner reviewer; do
+    for command in 'team-stow T1' 'team-handoff laptop' 'team-resume --wait' 'claude-coordinator' 'team-stack up' \
+      'team-lease take' 'team-heavy run -- tests/run' 'team-timers run' 'team-load-check --probe --role builder'; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+  # And a gate agent's, which has no role.
+  guard -0 'team-stow T1'
+  guard -0 'team-stack up'
+}
+
+@test "the acts' names go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local word
+  for word in team-checkpoint team-handoff team-ops-end team-records-rewrite team-resume team-review-comment team-stow \
+    claude-coordinator team-capacity team-config team-heavy team-lease team-secrets team-stack team-timers; do
+    AGENT_TEAM_ROLE=builder guard -0 "$word x"
+    assert_equal "$stderr" ""
+    guard -0 "$word x"
+    AGENT_TEAM_ROLE=assistant guard -2 "$word x"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "the assistant's $word passed the fast path: $stderr" >&2; return 1; }
+  done
+  # An assistant's call naming none of them still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'git status && team-state T7'
+}
+
+@test "the assistant's --help of the coordinator's commands and team-inbox --item pass, and every other form is refused to it and every form to a worker" {
+  local command role
+  # shellcheck disable=SC2016,SC2088 # the command as an agent types it
+  for command in 'team-inbox --help' 'team-inbox -h' 'bin/team-inbox --help' 'team-ask --help' 'team-ask -h T1' \
+    'team-answer --help' "$REPO_ROOT/bin/team-answer -h" 'team-run-approved --help' '~/agent-team/bin/team-run-approved -h' \
+    'team-thread --help' 'team-inbox --item 3' 'bin/team-inbox --item 12' '$B/team-inbox --item 3' \
+    "bash -c 'team-inbox --item 3'" 'env A=1 team-inbox --item 3' 'team-inbox --item 3 | head -1'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # Every act of them stays the coordinator's, and so does a --help past the first word.
+  refuses_as assistant "$COORDINATOR" "" 'team-inbox' 'team-inbox --post' 'team-inbox --item 3 --post' \
+    'team-inbox --post --item 3' 'team-inbox --item' 'team-inbox 3 --item' 'team-ask T1 q --file f' 'team-ask T1 --help' \
+    'team-answer T1 a 123' 'team-answer --item 3 123' 'team-run-approved T1 a' 'team-thread T1 agent-team title' \
+    'team-inbox --item 3; team-inbox --post' "bash -c 'team-ask T1 q --file f'" 'bin/team-inbox --post --help'
+  # A worker's and a gate agent's are refused in every form, as before.
+  for role in builder planner reviewer ops; do
+    refuses_as "$role" "$COORDINATOR" "" 'team-inbox --help' 'team-ask --help' 'team-answer -h' 'team-run-approved --help' \
+      'team-inbox --item 3' 'bin/team-inbox --item 3'
+  done
+  refuses "$COORDINATOR" 'team-inbox --help' 'team-inbox --item 3' 'team-ask -h'
+}
+
+# GitHub's writes by gh api, gh release, gh secret and gh variable, which the assistant's deny
+# rules held by any call with a field or naming the group until its assistant-github-write row
+# took them over, command by command.
+GITHUB="a GitHub write, which an assistant session never makes"
+GITHUB_METHOD="$GITHUB (gh api --method POST)"
+GITHUB_INPUT="$GITHUB (gh api --input, a request body)"
+GITHUB_FIELD="$GITHUB (gh api with a field and no --method GET or HEAD, which sends a POST)"
+GITHUB_MUTATION="$GITHUB (a GraphQL mutation or subscription)"
+GITHUB_UNREAD="$GITHUB (a GraphQL query from a file or stdin the guard cannot read)"
+GITHUB_NO_QUERY="$GITHUB (gh api graphql with a field but no query)"
+GITHUB_DOLLAR="$GITHUB (a GraphQL query holding a \$ or a backtick, which may be a shell expansion: write its values into the query)"
+
+@test "the assistant's GitHub writes by gh api, release, secret and variable are refused, naming what it read, by any spelling" {
+  local command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$GITHUB_METHOD" "" 'gh api -X POST repos/o/r/issues' 'gh api -XPOST repos/o/r/issues' \
+    'gh api --method=POST repos/o/r/issues' 'gh api repos/o/r/issues --method post' 'gh api -iX POST repos/o/r/issues' \
+    'gh api -X GET -X POST repos/o/r/issues' 'gh -R o/r api -X POST x' 'bin/gh api -X post x' "bash -c 'gh api -X POST x'" \
+    'env A=1 gh api -X POST x' 'echo x | xargs gh api -X POST' '"gh" api -X POST x' 'gh-axi api -X POST x'
+  refuses_as assistant "$GITHUB (gh api --method PATCH)" "" 'gh api -XPATCH repos/o/r/issues/1'
+  refuses_as assistant "$GITHUB (gh api --method DELETE)" "" 'gh api --method=DELETE repos/o/r/git/refs/heads/x'
+  refuses_as assistant "$GITHUB (gh api --method PUT)" "" 'gh api --method put repos/o/r/pulls/5/merge' 'gh api -X Put x'
+  refuses_as assistant "$GITHUB_INPUT" "" 'gh api repos/o/r/issues --input body.json' 'gh api --input=- x' \
+    'gh api -X GET x --input body.json' 'gh api graphql --input q.json'
+  refuses_as assistant "$GITHUB_FIELD" "" 'gh api repos/o/r/issues -f title=x' 'gh api repos/o/r/issues -F x=1' \
+    'gh api repos/o/r/issues --field x=1' 'gh api repos/o/r/issues --raw-field=title=x' 'gh api -ftitle=x repos/o/r/issues' \
+    'gh api -Fx=1 x' 'gh api https://api.github.com/graphql -f query={viewer{login}}' 'gh api /graphql -f query={viewer{login}}'
+  # shellcheck disable=SC2016
+  refuses_as assistant "$GITHUB_MUTATION" "" "gh api graphql -f query='mutation{addStar(input:{starrableId:\"x\"}){clientMutationId}}'" \
+    "gh api graphql -f query='subscription{x}'" "gh api graphql -F query='mutation M { x }'" \
+    "gh api graphql -f query='{viewer{login}} mutation{x}'" "gh api graphql --raw-field 'query=mutation{x}'" \
+    "gh api -X GET graphql -f query='mutation{x}'"
+  # shellcheck disable=SC2016
+  refuses_as assistant "$GITHUB_UNREAD" "" 'gh api graphql -f query=@q.graphql' 'gh api graphql -F query=@-' \
+    "gh api graphql -f query='{viewer{login}}' -F query=@q.graphql" 'gh api graphql --raw-field=query=@/tmp/q'
+  # A $ or a backtick anywhere in a query may be the shell's, which the walk cannot tell from a
+  # GraphQL variable, so both are refused: a comma or a comment line before an expansion too.
+  # shellcheck disable=SC2016
+  refuses_as assistant "$GITHUB_DOLLAR" "" 'gh api graphql -f query="$(cat q.graphql)"' 'gh api graphql -f query="$Q"' \
+    'gh api graphql -f query="${Q}"' 'gh api graphql -f query=`cat q`' \
+    "M='mutation{addStar(input:{starrableId:\"x\"}){clientMutationId}}'; gh api graphql -f query=\",\$M\"" \
+    'gh api graphql -f query="{viewer{login}}
+# x
+$M"' "gh api graphql -F query='query(\$n:Int!){viewer{repositories(first:\$n){nodes{name}}}}' -F n=5" \
+    'gh api graphql -f query="{viewer{login}}`printf x`"'
+  refuses_as assistant "$GITHUB_NO_QUERY" "" 'gh api graphql -F owner=o' 'gh api graphql -f "query[]=x"'
+  # Each writing subcommand of the three groups, by gh and gh-axi, with -R before it too.
+  while IFS='|' read -r group command; do
+    for role in gh gh-axi; do
+      refuses_as assistant "$GITHUB ($role $group $command)" "" "$role $group $command x" \
+        "$role $group -R o/r $command x" "$role $group --repo o/r $command" "$role $group --repo=o/r $command" \
+        "$role $group -Ro/r $command" "$role -R o/r $group $command x"
+    done
+  done <<'COMMANDS'
+release|create
+release|edit
+release|delete
+release|upload
+release|delete-asset
+secret|set
+secret|delete
+secret|remove
+variable|set
+variable|delete
+COMMANDS
+  # An option's value is never read as the subcommand, as gh reads them.
+  refuses_as assistant "$GITHUB (gh secret set)" "" 'gh secret --org list set X' 'gh secret --env=x set X'
+  # A --help past the subcommand may be an option's value (--notes --help), so only a group's own passes.
+  refuses_as assistant "$GITHUB (gh release create)" "" 'gh release create v1 --notes --help' 'gh release create --help'
+}
+
+@test "the assistant's gh call is refused unless it is one of gh's reads, an unknown group and an alias among the refused" {
+  local name
+  # Each group's writes, which no deny rule of the assistant's held, by gh and gh-axi where it has them.
+  while IFS='|' read -r name command; do
+    refuses_as assistant "$GITHUB ($name)" "" "$command" "bash -c '$command'" "env A=1 $command"
+  done <<'COMMANDS'
+gh gist create|gh gist create --public /tmp/x
+gh workflow run|gh workflow run ci.yml
+gh workflow enable|gh workflow enable ci.yml
+gh workflow disable|gh workflow disable ci.yml
+gh run rerun|gh run rerun 1
+gh run cancel|gh run cancel 1
+gh run delete|gh run delete 1
+gh label create|gh label create x
+gh label edit|gh label edit x
+gh label delete|gh label delete x
+gh cache delete|gh cache delete --all
+gh repo fork|gh repo fork o/r
+gh repo rename|gh repo rename x
+gh repo archive|gh repo archive o/r
+gh repo sync|gh repo sync
+gh repo deploy-key add|gh repo deploy-key add key.pub
+gh repo autolink create|gh repo autolink create x y
+gh pr lock|gh pr lock 5
+gh pr update-branch|gh pr update-branch 5
+gh pr checkout|gh pr checkout 5
+gh issue delete|gh issue delete 5
+gh issue transfer|gh issue transfer 5 o/r
+gh issue lock|gh issue lock 5
+gh alias set|gh alias set rc 'release create'
+gh alias import|gh alias import aliases.yml
+gh alias delete|gh alias delete rc
+gh repo set-default|gh repo set-default o/r
+gh auth token|gh auth token
+gh auth login|gh auth login --with-token
+gh auth logout|gh auth logout
+gh auth switch|gh auth switch
+gh auth refresh|gh auth refresh -s repo
+gh auth setup-git|gh auth setup-git
+gh config set|gh config set editor vi
+gh config clear-cache|gh config clear-cache
+gh skill install|gh skill install x
+gh extension install|gh extension install o/gh-x
+gh extension exec|gh extension exec x
+gh-axi workflow run|gh-axi workflow run ci.yml --ref main
+gh-axi run rerun|gh-axi run rerun 1
+gh-axi label create|gh-axi label create --name x --color fff
+gh-axi repo fork|gh-axi repo fork
+gh-axi issue subissue add|gh-axi issue subissue add 1 2
+gh-axi pr checkout|gh-axi pr checkout 5
+gh issue develop|gh issue develop 5 --list
+COMMANDS
+  # A group the guard knows no read of: a user alias, an extension, gh co, copilot, preview, setup.
+  while IFS='|' read -r name command; do
+    refuses_as assistant "$GITHUB ($name, a command the guard knows no read of)" "" "$command"
+  done <<'UNKNOWN'
+gh rc|gh rc v1
+gh p|gh p repos/o/r/issues
+gh co|gh co 5
+gh ext|gh ext list
+gh cs|gh cs list
+gh copilot|gh copilot
+gh preview|gh preview prompter
+gh-axi setup|gh-axi setup hooks
+gh-axi update|gh-axi update
+UNKNOWN
+  # gh auth status prints the token with -t or --show-token.
+  refuses_as assistant "$GITHUB (gh auth status --show-token, which prints the token)" "" 'gh auth status -t' \
+    'gh auth status --show-token' 'gh auth status -at'
+  # gh config get reads only the keys gh config list names: a host's oauth_token is its token.
+  refuses_as assistant "$GITHUB (gh config get oauth_token, a key gh config list does not name)" "" \
+    'gh config get -h github.com oauth_token' 'gh config get oauth_token' 'gh config get --host=github.com oauth_token' \
+    'bash -c "gh config get -h github.com oauth_token"'
+  refuses_as assistant "$GITHUB (gh config get user, a key gh config list does not name)" "" 'gh config get -h github.com user'
+  # A clone passes the words after its -- to git clone, whose -c may make git run a program.
+  refuses_as assistant "$GITHUB (gh repo clone with words after --, which it passes to git clone)" "" \
+    'gh repo clone example-org/example-repo -- -c core.fsmonitor=x' 'gh repo clone o/r /tmp/r -- --depth 1'
+  refuses_as assistant "$GITHUB (gh gist clone with words after --, which it passes to git clone)" "" \
+    'gh gist clone x -- -c core.fsmonitor=x'
+}
+
+@test "the assistant's GitHub reads pass, and a worker's and a gate agent's GitHub calls are judged as before" {
+  local command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  for command in 'gh api repos/o/r/pulls' 'gh api -X GET search/issues -f q=x' 'gh api --method HEAD repos/o/r' \
+    'gh api --method=get repos/o/r/pulls -F per_page=100' 'gh api -X GET search/issues -f q=repo:o/r' \
+    "gh api graphql -f query='{viewer{login}}'" "gh api graphql -f query='{viewer{login}}' -F n=5" \
+    "gh api graphql -f query='
+query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' 'gh api --paginate repos/o/r/pulls -q .[].number' \
+    'gh api --method GET rate_limit -F probe=1 --jq .resources.core.limit' 'gh api -H Accept:x repos/o/r' \
+    'gh release list' 'gh release ls' 'gh release view v1' 'gh release download v1 -p "*.tgz"' 'gh release verify v1' \
+    'gh release verify-asset v1 a.tgz' 'gh release -R o/r list' 'gh release --repo=o/r view v1' 'gh secret list' 'gh secret ls' \
+    'gh secret list -R o/r' 'gh variable list' 'gh variable ls' 'gh variable get X' 'gh release' 'gh secret' 'gh variable' \
+    'gh release --help' 'gh secret --help' 'gh variable -h' 'gh release -R o/r' 'gh-axi release list' \
+    'gh-axi secret list' 'gh-axi variable list' 'gh-axi release view v1' 'gh pr view 5' 'gh pr list' 'gh run view 1 --log' \
+    'gh' 'gh --help' 'gh pr --help' 'gh auth status' 'gh browse --no-browser' 'gh status' 'gh licenses' 'gh completion -s bash' \
+    'gh codespace list' 'gh discussion view 1' 'gh gist view x' 'gh gist clone x' 'gh issue list' 'gh issue status' \
+    'gh issue view 5 --comments' 'gh org list' 'gh pr status' 'gh pr checks 5' 'gh pr diff 5' 'gh project item-list 1' \
+    'gh repo view o/r' 'gh repo clone o/r /tmp/r' 'gh repo read-file README.md' 'gh repo autolink list' \
+    'gh repo deploy-key list' 'gh skill search x' 'gh cache list' 'gh run list' 'gh run watch 1' 'gh run download 1' \
+    'gh workflow view ci.yml' 'gh agent-task list' 'gh alias list' 'gh attestation verify a.tgz -o o' 'gh config get editor' \
+    'gh config get -h github.com git_protocol' 'gh config get --host github.com pager' 'gh repo clone o/r /tmp/r --' \
+    'gh extension list' 'gh gpg-key list' 'gh ssh-key list' 'gh label list' 'gh ruleset check main' 'gh search prs x' \
+    'gh search code x --limit 5' 'gh-axi' 'gh-axi --help' 'gh-axi issue list --state open' 'gh-axi issue subissue list 1' \
+    'gh-axi pr checks 5' 'gh-axi run view 1 --log' 'gh-axi workflow list' 'gh-axi repo view' 'gh-axi label list' \
+    'gh-axi search issues x' 'gh-axi update --check' \
+    "grep -rn 'gh secret set' sops" 'git commit -m "fix: gh api -X POST is refused"' 'echo gh release create'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # A worker's and a gate agent's GitHub calls are not the row's: each passes the guard as it did.
+  for role in builder planner reviewer ops ""; do
+    for command in 'gh api -X POST repos/o/r/issues' 'gh api repos/o/r/issues -f title=x' 'gh api --input body.json x' \
+      "gh api graphql -f query='mutation{x}'" 'gh api graphql -f query=@q.graphql' 'gh release create v1' \
+      'gh secret set X' 'gh variable delete X' 'gh-axi release upload v1 a' 'gh gist create /tmp/x' 'gh alias set p api' \
+      'gh pr checkout 5' 'gh auth status -t' 'gh co 5'; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+}
+
+@test "every gh and gh-axi call goes to Python past the fast path only for the assistant, so fails closed there when Python fails" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local command
+  for command in 'gh api x' 'gh release list' 'gh secret list' 'gh variable list' 'gh-axi release list' 'g""h api x' \
+    'gh pr view 5' 'gh gist create x' 'gh co 5' 'bin/gh alias set p api' 'gh-axi workflow run ci'; do
+    AGENT_TEAM_ROLE=builder guard -0 "$command"
+    assert_equal "$stderr" ""
+    guard -0 "$command"
+    AGENT_TEAM_ROLE=assistant guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
+  done
+  # An assistant's call naming gh only inside a word still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'cat high.txt github.md'
+}
+
+# A write of the thread cache the Discord guard trusts, which the assistant's deny rule held by any
+# call naming it until its assistant-thread-cache row took it over, command by command.
+CACHE="the thread cache the Discord guard trusts, which only the scripts and hooks write"
+
+@test "the assistant's write of the thread cache is refused, by a redirection or a writer, naming the path as written" {
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  local state='~/.local/state/agent-team' writer
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE ($state/assistant-threads)" "" "echo 1571000000000000101 >>$state/assistant-threads" \
+    "echo x >$state/assistant-threads" "echo x >|$state/assistant-threads" "echo x 1>>$state/assistant-threads" \
+    "grep x y 2>$state/assistant-threads" "ls &>$state/assistant-threads" "ls &>>$state/assistant-threads" \
+    "ls >&$state/assistant-threads" "exec 3<>$state/assistant-threads" ">$state/assistant-threads" \
+    ": > $state/assistant-threads" "cat x > \"$state/assistant-threads\"" "bash -c 'echo x >> $state/assistant-threads'" \
+    "bash -c \"ls 2> $state/assistant-threads\"" "eval 'echo x >$state/assistant-threads'" \
+    "echo 'echo x >$state/assistant-threads' | bash" "{ echo x; } >>$state/assistant-threads" \
+    "(echo x) >$state/assistant-threads" "cat >$state/assistant-threads <<'IDS'
+1571000000000000101
+IDS"
+  refuses_as assistant "$CACHE (assistant-threads)" "" "cd $state && tee -a assistant-threads" \
+    "cd $state && echo x >assistant-threads"
+  refuses_as assistant "$CACHE (\$HOME/.local/state/agent-team/assistant-threads)" "" \
+    'sed -i 1d $HOME/.local/state/agent-team/assistant-threads'
+  # Each writer, plainly, through bash -c and behind a wrapper.
+  while IFS='|' read -r writer; do
+    refuses_as assistant "$CACHE ($state/assistant-threads)" "" "${writer//@/$state/assistant-threads}" \
+      "bash -c '${writer//@/$state/assistant-threads}'" "env A=1 ${writer//@/$state/assistant-threads}"
+  done <<'WRITERS'
+tee @
+tee -a /tmp/x @
+cp /tmp/x @
+cp @ /tmp/x
+mv /tmp/x @
+mv @ /tmp/x
+install -m 600 /tmp/x @
+ln -sf /tmp/x @
+rsync /tmp/x @
+dd if=/tmp/x of=@
+truncate -s 0 @
+rm @
+rm -f @
+unlink @
+shred -u @
+touch @
+chmod 666 @
+chown me @
+sed -i 1d @
+sed -i.bak 1d @
+sed -ni p @
+sed --in-place 1d @
+sed --in-place=.bak 1d @
+perl -pi -e s/x/y/ @
+perl -i.bak -pe s/x/y/ @
+ruby -pi -e 1 @
+WRITERS
+  # A name past the basename's start (the probe's absent file) and a path in quotes.
+  refuses_as assistant "$CACHE ($state/assistant-threads.load-check-probe-absent)" "" \
+    "sed -i -n p $state/assistant-threads.load-check-probe-absent"
+  refuses_as assistant "$CACHE (/home/me/.local/state/agent-team/assistant-threads)" "" \
+    "rm '/home/me/.local/state/agent-team/assistant-threads'" "echo x | xargs -I{} cp {} /home/me/.local/state/agent-team/assistant-threads"
+  # A redirection's refusal names the line it stands on, as a command's does.
+  AGENT_TEAM_ROLE=assistant guard -2 "cd /tmp
+echo x >>$state/assistant-threads"
+  assert_equal "${stderr#*$'\n'}" "It stands on line 2 of the call: echo x >>$state/assistant-threads."
+}
+
+@test "the assistant's call naming the thread cache is refused unless each command of it is a plain reader with no write" {
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  local state='~/.local/state/agent-team' command
+  # A command that is no plain reader, in a call naming the cache, is refused by its name, as the
+  # deny rule *assistant-threads* refused any call naming it: each writes it by its own program.
+  while IFS='|' read -r name command; do
+    refuses_as assistant "$CACHE ($name, which is no plain reader of it, in a call naming it)" "" "${command//@/$state/assistant-threads}"
+  done <<'NONREADERS'
+sort|sort -u -o @ @ /tmp/ids
+sort|sort --output=@ /tmp/ids
+sort|sort -uo @ /tmp/ids
+sort|sort --compress-program=/tmp/x @
+sort|sort --comp=/tmp/x @
+sort|sort --out @ /tmp/ids
+sort|sort -T /tmp @
+sort|sort --temporary-directory=/tmp @
+dd|dd if=@ of=/dev/stdout
+diff|diff -l @ /tmp/ids
+diff|diff -ul @ /tmp/ids
+diff|diff --paginate @ /tmp/ids
+diff|diff --pag @ /tmp/ids
+diff|diff -u3l @ /tmp/ids
+test|test -v 'x[$(rm /tmp/x)]' && cat @
+test|test -v 'x[$(echo 1571000000000000303 >>@)]'
+test|test -R x; cat @
+[|[ -v 'x[y=1]' ]; cat @
+[|[ -R x ]; cat @
+python3|python3 -c 'open("/home/me/.local/state/agent-team/assistant-threads","a").write("1571000000000000303\n")'
+perl|perl -e 'open(F, ">>", "@"); print F "1571000000000000303\n"'
+node|node -e 'require("fs").appendFileSync("@", "1571000000000000303\n")'
+awk|awk '{print >> "@"}' /tmp/ids
+curl|curl -o @ https://example.com/ids
+wget|wget -O @ https://example.com/ids
+tar|tar -xf /tmp/ids.tar -C ~/.local/state/agent-team assistant-threads
+perl|perl -ne print @
+bash|bash -c 'cat @'
+git|git commit -m 'test: rm assistant-threads is refused'
+source|source ~/agent-team/bin/lib/team.sh && assistant_thread_keep 1571000000000000303
+.|. ~/agent-team/bin/lib/team.sh; assistant_thread_keep 1571000000000000303
+NONREADERS
+  # sed reads only with a plain script: a w, W or e command or flag writes or runs.
+  refuses_as assistant "$CACHE (sed, which is no plain reader of it, in a call naming it)" "" \
+    "sed -n 'w $state/assistant-threads' /tmp/ids" "sed -n -e 1p -e 'W $state/assistant-threads' /tmp/ids" \
+    "sed 's/x/y/w $state/assistant-threads' /tmp/ids" "sed -f /tmp/script $state/assistant-threads" \
+    "sed '1e touch /tmp/x' $state/assistant-threads"
+  # A redirection in a call naming the cache writes only to /dev/null, stdout or stderr, since its
+  # target may be the cache by a variable or a link.
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE (>>\$f, a write in a call naming it)" "" \
+    "f=$state/assistant-threads; echo 1571000000000000303 >>\"\$f\""
+  refuses_as assistant "$CACHE (>/tmp/count, a write in a call naming it)" "" "grep -c . $state/assistant-threads >/tmp/count"
+  # The library's names of the cache name it too: its variable and the function that writes it.
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE (>>\$ASSISTANT_THREADS, a write in a call naming it)" "" \
+    'source ~/agent-team/bin/lib/team.sh; echo 1571000000000000303 >>"$ASSISTANT_THREADS"'
+  refuses_as assistant "$CACHE (assistant_thread_keep, which is no plain reader of it, in a call naming it)" "" \
+    'assistant_thread_keep 1571000000000000303 2>/dev/null'
+  # Behind a wrapper, the wrapper is refused.
+  refuses_as assistant "$CACHE (flock, which is no plain reader of it, in a call naming it)" "" \
+    "flock $state/assistant-threads cat /tmp/x"
+  # A reader passes only by its bare name, since a path may name another program of it, and with
+  # no assignment before it or on its own, since a PATH may find another; time is refused with any
+  # option or none, as every wrapper is.
+  refuses_as assistant "$CACHE (/tmp/x/cat, which is no plain reader of it, in a call naming it)" "" \
+    "/tmp/x/cat $state/assistant-threads"
+  # shellcheck disable=SC2016 # the command as an agent types it
+  refuses_as assistant "$CACHE (PATH=/tmp/x:\$PATH, an assignment in a call naming it)" "" \
+    "PATH=/tmp/x:\$PATH cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (PATH=/tmp/x, an assignment in a call naming it)" "" \
+    "PATH=/tmp/x; cat $state/assistant-threads" "env PATH=/tmp/x cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (LC_ALL=C, an assignment in a call naming it)" "" \
+    "env LC_ALL=C grep -x 1 $state/assistant-threads"
+  refuses_as assistant "$CACHE (/usr/bin/time, which is no plain reader of it, in a call naming it)" "" \
+    "/usr/bin/time -o $state/assistant-threads true"
+  refuses_as assistant "$CACHE (time, which is no plain reader of it, in a call naming it)" "" \
+    "time -o $state/assistant-threads true" "time --output=$state/assistant-threads true" \
+    "time cat $state/assistant-threads" "time -p cat $state/assistant-threads"
+  # No wrapper runs a reader, since the walk takes the word after a wrapper's option it does not
+  # know as that option's value, so the program it runs may stand among the wrapper's own words.
+  refuses_as assistant "$CACHE (xargs, which is no plain reader of it, in a call naming it)" "" \
+    "echo $state/assistant-threads | xargs -r /tmp/x/cat" "echo $state/assistant-threads | xargs -0 python3 -c 'import sys'" \
+    "echo $state/assistant-threads | xargs cat" "echo $state/assistant-threads | xargs /tmp/x/cat"
+  refuses_as assistant "$CACHE (timeout, which is no plain reader of it, in a call naming it)" "" \
+    "timeout --foreground python3 -c \"open('$state/assistant-threads','a')\"" "timeout 5 cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (env, which is no plain reader of it, in a call naming it)" "" \
+    "env -i python3 -c \"open('$state/assistant-threads','a')\"" "env grep -x 1 $state/assistant-threads"
+  refuses_as assistant "$CACHE (nice, which is no plain reader of it, in a call naming it)" "" \
+    "nice --adjustment=5 python3 -c \"open('$state/assistant-threads','a')\""
+  refuses_as assistant "$CACHE (command, which is no plain reader of it, in a call naming it)" "" \
+    "command cat $state/assistant-threads"
+  # No builtin that assigns a variable: read and printf -v may set PATH, and cd sets PWD.
+  refuses_as assistant "$CACHE (read, which is no plain reader of it, in a call naming it)" "" \
+    "read -r PATH <<<'/tmp/x'; cat $state/assistant-threads" \
+    "while read -r id; do echo \"\$id\"; done <$state/assistant-threads"
+  refuses_as assistant "$CACHE (printf, which is no plain reader of it, in a call naming it)" "" \
+    "printf -v PATH /tmp/x; cat $state/assistant-threads" "printf '%s\\n' x $state/assistant-threads"
+  refuses_as assistant "$CACHE (builtin, which is no plain reader of it, in a call naming it)" "" \
+    "builtin read PATH <<<'/tmp/x'; cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (cd, which is no plain reader of it, in a call naming it)" "" \
+    "cd /tmp && cat $state/assistant-threads"
+  # An arithmetic expansion or a named fd assigns a variable too.
+  refuses_as assistant "$CACHE (an arithmetic expansion, which may assign a variable, in a call naming it)" "" \
+    "echo \$((PATH=5)); cat $state/assistant-threads" "echo \$[PATH=5]; cat $state/assistant-threads" \
+    "(( PATH = 5 )); cat $state/assistant-threads"
+  refuses_as assistant "$CACHE ({PATH}</dev/null, a redirection that assigns a variable, in a call naming it)" "" \
+    "{PATH}</dev/null cat $state/assistant-threads"
+  # A redirection writes only to /dev/null.
+  refuses_as assistant "$CACHE (>/dev/stdout, a write in a call naming it)" "" "cat $state/assistant-threads >/dev/stdout"
+  # The readers are joined by pipes, &&, || and ; alone: no group, subshell, loop, function,
+  # substitution, background or ! may change where or how a bare name runs.
+  refuses_as assistant "$CACHE (a call naming it that is no plain list of readers joined by |, &&, || or ;)" "" \
+    "(cat $state/assistant-threads)" "{ cat $state/assistant-threads; }" \
+    "cat() { head; }; cat $state/assistant-threads" "cat $state/assistant-threads &" "! cat $state/assistant-threads" \
+    "cat \$(echo $state)/assistant-threads" \
+    "cat $state/assistant-threads | (head)" "coproc cat $state/assistant-threads" "cat <(head $state/assistant-threads)" \
+    "cat $state/assistant-threads > >(head)"
+  # The walk reads a \${...} expansion, which may assign (\${PATH:=...}), as a command of its own.
+  refuses_as assistant "$CACHE (PATH:=/tmp/x, which is no plain reader of it, in a call naming it)" "" \
+    ": \${PATH:=/tmp/x}; cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (for, which is no plain reader of it, in a call naming it)" "" \
+    "for x in 1; do cat $state/assistant-threads; done"
+  refuses_as assistant "$CACHE ([[, which is no plain reader of it, in a call naming it)" "" \
+    "[[ -s $state/assistant-threads ]] && cat $state/assistant-threads"
+  # The walk does not read a heredoc's body in full, and an unquoted one expands \${...}, which may
+  # assign (\${BASH_CMDS[cat]:=...} changes what a later bare cat runs), so no heredoc passes, on
+  # any marker.
+  refuses_as assistant "$CACHE (<<IDS, a heredoc, whose body the walk does not read in full, in a call naming it)" "" \
+    ": <<IDS
+\${BASH_CMDS[cat]:=/tmp/x/cat}
+IDS
+cat $state/assistant-threads" ": <<'IDS'
+\${BASH_CMDS[cat]:=/tmp/x/cat}
+IDS
+cat $state/assistant-threads" "cat <<IDS
+\$(rm /tmp/x)
+IDS
+cat $state/assistant-threads" "cat <<\"IDS\"
+1571000000000000101
+IDS
+cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (<<-IDS, a heredoc, whose body the walk does not read in full, in a call naming it)" "" \
+    "true <<-IDS
+	1571000000000000101
+	IDS
+cat $state/assistant-threads"
+  # A here-string passes only with a word the walk reads in full, one with no \$ or backtick: the
+  # walk does not read a substitution in a double-quoted one.
+  refuses_as assistant "$CACHE (<<<\$(rm /tmp/x), a here-string whose word the walk does not read in full, in a call naming it)" "" \
+    "cat <<<\"\$(rm /tmp/x)\"; cat $state/assistant-threads" "cat <<< \"\$(rm /tmp/x)\" $state/assistant-threads"
+  refuses_as assistant "$CACHE (<<<\`rm /tmp/x\`, a here-string whose word the walk does not read in full, in a call naming it)" "" \
+    "cat <<<\"\`rm /tmp/x\`\"; cat $state/assistant-threads"
+  refuses_as assistant "$CACHE (<<<\${BASH_CMDS[cat]:=/tmp/x/cat}, a here-string whose word the walk does not read in full, in a call naming it)" "" \
+    "cat <<<\"\${BASH_CMDS[cat]:=/tmp/x/cat}\"; cat $state/assistant-threads"
+  # Bash removes a backslash-newline before it reads the call, so one may join what the guard reads
+  # apart (\$ and {, \$ and [, < and <, {x} and <): none passes, wherever it stands.
+  refuses_as assistant "$CACHE (a backslash-newline, which Bash removes before it reads the call, in a call naming it)" "" \
+    ": \$\\
+{BASH_CMDS[cat]:=/tmp/x/cat}; cat $state/assistant-threads" "echo \$\\
+[x=1]; cat $state/assistant-threads" "cat <\\
+<true
+1571000000000000101
+true
+cat $state/assistant-threads" "{x}\\
+</dev/null cat $state/assistant-threads" "cat $state/assistant-threads \\
+  /tmp/ids"
+  # A \${ anywhere in the call's text is refused, as the arithmetic forms are, since one may assign.
+  refuses_as assistant "$CACHE (a parameter expansion, which may assign a variable, in a call naming it)" "" \
+    "grep -c '\${x}' $state/assistant-threads"
+}
+
+@test "the assistant's reads of the thread cache pass, and a worker's and a gate agent's writes of it are judged as before" {
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  local state='~/.local/state/agent-team' command role
+  # shellcheck disable=SC2016 # the command as an agent types it
+  for command in 'grep -rn assistant-threads bin' "cat $state/assistant-threads" "wc -l $state/assistant-threads" \
+    "jq -R . $state/assistant-threads" "sed -n 1p $state/assistant-threads" "sed -e s/i/x/ $state/assistant-threads" \
+    "wc -l <$state/assistant-threads" "cat < $state/assistant-threads" \
+    "grep -c . $state/assistant-threads 2>/dev/null" \
+    "dd if=$state/assistant-threads of=/dev/null" "head -n 3 $state/assistant-threads | wc -l" \
+    "echo tee assistant-threads" "grep -l assistant-threads bin/claude-assistant" \
+    "cat $state/assistant-threads && head -n 1 $state/assistant-threads || wc -l $state/assistant-threads; ls $state" \
+    "grep -c . $state/assistant-threads 2>&1 | head -n 1" "grep -rn assistant-threads bin | head -5 | wc -l" "sed -n '1,3p;\$p' $state/assistant-threads" \
+    "sed -n '/^157/p' $state/assistant-threads" "[ -s $state/assistant-threads ] && tail -n 1 $state/assistant-threads" \
+    "grep -rn 'ASSISTANT_THREADS\|assistant_thread_keep' bin" "diff $state/assistant-threads /tmp/ids >&2" "diff -u $state/assistant-threads /tmp/ids" \
+    "wc -l <<<'1571000000000000101'; cat $state/assistant-threads" \
+    "grep -rn assistant-threads bin | cut -c1-200" "sort -u $state/assistant-threads | tr -d x | nl" \
+    "sort -k1,1n -t, $state/assistant-threads" "sort --check $state/assistant-threads"; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # A worker's and a gate agent's are not the row's: each passes the guard as it did.
+  for role in builder planner reviewer ops ""; do
+    for command in "echo 1571000000000000101 >>$state/assistant-threads" "cd $state && tee -a assistant-threads" \
+      "sed -i 1d $state/assistant-threads" "cp /tmp/x $state/assistant-threads" "rm $state/assistant-threads" \
+      "truncate -s 0 $state/assistant-threads" "dd if=/tmp/x of=$state/assistant-threads" \
+      "perl -pi -e s/x/y/ $state/assistant-threads" "ls 2>$state/assistant-threads" "ls &>$state/assistant-threads" \
+      "bash -c 'mv /tmp/x $state/assistant-threads'"; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+}
+
+@test "the thread cache's name goes to Python past the fast path only for the assistant, so fails closed there when Python fails" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local command
+  # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
+  for command in 'cp /tmp/x ~/.local/state/agent-team/assistant-threads' 'tee -a assistant-threads' \
+    'sed -i 1d assistant-"threads"' 'truncate -s 0 assistant\-threads'; do
+    AGENT_TEAM_ROLE=builder guard -0 "$command"
+    assert_equal "$stderr" ""
+    guard -0 "$command"
+    AGENT_TEAM_ROLE=assistant guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
+  done
+  # An assistant's call naming no trigger still exits at once.
+  AGENT_TEAM_ROLE=assistant guard -0 'cp /tmp/x /tmp/y'
 }

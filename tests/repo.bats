@@ -333,20 +333,32 @@ probe_rules() {
 }
 
 @test "every attempt of the refusal probe is well formed, and names a family the data file has" {
-  local out
-  out=$(jq -r '(.families | map(.family)) as $families | .attempts[]
+  local out malformed
+  malformed='(.families | map(.family)) as $families | .attempts[]
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
       or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "assistant") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
-      or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login") | not)
+      or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login", "allowed") | not)
       or (.expect == "kernel" and (. as $a | .tool != "Bash" or (.input | contains("@CANARY@/\($a.id)\"") | not)))
       or (.background != null and (.background != true or .tool != "Bash" or .expect != "kernel"))
-      or ((.expect | IN("hook", "script")) and (.marker | type) != "string")
-      or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel") | not)))
+      or ((.expect | IN("hook", "script", "allowed")) and (.marker | type) != "string")
+      or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel", "allowed") | not)))
+      or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
       or ((.expect == "rule") != (.family | type == "string"))
       or (.family != null and (.family | IN($families[]) | not)))
-    | .id' "$REPO_ROOT/bin/lib/probe.json")
+    | .id'
+  out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
+  # An attempt that must run is judged by its marker, so one with none, or a marker on a kind that
+  # reads none, is malformed, and so is the login's stand-in on any kind but allowed.
+  out=$(jq -r "$malformed" <<<'{"families": [], "attempts": [
+    {"id": "no-marker", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "allowed"},
+    {"id": "number-marker", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "allowed", "marker": 1},
+    {"id": "login-hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "@LOGIN@"},
+    {"id": "marked", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "allowed", "marker": "@LOGIN@"}]}')
+  assert_equal "$out" "no-marker
+number-marker
+login-hook"
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
 }
@@ -3295,6 +3307,85 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   found=$(cd "$REPO_ROOT" && grep -nE '^[[:space:]]+wait([[:space:]]+-[nf])*([[:space:]]*($|[;&|)}])|[[:space:]]+[0-9]?>)' \
     tests/*.bats tests/helpers/*.bash) || (($? == 1))
   assert_equal "$found" ""
+}
+
+# The shell code of bin/: each script, each sourced file (.sh) and each doctor check, but the
+# vendored code.
+bin_shell_files() {
+  local file
+  while IFS= read -r file; do
+    [[ $file != bin/lib/vendor/* ]] || continue
+    if [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; }; then echo "$file"; fi
+  done < <(git -C "${REPO_ROOT:?}" ls-files bin)
+}
+
+# Each line of <file>... that runs a bare mktemp, as <file>:<line>: a bare mktemp: <text>: mktemp
+# as a command word, at the line's start or after $(, a backtick, ;, &, |, ( or {, past
+# assignments, command, builtin, env, exec, time, !, then, do and else; never in a line that is a
+# comment, nor in a case pattern that names it (scratch-only-edits' reader of other commands:
+# "mktemp)", or "a | mktemp |" with no $( before it): bare_mktemps <file>...
+bare_mktemps() {
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*([A-Za-z0-9_.*-]+[[:space:]]*\|[[:space:]]*)*mktemp[[:space:]]*[|)]/ { next }
+    /(^|[;&|({`]|\$\()[[:space:]]*(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|command|builtin|env|exec|time|!|then|do|else)[[:space:]]+)*mktemp([[:space:];&|)`]|$)/ {
+      print FILENAME ":" FNR ": a bare mktemp: " $0
+    }
+  ' "$@"
+}
+
+# bin/lib/temp-files.sh owns the one EXIT trap of every shell that sources it, which removes the
+# files team_mktemp made, so a file made with a bare mktemp, or an EXIT trap set after the
+# library (or temp-files.sh) is sourced, would leave a file when a signal ends the script.
+@test "every script under bin/ makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
+  local file upto found
+  cd "$REPO_ROOT"
+  # An EXIT trap before the line that sources the library is the one it takes as the exit action.
+  found=$(while IFS= read -r file; do
+    [[ $file != bin/lib/temp-files.sh ]] || continue
+    upto=$(grep -nE '^[^#]*source .*/(team|temp-files)\.sh"' "$file" | head -n 1 | cut -d: -f1)
+    bare_mktemps "$file"
+    awk -v file="$file" -v upto="${upto:-0}" '
+      /^[[:space:]]*#/ { next }
+      FNR > upto && /(^|[;&|({[:space:]])trap( [^#]*)? (EXIT|0)([;)[:space:]]|$)/ { print file ":" FNR ": an EXIT trap: " $0 }
+    ' "$file"
+  done < <(bin_shell_files))
+  assert_equal "$found" ""
+  # The walk reads the scripts it holds to.
+  bin_shell_files | grep -qx bin/team-merge
+  bin_shell_files | grep -qx bin/lib/threads.sh
+}
+
+@test "the bare-mktemp check finds mktemp as a command word in each form a script may run it, and leaves a name, a text and a case pattern" {
+  local planted=$BATS_TEST_TMPDIR/planted.sh
+  cat >"$planted" <<'PLANTED'
+a=$(mktemp)
+a=$( mktemp -d)
+a=$(command mktemp)
+a=$(TMPDIR=/x mktemp)
+a=`mktemp`
+mktemp >"$f"
+  mktemp -d "$d/x.XXXXXX"
+true && mktemp
+false || mktemp
+x; mktemp
+if true; then mktemp; fi
+for i in 1; do mktemp; done
+(mktemp)
+{ mktemp; }
+env TMPDIR=/x mktemp
+a=$(team_mktemp)
+a=$(team_mktemp -d)
+# mktemp in a comment
+echo "made with mktemp -d"
+echo 'mktemp'
+x=mktemp.out
+f() { :; } # then mktemp
+     cd | pushd | tee | mktemp | basename | \
+     mktemp) MK[e]=1 ;;
+PLANTED
+  run bare_mktemps "$planted"
+  assert_equal "$(cut -d: -f2 <<<"$output" | paste -sd ' ')" "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15"
 }
 
 # T281: a test's git -C "$TEAM_HOME" with TEAM_HOME empty ran in the code checkout and switched its

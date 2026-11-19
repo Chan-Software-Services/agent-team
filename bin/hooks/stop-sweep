@@ -15,8 +15,7 @@ if jq -e '.stop_hook_active == true' >/dev/null 2>&1 <<<"$event"; then exit 0; f
 own=$(jq -r '.session_id | strings' 2>/dev/null <<<"$event") || own=''
 [[ -z $own ]] || export CLAUDE_CODE_SESSION_ID=$own
 
-errors=$(mktemp)
-trap 'rm -f "$errors"' EXIT
+errors=$(team_mktemp)
 
 block() {
   jq -cn --arg reason "$1" '{decision: "block", reason: $reason}'

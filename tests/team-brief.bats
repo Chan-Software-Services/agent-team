@@ -565,7 +565,7 @@ walk_brief() {
   [[ ! -e $TEAM_HOME/tasks/T14/brief.md ]]
 }
 
-@test "a gated project's review reads the branch's local head before the gate, and posts nothing" {
+@test "a gated project's review reads the branch's local head before the gate and posts nothing, and one of a PR it is given comments on that PR" {
   open_t12
   branch_head T12 dev
   run_bin -0 --separate-stderr team-brief T12 reviewer --name review --set head="$head" --set "checks=the checks"
@@ -628,10 +628,19 @@ EOF
     assert_equal "${got[line]-<missing line $((line + 1))>}" "${want[line]}"
   done
   assert_equal "${#got[@]}" "${#want[@]}"
-  # A PR is refused: the gate has not opened one when its project's first review runs.
-  run_bin -1 team-brief T12 reviewer --name review-pr --set head="$head" --set "checks=the checks" \
-    --set pr=https://github.com/Chan-Software-Services/Conventioner/pull/9
-  assert_equal "$output" "team-brief: no placeholder in reviewer uses: pr"
+  # A PR the caller names is one the gate opened with no team review before it: the review reads
+  # it, comments on it and sets its status, as a direct-PR project's does, and says no "no PR".
+  local pr=https://github.com/Chan-Software-Services/Conventioner/pull/9 brief
+  run_bin -0 --separate-stderr team-brief T12 reviewer --name review-pr --set head="$head" --set "checks=the checks" \
+    --set pr="$pr"
+  brief=$(<"$output")
+  assert_contains "$brief" "There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$head\`"
+  assert_contains "$brief" "The comment on PR $pr is that file, posted with this exact command, the only comment your settings allow: \`$REPO_ROOT/bin/team-review-comment $pr .scratch/task/review.md\`"
+  assert_contains "$brief" "\`$REPO_ROOT/bin/team-review-status $pr $head <success|failure> \"<one line, at most 140 characters>\"\`."
+  assert_contains "$brief" "- Send \`T12 DONE pass $pr findings="
+  [[ $brief != *"no PR yet"* && $brief != *"no-mistakes gate"* && $brief != *"Post nothing"* && $brief != *'{{'* ]]
+  # The brief's record names the PR it reviews.
+  assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review-pr.json")" "$pr"
 }
 
 @test "a direct-PR project's review reads the PR, comments on it and sets its status" {
