@@ -22,8 +22,8 @@
 #   --fill       relaunch each running ticket's stowed or crashed builder, then launch the ready
 #                tickets of the phase being built up to its cap, with no message
 #   --checks     with a review launch, the first review's checks file (the reviewer's checks);
-#                required when the task has no review yet, or none since its latest merged part
-#                (a later phase's first review), refused once it has one
+#                required when the task has no review yet in the PR's project, or none since that
+#                project's latest merged part (a later phase's first review), refused once it has one
 #   --since      with a rereview launch, a file of the coordinator's words, added after the derived
 #                since; refused for the first review and for verify
 #   --template   with a review launch after the first, rereview or verify instead of the rule's
@@ -176,12 +176,15 @@
 # and one logged with no reviewer's done counts in every project), so a task's PRs in two
 # repositories are each reviewed beside the other; for the same reason the "already handed off"
 # refusal reads only a reviewer's launch in that project (launch_in in bin/lib/ledger.jq: one naming
-# no project counts) and a review made there. With no review logged yet, or none since the task's latest
-# merged part (a merged with phases_left, so a later phase's first PR), the brief is
+# no project counts) and a review made there. With no review logged yet, or none since that
+# project's latest merged part (a merged with phases_left in that project, or naming none, so a
+# later phase's first PR; another repository's merged part ends no phase of this one, whose PR's
+# earlier reviews still stand), the brief is
 # team-brief T<n> reviewer --name review (review-<k>, the lowest k from 2, once a launch read the
 # name) with --checks as its checks (refused without one: "T<n> has no review yet", or "no review
 # since its phase merged at <ts>", "so its first reviewer needs --checks <file>, ..."), the
-# PR's url and head (a PR) or the reported head (review-ready; no pr); after one, it is
+# PR's url and head (a PR, which on a gated project team-brief briefs as a review of that PR) or
+# the reported head (review-ready; no pr); after one, it is
 # rereview, or verify when the latest review sent findings back and either counted
 # none but plain notes or reviewed the head this message reports (a round that only edited the PR
 # body), --template choosing instead, and a DONE merged always a rereview; it is named
@@ -329,7 +332,17 @@
 # followed (queue_state's round_due in bin/lib/ledger.jq) gets that brief's step too, whatever its
 # base: "merge base: <url> failed <checks> on the merge queue's trial merge, which dropped it at
 # <ts>, so the builder fixes it on the branch (step 6): ...", never the merge line, which would
-# enqueue the same failing head again.
+# enqueue the same failing head again. A PR the merge queue dropped for a check the base's rules
+# require that no run made on the trial commit, with no pr event of its URL and no review of the
+# task since (queue_state's rules_due), gets the rules step team-merge names instead, even beside a
+# failure of its own and whatever its base: "merge rules: <url> was dropped by the merge queue at
+# <ts>: <checks> never reported on its trial commit, which <base>'s rules require; the base's rules
+# require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix
+# the workflow's merge_group trigger or ask Daniel to change <repo>'s ruleset, then run team-merge
+# T<n> again", a check the project's required_checks alone require said as theirs, in its own
+# clause, and the step as team-merge words it for them (rules_reason and rules_step in
+# bin/lib/ledger.jq), never the merge line nor the merge-base step, since the trial merge cannot
+# be judged until every required check runs there.
 # The churn rule: when this review sent back a finding its widening= marks (one in what the last
 # fix added), the task's previous review in the verdict's project (project_reviews: the latest
 # made there before this one, on a rerun the latest before the line that holds it, another
@@ -544,9 +557,22 @@ arm_line() {
 # read_state's variables and the task's events: the merge ask or the default word's merge, or for a
 # PR behind its base the merge base step (see the header).
 merge_line() {
-  local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial
+  local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial rules repo
   url=$pr_url
   caught='' no_catch_up=''
+  # A PR the merge queue dropped for a check the base's rules require that no run made on the trial
+  # commit, with no pr event of it and no review of the task since (queue_state's rules_due): the
+  # trial merge cannot be judged until every required check runs there, so the rules step alone,
+  # as team-merge names it, even beside a failure of the PR's own or behind its base.
+  repo=${url#https://github.com/}
+  repo=${repo%%/pull/*}
+  rules=$(task_event_array "$task" | ledger_jq 'queue_state($url) | select(.rules_due? == true)
+    | "was dropped by the merge queue at \(.since): \(.failed | rules_reason($base | select(. != "" and . != "null") // null; "its trial commit")); \(.failed | rules_step($repo; $task))"' \
+    -r --arg url "${url%/}" --arg base "$base" --arg repo "$repo" --arg task "$task") || exit 1
+  if [[ -n $rules ]]; then
+    echo "merge rules: $url $rules"
+    return 0
+  fi
   # A PR the merge queue dropped for a failure of its own on the trial merge, with no pr event of
   # it and no review of the task since (queue_state's round_due): the head passed what the trial
   # merge failed, so the builder's round.
@@ -905,12 +931,14 @@ held_prog="$same_def"' . as $events
      events: [$parsed[] | . as $p
        | {event: $p, at: ([range($anchor + 1; $events | length) | select($events[.] | same($p))] | first)}]}'
 kind='' back='' held='' briefs='' sender_wt='' launch_project=''
-# The index just past the task's latest merged part (a merged with phases left: a phase's PR
+# The index just past $project's latest merged part (a merged with phases left: a phase's PR
 # merged and the next phase still to build), 0 with none: the reviews from there on are this
-# phase's, so a later phase's first PR is a first review.
-phase_def='def phase_start: ([to_entries[] | select(.value.event == "merged" and (.value.phases_left | type) == "array"
-    and .value.phases_left != []) | .key + 1] | last) // 0;'
-sender_ticket='' sender_session='' review='' phase_merged=''
+# phase's, so a later phase's first PR is a first review. A merged in another project ends no
+# phase of $project's, so its PR's reviews before that merge still stand; one naming no project
+# ends every project's.
+phase_def='def phase_start($project): ([to_entries[] | select(.value.event == "merged" and (.value.phases_left | type) == "array"
+    and .value.phases_left != [] and (.value.project // $project) == $project) | .key + 1] | last) // 0;'
+sender_ticket='' sender_session='' review=''
 json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3]
   | (.[1] // "") as $sub
   | if .[0] == "DONE" and any($parsed[]; .event == "done" and .role == "ops") then "DONE"
@@ -931,7 +959,6 @@ json_vars --ledger kind='$message | gsub("^\\s+"; "") | [splits("\\s+")] | .[1:3
   launch_project="$launch_def sender_launch | .project // empty" \
   sender_ticket="$launch_def sender_launch | .ticket // empty" sender_session="$launch_def sender_launch | .session // empty" \
   review='$parsed | map(select(.event == "review")) | first | tojson' \
-  phase_merged="$phase_def"' phase_start as $k | if $k == 0 then empty else .[$k - 1].ts end' \
   -- --arg message "$message" --argjson parsed "$parsed" <<<"$events"
 
 # Whether a launch of the task read brief-<name>: brief_launched <name>
@@ -1013,12 +1040,12 @@ log_events() {
 # that starts with <prefix> (with an empty prefix, its last line that is not blank), or nothing.
 sibling_said() {
   local prefix=$1 err
-  err=$(mktemp)
+  err=$(team_mktemp)
   rc=0
   out=$(sibling "${@:2}" 2>"$err") || rc=$?
   cat -- "$err" >&2
   said=$(awk -v p="$prefix" 'NF && (p == "" || index($0, p) == 1) { l = $0 } END { print l }' "$err")
-  rm -f -- "$err"
+  team_tmp_rm "$err"
 }
 
 # return_ticket <NN> <worktree>: ticket NN's worktree returned through team-close --ticket, its
@@ -1330,14 +1357,14 @@ base_due() {
   dirty=$(changed_files "$wt" untracked)
   [[ -z $dirty ]] ||
     die "$why the task worktree $wt has uncommitted changes ($dirty), so $branch is not brought to origin/$base and $stop: commit or remove them, then run team-next $task --fill again"
-  NET_ERR=$(mktemp)
+  NET_ERR=$(team_mktemp)
   origin_git -C "$wt" fetch -q --no-write-fetch-head origin "+refs/heads/$base:refs/remotes/origin/$base" || rc=$?
   if ((rc != 0)); then
     echo "${0##*/}: $why origin's $base cannot be fetched into $wt ($(origin_reason "$rc")), so $branch is not brought to it and $stop: run team-next $task --fill again once it can be" >&2
-    rm -f -- "$NET_ERR"
+    team_tmp_rm "$NET_ERR"
     exit 75
   fi
-  rm -f -- "$NET_ERR"
+  team_tmp_rm "$NET_ERR"
   head=$(git -C "$wt" rev-parse HEAD)
   onto=$(git -C "$wt" rev-parse "refs/remotes/origin/$base")
   ! git -C "$wt" merge-base --is-ancestor "$onto" HEAD || return 0
@@ -1569,10 +1596,10 @@ if [[ $handoff == verdict ]]; then
         posted=failure check_sha=$reviewed summary="$task's review of $short found findings"
         if [[ $verdict == pass ]]; then posted=success summary="$task's review of $short passed"; fi
         if [[ $same == true ]]; then check_sha=$live_head; fi
-        errors=$(mktemp)
+        errors=$(team_mktemp)
         if ! run=$(sibling team-review-check "$pr_url" "$check_sha" "$posted" "$summary" 2>"$errors"); then
           why=$(grep . "$errors" | tail -n 1) || why=''
-          rm -f -- "$errors"
+          team_tmp_rm "$errors"
           # A check run's id on stdout: the check was posted, and only its token's revoke failed.
           if [[ $run =~ ^[1-9][0-9]*$ ]]; then
             echo "posted agent-review $posted on $short as the reviewer App's check run $run, but ${why#team-review-check: }"
@@ -1585,7 +1612,7 @@ if [[ $handoff == verdict ]]; then
             exit 1
           fi
         else
-          rm -f -- "$errors"
+          team_tmp_rm "$errors"
           echo "posted agent-review $posted on $short as the reviewer App's check run $run"
         fi
       fi
@@ -1726,12 +1753,15 @@ if [[ $handoff == review ]]; then
     [[ $kind == "DONE merged" ]] || sets=(--set "head=$head")
   fi
 
-  # The latest review of this phase made in the hand-off's project (project_reviews in
-  # bin/lib/ledger.jq), or null: another repository's review is no review of this PR.
-  latest=$(ledger_jq "$phase_def"' phase_start as $k | . as $events
-    | [project_reviews($project)[] | select(. >= $k)] | last | if . == null then null else $events[.] end' \
-    -c --arg project "$project" <<<"$events")
-  if [[ $latest == null ]]; then
+  # The latest review of the hand-off's project's phase made in that project (project_reviews in
+  # bin/lib/ledger.jq), or null: another repository's review is no review of this PR, and another
+  # repository's merge ends no phase of it; and the time of the merge that started the phase.
+  latest='' phase_merged=''
+  json_vars --ledger latest="$phase_def"' phase_start($project) as $k | . as $events
+      | [project_reviews($project)[] | select(. >= $k)] | last | if . == null then null else $events[.] end' \
+    phase_merged="$phase_def"' phase_start($project) as $k | if $k == 0 then empty else .[$k - 1].ts end' \
+    -- --arg project "$project" <<<"$events"
+  if [[ -z $latest ]]; then
     none="no review yet"
     [[ -z $phase_merged ]] || none="no review since its phase merged at $phase_merged"
     [[ -n $checks ]] || die "$task has $none, so its first reviewer needs --checks <file>, the review's checks"

@@ -91,6 +91,109 @@ setup() {
   assert_equal "$status:$stderr" 0:
 }
 
+# two_worktrees: the ledger opens T9 in $wt and adds $wt2, in another project, as team-open --task
+# T9 --add does; it also opens ticket 01's worktree $wt3 of T9, another task T8's $wt8, and adds
+# and returns $wt4 of T9. The session is T9's planner, as its settings' env says.
+two_worktrees() {
+  wt2=$HOME/wt2 wt3=$HOME/wt3 wt4=$HOME/wt4 wt8=$HOME/wt8
+  mkdir -p "$wt2/.scratch/task" "$wt2/src" "$wt3/.scratch/task" "$wt4/.scratch/task" "$wt8/.scratch/task"
+  jq -cn --arg wt "$wt" --arg wt2 "$wt2" --arg wt3 "$wt3" --arg wt4 "$wt4" --arg wt8 "$wt8" '"2026-11-18T00:00:00Z" as $ts
+    | {ts: $ts, task: "T9", event: "opened", project: "a", branch: "fix/T9-x", worktree: $wt},
+      {ts: $ts, task: "T9", event: "worktree-added", project: "b", branch: "fix/T9-x", worktree: $wt2},
+      {ts: $ts, task: "T9", event: "worktree-added", project: "a", branch: "fix/T9-x--01", ticket: "01", worktree: $wt3},
+      {ts: $ts, task: "T9", event: "worktree-added", project: "c", branch: "fix/T9-x", worktree: $wt4},
+      {ts: $ts, task: "T9", event: "worktree-returned", project: "c", worktree: $wt4},
+      {ts: $ts, task: "T8", event: "opened", project: "b", branch: "fix/T8-y", worktree: $wt8}' >>"$TEAM_HOME/ledger.jsonl"
+  export AGENT_TEAM_ROLE=planner AGENT_TEAM_TASK=T9
+}
+
+# write <status> <file_path>: run the hook on a Write call.
+write() {
+  run_bin "$1" --separate-stderr hooks/scratch-only-edits \
+    <<<"$(jq -cn --arg p "$2" --arg cwd "$wt" '{hook_event_name: "PreToolUse", cwd: $cwd, tool_name: "Write",
+      tool_input: {file_path: $p, content: "x"}}')"
+}
+
+@test "a planner of a task with two worktrees writes the other worktree's task directory, by an edit tool or the shell" {
+  two_worktrees
+  write -0 "$wt2/.scratch/task/spec.md"
+  assert_equal "$output$stderr" ""
+  write -0 "$wt2/.scratch/task/tickets/08-x.md"
+  edit -0 "$wt2/.scratch/task/scope.txt"
+  passes "echo x > $wt2/.scratch/task/spec.md" "cmd | tee -a ~/wt2/.scratch/task/scope.txt" \
+    "cd ~/wt2 && cat > .scratch/task/tickets/08-x.md <<'X'
+text
+X"
+  # Its own .scratch/ is still all its own.
+  write -0 "$wt/.scratch/notes.md"
+  passes 'echo x > .scratch/x'
+}
+
+@test "a planner is still refused the other worktree's code and its .scratch/ outside task/, naming each directory it may write" {
+  two_worktrees
+  write -2 "$wt2/src/main.sh"
+  assert_equal "$stderr" "Blocked: this role may edit files only under $wt/.scratch or $wt2/.scratch/task (tried $wt2/src/main.sh)."
+  write -2 "$wt2/.scratch/notes.md"
+  assert_contains "$stderr" "(tried $wt2/.scratch/notes.md)"
+  write -2 "$wt2/.scratch/task-other/x"
+  assert_contains "$stderr" "(tried $wt2/.scratch/task-other/x)"
+  write -2 "$wt2/.scratch/task/../../src/x"
+  assert_contains "$stderr" "(tried $wt2/src/x)"
+  shell -2 "echo x > $wt2/src/a; echo y > $wt2/.scratch/task/ok"
+  assert_equal "$stderr" "Blocked: this role may write files only under $wt/.scratch or $wt2/.scratch/task; write there with the Write tool, not a shell redirection or tee (tried $wt2/src/a)."
+}
+
+@test "a planner is refused a ticket worktree's, another task's and a returned worktree's task directory" {
+  two_worktrees
+  local dir
+  for dir in "$wt3" "$wt8" "$wt4"; do
+    write -2 "$dir/.scratch/task/spec.md"
+    assert_equal "$stderr" "Blocked: this role may edit files only under $wt/.scratch or $wt2/.scratch/task (tried $dir/.scratch/task/spec.md)."
+    shell -2 "echo x > $dir/.scratch/task/spec.md"
+    assert_contains "$stderr" "(tried $dir/.scratch/task/spec.md)"
+  done
+}
+
+@test "a planner is refused a path through a link into the other worktree, and a task directory that is a link" {
+  two_worktrees
+  ln -s "$wt2/src" "$wt2/.scratch/task/src"
+  write -2 "$wt2/.scratch/task/src/main.sh"
+  assert_contains "$stderr" "(tried $wt2/src/main.sh)"
+  shell -2 "echo x > $wt2/.scratch/task/src/main.sh"
+  assert_contains "$stderr" "(tried $wt2/.scratch/task/src/main.sh)"
+  # A task directory that is itself a link is no task directory the planner may write.
+  rm -r -- "${wt2:?}/.scratch/task"
+  ln -s "$wt2/src" "$wt2/.scratch/task"
+  write -2 "$wt2/.scratch/task/spec.md"
+  assert_equal "$stderr" "Blocked: this role may edit files only under $wt/.scratch (tried $wt2/src/spec.md)."
+  # A worktree reached through a link is judged by its real path.
+  rm -- "$wt2/.scratch/task"
+  mkdir -p "$wt2/.scratch/task"
+  ln -s "$wt2" "$HOME/wt2-link"
+  write -0 "$HOME/wt2-link/.scratch/task/spec.md"
+}
+
+@test "a reviewer, a planner whose root is no worktree of its task, and a planner with no team home keep their own .scratch/ alone" {
+  two_worktrees
+  AGENT_TEAM_ROLE=reviewer write -2 "$wt2/.scratch/task/spec.md"
+  assert_equal "$stderr" "Blocked: this role may edit files only under $wt/.scratch (tried $wt2/.scratch/task/spec.md)."
+  AGENT_TEAM_ROLE=reviewer shell -2 "echo x > $wt2/.scratch/task/spec.md"
+  assert_contains "$stderr" "only under $wt/.scratch;"
+  AGENT_TEAM_TASK=T8 write -2 "$wt2/.scratch/task/spec.md"
+  assert_equal "$stderr" "Blocked: this role may edit files only under $wt/.scratch (tried $wt2/.scratch/task/spec.md)."
+  CLAUDE_PROJECT_DIR=$wt8 write -2 "$wt2/.scratch/task/spec.md"
+  assert_contains "$stderr" "only under $wt8/.scratch (tried"
+  CLAUDE_PROJECT_DIR=$wt3 write -2 "$wt2/.scratch/task/spec.md"
+  assert_contains "$stderr" "only under $wt3/.scratch (tried"
+  TMPDIR=$tmp run --separate-stderr env -u TEAM_HOME "$REPO_ROOT/bin/hooks/scratch-only-edits" <<<"$(jq -cn --arg cwd "$wt" \
+    --arg p "$wt2/.scratch/task/spec.md" '{hook_event_name: "PreToolUse", cwd: $cwd, tool_name: "Write", tool_input: {file_path: $p, content: "x"}}')"
+  assert_equal "$status:$stderr" "2:Blocked: this role may edit files only under $wt/.scratch (tried $wt2/.scratch/task/spec.md)."
+  # The ops session's one file stays its one file.
+  run_bin -2 --separate-stderr hooks/scratch-only-edits .scratch/answer.md \
+    <<<"$(jq -cn --arg p "$wt2/.scratch/task/spec.md" --arg cwd "$wt" '{cwd: $cwd, tool_name: "Write", tool_input: {file_path: $p}}')"
+  assert_contains "$stderr" "may edit one file only"
+}
+
 @test "input it cannot read is refused, naming why" {
   local input
   for input in 'not json' '' '[]' '{"tool_input": {"file_path": "src/a"}}' '{"tool_name": 5}' '"Write"'; do

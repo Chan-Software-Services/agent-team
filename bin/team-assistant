@@ -264,8 +264,7 @@ close_topic() {
 (($#)) || usage_error "$USAGE"
 command=$1
 shift
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 lock=$TEAM_HOME/ledger.jsonl.lock
 
 case $command in

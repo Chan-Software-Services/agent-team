@@ -112,8 +112,7 @@ if [[ -n $channel ]]; then
     die "$task's $id asks for a script's yes: $never"
   if why=$(lease_refusal "$does"); then die "$why"; fi
 fi
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 if [[ -n $channel ]]; then place=$(assistant_place "$channel" 2>"$scratch/error") || die "$(<"$scratch/error")"; fi
 word=$(answer_message "$task" "$id" "$message" "$events" "$does" "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
 answer=$(jq -r '.message.content | strings' <<<"$word")

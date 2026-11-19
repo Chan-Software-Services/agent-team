@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # team-tokens: the last seven days end with the newest quota reading, team-quota status's, in its
-# text and its JSON, with team-quota's note under the table when the reading holds no model window,
+# text and its JSON, with team-quota's note under the table when it shows no fresh model window,
 # and a team-quota that fails leaves the rest of the report whole; and the status-report skill
 # sends the coordinator to both for usage.
 
@@ -51,7 +51,7 @@ seven_days() {
 }
 
 @test "a reading with no model window has team-quota's note under the table, in its words, and one with a model window none" {
-  local note="model windows: none in this reading, since Claude Code's status line gives no model's own week (/usage shows it)"
+  local note="model windows: none read yet (team-quota usage reads them from Claude Code, every 10 minutes on the heartbeat); a rule on a model's week falls back to seven_day"
   reading 12
   run_bin -0 team-tokens
   [[ $(seven_days <<<"$output") != *"model windows:"* ]]

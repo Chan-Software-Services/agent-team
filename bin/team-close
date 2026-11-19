@@ -215,8 +215,7 @@ linked_part() {
   return 1
 }
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 
 # What became of origin's ticket branch at the last return of a ticket worktree (deleted, kept,
 # none or unread), and each "<primary> <branch>" this run has settled on origin.
@@ -551,7 +550,7 @@ if [[ -n $ticket ]]; then
     LIVE_SESSIONS=''
   done
 
-  trap 'status=$?; rm -rf "$scratch"; ((status == 0)) || echo "team-close: $label is half returned; fix the cause above and run team-close $task --ticket $ticket again" >&2' EXIT
+  team_exit_trap 'status=$?; ((status == 0)) || echo "team-close: $label is half returned; fix the cause above and run team-close $task --ticket $ticket again" >&2'
   stopped=()
   while IFS= read -r id; do
     claude stop "$id" >&2 || die "cannot stop session $id"
@@ -625,7 +624,7 @@ if ((${#problems[@]})); then
   exit 1
 fi
 
-trap 'status=$?; rm -rf "$scratch"; ((status == 0)) || echo "team-close: $task is half closed; fix the cause above and run team-close $task again" >&2' EXIT
+team_exit_trap 'status=$?; ((status == 0)) || echo "team-close: $task is half closed; fix the cause above and run team-close $task again" >&2'
 
 # End the task's ops session through team-ops-end before any other session stops: it stops and
 # removes the session and deletes its transcript, MCP logs, session directory, file checkpoints

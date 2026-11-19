@@ -173,7 +173,7 @@ save_image() {
     echo "not saved: over the limit of $MAX_IMAGE bytes"
     return 1
   fi
-  if ! mkdir -p -- "$ui" 2>/dev/null || ! incoming=$(mktemp "$ui/.incoming.XXXXXX" 2>/dev/null); then
+  if ! mkdir -p -- "$ui" 2>/dev/null || ! incoming=$(team_mktemp "$ui/.incoming.XXXXXX" 2>/dev/null); then
     echo "not saved: cannot write in $ui/"
     return 1
   fi
@@ -203,7 +203,7 @@ save_image() {
       done
     fi
   fi
-  rm -f -- "$incoming"
+  team_tmp_rm "$incoming"
   if [[ -n $why ]]; then
     echo "$why"
     return 1
@@ -263,8 +263,7 @@ if [[ ${1:-} == wait ]]; then
     die "cannot read allowFrom from ~/.claude/channels/discord/access.json, so no message can be known as Daniel's"
   fenced "$WAITS"
   discord_token >/dev/null || die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
-  scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' EXIT
+  scratch=$(team_mktemp -d)
   ui=$TEAM_HOME/tasks/$task/ui
 
   if [[ -z $after ]]; then
@@ -308,8 +307,7 @@ if [[ ${1:-} == archive ]]; then
   done
   if why=$(worker_refusal "" "archives no Discord thread"); then die "$why"; fi
   fenced "$THREAD_FENCE"
-  scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' EXIT
+  scratch=$(team_mktemp -d)
 
   # The threads whose work is done, as {"<id>": {task, what}}: each a closed event names (a close
   # under the rule), with --all every thread and interview thread of a closed task, and each topic

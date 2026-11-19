@@ -41,8 +41,11 @@
 # session's commands remove and rename nothing there.
 #
 # Exit status: 0 done, 1 refused, 2 a malformed command line.
-# It sources no library and needs no team home; it needs jq.
+# It sources no library but bin/lib/temp-files.sh, for its temporary files, and needs no team
+# home; it needs jq.
 set -euo pipefail
+# shellcheck source=bin/lib/temp-files.sh
+source "$(dirname "${BASH_SOURCE[0]}")/temp-files.sh"
 
 refuse() {
   echo "confine-session: $1" >&2
@@ -75,7 +78,7 @@ shell_path() {
 # Writes stdin to <name> in the session directory with <mode>, by a temporary name and a rename.
 place() {
   local tmp
-  tmp=$(mktemp "$dir/.$1.XXXXXX")
+  tmp=$(team_mktemp "$dir/.$1.XXXXXX")
   cat >"$tmp"
   chmod "$2" "$tmp"
   mv -f -- "$tmp" "$dir/$1"

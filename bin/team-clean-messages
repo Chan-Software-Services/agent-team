@@ -188,8 +188,7 @@ commits=$(g rev-list --reverse "origin/$base..$old_head") || die "cannot list $r
 mapfile -t commits <<<"$commits"
 [[ -n ${commits[0]} ]] || commits=()
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 
 # Each commit's message, exactly as stored, in $scratch/<sha>, and its attribution lines in
 # $scratch/<sha>.lines; offenders lists the commits that have any.
@@ -312,7 +311,7 @@ g update-ref -m "team-clean-messages: strip attribution lines" "refs/heads/$bran
 # The lease is origin's head of the branch: the old head once it is pushed, empty while origin
 # has no such branch.
 push="git -C $(printf %q "$worktree") push --force-with-lease=$branch:$remote origin $branch"
-trap 'status=$?; rm -rf "$scratch"; ((status == 0)) || echo "team-clean-messages: $branch moved to $new_head, but history-rewritten is not in the ledger; push it with: $push" >&2' EXIT
+team_exit_trap 'status=$?; ((status == 0)) || echo "team-clean-messages: $branch moved to $new_head, but history-rewritten is not in the ledger; push it with: $push" >&2'
 ledger_append "$(jq -cn --arg task "$task" --arg project "$project" --arg branch "$branch" \
   --arg old "$old_head" --arg new "$new_head" \
   '{ts: (now | todate), task: $task, event: "history-rewritten", project: $project, branch: $branch,

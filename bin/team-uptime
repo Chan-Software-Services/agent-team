@@ -262,8 +262,8 @@ run_round() {
     echo "another team-uptime run is checking; skipped"
     exit 0
   fi
-  body=$(mktemp) err=$(mktemp)
-  trap 'rm -f "$body" "$err"' EXIT
+  body=$(team_mktemp)
+  err=$(team_mktemp)
   # The open outages of uptime.json from before the notice record, moved into it once (by the
   # record's first write, whichever script made it), then stripped from the state.
   if notices_upgrade uptime 2>"$err"; then

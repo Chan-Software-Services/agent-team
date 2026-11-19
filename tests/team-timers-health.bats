@@ -14,6 +14,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   stub_reply claude "$COORDINATOR"
   origin=$(hold_lease home-pc)
+  usage_read_now
   fake_service_managers
   stub_command uname
   stub_reply uname Linux

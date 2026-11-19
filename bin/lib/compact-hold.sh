@@ -74,11 +74,8 @@ compact_hold_update() {
     if [[ $hold_after != "$hold_before" ]]; then
       # A log that cannot be opened leaves the record as it was.
       [[ -z $hold_lines ]] || : >>"$COMPACT_HOLD_LOG" || exit 1
-      hold_new=$(mktemp "$hold_file.XXXXXX") || exit 1
-      if ! { echo "$hold_after" >"$hold_new" && mv -f "$hold_new" "$hold_file"; }; then
-        rm -f "$hold_new"
-        exit 1
-      fi
+      hold_new=$(team_mktemp "$hold_file.XXXXXX") || exit 1
+      { echo "$hold_after" >"$hold_new" && mv -f "$hold_new" "$hold_file"; } || exit 1
     fi
     if [[ -n $hold_lines ]]; then
       echo "$hold_lines" >>"$COMPACT_HOLD_LOG" || exit 1
