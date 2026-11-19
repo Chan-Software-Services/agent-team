@@ -83,8 +83,11 @@
 # stopped for each task it has not stowed yet, kept for its stowed while the lease's epoch holds.
 # Exit 0 done, 1 a task refused or a stack would not stop (the others still stowed), or a step
 # failed, 2 usage error, 75 GitHub unreachable or another team-stow running.
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no team-stow") && die "$why"
 
 # Seconds: the most one call to an origin may take.
 NET_TIMEOUT=60

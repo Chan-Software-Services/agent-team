@@ -51,6 +51,9 @@
 # the prompt is appended to it and the name is its first line.
 # Exit 0 done, 1 refused or not held, 2 usage error, 75 GitHub unreachable, the lease kept moving,
 # or another lease command held the lock too long.
+# An assistant session is refused take, renew and release, the coordinator's acts (assistant_refusal
+# in bin/lib/team.sh, beside command-guard's assistant-acts row); its other subcommands and --help
+# still answer.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
@@ -63,6 +66,7 @@ ATTEMPTS=10
 
 usage="usage: team-lease status [--json] | check | take [--steal] | renew | release"
 command=${1:-} json=0 steal=0
+if [[ $command == @(take|renew|release) ]] && why=$(assistant_refusal "runs no team-lease $command"); then die "$why"; fi
 case $command in
   status) [[ $# -eq 1 || ($# -eq 2 && $2 == --json) ]] || usage_error "$usage" ;;
   take) [[ $# -eq 1 || ($# -eq 2 && $2 == --steal) ]] || usage_error "$usage" ;;

@@ -580,6 +580,27 @@ $table:10: tasks/queued/unnamed.md: takes itself"
   assert_equal "$stderr" "team-queue: no table at $BATS_TEST_TMPDIR/none.tsv"
 }
 
+@test "index --check runs in an assistant session as for the coordinator, writing nothing, and every other form is refused to it and to a worker" {
+  ready a-one.md 1 S "the first"
+  assistant_reads 1 team-queue index --check
+  assert_equal "$output" "tasks/queued/index.md: not as team-queue index writes it"
+  run_bin -0 team-queue index
+  assistant_reads 0 team-queue index --check
+  assert_equal "$output" ""
+  printf 'file\tpriority\na-one.md\t2\n' >"$BATS_TEST_TMPDIR/table.tsv"
+  local before args
+  before=$(files_state)
+  for args in index set tidy "take T5 a-one.md"; do
+    # shellcheck disable=SC2086 # each word an argument
+    AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-queue $args
+    assert_equal "$stderr" "team-queue: an assistant session edits no records: that is the coordinator's; send it your message"
+  done
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-queue set "$BATS_TEST_TMPDIR/table.tsv"
+  assert_equal "$stderr" "team-queue: an assistant session edits no records: that is the coordinator's; send it your message"
+  worker_refused team-queue "edits no records" index --check
+  assert_equal "$(files_state)" "$before"
+}
+
 @test "a worker session is refused, and a malformed command line is a usage error" {
   AGENT_TEAM_ROLE=builder run_bin -1 --separate-stderr team-queue index
   assert_equal "$stderr" "team-queue: a builder session edits no records: that is the coordinator's; send it your message"

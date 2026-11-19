@@ -309,13 +309,8 @@ assert_nothing_written() {
   assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
 }
 
-@test "its settings deny every rule of the coordinator's, the Discord token and access files, and the coordinator's acts" {
-  local settings=$REPO_ROOT/assistant.settings.json command rule
-  # Each script rule has its path spelling too, as the claude rules have.
-  while IFS= read -r rule; do
-    jq -e --arg r "Bash(*/${rule#Bash(}" '.permissions.deny | index($r) != null' "$settings" >/dev/null ||
-      { echo "no path spelling of $rule" >&2; return 1; }
-  done < <(jq -r '.permissions.deny[] | select(test("^Bash\\((team-|claude-coordinator )"))' "$settings")
+@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts, GitHub's writes and the thread cache's writes" {
+  local settings=$REPO_ROOT/assistant.settings.json command
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
   # assistant's command-guard hook holds instead, command by command.
@@ -325,26 +320,12 @@ assert_nothing_written() {
   for command in "cat ~/.claude/channels/discord/.env" "cat $HOME/.claude/channels/discord/access.json" \
     "ls ~/.claude/channels/discord/" "cat ~/.claude/channels/discord-assistant/.env" \
     "jq . ~/.claude/channels/discord-assistant/access.json" "cd ~/.claude/channels && cat discord/.env" \
-    "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
-    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
     "git push" "git push origin main" "git push -u origin x" "git -C ~/agent-team-records push" \
     "git -C ~/agent-team-records push origin main" "git commit -m x" "git -C ~/agent-team-records commit -m x" \
     "gh pr create --fill" "gh pr merge 5" "gh pr comment 5 --body x" "gh pr review 5 --approve" "gh pr ready 5" \
     "gh-axi pr edit 5 --title x" "gh issue create --title x" "gh-axi issue comment 3 --body x" \
-    "gh release create v1" "gh repo delete x/y" "gh repo edit --visibility public" \
-    "gh api -X POST repos/o/r/issues" "gh api repos/o/r/issues --method POST" "gh api repos/o/r/issues -f title=x" \
-    "gh api repos/o/r/issues -F title=x" "gh secret set X" \
-    "team-handoff laptop" "team-resume" "$REPO_ROOT/bin/team-resume --wait" "team-lease take" "team-lease release" \
-    "team-lease take --steal" "team-timers run" "team-timers disable" "team-stow T1" "team-checkpoint" \
-    "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
-    "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
-    "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
-    "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
-    "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
-    "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
-    "$REPO_ROOT/bin/team-review-comment https://github.com/o/r/pull/5 x.md" "team-load-check --probe --role assistant" \
-    "~/agent-team/bin/team-load-check" "team-heavy run -- git push" "$REPO_ROOT/bin/team-heavy run --label x -- sh -c x" \
-    "claude stop 0a1b2c3d" "claude rm 0a1b2c3d" "claude attach coordinator" "claude --bg --name x go" \
+    "gh repo delete x/y" "gh repo edit --visibility public" "team-lease take --steal" "team-land T1" \
+    "$REPO_ROOT/bin/team-land https://github.com/o/r/pull/5" "claude stop 0a1b2c3d" "claude rm 0a1b2c3d" "claude attach coordinator" "claude --bg --name x go" \
     "claude -p hi" "claude --model opus --print hi" "$HOME/.local/bin/claude stop x" \
     "sudo pacman -S jq" "op read op://x/y" "cat /proc/1/environ"; do
     denied_in "$settings" "$command" || { echo "allows: $command" >&2; return 1; }
@@ -357,6 +338,45 @@ assert_nothing_written() {
       '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
     assert_contains "$stderr" "Blocked by command-guard: a cd into ~/.config/agent-team or the Discord bot's directories"
   done
+  # A run of the coordinator's acts: its command-guard hook's assistant-acts row refuses it, command
+  # by command, where its deny rules refused any call naming the script.
+  # shellcheck disable=SC2088
+  for command in "team-handoff laptop" "team-resume" "$REPO_ROOT/bin/team-resume --wait" "team-lease take" \
+    "team-lease release" "team-timers run" "team-timers disable" "team-stow T1" "team-checkpoint" \
+    "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
+    "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
+    "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
+    "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
+    "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
+    "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
+    "$REPO_ROOT/bin/team-review-comment https://github.com/o/r/pull/5 x.md" "team-load-check --probe --role assistant" \
+    "~/agent-team/bin/team-load-check" "team-heavy run -- git push" "$REPO_ROOT/bin/team-heavy run --label x -- sh -c x"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: the coordinator's acts, which an assistant session never runs ("
+  done
+  # A GitHub write by gh api, release, secret or variable: its assistant-github-write row refuses
+  # it, command by command, where its deny rules refused any gh api call with a field and any call
+  # of the three groups.
+  for command in "gh api -X POST repos/o/r/issues" "gh api repos/o/r/issues --method POST" \
+    "gh api repos/o/r/issues -f title=x" "gh api repos/o/r/issues -F title=x" "gh api --input body.json x" \
+    "gh api graphql -f query='mutation{x}'" "gh release create v1" "gh secret set X" "gh variable delete X" \
+    "gh-axi release upload v1 a.tgz" "gh-axi secret set X" "gh-axi variable set X"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: a GitHub write, which an assistant session never makes ("
+  done
+  # A write of the thread cache the Discord guard trusts: its assistant-thread-cache row refuses it,
+  # command by command, where its deny rule refused any call naming the cache.
+  # shellcheck disable=SC2088
+  for command in "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
+    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
+    "cp /tmp/x ~/.local/state/agent-team/assistant-threads" "rm ~/.local/state/agent-team/assistant-threads" \
+    "ls 2>~/.local/state/agent-team/assistant-threads"; do
+    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    assert_contains "$stderr" "Blocked by command-guard: the thread cache the Discord guard trusts, which only the scripts and hooks write ("
+  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -368,7 +388,17 @@ assert_nothing_written() {
     "cat ~/.claude/channels/discord-assistant/inbox/a.png" \
     "team-state" "team-lease status" "team-lease check" "team-timers health" "team-timers status --json" \
     "team-config diff" "team-secrets check" "team-stack ls" "team-capacity status" "team-doctor" \
-    "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup"; do
+    "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup" \
+    "sed -n 1,40p bin/team-load-check | head -20" "grep -rn toolkit bin/claude-coordinator bin/claude-assistant" \
+    "wc -l bin/team-checkpoint bin/team-review-comment" "team-load-check --help" "team-timers watch --once" \
+    "bin/team-stow --help" "bin/team-handoff --help" "bin/team-resume --help" "bin/team-checkpoint --help" \
+    "bin/team-review-comment --help" "bin/team-records-rewrite --help" "bin/team-ops-end --help" \
+    "bin/claude-coordinator --help" "gh api -X GET search/issues -f q=repo:o/r" \
+    "gh api --method GET repos/o/r/pulls -F per_page=100" "gh api graphql -f query='{viewer{login}}'" \
+    "gh release list" "gh release view v1" "gh secret list" "gh variable list" "gh variable get X" \
+    "gh-axi release list" "gh-axi secret list" "gh-axi variable list" "grep -rn assistant-threads bin" \
+    "cat ~/.local/state/agent-team/assistant-threads" "wc -l ~/.local/state/agent-team/assistant-threads" \
+    "jq -R . ~/.local/state/agent-team/assistant-threads" "sed -n 1p ~/.local/state/agent-team/assistant-threads"; do
     if denied_in "$settings" "$command"; then echo "denies: $command" >&2; return 1; fi
   done
 }

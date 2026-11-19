@@ -12,7 +12,7 @@
 # the script's help_more, if it defined one before sourcing), and provides die, usage_error, team_project, ledger_jq, json_vars, email_kind, refused_emails, ledger_append, ledger_push,
 # task_events, task_event_array, known_task_events, open_task_events, task_status, task_worktrees, plan_task_dir, plan_files, script_place_refusal, local_path,
 # archive_left_out, rsync_rule, archive_task_dir, machine_name, os_release, team_os, claude_cache_dir, tool_dirs,
-# team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, capture_refusal, toolkit_refusal, task_own_dirs, path_under, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
+# team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, assistant_refusal, capture_refusal, toolkit_refusal, task_own_dirs, path_under, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
@@ -908,14 +908,18 @@ lease_refusal() {
 # Print why this session may not <does>, which is the coordinator's, or fail when it may: a worker session (its
 # settings' AGENT_TEAM_ROLE names a role other than the coordinator, "an assistant session" for the
 # assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
-# when the caller passes --interview, for the interview thread's post and wait. Worker settings
+# when the caller passes --interview, for the interview thread's post and wait, and the assistant
+# when the caller passes --read, for a read-only form of a coordinator's script (team-inbox --item,
+# team-queue list and index --check, team-log --check and --check-lifecycle), which reads what the
+# coordinator reads and writes nothing; a call passes one or the other. Worker settings
 # deny most of the same commands by their bare name, and command-guard refuses team-ask,
 # team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved by any path where a command
 # starts; this holds where both miss a spelling:
-# worker_refusal <task or ""> <does> [--interview]
+# worker_refusal <task or ""> <does> [--interview | --read]
 worker_refusal() {
   local role=${AGENT_TEAM_ROLE:-} own=${AGENT_TEAM_TASK:-}
   [[ -n $role && $role != coordinator ]] || return 1
+  [[ ${3:-} != --read || $role != assistant ]] || return 1
   if [[ ${3:-} == --interview && $role == planner ]]; then
     [[ -z $1 || $1 != "$own" ]] || return 1
     echo "a planner session of ${own:-no task} $2 for $1: a planner talks with Daniel only in its own task's interview thread"
@@ -924,6 +928,18 @@ worker_refusal() {
     [[ $role != assistant ]] || article=an
     echo "$article $role session $2: that is the coordinator's; send it your message"
   fi
+}
+
+# Print why the assistant's session may not <does>, one of the coordinator's acts, or fail when it
+# may: only the assistant (AGENT_TEAM_ROLE assistant) is refused, since workers run some of the
+# acts (a reviewer's team-review-comment, a builder's team-stack up) and Daniel's own shell and the
+# heartbeat set no role. command-guard's assistant-acts row refuses the same by every spelling its
+# walk reads; this holds where the walk cannot read a call (an interpreter's program, tmux,
+# systemd-run). The library answers --help and -h before a script calls it, and a script calls it
+# only for its acting subcommands, so it passes the row's read forms: assistant_refusal <does>
+assistant_refusal() {
+  [[ ${AGENT_TEAM_ROLE:-} == assistant ]] || return 1
+  echo "an assistant session $1: that is the coordinator's; send it your message"
 }
 
 # Print why this session may not read the Agent Chrome for <task>, or fail when it may: only a
@@ -1885,8 +1901,9 @@ daniel_message() {
 # The assistant's thread cache: the ids of the threads under #assistant found so far, one
 # known-good id per line, which the assistant's Discord guard passes without asking Discord and
 # its digest lists. It is trusted only because the assistant cannot write it: its settings deny
-# the Edit tool and any Bash call naming the file (assistant.settings.json), so only the scripts
-# and hooks below add to it.
+# the Edit tool (assistant.settings.json) and its command guard's assistant-thread-cache row a
+# Bash call that writes the file by a redirection or a writer it names, so only the scripts and
+# hooks below add to it.
 # shellcheck disable=SC2034 # read by the scripts that source this library
 ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
 

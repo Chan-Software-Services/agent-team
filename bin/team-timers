@@ -462,6 +462,9 @@
 # runs and 60 minutes, and TEAM_NOTICES_LOCK_SECONDS the 10 s a write of the notice record waits for
 # its lock (the tests' seams).
 # Exit 0 done, 1 refused or a step failed, 2 usage error, 75 GitHub unreachable.
+# An assistant session is refused disable, enable and run, the coordinator's acts (assistant_refusal
+# in bin/lib/team.sh, beside command-guard's assistant-acts row); its other subcommands and --help
+# still answer.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/notices.sh
@@ -544,6 +547,7 @@ CAFFEINATE_LABEL=agent-team.caffeinate
 
 usage="usage: team-timers enable | disable | status [--json] | health [--json] | run | watch [--once]"
 command=${1:-} json=0 once=0
+if [[ $command == @(disable|enable|run) ]] && why=$(assistant_refusal "runs no team-timers $command"); then die "$why"; fi
 case $command in
   enable | disable | run) [[ $# -eq 1 ]] || usage_error "$usage" ;;
   status | health) [[ $# -eq 1 || ($# -eq 2 && $2 == --json) ]] || usage_error "$usage" ;;

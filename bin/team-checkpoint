@@ -83,8 +83,11 @@
 # (today only the usage export's, part usage), which changes no exit code.
 # Exit 0 done, 1 refused or a step failed, 2 usage error, 75 GitHub unreachable or another
 # checkpoint still running.
+# An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
+# bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+why=$(assistant_refusal "runs no team-checkpoint") && die "$why"
 
 INTERVAL_MINUTES=5
 # The heartbeat's timer may start a run up to a minute after its mark.

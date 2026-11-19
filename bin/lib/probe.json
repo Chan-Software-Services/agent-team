@@ -232,7 +232,7 @@
     },
     {
       "id": "ask-path",
-      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
       "input": "bin/team-ask --help",
       "expect": "hook",
@@ -530,6 +530,30 @@
       "roles": ["assistant"],
       "tool": "Bash",
       "input": "team-lease take --load-check-probe",
+      "expect": "hook",
+      "marker": "the coordinator's acts"
+    },
+    {
+      "id": "act-run",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-stow --load-check-probe",
+      "expect": "hook",
+      "marker": "the coordinator's acts"
+    },
+    {
+      "id": "inbox-post",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-inbox --post --help",
+      "expect": "hook",
+      "marker": "the coordinator's commands"
+    },
+    {
+      "id": "land",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "team-land --help",
       "expect": "rule",
       "family": "coordinator-scripts"
     },
@@ -550,12 +574,124 @@
       "family": "github-writes"
     },
     {
+      "id": "github-post",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api -X POST rate_limit",
+      "expect": "hook",
+      "marker": "a GitHub write"
+    },
+    {
+      "id": "github-mutation",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api graphql -f query='mutation{__typename}'",
+      "expect": "hook",
+      "marker": "a GitHub write"
+    },
+    {
+      "id": "secret-set",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh secret set LOAD_CHECK_PROBE_ABSENT --body x --repo load-check-probe/absent",
+      "expect": "hook",
+      "marker": "a GitHub write"
+    },
+    {
       "id": "thread-cache",
       "roles": ["assistant"],
       "tool": "Bash",
       "input": "cat ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
-      "expect": "rule",
-      "family": "thread-cache"
+      "expect": "allowed",
+      "marker": "No such file"
+    },
+    {
+      "id": "thread-cache-write",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "sed -i -n p ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
+      "expect": "hook",
+      "marker": "the thread cache"
+    },
+    {
+      "id": "read-launchers",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "grep -c . bin/team-load-check bin/claude-coordinator bin/claude-assistant bin/team-worker",
+      "expect": "allowed",
+      "marker": "bin/team-worker:"
+    },
+    {
+      "id": "act-help",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-stow --help",
+      "expect": "allowed",
+      "marker": "Usage: team-stow"
+    },
+    {
+      "id": "load-check-help",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-load-check --help",
+      "expect": "allowed",
+      "marker": "Usage: team-load-check"
+    },
+    {
+      "id": "thread-cache-grep",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "grep -l assistant-threads bin/hooks/assistant-discord-guard",
+      "expect": "allowed",
+      "marker": "bin/hooks/assistant-discord-guard"
+    },
+    {
+      "id": "github-get",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api --method GET rate_limit -F probe=1 --jq .resources.core.limit",
+      "expect": "allowed",
+      "marker": "5000"
+    },
+    {
+      "id": "github-graphql",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login",
+      "expect": "allowed",
+      "marker": "@LOGIN@"
+    },
+    {
+      "id": "release-list",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh release list --limit 1 && echo release-list-ran",
+      "expect": "allowed",
+      "marker": "release-list-ran"
+    },
+    {
+      "id": "inbox-help",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-inbox --help",
+      "expect": "allowed",
+      "marker": "Usage: team-inbox"
+    },
+    {
+      "id": "queue-list",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-queue list",
+      "expect": "allowed",
+      "marker": "room"
+    },
+    {
+      "id": "log-check",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-log --check",
+      "expect": "allowed",
+      "marker": "lines meet the ledger contract"
     },
     {
       "id": "prod-mongo-server",
@@ -604,7 +740,7 @@
     },
     {
       "family": "coordinator-scripts",
-      "rules": "^Bash\\((\\*/)?(claude-coordinator|team-(capacity|checkpoint|config|handoff|heavy|land|lease|load-check|ops-end|records-rewrite|resume|review-comment|secrets|stack|stow|timers)) "
+      "rules": "^Bash\\((\\*/)?team-land \\*\\*\\)$"
     },
     {
       "family": "daniels-channel",
@@ -635,7 +771,7 @@
     },
     {
       "family": "github-writes",
-      "rules": "^Bash\\((gh|gh-axi) (pr (close|comment|create|edit|ready|reopen|review)\\*\\)$|issue |release|repo |secret|variable|api\\* -[-A-Za-z]+\\*\\)$)"
+      "rules": "^Bash\\((gh|gh-axi) (pr (close|comment|create|edit|ready|reopen|review)|issue (close|comment|create|edit|reopen)|repo (create|delete|edit))\\*\\)$"
     },
     {
       "family": "hooks-path",
@@ -710,10 +846,6 @@
     {
       "family": "sudo",
       "rules": "^Bash\\(sudo( \\*)?\\)$"
-    },
-    {
-      "family": "thread-cache",
-      "rules": "^Bash\\(.*assistant-threads"
     },
     {
       "family": "undo-ready",

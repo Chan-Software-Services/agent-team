@@ -2576,6 +2576,26 @@ ticket_launched() {
   assert_equal "$(logged_after 2)" '{"task":"T14","event":"resumed","all":true}'
 }
 
+@test "--check and --check-lifecycle run in an assistant session as for the coordinator, writing nothing, and every other form is refused to it" {
+  opened_task T14
+  assistant_reads 0 team-log --check
+  assert_equal "$output" "$TEAM_HOME/ledger.jsonl: $(wc -l <"$TEAM_HOME/ledger.jsonl") lines meet the ledger contract"
+  assistant_reads 0 team-log --check "$TEAM_HOME/ledger.jsonl"
+  assistant_reads 0 team-log --check-lifecycle
+  [[ -n $output ]]
+  echo '{"task":"T14"' >"$BATS_TEST_TMPDIR/broken.jsonl"
+  assistant_reads 1 team-log --check "$BATS_TEST_TMPDIR/broken.jsonl"
+  local before
+  before=$(files_state)
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-log T14 resumed all=true
+  assert_equal "$stderr" "team-log: an assistant session runs no team-log: that is the coordinator's; send it your message"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-log T14 --from-message 'T14 DONE 01 abc1234 the ticket' --print
+  assert_equal "$stderr" "team-log: an assistant session runs no team-log: that is the coordinator's; send it your message"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-log --fix-sent-back
+  assert_equal "$stderr" "team-log: an assistant session runs no team-log: that is the coordinator's; send it your message"
+  assert_equal "$(files_state)" "$before"
+}
+
 @test "an event holding an address at a public provider is refused, naming its field and never the value, since the records hook would refuse every later ledger commit" {
   open_t7
   provider=gmail.com

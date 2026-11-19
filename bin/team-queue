@@ -145,7 +145,8 @@
 # exits 0; a commit that fails (the team home's hooks refuse it) leaves the change written for the
 # next checkpoint to commit, saying so on stderr, and exits 1.
 # It refuses in a worker session (worker_refusal in bin/lib/team.sh), list too, which only the
-# coordinator, the sweep and the snapshot read.
+# coordinator, the sweep, the snapshot and the assistant read: an assistant session runs list and
+# index --check, which write nothing, as the coordinator does, and is refused every other form.
 # Exit codes: 0 done, 1 refused or a check failed, 2 a malformed command line (or a
 # TEAM_QUEUE_TODAY that is no YYYY-MM-DD).
 set -euo pipefail
@@ -398,7 +399,10 @@ commit() {
   die "the change is written but not committed; the next checkpoint commits it"
 }
 
-why=$(worker_refusal "" "$(if [[ ${1:-} == list ]]; then echo "reads no queue"; else echo "edits no records"; fi)") && die "$why"
+# list and index --check read alone, so the assistant runs them as the coordinator does.
+read_form=()
+[[ ${1:-} != list && "$*" != "index --check" ]] || read_form=(--read)
+why=$(worker_refusal "" "$(if [[ ${1:-} == list ]]; then echo "reads no queue"; else echo "edits no records"; fi)" "${read_form[@]}") && die "$why"
 (($#)) || usage_error "$usage"
 today=${TEAM_QUEUE_TODAY:-$(date -u +%F)}
 [[ $today =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage_error "TEAM_QUEUE_TODAY \"$today\" is not a YYYY-MM-DD date"

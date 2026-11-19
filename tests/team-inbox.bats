@@ -1284,6 +1284,23 @@ EOF
   assert_equal "$stderr" "team-inbox: a builder session edits nothing in Discord: that is the coordinator's; send it your message"
 }
 
+@test "--item runs in an assistant session as for the coordinator, writing nothing, and every other form is refused to it" {
+  waiting_ledger
+  run_bin -0 team-inbox
+  assistant_reads 0 team-inbox --item 1
+  assert_equal "$output" "pr T4 https://github.com/owner/proj/pull/4"
+  assistant_reads 1 team-inbox --item 999
+  assert_contains "$stderr" "team-inbox: no item 999 waits; the list holds "
+  local before args
+  before=$(files_state)
+  for args in "" --post; do
+    # shellcheck disable=SC2086 # each word an argument
+    AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-inbox $args
+    assert_equal "$stderr" "team-inbox: an assistant session edits nothing in Discord: that is the coordinator's; send it your message"
+  done
+  assert_equal "$(files_state)" "$before"
+}
+
 @test "--help prints the header, and any argument but --post or --item <n> from 1 to 999 is a usage error" {
   run_bin -0 team-inbox --help
   assert_contains "$output" "Usage: team-inbox [--post | --item <n>]"

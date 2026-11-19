@@ -163,3 +163,26 @@
 {"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end && rm -rf test-results playwright-report && cd .."}, "local": true}
 {"roles": ["builder", "gate"], "tool": "Bash", "input": {"command": "cd @WORKTREE@/front-end; npx playwright test --reporter=line; cd ..; rm -rf front-end/test-results"}, "local": true}
 {"roles": ["builder", "reviewer", "gate"], "tool": "Bash", "input": {"command": "tmux -S @JOB@/tmp/look.sock new-session -d -s look 'npm run dev'; tmux -S @JOB@/tmp/look.sock capture-pane -p -t look; tmux -S @JOB@/tmp/look.sock kill-server"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "sed -n 1,40p bin/team-load-check | head -20"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "grep -rn toolkit bin/claude-coordinator bin/claude-assistant"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "wc -l bin/team-checkpoint bin/team-review-comment"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-load-check --help"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-stow --help | head -30"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "for s in team-handoff team-resume team-checkpoint team-review-comment team-records-rewrite team-ops-end claude-coordinator; do @TEAM_CODE@/bin/$s --help | head -3; done"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-inbox --help | head -20; @TEAM_CODE@/bin/team-ask --help | head -5"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "team-answer -h | head -3 && team-run-approved --help | head -3"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-inbox --item 3"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-queue list"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-queue index --check; echo \"exit $?\""}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "@TEAM_CODE@/bin/team-log --check && @TEAM_CODE@/bin/team-log --check-lifecycle | tail -3"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh api -X GET search/issues -f q=repo:example-org/example-repo --jq '.items[].number' | head -5"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh api --method GET repos/example-org/example-repo/pulls -F per_page=100 --jq 'length'"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh api graphql -f query='{ repository(owner: \"example-org\", name: \"example-repo\") { pullRequests(states: OPEN) { totalCount } } }'"}}
+{"roles": ["coordinator"], "tool": "Bash", "input": {"command": "gh api graphql -f query='query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pullRequests(states: OPEN) { totalCount } } }' -F owner=example-org -F name=example-repo"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh release list --repo example-org/example-repo --limit 5; gh release view v1.2.0 --repo example-org/example-repo"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh secret list --repo example-org/example-repo && gh variable list --repo example-org/example-repo && gh variable get EXAMPLE_FLAG --repo example-org/example-repo"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "gh-axi release list; gh-axi secret list; gh-axi variable list"}}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "grep -rn assistant-threads @TEAM_CODE@/bin | cut -c1-200"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "cat ~/.local/state/agent-team/assistant-threads; wc -l ~/.local/state/agent-team/assistant-threads"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "jq -R . ~/.local/state/agent-team/assistant-threads && sed -n 1p ~/.local/state/agent-team/assistant-threads"}, "local": true}
+{"roles": ["coordinator"], "tool": "Bash", "input": {"command": "while read -r id; do echo \"thread $id\"; done < ~/.local/state/agent-team/assistant-threads"}, "local": true}
