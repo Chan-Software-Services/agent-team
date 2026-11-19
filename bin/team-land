@@ -38,28 +38,40 @@
 #   out of the queue is said, and tried again at each look;
 #   once posted, it waits on the trial commit's checks with team-ci-wait --merge-group <trial sha>
 #   --json <pr url>, once per sha, which classes a failure as the PR's own or infrastructure as
-#   on a head, and ends when the entry leaves that commit; team-ci-wait's deadline is what is
-#   left of this script's, at most its own 90 minutes;
+#   on a head, or as rules: a check the base's rules or the registry require that never reported
+#   on the trial commit; it ends when the entry leaves that commit; team-ci-wait's deadline is
+#   what is left of this script's, at most its own 90 minutes;
+#   a wait that ends with any rules failure, whatever else failed, has the PR taken out of the
+#   queue at once, rather than left to the check's timeout, since no trial commit will make that
+#   check, and ends it, dequeued, its reason "<names> never reported on the trial commit, which
+#   <base>'s rules require", or for the checks the project's required_checks alone require
+#   (team-ci-wait's source) "..., which the project's required_checks require", a clause for each
+#   (rules_reason in bin/lib/ledger.jq); while GitHub does not let it out, it is tried again at
+#   each look, and a drop by the queue meanwhile ends it the same way, that reason after GitHub's;
 #   a merged PR ends it, merged, when its head is still <head>; merged at another head, it ends
 #   refused, naming both;
 #   a PR that left the queue unmerged was dropped: its latest removal (RemovedFromMergeQueueEvent)
 #   is not the one of the first look, or, when GitHub shows no new removal within 2 minutes of
 #   looks, it is taken as dropped with no reason given. When team-ci-wait classed failures on the
-#   trial commit and none is the PR's own (infrastructure, and the roll-ups of such), it enqueues
-#   the same head once more, once per run; else it ends, dequeued.
+#   trial commit and none is the PR's own or rules (infrastructure, and the roll-ups of such), it
+#   enqueues the same head once more, once per run; else it ends, dequeued. A rules drop is never
+#   enqueued again: the next step is the base's rules, the project's required_checks or the
+#   workflow's merge_group trigger, which team-merge names.
 # It prints what it does as it goes, each line starting "team-land: " with the text of a
-# team-ci-wait end indented under its line, and on its last line one JSON object, {schema:
+# team-ci-wait end indented under its line, then each line that wait printed on stderr (as that
+# the base's rules could not be read), and on its last line one JSON object, {schema:
 # "team-land/1", outcome, url, head, merge, reason, failed}:
 #   outcome  merged, dequeued, waiting or refused
 #   url      the PR's, its repo at the end of its moves
 #   head     <head>
 #   merge    the PR's merge commit when merged, else null
 #   reason   null when merged; when dequeued, GitHub's reason for the removal (or that the PR
-#            was closed), then an enqueue once more that failed and an agent-review that could
-#            not be posted on the last trial commit, or why this run took the PR out of the
-#            queue; when waiting or refused, why
+#            was closed), then a rules drop's reason, an enqueue once more that failed and an
+#            agent-review that could not be posted on the last trial commit, or why this run took
+#            the PR out of the queue; when waiting or refused, why
 #   failed   the failures team-ci-wait classed on the dropped trial commit, each {name, class,
-#            kind, link, step}, as the ledger's ci event carries them; [] on any other end
+#            kind, link, step, and source on a rules failure}, as the ledger's ci event carries
+#            them; [] on any other end
 # Exit 0 merged; 1 dequeued or refused; 2 a malformed command line; 75 waiting: the deadline, 4
 # hours from its start (TEAM_LAND_DEADLINE_SECONDS replaces its seconds), came with the PR left in
 # the queue (or, as its reason then says, not shown in it, or GitHub unread at the last look), or
@@ -94,6 +106,7 @@ poster=team-review-status
 bar=$(own_bar "$project") || exit 1
 if [[ $(jq -r '.app? // empty' <<<"$bar") ]]; then poster=team-review-check; fi
 bin=$(dirname "$TEAM_LIB")
+base=$(team_project "$project" base)
 
 dir=$(team_mktemp -d)
 echo '[]' >"$dir/failed"
@@ -237,10 +250,14 @@ ci_wait() {
     return 0
   fi
   if [[ $ci_outcome == failed ]]; then
-    jq -c '.failures | map({name, class, kind, link, step})' <<<"$out" >"$dir/failed"
+    jq -c '.failures | map({name, class, kind, link, step} + if .source then {source} else {} end)' <<<"$out" >"$dir/failed"
   fi
   note "the checks of the trial commit ${1:0:7}: $ci_outcome"
   jq -r '.text' <<<"$out" | sed 's/^/  /'
+  # What the wait said on stderr beside its result, as that the base's rules could not be read.
+  grep . "$dir/ci.stderr" | sed 's/^/  /' || true
+  # A required check no workflow makes on a trial commit: the PR comes out of the queue at once.
+  rules_drop=$(ledger_jq 'rules_reason($base; "the trial commit")' -r --arg base "$base" "$dir/failed") || rules_drop=''
 }
 
 # The end of a drop, with GitHub's reason and what this run adds to it.
@@ -252,6 +269,7 @@ dropped() {
 }
 
 first=true enqueued=false retried=false start_removal='' gone_n='' on_trial='' unposted='' enqueue_error='' ci_outcome=''
+rules_drop=''
 said_last='' seen=''
 declare -A posted=() waited=() held=()
 while :; do
@@ -285,7 +303,10 @@ while :; do
     fi
     if [[ -n $entry ]]; then
       gone_n='' seen=queued
-      if [[ -n $trial ]]; then
+      if [[ -n $rules_drop ]]; then
+        # Out at once, on whatever trial commit the entry is on now: none will make the check.
+        take_out "$rules_drop" || true
+      elif [[ -n $trial ]]; then
         if [[ $trial != "$on_trial" ]]; then
           # A new trial commit: what failed or could not be posted on an earlier one is not its.
           on_trial=$trial unposted=''
@@ -295,13 +316,19 @@ while :; do
         if [[ -n ${posted[$on_trial]:-} && -z ${waited[$on_trial]:-} ]]; then
           trial=$on_trial
           ci_wait "$trial"
-          case $ci_outcome in
-            passed | none | failed | other-head | closed)
-              waited[$trial]=1
-              # The queue acts on these at once: look again with no wait, but for the deadline.
-              ((SECONDS >= DEADLINE_SECONDS)) || continue
-              ;;
-          esac
+          if [[ -n $rules_drop ]]; then
+            # Out now; where GitHub does not let it out, tried again at the next look's.
+            waited[$trial]=1
+            take_out "$rules_drop" || true
+          else
+            case $ci_outcome in
+              passed | none | failed | other-head | closed)
+                waited[$trial]=1
+                # The queue acts on these at once: look again with no wait, but for the deadline.
+                ((SECONDS >= DEADLINE_SECONDS)) || continue
+                ;;
+            esac
+          fi
         fi
       fi
     elif ! $enqueued; then
@@ -319,7 +346,9 @@ while :; do
           reason="GitHub shows no removal and no reason"
         fi
         note "the merge queue dropped $url: $reason"
-        if ! $retried && jq -e 'any(.[]; .class == "infrastructure") and all(.[]; .class != "pr")' "$dir/failed" >/dev/null; then
+        if [[ -n $rules_drop ]]; then
+          dropped "$reason" "$rules_drop"
+        elif ! $retried && jq -e 'any(.[]; .class == "infrastructure") and all(.[]; .class != "pr" and .class != "rules")' "$dir/failed" >/dev/null; then
           retried=true
           if ! enqueue; then
             dropped "$reason" "enqueuing ${land_head:0:7} once more failed: $enqueue_error"

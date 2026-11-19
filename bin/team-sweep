@@ -46,7 +46,8 @@
 #                  blocked, waiting, paused) and does not name the builder's session, and a
 #                  resumed with no brief after one (no review, ask, answer or builder's launch),
 #                  which Claude Code calls blocked for a last summary that says it waits on the
-#                  merge, and which is idle with a ledger event since its launch
+#                  merge, and which is idle with a ledger event since its launch; nor one, but a
+#                  ticket's builder, that a later builder launch of its worktree superseded
 #   silent         a live, idle session of an open task, not parked, with no ledger event for the
 #                  task after that session's latest launch but denied ones (one waiting for input
 #                  is not also silent); a ticket's builder by its own events: none since its
@@ -103,7 +104,8 @@
 #                  of it is a queued, with no other head logged since, by a pr event of the PR
 #                  or by any review of the task) is
 #                  never named, nor one the queue dropped for a failure of its own, which
-#                  trial-failed names, nor any PR of a task whose merge lock a process holds,
+#                  trial-failed names, nor one it dropped for a check the base's rules require,
+#                  which trial-rules names, nor any PR of a task whose merge lock a process holds,
 #                  which team-merge is landing
 #   queue-wait     an open task's PR that stands in the merge queue while no process holds the
 #                  task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
@@ -119,7 +121,24 @@
 #                  failed <checks> on the merge queue's trial merge, which dropped it at <the
 #                  dequeued's time>; next: run team-next T<n> --ci, which names the
 #                  builder-merge-base step and who takes it, then a rereview; never team-merge
-#                  T<n> on the same head", beside the task's other findings
+#                  T<n> on the same head", beside the task's other findings; never for a PR
+#                  trial-rules names
+#   trial-rules    an open task in awaiting-merge, with no ask open and nothing parking it and no
+#                  process holding its merge lock, whose PR the merge queue dropped for a check the
+#                  base's rules require and no workflow made on the trial commit (its latest
+#                  queued, dequeued or merged is a dequeued whose failed holds one of class rules,
+#                  with no pr event of it and no review since; queue_state's rules_due in
+#                  bin/lib/ledger.jq), whatever else failed, with session null: "<checks> never
+#                  reported on the trial commit of <url>, which <base>'s rules require; next: run
+#                  team-doctor and tell Daniel; run team-merge T<n> once the rules or the workflow
+#                  are fixed", <base> the base of the PR's project (that of its latest queued, else
+#                  the task's) as its opened or worktree-added logged it; a check the project's
+#                  required_checks alone require (team-ci-wait's source) is said in a clause of its
+#                  own, "...; <checks> never reported on the trial commit of <url>, which the
+#                  project's required_checks require", and its next step names them among what to
+#                  fix, "the rules, the project's required_checks or the workflow", leaving out
+#                  team-doctor and Daniel when no check the rules require is among them; beside the
+#                  task's other findings; the next team-merge's queued ends it
 #   ticket-gone    a running ticket of an open task, not parked (its latest launch in its ticket
 #                  worktree with no done of its session and no ticket-done of its ticket since),
 #                  whose builder's session is not live, with no stowed after that launch and no

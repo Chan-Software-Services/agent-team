@@ -63,8 +63,8 @@ declare -gA FORMAT=(
 # cloned as the bootstrap clones them,
 # ~/.config/agent-team/home names the team home, and its core.hooksPath the code's records-git;
 # the user manager delegates cpu and memory and the team's slice is installed (team-capacity);
-# /tmp is a memory file system a tenth full (tmp_reading); and a reading of the machine's load was
-# just taken, as a good heartbeat run just ended.
+# /tmp is a memory file system a tenth full (tmp_reading); and a reading of the machine's load and
+# one of the model windows were just taken, as a good heartbeat run just ended.
 doctor_machine() {
   # The whole doctor, until a test names its checks (only_checks).
   unset TEAM_DOCTOR_CHECKS
@@ -180,6 +180,8 @@ case $* in
     # A base's rules (base_rules), from $STUB_FIXTURES/github/<owner>/<name>/: branch.json,
     # rules.json and ruleset-<id>.json, or as an unprotected base with no ruleset (queue_on in
     # tests/team-doctor-projects.bats writes them); branch.err fails the branch read with its text.
+    # The repository's CodeQL default setup from default-setup.json (default_setup there writes
+    # it), else not configured; default-setup.err fails its read with its text.
     dir=$STUB_FIXTURES/github/$(cut -d/ -f2,3 <<<"$2")
     case ${2#repos/*/*/} in
       branches/*)
@@ -187,6 +189,9 @@ case $* in
         cat "$dir/branch.json" 2>/dev/null || printf '{"name": "%s", "protected": false}\n' "${2##*/}" ;;
       rules/branches/*) cat "$dir/rules.json" 2>/dev/null || echo '[]' ;;
       rulesets/*) cat "$dir/ruleset-${2##*/}.json" ;;
+      code-scanning/default-setup)
+        if [[ -f $dir/default-setup.err ]]; then cat "$dir/default-setup.err" >&2; exit 1; fi
+        cat "$dir/default-setup.json" 2>/dev/null || echo '{"state": "not-configured", "languages": []}' ;;
       *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
     esac ;;
   *) echo "gh stub: unplanned call: $*" >&2; exit 127 ;;
@@ -261,8 +266,19 @@ EOF
   tmp_reading 10
   # A reading of the machine's load just taken, as its heartbeat takes one.
   capacity_reading 0
-  # And a good heartbeat run just ended, with its checkpoint.
+  # And a good heartbeat run just ended, with its checkpoint and its read of the model windows.
   good_heartbeat_run
+  good_usage_read
+}
+
+# The attempt record a good team-quota usage read on home-pc leaves, just now: Fable's week at
+# 40%, so the quota model line passes.
+good_usage_read() {
+  local state=$HOME/.local/state/agent-team
+  mkdir -p "$state"
+  jq -n --arg now "$(date -u +%FT%TZ)" '{at: $now, ok: true, why: null, reading: {at: $now, machine: "home-pc",
+    source: "usage", windows: {seven_day: {used: 30, resets_at: "2036-01-07T14:00:00Z"}},
+    models: [{name: "Fable", used: 40, resets_at: "2036-01-07T14:00:00Z"}]}}' >"$state/quota-usage.json"
 }
 
 # The team home's credential.https://github.com.helper values, the owner login's for <gh>, as

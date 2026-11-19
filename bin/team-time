@@ -72,7 +72,9 @@
 # launch (replaced), its stowed or, for a builder or a planner, a paused reason=stowed
 # (stowed) or its closed (closed); else it is running.
 # Its project is the launch's, else the task's; its path the task's, else "-"; its model the
-# launch's, else "default"; its toolkits the launch's list, sorted and deduplicated, [] for none or
+# launch's, else "default" (a launch on the settings' model since 2026-11-17 logs its word, opus
+# say, and one before none, so by_role_model splits one baseline in two rows:
+# sops/model-trials.md); its toolkits the launch's list, sorted and deduplicated, [] for none or
 # for a legacy launch with no list; its first done the minutes to its first round's report; its
 # phases its task's phase minutes over its span (null for a legacy task). A lifetime is in the
 # window when it ended in it; one running at --until is listed apart with its age, in no average.

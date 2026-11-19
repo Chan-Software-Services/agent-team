@@ -16,12 +16,13 @@ on() {
     '{ts: ($from | fromdate + $n * 60 | todate), task: "T1", event: $e} + ('"${2:-{\}}"')')")
 }
 
-# fold_read <filter>: the filter's output over the events so far, with ledger.jq's definitions (from
-# FOLD_LIB when a test set it to a library of its own, else this checkout's), the contract as
-# $contract and the sandbox's HOME as $home, compact, strings raw.
+# fold_read <filter> [<jq option>...]: the filter's output over the events so far, with ledger.jq's
+# definitions (from FOLD_LIB when a test set it to a library of its own, else this checkout's), the
+# contract as $contract and the sandbox's HOME as $home, compact, strings raw; the options (an
+# --argjson) go to jq.
 fold_read() {
   printf '%s\n' "${events[@]}" | jq -L "${FOLD_LIB:-$REPO_ROOT/bin/lib}" -scr --slurpfile contract "$REPO_ROOT/bin/lib/ledger-contract.json" \
-    --arg home "$HOME" "include \"ledger\"; \$contract[0] as \$contract | $1"
+    --arg home "$HOME" "${@:2}" "include \"ledger\"; \$contract[0] as \$contract | $1"
 }
 
 # opened <path>: T1 opened on <path>.
@@ -302,14 +303,68 @@ builder_launch() {
     assert_equal "$(fold_read 'handed_on_launches(""; "/home/x") | launch_states([{id: "b1", status: "idle"}]) | map([.session, .state])')" \
       '[["b1","handed-on"]]'
   done
-  # A paused that is no stow (its cause worker) is a wait the builder comes back from.
+  # A paused that is no stow (its cause worker) is a wait the builder comes back from, so a
+  # builder's launch, which reads the events before its own, leaves it; once that launch is
+  # logged, it has taken the worktree, and b1 is handed on.
   events=()
   opened feature
   builder_launch b1
   on paused '{reason: "holding gate runs for the sudo fix"}'
+  assert_equal "$(fold_read 'handed_on_launches("builder"; "/home/x") | launch_states([{id: "b1", status: "idle"}]) | map([.session, .state])')" \
+    '[["b1","idle with no event of its own since its launch"]]'
   builder_launch b2
   assert_equal "$(fold_read 'handed_on_launches(""; "/home/x") | launch_states([{id: "b1", status: "idle"}]) | map([.session, .state])')" \
-    '[["b1","idle with no event of its own since its launch"]]'
+    '[["b1","handed-on"]]'
+}
+
+@test "a builder a later builder launch of its worktree supersedes is handed on, summary-blocked too, and one at a real prompt is still named" {
+  opened feature
+  builder_launch b1
+  on pr '{url: "https://github.com/owner/proj/pull/5", head: "1234567"}'
+  on launch '{role: "reviewer", session: "r1", worktree: "/w/1", toolkits: []}'
+  builder_launch b2
+  # Claude Code calls an idle session blocked when its last summary says it waits on someone; b2
+  # has taken the worktree, so b1's summary is no prompt, and the heartbeat's stow plan stops it.
+  local states='handed_on_launches(""; $home) | launch_states($s) | map(select(.role == "builder") | [.session, .state, .handed_on])'
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "b1", "status": "idle", "state": "blocked"}]')" '[["b1","handed-on",true]]'
+  assert_equal "$(fold_read '[plan_tasks($s)[].finished[]]' --argjson s '[{"id": "b1", "status": "idle", "state": "blocked"}]')" \
+    '[{"session":"b1","role":"builder"}]'
+  # The sweep reads it the same: no waiting-input, and b2 busy at work.
+  assert_equal "$(fold_read '[task_findings($s; {sessions: {}})]' \
+    --argjson s '[{"id": "b1", "status": "idle", "state": "blocked", "name": "T1-builder"}, {"id": "b2", "status": "busy", "name": "T1-builder"}]')" '[]'
+  # A dialog open (a permission prompt, a question) is still waiting for input, and named.
+  local prompt='[{"id": "b1", "status": "idle", "state": "blocked", "waitingFor": "dialog open", "name": "T1-builder"}, {"id": "b2", "status": "busy", "name": "T1-builder"}]'
+  assert_equal "$(fold_read "$states" --argjson s "$prompt")" '[["b1","waiting for input",true]]'
+  assert_equal "$(fold_read '[task_findings($s; {sessions: {}}) | .kind]' --argjson s "$prompt")" '["waiting-input"]'
+  # So is one whose status is waiting, and a busy one is waited on, its work handed on.
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "b1", "status": "waiting", "state": "blocked"}]')" '[["b1","waiting for input",true]]'
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "b1", "status": "busy"}]')" '[["b1","busy",true]]'
+  # With no pr of its own, the later launch has taken its worktree all the same.
+  events=()
+  opened feature
+  builder_launch b1
+  builder_launch b2
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "b1", "status": "idle", "state": "blocked"}]')" '[["b1","handed-on",true]]'
+  # A builder of another worktree, a second project's, is no later launch of b1's worktree.
+  events=()
+  opened feature
+  builder_launch b1
+  on launch '{role: "builder", session: "b2", worktree: "/w/2", toolkits: []}'
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "b1", "status": "idle", "state": "blocked"}]')" '[]'
+}
+
+@test "a ticket builder keeps its own rule: a later builder of its ticket worktree hands it on only with its ticket's ticket-done" {
+  opened feature
+  on plan-approved '{by: "coordinator"}'
+  on worktree-added '{project: "proj", branch: "feat/T1-tooling--02", worktree: "/w/2", ticket: "02"}'
+  on launch '{role: "builder", session: "t1", worktree: "/w/2", ticket: "02", toolkits: []}'
+  on launch '{role: "builder", session: "t2", worktree: "/w/2", ticket: "02", toolkits: []}'
+  local states='handed_on_launches(""; $home) | launch_states($s) | map(select(.session == "t1") | [.session, .state, .handed_on])'
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "t1", "status": "idle", "state": "blocked"}]')" '[["t1","waiting for input",false]]'
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "t1", "status": "idle"}]')" \
+    '[["t1","idle with no event of its own since its launch",false]]'
+  on ticket-done '{ticket: "02", commits: ["abc1234"]}'
+  assert_equal "$(fold_read "$states" --argjson s '[{"id": "t1", "status": "idle"}]')" '[["t1","handed-on",true]]'
 }
 
 @test "a merge-approved ends an old wait on Daniel, and no other park" {
