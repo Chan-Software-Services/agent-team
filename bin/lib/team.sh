@@ -2293,7 +2293,7 @@ host_merge() {
     echo "the objects of $1 cannot be found"
     return 2
   fi
-  host_dir=$(mktemp -d) || return 2
+  host_dir=$(team_mktemp -d) || return 2
   if "${host_git[@]}" init -q --bare --template= "$host_dir/repo" 2>/dev/null &&
     printf '%s\n' "$host_objects" >"$host_dir/repo/objects/info/alternates"; then
     merge_judged "$2" "$3" "${host_git[@]}" --git-dir="$host_dir/repo" || host_rc=$?
@@ -2301,7 +2301,7 @@ host_merge() {
     echo "no repository could be made to merge in"
     host_rc=2
   fi
-  rm -rf "${host_dir:?}"
+  team_tmp_rm "$host_dir"
   return "$host_rc"
 }
 
