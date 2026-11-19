@@ -88,12 +88,18 @@
 # On a base with a merge queue (base_rules' queue), run it with Bash run_in_background, since it
 # ends only when the queue does. The checks above are the same, a PR behind its base still no reason
 # to refuse, with two more: the project's merge_method is merge, the only one the team proves a
-# trial commit for, and the PR's queue entry can be read. A refusal there reaches the queue: a PR in
+# trial commit for, and the PR's queue entry can be read. For a PR in the queue, a conflict GitHub
+# has not worked out is no reason, since GitHub does not work it out again for a PR that stands in
+# the queue when its base moves: the queue is the proof there, a trial commit built only from a
+# clean merge and proved before agent-review goes on it (queue_commit_problems in bin/lib/team.sh),
+# unless its entry is UNMERGEABLE, which is refused naming the queue; a conflict GitHub did work
+# out is refused in the queue as out of it. A refusal there reaches the queue: a PR in
 # the queue is taken out of it (GraphQL's dequeuePullRequest; dequeue_pr in bin/lib/team.sh) and
 # dequeued logged with the reasons, since a trial commit that carries agent-review lands whatever
 # this run says, unless every reason is one that cannot be told now, which leaves it queued and says
-# so: GitHub unread, a conflict GitHub has not worked out yet, the plan's files unread, the head not
-# fetched for the local checks, and local checks that could not run (team-checks exit 75), each
+# so: GitHub unread, a conflict GitHub has not worked out yet for a PR in no queue or whose queue
+# entry could not be read, the plan's files unread, the head not fetched for the local checks, and
+# local checks that could not run (team-checks exit 75), each
 # classed where it is made; every other reason is a refusal that stands, a Discord message that
 # cannot be read back and a head not fetched to check a word among them, which fails closed at the
 # cost of a second enqueue. A PR GitHub does not let out is said, nothing logged; and a queued that
@@ -259,8 +265,8 @@ method=$(team_project "$project" merge_method)
 # merge_reasons, the checks every merge gets, whatever the word.
 head_reasons=() default_reasons=() merge_reasons=()
 # The reasons that cannot be told now, a set keyed by each such reason, which later puts it in
-# where it is made, never by reading its text: GitHub unread, a conflict GitHub has not worked out,
-# the plan's files unread, a head that cannot be fetched for the local checks, and local checks
+# where it is made, never by reading its text: GitHub unread, a conflict GitHub has not worked out
+# for a PR in no queue or whose queue entry could not be read, the plan's files unread, a head that cannot be fetched for the local checks, and local checks
 # that could not start (team-checks exit 75). A run again may find each gone, so a refusal on these
 # alone leaves a queued PR in the queue; every other reason is a refusal that stands.
 declare -A untold_reasons=()
@@ -304,11 +310,6 @@ else
   if [[ -z $landed ]]; then
     [[ $state == open ]] || merge_reasons+=("PR #$number is $state, not open")
     [[ $(jq -r .isDraft "$scratch/pr") != true ]] || merge_reasons+=("PR #$number is a draft")
-    case $(jq -r .mergeable "$scratch/pr") in
-      MERGEABLE) ;;
-      CONFLICTING) merge_reasons+=("PR #$number conflicts with its base") ;;
-      *) later merge_reasons "GitHub has not worked out yet whether PR #$number conflicts with its base; try again in a minute" ;;
-    esac
   fi
   # A base with a merge queue lands the PR through it: the team proves a trial commit only as a
   # merge commit, and a PR already in the queue is waited on, never enqueued twice.
@@ -327,6 +328,24 @@ else
     else
       later merge_reasons "GitHub cannot be read: PR #$number's merge queue entry ($(grep -m1 . "$scratch/error" 2>/dev/null || echo "gh api graphql gave no pull request"))"
     fi
+  fi
+  # Whether the PR conflicts with its base, as GitHub worked it out. GitHub does not work it out
+  # again for a PR that stands in the queue when its base moves, so there the queue is the proof:
+  # it builds a trial commit only from a merge that is clean onto what is ahead of the PR, which
+  # queue_commit_problems (bin/lib/team.sh) proves before agent-review goes on it, and an entry
+  # GitHub marks UNMERGEABLE is one it could not merge.
+  if [[ -z $landed ]]; then
+    case $(jq -r .mergeable "$scratch/pr") in
+      MERGEABLE) ;;
+      CONFLICTING) merge_reasons+=("PR #$number conflicts with its base") ;;
+      *)
+        if [[ $entry == UNMERGEABLE ]]; then
+          merge_reasons+=("PR #$number's entry in $base's merge queue is UNMERGEABLE, and GitHub has not worked out whether PR #$number conflicts with its base")
+        elif [[ -z $entry ]]; then
+          later merge_reasons "GitHub has not worked out yet whether PR #$number conflicts with its base; try again in a minute"
+        fi
+        ;;
+    esac
   fi
   [[ $(jq -r .base <<<"$facts") == "$base" ]] || merge_reasons+=("PR #$number targets $(jq -r .base <<<"$facts"), not $project's base $base")
   [[ -z $holds || $holds == "$head" ]] || merge_reasons+=("PR #$number's head is ${head:0:7}, not ${holds:0:7}, the head --holds names")
