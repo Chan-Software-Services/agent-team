@@ -85,16 +85,17 @@ ledger=$TEAM_HOME/ledger.jsonl
 live_sessions
 projects=$(team_project --list) || exit 1
 
-tmp=$(mktemp -d)
+tmp=$(team_mktemp -d)
 # Stop the jobs below if this run is cut short, and keep every temp file of the run in $tmp.
-trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$tmp"' EXIT
+team_exit_trap 'kill $(jobs -p) 2>/dev/null || true'
 export TMPDIR=$tmp
 
 # The production checks' last results, team-uptime status --json's object, or {error} with the last
 # line it said on stderr, its "team-uptime: " cut and $HOME as ~: production_status
 production_status() {
   local out err line
-  out=$(mktemp) err=$(mktemp)
+  out=$(team_mktemp)
+  err=$(team_mktemp)
   if TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-uptime" status --json >"$out" 2>"$err" </dev/null &&
     jq -ce 'select(.schema == "team-uptime/1")' "$out" 2>/dev/null; then
     :
@@ -103,7 +104,7 @@ production_status() {
     line=${line#team-uptime: }
     jq -cn --arg error "${line//"$HOME/"/"~/"}" '{error: $error}'
   fi
-  rm -f "$out" "$err"
+  team_tmp_rm "$out" "$err"
 }
 
 # The queue, team-queue list --json's object (it reads team-capacity plan and costs itself), or
@@ -112,14 +113,15 @@ production_status() {
 queue_status() {
   local out err
   if [[ ! -d $TEAM_HOME/tasks/queued ]]; then echo null; return; fi
-  out=$(mktemp) err=$(mktemp)
+  out=$(team_mktemp)
+  err=$(team_mktemp)
   if TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-queue" list --json >"$out" 2>"$err" </dev/null &&
     jq -ce 'select(type == "object" and .schema == "team-queue/1")' "$out" 2>/dev/null; then
     :
   else
     error_view "$err" "team-queue list printed no team-queue/1 object" "team-queue: "
   fi
-  rm -f "$out" "$err"
+  team_tmp_rm "$out" "$err"
 }
 
 # Every task's events by id, read once.
@@ -133,7 +135,7 @@ project_prs() {
   # the repository where it is now, not through the redirect of a name it had.
   repo=$(team_project "$project" repo) || return 1
   repo=$(canonical_repo "$repo") || return 1
-  dir=$(mktemp -d) || return 1
+  dir=$(team_mktemp -d) || return 1
   if github "$dir" list pr list --repo "$repo" --state open --limit 100 \
     --json number,title,url,headRefName,baseRefName,isDraft; then
     jq -c --arg project "$project" --arg repo "$repo" '{project: $project, repo: $repo,

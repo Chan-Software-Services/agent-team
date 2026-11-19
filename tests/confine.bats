@@ -851,7 +851,7 @@ $SFILE"
   [[ ! -e $base ]]
   # The checkout's own path, which the program quotes too.
   mkdir -p "$BOX/zsh/lib"
-  cp "$WRITE" "$BOX/zsh/lib/"
+  cp "$WRITE" "$REPO_ROOT/bin/lib/temp-files.sh" "$BOX/zsh/lib/"
   run --separate-stderr "$BOX/zsh/lib/confine-session" write --dir "$SDIR" --task "$TASK" --worktree "$WT" --git-dir "$GIT" \
     --team-home "$TEAM_HOME" --home "$HOME"
   assert_equal "$status: $stderr" "1: confine-session: $(realpath "$BOX")/zsh/lib holds \"zsh\", which the session's shell path may not"

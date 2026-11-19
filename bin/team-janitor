@@ -156,8 +156,7 @@ REPORT=$DIR/$DAY${DRY:+-dry-run}.md
 POSTED=$DIR/posted-$DAY.json
 # The most one Discord post may take, as team-timers posts.
 POST_TIMEOUT=20
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+WORK=$(team_mktemp -d)
 MACHINE=$(machine_name 2>/dev/null || hostname -s 2>/dev/null || echo "this machine")
 # Set when the run ends with exit 1.
 FAILED=''

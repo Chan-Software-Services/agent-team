@@ -422,8 +422,7 @@ case $command in
       printf '%s\n' "$problems"
       exit 1
     fi
-    NET_ERR=$(mktemp)
-    trap 'rm -f "$NET_ERR"' EXIT
+    NET_ERR=$(team_mktemp)
     # shellcheck disable=SC2034 # read by commit_records
     records_edit=edit_index
     commit "chore: queued index" "$index_rel"
@@ -433,9 +432,8 @@ case $command in
     (($# == 1)) || usage_error "$usage"
     table=$1
     [[ -f $table && -r $table ]] || die "no table at $table"
-    NET_ERR=$(mktemp)
-    plan=$(mktemp)
-    trap 'rm -f "$NET_ERR" "$plan"' EXIT
+    NET_ERR=$(team_mktemp)
+    plan=$(team_mktemp)
     # The paths to commit are the rows' files, read as queue_set reads the first column; a row
     # that names no queued file refuses the table before anything is committed.
     paths=("$index_rel")
@@ -473,9 +471,8 @@ case $command in
       fi
     done
     ((${#take_files[@]})) || usage_error "$usage"
-    NET_ERR=$(mktemp)
-    plan=$(mktemp)
-    trap 'rm -f "$NET_ERR" "$plan"' EXIT
+    NET_ERR=$(team_mktemp)
+    plan=$(team_mktemp)
     # Only a name that may be queued is a path to commit; any other is refused before the commit.
     paths=("$index_rel")
     for name in "${take_files[@]}"; do
@@ -493,9 +490,8 @@ case $command in
   tidy)
     (($# == 0)) || usage_error "$usage"
     [[ -d $queued ]] || exit 0
-    NET_ERR=$(mktemp)
-    plan=$(mktemp)
-    trap 'rm -f "$NET_ERR" "$plan"' EXIT
+    NET_ERR=$(team_mktemp)
+    plan=$(team_mktemp)
     # Judged first outside the lock, for the paths to commit and to take no lock when nothing
     # changes; a change judged afresh under the lock that these paths miss is the checkpoint's.
     tidy_judge || die "cannot judge the queue"
@@ -522,8 +518,7 @@ case $command in
         *) usage_error "$usage" ;;
       esac
     done
-    work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
+    work=$(team_mktemp -d)
     capacity_json costs "$work/costs" &
     costs_pid=$!
     if [[ -z $plan_given ]]; then

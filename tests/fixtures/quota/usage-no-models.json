@@ -1,0 +1,15 @@
+{
+  "subtype": "success",
+  "response": {
+    "session": { "total_cost_usd": 0, "total_input_tokens": 0, "total_output_tokens": 0, "total_api_duration_ms": 0 },
+    "subscription_type": "max",
+    "rate_limits_available": true,
+    "rate_limits": {
+      "five_hour": null,
+      "seven_day": { "utilization": 77, "resets_at": "2036-11-14T18:00:00.831907+00:00" },
+      "seven_day_sonnet": null,
+      "model_scoped": []
+    },
+    "behaviors": null
+  }
+}

@@ -250,7 +250,7 @@ STATE=$HOME/.local/state/agent-team
 GATE_WORKTREES=${TEAM_STACK_GATE_WORKTREES:-$HOME/.no-mistakes/worktrees}
 
 # Docker's answers go through files: a machine's hundreds of volumes are too long for an argument.
-WORK=$(mktemp -d)
+WORK=$(team_mktemp -d)
 
 # The admission an up holds until its stack runs (room_check's, admit's first line), else empty:
 # the exit handler releases it, so an up that fails or is ended before its up -d --wait returns 0
@@ -265,12 +265,11 @@ release_admission() {
     echo "${0##*/}: warning: could not release admission $1: $(grep . <<<"$out" | tail -n 1 || echo "team-capacity release failed"); it ends 10 minutes after it was made" >&2
 }
 
-# The one exit handler: the pending admission released, then the work directory removed.
+# The exit action: the pending admission released.
 on_exit() {
   if [[ -n $ADMISSION ]]; then release_admission "$ADMISSION"; fi
-  rm -rf "$WORK"
 }
-trap on_exit EXIT
+team_exit_trap on_exit
 DOCKER_ERR=$WORK/stderr
 
 # Run a read-only docker call, its output in DOCKER_OUT; a failure dies naming the call and

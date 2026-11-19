@@ -50,6 +50,29 @@ FIX="fix: bin/lib/confine-session's, bin/lib/confine-shell's and bin/lib/confine
   jq -e '.[] | select(.check == "confine") | .verdict == "PASS" and .fix == ""' <<<"$output"
 }
 
+@test "a doctor scratch whose random name holds \"zsh\", which a session's shell path may not, is made again, so the confine line still passes" {
+  needs_landlock
+  tools_at arch
+  # mktemp's first scratch holds "zsh", as one in a few tens of thousands of its names does.
+  shared_make mktemp-zsh <<'STUB'
+#!/usr/bin/env bash
+if [[ $* == -d && ! -e $BATS_TEST_TMPDIR/mktemp-zsh-made ]]; then
+  : >"$BATS_TEST_TMPDIR/mktemp-zsh-made"
+  mkdir "${TMPDIR:-/tmp}/tmp.96tSnTzshi" && echo "${TMPDIR:-/tmp}/tmp.96tSnTzshi"
+  exit
+fi
+for real in $(type -ap mktemp); do
+  [[ $real -ef $0 ]] || exec "$real" "$@"
+done
+exit 1
+STUB
+  ln -f "$BATS_RUN_TMPDIR/shared/mktemp-zsh" "$BATS_TEST_TMPDIR/stubs/mktemp"
+  run_bin -0 team-doctor
+  [[ -e $BATS_TEST_TMPDIR/mktemp-zsh-made ]]
+  assert_equal "$(line_of confine)" "PASS confine: Landlock ABI $(abi); a worker's shell commands can run confined (a session's shell and prefix ran true in a sandbox worktree); no project has confine on, so every worker runs on the text guard alone"
+  [[ ! -e ${TMPDIR:-/tmp}/tmp.96tSnTzshi ]]
+}
+
 @test "the confine line's pass names the projects whose workers run confined, those with confine on" {
   needs_landlock
   tools_at arch

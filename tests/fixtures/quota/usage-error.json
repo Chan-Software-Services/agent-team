@@ -1,0 +1,4 @@
+{
+  "subtype": "error",
+  "error": "Unknown control request subtype:\tget_usage\n(an older Claude Code)"
+}

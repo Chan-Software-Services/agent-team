@@ -1340,6 +1340,48 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   [[ $output != *"run team-merge"* ]]
 }
 
+@test "--ci on a PR the merge queue dropped for a check the base's rules require prints the rules step, never the merge line nor the merge-base step, until it is queued again" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 0
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7"
+  # A rules failure beside one of the PR's own: the rules step alone, naming only the rules checks.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "Analyze (actions) and e2e never reported on the trial commit, which main'"'"'s rules require",
+      failed: [{name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}, {name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"},
+        {name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  local rules_step="merge rules: $url was dropped by the merge queue at 2026-10-23T10:00:00Z: Analyze (actions) and e2e never reported on its trial commit, which main's rules require; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T7 again"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$rules_step"
+  [[ $output != *"run team-merge T7 for"* ]]
+  [[ $output != *"merge base:"* ]]
+  [[ $output != *"merge ask:"* ]]
+  # Behind its base too: still the rules step, no catch-up and no merge-base brief.
+  pr_on_github "$sha" 3
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$rules_step"
+  [[ $output != *"merge base:"* ]]
+  # Queued again once the rules are fixed: the merge line is back.
+  pr_on_github "$sha" 0
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T11:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url"
+  [[ $output != *"merge rules:"* ]]
+  # A check the project's required_checks alone require is said as theirs, with team-merge's step
+  # for them.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T12:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "",
+      failed: [{name: "data", class: "rules", kind: "missing", link: "", step: "", source: "required_checks"}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "merge rules: $url was dropped by the merge queue at 2026-10-23T12:00:00Z: data never reported on its trial commit, which the project's required_checks require; the project's required_checks require a check no workflow makes on a trial commit: fix the workflow's merge_group trigger or the project's required_checks in the registry, then run team-merge T7 again"
+}
+
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {
   # The branch is not on origin, so the fetch fails.
   reviewing "$sha"
@@ -2180,6 +2222,59 @@ launched T7-reviewer c0000001"
   assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
   assert_equal "$(record rereview-2 | jq -c '{template, pr: .values.pr, head: .values.head, reviewed: .values.reviewed}')" \
     "$(jq -cn --arg url "$url" --arg h "$fix" --arg r "$sha" '{template: "rereview", pr: $url, head: $h, reviewed: $r}')"
+}
+
+@test "a merged part in one repository ends that repository's phase alone: the other's PR reported again is re-reviewed from its own reviewed head" {
+  second_repo
+  # proj's PR 9 passed in proj, then other's PR merged with phase 2 left.
+  reviewing "$sha"
+  review_logged pass "$sha" '[]'
+  event 'done' '{role: "reviewer", session: "r0000002"}'
+  other_reviewing
+  review_logged pass "$head_other" '[]'
+  event 'done' '{role: "reviewer", session: "r0000003"}'
+  event merged "$(jq -cn --arg url "$url_other" --arg h "$head_other" \
+    '{pr: 4, merge: "m0", head: $h, by: "team-merge", project: "other", url: $url, phases_left: [2]}')"
+  # A round fixed a red check on proj's PR, which its builder reports again.
+  local fix
+  fix=$(commit fix.txt "test: wait for the hand-out")
+  on_github 9 "$fix"
+  refused "T7 has a review already, so --checks is for its first reviewer only; a rereview takes --since" \
+    T7 --checks "$(checks)" -- "T7 PR $url"
+  run_bin -0 --separate-stderr team-next T7 -- "T7 PR $url"
+  assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
+  assert_equal "$(record rereview-2 | jq -c '{template, pr: .values.pr, head: .values.head, reviewed: .values.reviewed}')" \
+    "$(jq -cn --arg url "$url" --arg h "$fix" --arg r "$sha" '{template: "rereview", pr: $url, head: $h, reviewed: $r}')"
+
+  # other's own merged part did end its phase: its phase 2 PR is a first review, its phase 1
+  # review no longer standing.
+  local url_next=https://github.com/owner/other/pull/5 next
+  next=$(git -C "${wt_other:?}" commit -q --allow-empty -m "feat: phase 2" && git -C "${wt_other:?}" rev-parse HEAD)
+  export NEXT_HEAD=$next
+  stub_script gh <<'SH'
+[[ $1 == pr && $2 == view && $3 == 5 && $4 == --repo && $5 == owner/other ]] || { echo "unexpected gh $*" >&2; exit 1; }
+jq -cn --arg head "$NEXT_HEAD" '{headRefOid: $head, headRefName: "feat/T7-toil"}'
+SH
+  refused "T7 has no review since its phase merged at 2026-11-01T10:00:00Z, so its first reviewer needs --checks <file>, the review's checks" \
+    T7 -- "T7 PR $url_next"
+}
+
+@test "a gated project's PR with no review in its phase is a first review of that PR, which comments on it and sets its status" {
+  sed -i 's/^delivery = "direct-pr"/delivery = "no-mistakes"/' "$TEAM_HOME/projects.toml"
+  on_github 9 "$sha"
+  refused "T7 has no review yet, so its first reviewer needs --checks <file>, the review's checks" T7 -- "T7 PR $url"
+  run_bin -0 --separate-stderr team-next T7 --checks "$(checks)" -- "T7 PR $url"
+  assert_equal "$output" "logged pr url=$url head=$sha
+brief $TEAM_HOME/tasks/T7/brief-review.md
+launched T7-reviewer c0000001"
+  assert_equal "$(record review | jq -c '{template, pr: .values.pr, head: .values.head}')" \
+    "$(jq -cn --arg url "$url" --arg h "$sha" '{template: "reviewer", pr: $url, head: $h}')"
+  local brief
+  brief=$(<"$TEAM_HOME/tasks/T7/brief-review.md")
+  assert_contains "$brief" "/team-review-comment $url .scratch/task/review.md"
+  assert_contains "$brief" "/team-review-status $url $sha <success|failure>"
+  assert_contains "$brief" "- Send \`T7 DONE pass $url findings="
+  [[ $brief != *"There is no PR yet"* && $brief != *"Post nothing to GitHub"* ]]
 }
 
 # reviewed_in <session> <verdict> <head> <sent_back as JSON> [<more review fields as JSON>]: a review
@@ -3659,6 +3754,71 @@ brief $TEAM_HOME/tasks/T7/brief-resume-build-02-2.md
 launched T7-builder-02 c0000005
 full: 2 of phase 1's cap 2 build (02, 03); ready and waiting for a slot: 04"
   assert_equal "$(jq -r .values.from "$TEAM_HOME/tasks/T7/brief-resume-build-02-2.json")" "the handoff from home-pc at 2026-11-01T10:00:00Z"
+  run_bin -0 team-log --check
+}
+
+# builder_model <model>: T7's opened event names <model> as its builder model, as team-open
+# --builder-model logs it, and the setup's builder launches ran on it, as team-worker logs them.
+builder_model() {
+  jq -c --arg m "$1" 'if .event == "opened" then .builder_model = $m
+    elif .event == "launch" and .role == "builder" and .model_from == null then .model = $m | .model_from = "task"
+    else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+}
+
+# Each session claude started, by its name, with the --model it was given, if any.
+launch_models() {
+  bg_calls | jq -c '[.[index("--name") + 1], ((index("--model") // empty) as $i | .[$i + 1])]'
+}
+
+# Each launch team-worker logged after the setup's b0000001, its brief and model, and where the
+# model came from.
+logged_models() {
+  jq -c 'select(.event == "launch" and .session != "b0000001") | [.brief, .model, .model_from]' "$TEAM_HOME/ledger.jsonl"
+}
+
+@test "a task's builder model holds through each builder launch team-next makes: the next ticket's, a stow's round, the fill's and its relaunches" {
+  # Before a task kept its builder model, each of these launched with no --model and logged no
+  # model, so the builder fell back to the settings' model.
+  local head
+  head=$(git -C "${wt:?}" rev-parse HEAD)
+  builder_model sonnet
+  run_bin -0 team-next T7 -- "T7 DONE 01 ${head:0:8} done"
+  # The round after a findings review, its builder stowed.
+  reviewing "$head"
+  review_logged findings "$head" '[3]' '{"blocking": 1}'
+  event 'done' '{role: "reviewer", session: "r0000002"}'
+  echo "# review" >"$wt/.scratch/task/review.md"
+  run_bin -0 team-next T7 -- "T7 PAUSED stowed"
+  assert_equal "$(launch_models)" $'["T7-builder","sonnet"]\n["T7-builder","sonnet"]'
+  assert_equal "$(logged_models | jq -c 'select(.[0] != "brief-review")')" \
+    $'["brief-build-02","sonnet","task"]\n["brief-round-1","sonnet","task"]'
+}
+
+@test "a builder launched on --model keeps that model through team-next's next builder launch" {
+  # The setup's builder b0000001 launched on --model fable, which is its task's builder model
+  # from then on, over the opened event's.
+  builder_model sonnet
+  jq -c 'if .event == "launch" and .session == "b0000001" then .model = "fable" | .model_from = "launch" else . end' \
+    "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  local head
+  head=$(git -C "${wt:?}" rev-parse HEAD)
+  run_bin -0 team-next T7 -- "T7 DONE 01 ${head:0:8} done"
+  assert_equal "$(launch_models)" '["T7-builder","fable"]'
+  assert_equal "$(logged_models)" '["brief-build-02","fable","task"]'
+  run_bin -0 team-log --check
+}
+
+@test "a task's builder model holds through --fill's ticket builders and their relaunches after a stow" {
+  builder_model sonnet
+  relaunch_ready
+  stowed_here level
+  run_bin -0 team-next T7 --fill
+  assert_equal "$(launch_models)" \
+    $'["T7-builder-02","sonnet"]\n["T7-builder-03","sonnet"]\n["T7-builder-02","sonnet"]\n["T7-builder-03","sonnet"]'
+  assert_equal "$(logged_models)" \
+    $'["brief-build-02","sonnet","task"]\n["brief-build-03","sonnet","task"]\n["brief-resume-build-02","sonnet","task"]\n["brief-resume-build-03","sonnet","task"]'
   run_bin -0 team-log --check
 }
 

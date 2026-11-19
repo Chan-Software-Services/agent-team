@@ -34,7 +34,8 @@ closing line again, ending in a full stop; null for a call of one line, or when 
 holds the refused command. It prints nothing when no row refuses, and exits 0
 either way. Any error of its own exits 1 with one line on stderr, "command_rules.py: <ErrorType>:
 <message>", or "<row id>: <ErrorType>: <message>" when a row raised, so the hook refuses: a guard
-that cannot decide refuses.
+that cannot decide refuses. A RecursionError's message names Python's recursion limit, which its
+own does not: "RecursionError: a reading nested deeper than Python's recursion limit of <n> frames".
 
 A command's name is its first word's basename, its quotes removed, so a path or a quoted name is
 the name; and as a reading of where a command starts took it, a word past a wrapper's options
@@ -643,6 +644,13 @@ class RowError(Exception):
     """A row that raised, named."""
 
 
+def error_text(error):
+    """An error as "<ErrorType>: <message>", a RecursionError's message naming Python's limit."""
+    if isinstance(error, RecursionError):
+        return f"RecursionError: a reading nested deeper than Python's recursion limit of {sys.getrecursionlimit()} frames"
+    return f"{type(error).__name__}: {error}"
+
+
 def refusal(command, context=None):
     """The first row, in table order, that refuses any command the text runs, with its reason and
     allowed way, or None; each row is given the call's context."""
@@ -652,7 +660,7 @@ def refusal(command, context=None):
             try:
                 refused = row.test(found, context)
             except Exception as error:  # noqa: BLE001 - named, then refused by the caller
-                raise RowError(f"{row.id}: {type(error).__name__}: {error}") from error
+                raise RowError(f"{row.id}: {error_text(error)}") from error
             if refused:
                 reason, allowed = refused if isinstance(refused, tuple) else (refused, row.allowed)
                 reason = reason if isinstance(reason, str) else row.reason
@@ -674,7 +682,7 @@ def main():
         sys.stderr.write(f"{error}\n")
         return 1
     except Exception as error:  # noqa: BLE001 - a guard that cannot decide refuses
-        sys.stderr.write(f"command_rules.py: {type(error).__name__}: {error}\n")
+        sys.stderr.write(f"command_rules.py: {error_text(error)}\n")
         return 1
     if found:
         sys.stdout.write(json.dumps(found, ensure_ascii=False, separators=(",", ":")) + "\n")
