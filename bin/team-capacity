@@ -1419,8 +1419,7 @@ case $command in
   release) release ;;
   sample) sample ;;
   status | costs | admit | check | plan | jobs)
-    work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
+    work=$(team_mktemp -d)
     if [[ $command == jobs ]]; then jobs_count; else "$command"; fi
     ;;
 esac

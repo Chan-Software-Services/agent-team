@@ -44,8 +44,7 @@ json=0
 [[ ${1:-} != --json ]] || json=1
 
 # The run's scratch: err, a command's stderr for first_error, and what a check keeps there.
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 err=$scratch/err
 : >"$err"
 # Each check's check, verdict, reason and fix, in order, for --json.

@@ -994,6 +994,34 @@ team_cpu_of() {
   [[ -n $(sed -n "s/^HOLDER_FORM=//p" "$REPO_ROOT/bin/team-heavy") ]]
 }
 
+# take_reading is a library function: the exit action it sets while its stack listing runs is its
+# own, beside the action of the script that calls it, which keeps it and sees the script's exit
+# status as $?, on a normal end, when the reading dies while the listing runs (no MemTotal in
+# the machine's meminfo), and when the script ends with status 0 there (its reading_context
+# redefined as exit 0).
+@test "take_reading keeps its caller's exit action, on a normal end and when the reading fails" {
+  sample_machine
+  local caller=$BATS_TEST_TMPDIR/caller acted=$BATS_TEST_TMPDIR/acted end
+  : >"$BATS_TEST_TMPDIR/no-meminfo"
+  for end in "$TEAM_MEMINFO:0:after caller 0" "$BATS_TEST_TMPDIR/no-meminfo:1:caller 1" "$TEAM_MEMINFO:0:caller 0:exits"; do
+    rm -f "$acted"
+    cat >"$caller" <<SCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+source "$REPO_ROOT/bin/lib/team.sh"
+source "\$TEAM_LIB/reading.sh"
+$([[ $end != *:exits ]] || echo 'reading_context() { exit 0; }')
+team_exit_trap 'echo "caller \$?" >>"$acted"'
+build() { echo '{}'; }
+take_reading "$BATS_TEST_TMPDIR/state" build
+echo after >>"$acted"
+SCRIPT
+    chmod +x "$caller"
+    TEAM_HOME=$TEAM_HOME TEAM_MEMINFO=${end%%:*} run "$caller"
+    assert_equal "$end:$status:$(paste -sd ' ' "$acted")" "$end:$(cut -d: -f2 <<<"$end"):$(cut -d: -f3 <<<"$end")"
+  done
+}
+
 @test "sample on macOS: each task's use is its processes' by directory and descent, each session its tree's but its heavy run, and systemd is not asked" {
   sample_machine
   as_macos

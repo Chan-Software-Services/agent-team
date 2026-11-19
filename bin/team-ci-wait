@@ -334,8 +334,7 @@ branch_ci=$(team_project "$project" branch_ci)
 # Whom the reader logs each request for.
 if [[ -n $run_id ]]; then GH_FOR="$repo run $run_id"; else GH_FOR="$repo#$number"; fi
 
-dir=$(mktemp -d)
-trap 'rm -rf "$dir"' EXIT
+dir=$(team_mktemp -d)
 echo '[]' >"$dir/failures"
 
 # finish <outcome> <exit code> <text>: print <text>, or with --json the object of this end, its

@@ -83,8 +83,7 @@ if ! flock -w "$LOCK_WAIT" "$lock_fd"; then
   echo "${0##*/}: another lease command has held $state/lease.lock for ${LOCK_WAIT}s; try again" >&2
   exit 75
 fi
-err=$(mktemp)
-trap 'rm -f "$err"' EXIT
+err=$(team_mktemp)
 
 home_git() {
   git -C "$TEAM_HOME" "$@"

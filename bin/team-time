@@ -169,8 +169,7 @@ report=$(
 first=$(jq -r '[.workers.lifetimes[].start] | min // empty' <<<"$report")
 rows='' error=''
 if [[ -n $first ]]; then
-  err=$(mktemp)
-  trap 'rm -f "$err"' EXIT
+  err=$(team_mktemp)
   since_args=(--since "$first")
   [[ $first < $until ]] || since_args=()
   if ! rows=$(TEAM_HOME=$TEAM_HOME "$(dirname "${BASH_SOURCE[0]}")/team-tokens" time "${since_args[@]}" --until "$until" </dev/null 2>"$err"); then

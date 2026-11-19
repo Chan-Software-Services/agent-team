@@ -119,7 +119,7 @@ machine=$(machine_name) || exit 1
 bin=$(dirname "$TEAM_LIB")
 state=$HOME/.local/state/agent-team
 mkdir -p "$state"
-scratch=$(mktemp -d)
+scratch=$(team_mktemp -d)
 NET_ERR=$scratch/net-err
 err=$scratch/err
 
@@ -140,7 +140,7 @@ stop_run() {
 }
 
 # On a run that stops (any exit but 0), a stow-failed for each task whose stowing stands and that
-# it did not stow (STOW_STOWING), with the run's last error line; then the scratch goes.
+# it did not stow (STOW_STOWING), with the run's last error line.
 on_exit() {
   local rc=$? task
   if ((rc)) && declare -p STOW_STOWING >/dev/null 2>&1; then
@@ -148,9 +148,8 @@ on_exit() {
       stow_fail "$task" "the run stopped: ${STOW_LAST_ERROR:-team-stow exited $rc}" || true
     done
   fi
-  rm -rf "$scratch"
 }
-trap on_exit EXIT
+team_exit_trap on_exit
 
 # The first line of a sibling's stderr, without its "<script>: " prefix.
 first_error() {

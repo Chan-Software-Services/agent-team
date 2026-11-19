@@ -121,8 +121,7 @@ for event in "${lines[@]}"; do
   [[ -z $problems ]] || die "refusing a ledger event: $problems"
 done
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 printf '%s\n' "$question" >"$scratch/question"
 jq -nr --arg mentions "$mentions" --arg task "$task" --arg thread "$thread" --arg line "$line" --argjson max "$PING_LINE" '
   "\($mentions) \($task) has a question for you in <#\($thread)>: "

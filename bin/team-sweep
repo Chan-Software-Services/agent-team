@@ -333,7 +333,7 @@ ledger=$TEAM_HOME/ledger.jsonl
 # run_file, which forks nothing, and every read that writes one (a view, the activity, the
 # registry's) runs as a view, since a command substitution is no job, so the end could neither
 # stop it nor wait for it, and a file it made while the directory was removed would stay.
-run_tmp=$(mktemp -d)
+run_tmp=$(team_mktemp -d)
 end_run() {
   local -a views below
   mapfile -t views < <(jobs -rp)
@@ -347,9 +347,8 @@ end_run() {
     ((${#below[@]} == 0)) || kill -TERM "${below[@]}" 2>/dev/null || true
     wait "${views[@]}" 2>/dev/null || true
   fi
-  rm -rf "$run_tmp"
 }
-trap end_run EXIT
+team_exit_trap end_run
 
 # A new empty file of the run, named for what it holds, its path in <var>: run_file <var> <name>
 # The shell makes it itself, with noclobber, so no process of the run's main shell writes into the

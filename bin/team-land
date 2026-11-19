@@ -108,8 +108,7 @@ if [[ $(jq -r '.app? // empty' <<<"$bar") ]]; then poster=team-review-check; fi
 bin=$(dirname "$TEAM_LIB")
 base=$(team_project "$project" base)
 
-dir=$(mktemp -d)
-trap 'rm -rf "$dir"' EXIT
+dir=$(team_mktemp -d)
 echo '[]' >"$dir/failed"
 
 note() {

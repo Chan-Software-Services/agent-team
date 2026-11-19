@@ -70,7 +70,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
 (($# == 0)) || usage_error "it takes no argument: the event's JSON comes on stdin"
 # From here only hold (below) exits 2: a failed command, jq's own exit 2 included, ends as exit 1.
 holding=''
-trap 'status=$?; [[ $status != 2 || -n $holding ]] || exit 1' EXIT
+team_exit_trap 'status=$?; [[ $status != 2 || -n $holding ]] || exit 1'
 # shellcheck source=bin/lib/compact-hold.sh
 source "$TEAM_LIB/compact-hold.sh"
 
@@ -90,6 +90,7 @@ unstowed() {
 
 hold() {
   echo "compact-hold: this auto-compaction waits for the coordinator's stow (team-stowed lets it run)" >&2
+  # shellcheck disable=SC2034 # read by the exit action
   holding=1
   exit 2
 }

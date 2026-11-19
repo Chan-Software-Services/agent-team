@@ -557,12 +557,12 @@ health=$state/health.json
 units=$HOME/.config/systemd/user
 agents=$HOME/Library/LaunchAgents
 domain=gui/$(id -u)
-err=$(mktemp)
+err=$(team_mktemp)
 # The run's results for the health record, one JSON object a line (step_ok, step_fail, run_fact),
 # written by the run and read by bounded_run too; and bounded_run's mark that the run timed out.
-results=$(mktemp)
+results=$(team_mktemp)
 fired=$err.fired
-trap 'rm -f "$err" "$results"' EXIT
+team_tmp_add "$fired"
 
 # The service manager of this OS: systemd or launchd.
 manager() {
@@ -713,7 +713,7 @@ disabled_job() {
 
 # Boot the heartbeat job out from inside it, its last act: launchd stops this process with it.
 unload_self() {
-  rm -f "$err" "$results"
+  team_tmp_rm "$err" "$results" "$fired"
   launchctl bootout "$domain/$HEARTBEAT_LABEL" ||
     die "launchctl bootout $domain/$HEARTBEAT_LABEL failed"
 }
@@ -1991,7 +1991,7 @@ run_heartbeat() {
   run_start=$(date -u +%FT%TZ) run_id=$(date +%s%N)-$BASHPID
   run_fact "$(jq -cn --arg start "$run_start" --arg id "$run_id" '{start: $start, id: $id}')"
   recording=1
-  trap run_ended EXIT
+  team_exit_trap run_ended
   if ! machine=$(machine_name 2>"$err"); then
     machine=''
     problem run "$(first_error)"

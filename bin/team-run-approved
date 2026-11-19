@@ -87,8 +87,7 @@ script=$(local_path "$script")
 why=$(script_place_refusal "$task" "$script" "it runs nothing") && die "$why"
 real=$(realpath -e -- "$script")
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 copy=$scratch/${real##*/}
 cp -- "$real" "$copy"
 actual=$(sha256sum "$copy" | cut -d' ' -f1)
@@ -135,12 +134,12 @@ mark=$(jq -nc --arg asked_at "$asked_at" --argjson ask "$(jq .k <<<"$ask")" --ar
 if [[ -f $started ]] && [[ $(jq -c '{asked_at, ask, sha256}' "$started" 2>/dev/null) == "$mark" ]]; then
   die "$task's ask $id, at $asked_at, already started a run on this machine, at $(jq -r .started_at "$started"), with no ran logged since: it was killed or could not log, and it used the OK; a new run needs a new ask"
 fi
-tmp=$(mktemp "$runs/.$id.started.XXXXXX")
+tmp=$(team_mktemp "$runs/.$id.started.XXXXXX")
 jq -c --arg at "$(date -u +%FT%TZ)" '. + {started_at: $at}' <<<"$mark" >"$tmp"
 mv -fT -- "$tmp" "$started"
 
 # The log, a new file moved into place, written through the descriptor that made it.
-tmp=$(mktemp "$runs/.$id.log.XXXXXX")
+tmp=$(team_mktemp "$runs/.$id.log.XXXXXX")
 exec {out}>"$tmp"
 mv -fT -- "$tmp" "$log"
 rc=0

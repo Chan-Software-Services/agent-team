@@ -199,8 +199,8 @@ flock "${wait_flag[@]}" "$lock" || {
   exit 75
 }
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"; rm -f "$TEAM_HOME/.waiting.json.$$" "$TEAM_HOME/.waiting.md.$$"' EXIT
+scratch=$(team_mktemp -d)
+team_tmp_add "$TEAM_HOME/.waiting.json.$$" "$TEAM_HOME/.waiting.md.$$"
 
 # Call Discord: call <path> [<curl options>...]; writes the answer to $scratch/answer, or sets
 # STATUS (the HTTP status, empty with no answer) and ERROR (curl's first line, or why no call was

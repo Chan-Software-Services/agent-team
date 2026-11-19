@@ -68,7 +68,7 @@ head=$(git -C "$checkout" rev-parse -q --verify "$rev^{commit}") || die "$rev is
 # Outside the home directory, whose paths the ledger reads as any machine's.
 base=${TMPDIR:-/tmp}
 case $base in /home/* | /Users/* | "$HOME"/*) base=/tmp ;; esac
-scratch=$(mktemp -d "$base/team-checks.XXXXXX")
+scratch=$(team_mktemp -d "$base/team-checks.XXXXXX")
 # A check may leave a read-only tree in its TMPDIR, as go's module cache is, or a directory it may
 # not read or search, which rm -rf cannot empty, so each directory is made readable, writable and
 # searchable (X) before chmod descends into it, and each file writable, before the tree goes.
@@ -76,7 +76,7 @@ remove_tree() {
   chmod -R u+rwX "$1" 2>/dev/null || true
   rm -rf "$1"
 }
-trap 'git -C "$checkout" worktree remove --force "$scratch/head" 2>/dev/null || true; remove_tree "$scratch"' EXIT
+team_exit_trap 'git -C "$checkout" worktree remove --force "$scratch/head" 2>/dev/null || true; remove_tree "$scratch"'
 git -C "$checkout" worktree add -q --detach "$scratch/head" "$head" 2>"$scratch/error" ||
   die "cannot check out ${head:0:7} for the local checks: $(grep -m1 . "$scratch/error")"
 

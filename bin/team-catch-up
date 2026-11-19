@@ -90,8 +90,7 @@ else
     die "$url is not one of $task's pr events:"$'\n'"$(jq -r '.[] | select(.event == "pr") | "  \(.url)"' <<<"$events")"
 fi
 
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(team_mktemp -d)
 
 # The PR as team-state sees it: the repo, the project, the head, its branch, the checks by bucket.
 facts=$(pr_part "$events" "$pr" "$scratch") || exit 1
@@ -184,7 +183,7 @@ if ! git -C "$primary" push -q origin "$merge:refs/heads/$branch" 2>"$scratch/pu
   fi
   die "the push of ${merge:0:7} to $branch failed, so nothing was logged: $(grep -m1 . "$scratch/push-error" || echo "git push failed")"
 fi
-trap 'status=$?; rm -rf "$scratch"; ((status == 0)) || echo "team-catch-up: ${merge:0:7} is pushed to $branch, but its caught-up event was not logged" >&2' EXIT
+team_exit_trap 'status=$?; ((status == 0)) || echo "team-catch-up: ${merge:0:7} is pushed to $branch, but its caught-up event was not logged" >&2'
 
 # agent-review on the merge, once GitHub shows it as the PR's head and caught-up is logged, which
 # the App's check needs (team-review-check reads the review the merge stands on through it): the
@@ -200,7 +199,7 @@ done
 
 ledger_append "$(jq -cn --arg task "$task" --arg url "$url" --arg from "$reviewed" --arg merge "$merge" --arg base "$onto" \
   '{ts: (now | todate), task: $task, event: "caught-up", url: $url, from: $from, head: $merge, base: $base}')"
-trap 'rm -rf "$scratch"' EXIT
+team_exit_trap -
 
 if [[ $shown != "$merge" ]]; then
   unset_status="GitHub still shows ${shown:0:7} as the head of $url after ${wait_for}s"

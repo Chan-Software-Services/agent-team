@@ -128,12 +128,22 @@ sample() {
   while read -r maker expression; do
     [[ -n $maker && $maker != '#'* ]] || continue
     count=$((count + 1))
-    first=$(sample "$expression" 123 AbC)
-    second=$(sample "$expression" 456 xY9)
-    stale_dir "$TMP_ROOT/$first"
-    stale_file "$TMP_ROOT/$second"
-    stale_file "$VAR_ROOT/$first"
-    stale_dir "$VAR_ROOT/$second"
+    if [[ $expression == 'team-temp\.'* ]]; then
+      # A run's list of its temporary paths goes only as a file, once its pid is no process's.
+      first=$(sample "$expression" "$(dead_pid)" AbC)
+      second=$(sample "$expression" "$(dead_pid)" xY9)
+      stale_file "$TMP_ROOT/$first"
+      stale_file "$TMP_ROOT/$second"
+      stale_file "$VAR_ROOT/$first"
+      stale_file "$VAR_ROOT/$second"
+    else
+      first=$(sample "$expression" 123 AbC)
+      second=$(sample "$expression" 456 xY9)
+      stale_dir "$TMP_ROOT/$first"
+      stale_file "$TMP_ROOT/$second"
+      stale_file "$VAR_ROOT/$first"
+      stale_dir "$VAR_ROOT/$second"
+    fi
     expected+="removed $TMP_ROOT/$first (0 MB, untouched 2 h; $maker)"$'\n'
     expected+="removed $TMP_ROOT/$second (0 MB, untouched 2 h; $maker)"$'\n'
     expected+="removed $VAR_ROOT/$first (0 MB, untouched 2 h; $maker)"$'\n'
@@ -293,11 +303,13 @@ removed $VAR_ROOT/nm-cli-home-4 (0 MB, untouched 2 h; no-mistakes)"
   started
   running "$!" "sleep 301"
   # The run's scratch in a directory of the test's, kept as a killed run would leave it: the EXIT
-  # trap's removal of it fails, whose exit code is then the run's.
+  # trap's removal of it fails, which changes nothing of the run's own exit.
   mkdir "$BATS_TEST_TMPDIR/run-tmp"
   fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
-  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -5 team-janitor tmp
-  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -0 team-janitor tmp
+  # The exit handler names on stderr each of its paths it could not remove: the scratch and the list.
+  assert_equal "$(grep -v '^team-janitor: could not remove ' <<<"$output")" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  assert_equal "$(grep -c "^team-janitor: could not remove $BATS_TEST_TMPDIR/run-tmp/\(tmp\.\|team-temp\.\)" <<<"$output")" 2
   local text
   text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)
   [[ -f $text ]]
@@ -322,8 +334,10 @@ n$TMP_ROOT/nm-cli-home-7"
   mkdir "$BATS_TEST_TMPDIR/run-tmp"
   fails_on_call rm "$BATS_TEST_TMPDIR/run-tmp/"
   unset TEAM_PATH_FIRST
-  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -5 team-janitor tmp
-  assert_equal "$output" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  TMPDIR=$BATS_TEST_TMPDIR/run-tmp run_bin -0 team-janitor tmp
+  # The exit handler names on stderr each of its paths it could not remove: the scratch and the list.
+  assert_equal "$(grep -v '^team-janitor: could not remove ' <<<"$output")" "removed $TMP_ROOT/nm-cli-home-1 (0 MB, untouched 2 h; no-mistakes)"
+  assert_equal "$(grep -c "^team-janitor: could not remove $BATS_TEST_TMPDIR/run-tmp/\(tmp\.\|team-temp\.\)" <<<"$output")" 2
   [[ -d $TMP_ROOT/nm-cli-home-7 && -d $TMP_ROOT/bats-run-AbC123 && -d $VAR_ROOT/nm-cli-home-4 ]]
   local text
   text=$(find "$BATS_TEST_TMPDIR/run-tmp" -name processes)
@@ -454,6 +468,62 @@ removed $VAR_ROOT/git-template-3 (0 MB, untouched 2 h; no-mistakes)"
   run_bin -0 --separate-stderr team-janitor tmp
   assert_equal "$output" ""
   assert_equal "$stderr" ""
+}
+
+# dead_pid: a pid of this user's that has just ended, so no process holds it.
+dead_pid() {
+  true &
+  local pid=$!
+  wait "$pid"
+  echo "$pid"
+}
+
+# A run's list of its temporary paths (bin/lib/temp-files.sh's team-temp.<pid>.<random>), left by a
+# KILL, names paths the janitor never removes by it: the list's text is anyone's to write.
+@test "team-janitor tmp removes a dead run's list of temporary paths alone, and keeps a live run's, a directory of the name and a pid that is not a number" {
+  local dead
+  dead=$(dead_pid)
+  sleep 300 >/dev/null 2>&1 3>&- &
+  started
+  running "$!" "sleep 300"
+  printf '%s\n' "$OUTSIDE/file" "$OUTSIDE" >"$TMP_ROOT/team-temp.$dead.1234"
+  stale_file "$TMP_ROOT/team-temp.$!.5678"
+  stale_file "$TMP_ROOT/team-temp.0$dead.42"
+  stale_file "$TMP_ROOT/team-temp.abc.42"
+  stale_dir "$TMP_ROOT/team-temp.$dead.99"
+  touch -d "125 minutes ago" "$TMP_ROOT/team-temp.$dead.1234"
+  run_bin -0 --separate-stderr team-janitor tmp
+  assert_equal "$stderr" ""
+  assert_equal "$output" "removed $TMP_ROOT/team-temp.$dead.1234 (0 MB, untouched 2 h; agent-team)"
+  [[ -f $OUTSIDE/file ]]
+  assert_equal "$(cd "$TMP_ROOT" && find . -mindepth 1 -maxdepth 1 | LC_ALL=C sort)" \
+    "$(printf '%s\n' "./team-temp.$!.5678" "./team-temp.0$dead.42" "./team-temp.$dead.99" ./team-temp.abc.42 | LC_ALL=C sort)"
+}
+
+@test "team-janitor tmp keeps a dead run's list when the processes cannot be read" {
+  local dead
+  dead=$(dead_pid)
+  stale_file "$TMP_ROOT/team-temp.$dead.1234"
+  fails_on_call tr '\0'
+  run_bin -1 --separate-stderr team-janitor tmp
+  assert_equal "$output" ""
+  [[ $stderr == "team-janitor: could not read this user's processes, so nothing was removed: "* ]]
+  [[ -f $TMP_ROOT/team-temp.$dead.1234 ]]
+}
+
+@test "on macOS team-janitor tmp keeps a list whose pid ps lists, and removes one whose pid it does not" {
+  as_macos
+  stub_command lsof ps
+  stub_reply lsof "p500
+fcwd
+n/"
+  stub_reply ps "  500     1 sleep 300 PATH=/usr/bin:/bin"
+  stale_file "$TMP_ROOT/team-temp.500.1"
+  stale_file "$TMP_ROOT/team-temp.501.1"
+  unset TEAM_PATH_FIRST
+  run_bin -0 team-janitor tmp
+  assert_equal "$output" "removed $TMP_ROOT/team-temp.501.1 (0 MB, untouched 2 h; agent-team)"
+  [[ -f $TMP_ROOT/team-temp.500.1 ]]
 }
 
 @test "team-janitor tmp refuses an argument it does not know, and a TEAM_TMP_AGE_MINUTES that is no number" {

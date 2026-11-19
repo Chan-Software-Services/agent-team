@@ -268,7 +268,7 @@ usage_exchange() {
     jq -cn '{why: "claude is not on the PATH"}'
     return 0
   fi
-  dir=$(mktemp -d "${TMPDIR:-/tmp}/team-quota-usage.XXXXXX")
+  dir=$(team_mktemp -d "${TMPDIR:-/tmp}/team-quota-usage.XXXXXX")
   coproc CC {
     exec {held}>&-
     cd "$dir" && exec timeout --kill-after="$QUOTA_USAGE_KILL_SECONDS" "$QUOTA_USAGE_SECONDS" \
@@ -297,7 +297,7 @@ usage_exchange() {
   exec {cc_in}>&-
   wait "$pid" 2>/dev/null || rc=$?
   exec {cc_out}<&-
-  rmdir "$dir" 2>/dev/null || true
+  team_tmp_rm "$dir"
   if [[ -n $answer ]]; then
     jq -c '{answer: .response}' <<<"$answer"
   elif ((rc == 124 || rc == 137)); then
