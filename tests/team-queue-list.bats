@@ -169,13 +169,37 @@ says() {
   assert_equal "$(says)" "$room"
   event T40 resumed 2026-11-13T18:30:00Z '{id: "held-1", discord_message: "1000000000000000002"}'
   assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
-  # A park of the team's own, a room refusal, still holds it: the team launches it once it can.
+  # A park of the team's own still holds it, the team launching it once it can: a room
+  # refusal, a block on another task, a stow, and a stowed.
   event T40 paused 2026-11-13T18:35:00Z '{reason: "no room for session:planner at full", cause: "room"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 resumed 2026-11-13T18:36:00Z '{id: "paused-1"}'
+  event T40 blocked 2026-11-13T18:37:00Z '{on: "T39", reason: "T39 merges first", cause: "task"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 resumed 2026-11-13T18:38:00Z '{id: "blocked-1"}'
+  event T40 paused 2026-11-13T18:39:00Z '{reason: "stowed", cause: "stow"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 resumed 2026-11-13T18:39:30Z '{id: "paused-2"}'
+  event T40 stowed 2026-11-13T18:39:40Z '{machine: "home-pc", worktrees: [], roles: [], cause: "level"}'
   assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
   # A parked task lets the next unstaffed one name itself.
   event T41 opened 2026-11-13T18:40:00Z '{project: "proj"}'
   event T40 asked 2026-11-13T18:45:00Z '{id: "p2", text: "which project?"}'
   assert_equal "$(says)" "no room: T41, opened at 18:40, has no worker yet"
+}
+
+@test "a ticket's park frees no room: a task opened again, its ask holding only a ticket's builder, still holds it" {
+  event T50 opened 2026-11-13T17:00:00Z '{project: "proj"}'
+  event T50 launch 2026-11-13T17:01:00Z '{role: "builder", session: "aaaa0050", ticket: "01"}'
+  event T50 asked 2026-11-13T17:02:00Z '{id: "t2", text: "ticket 02 takes which table?", tickets: ["02"]}'
+  event T50 opened 2026-11-13T17:05:00Z '{project: "proj"}'
+  assert_equal "$(says)" "no room: T50, opened at 17:05, has no worker yet"
+}
+
+@test "the causes that free the room are every cause the lifecycle table counts as a wait on Daniel, and outside" {
+  assert_equal "$(jq -c -L "$REPO_ROOT/bin/lib" -n 'include "queue"; include "ledger"; queue_parked_off_team | sort')" \
+    "$(jq -c '[.causes | to_entries[] | select(.value.class == "wait:daniel" or .key == "outside") | .key] | sort' \
+      "$REPO_ROOT/bin/lib/lifecycle.json")"
 }
 
 @test "a plan or costs that cannot be read is no room, naming why, never a failure" {

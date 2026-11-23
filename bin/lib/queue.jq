@@ -337,19 +337,24 @@ def queue_capacity($name; $schema):
     else {error: "\($name) is no \($schema) object"} end;
 
 # The park causes of a task that waits on Daniel or on something outside the team, not on the
-# team itself: an open ask, a waiting on Daniel or outside, Daniel's hold.
+# team itself: an open ask, a waiting on Daniel or outside, Daniel's hold. They are every cause
+# lifecycle.json's causes table gives the class wait:daniel, and outside, which
+# tests/team-queue-list.bats holds, so a cause the table adds as a wait on Daniel fails that test
+# until it is listed here.
 def queue_parked_off_team: ["ask", "daniel", "daniel-hold", "outside"];
 
 # The open tasks the team itself is about to launch: those whose latest opened no launch follows
-# and with no standing park of a queue_parked_off_team cause (one parked on Daniel or outside
-# waits on them, and holds back no open), [{task, ts}] by task number, from the events by task
-# (by_task's object).
+# and with no standing park of a queue_parked_off_team cause that parks the whole task (one
+# parked on Daniel or outside waits on them, and holds back no open; a ticket's park, or an ask
+# naming tickets, holds only those tickets' builders, as parked reads it, so it frees nothing),
+# [{task, ts}] by task number, from the events by task (by_task's object).
 def queue_unstaffed($tasks):
   [$tasks | to_entries[] | .key as $t | .value
    | (last(to_entries[] | select(.value.event == "opened")) // null) as $o
    | select($o != null and (any(.[$o.key + 1:][]; .event == "launch") | not))
    | select(is_open)
-   | select(any(lifecycle.parks[]; (.passed | not) and IN(.cause; queue_parked_off_team[])) | not)
+   | select(any(lifecycle.parks[]; (.passed | not) and .ticket == null and .tickets == null
+       and IN(.cause; queue_parked_off_team[])) | not)
    | {task: $t, ts: $o.value.ts}]
   | sort_by(.task[1:] | tonumber);
 
