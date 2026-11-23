@@ -37,8 +37,13 @@
 # every server `claude mcp list` names in the team home but the Discord plugin's, as
 # claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
 # bin/lib/worker-login names one, by its settings' env, as the coordinator's does. It runs on the
-# user settings' model at their effort, with their Remote Control, as the coordinator does, and
-# compacts at 200k tokens by the launch's --autocompact flag, idle from 100k.
+# assistant line of the team home's models.toml as the coordinator runs on its own (bin/team-models,
+# sops/models.md): the line's model and effort as --model and --effort, its subagent fields in its
+# settings' env, an axis no line names on the settings' word, and a file that does not read a
+# warning, launching on the settings' word (launch_models in bin/lib/launch.sh). It runs with the
+# user settings' Remote Control, as the coordinator does, and compacts at 200k tokens by the
+# launch's --autocompact flag, idle from 100k. Once claude --bg has started it, the launch appends
+# what it runs on to the team home's sessions.jsonl, as the coordinator's does (launch_log).
 #
 # It refuses (exit 1), in this order: while another launch holds the non-blocking flock on
 # ~/.local/state/agent-team/assistant-launch.lock; while `claude agents --json --all` lists a
@@ -65,7 +70,9 @@
 #                 no row in Daniel's Remote Control list on claude.ai, and prints the session's
 #                 id alone, as team-worker does. Its settings and MCP config are
 #                 ~/.local/state/agent-team/assistant-load-check.settings.json and .mcp.json, so
-#                 the live assistant's stay as they are. It is no assistant, so it takes no
+#                 the live assistant's stay as they are. It runs on the assistant.load-check
+#                 line of models.toml, which falls back to the assistant's, and logs no line in
+#                 sessions.jsonl, as a T0 worker logs nothing. It is no assistant, so it takes no
 #                 launch lock and none of the refusals above but a malformed command line
 #                 (exit 2) and a <worktree> that is no directory, and writes no Discord state.
 set -euo pipefail
@@ -105,7 +112,9 @@ if [[ -n $load_check ]]; then
     | .remoteControlAtStartup = false' \
     "$code/assistant.settings.json" >"$template"
   launch_settings "$template" "" "" "$settings" "$mcp" "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
+  launch_models assistant.load-check "$settings"
   out=$(claude --bg --name T0-assistant \
+    ${LAUNCH_MODEL_ARGS[@]+"${LAUNCH_MODEL_ARGS[@]}"} \
     --autocompact 200k \
     --mcp-config "$mcp" \
     --dangerously-skip-permissions \
@@ -142,6 +151,7 @@ settings=$LAUNCH_STATE/assistant.settings.json
 # connector.
 launch_settings "$code/assistant.settings.json" "" "" "$settings" "$mcp" \
   "@TEAM_HOME@=$TEAM_HOME" "@DISCORD_STATE_DIR@=$state"
+launch_models assistant "$settings"
 
 mkdir -p "$state"
 chmod 700 "$state"
@@ -156,7 +166,9 @@ mv -f "$state/access.json.$$" "$state/access.json"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
 # inherit the lock's file, so a running assistant never holds the next launch's lock.
-claude --bg --name assistant \
+status=0
+out=$(claude --bg --name assistant \
+  ${LAUNCH_MODEL_ARGS[@]+"${LAUNCH_MODEL_ARGS[@]}"} \
   --autocompact 200k \
   --mcp-config "$mcp" \
   --channels plugin:discord@claude-plugins-official \
@@ -164,4 +176,7 @@ claude --bg --name assistant \
   --append-system-prompt-file "$code/roles/assistant.md" \
   --settings "$settings" \
   "$prompt" \
-  {LAUNCH_LOCK_FD}>&-
+  {LAUNCH_LOCK_FD}>&-) || status=$?
+[[ -z $out ]] || printf '%s\n' "$out"
+((status != 0)) || launch_log assistant "$out"
+exit "$status"

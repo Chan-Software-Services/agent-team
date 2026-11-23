@@ -91,11 +91,12 @@ drill_lines() {
   if [[ -e $TEAM_HOME/drills.jsonl ]]; then jq -c 'del(.at)' "$TEAM_HOME/drills.jsonl"; fi
 }
 
-# The one compaction line a run should have recorded, but at: drill_line <verdict> <detail>
+# The one compaction line a run should have recorded, but at, its detail ending in the model and
+# effort it ran on, Claude Code's defaults unless given: drill_line <verdict> <detail> [<models>]
 drill_line() {
   jq -cn --arg commit "$(git -C "${REPO_ROOT:?}" rev-parse HEAD)" --argjson dirty \
     "$([[ -z $(git -C "${REPO_ROOT:?}" status --porcelain --untracked-files=no) ]] && echo false || echo true)" \
-    --arg verdict "$1" --arg detail "$2" \
+    --arg verdict "$1" --arg detail "$2, ${3:-model=default effort=default}" \
     '{drill: "compaction", machine: "home-pc", commit: $commit, dirty: $dirty, claude: "2.1.321",
       verdict: $verdict, detail: $detail}'
 }
@@ -175,6 +176,41 @@ team-drill: recorded compaction pass on home-pc at $(git -C "${REPO_ROOT:?}" rev
     assert_equal "$(cat "$STUB_FIXTURES/turn-$n.team-home")" "$team"
     assert_equal "$(cut -d: -f1 "$STUB_FIXTURES/turn-$n.path")" "$sandbox/stubs"
   done
+}
+
+@test "it runs on the coordinator.compaction-drill line of the team home it records into, and its record says so" {
+  full_answer
+  printf '%s\n' '"default" = { model = "opus", effort = "high" }' '"coordinator" = { model = "sonnet" }' \
+    '"coordinator.compaction-drill" = { effort = "medium", subagent_model = "haiku" }' >"$TEAM_HOME/models.toml"
+  run -0 "$REPO_ROOT/tests/compaction-drill"
+  local n
+  for n in 1 2 3; do
+    assert_equal "$(flag_of "$n" --model)" sonnet
+    assert_equal "$(flag_of "$n" --effort)" medium
+    assert_equal "$(jq -c '.env' "$STUB_FIXTURES/turn-$n.settings")" "$(jq -cn --arg team "$(drill_sandbox)/team" '{TEAM_HOME: $team, CLAUDE_CODE_SUBAGENT_MODEL: "haiku"}')"
+  done
+  # Each a one-value flag before the session's flags, so --tools still takes only its own.
+  assert_equal "$(calls | sed -n 1p | jq -c '.[14:18]')" '["--model","sonnet","--effort","medium"]'
+  assert_equal "$(drill_lines)" "$(drill_line pass "10 of 10 checks passed, 1.50 USD" "model=sonnet effort=medium")"
+}
+
+@test "with no models.toml it passes no model or effort and records the settings' word" {
+  full_answer
+  mkdir -p "$HOME/.claude"
+  echo '{"model": "opus", "effortLevel": "high"}' >"$HOME/.claude/settings.json"
+  run -0 "$REPO_ROOT/tests/compaction-drill"
+  assert_equal "$(calls | sed -n 1,3p | jq -c 'map(select(. == "--model" or . == "--effort"))' | sort -u)" '[]'
+  assert_equal "$(drill_lines)" "$(drill_line pass "10 of 10 checks passed, 1.50 USD" "model=opus effort=high")"
+}
+
+@test "a models.toml that does not read is a warning, and the drill runs on the settings' word" {
+  full_answer
+  echo '"default" = { model = "opsu" }' >"$TEAM_HOME/models.toml"
+  run -0 --separate-stderr "$REPO_ROOT/tests/compaction-drill"
+  assert_contains "$stderr" "compaction-drill: models.toml does not read: models.toml: "
+  assert_contains "$stderr" "; launching on the settings' model"
+  assert_equal "$(calls | sed -n 1p | jq -c 'map(select(. == "--model" or . == "--effort"))')" '[]'
+  assert_equal "$(drill_lines)" "$(drill_line pass "10 of 10 checks passed, 1.50 USD")"
 }
 
 @test "its settings hold only the coordinator's SessionStart hook and TEAM_HOME: no Discord, no Stop hook, no lease fence" {
@@ -381,7 +417,8 @@ API Error: the stub's turn 2 failed"
   [[ ! -e $HOME/.config/agent-team/home ]]
   run -0 --separate-stderr "$REPO_ROOT/tests/compaction-drill"
   assert_equal "${lines[-1]}" "== 10 of 10 checks passed"
-  assert_equal "$stderr" "compaction-drill: not recorded: team-drill: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home"
+  assert_equal "$stderr" "compaction-drill: models.toml does not read: team-models: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home; launching on the settings' model
+compaction-drill: not recorded: team-drill: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home"
 }
 
 @test "--help prints its header, which says it spends allowance and never runs in tests/run; arguments are exit 2" {
@@ -392,6 +429,9 @@ API Error: the stub's turn 2 failed"
   # It says it records its run, and where.
   assert_contains "$output" "drills.jsonl"
   assert_contains "$output" "bin/team-drill record compaction"
+  # And that it runs on the coordinator.compaction-drill line, whose model and effort its detail names.
+  assert_contains "$output" "coordinator.compaction-drill"
+  assert_contains "$output" "model=<m> effort=<e>"
   run -2 "$REPO_ROOT/tests/compaction-drill" extra
   assert_equal "$output" "usage: tests/compaction-drill"
   assert_equal "$(stub_calls claude)" ""
