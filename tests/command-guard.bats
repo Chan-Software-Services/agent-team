@@ -920,6 +920,7 @@ team-lease renew|team-lease renew
 team-lease release|team-lease release
 team-quota usage|team-quota usage
 team-quota usage|team-quota usage --if-due
+team-quota usage|bin/team-quota usage --load-check-probe
 team-secrets restore|team-secrets restore
 team-secrets save|team-secrets save discord-bot-env
 team-stack down|team-stack down
@@ -938,6 +939,9 @@ COMMANDS
   # shellcheck disable=SC2016
   refuses_as assistant "$ACTS (team-lease take); $ACTS_TAIL" "" '$B/team-lease take' "bash -c 'team-lease take'" \
     "eval 'bin/team-lease take'" 'env A=1 ~/agent-team/bin/team-lease take --load-check-probe'
+  # shellcheck disable=SC2016
+  refuses_as assistant "$ACTS (team-quota usage); $ACTS_TAIL" "" '$B/team-quota usage' \
+    'env A=1 ~/agent-team/bin/team-quota usage --if-due'
   # A --help that is not the first word reaches the act, since the library answers only a first one.
   refuses_as assistant "$ACTS (team-stow); $ACTS_TAIL" "" 'team-stow T1 --help' 'team-stow T1 -h'
   refuses_as assistant "$ACTS (team-heavy run); $ACTS_TAIL" "" 'team-heavy run --help' 'team-heavy run -- --help'
@@ -971,6 +975,9 @@ COMMANDS
   guard -0 'team-stow T1'
   guard -0 'team-stack up'
   guard -0 'team-quota usage --if-due'
+  # And the coordinator's, whose settings run the guard with its own role.
+  AGENT_TEAM_ROLE=coordinator guard -0 'team-quota usage --if-due'
+  assert_equal "$stderr" ""
 }
 
 @test "the acts' names go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
