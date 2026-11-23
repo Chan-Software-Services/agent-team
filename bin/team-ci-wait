@@ -71,7 +71,11 @@
 #                                                 the same read for every wait on the repository
 # Once, when the wait ends on a failure, it reads the Actions job of each failed or cancelled check
 # with an Actions job link that is not a roll-up (actions/jobs/<job id>), for its runner and
-# steps: only reads of metadata, never a log or a check's output.
+# steps, and never a check's output. Of each failure that is still the PR's at a step of the
+# job's own, it then reads the job's log once (actions/jobs/<job id>/logs, through gh_call with
+# gh api's --allow-escape-sequences, since a log holds the runner's colours); and only when one of those logs shows apt's fetch failure (below), the
+# change's paths once: the PR's (pulls/<n>/files, every page), or with --run the branch's from
+# the project's base (compare/<base>...<head>).
 # A workflow run of the head that is not completed holds the wait whatever the checks show, since
 # in a re-run's or a push's first seconds the head's checks may list only another workflow's, and
 # an earlier attempt's failure may yet be replaced.
@@ -152,9 +156,17 @@
 #   infrastructure  never started: a failed or cancelled check whose job has no runner and no step
 #                   that ran (none concluded but skipped); setup: a failed check whose first
 #                   failing step is GitHub's own (Set up job, Set up runner, Initialize containers,
-#                   Complete job) or a stock action's (Run actions/..., Post Run actions/...); and
-#                   each queued or stuck check: each line names its link and the gh run rerun (for
-#                   a queued one, gh run cancel first) to run before running team-ci-wait again
+#                   Complete job) or a stock action's (Run actions/..., Post Run actions/...), or
+#                   one whose first failing step failed because apt could not fetch the runner's
+#                   packages: in that step's span of its log, its first ##[error] line comes after
+#                   one of apt's fetch errors (E: Failed to fetch, E: Unable to fetch some archives,
+#                   E: Some index files failed to download), with no ##[group], ##[endgroup],
+#                   ##[start-action] or ##[end-action] line between them, and the change touches
+#                   nothing under .github/, where its workflows, actions, install lists and apt
+#                   sources live (paths that cannot be read, or as many as GitHub lists at most,
+#                   3000 of a PR's or 300 of a compare's, count as touching it); and each queued
+#                   or stuck check: each line names its link and the gh run rerun (for a queued
+#                   one, gh run cancel first) to run before running team-ci-wait again
 #   rules           with --merge-group, a required check not listed on the trial commit: "rules:
 #                   <name> was not reported on the trial commit, though <base>'s rules require it
 #                   (or the project requires it, for one of the registry's alone): no workflow
@@ -510,8 +522,9 @@ tick() {
 }
 
 # The classes, as jq definitions over a look, with $stuck and $queued the names of the checks that
-# ran out their clocks, $jobs each Actions job read by its id, $repo, and the mode's $whose and
-# $again. unpassed is each check
+# ran out their clocks, $jobs each Actions job read by its id, $fetched the ids of the jobs whose
+# failing step's log shows apt could not fetch the runner's packages (apt_fetch_failed), $repo, and
+# the mode's $whose and $again. unpassed is each check
 # that did not pass, failed, cancelled, stuck or queued, with its run_id and job_id from its Actions
 # job link (else null) and shards, the names of the checks of its run, failed, cancelled, stuck or
 # queued, that make a failed or cancelled check a roll-up of them. classed is each of them as
@@ -550,12 +563,46 @@ CLASSES='
       elif .bucket == "fail" and ($step // "" | setup_step) then
         {class: "infrastructure", kind: "setup", step: $step, rerun: $rerun,
          line: "infrastructure: \(.name) failed in setup, at its step \"\($step)\" (\($link)); rerun it with \($rerun), then \($again)"}
+      elif .bucket == "fail" and $step != null and (.job_id | tostring | IN($fetched[])) then
+        {class: "infrastructure", kind: "setup", step: $step, rerun: $rerun,
+         line: "infrastructure: \(.name) failed in setup, at its step \"\($step)\", where apt could not fetch the runner\u0027s packages (\($link)); rerun it with \($rerun), then \($again)"}
       else
         {class: "pr", kind: (if .bucket == "fail" then "failed" else "cancelled" end), step: $step,
          line: ("\($whose): \(.name) " + (if .bucket == "fail" then "failed" else "was cancelled" end) + ": \($link)"
            + (if .job_id != null and $job == null then " (its job could not be read)" else "" end))}
       end;
 '
+
+# apt_fetch_failed <log> <started at> <completed at>: whether a job's log, each line "<time> <text>"
+# as actions/jobs/<id>/logs gives it, shows its step of that span failing because apt could not fetch packages: the step's
+# first ##[error] line comes after one of apt's fetch errors (E: Failed to fetch, E: Unable to fetch
+# some archives, E: Some index files failed to download) with no ##[group], ##[endgroup],
+# ##[start-action] or ##[end-action] line between them, so the command that failed is the one apt
+# printed them in. The span is the step's, to the second, as the job's steps give it.
+apt_fetch_failed() {
+  LC_ALL=C awk -v from="${2:0:19}" -v to="${3:0:19}" '
+    { at = substr($0, 1, 19); text = substr($0, index($0, " ") + 1) }
+    at < from || at > to { next }
+    text ~ /^##\[error\]/ { found = fetch; exit }
+    text ~ /^##\[(group|endgroup|start-action|end-action)/ { fetch = 0; next }
+    text ~ /^E: (Failed to fetch |Unable to fetch some archives|Some index files failed to download)/ { fetch = 1 }
+    END { exit !found }' "$1"
+}
+
+# change_touches_ci: whether the change under the wait may have caused its own runner's packages to
+# fail to fetch: a changed path under .github/ (a workflow, an action, an install list or an apt
+# source written there), or paths that cannot be read or may be cut short (GitHub lists at most
+# 3000 of a PR's, and 300 of a compare's). The change is the PR's (with --merge-group too), or with
+# --run the branch's from the project's base (compare <base>...<head>).
+change_touches_ci() {
+  if [[ -n $run_id ]]; then
+    gh_read "$dir" compare "repos/$repo/compare/$base...$head" || return 0
+    [[ $(jq -r '(.files | length) < 300 and all(.files[]; .filename | startswith(".github/") | not)' "$dir/compare" 2>/dev/null) != true ]]
+  else
+    gh_call "$dir" files api "repos/$repo/pulls/$number/files?per_page=100" --paginate --jq '.[].filename' || return 0
+    (($(wc -l <"$dir/files") >= 3000)) || grep -q '^\.github/' "$dir/files"
+  fi
+}
 
 # report <missing>: sets text to the text of a wait that ends on a failure: today's first line, then
 # a line for each check the last readable look did not pass, classed, and each required check in
@@ -571,13 +618,28 @@ report() {
       jq -c --arg id "$id" '{($id): .}' "$dir/job-$id" >>"$dir/jobs"
     fi
   done < <(jq -r --argjson stuck "$stuck_json" --argjson queued "$queued_json" --arg repo "$repo" \
-    --arg queued_span "" --arg whose "" --arg again "" --argjson jobs '{}' "$CLASSES"'
+    --arg queued_span "" --arg whose "" --arg again "" --argjson jobs '{}' --argjson fetched '[]' "$CLASSES"'
     unpassed | select(.shards == [] and (.bucket == "fail" or .bucket == "cancel") and .job_id != null) | .job_id' "$dir/look")
+  # Each failure still the PR's at a step of its own, whose log is read once: those whose step
+  # failed on apt's fetch are infrastructure, unless the change may have caused it.
+  : >"$dir/fetched"
+  while IFS=$'\t' read -r id from to; do
+    if gh_call "$dir" "log-$id" api --allow-escape-sequences "repos/$repo/actions/jobs/$id/logs" && apt_fetch_failed "$dir/log-$id" "$from" "$to"; then
+      echo "\"$id\"" >>"$dir/fetched"
+    fi
+  done < <(jq -r --argjson stuck "$stuck_json" --argjson queued "$queued_json" --arg repo "$repo" \
+    --arg queued_span "" --arg whose "" --arg again "" --argjson jobs "$(jq -s 'add // {}' "$dir/jobs")" \
+    --argjson fetched '[]' "$CLASSES"'
+    classed | select(.class == "pr" and .kind == "failed" and .step != null)
+    | ([$jobs[.job | tostring].steps[] | select(.conclusion == "failure")] | sort_by(.number) | .[0]) as $s
+    | select(($s.started_at // "") != "" and ($s.completed_at // "") != "")
+    | [.job, $s.started_at, $s.completed_at] | @tsv' "$dir/look")
+  if [[ -s $dir/fetched ]] && change_touches_ci; then : >"$dir/fetched"; fi
   jq -c --argjson stuck "$stuck_json" --argjson queued "$queued_json" --argjson missing "$1" --arg repo "$repo" \
     --arg queued_span "$(span "$QUEUED_SECONDS")" --arg whose "$whose" --arg again "$again" \
     --arg unreported "$([[ -n $run_id ]] || echo " for $(span "$SETTLE_SECONDS")")" \
     --arg base "$base" --argjson group "$([[ -n $group ]] && echo true || echo false)" --argjson rules "$rules_required" \
-    --argjson jobs "$(jq -s 'add // {}' "$dir/jobs")" "$CLASSES"'
+    --argjson jobs "$(jq -s 'add // {}' "$dir/jobs")" --argjson fetched "$(jq -s . "$dir/fetched")" "$CLASSES"'
     [classed, ($missing[] | {name: ., class: (if $group then "rules" else "pr" end), kind: "missing", state: null,
        link: null, run: null, job: null, step: null, rerun: null}
        + if $group then
