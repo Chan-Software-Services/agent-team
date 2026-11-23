@@ -87,7 +87,7 @@
     },
     "trial-marked": {
       "writer": "team-land",
-      "about": "team-land posted agent-review on a trial commit it had logged trial-unmarked for: url is the PR's; head the full sha it lands; trial the trial commit's full sha; it ends that trial-unmarked's standing",
+      "about": "team-land posted agent-review on a trial commit of the PR after it logged trial-unmarked, on that trial commit or on the next one the queue rebuilt the entry onto: url is the PR's; head the full sha it lands; trial the full sha of the trial commit posted on; it ends the standing of every trial-unmarked of the url before it",
       "required": {"url": "string", "head": "string", "trial": "string"}
     },
     "history-rewritten": {

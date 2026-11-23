@@ -51,8 +51,9 @@
 #   (team-post T<n> --file), a post that fails said on its own line, and logs trial-unmarked (url,
 #   head, trial, reason, since, checks), which team-sweep's trial-unmarked finding reads; while the
 #   checks it logged are pending or unknown, each later unmarked look of that trial commit looks
-#   again, and logs trial-unmarked once more, with no post, the first time they show passed. A post
-#   on a trial commit this run logged trial-unmarked for logs trial-marked (url, head, trial);
+#   again, and logs trial-unmarked once more, with no post, the first time they show passed. The
+#   next post on any trial commit after this run logged trial-unmarked (the queue may have rebuilt
+#   the entry meanwhile) logs trial-marked (url, head, trial: the one posted on);
 #   without --task neither is logged and nothing posted;
 #   once posted, it waits on the trial commit's checks with team-ci-wait --merge-group <trial sha>
 #   --json <pr url>, once per sha, which classes a failure as the PR's own or infrastructure as
@@ -225,16 +226,19 @@ trial_look() {
 }
 
 # log_trial <kind> <sha> [<checks>]: with --task, log trial-unmarked of the trial commit <sha>, with
-# the reason and time it has stood unmarked since and <checks>, or trial-marked.
+# the reason and time it has stood unmarked since and <checks>, or trial-marked; unmarked_open says
+# a trial-unmarked of this run stands, with no trial-marked since.
 log_trial() {
   local event
   [[ -n $task ]] || return 0
   if [[ $1 == trial-unmarked ]]; then
+    unmarked_open=1
     event=$(jq -cn --arg task "$task" --arg url "$url" --arg head "$land_head" --arg trial "$2" \
       --arg reason "$unmarked_reason" --arg since "$unmarked_since" --arg checks "$3" \
       '{ts: (now | todate), task: $task, event: "trial-unmarked", url: $url, head: $head, trial: $trial,
         reason: $reason, since: $since, checks: $checks}')
   else
+    unmarked_open=''
     event=$(jq -cn --arg task "$task" --arg url "$url" --arg head "$land_head" --arg trial "$2" \
       '{ts: (now | todate), task: $task, event: "trial-marked", url: $url, head: $head, trial: $trial}')
   fi
@@ -371,7 +375,7 @@ dropped() {
 first=true enqueued=false retried=false start_removal='' gone_n='' on_trial='' unposted='' enqueue_error='' ci_outcome=''
 rules_drop=''
 said_last='' seen=''
-miss_at='' miss_key='' miss_reason='' unmarked_trial='' unmarked_key='' unmarked_reason='' unmarked_since='' unmarked_n=0
+miss_at='' miss_key='' miss_reason='' unmarked_trial='' unmarked_key='' unmarked_reason='' unmarked_since='' unmarked_n=0 unmarked_open=''
 declare -A posted=() waited=() held=() alerted=()
 while :; do
   if offline=$(offline_hold); then
@@ -416,7 +420,7 @@ while :; do
         if [[ -z ${posted[$on_trial]:-} ]]; then
           if hold "$on_trial" && post "$on_trial"; then
             posted[$on_trial]=1 unposted=''
-            [[ -z ${alerted[$on_trial]:-} ]] || log_trial trial-marked "$on_trial"
+            [[ -z $unmarked_open ]] || log_trial trial-marked "$on_trial"
           else
             unmarked "$on_trial"
           fi

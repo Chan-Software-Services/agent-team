@@ -696,6 +696,21 @@ $t1	post	75	GitHub cannot be read: gh api: error connecting to api.github.com"
   assert_equal "$(grep -c "check-runs" "$GH_DIR/calls")" 3
 }
 
+@test "a trial-unmarked ends with the trial-marked of the next trial commit posted on, when the queue rebuilt the entry" {
+  holds_until 22
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test completed success)"
+  pr_at 22 OPEN "$t2"
+  trial_checks 22 "$t2" "$(check_run test in_progress)"
+  pr_at 24 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(kind_events trial-unmarked | jq -r '[.trial, .checks] | join(" ")')" "$t1 passed"
+  assert_equal "$(kind_events trial-marked | jq -r .trial)" "$t2"
+  assert_equal "$(posted_on)" "--merge-group $url $t2"
+}
+
 @test "no alert before 10 minutes of looks with the same reason: a changed reason starts the count again" {
   # Reason A at looks 0 to 9, reason B at looks 10 to 29: 30 looks unmarked, never 20 with one reason.
   holds_until 30 "GitHub cannot be read: gh pr view: error connecting to api.github.com"
