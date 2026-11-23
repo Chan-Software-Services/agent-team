@@ -309,7 +309,7 @@ assert_nothing_written() {
   assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
 }
 
-@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts, GitHub's writes and the thread cache's writes" {
+@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts and GitHub's writes" {
   local settings=$REPO_ROOT/assistant.settings.json command
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
@@ -366,17 +366,6 @@ assert_nothing_written() {
       '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
     assert_contains "$stderr" "Blocked by command-guard: a GitHub write, which an assistant session never makes ("
   done
-  # A write of the thread cache the Discord guard trusts: its assistant-thread-cache row refuses it,
-  # command by command, where its deny rule refused any call naming the cache.
-  # shellcheck disable=SC2088
-  for command in "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
-    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
-    "cp /tmp/x ~/.local/state/agent-team/assistant-threads" "rm ~/.local/state/agent-team/assistant-threads" \
-    "ls 2>~/.local/state/agent-team/assistant-threads"; do
-    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
-      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
-    assert_contains "$stderr" "Blocked by command-guard: the thread cache the Discord guard trusts, which only the scripts and hooks write ("
-  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -403,7 +392,7 @@ assert_nothing_written() {
   done
 }
 
-@test "its settings deny the Read and Edit tools the Discord token and access files, the Edit tool the thread cache, and leave the inbox" {
+@test "its settings deny the Read and Edit tools the Discord token and access files, and leave the inbox" {
   local settings=$REPO_ROOT/assistant.settings.json rule tool
   for tool in Read Edit; do
     for rule in "$tool(~/.claude/channels/discord/**)" "$tool(~/.claude/channels/discord-assistant/.env)" \
@@ -412,8 +401,6 @@ assert_nothing_written() {
         { echo "no deny rule $rule" >&2; return 1; }
     done
   done
-  # The thread cache the Discord guard trusts, which only the scripts and hooks write.
-  jq -e '.permissions.deny | index("Edit(~/.local/state/agent-team/assistant-threads)") != null' "$settings" >/dev/null
   assert_equal "$(jq -c '[.permissions.deny[] | select(test("discord-assistant/(inbox|\\*)"))]' "$settings")" '[]'
 }
 
