@@ -81,10 +81,18 @@
     },
     {
       "id": "merge",
-      "roles": ["planner", "builder", "reviewer", "assistant"],
+      "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
       "input": "gh pr merge --help",
       "expect": "rule",
+      "family": "merge"
+    },
+    {
+      "id": "pr-merge",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh pr merge --help",
+      "expect": "refused",
       "family": "merge"
     },
     {
@@ -482,7 +490,7 @@
       "id": "coordinator-merge",
       "roles": ["assistant"],
       "tool": "Bash",
-      "input": "team-merge T1",
+      "input": "bin/team-merge T1",
       "expect": "script",
       "marker": "an assistant session merges no PR"
     },
@@ -498,7 +506,7 @@
       "id": "worker-launch",
       "roles": ["assistant"],
       "tool": "Bash",
-      "input": "team-worker T1 builder x",
+      "input": "bin/team-worker T1 builder x",
       "expect": "script",
       "marker": "an assistant session launches no session"
     },
@@ -570,7 +578,7 @@
       "roles": ["assistant"],
       "tool": "Bash",
       "input": "gh pr create --help",
-      "expect": "rule",
+      "expect": "refused",
       "family": "github-writes"
     },
     {
