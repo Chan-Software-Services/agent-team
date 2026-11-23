@@ -590,7 +590,7 @@ launched T1-reviewer 2b3c4d5e"
   # Its findings go back to the deliverer, which still holds the context.
   ok team-next T1 --sent-back 1 -- "T1 DONE findings .scratch/task/review.md findings=${zero/blocking:0/blocking:1} before=none guarded=none"
   assert_equal "$(tail -n 1 <<<"$output")" \
-    "send to T1-builder ($deliverer, context unknown): T1 fix findings 1 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T1 QUESTION first), then deliver again as your brief says"
+    "send to T1-builder ($deliverer, context unknown): T1 fix findings 1 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T1 QUESTION first), then deliver again as your brief says; before you start, bring the branch to the PR's head with \`git fetch origin && git merge --ff-only origin/feat/T1-tooling\`, and send T1 BLOCKED <git's reason> if it fails"
 
   # The holder fixes and reports the PR again: the rereview, from the reviewed head.
   session_is "$deliverer" busy working

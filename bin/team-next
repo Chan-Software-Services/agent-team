@@ -231,8 +231,9 @@
 # the holder under 250k (its name, the findings sent back and the findings file the message names,
 # for a pass the newest of review.md and rereview*.md in the holder's task directory, as
 # team-brief derives a round's, and that each is fixed as narrowly as it asks, a fix reaching
-# shapes it does not name a T<n> QUESTION first), else the T<n> STOW to send it (after recovering
-# it when gone), or no hand-off when nothing was sent back.
+# shapes it does not name a T<n> QUESTION first, and on a PR that it first brings the branch to
+# the PR's head with git merge --ff-only, a T<n> BLOCKED when that fails), else the T<n> STOW to
+# send it (after recovering it when gone), or no hand-off when nothing was sent back.
 # The findings round's look: when findings go back on a PR, before that line, one look at the
 # reviewed head, team-ci-wait --no-agent-review --json --look <url> <head> (the review's own
 # agent-review is no check). Its failures of class pr (the PR's own) are written to the report
@@ -544,12 +545,15 @@ read_state() {
 }
 
 # round_line <what>: a fix round's hand-off, from read_state's variables, for findings sent back
-# or for the failed checks of a pass: the message to fix <what> for the holder under 250k, else
-# the STOW to send it, after recovering it when gone.
+# or for the failed checks of a pass: the message to fix <what> for the holder under 250k, which
+# on a PR first brings the branch to the PR's head, as a builder-round brief's step 1 does, since
+# team-catch-up may have moved it; else the STOW to send it, after recovering it when gone.
 round_line() {
-  local stow="$task STOW; its PAUSED stowed goes to team-next, which launches the round"
+  local stow="$task STOW; its PAUSED stowed goes to team-next, which launches the round" ff=''
+  [[ -z $branch ]] ||
+    ff="; before you start, bring the branch to the PR's head with \`git fetch origin && git merge --ff-only origin/$branch\`, and send $task BLOCKED <git's reason> if it fails"
   case $holds in
-    holds) echo "send to $who: $task fix $1 on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a $task QUESTION first), then deliver again as your brief says" ;;
+    holds) echo "send to $who: $task fix $1 on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a $task QUESTION first), then deliver again as your brief says$ff" ;;
     full) echo "send to $who: $stow" ;;
     gone) echo "$gone $stow" ;;
   esac
