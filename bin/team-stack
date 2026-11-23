@@ -58,11 +58,14 @@
 #             ..., not seeded: it was started with --no-seed at <at> and never seeded; team-stack
 #                  seed seeds it
 #             ..., not seeded: its seed is running in team-stack <pid>
-#           A stack whose network is to be made (a new stack, one of another task taken down
-#           first, or one whose network Docker lacks) makes it with the heavy-run lock held, as
-#           "The heavy-run lock" below says: <wrapper> up --no-start (its networks, volumes and
-#           containers made, none started), the lock let go, then up -d --wait; a running stack,
-#           and a stopped one whose network is there, take no lock.
+#           A stack whose network is to be made (a new stack, one of another task taken down first,
+#           or one whose network Docker lacks) makes it with the heavy-run lock held, as "The
+#           heavy-run lock" below says: it waits for the lock before its admission, holding no
+#           admission lock, takes it again at once when admitted (a heavy run that took it in
+#           between sends it back to the wait, its admission released), runs <wrapper> up --no-start
+#           (its networks, volumes and containers made, none started, and a missing image pulled or
+#           built first, which the lock covers too), lets the lock go, then runs up -d --wait; a
+#           running stack, and a stopped one whose network is there, take no lock.
 #           A stack not running is first admitted, under an exclusive flock on
 #           ~/.local/state/agent-team/stacks.lock held until its up -d --wait returns (a running
 #           one is not checked). There is room when both hold, in this order: free space (df -Pk)
@@ -109,22 +112,19 @@
 # down      Saves the last 1 MiB of each log_services service's log (docker compose -p <project>
 #           logs --no-color --timestamps <service>) to
 #           <worktree>/<task_dir>/stack-logs/<project>-<service>.log, then runs docker compose -p
-#           <project> down -v --remove-orphans with the heavy-run lock held (while a heavy run
-#           holds it: docker rm --force --volumes on its containers and docker volume rm on its
-#           named volumes, its networks left for the sweep, as "The heavy-run lock" below
-#           says; the reaper's and the sweep's takedowns do the same, and up's takedown of
-#           another task's stack first waits for the lock as up does before a network is
-#           made), after which it
-#           releases the admission the
-#           stack's record names (as up's; the reaper and up's takedown do too), and docker
-#           volume rm on each anonymous volume its containers mounted that is still there, and
-#           fails naming each container, volume and network of the stack left, and removes the
-#           stack's record. A worktree with
-#           no stack is told so, exit 0 (as for stop). Without --instance, it first takes down
-#           the worktree's instances in name order, each as it takes down a stack, with a line
-#           each: the team stacks whose Compose project is <stack>-<anything> and whose worktree
-#           label names the worktree, another spelling of it included (team-close's down
-#           therefore takes them too).
+#           <project> down -v --remove-orphans with the heavy-run lock held (while a heavy run holds
+#           it: docker rm --force --volumes on its containers and docker volume rm on its named
+#           volumes, its networks left for the sweep, as "The heavy-run lock" below says; the
+#           reaper's and the sweep's takedowns do the same, and up's takedown of another task's
+#           stack first waits for the lock as up does before a network is made), after which it
+#           releases the admission the stack's record names (as up's; the reaper and up's takedown
+#           do too), and docker volume rm on each anonymous volume its containers mounted that is
+#           still there, and fails naming each container, volume and network of the stack left, and
+#           removes the stack's record. A worktree with no stack is told so, exit 0 (as for stop).
+#           Without --instance, it first takes down the worktree's instances in name order, each as
+#           it takes down a stack, with a line each: the team stacks whose Compose project is
+#           <stack>-<anything> and whose worktree label names the worktree, another spelling of it
+#           included (team-close's down therefore takes them too).
 #
 # sweep     Removes each running gate stack (every container of its Compose project of class gate,
 #           one running) whose stored readings (~/.local/state/agent-team/capacity/readings.jsonl,
@@ -202,12 +202,12 @@
 #           lock (<its holder line>), so a later reap --apply removes it once the run ends",
 #           neither removed nor failed (a team stack it removes then leaves its network for the
 #           sweep).
-#           Then "kept <type> <name> (<class>, <size>, <age> old)" for every object no rule
-#           matched that is not the team's (stacks, containers of no stack, volumes, images,
-#           networks but Docker's own), and a summary line, the
-#           totals by rule. A removal that fails is named on stderr with Docker's reason, the
-#           others still happen, exit 1. Test seam: TEAM_STACK_REAP_PROJECTS, a pattern, limits it
-#           to the Compose projects whose names match it and their objects.
+#           Then "kept <type> <name> (<class>, <size>, <age> old)" for every object no rule matched
+#           that is not the team's (stacks, containers of no stack, volumes, images, networks but
+#           Docker's own), and a summary line, the totals by rule. A removal that fails is named on
+#           stderr with Docker's reason, the others still happen, exit 1. Test seam:
+#           TEAM_STACK_REAP_PROJECTS, a pattern, limits it to the Compose projects whose names match
+#           it and their objects.
 #
 # The stack record, ~/.local/state/agent-team/stacks/<Compose project>.json, holds what Docker
 # cannot tell of a team stack: {schema: "team-stack/1", seed: {state, at, commit, pid, exit},
@@ -229,22 +229,22 @@
 # The heavy-run lock, ~/.local/state/agent-team/heavy.lock (team-heavy's): making or removing a
 # stack's Docker network adds or deletes the host's address on the network's bridge, and a browser
 # on the machine then fails every request it has in flight with net::ERR_NETWORK_CHANGED, so each
-# step that makes or removes one holds the lock for as long as it takes, and no other step does;
-# a heavy run (team-heavy run, a gate's end-to-end phase) holds it for its whole run. While
-# team-stack holds it, its holder line is "team-stack <subcommand> (pid <pid>, <Compose project>,
-# or networks for the sweep's and the reaper's network removals) since <time>", which is not
-# team-heavy's form, so team-heavy stop never takes the pid for a run's. Under a heavy run
-# (TEAM_HEAVY_HELD set) the run holds it already, and team-stack takes nothing. up waits for it up
-# to wait_minutes, saying once on stderr that it waits, for whom and before what ("waiting up to
-# <n> minutes for the heavy-run lock, held by <holder line>, before <project>'s network is made:
-# ..."), then exits 75 ("... so team-stack up stops before <what>; run it again once the heavy run
-# ends"), its admission released. A takedown and the sweep's and the reaper's network removals
-# take it only when it is free (or within 5 seconds, while only a reader's shared lock holds it,
-# as team-heavy waits): while a heavy run holds it, a takedown removes the stack's containers and
-# named volumes now and leaves its networks, saying on stderr "<project>'s network <names> is left
-# for team-stack sweep to remove once the heavy-run lock is free: it is held by <holder line>, ...",
-# and adds each to ~/.local/state/agent-team/stacks/networks-left.json, a JSON array of {project,
-# name, at} written under records.lock, which the sweep removes from.
+# step that makes or removes one holds the lock for as long as it takes, and no other step does; a
+# heavy run (team-heavy run, a gate's end-to-end phase) holds it for its whole run. While team-stack
+# holds it, its holder line is "team-stack <subcommand> (pid <pid>, <Compose project>, or networks
+# for the sweep's and the reaper's network removals) since <time>", which is not team-heavy's form,
+# so team-heavy stop never takes the pid for a run's. Under a heavy run (TEAM_HEAVY_HELD set) the
+# run holds it already, and team-stack takes nothing. up waits for it, before its admission, up to
+# wait_minutes, saying once on stderr that it waits, for whom and before what ("waiting up to <n>
+# minutes for the heavy-run lock, held by <holder line>, before <project>'s network is made: ..."),
+# then exits 75 ("... so team-stack up stops before <what>; run it again once the heavy run ends"),
+# holding no admission. A takedown and the sweep's and the reaper's network removals take it only
+# when it is free (or within 5 seconds, while only a reader's shared lock holds it, as team-heavy
+# waits): while a heavy run holds it, a takedown removes the stack's containers and named volumes
+# now and leaves its networks, saying on stderr "<project>'s network <names> is left for team-stack
+# sweep to remove once the heavy-run lock is free: it is held by <holder line>, ...", and adds each
+# to ~/.local/state/agent-team/stacks/networks-left.json, a JSON array of {project, name, at}
+# written under records.lock, which the sweep removes from.
 #
 # The owner classes, from each object's own labels and its Compose project, and the registry's
 # stack blocks (team-project --help):
@@ -365,16 +365,24 @@ net_unlock() {
 }
 
 # Wait for the heavy-run lock before <what> ("<project>'s network is made"), as up does: up to
-# wait_minutes, said once on stderr while a heavy run holds it, then exit 75 naming the holder:
-# net_wait <what>
+# wait_minutes from an up's first wait, however many it makes, said once on stderr for each <what>
+# while a heavy run holds it, then exit 75 naming the holder: net_wait <what>
+NET_DEADLINE='' NET_SAID=''
 net_wait() {
-  local minutes seconds
+  local minutes seconds now
   net_lock 0 && return 0
   minutes=$(setting wait_minutes)
-  seconds=$(jq -n --argjson m "$minutes" '$m * 60 | ceil')
-  echo "${0##*/}: waiting up to $minutes minutes for the heavy-run lock, held by $(heavy_holder), before $1:" \
-    "a network made or removed while a heavy run's browser loads a page fails its requests (net::ERR_NETWORK_CHANGED)" >&2
-  net_lock "$seconds" && return 0
+  now=$(date +%s)
+  if [[ -z $NET_DEADLINE ]]; then
+    seconds=$(jq -n --argjson m "$minutes" '$m * 60 | ceil')
+    NET_DEADLINE=$((now + seconds))
+  fi
+  if [[ $NET_SAID != "$1" ]]; then
+    NET_SAID=$1
+    echo "${0##*/}: waiting up to $minutes minutes for the heavy-run lock, held by $(heavy_holder), before $1:" \
+      "a network made or removed while a heavy run's browser loads a page fails its requests (net::ERR_NETWORK_CHANGED)" >&2
+  fi
+  ((NET_DEADLINE > now)) && net_lock $((NET_DEADLINE - now)) && return 0
   echo "${0##*/}: the heavy-run lock is still held by $(heavy_holder) after $minutes minutes, so team-stack up stops" \
     "before $1; run it again once the heavy run ends" >&2
   exit 75
@@ -1143,7 +1151,27 @@ cmd_up() {
     if [[ -n $(volumes_left "${NAMED_VOLUMES[@]}") ]]; then fresh=''; fi
   fi
   # A running stack of the task is admitted without a check; a stopped one is counted as new.
-  jq -e .running "$WORK/stack.json" >/dev/null || admit
+  # One whose network is to be made waits for the heavy run before its admission, so no other up
+  # waits on the admission lock behind that wait, and then takes the heavy-run lock at once; a run
+  # that took it in between sends it back to the wait, its admission and the admission lock let go.
+  local was_running='' make_network=''
+  if jq -e .running "$WORK/stack.json" >/dev/null; then was_running=1; fi
+  if network_missing; then
+    make_network=1
+    while :; do
+      net_wait "$STACK_NAME's network is made"
+      [[ -z $was_running ]] || break
+      net_unlock
+      admit
+      net_lock 0 && break
+      exec {LOCK_FD}>&-
+      LOCK_FD=''
+      if [[ -n $ADMISSION ]]; then release_admission "$ADMISSION"; fi
+      ADMISSION=''
+    done
+  elif [[ -z $was_running ]]; then
+    admit
+  fi
   # A new stack's record is written new, its seed owed (or skipped) until a seed runs, so an up
   # that fails or is killed before its seed leaves the seed owed.
   if [[ -n $fresh ]]; then
@@ -1152,8 +1180,7 @@ cmd_up() {
   fi
   # Its network made, with the heavy-run lock held only while up --no-start makes it (and the
   # volumes and containers, starting none), so a heavy run's browser never sees it come.
-  if network_missing; then
-    net_wait "$STACK_NAME's network is made"
+  if [[ -n $make_network ]]; then
     wrapper up --no-start >&2 || die "${WRAPPER#"$WT/"} up --no-start failed for $STACK_NAME (exit $?)"
     net_unlock
   fi
@@ -1345,9 +1372,13 @@ sweep_networks() {
   docker_read 'network ls' network ls --quiet --no-trunc --filter label=com.docker.compose.project
   mapfile -t ids < <(grep . <<<"$DOCKER_OUT" || true)
   docker_inspect network "$WORK/sweep-networks.json" "${ids[@]}"
+  # The containers read again, since the gate rule before it may have removed some.
+  docker_read ps ps --all --quiet --no-trunc
+  mapfile -t ids < <(grep . <<<"$DOCKER_OUT" || true)
+  docker_inspect container "$WORK/sweep-containers.json" "${ids[@]}"
   # Each listed network with what the sweep does with it: remove (no container uses it) or drop
   # (gone, or in use again).
-  jq -c --slurpfile containers "$WORK/containers.json" --slurpfile networks "$WORK/sweep-networks.json" '
+  jq -c --slurpfile containers "$WORK/sweep-containers.json" --slurpfile networks "$WORK/sweep-networks.json" '
     # A stopped container is on no network'"'"'s Containers, but its own settings still name them.
     ([$containers[0][] | (.NetworkSettings.Networks // {} | keys[]), (.HostConfig.NetworkMode // empty)] | unique) as $named
     | .[] | . as $left

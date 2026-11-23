@@ -128,8 +128,63 @@ stack_anonymous() {
   assert_contains "$stderr" "team-stack: the heavy-run lock is still held by $HEAVY_LINE after 0.03 minutes, so team-stack up stops before $PROJECT's network is made; run it again once the heavy run ends"
   assert_equal "$(compose_locks)" "compose config --format json | $HEAVY_LINE"
   assert_equal "$(stack_left)" ""
-  # Its admission went with it.
+  # It waited before its admission, so it made none.
   assert_equal "$(jq -c '.[]' "$HOME/.local/state/agent-team/capacity/admitted.json" 2>/dev/null || true)" ""
+}
+
+@test "an up waiting for the heavy run before its network is made holds no admission lock, so an up of a stopped stack with its network goes on" {
+  open_task T22
+  run_bin -0 team-stack up --worktree "$STACK_WORKTREE" --no-seed
+  run_bin -0 team-stack stop --worktree "$STACK_WORKTREE"
+  printf '{"wait_minutes": 0.1}\n' >"$HOME/.config/agent-team/stack.json"
+  hold_heavy
+  # A new instance's up waits for the run, 6 seconds, then exits 75.
+  guard_sandbox
+  "$REPO_ROOT/bin/team-stack" up --worktree "$STACK_WORKTREE" --instance a --no-seed \
+    >"$BATS_TEST_TMPDIR/a.out" 2>"$BATS_TEST_TMPDIR/a.err" 3>&- &
+  local waiting=$! i rc=0
+  for ((i = 0; i < 100; i++)); do
+    ! grep -q 'waiting up to' "$BATS_TEST_TMPDIR/a.err" || break
+    sleep 0.05
+  done
+  assert_contains "$(cat "$BATS_TEST_TMPDIR/a.err")" "before $PROJECT-a's network is made"
+  # The stopped stack, whose network is there, is up at once, saying nothing of a wait.
+  SECONDS=0
+  run_bin -0 --separate-stderr team-stack up --worktree "$STACK_WORKTREE" --no-seed
+  ((SECONDS < 4))
+  assert_equal "$stderr" ""
+  assert_equal "$output" "team-stack: $PROJECT is up for T22, not seeded: --no-seed"
+  wait "$waiting" || rc=$?
+  assert_equal "$rc" 75
+}
+
+@test "a heavy run that starts while a new stack's up waits for room sends it back to the heavy wait, its admission let go" {
+  open_task T22
+  printf '{"wait_minutes": 1}\n' >"$HOME/.config/agent-team/stack.json"
+  capacity_room $((16 * 1073741824)) none
+  guard_sandbox
+  TEAM_STACK_RECHECK_SECONDS=1 "$REPO_ROOT/bin/team-stack" up --worktree "$STACK_WORKTREE" --no-seed \
+    >"$BATS_TEST_TMPDIR/up.out" 2>"$BATS_TEST_TMPDIR/up.err" 3>&- &
+  local up=$! i rc=0
+  for ((i = 0; i < 200; i++)); do
+    ! grep -q 'no room for' "$BATS_TEST_TMPDIR/up.err" || break
+    sleep 0.05
+  done
+  # A heavy run starts, then the level gives room: the up is admitted, finds the lock taken, and waits.
+  hold_heavy
+  capacity_room $((16 * 1073741824)) full
+  for ((i = 0; i < 200; i++)); do
+    ! grep -q 'for the heavy-run lock' "$BATS_TEST_TMPDIR/up.err" || break
+    sleep 0.05
+  done
+  assert_contains "$(cat "$BATS_TEST_TMPDIR/up.err")" "team-stack: waiting up to 1 minutes for the heavy-run lock, held by $HEAVY_LINE, before $PROJECT's network is made"
+  assert_equal "$(jq -c '.[]' "$HOME/.local/state/agent-team/capacity/admitted.json" 2>/dev/null || true)" ""
+  assert_equal "$(compose_locks | grep -c -- '--no-start' || true)" 0
+  end_heavy
+  wait "$up" || rc=$?
+  assert_equal "$rc" 0
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/up.out")" "team-stack: $PROJECT is up for T22, not seeded: --no-seed"
+  [[ $(compose_locks | grep -- '--no-start') == "compose up --no-start | team-stack up (pid "* ]]
 }
 
 @test "up waits for the heavy run before it takes down another task's stack, and takes it down under the lock" {
@@ -174,6 +229,53 @@ compose up --no-start | team-stack up (pid <pid>, $PROJECT)"
   assert_equal "$(jq -r --arg n "$anonymous" '.[] | select(.Name == $n) | .Name' "$DOCKER_STATE/volumes.json")" ""
   # Its record is gone, as after any down.
   [[ ! -e $HOME/.local/state/agent-team/stacks/$PROJECT.json ]]
+}
+
+@test "down while only a reader's shared lock holds the heavy-run lock waits for it, and removes the network with compose down" {
+  open_task T22
+  run_bin -0 team-stack up --worktree "$STACK_WORKTREE" --no-seed
+  # A reader (team-heavy status, team-capacity's reading) holds it shared for 2 seconds.
+  bash -c 'exec 9<"$1" && flock -s 9 && exec sleep 2' reader "$HEAVY_LOCK" 3>&- &
+  local reader=$! i
+  for ((i = 0; i < 100; i++)); do
+    ! flock -n -x "$HEAVY_LOCK" true || { sleep 0.05; continue; }
+    break
+  done
+  run -1 flock -n -x "$HEAVY_LOCK" true
+  run_bin -0 --separate-stderr team-stack down --worktree "$STACK_WORKTREE"
+  assert_equal "$stderr" ""
+  [[ $(compose_locks | tail -n 1) =~ ^compose\ -p\ $PROJECT\ down\ -v\ --remove-orphans\ \|\ team-stack\ down\ \(pid\ [0-9]+,\ $PROJECT\)\ since\  ]]
+  assert_equal "$(stack_left)" ""
+  wait "$reader" || true
+}
+
+@test "down's takedown of the worktree's instances while a heavy run holds the lock leaves each instance's network for the sweep" {
+  open_task T22
+  run_bin -0 team-stack up --worktree "$STACK_WORKTREE" --instance a --no-seed
+  run_bin -0 team-stack up --worktree "$STACK_WORKTREE" --no-seed
+  hold_heavy
+  run_bin -0 --separate-stderr team-stack down --worktree "$STACK_WORKTREE"
+  assert_contains "$output" "team-stack: $PROJECT-a is removed, its logs in $STACK_WORKTREE/.scratch/task/stack-logs"
+  assert_contains "$stderr" "team-stack: $PROJECT-a's network $PROJECT-a_default is left for team-stack sweep to remove once the heavy-run lock is free"
+  assert_equal "$(docker_calls | grep -E '^compose -p [^ ]+ down' || true)" ""
+  assert_equal "$(jq -r --arg p "$PROJECT-a" '.[] | select(.Config.Labels["com.docker.compose.project"] == $p) | .Name' "$DOCKER_STATE/containers.json")" ""
+  assert_equal "$(jq -r '.[] | "\(.project) \(.name)"' "$HOME/.local/state/agent-team/stacks/networks-left.json" | LC_ALL=C sort)" \
+    "$PROJECT $NETWORK
+$PROJECT-a $PROJECT-a_default"
+}
+
+@test "an up of the task's stopped stack whose network Docker lacks makes it with the heavy-run lock, waiting for a heavy run first" {
+  open_task T22
+  run_bin -0 team-stack up --worktree "$STACK_WORKTREE" --no-seed
+  run_bin -0 team-stack stop --worktree "$STACK_WORKTREE"
+  docker_state networks --arg n "$NETWORK" 'map(select(.Name != $n))'
+  printf '{"wait_minutes": 1}\n' >"$HOME/.config/agent-team/stack.json"
+  hold_heavy 2
+  local before
+  before=$(docker_compose_env | wc -l)
+  run_bin -0 --separate-stderr team-stack up --worktree "$STACK_WORKTREE" --no-seed
+  assert_equal "$stderr" "team-stack: waiting up to 1 minutes for the heavy-run lock, held by $HEAVY_LINE, before $PROJECT's network is made: a network made or removed while a heavy run's browser loads a page fails its requests (net::ERR_NETWORK_CHANGED)"
+  [[ $(compose_locks | tail -n "+$((before + 1))" | grep -- '--no-start') == "compose up --no-start | team-stack up (pid "* ]]
 }
 
 @test "under a heavy run (TEAM_HEAVY_HELD) up and down take no lock: the run holds it" {
@@ -240,6 +342,40 @@ compose up --no-start | team-stack up (pid <pid>, $PROJECT)"
   assert_equal "$(docker_calls | grep -c '^network rm' || true)" 0
   assert_equal "$(jq -c . "$HOME/.local/state/agent-team/stacks/networks-left.json")" "[]"
   assert_equal "$(jq -r '[.[] | select(.Name == "stackfix-old-1_default" or .Name == $n)] | length' --arg n "$NETWORK" "$DOCKER_STATE/networks.json")" 2
+}
+
+# The machine's stored readings, written anew: one a minute for the last 35 minutes, the fixture's
+# running gate stack nmtest-1895520 idle in each, as team-capacity sample stores them.
+idle_gate_readings() {
+  local dir=$HOME/.local/state/agent-team/capacity ago
+  mkdir -p "$dir"
+  : >"$dir/readings.jsonl"
+  for ((ago = 35; ago >= 0; ago--)); do
+    jq -cn --argjson ago "$ago" --arg wt "$HOME/.no-mistakes/worktrees/01KQ3V2M8Z/Conventioner" '
+      (32 * 1073741824) as $total
+      | {at: (now - $ago * 60 | floor | todate), os: "linux", docker: true,
+         memory: {total: $total, available: (16 * 1073741824), team: 0, others: (12 * 1073741824)}, cpu: null,
+         systemd: true, sessions: true, tasks: [], heavy: null, gate: {running: false, memory: 0, cpu_seconds: 0},
+         stacks: [{name: "nmtest-1895520", class: "gate", task: null, project: null, worktree: $wt, kind: "gate",
+           memory: 315621376, cpu: 0.0012, limits: 536870912, in_use: false}]}' >>"$dir/readings.jsonl"
+  done
+}
+
+@test "sweep's removal of an idle gate stack while a heavy run holds the lock leaves its network listed, and a later sweep removes it" {
+  local gate=nmtest-1895520 network=nmtest-1895520_conventioner_network
+  idle_gate_readings
+  hold_heavy
+  run_bin -0 --separate-stderr team-stack sweep
+  assert_contains "$output" "removed gate stack $gate: no process in use in it"
+  assert_contains "$stderr" "team-stack: $gate's network $network is left for team-stack sweep to remove once the heavy-run lock is free"
+  assert_equal "$(jq -r '.[] | "\(.project) \(.name)"' "$HOME/.local/state/agent-team/stacks/networks-left.json")" "$gate $network"
+  assert_equal "$(jq -r --arg n "$network" '[.[] | select(.Name == $n)] | length' "$DOCKER_STATE/networks.json")" 1
+  end_heavy
+  run_bin -0 --separate-stderr team-stack sweep
+  assert_equal "$stderr" ""
+  [[ $output =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\ removed\ network\ $network\ of\ $gate:\ no\ container\ uses\ it$ ]]
+  assert_equal "$(jq -r --arg n "$network" '[.[] | select(.Name == $n)] | length' "$DOCKER_STATE/networks.json")" 0
+  assert_equal "$(jq -c . "$HOME/.local/state/agent-team/stacks/networks-left.json")" "[]"
 }
 
 @test "a network removal the sweep cannot make is named on stderr, and the sweep exits 1" {
