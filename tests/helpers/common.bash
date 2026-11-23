@@ -1094,6 +1094,16 @@ keeps_named() {
   return "$found"
 }
 
+# over_cap <file> <cap> <name> <pointers>: the line that says <file>, called <name>, is over its
+# cap of <cap> bytes, and nothing when it is not; the file's size is wc -c's, and <pointers> says
+# where its material may move.
+over_cap() {
+  local over_cap_bytes
+  over_cap_bytes=$(wc -c <"$1")
+  ((over_cap_bytes <= $2)) ||
+    echo "$3 is $over_cap_bytes bytes, over its cap of $2: move material behind a pointer ($4), and never raise the cap without Daniel's word"
+}
+
 # hold_merge_lock <task>: a process that holds the task's merge lock as team-merge does, the file
 # open and locked, until the test kills it; prints its pid once the lock is held.
 hold_merge_lock() {

@@ -13,6 +13,7 @@ sops/**
 .github/**
 .claude/settings.json
 CLAUDE.md
+LAYOUT.md
 README.md
 SETUP.md
 LICENSE

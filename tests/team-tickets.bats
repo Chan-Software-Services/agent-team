@@ -533,9 +533,12 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
   assert_contains "$output" "a task directory with no spec.md, a spec with no such"
 }
 
-@test "the planner's role and briefs give the line formats, the Phase:, Touches: and Parallel: lines, each repository's task directory and the check, and the manual names team-tickets" {
+# The two briefs that write tickets give the formats, so the planner's role, which every planner
+# session loads, leaves them to the briefs (Daniel's rule, 2026-11-23).
+@test "the planner's briefs give the line formats, the Phase:, Touches: and Parallel: lines, each repository's task directory and the check, and the manual names team-tickets" {
   local file
-  for file in roles/planner.md templates/briefs/planner-feature.md templates/briefs/planner-interview.md; do
+  if grep -nF 'Blocked by:' "$REPO_ROOT/roles/planner.md"; then return 1; fi
+  for file in templates/briefs/planner-feature.md templates/briefs/planner-interview.md; do
     assert_contains "$(cat "$REPO_ROOT/$file")" '`Blocked by: None` or `Blocked by: 01, 03`'
     assert_contains "$(cat "$REPO_ROOT/$file")" '`Waits for: <an outside condition>`'
     assert_contains "$(cat "$REPO_ROOT/$file")" 'optionally bold'

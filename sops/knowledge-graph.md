@@ -54,6 +54,7 @@ Required keys: `layer`, `kind`, and `verified` (except on `record`).
 Add a kind only when a real node fits none of these; say why in the project's graph hub.
 
 `verified` is the author's own calendar day, the day the node was read against the code.
+A builder moves it only after the delivery's claims check has read the node.
 Never backdate it to suit the time zone CI runs in; the checker allows for that (see "The checks").
 
 ### Rules for the content
@@ -93,7 +94,7 @@ docs/agents/issue-tracker.md   the tracker contract the skills read
 ### What `AGENTS.md` keeps
 
 Only what nearly every session would get wrong without, before it knows which area it is in:
-what the project is; the stack; the branch and release rules; irreversible-safety rules; how to run the suites; the graph's contract; one index line per sharp-edge area ("Before changing X, read [node]"); where plans live.
+what the project is; the stack; the branch and release rules; irreversible-safety rules; how to run the suites; the graph's contract; one index line per sharp-edge area that a path lookup does not find ("Before changing X, read [node]"); where plans live.
 Everything else is a node.
 Aim for under 200 lines.
 

@@ -32,7 +32,7 @@ A project's own design document decides how things look, and wins where it disag
   Why: a caller's mismatch becomes a type error.
 - Under a cap, draw at most N matches across the groups in order, then a line "N more, type to narrow" that is no option, kept in view (`position: sticky` with a matching `scroll-padding-bottom`) and named by the field's `aria-describedby`.
   Why: the keys never land on it, and a screen reader stays on the field under `aria-activedescendant`, so only the field can say it.
-- When the current choice is past the cap, name it in the field or its chip, leave no row active, and let Enter keep it.
+- When the current choice is past the cap, draw it first as the active row, for one choice as for several, and let Enter keep it.
   Why: otherwise Enter swaps the choice for the first row.
 - Leave out a group that the cap alone empties.
   Why: its "None match" would be false.

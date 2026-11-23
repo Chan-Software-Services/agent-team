@@ -184,9 +184,14 @@ red_logged() {
   jq -c '.failures | map({name, class, kind, link, step})' "$STUB_FIXTURES/team-ci-wait.out"
 }
 
+# ff_step: the step a holder's fix message on PR 9 ends with, bringing feat/T7-toil to the PR's head.
+ff_step() {
+  echo "; before you start, bring the branch to the PR's head with \`git fetch origin && git merge --ff-only origin/feat/T7-toil\`, and send T7 BLOCKED <git's reason> if it fails"
+}
+
 # ci_fix <who> <head>: the fix message --ci prints to the holder <who> for red_checks on <head>.
 ci_fix() {
-  echo "send to $1: T7 fix the failed checks test-shards (2), build and lint of ${2:0:8} in $TEAM_HOME/tasks/T7/ci-${2:0:8}.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+  echo "send to $1: T7 fix the failed checks test-shards (2), build and lint of ${2:0:8} in $TEAM_HOME/tasks/T7/ci-${2:0:8}.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
 }
 
 # infra <name> <kind> <run> <job> [<step>]: one infrastructure failure of PR 9's checks, as
@@ -1822,8 +1827,9 @@ launched T7-builder c0000001"
   run_bin -0 --separate-stderr team-next T7 --sent-back 1,2,3 -- "T7 DONE pass $url $back before=none guarded=none"
   assert_equal "$(logged_from $((count + 1)) | jq -c 'select(.event == "review") | {verdict, sent_back}')" '{"verdict":"findings","sent_back":[1,2,3]}'
   assert_equal "$(tail -n 1 <<<"$output")" \
-    "send to T7-builder (b0000001, 120k): T7 fix findings 1, 2 and 3 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
-  [[ $output != *merge* ]]
+    "send to T7-builder (b0000001, 120k): T7 fix findings 1, 2 and 3 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
+  # No merge line: the fix message's only merge is its ff-only step.
+  [[ ${output//git merge --ff-only/} != *merge* ]]
   # The holder's stow launches the round, as after findings.
   run_bin -0 --separate-stderr team-next T7 -- "T7 PAUSED stowed"
   assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-round-1.md"
@@ -1840,7 +1846,7 @@ launched T7-builder c0000001"
   touch -d 2026-11-01T10:00:00Z "$wt/.scratch/task/review.md" "$wt/.scratch/task/rereview-2.md"
   run_bin -0 --separate-stderr team-next T7 --sent-back 1 -- "T7 DONE pass $url ${counts/correctness:0/correctness:1} before=none guarded=none"
   assert_equal "$(tail -n 1 <<<"$output")" \
-    "send to T7-builder (b0000001, 120k): T7 fix findings 1 in .scratch/task/rereview-2.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+    "send to T7-builder (b0000001, 120k): T7 fix findings 1 in .scratch/task/rereview-2.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
   run_bin -0 --separate-stderr team-next T7 -- "T7 PAUSED stowed"
   assert_equal "$(record round-1 | jq -r .values.findings_file)" .scratch/task/rereview-2.md
 }
@@ -2059,7 +2065,7 @@ SH
   run_bin -0 --separate-stderr team-next T7 --from r0000003 --sent-back 1,2 -- "$findings"
   assert_contains "$output" "logged review verdict=findings head=$head_other"
   assert_equal "$(tail -n 1 <<<"$output")" \
-    "send to T7-builder (b0000002, 80k): T7 fix findings 1 and 2 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+    "send to T7-builder (b0000002, 80k): T7 fix findings 1 and 2 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
   # The look at the checks was other's PR's, at the head its review read, and the App posts nothing there.
   assert_equal "$(stub_calls team-ci-wait)" "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", "--look", $url, $h]')"
   assert_equal "$(stub_calls team-review-check)" ""
@@ -2464,6 +2470,19 @@ SH
   assert_equal "$(stub_calls gh)" ""
 }
 
+@test "findings with no PR yet, a gated project's, go to the holding builder with no step bringing the branch to a PR's head" {
+  sed -i 's/^delivery = "direct-pr"/delivery = "no-mistakes"/' "$TEAM_HOME/projects.toml"
+  jq -cn --arg h "$sha" '{template: "reviewer", project: "proj", values: {head: $h}}' >"$TEAM_HOME/tasks/T7/brief-review.json"
+  launched r0000002 brief-review '[]' reviewer
+  live b0000001 90000
+  echo "# review" >"$wt/.scratch/task/review.md"
+  run_bin -0 --separate-stderr team-next T7 --sent-back 1 -- \
+    "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "send to T7-builder (b0000001, 90k): T7 fix findings 1 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+  assert_equal "$(stub_calls gh)" ""
+}
+
 @test "a later phase after a merged PR: its review-ready gets the pre-gate re-review naming no PR, and its pass sends the builder on" {
   sed -i 's/^delivery = "direct-pr"/delivery = "no-mistakes"/' "$TEAM_HOME/projects.toml"
   reviewing "$sha"
@@ -2506,9 +2525,25 @@ SH
   assert_equal "$(logged_from $((count + 1)) | jq -c 'select(.event == "review") | {verdict, head, sent_back}')" \
     "$(jq -cn --arg h "$sha" '{verdict: "findings", head: $h, sent_back: [3, 5]}')"
   assert_equal "$(tail -n 1 <<<"$output")" \
-    "send to T7-builder (b0000001, 120k): T7 fix findings 3 and 5 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+    "send to T7-builder (b0000001, 120k): T7 fix findings 3 and 5 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
   assert_equal "$(outside_calls)" ""
   assert_equal "$(bg_calls)" ""
+}
+
+@test "a findings verdict on a PR GitHub cannot be read still gives the holder the step to the PR's head, on the task's branch" {
+  reviewing "$sha"
+  stub_script gh <<'SH'
+echo "HTTP 502: Bad Gateway" >&2
+exit 1
+SH
+  live b0000001 120000
+  run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+  local line
+  line=$(tail -n 1 <<<"$output")
+  # The look's note that the checks could not be read follows the step.
+  assert_equal "${line%%; the checks of "${sha:0:8}" could not be read (*}" \
+    "send to T7-builder (b0000001, 120k): T7 fix findings 3 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
+  assert_contains "$line" "$(ff_step); the checks of ${sha:0:8} could not be read (GitHub could not be read"
 }
 
 @test "a findings verdict whose holder is at 250k or more, or gone, prints the STOW to send" {
@@ -2543,7 +2578,7 @@ SH
   assert_equal "$(stub_calls team-ci-wait)" "$(jq -cn --arg url "$url" --arg h "$sha" '["--no-agent-review", "--json", "--look", $url, $h]')"
   assert_equal "$(tail -n 3 <<<"$output")" "report $report
 logged ci url=$url head=$sha outcome=failed look=true failed=$(look_own)
-send to T7-builder (b0000001, 120k): T7 fix findings 3 and 5 in .scratch/task/review.md, and the failed checks test-shards (2) and lint of ${sha:0:8} in $report on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+send to T7-builder (b0000001, 120k): T7 fix findings 3 and 5 in .scratch/task/review.md, and the failed checks test-shards (2) and lint of ${sha:0:8} in $report on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
   # The ci follows the review, and holds the PR's own failures alone.
   assert_equal "$(logged_from $((count + 1)) | jq -r .event | paste -sd ' ')" "review done ci"
   assert_equal "$(logged_from $((count + 1)) | jq -cS 'select(.event == "ci")')" \
@@ -2668,7 +2703,7 @@ churn_line() {
 
 # fix_line <findings> <file>: the fix message to the holder b0000001 at 120k.
 fix_line() {
-  echo "send to T7-builder (b0000001, 120k): T7 fix findings $1 in $2 on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+  echo "send to T7-builder (b0000001, 120k): T7 fix findings $1 in $2 on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
 }
 
 @test "a second review in a row sending back widening findings prints the churn line, carrying the holder's fix, STOW or recover line, logged once and launching nothing" {
@@ -2767,7 +2802,8 @@ fix_line() {
     "T7 DONE pass $url ${counts/note-change:0/note-change:1} before=none guarded=none widening=3"
   assert_equal "$(tail -n 1 <<<"$output")" \
     "$(churn_line 3 "$fix" 1 decide "$(fix_line 3 .scratch/task/rereview-2.md)")"
-  [[ $output != *merge* ]]
+  # No merge line: the fix message's only merge is its ff-only step.
+  [[ ${output//git merge --ff-only/} != *merge* ]]
   assert_equal "$(bg_calls)" ""
 }
 
