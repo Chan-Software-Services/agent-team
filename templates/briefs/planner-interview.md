@@ -52,7 +52,7 @@ Make a prototype when a question is about how something looks, or when Daniel as
    It uses what the worktree has installed and takes the worktree's path and the stack's URL as arguments, so it runs again from another slot.
    Something Daniel must use by hand is a builder's job in the app, so never force it into a script: send `{{task}} BLOCKED prototype <what> Daniel must use it by hand, so it needs a builder` to `coordinator`.
 2. Start the stack with `{{team_bin}}/team-stack up`, run with Bash `run_in_background` as a call of its own, since it may wait for room, and reach it with `eval "$({{team_bin}}/team-stack env)"`; never the primary stack.
-   When `up` exits 75, the team has no room: send `{{task}} PAUSED <its reason line>`, say in the thread that the tiles wait for room, wait with `team-thread wait`, and try `up` again when Daniel answers.
+   When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack's network is made: send `{{task}} PAUSED <its reason line>`, say in the thread that the tiles wait for room, wait with `team-thread wait`, and try `up` again when Daniel answers.
 3. Take the tiles into `{{task_dir}}/shots/`, numbered in the order you show them, with fixture values only: every name, address and other value on a tile comes from the stack's seed or the script.
 4. Stop the stack with `{{team_bin}}/team-stack stop` once the tiles are taken, since an interview may hold it for hours; it keeps its data, and the next `up` starts it again.
 5. Look at each tile, then post it with `{{team_bin}}/team-post {{task}} --thread interview --file <file> --attach <tile> --attach <tile>`, one `--attach` per tile, with each tile's number and caption in its text.

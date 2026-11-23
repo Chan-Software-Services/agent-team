@@ -343,7 +343,7 @@ The heartbeat (`team-timers run`, every 5 minutes on the lease holder) can run t
 Builders, planners and reviewers carry these rules in a short `## Docker stacks` section of their role:
 
 - Start the worktree's stack only with `~/agent-team/bin/team-stack up`, never `docker compose up`, the wrapper's `up` or `docker run`, and reach it with `eval "$(~/agent-team/bin/team-stack env)"`.
-- On `up`'s exit 75, send `T<n> PAUSED <its reason line>` and wait, rather than fighting for room.
+- On `up`'s exit 75 (no room, or a heavy run still holding the machine before a new stack's network is made), send `T<n> PAUSED <its reason line>` and wait, rather than fighting for room.
 - Seed only with `~/agent-team/bin/team-stack seed` (or let `up` seed a new stack), never the project's seed script, and run nothing after an `up` that may exit 75 in the same call.
 - `~/agent-team/bin/team-stack stop` a stack no longer needed, and `~/agent-team/bin/team-stack down` it when done.
 - Never prune, and never remove another task's or project's containers, volumes or networks; never test against Daniel's primary stack.
