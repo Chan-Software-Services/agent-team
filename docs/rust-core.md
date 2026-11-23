@@ -96,6 +96,7 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 9. The model and effort of every session category come from one easy-to-change config, now in bash and in the core (Daniel, 2026-11-23, H173; T513).
 10. Topic sessions, and the assistant's digest three times a day on a schedule given as an IANA zone (`Asia/Taipei` 06:00, 12:00 and 18:00) (Daniel, 2026-11-23, H175 to H177; T514).
 11. This doc and its port map, kept by hand, with no CI check (Daniel, 2026-11-23, message 1574436111630204939, H178).
+12. Toolkits and playbooks become domain objects, data in `team-model`: access becomes a grant apart from toolkits, which never carry authority; a playbook run is a task on a `playbook` path with its steps as checkpoints; a toolkit's OS-specific parts go through the platform seam; decided, not built, since its design task waits until the core is done (Daniel, 2026-11-23, message 1574440852338774148, H179).
 
 ## Open
 
