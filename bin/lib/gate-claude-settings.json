@@ -1,6 +1,13 @@
 {
   "attribution": { "commit": "", "sessionUrl": false },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "cat \"$HOME/agent-team/bin/lib/gate-rules.md\"", "timeout": 10 }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
