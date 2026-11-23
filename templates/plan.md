@@ -20,11 +20,7 @@ Path: {{path}}.
 
 <!-- How the coordinator and the reviewer know it is done: tests, checks, observable behaviour. -->
 
-## Rust core
-
-<!-- Only for an agent-team plan; delete otherwise. Where the change lands in the Rust core by the code's `docs/rust-core.md` (its crate, seam and config), and the lines of that doc it adds or changes. A step of the Rust port reads that doc first, and its briefs list it first to read. -->
-
-## Not in scope
+{{rust_core}}## Not in scope
 
 <!-- What a worker might expect to do here but must leave alone. -->
 
