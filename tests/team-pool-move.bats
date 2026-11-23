@@ -104,8 +104,9 @@ json.dump({"version": 4, "worktrees": worktrees}, open(f"{pool}/treehouse-state.
 PY
 }
 
-# pools_at <dir>: the pool moved, with its state, to the pools' root <dir>, which the stub
-# treehouse reads its pools from, and old_pool and new_pool named under it.
+# pools_at <dir>: the pool moved to the pools' folder <dir> (<root>/.treehouse), which the stub
+# treehouse reads its pools from, its key and state written again there, and old_pool and
+# new_pool named under it.
 pools_at() {
   mkdir -p "$(dirname "$1")"
   mv -T "$HOME/.treehouse" "$1"
