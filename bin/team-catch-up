@@ -15,9 +15,11 @@
 #   the shorter prefix), or the head an earlier team-catch-up made it from (reviewed_head in bin/lib/ledger.jq,
 #   when no review names the head itself);
 #   every required check (the base's rules, its protection's and its rulesets' required checks,
-#   base_rules in bin/lib/team.sh, gh pr checks --required and the project's required_checks) is
-#   present on the head and passed (a skipped one passes), and no check on the head is failing or
-#   pending; rules that cannot be read end it as GitHub unreadable.
+#   base_rules in bin/lib/team.sh, gh pr checks --required and the project's required_checks) on
+#   the head has passed (a skipped one passes), agent-review is on it, and no check on the head is
+#   failing or pending; rules that cannot be read end it as GitHub unreadable. Any other required
+#   check the head lacks is no reason: a check the base newly requires is made only on a commit
+#   pushed since, such as this merge, so the merge's own checks must bring it.
 # Then it fetches the PR's branch and the base into the project's primary checkout, as team-merge
 # does, and refuses a fetched tip that is not the head GitHub showed (the head moved: run it
 # again). A head an earlier team-catch-up made must add only clean merges of the base to the
@@ -27,7 +29,8 @@
 # the conflicted files and the holder's builder-merge-base step, exit 1. A clean one on a base
 # with a merge queue (the queue of its rules, base_rules in bin/lib/team.sh) makes nothing either,
 # exit 1: "<base> merges through its queue, which needs no catch-up: run team-merge T<n>", since
-# the queue tests the PR merged onto what is ahead of it. Else a clean one is made with
+# the queue tests the PR merged onto what is ahead of it; but a head that lacks a required check is
+# caught up there too, since team-merge refuses a head lacking one. Else a clean one is made with
 # git commit-tree in the primary checkout, under its git identity, with the head and origin's base
 # as parents and git's own message, "Merge remote-tracking branch 'origin/<base>' into
 # <branch>", touching no worktree, index or branch, and pushed to origin's branch, never forced
@@ -44,7 +47,9 @@
 # A status or check that cannot be set is said on stderr with the command to set it; the merge is
 # pushed and logged all the same, exit 1. A check posted whose token alone was not revoked
 # (team-review-check printed its id) is said as posted, with why, and is no failure.
-# Prints what it merged, the merge's full sha, and last the next step: arm team-next T<n> --ci,
+# Prints what it merged, then, when the head lacked required checks, "the head lacked the required
+# check(s) <names>, which the checks of the merge <short> must bring: team-merge refuses it while
+# one is missing", the merge's full sha, and last the next step: arm team-next T<n> --ci,
 # the checks wait on the merge, which then prints the merge ask at the reviewed head (or the
 # default word's merge, when it covers it).
 # The coordinator runs it; lease-fence blocks it on a machine that lost the lease, as its git push
@@ -130,13 +135,19 @@ while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done
         if same_head($reviewed; $head) then "" else " or \($reviewed[:7]), which team-catch-up made it from" end): review the head first"
     else empty end' -r --arg task "$task" --arg head "$head" --arg reviewed "$reviewed" --arg project "$project" <<<"$events")
 # The rules' required checks, its protection's and its rulesets', read as team-merge reads them.
+# A required check missing on the head is no reason but agent-review, which no merge's run brings:
+# a check the base newly requires is made only on a commit pushed since, such as this merge.
 while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done < <(jq -r --slurpfile rules "$scratch/rules" '
   ((.required + [$rules[0].required[].context]) | unique) as $required
   | (.checks.passed + .checks.failing + .checks.pending) as $present
-  | ($required[] | select(IN($present[]) | not) | "required check \(.) is missing on the head"),
+  | ($required[] | select(. == "agent-review" and (IN($present[]) | not)) | "required check \(.) is missing on the head"),
     ([$required[] | select(IN($present[]))] - .checks.passed | .[] | "required check \(.) has not passed on the head"),
     (.checks.failing | select(length > 0) | "checks failing on the head: \(join(", "))"),
     (.checks.pending | select(length > 0) | "checks pending on the head: \(join(", "))")' <<<"$facts")
+# The required checks the head lacks, which the merge's own checks must bring, as "a and b".
+lacked=$(jq -r --slurpfile rules "$scratch/rules" '
+  ((.required + [$rules[0].required[].context]) | unique) - (.checks.passed + .checks.failing + .checks.pending)
+  | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' <<<"$facts")
 if ((${#reasons[@]})); then
   {
     echo "team-catch-up: $task cannot catch up PR #$number, so nothing changed:"
@@ -169,7 +180,7 @@ if ((rc == 1)); then
   die "$url conflicts with $base on $(paste -sd, <<<"$tree" | sed 's/,/, /g'): the holder merges it (builder-merge-base), then a rereview"
 elif ((rc)); then
   die "$url cannot be merged with $base in $primary: $tree"
-elif jq -e '.queue != null' <<<"$facts" >/dev/null; then
+elif [[ -z $lacked ]] && jq -e '.queue != null' <<<"$facts" >/dev/null; then
   die "$base merges through its queue, which needs no catch-up: run team-merge $task"
 fi
 merge=$(git -C "$primary" commit-tree "$tree" -p "$head" -p "$onto" \
@@ -230,5 +241,8 @@ if [[ -n $unset_status ]]; then
   exit 1
 fi
 echo "team-catch-up: merged $base ${onto:0:7} cleanly onto ${head:0:7} as ${merge:0:7} and pushed it to $branch"
+if [[ -n $lacked ]]; then
+  echo "team-catch-up: the head lacked the required check$([[ $lacked != *" and "* ]] || echo s) $lacked, which the checks of the merge ${merge:0:7} must bring: team-merge refuses it while one is missing"
+fi
 echo "$merge"
 echo "next: arm team-next $task --ci with Bash run_in_background: it waits on the checks of the merge ${merge:0:7} and prints the merge ask at ${reviewed:0:7}, whose word holds through this merge"
