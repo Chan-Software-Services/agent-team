@@ -253,7 +253,7 @@ waits_ages() {
   local name seconds rc=0 step=log why
   git -C "$TEAM_HOME" log --no-renames -G'^waits: ' --format='@%at' --name-only -- tasks/queued/ >"$1/log" 2>"$1/err" || rc=$?
   if ((rc == 0)); then
-    step=diff
+    step="diff"
     git -C "$TEAM_HOME" diff --no-renames -G'^waits: ' --name-only HEAD -- tasks/queued/ >"$1/diff" 2>"$1/err" || rc=$?
   fi
   if ((rc)); then
