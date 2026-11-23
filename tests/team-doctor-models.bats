@@ -2,6 +2,7 @@
 # team-doctor: one PASS, WARN or FAIL line per thing this machine needs, on the machine
 # tests/helpers/doctor.bash builds: every tool a version stub, the OS a stubbed uname.
 # This file: the models line, which reads the team home's models.toml with team-models --check;
+# on the doctor's machine it is the shipped file, tests/fixtures/models.toml;
 # tests/team-models.bats covers the reader itself.
 
 load helpers/common
@@ -20,7 +21,7 @@ models() {
 }
 
 @test "the models line passes on a file that reads, counting its lines and naming the default" {
-  cp "$REPO_ROOT/tests/fixtures/models.toml" "$TEAM_HOME/models.toml"
+  # The doctor's machine has the shipped file.
   run_bin -0 team-doctor
   assert_equal "$output" "PASS models: models.toml reads: 1 line; default opus at high"
   models <<'TOML'
@@ -51,6 +52,7 @@ TOML
 }
 
 @test "the models line warns with no models.toml in the team home" {
+  rm "$TEAM_HOME/models.toml"
   run_bin -0 team-doctor
   assert_equal "$output" "WARN models: no models.toml in the team home, so every session runs on the user settings' model; fix: write it as sops/models.md says"
 }
