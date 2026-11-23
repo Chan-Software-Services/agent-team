@@ -52,6 +52,7 @@ A Cargo workspace at the repository's root, its crates under `crates/` (T370's s
 | `adapter-discord`, `adapter-web` (later) | One UI each, a client process of `team-api` | `team-api` only |
 
 - `team-core` and `team-model` never name an OS or a UI, and an adapter never depends on `team-core`.
+- So the Discord fields of today's events (`discord_thread`, `discord_message`, 21 kinds carry one, the four first-hand words among them) cannot stay as they are in `team-model`: how such a reference crosses the interface seam is open (below).
 - What stays outside Rust: the MCP servers and toolkits in JavaScript (`servers/`, `toolkits/`), the vendored tools, and the role prompts, templates and SOPs, which are text.
 
 ## The platform seam
@@ -85,26 +86,29 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 
 ## Decided since H1
 
-1. No macOS CI and no macOS test run until Daniel says; the core still keeps the platform seam, so it is meant to build for macOS (Daniel, 2026-11-15, message 1571491639564959846, T370's decision 1; it overrides H1's "both in CI from the first crate").
+1. No macOS test run on a Mac and no macOS CI until Daniel says, but for the one job of decision 14; the core still keeps the platform seam, so it is meant to build for macOS (Daniel, 2026-11-15, T370's decision 1; it overrides H1's "both in CI from the first crate").
 2. The core is a Cargo workspace inside this repository, so one PR replaces a bash script and its tests together (T370's decision 2).
 3. Rust is installed under the home directory with rustup, the toolchain and its rust-analyzer component pinned by `rust-toolchain.toml`, and cargo-nextest and sccache pinned in `bin/lib/tools.lock` with a `team-doctor` line and a `team-bootstrap` step (T370's decision 3).
 4. A crate is added only by a ticket that names it; `cargo-deny` gates licenses, advisories and sources (crates.io only); `Cargo.lock` is committed (T370's decision 4).
 5. The port runs one task at a time at queue priority 1 (T370's decision 5).
 6. The workspace sits at the repository's root, a virtual workspace with its crates under `crates/`, its first a skeleton `crates/team-core` that step 2 may rename (T370's spec).
 7. The Rust core comes first, then the team working on macOS by 2026-12-18, and the core keeps two clean seams: the platform (Linux, macOS, Windows later) and the interface (the CLI, Discord, a web app or whatever the UI becomes) (Daniel, 2026-11-23, H168).
-8. Daniel's interface requirements (any session, typed or dictated input; a dashboard of all active tasks; a secure shell; files and images both ways) are built after the core, and the interface seam carries them from the start (Daniel, 2026-11-23, message 1574435460586152077).
+8. Daniel's interface requirements (any session, typed or dictated input; a dashboard of all active tasks; a secure shell; files and images both ways) are built after the core, and the interface seam carries them from the start (Daniel, 2026-11-23, the interface requirements' research note).
 9. The model and effort of every session category come from one easy-to-change config, now in bash and in the core (Daniel, 2026-11-23, H173; T513).
-10. Topic sessions, and the assistant's digest three times a day on a schedule given as an IANA zone (`Asia/Taipei` 06:00, 12:00 and 18:00) (Daniel, 2026-11-23, H175 to H177; T514).
-11. This doc and its port map, kept by hand, with no CI check (Daniel, 2026-11-23, message 1574436111630204939, H178).
-12. Toolkits and playbooks become domain objects, data in `team-model`: access becomes a grant apart from toolkits, which never carry authority; a playbook run is a task on a `playbook` path with its steps as checkpoints; a toolkit's OS-specific parts go through the platform seam; decided, not built, since its design task waits until the core is done (Daniel, 2026-11-23, message 1574440852338774148, H179).
-13. A link inbox: Daniel shares links into a `#inbox` channel, each starting a full research task; fetchers by kind, sandboxed, with no login anywhere; it runs on the team's host and moves with it; decided, not built, since it waits until the core is done (Daniel, 2026-11-23, message 1574443489746227393, H180).
+10. Topic sessions, and the assistant's digest three times a day on a schedule given as an IANA zone and three local times (Daniel, 2026-11-23, H175 to H177; T514).
+11. This doc and its port map, kept by hand, with no CI check (Daniel, 2026-11-23, H178).
+12. Toolkits and playbooks become domain objects, data in `team-model`: access becomes a grant apart from toolkits, which never carry authority; a playbook run is a task on a `playbook` path with its steps as checkpoints; a toolkit's OS-specific parts go through the platform seam; decided, not built, since its design task waits until the core is done (Daniel, 2026-11-23, H179).
+13. A link inbox: Daniel shares links into a `#inbox` channel, each starting a full research task; fetchers by kind, sandboxed, with no login anywhere; it runs on the team's host and moves with it; decided, not built, since it waits until the core is done (Daniel, 2026-11-23, H180).
   It lands as an input of the interface seam, its fetchers behind the platform seam where the tools differ (the assistant's sketch: faster-whisper on Linux, whisper.cpp on the Mac).
+14. One macOS job in CI for the Rust workspace, on GitHub's runners, so long as nothing requires it to merge: neither a required check nor a job a required check depends on; its findings are fixed without blocking a merge, and if it cannot be kept so, there is none (Daniel, 2026-11-23, H194).
 
 ## Open
 
 - Where `team-guard` lives: its own small binary, for the start time a PreToolUse hook needs, or a subcommand of the `team` binary.
 - Where the `Vcs` trait's implementation lives: in `team-platform` beside the trait, or a crate of its own.
 - How macOS workers are confined (H1's open question 8).
+- How an event's Discord reference (a thread, Daniel's message) stays behind the interface seam: an adapter-opaque reference, its adapter's kind and its id, inside the event or the `Attestation`, is one shape.
+- Where a guard of one adapter's tools lives, as `bin/hooks/assistant-discord-guard` is of Discord's: in `team-guard` behind the same kind of reference, or with its adapter.
 - Which of the 16 interface proposals Daniel keeps.
 
 ## Planned, not built
@@ -145,7 +149,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/team-doctor` | `team-cli` | `platform`, `vcs` | |
 | `bin/team-drill` | `team-core` | `none` | |
 | `bin/team-handoff` | `team-core` | `platform`, `vcs` | The lease (step 7) |
-| `bin/team-heavy` | `team-platform` | `platform` | The heavy-run lock and its scope |
+| `bin/team-heavy` | `team-platform` | `platform` | The heavy-run lock and its scope: the trait here, each OS's body (systemd's or launchd's scope) in its own crate |
 | `bin/team-inbox` | `team-core` | `interface` | The one inbox (step 4); `list_waiting` |
 | `bin/team-janitor` | `team-core` | `platform` | Docker and `/tmp` |
 | `bin/team-land` | `team-core` | `vcs` | The merge queue |
@@ -190,7 +194,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | Script | Crate | Seam | Note |
 | - | - | - | - |
 | `bin/hooks/assistant-digest` | `team-cli` | `none` | A read model view |
-| `bin/hooks/assistant-discord-guard` | `team-guard` | `interface` | |
+| `bin/hooks/assistant-discord-guard` | `team-guard` | `interface` | Discord-specific: its place is open |
 | `bin/hooks/assistant-stop` | `team-cli` | `none` | |
 | `bin/hooks/axi-banner` | `team-cli` | `none` | |
 | `bin/hooks/command-guard` | `team-guard` | `platform` | The rule table confinement does not hold (step 8) |
@@ -213,7 +217,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | - | - | - | - |
 | `bin/lib/capacity.jq` | `team-core` | `platform` | The admission rule and its readings |
 | `bin/lib/channel-access.sh` | `adapter-discord` | `interface` | |
-| `bin/lib/chrome.sh` | `team-platform` | `platform` | |
+| `bin/lib/chrome.sh` | `team-platform` | `platform` | The trait here, each OS's path in its own crate |
 | `bin/lib/code` | `team-guard` | `none` | Config: the code paths |
 | `bin/lib/command_rules.py` | `team-guard` | `platform` | |
 | `bin/lib/command_text.py` | `team-guard` | `none` | |
@@ -231,8 +235,8 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/fence_rules.py` | `team-guard` | `none` | |
 | `bin/lib/gate-claude-settings.json` | stays | `none` | Config: the gate's Claude settings |
 | `bin/lib/gate-config.awk` | `team-cli` | `none` | |
-| `bin/lib/github-api.sh` | `team-platform` | `vcs` | |
-| `bin/lib/github-login.sh` | `team-platform` | `vcs` | |
+| `bin/lib/github-api.sh` | `team-platform` or a `Vcs` crate (open) | `vcs` | |
+| `bin/lib/github-login.sh` | `team-platform` or a `Vcs` crate (open) | `vcs` | |
 | `bin/lib/guarded` | `team-model` | `none` | Config: the short list |
 | `bin/lib/health.jq` | `team-model` | `none` | |
 | `bin/lib/kill_rules.py` | `team-guard` | `platform` | |
@@ -251,11 +255,11 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/probe.json` | `team-cli` | `platform` | Config: the refusal probe |
 | `bin/lib/queue.jq` | `team-model` | `none` | |
 | `bin/lib/quota.sh` | `team-core` | `none` | |
-| `bin/lib/reading.sh` | `team-platform` | `platform` | |
+| `bin/lib/reading.sh` | `team-platform` | `platform` | The trait here, each OS's body (`/proc` on Linux) in its own crate |
 | `bin/lib/records` | `team-guard` | `none` | Config: the records paths |
 | `bin/lib/records-rewrite/` | `team-cli` | `vcs` | With `team-records-rewrite` |
 | `bin/lib/repo-moves.json` | `team-model` | `none` | Config |
-| `bin/lib/review-app` | `team-platform` | `vcs` | Config: the reviewer App |
+| `bin/lib/review-app` | `team-platform` or a `Vcs` crate (open) | `vcs` | Config: the reviewer App |
 | `bin/lib/review_facts.py` | `team-core` | `vcs` | |
 | `bin/lib/session-activity` | `team-core` | `platform` | |
 | `bin/lib/session_records.py` | `team-guard` | `platform` | |
@@ -272,7 +276,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/tools.lock` | `team-cli` | `platform` | Config: the pinned tools |
 | `bin/lib/uptime.jq` | `team-model` | `none` | |
 | `bin/lib/vendor/` | stays | `none` | Vendored: git filter-repo |
-| `bin/lib/worker-login` | `team-platform` | `vcs` | Config: the worker login, absent while it is off |
+| `bin/lib/worker-login` | `team-platform` or a `Vcs` crate (open) | `vcs` | Config: the worker login, absent while it is off |
 | `bin/lib/workers.jq` | `team-model` | `none` | |
 | `bin/lib/working-set.awk` | `team-platform-linux` | `platform` | |
 
@@ -335,12 +339,13 @@ Every kind is a variant of `team-model`'s event enum; the column says which comm
 | `worktree-moved` | `team-open` | `team-core` | `vcs` |
 | `worktree-returned` | `team-close` | `team-core` | `vcs` |
 
-### Config files
+### Config files and records
 
-The config in `bin/lib/` is in the library's table above; the rest:
+The config in `bin/lib/` is in the library's table above; the rest, with the team home's records the scripts read:
 
 | File | Where | Crate | Seam | Note |
 | - | - | - | - | - |
+| `ledger.jsonl` | the team home | `team-model` (events), `team-core` (the append) | `none` | The log the read model folds |
 | `projects.toml` | the team home | `team-model` | `none` | The registry, read through `team-project` today |
 | `level.jsonl` | the team home | `team-core` | `platform` | The resource level |
 | `drills.jsonl` | the team home | `team-model` | `none` | |
@@ -349,12 +354,22 @@ The config in `bin/lib/` is in the library's table above; the rest:
 | `tasks/queued/` | the team home | `team-core` | `none` | Proposals (step 4) |
 | `machine/secrets.json` | the team home | `team-platform` | `platform` | `SecretStore`'s manifest |
 | `machine/claude/` | the team home | `team-cli` | `platform` | `team-config` |
+| `projects/<project>/review-rules.md` | the team home | `team-core` | `none` | A review brief's standing lines |
+| `usage/` | the team home | `team-cli` | `platform` | `team-tokens` and `team-quota` |
+| `assistant/handoffs.jsonl`, `assistant/topics.jsonl` | the team home | `team-core` | `interface` | The assistant's hand-offs and closed topics |
+| `manual-steps.md` | the team home | stays | `none` | Text the assistant keeps |
+| `memory/` | the team home | stays | `none` | Claude Code's auto memory |
+| `~/.claude/channels/discord/access.json` | the machine | `adapter-discord` | `interface` | The Discord plugin's access |
+| `~/.claude/channels/discord/.env` | the machine | `adapter-discord` | `interface` | The bot token, a secret |
+| `~/.claude/channels/discord-assistant/` | the machine | `adapter-discord` | `interface` | The assistant's plugin state |
+| `~/.claude.json` | the machine | `team-cli` | `platform` | Claude Code's user state |
+| `~/.claude/settings.json` | the machine | `team-cli` | `platform` | Claude Code's user settings |
 | `~/.config/agent-team/home` | the machine | `team-platform` | `platform` | Paths |
 | `~/.config/agent-team/machine` | the machine | `team-platform` | `platform` | The machine's name |
 | `~/.config/agent-team/capacity.json` | the machine | `team-core` | `platform` | |
 | `~/.config/agent-team/stack.json` | the machine | `team-core` | `platform` | |
-| `~/.config/agent-team/review-app.pem` | the machine | `team-platform` | `vcs` | A secret |
-| `~/.config/agent-team/gh-worker/` | the machine | `team-platform` | `vcs` | The worker login |
+| `~/.config/agent-team/review-app.pem` | the machine | `team-platform` or a `Vcs` crate (open) | `vcs` | A secret |
+| `~/.config/agent-team/gh-worker/` | the machine | `team-platform` or a `Vcs` crate (open) | `vcs` | The worker login |
 | `~/.config/agent-team/confine/` | the machine | `team-platform-linux` | `platform` | Each confined session's roots |
 | `~/.local/state/agent-team/` | the machine | `team-platform` (paths), `teamd` | `platform` | The machine's state: the lease, health, notices, the inbox, quota and uptime readings, locks and logs |
 | `settings/*.json` | the code | stays | `platform` | Workers' Claude Code settings, with `team-guard`'s hooks |
