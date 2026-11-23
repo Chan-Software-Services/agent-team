@@ -231,8 +231,9 @@
 # the holder under 250k (its name, the findings sent back and the findings file the message names,
 # for a pass the newest of review.md and rereview*.md in the holder's task directory, as
 # team-brief derives a round's, and that each is fixed as narrowly as it asks, a fix reaching
-# shapes it does not name a T<n> QUESTION first, and on a PR that it first brings the branch to
-# the PR's head with git merge --ff-only, a T<n> BLOCKED when that fails), else the T<n> STOW to
+# shapes it does not name a T<n> QUESTION first, and on a PR, whether or not GitHub can be read,
+# that it first brings the branch to the PR's head with git merge --ff-only, a T<n> BLOCKED when
+# that fails), else the T<n> STOW to
 # send it (after recovering it when gone), or no hand-off when nothing was sent back.
 # The findings round's look: when findings go back on a PR, before that line, one look at the
 # reviewed head, team-ci-wait --no-agent-review --json --look <url> <head> (the review's own
@@ -520,9 +521,10 @@ read_state() {
   # whether it holds it (live and under 250k: holds, else full or gone) and its context as
   # "<context>k"; whether GitHub could not be read for the PR, its url, error and head; whether
   # that head is the reviewed one; the fix round's findings (sent), the reviewed head's first 8
-  # characters, and the PR's facts for a merge base.
+  # characters, and the PR's facts for a merge base; the PR's branch for a fix round's step, GitHub's
+  # or, when GitHub cannot be read, the task's own branch in the PR's project.
   pr='' holder='' session='' holds='' context='' pr_error='' pr_url='' pr_reason='' live_head='' reviewed=''
-  same='' sent='' short='' behind='' base='' pr_project='' branch='' before='' queue=''
+  same='' sent='' short='' behind='' base='' pr_project='' branch='' pr_branch='' before='' queue=''
   json_vars --ledger pr='.pr | if (.state? // "") == "merged" then null else . end | tojson' holder='[.workers[] | select(.role == "builder")] | last | . != null' \
     session='[.workers[] | select(.role == "builder")] | last | .session | tostring' \
     holds='[.workers[] | select(.role == "builder")] | last
@@ -535,6 +537,9 @@ read_state() {
     sent='$review.sent_back // [] | tojson' short='$review.head[:8] | tostring' \
     behind='.pr | objects | .behind_by // 0' base='.pr | objects | .base | tostring' \
     pr_project='.pr | objects | .project // empty' branch='.pr | objects | .branch // empty' \
+    pr_branch='(.pr | objects) as $pr | $pr.branch
+      // ([.worktrees[] | select(.project == $pr.project and .ticket == null and (.returned | not))] | last | .branch)
+      // empty' \
     queue='.pr | objects | .queue != null' \
     before='$review.before // [] | map(tostring)
       | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' \
@@ -546,12 +551,13 @@ read_state() {
 
 # round_line <what>: a fix round's hand-off, from read_state's variables, for findings sent back
 # or for the failed checks of a pass: the message to fix <what> for the holder under 250k, which
-# on a PR first brings the branch to the PR's head, as a builder-round brief's step 1 does, since
-# team-catch-up may have moved it; else the STOW to send it, after recovering it when gone.
+# on a PR, GitHub read or not, first brings the branch to the PR's head, as a builder-round brief's
+# step 1 does, since team-catch-up may have moved it; else the STOW to send it, after recovering it
+# when gone.
 round_line() {
   local stow="$task STOW; its PAUSED stowed goes to team-next, which launches the round" ff=''
-  [[ -z $branch ]] ||
-    ff="; before you start, bring the branch to the PR's head with \`git fetch origin && git merge --ff-only origin/$branch\`, and send $task BLOCKED <git's reason> if it fails"
+  [[ $pr == null || -z $pr ]] ||
+    ff="; before you start, bring the branch to the PR's head with \`git fetch origin && git merge --ff-only origin/${pr_branch:-<its branch>}\`, and send $task BLOCKED <git's reason> if it fails"
   case $holds in
     holds) echo "send to $who: $task fix $1 on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a $task QUESTION first), then deliver again as your brief says$ff" ;;
     full) echo "send to $who: $stow" ;;

@@ -2530,6 +2530,22 @@ SH
   assert_equal "$(bg_calls)" ""
 }
 
+@test "a findings verdict on a PR GitHub cannot be read still gives the holder the step to the PR's head, on the task's branch" {
+  reviewing "$sha"
+  stub_script gh <<'SH'
+echo "HTTP 502: Bad Gateway" >&2
+exit 1
+SH
+  live b0000001 120000
+  run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+  local line
+  line=$(tail -n 1 <<<"$output")
+  # The look's note that the checks could not be read follows the step.
+  assert_equal "${line%%; the checks of "${sha:0:8}" could not be read (*}" \
+    "send to T7-builder (b0000001, 120k): T7 fix findings 3 in .scratch/task/review.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says$(ff_step)"
+  assert_contains "$line" "$(ff_step); the checks of ${sha:0:8} could not be read (GitHub could not be read"
+}
+
 @test "a findings verdict whose holder is at 250k or more, or gone, prints the STOW to send" {
   reviewing "$sha"
   pr_on_github "$sha"
