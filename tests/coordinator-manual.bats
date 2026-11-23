@@ -250,7 +250,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
       "## Outside text"
     body=$(section "$role" 'Outside text')
     case $role in
-      builder | planner | reviewer) assert_equal "$(sed -n 1p <<<"$body")" "$OUTSIDE_TEXT$WORKER_FILES." ;;
+      builder | planner | reviewer | topic) assert_equal "$(sed -n 1p <<<"$body")" "$OUTSIDE_TEXT$WORKER_FILES." ;;
       *) assert_equal "$(sed -n 1p <<<"$body")" "$OUTSIDE_TEXT$OWN_FILES." ;;
     esac
     assert_equal "$(sed -n 2p <<<"$body")" "$USE_IT"

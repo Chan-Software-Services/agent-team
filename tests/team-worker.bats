@@ -3628,3 +3628,96 @@ JSON
   [[ $stderr != *11111111* && $stderr != *33333333* ]]
   assert_equal "$(launches | tail -n 1 | jq -c '[.ticket, .branch]')" '["03","feat/T7-one--03"]'
 }
+
+# open_topic <task>: a topic task opened in proj's $wt1 on Daniel's word, with its interview
+# thread and no thread under #coordinator, as team-topic open leaves one; with --no-thread, before
+# team-thread --interview has run.
+open_topic() {
+  ledger_line --arg t "$1" --arg wt "$wt1" '{ts: (now | todate), task: $t, event: "opened", project: "proj", path: "topic",
+    type: "research", title: "A topic", branch: "research/\($t)-a-topic", base: "main", base_sha: "0123456", worktree: $wt,
+    discord_message: "1574454112324419625", discord_channel: "1570000000000000100"}'
+  [[ ${2:-} == --no-thread ]] ||
+    ledger_line --arg t "$1" '{ts: (now | todate), task: $t, event: "interview-thread", discord_thread: "1564"}'
+}
+
+@test "a topic task takes only its topic session, and the topic role only a topic task, refused before anything starts" {
+  open_topic T7
+  open_task T8
+  local role
+  for role in planner builder reviewer; do
+    refused_launch "T7 is a topic, which takes only its topic session" T7 "$role" "$wt1" -- go
+  done
+  ops_stub
+  refused_launch "T7 is a topic, which takes only its topic session" \
+    T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  refused_launch "the topic role is only a topic task's: T8 is a feature task" T8 topic "$wt2" -- go
+  assert_equal "$(bg_calls)" ""
+  [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
+}
+
+@test "a topic launches on its interview thread with no thread under #coordinator, and one with none is refused" {
+  open_topic T7 --no-thread
+  refused_launch "T7 is a topic with no thread; team-topic open opens it" T7 topic "$wt1" -- go
+  ledger_line '{ts: (now | todate), task: "T7", event: "interview-thread", discord_thread: "1564"}'
+  run_bin -0 team-worker T7 topic "$wt1" -- go
+  assert_equal "$output" "4f2a9c1e"
+  assert_equal "$(launches | jq -c '[.role, .session, .project, .branch]')" '["topic","4f2a9c1e","proj","research/T7-a-topic"]'
+  assert_equal "$(bg_calls | jq -r 'index("--name") as $i | .[$i + 1]')" "T7-topic"
+  run_bin -0 team-log --check
+}
+
+@test "a topic's generated settings hold the planner's interview allows, the history read, the edit hook and its own denials" {
+  open_topic T7
+  run_bin -0 team-worker T7 topic "$wt1" -- go
+  local settings=$TEAM_HOME/tasks/T7/settings.topic.proj.json rule code=$REPO_ROOT
+  assert_equal "$(jq -r .env.AGENT_TEAM_ROLE "$settings")" topic
+  assert_equal "$(jq -r .env.AGENT_TEAM_TASK "$settings")" T7
+  assert_equal "$(jq -r '.permissions.allow[] | select(test("team-(post|thread)"))' "$settings")" \
+    "Bash($code/bin/team-post T7 --thread interview --file *)
+Bash($code/bin/team-post T7 --thread interview --retract *)
+Bash($code/bin/team-thread wait T7)
+Bash($code/bin/team-thread wait T7 --after *)
+Bash($code/bin/team-thread history T7)"
+  # Nothing of the planner's tickets or walk.
+  assert_equal "$(jq -c '.permissions.allow | map(select(test("team-tickets|team-ui")))' "$settings")" '[]'
+  # The planner's denials of #coordinator and the task's thread, the worker settings' first.
+  for rule in 'Bash(team-post --coordinator*)' 'Bash(*/bin/team-post * --thread task*)' 'Bash(gh pr merge*)'; do
+    jq -e --arg r "$rule" '.permissions.deny | index($r)' "$settings" >/dev/null || { echo "no deny rule $rule" >&2; return 1; }
+  done
+  # The writes a read-only session never makes, bare and by a path.
+  for rule in 'Bash(git push*)' 'Bash(*/git push*)' 'Bash(git commit*)' 'Bash(git merge*)' 'Bash(git rebase*)' \
+    'Bash(git reset*)' 'Bash(git checkout -b*)' 'Bash(git switch -c*)' 'Bash(git branch *)' 'Bash(*/git branch *)' \
+    'Bash(team-stack*)' 'Bash(*/team-stack*)' 'Bash(docker *)' 'Bash(*/docker *)' 'Bash(npm install*)' 'Bash(npm i *)' \
+    'Bash(npm ci*)' 'Bash(pnpm install*)' 'Bash(pnpm add*)' 'Bash(yarn add*)' 'Bash(pip install*)' 'Bash(uv pip install*)' \
+    'Bash(cargo install*)' 'Bash(brew install*)' 'Bash(systemctl*)' 'Bash(*/systemctl*)' \
+    'Bash(gh pr create*)' 'Bash(gh-axi pr create*)' 'Bash(gh issue comment*)' 'Bash(gh api * -X*)' \
+    'Bash(gh api * --method*)' 'Bash(gh api * -f*)' 'Bash(gh api * --input*)' 'Bash(gh workflow run*)' 'Bash(gh release create*)'; do
+    jq -e --arg r "$rule" '.permissions.deny | index($r)' "$settings" >/dev/null || { echo "no deny rule $rule" >&2; return 1; }
+  done
+  # The reads it keeps are denied by no rule, and a write by a path or behind a wrapper is.
+  for rule in 'git log --oneline -3' 'git diff origin/dev' 'git status' 'gh pr view 12' 'gh pr list' 'gh pr diff 12' \
+    'gh issue view 3' 'gh issue list' 'gh run view 9' 'gh run list' 'gh repo view' 'gh search code foo' \
+    'gh api repos/example-org/example-repo/pulls' 'npm info effect' "$code/bin/team-thread history T7"; do
+    ! denied_in "$settings" "$rule" || { echo "denied: $rule" >&2; return 1; }
+  done
+  for rule in 'git branch' 'git branch -m x' '/usr/bin/git push origin x' 'cd x && git commit -m y' 'timeout 5 npm install' \
+    "$code/bin/team-stack up" 'docker compose up' 'gh pr comment 3 --body x' 'gh api -X POST repos/o/r/issues' \
+    'gh api repos/o/r/issues -f title=x' 'gh-axi issue create --title x'; do
+    denied_in "$settings" "$rule" || { echo "not denied: $rule" >&2; return 1; }
+  done
+  assert_equal "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write|MultiEdit|NotebookEdit|Bash") | .hooks[] | "\(.command) \(.args) \(.onFailure) \(.timeout)"' "$settings")" \
+    "$code/bin/hooks/scratch-only-edits [] block 30"
+  # The planner's skill overrides, on the worker settings' own.
+  assert_equal "$(jq -c .skillOverrides "$settings")" \
+    "$(jq -sc '.[0].skillOverrides * .[1].skillOverrides' "$REPO_ROOT/settings/worker.json" "$REPO_ROOT/settings/planner.json")"
+  local texts
+  mapfile -t texts < <(role_texts topic)
+  keeps_named "$settings" "${texts[@]}"
+}
+
+@test "T0, the load check, takes the topic role with no thread" {
+  run_bin -0 team-worker T0 topic "$wt1" -- go
+  assert_equal "$output" "4f2a9c1e"
+  assert_equal "$(jq -r .env.AGENT_TEAM_ROLE "$TEAM_HOME/tasks/T0/settings.topic.proj.json")" topic
+  assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" ""
+}

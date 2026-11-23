@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse hook for planners and reviewers: they write files only inside the worktree's .scratch/
-# directory, and a planner also inside each of its task's other worktrees' task directory (below).
+# PreToolUse hook for planners, topic sessions and reviewers: they write files only inside the
+# worktree's .scratch/ directory, and a planner or a topic session also inside each of its task's
+# other worktrees' task directory (below).
 # Exit 2 blocks the tool call and shows stderr to the agent; exit 0 passes it.
 #
 # Usage: scratch-only-edits [<file>]   (the hook's input on stdin)
@@ -8,9 +9,9 @@
 #         .scratch/answer.md): plain names joined by /, none of them . or .., the first not
 #         starting with a -
 #
-# A planner's other task directories: when the session's settings' env names it a planner
-# (AGENT_TEAM_ROLE) of a task (AGENT_TEAM_TASK), set at launch and changed by no tool call of the
-# session, and it is given no <file>, a target outside its own set may also lie under the
+# A planner's other task directories: when the session's settings' env names it a planner or a
+# topic session (AGENT_TEAM_ROLE) of a task (AGENT_TEAM_TASK), set at launch and changed by no tool
+# call of the session, and it is given no <file>, a target outside its own set may also lie under the
 # .scratch/task of each other of its task's open worktrees as the ledger names them at the call
 # (opened, worktree-added or moved, and not returned; never a ticket worktree's), so each
 # repository's tickets, scope.txt and spec land where team-tickets reads them when the project's
@@ -298,8 +299,9 @@ under() {
 
 # task_dirs: fill task_dir with the .scratch/task of each other worktree of a planner's task, once,
 # and where with the directories the session may write, joined by "or", for the refusal. Only for
-# a planner (AGENT_TEAM_ROLE) of a task (AGENT_TEAM_TASK), both from its settings' env, which no
-# tool call of the session changes, with no one file given: its task's open worktrees, as the
+# a planner or a topic session (AGENT_TEAM_ROLE) of a task (AGENT_TEAM_TASK), both from its
+# settings' env, which no tool call of the session changes, with no one file given: its task's open
+# worktrees, as the
 # ledger names them now (open_worktrees in bin/lib/ledger.jq), but ticket worktrees, must hold the
 # session's root, and each other one's .scratch/task counts by its real path only when no link
 # lies at .scratch or .scratch/task. Read only when a target lies outside the session's own set.
@@ -307,7 +309,7 @@ task_dir=() where=$scratch dirs_read=''
 task_dirs() {
   [[ -z $dirs_read ]] || return 0
   dirs_read=1
-  [[ ${AGENT_TEAM_ROLE:-} == planner && ${AGENT_TEAM_TASK:-} =~ ^T[0-9]+$ && -z $one ]] || return 0
+  [[ ${AGENT_TEAM_ROLE:-} == @(planner|topic) && ${AGENT_TEAM_TASK:-} =~ ^T[0-9]+$ && -z $one ]] || return 0
   [[ -n $TEAM_HOME && -f $TEAM_HOME/ledger.jsonl ]] || return 0
   local list own wt dir mine=''
   local -a peer_wts=()

@@ -222,6 +222,23 @@ run_of() {
 6666"
 }
 
+@test "a topic session posts to its own task's interview thread alone, as a planner does" {
+  interview_task
+  AGENT_TEAM_ROLE=topic AGENT_TEAM_TASK=T7 run_bin -0 team-post T7 --thread interview --file "$IMAGES/q.md"
+  assert_equal "$(channels)" "5555"
+  AGENT_TEAM_ROLE=topic AGENT_TEAM_TASK=T7 run_bin -1 team-post T17 --thread interview --file "$IMAGES/q.md"
+  assert_equal "$output" "team-post: a topic session of T7 posts to Discord for T17: a topic talks with Daniel only in its own task's interview thread"
+  local args
+  for args in "T7 --file q.md" "T7 --thread task --file q.md" "--coordinator --file q.md"; do
+    eval "AGENT_TEAM_ROLE=topic AGENT_TEAM_TASK=T7 run_bin -1 team-post ${args/q.md/$IMAGES/q.md}"
+    assert_equal "$output" "team-post: a topic session posts to Discord: that is the coordinator's; send it your message"
+  done
+  # Its file is its own task directory's, as every worker's.
+  AGENT_TEAM_ROLE=topic AGENT_TEAM_TASK=T7 run_bin -1 team-post T7 --thread interview --file "$BATS_TEST_TMPDIR/q.md"
+  assert_equal "$output" "team-post: cannot post $BATS_TEST_TMPDIR/q.md: a worker session posts only a file in T7's task directory"
+  assert_equal "$(channels)" "5555"
+}
+
 @test "a malformed command line is a usage error, and nothing is posted" {
   local args
   for args in "" "T7" "--file q.md" "7 --file q.md" "T0 --file q.md" "T7 --coordinator --file q.md" \

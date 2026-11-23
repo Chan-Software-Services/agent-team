@@ -6,9 +6,9 @@
 # refuses on a machine that is fenced or that lost the lease (lease_refusal in bin/lib/team.sh, as
 # the lease-fence hook does), and posts nothing then; while the team holds offline it still
 # posts, since Discord is up and the plugin's posts go on too. In a worker session it posts only a
-# planner's question, with its images, to its own task's interview thread, or retracts one of
-# those images (worker_refusal in bin/lib/team.sh); the coordinator posts the rest, the task's
-# thread's images included.
+# planner's question or a topic session's message, with its images, to its own task's interview
+# thread, or retracts one of those images (worker_refusal in bin/lib/team.sh); the coordinator
+# posts the rest, the task's thread's images included.
 #
 # Usage: team-post T<n> [--thread task|interview] --file <path> [--attach <image>]...
 #        team-post T<n> --thread interview --retract <message id>

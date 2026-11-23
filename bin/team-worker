@@ -5,7 +5,7 @@
 #
 # Usage: team-worker <task> <role> <worktree> [--toolkit <name>]... [--model <alias>] [--request <link>] [--past-ask <id>]... -- <first prompt>
 #   task       T<n>, e.g. T1
-#   role       planner | builder | reviewer | ops
+#   role       planner | builder | reviewer | ops | topic (a topic task's one role, and only its)
 #   worktree   a linked git worktree of the task's repo (never a primary checkout), one of the
 #              task's open worktrees (opened or added, not returned)
 #   --model    not for ops: the model alias or name to launch on instead of the registry's, such
@@ -38,6 +38,17 @@
 # <role> yet"). It also refuses a task with no Discord thread, a worktree not one of the task's open
 # worktrees, and a launch on a machine that does not hold the lease (`team-lease check`, confirmed
 # against origin) or cannot reach GitHub.
+# A topic task (its opened event's path topic, which team-topic open opens on Daniel's word) takes
+# only the role topic, its read-only conversation with Daniel, and the role topic only a topic
+# task: every other role on a topic task is refused, "T<n> is a topic, which takes only its topic
+# session", and topic on any other, "the topic role is only a topic task's: T<n> is a <path> task",
+# before the thread check and launch_refusal's refusals above, with nothing started or logged; T0
+# takes topic as it takes every role. A topic's thread is its latest interview-thread, since it has
+# none under #coordinator: one with none is refused, "T<n> is a topic with no thread; team-topic
+# open opens it". The session is T<n>-topic, launched with
+# settings/topic.json: the planner's interview commands for its own task, team-thread history, the
+# scratch-only-edits hook and the denials of a session that changes no repository and nothing on
+# the machine.
 # Prints the background session id and logs the launch to ledger.jsonl, with the worktree's
 # project and branch, the machine's team name
 # (~/.config/agent-team/machine), and for ops the request's link and message id. T0, the load check, needs no thread and
@@ -422,13 +433,25 @@ if [[ $task != T0 ]]; then
   # Daniel's hold, an open ask --past-ask does not name, a feature task's build before its plan),
   # whether it has a thread, and its open worktrees, one a line as
   # "<worktree>\x1f<worktree> (<project>, <branch>)\x1f<project>\x1f<its compact JSON>".
-  refusal='' thread='' worktrees=''
+  refusal='' thread='' worktrees='' task_path=''
   json_vars --ledger refusal='[launch_refusal($task; $role; $ARGS.positional; true)] | join("; ")' \
-    thread='any(.[]; .event == "thread")' \
+    task_path='[.[] | select(.event == "opened") | .path | strings] | last // ""' \
+    thread='([.[] | select(.event == "opened") | .path] | last) as $path
+      | any(.[]; .event == (if $path == "topic" then "interview-thread" else "thread" end))' \
     worktrees='[open_worktrees(.[]; $home) | [.worktree, "\(.worktree) (\(.project), \(.branch))", (.project // ""), tojson]
       | map(tostring) | join("\u001f")] | join("\n")' \
     -- --arg task "$task" --arg role "$role" --args -- ${past[@]+"${past[@]}"} <<<"$events"
-  # Every task has its Discord thread before any worker starts (bin/team-thread).
+  # A topic task takes only its topic session, and the topic role only a topic task, so no
+  # builder, reviewer or ops comes of a topic, and no topic session of any other task.
+  [[ $task_path != topic || $role == topic ]] || die "$task is a topic, which takes only its topic session"
+  [[ $role != topic || -z $task_path || $task_path == topic ]] ||
+    die "the topic role is only a topic task's: $task is a $task_path task"
+  # Every task has its Discord thread before any worker starts (bin/team-thread): a topic its
+  # interview thread, which team-topic open opens, and every other task its thread under
+  # #coordinator.
+  if [[ $task_path == topic ]]; then
+    [[ $thread == true ]] || die "$task is a topic with no thread; team-topic open opens it"
+  fi
   [[ $thread == true ]] || die "$task has no Discord thread; open one first with team-thread"
   [[ -z $refusal ]] || die "$refusal"
 

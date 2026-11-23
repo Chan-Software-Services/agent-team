@@ -193,10 +193,10 @@ refuses_wrapped() {
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
   guard -2 "pkill -f vite"
   assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: do not reach it another way."
-  # Only the four worker roles' prompts say to go on by the allowed way, so every worker role is
+  # Only the five worker roles' prompts say to go on by the allowed way, so every worker role is
   # told to, and a session of any other role, as the assistant is, is told what a gate agent is.
   local role
-  for role in planner reviewer ops; do
+  for role in planner reviewer ops topic; do
     AGENT_TEAM_ROLE=$role guard -2 "pkill -f vite"
     assert_equal "$stderr" "Blocked by command-guard: a kill by name or pattern (pkill), $BY_NAME; the allowed way: $KILL_WAY. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way."
   done

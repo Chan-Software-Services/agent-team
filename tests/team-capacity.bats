@@ -1335,7 +1335,7 @@ cost() {
   run_bin -0 team-capacity costs --json
   assert_equal "$(jq -c '.schema' <<<"$output")" '"team-capacity-costs/1"'
   assert_equal "$(jq -c '.costs | map([.kind, .source, .samples])' <<<"$output")" \
-    '[["session:builder","seed",4],["session:ops","seed",0],["session:planner","seed",0],["session:reviewer","learned",5],["stack:conventioner","none",0],["gate","seed",0],["heavy:tests-run","learned",25]]'
+    '[["session:builder","seed",4],["session:ops","seed",0],["session:planner","seed",0],["session:reviewer","learned",5],["session:topic","seed",0],["stack:conventioner","none",0],["gate","seed",0],["heavy:tests-run","learned",25]]'
   assert_equal "$(jq -c --argjson mib "$MIB" '.costs | map(select(.kind | IN("session:builder", "session:reviewer", "heavy:tests-run", "gate"))
       | [.estimate_bytes, .range])' <<<"$output")" \
     "$(jq -cn --argjson mib "$MIB" '[[536870912, {min: (400 * $mib), max: (700 * $mib)}], [(500 * $mib * 1.1 | round), {min: (100 * $mib), max: (500 * $mib)}],
@@ -1343,9 +1343,10 @@ cost() {
   run_bin -0 team-capacity costs
   assert_equal "$(sed -n 1p <<<"$output")" "session:builder: 0.5 GiB, the seed: session_gib 0.5 GiB, its default (4 samples of 5)"
   assert_equal "$(sed -n 4p <<<"$output")" "session:reviewer: 0.5 GiB, learned from 5 samples, 0.1 GiB to 0.5 GiB"
-  assert_equal "$(sed -n 5p <<<"$output")" "stack:conventioner: no estimate, no seed: no stack of it seen running yet"
-  assert_equal "$(sed -n 6p <<<"$output")" "gate: 2.2 GiB, the seed: gate_gib 2.2 GiB, its default"
-  assert_equal "$(sed -n 7p <<<"$output")" "heavy:tests-run: 1.9 GiB, learned from the last 20 of 25 samples, 0.1 GiB to 2.0 GiB"
+  assert_equal "$(sed -n 5p <<<"$output")" "session:topic: 0.5 GiB, the seed: session_gib 0.5 GiB, its default"
+  assert_equal "$(sed -n 6p <<<"$output")" "stack:conventioner: no estimate, no seed: no stack of it seen running yet"
+  assert_equal "$(sed -n 7p <<<"$output")" "gate: 2.2 GiB, the seed: gate_gib 2.2 GiB, its default"
+  assert_equal "$(sed -n 8p <<<"$output")" "heavy:tests-run: 1.9 GiB, learned from the last 20 of 25 samples, 0.1 GiB to 2.0 GiB"
 }
 
 # old_cost <kind> <peak MiB>...: one cost line of <kind> per peak with no measure, as written

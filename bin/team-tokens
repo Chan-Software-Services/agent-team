@@ -33,7 +33,7 @@
 #                    output
 #   models, machines replies, tokens, $w and the first and last day of each
 #   roles            sessions, replies, tokens by type and $w per role (coordinator, assistant,
-#                    planner, builder, reviewer, ops, unlaunched, team-test, daniel), with the
+#                    planner, builder, reviewer, ops, topic, unlaunched, team-test, daniel), with the
 #                    share of it from subagents
 #   projects, tasks  $w per project; per task its tokens, $w, its planners', builders' and
 #                    reviewers' $w, its launches per machine, merges, tickets done and reviews in
@@ -1041,10 +1041,10 @@ def export(through_now):
 # The report.
 
 TYPES = ("input", "cache_write_1h", "cache_write_5m", "cache_read", "output")
-CLASSES = ["coordinator", "assistant", "planner", "builder", "reviewer", "ops", "unlaunched", "team-test", "daniel"]
-WORKERS = ("planner", "builder", "reviewer", "ops")
+CLASSES = ["coordinator", "assistant", "planner", "builder", "reviewer", "ops", "topic", "unlaunched", "team-test", "daniel"]
+WORKERS = ("planner", "builder", "reviewer", "ops", "topic")
 # The roles the sessions, days and rebuild tables show.
-SESSION_ROLES = ("coordinator", "assistant", "planner", "builder", "reviewer", "ops")
+SESSION_ROLES = ("coordinator", "assistant", "planner", "builder", "reviewer", "ops", "topic")
 CONTEXT_EDGES = (0, 50e3, 100e3, 200e3, 400e3, 700e3, 2e6)
 # The context past which a session ran long, as the long sessions table counts it.
 LONG = 250e3

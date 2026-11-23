@@ -7,7 +7,7 @@
 # refuses; this one fails when a hook starts refusing ordinary work.
 #
 # The corpus is data, one JSON object a line, so another guard implementation can run it too:
-#   roles  the sessions that make the call: builder, planner, reviewer, ops, coordinator,
+#   roles  the sessions that make the call: builder, planner, reviewer, ops, topic, coordinator,
 #          assistant, gate (a gate's agent, which has no role)
 #   tool   the tool's name, and input, its tool_input
 #   cwd    the session's working directory, @WORKTREE@ when left out
@@ -32,7 +32,7 @@
 load helpers/common
 
 CORPUS=$BATS_TEST_DIRNAME/fixtures/guard-corpus/allowed.jsonl
-ROLES=(builder planner reviewer ops coordinator assistant gate)
+ROLES=(builder planner reviewer ops topic coordinator assistant gate)
 ASSISTANT=1570000000000000100
 THREAD=1570000000000000201
 SESSION=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
@@ -54,7 +54,7 @@ setup() {
 # The settings files a <role>'s session loads its hooks from, in this checkout: settings_of <role>
 settings_of() {
   case $1 in
-    builder | planner | reviewer | ops) printf '%s\n' "$REPO_ROOT/settings/worker.json" "$REPO_ROOT/settings/$1.json" ;;
+    builder | planner | reviewer | ops | topic) printf '%s\n' "$REPO_ROOT/settings/worker.json" "$REPO_ROOT/settings/$1.json" ;;
     coordinator) echo "$REPO_ROOT/coordinator.settings.json" ;;
     assistant) echo "$REPO_ROOT/assistant.settings.json" ;;
     gate) echo "$REPO_ROOT/bin/lib/gate-claude-settings.json" ;;
@@ -68,7 +68,7 @@ session() {
   export CLAUDE_PROJECT_DIR=$WT CLAUDE_JOB_DIR=$JOB AGENT_TEAM_TASK=T12
   unset AGENT_TEAM_ROLE CLAUDE_CODE_TMPDIR
   case $1 in
-    builder | planner | reviewer | ops | coordinator | assistant) export AGENT_TEAM_ROLE=$1 ;;&
+    builder | planner | reviewer | ops | topic | coordinator | assistant) export AGENT_TEAM_ROLE=$1 ;;&
     coordinator | assistant) export CLAUDE_PROJECT_DIR=$TEAM_HOME ;;&
     coordinator | assistant | gate) unset AGENT_TEAM_TASK ;;
   esac
@@ -184,6 +184,10 @@ another_session_on() {
 
 @test "a reviewer's allowed calls pass every hook its settings run on them" {
   allowed_for reviewer
+}
+
+@test "a topic session's allowed calls pass every hook its settings run on them" {
+  allowed_for topic
 }
 
 @test "an ops session's allowed calls pass every hook its settings run on them" {

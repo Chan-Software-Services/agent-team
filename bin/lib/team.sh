@@ -908,8 +908,9 @@ lease_refusal() {
 
 # Print why this session may not <does>, which is the coordinator's, or fail when it may: a worker session (its
 # settings' AGENT_TEAM_ROLE names a role other than the coordinator, "an assistant session" for the
-# assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
-# when the caller passes --interview, for the interview thread's post and wait, and the assistant
+# assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner or a topic
+# session on its own task (its settings' AGENT_TEAM_TASK) when the caller passes --interview, for
+# the interview thread's post, wait and history, and the assistant
 # when the caller passes --read, for a read-only form of a coordinator's script (team-inbox --item,
 # team-queue list and index --check, team-log --check and --check-lifecycle), which reads what the
 # coordinator reads and writes nothing; a call passes one or the other. Worker settings
@@ -921,9 +922,9 @@ worker_refusal() {
   local role=${AGENT_TEAM_ROLE:-} own=${AGENT_TEAM_TASK:-}
   [[ -n $role && $role != coordinator ]] || return 1
   [[ ${3:-} != --read || $role != assistant ]] || return 1
-  if [[ ${3:-} == --interview && $role == planner ]]; then
+  if [[ ${3:-} == --interview && $role == @(planner|topic) ]]; then
     [[ -z $1 || $1 != "$own" ]] || return 1
-    echo "a planner session of ${own:-no task} $2 for $1: a planner talks with Daniel only in its own task's interview thread"
+    echo "a $role session of ${own:-no task} $2 for $1: a $role talks with Daniel only in its own task's interview thread"
   else
     local article=a
     [[ $role != assistant ]] || article=an

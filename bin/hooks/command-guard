@@ -5,8 +5,8 @@
 # <the rule>; a guardrail, so report it as BLOCKED and do not reach it another way." on stderr;
 # exit 0 passes it. A rule that names an allowed way shows "Blocked by command-guard: <the rule>;
 # the allowed way: <the way>. A guardrail: report it as BLOCKED, saying you took the allowed way,
-# and go on only by that way." to a worker (AGENT_TEAM_ROLE builder, planner, reviewer or ops,
-# the roles whose prompts say to go on by it), and "... <the way>. A guardrail: do not reach it
+# and go on only by that way." to a worker (AGENT_TEAM_ROLE builder, planner, reviewer, ops or
+# topic, the roles whose prompts say to go on by it), and "... <the way>. A guardrail: do not reach it
 # another way." to any other session: one with no role, as a gate agent has, and the assistant,
 # whose role stops that line of work. The kill and delete rows judge the assistant's calls as a
 # worker's, with its directory, the team home, as its worktree.
@@ -78,7 +78,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/team.sh" "$@"
 block() {
   if [[ -z ${2:-} ]]; then
     echo "Blocked by command-guard: $1; a guardrail, so report it as BLOCKED and do not reach it another way." >&2
-  elif [[ ${AGENT_TEAM_ROLE:-} == @(builder|planner|reviewer|ops) ]]; then
+  elif [[ ${AGENT_TEAM_ROLE:-} == @(builder|planner|reviewer|ops|topic) ]]; then
     echo "Blocked by command-guard: $1; the allowed way: $2. A guardrail: report it as BLOCKED, saying you took the allowed way, and go on only by that way." >&2
   else
     echo "Blocked by command-guard: $1; the allowed way: $2. A guardrail: do not reach it another way." >&2

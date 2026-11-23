@@ -114,6 +114,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tmp.md`: the team's temporary files: `team-janitor tmp`'s roots, rules and list and how a line is added, the session tmp and task-named scratch, what a run says and where, the warning, the heartbeat's step, the doctor's `tmp` line and the test seams.
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
+  - `briefs/topic.md`: a topic session's brief, its task's facts, its interview thread and what Daniel asked for (`{{about}}`), opening the thread with its understanding of the topic.
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
   - `tests/bootstrap-drill.bats`: runs `tests/bootstrap-drill` on a stub `team-bootstrap`.
