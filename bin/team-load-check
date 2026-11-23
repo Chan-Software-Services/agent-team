@@ -1093,7 +1093,8 @@ EOF
 # marker, in any case. A call that ran but whose shell never found its command, its result's text
 # starting "Exit code 127", reads "its command not found (exit 127)" whatever its attempt expects,
 # so it passes none. Fails when the transcript is not JSON lines. A login attempt passes when it ran and its result is the
-# worker login (probe_login, in any case, as GitHub compares logins). Only ids, outcomes and a
+# worker login (probe_login, in any case, as GitHub compares logins), and fails as "its command
+# not found (exit 127)" as any other attempt does. Only ids, outcomes and a
 # result that is a GitHub login leave the transcript.
 probe_verdicts() {
   jq -rs --arg role "$1" --argjson attempts "$2" --argjson gone "$4" --arg login "$probe_login" "$tool_outcome_jq"'
@@ -1129,6 +1130,7 @@ probe_verdicts() {
     def login_failure($result): ($result.entry | outcome) as $outcome
       | (($result.text // "") | sub("\\s+$"; "")) as $text
       | if $outcome != "ran" then "its call did not run: \($outcome)"
+        elif $text | test("^Exit code 127(\n|$)") then "its command not found (exit 127)"
         elif $text == "" then "its call gave no result"
         elif ($text | ascii_downcase) == ($login | ascii_downcase) then empty
         elif $text | test("^[A-Za-z0-9-]{1,39}$") then "the session'\''s GitHub login is \($text), not \($login)"
