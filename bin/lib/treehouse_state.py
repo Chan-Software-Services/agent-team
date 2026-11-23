@@ -23,9 +23,10 @@ so.
 pools: prints the folder treehouse keeps <checkout>'s pools in, found as its
 internal/config/config.go does (ResolveRoot, Load and ResolvePoolRoot): the root is
 TREEHOUSE_ROOT when set, else the root of <checkout>/treehouse.toml when that file exists, else
-that of ~/.config/treehouse/config.toml; an empty root is HOME, a root's $VAR and ${VAR} are
-expanded as Go's os.ExpandEnv does (an unset one to nothing), a relative root is taken from
-<checkout>, and no symlink is resolved; the pools are <root>/.treehouse. Refused when a config
+that of ~/.config/treehouse/config.toml; a root empty as written is HOME, a root's $VAR and
+${VAR} are expanded as Go's os.ExpandEnv does (an unset one to nothing, so a root that expands to
+nothing is <checkout>), a relative root is taken from <checkout>, and no symlink is resolved; the
+pools are <root>/.treehouse. Refused when a config
 file cannot be read.
 
 check: prints each entry of <pool>'s state as "<name>\\t<path>\\t<holder>" (holder empty for a
