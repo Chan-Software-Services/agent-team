@@ -161,9 +161,11 @@ It holds:
 | `ledger.jsonl` | The append-only record of every task's events |
 | `level.jsonl` | The team's resource level and mode, one line per change (`team-level`), committed with the ledger so a level holds across restarts and handoffs |
 | `drills.jsonl` | Each run of a drill, one line per run (`team-drill`): what ran, on which machine, code commit and Claude Code version, and its verdict, appended and never rewritten |
+| `sessions.jsonl` | Each launch of the coordinator and the assistant, one line per launch (`claude-coordinator`, `claude-assistant`): the machine, the session's name, its model category and the model and effort it launched on, with where each came from, as a worker's ledger `launch` event says them |
 | `waiting.md` | What waits on Daniel, every open ask, PR ready to merge, interview and walk, and the asks and owed replies of the two kept lists, `tasks/current.md` and `assistant/current.md`, the assistant's marked, numbered and ranked by what each answer unblocks, as `team-inbox` last wrote it from the ledger and those files |
 | `waiting.json` | The same list with each item's number, key and count and the latest post, which `team-inbox` reads to keep each number while its item stands |
 | `projects.toml` | The project registry, read only through `bin/team-project`, whose `--help` documents every key |
+| `models.toml` | The model config, the model and effort each session category launches on, one line per choice, read only through `bin/team-models`, whose `--help` documents the line form, the categories and the precedence |
 | `tasks/` | Each task's plan, briefs and archived scratch; history, kept as written |
 | `projects/` | Each project's planning (Conventioner's backlog) |
 | `memory/` | Each registered project's Claude Code auto memory, `memory/<project>/`, which every machine and worktree of it shares once `team-config apply` points the project at it (a worker of it through `team-worker`'s settings), and the coordinator's, `memory/coordinator/`, the team home's own while it is no project's primary checkout, and the assistant's, `memory/assistant/`, which its settings name |
