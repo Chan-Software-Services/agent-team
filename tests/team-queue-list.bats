@@ -235,15 +235,18 @@ says() {
   ready e-wait.md 1 S "a later one" "after: T7 merged, b-one.md" "waits: Daniel's word" "alone: yes"
   ready f-opened.md 2 S "in the building" "opened: T5"
   ready g-bad.md 5 XL "a bad one"
+  # git knows no queued file yet, so a wait's age is its file's own (tests/team-queue-waits.bats).
+  touch -d 2026-11-01T00:00:00Z "$queued/e-wait.md"
+  local days=$((($(date +%s) - $(date -d 2026-11-01T00:00:00Z +%s)) / 86400))
   # The index was never written, so index --check names it stale; list leaves that line out.
   run_bin -0 --separate-stderr team-queue list --json
   assert_equal "$stderr" ""
   assert_equal "$(jq -r '.schema, (keys_unsorted | join(" "))' <<<"$output")" "team-queue/1
 schema room ready waiting opened unranked problems findings"
   assert_equal "$(jq -c .ready <<<"$output")" \
-    '[{"file":"b-one.md","title":"b-one","summary":"the first","project":"proj","priority":1,"size":"M","after":[],"waits":null,"from":["T5"],"opened":null,"takes":["c-taken.md"],"alone":false,"guarded":"ci","unblocks":1,"rank":1}]'
+    '[{"file":"b-one.md","title":"b-one","summary":"the first","project":"proj","priority":1,"size":"M","after":[],"waits":null,"waited":null,"from":["T5"],"opened":null,"takes":["c-taken.md"],"alone":false,"guarded":"ci","unblocks":1,"rank":1}]'
   assert_equal "$(jq -c .waiting <<<"$output")" \
-    '[{"file":"e-wait.md","title":"e-wait","summary":"a later one","project":"proj","priority":1,"size":"S","after":[{"condition":"T7 merged","met":false},{"condition":"b-one.md","met":false}],"waits":"Daniel'"'"'s word","from":[],"opened":null,"takes":[],"alone":true,"guarded":null,"unblocks":0,"rank":null}]'
+    '[{"file":"e-wait.md","title":"e-wait","summary":"a later one","project":"proj","priority":1,"size":"S","after":[{"condition":"T7 merged","met":false},{"condition":"b-one.md","met":false}],"waits":"Daniel'"'"'s word","waited":{"since":"2026-11-01T00:00:00Z","days":'"$days"',"source":"file"},"from":[],"opened":null,"takes":[],"alone":true,"guarded":null,"unblocks":0,"rank":null}]'
   assert_equal "$(jq -c '[.opened[] | {file, opened, rank}]' <<<"$output")" '[{"file":"f-opened.md","opened":"T5","rank":null}]'
   assert_equal "$(jq -c .unranked <<<"$output")" \
     '[{"file":"g-bad.md","problems":["priority \"5\" is not 1, 2, 3 or 4","size \"XL\" is not S, M or L"]}]'
