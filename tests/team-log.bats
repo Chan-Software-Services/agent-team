@@ -258,7 +258,7 @@ TABLE
       return 1
     }
   done
-  grep -Eq '^  opened +team-open +project, path, type, title, branch, base, base_sha, worktree; optional story, builder_model  \(story is the backlog story .*team-merge marks done; builder_model is the task.s builder model, .*default .*\)$' <<<"$output"
+  grep -Eq '^  opened +team-open +project, path, type, title, branch, base, base_sha, worktree; optional story, builder_model, discord_message \(id\), discord_channel \(id\)  \(story is the backlog story .*team-merge marks done; builder_model is the task.s builder model, .*default .*; discord_message and discord_channel, on a task of the path topic alone, are Daniel.s message asking for the topic .*\)$' <<<"$output"
   grep -Eq '^  review +team-log +verdict \(pass\|findings\), head; optional agent_review, sent_back \(list of whole numbers\), findings \(object\), before \(list of whole numbers\), guarded \(list\), widening \(list of whole numbers\), memory  \(verdict: findings whenever sent_back names a finding, whatever the reviewer.s word, .*sent_back: the numbers of the findings sent back .*findings: the count of each kind.*before: the numbers of the plain notes .*guarded: the guarded areas.*widening: the numbers of the new findings that sit in what the last fix added for an earlier finding, so reverting that fix would end them, as a rereview marks them; empty for none; memory: the file in the task directory of the memories.*\)$' <<<"$output"
   local retired
   for retired in merge-preapproved merge-preapproval-withdrawn merge-standing merge-standing-withdrawn; do
