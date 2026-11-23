@@ -1303,10 +1303,20 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   apt_mirror "$(apt_log 's/E: Failed to fetch .*/E: Unable to locate package fonts-nonesuch/; /E: Unable to fetch some archives/d')"
   run_bin team-ci-wait "$url"
   assert_contains "$output" "the PR's: e2e shard 4/10 failed"
-  # apt's fetch failed in a command that went on, and the tests after it failed.
+  # apt's fetch failed in a command that went on, and the tests after it failed: in a group of their
+  # own, or in the same run script (apt-get install ... || true), whose output comes between.
   echo 0 >"$GH_DIR/look"
   apt_mirror "$(apt_log '/Failed to install browser dependencies/i\
 2026-11-19T12:16:14.3160000Z ##[group]Run npx playwright test')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log '/Failed to install browser dependencies/i\
+2026-11-19T12:16:14.3150001Z Running 412 tests using 4 workers\
+2026-11-19T12:16:14.3150002Z   ok 1 sign-in works\
+2026-11-19T12:16:14.3150003Z   ok 2 sign-out works\
+2026-11-19T12:16:14.3150004Z   x 3 the schedule page loads\
+2026-11-19T12:16:14.3150005Z   1 failed')"
   run_bin team-ci-wait "$url"
   assert_contains "$output" "the PR's: e2e shard 4/10 failed"
   # apt's lines come before the step began, in an earlier step that went on.

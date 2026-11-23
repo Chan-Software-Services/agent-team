@@ -161,7 +161,8 @@
 #                   packages: in that step's span of its log, its first ##[error] line comes after
 #                   one of apt's fetch errors (E: Failed to fetch, E: Unable to fetch some archives,
 #                   E: Some index files failed to download), with no ##[group], ##[endgroup],
-#                   ##[start-action] or ##[end-action] line between them, and the change touches
+#                   ##[start-action] or ##[end-action] line between them and at most 3 other
+#                   lines after apt's last such error, and the change touches
 #                   nothing under .github/, where its workflows, actions, install lists and apt
 #                   sources live (paths that cannot be read, or as many as GitHub lists at most,
 #                   3000 of a PR's or 300 of a compare's, count as touching it); and each queued
@@ -523,8 +524,9 @@ tick() {
 
 # The classes, as jq definitions over a look, with $stuck and $queued the names of the checks that
 # ran out their clocks, $jobs each Actions job read by its id, $fetched the ids of the jobs whose
-# failing step's log shows apt could not fetch the runner's packages (apt_fetch_failed), $repo, and
-# the mode's $whose and $again. unpassed is each check
+# failing step's log shows apt could not fetch the runner's packages (apt_fetch_failed), when the
+# change touches nothing under .github/ (change_touches_ci), $repo, and the mode's $whose and
+# $again. unpassed is each check
 # that did not pass, failed, cancelled, stuck or queued, with its run_id and job_id from its Actions
 # job link (else null) and shards, the names of the checks of its run, failed, cancelled, stuck or
 # queued, that make a failed or cancelled check a roll-up of them. classed is each of them as
@@ -576,16 +578,19 @@ CLASSES='
 # apt_fetch_failed <log> <started at> <completed at>: whether a job's log, each line "<time> <text>"
 # as actions/jobs/<id>/logs gives it, shows its step of that span failing because apt could not fetch packages: the step's
 # first ##[error] line comes after one of apt's fetch errors (E: Failed to fetch, E: Unable to fetch
-# some archives, E: Some index files failed to download) with no ##[group], ##[endgroup],
-# ##[start-action] or ##[end-action] line between them, so the command that failed is the one apt
-# printed them in. The span is the step's, to the second, as the job's steps give it.
+# some archives, E: Some index files failed to download), with no ##[group], ##[endgroup],
+# ##[start-action] or ##[end-action] line between them and at most 3 lines of any other kind after
+# apt's last such error (a wrapper's own words, as Playwright's install-deps prints 2), so apt
+# printed them in the group or action that failed, and no other command's output followed them
+# there. The span is the step's, to the second, as the job's steps give it.
 apt_fetch_failed() {
   LC_ALL=C awk -v from="${2:0:19}" -v to="${3:0:19}" '
     { at = substr($0, 1, 19); text = substr($0, index($0, " ") + 1) }
     at < from || at > to { next }
-    text ~ /^##\[error\]/ { found = fetch; exit }
+    text ~ /^##\[error\]/ { found = fetch && since <= 3; exit }
     text ~ /^##\[(group|endgroup|start-action|end-action)/ { fetch = 0; next }
-    text ~ /^E: (Failed to fetch |Unable to fetch some archives|Some index files failed to download)/ { fetch = 1 }
+    text ~ /^E: (Failed to fetch |Unable to fetch some archives|Some index files failed to download)/ { fetch = 1; since = 0; next }
+    { since++ }
     END { exit !found }' "$1"
 }
 
