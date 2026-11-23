@@ -2092,9 +2092,7 @@ network conventioner_conventioner_network (unowned)"
   add_image conventioner/backend young $((7 * 86400 - 60))
   add_image conventioner/backend old $((7 * 86400 + 60))
   # The 2 newest are images, not tags: the in-use image's second tag, latest, leaves older the
-  # second newest of conventioner/frontend, however old, and oldest not. The in-use image is made
-  # newer than both by its age, never the fixture's date, which oldest's would pass in time.
-  docker_created image conventioner/frontend:2a5cc542bea3 $((10 * 86400))
+  # second newest of conventioner/frontend, however old, and oldest not.
   docker_state images '. + [(.[] | select(.Repository == "conventioner/frontend") | .Tag = "latest")]'
   add_image conventioner/frontend older $((20 * 86400))
   add_image conventioner/frontend oldest $((30 * 86400))
