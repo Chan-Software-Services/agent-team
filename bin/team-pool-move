@@ -10,9 +10,9 @@
 #
 # treehouse names a pool <checkout's folder>-<the first 3 bytes of the SHA-256 of the origin URL,
 # in hex> (pool_name) in the folder of pools it finds for the primary checkout (treehouse_state.py
-# pools: <root>/.treehouse, root TREEHOUSE_ROOT, else the checkout's treehouse.toml root, else
-# ~/.config/treehouse/config.toml's, its variables expanded, a relative one from the checkout, an
-# empty one HOME), and authenticates each slot's state entry with a digest over its path, so a
+# pools: <root>/.treehouse, root TREEHOUSE_ROOT, else that of the checkout's treehouse.toml when
+# it has one, else that of ~/.config/treehouse/config.toml, its variables expanded, a relative one
+# from the checkout, an empty one HOME), and authenticates each slot's state entry with a digest over its path, so a
 # bare set-url sends the next lease to a new, empty pool and a bare rename of the pool folder has
 # treehouse quarantine every slot, and free each one it finds safe, moving that slot's untracked
 # files out first (bin/lib/treehouse_state.py's header).
