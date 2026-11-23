@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154 # wt is helpers/load-check.bash's
-# team-load-check --probe, reading a transcript: which calls match an attempt, by its input or a
-# Read's file_path, and an attempt never made, or a session with no transcript or one not JSON.
+# team-load-check --probe, reading a transcript: @HOME@ in an attempt's input as the home directory,
+# in the prompt and in the match; which calls match an attempt, by its input or a Read's file_path;
+# and an attempt never made, or a session with no transcript or one not JSON.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts.
 

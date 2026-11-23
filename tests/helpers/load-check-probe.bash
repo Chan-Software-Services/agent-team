@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154 # code and wt are helpers/load-check.bash's
+# shellcheck disable=SC2154 # wt is helpers/load-check.bash's
 # The refusal probe's sandbox and readers, shared by the tests/team-load-check-probe-*.bats files
 # of team-load-check --probe: load it with `load helpers/load-check-probe` after `load
 # helpers/common`, `load helpers/load-check` and `load helpers/transcript`, and call

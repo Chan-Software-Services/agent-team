@@ -1,8 +1,12 @@
 #!/usr/bin/env bats
 # team-load-check --probe, the github calls: while bin/lib/worker-login names a login, the load
 # check itself makes each call of the data file's github list on the worker login for each of the
-# team's own projects, after the sessions' attempts (the sessions' login attempts are
-# team-load-check-probe-login.bats').
+# team's own projects, after the sessions' attempts, asking for a moved repo where it is now. Each
+# call passes when GitHub refuses it and fails the probe, naming its answer, when it does not; a
+# merge answered 405 for another reason than the push restriction, or 409, is not shown and fails
+# nothing, and with no open pull request no merge is tried. With every call refused, each session's
+# login attempts pass and its prompt names the login call as its one exception; a login attempt that
+# fails is team-load-check-probe-login.bats'.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts; login_on stands for the worker login and GitHub.
 

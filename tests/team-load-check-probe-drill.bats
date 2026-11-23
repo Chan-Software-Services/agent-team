@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # team-load-check --probe, the drill record: a probe of all three roles is the load-check-probe
 # drill, recorded through this checkout's team-drill once a session has launched; a probe of one
-# role is no drill.
+# role is no drill; and a refused record says why on stderr and leaves the probe's exit status.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts.
 

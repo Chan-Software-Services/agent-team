@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154 # wt is helpers/load-check.bash's
-# team-load-check --probe, the refusing layer: an attempt passes only when the layer it expects
-# refused it, and fails, naming what it expected, when it ran or another layer refused it.
+# team-load-check --probe, the refusing layer: an attempt passes when the layer it expects refused
+# it, a refused attempt, auto mode's stand-in, on any refusing layer, and fails, naming what it
+# expected, when it ran or another layer refused it; a rejection with no toolDenialKind is read by
+# its decision; and a probe whose every attempt passes removes every session and the worktree.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts.
 
