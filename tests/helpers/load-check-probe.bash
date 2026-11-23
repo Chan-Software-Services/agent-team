@@ -5,6 +5,11 @@
 # helpers/common`, `load helpers/load-check` and `load helpers/transcript`, and call
 # probe_sandbox in setup. Each function below says what it does.
 #
+# team-load-check --probe launches one T0 session per worker role through team-worker in the load
+# check's worktree (helpers/load-check), or the assistant's through claude-assistant --load-check,
+# each told to make its role's attempts of bin/lib/probe.json, and prints a PASS or FAIL line per
+# role and attempt from what its transcript shows refused each call.
+#
 # The sessions are a claude stub (planner 1a1a1a1a, builder 2b2b2b2b, reviewer 3c3c3c3c, assistant
 # 4d4d4d4d), whose argv each launch also keeps in $BATS_TEST_TMPDIR/argv-<role>: claude --bg
 # notes in $BATS_TEST_TMPDIR/launch-<role> where it started, whether .scratch/probe.git was a bare

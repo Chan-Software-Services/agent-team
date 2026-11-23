@@ -83,7 +83,6 @@ tests/team-janitor.bats	33	92
 tests/team-land.bats	38	
 tests/team-lease.bats	20	51
 tests/team-level.bats	59	123
-tests/team-load-check-probe.bats	448	
 tests/team-load-check.bats	144	91
 tests/team-log.bats	558	104
 tests/team-merge-default.bats	459	145
