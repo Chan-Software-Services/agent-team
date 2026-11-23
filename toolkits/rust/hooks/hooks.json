@@ -1,0 +1,28 @@
+{
+  "description": "At session start, in a worktree with Cargo.toml and rust-toolchain.toml, cargo's jobs held to the team's CPU budget and sccache as the compiler wrapper for the session, with a one-line banner; after an edit of a Rust file in a package under the session's directory, cargo clippy's findings for it, as additional context, within a 20 s deadline, never blocking the edit.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/rust-session\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/rust-diagnostics.mjs\"",
+            "timeout": 25
+          }
+        ]
+      }
+    ]
+  }
+}

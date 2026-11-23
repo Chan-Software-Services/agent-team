@@ -1,0 +1,28 @@
+# A workspace of its own, which the repository's workspace does not claim, for the rust toolkit:
+# tests/toolkits/rust.test.mjs runs the post-edit hook with the real cargo on a copy of it, and the
+# toolkit's evals copy it into each case's workspace. It has no dependency, so neither needs the
+# network. Its lints are the root's [workspace.lints] and its clippy.toml the root's, which the test
+# holds, so a finding here is one the core's check would give.
+[workspace]
+
+[package]
+name = "kind-fixture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license = "Apache-2.0"
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+wildcard_enum_match_arm = "warn"
+match_wildcard_for_single_variants = "warn"
