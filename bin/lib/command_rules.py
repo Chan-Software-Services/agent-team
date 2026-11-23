@@ -74,13 +74,13 @@ The rows, in order:
     word --help or -h, which the library answers before the script does anything, and team-inbox
     --item <n> with no other word, which reads waiting.json alone.
   assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts,
-    which its deny rules held by any call naming the script until this row: team-checkpoint,
-    team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
-    team-review-comment, team-stow and claude-coordinator with any words; team-capacity install
-    or place, team-config apply or capture, team-heavy run, team-lease take, renew or release,
-    team-quota usage (the heartbeat's usage reading), team-secrets restore or save, team-stack
-    down, seed, stop or up and team-timers disable, enable or run, any of those among the words
-    before a --; either kind passing with a first word --help or -h, which the library answers
+    which its deny rules held by any call naming the script until this row (but team-quota usage,
+    the heartbeat's usage reading, which no deny rule held): team-checkpoint, team-handoff,
+    team-load-check, team-ops-end, team-records-rewrite, team-resume, team-review-comment,
+    team-stow and claude-coordinator with any words; team-capacity install or place, team-config
+    apply or capture, team-heavy run, team-lease take, renew or release, team-quota usage,
+    team-secrets restore or save, team-stack down, seed, stop or up and team-timers disable,
+    enable or run, any of those among the words before a --; either kind passing with a first word --help or -h, which the library answers
     before the script does anything. Reason: the coordinator's acts, which an assistant session
     never runs (<the act and its subcommand>); its --help and a read of its file pass. Each act but
     team-heavy run also refuses the assistant itself (assistant_refusal in bin/lib/team.sh), where
