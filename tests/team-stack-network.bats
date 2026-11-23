@@ -262,7 +262,7 @@ compose up --no-start | team-stack up (pid <pid>, $PROJECT)"
   hold_heavy
   run_bin -0 team-stack down --worktree "$STACK_WORKTREE"
   TEAM_STACK_REAP_PROJECTS=$PROJECT run_bin -0 --separate-stderr team-stack reap --apply
-  assert_contains "$output" "left network $NETWORK (team): no container uses it; a heavy run holds the heavy-run lock ($HEAVY_LINE), so team-stack sweep removes it once the run ends"
+  assert_contains "$output" "left network $NETWORK (team): no container uses it; a heavy run holds the heavy-run lock ($HEAVY_LINE), so a later reap --apply removes it once the run ends"
   assert_contains "$output" "team-stack: nothing to remove"
   assert_equal "$(stack_left)" "$NETWORK"
   end_heavy

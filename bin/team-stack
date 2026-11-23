@@ -112,7 +112,9 @@
 #           <project> down -v --remove-orphans with the heavy-run lock held (while a heavy run
 #           holds it: docker rm --force --volumes on its containers and docker volume rm on its
 #           named volumes, its networks left for the sweep, as "The heavy-run lock" below
-#           says; the reaper's, the sweep's and up's takedowns do the same), after which it
+#           says; the reaper's and the sweep's takedowns do the same, and up's takedown of
+#           another task's stack first waits for the lock as up does before a network is
+#           made), after which it
 #           releases the admission the
 #           stack's record names (as up's; the reaper and up's takedown do too), and docker
 #           volume rm on each anonymous volume its containers mounted that is still there, and
@@ -197,8 +199,9 @@
 #           "removed ..." (a team stack's line ending "; its logs in <dir>"), or "already gone ..."
 #           for an object that went before its turn, or, for a network while a heavy run holds the
 #           heavy-run lock, "left network <name> (<class>): <why>; a heavy run holds the heavy-run
-#           lock (<its holder line>), so team-stack sweep removes it once the run ends", neither
-#           removed nor failed (a team stack it removes then leaves its network for the sweep).
+#           lock (<its holder line>), so a later reap --apply removes it once the run ends",
+#           neither removed nor failed (a team stack it removes then leaves its network for the
+#           sweep).
 #           Then "kept <type> <name> (<class>, <size>, <age> old)" for every object no rule
 #           matched that is not the team's (stacks, containers of no stack, volumes, images,
 #           networks but Docker's own), and a summary line, the
@@ -1471,7 +1474,7 @@ cmd_reap() {
     elif ((rc == 3)); then
       echo "already gone $object"
     elif ((rc == 4)); then
-      echo "left $object: $why; a heavy run holds the heavy-run lock ($logs), so team-stack sweep removes it once the run ends"
+      echo "left $object: $why; a heavy run holds the heavy-run lock ($logs), so a later reap --apply removes it once the run ends"
     else
       reason=$(last_reason "$WORK/reap.err" "no reason given")
       echo "${0##*/}: could not remove $object: ${reason#"${0##*/}: "}" >&2
