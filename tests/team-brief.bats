@@ -2726,7 +2726,8 @@ findings_files() {
   done
   # The round's stowed-work check comes right after it.
   grep -A4 -xF '## Do' "$TEAM_HOME/tasks/T12/brief-builder-round.md" | sed -n 4p | grep -q '^2\. Your branch must hold what the stowed builder pushed'
-  # builder-fix starts a new branch from the base, and its later rounds come as builder-round briefs.
+  # builder-fix starts a new branch from the base; a later round goes to the holding builder as
+  # team-next's message, or to a fresh builder as a builder-round brief, whose ff-only step this holds.
   run_bin -0 team-brief T12 builder-fix --set read='- `AGENTS.md`.' --set commits=fix --set goal=g --name fix
   refute_grep -F 'merge --ff-only' "$TEAM_HOME/tasks/T12/brief-fix.md"
   grep -qF 'git fetch origin && git merge --ff-only origin/{{branch}}' "$REPO_ROOT/templates/briefs/builder-round.md"
