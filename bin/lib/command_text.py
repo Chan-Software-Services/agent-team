@@ -128,13 +128,13 @@ find -exec, a script file or a sourced file; else None.
 places(text) maps each Command of the walk to each Place it stands at: the text it is a simple
 command of (the text walked, or a command string), the pipeline at that text's top level holding
 it, and for a string whether the shell itself runs it (SAME: eval's, trap's action, with no
-wrapper of its own but command or builtin and not run by find -exec) or another process does
+wrapper of its own but a bare command or builtin and not run by find -exec) or another process does
 (CHILD), with the Place of the command that runs it; what find -exec runs stands where find does.
 top_pipelines(text) gives each pipeline at the text's top level, in order, with its separator
 after it and its Command when the shell runs that command itself, in its place: its one segment
-one simple command, starting with no reserved word and defining no function, and not sent to the
-background, so neither piped nor a group, a compound command, a function's definition, ! or
-coproc, nor a background job.
+one simple command, starting with none of the reserved words LEADING holds and defining no
+function, and not sent to the background, so neither piped nor a group, a compound command, a
+function's definition, ! or coproc, nor a background job.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -1365,8 +1365,8 @@ def top_pipelines(text):
     """Each pipeline at the text's top level that holds more than blanks or a comment, in order,
     as (its index, as Place.root gives it; its Command when the shell itself runs it in its place,
     else None; the separator after it: "&&", "||", "&" when it is sent to the background, else
-    ";"). Its Command is its one segment's when that segment is one simple command, starts with no
-    reserved word and defines no function (name() or function), and it is not sent to the
+    ";"). Its Command is its one segment's when that segment is one simple command, starts with none of
+    the reserved words LEADING holds and defines no function (name() or function), and it is not sent to the
     background: so it is not piped (a pipeline of more than one command runs each in a subshell),
     nor a group, a compound command, a function's definition, ! or coproc, nor a background job."""
     reading = read_command(text)

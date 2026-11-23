@@ -64,14 +64,14 @@ unquoted brace lists expanded):
     variable's value where that is assigned): one behind no wrapper at the top level of the text
     the reading stands in, before the pipeline holding it there, itself in no pipeline of more
     than one command, that begins its and-or list and that list ends with a ; (an & sends it all
-    to the background), or is joined to that pipeline by && alone after no ||; a bare one, or one
+    to the background), or is joined to that pipeline by && alone, not right after a ||; a bare one, or one
     of export, declare, typeset or readonly with no word before it but another assignment, a --
     or, for declare and typeset, an option of -g, -r, -t and -x (any other may change the value or
     assign nothing), never local, which outside a function assigns nothing; for a command in
     trap's action, one so before the trap in the text around counts too. Any other counts for
     nothing: one in a subshell, a group, a compound command, a function or a string another
     process runs (a shell's -c), one after && or || in a list the reading does not stand in, one
-    after || in its own, and one after the reading; and a code part, eval's string among them, is
+    right after || in its own, and one after the reading; and a code part, eval's string among them, is
     read alone, so a command of it holds only its own. Bash's dynamic variables (FUNCNAME,
     BASH_SOURCE, DIRSTACK, RANDOM and the rest of DYNAMIC), whose value it keeps whatever is
     assigned, are unread; a value that is $(mktemp ...) or
@@ -403,7 +403,7 @@ def _before(name, place):
     """Whether an assignment of the variable surely runs before the pipeline at place.root of its
     text, in that shell: one top_pipelines gives a Command before it, that begins its and-or list
     and that list ends with a ; (an & sends it all to the background), or stands in the place's own
-    list joined to it by && alone, after no ||."""
+    list joined to it by && alone, not right after a ||."""
     tops = _tops(place.text)
     at = next((k for k, (root, _, _) in enumerate(tops) if root == place.root), 0)
     for k in range(at):
