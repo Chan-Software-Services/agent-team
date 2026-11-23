@@ -41,8 +41,8 @@ TOML
   for n in 1 2 3; do git -C "${primary:?}" worktree add -q --detach "$old_pool/$n/proj" main; done
   echo changed >"$old_pool/1/proj/README.md"
   echo "work in progress" >"$old_pool/1/proj/notes.txt"
-  git -C "$old_pool/2/proj" switch -q -c feat/T8-02
-  git -C "$old_pool/2/proj" commit -q --allow-empty -m "feat: ticket work"
+  git -C "${old_pool:?}/2/proj" switch -q -c feat/T8-02
+  git -C "${old_pool:?}/2/proj" commit -q --allow-empty -m "feat: ticket work"
   write_state "$old_pool" "1 T7" "2 T8--02" "3 "
   echo "$REPO_ROOT/bin/lib/treehouse_state.py" >"$BATS_TEST_TMPDIR/state-py"
   echo v3.1.5 >"$BATS_TEST_TMPDIR/version"
@@ -136,9 +136,9 @@ then: team-open --task T8 --resume proj --ticket 02"
   assert_equal "$(entries "$new_pool")" "1	<pool>/1/proj	T7
 2	<pool>/2/proj	T8--02
 3	<pool>/3/proj	"
-  assert_equal "$(git -C "$new_pool/1/proj" status --porcelain)" " M README.md
+  assert_equal "$(git -C "${new_pool:?}/1/proj" status --porcelain)" " M README.md
 ?? notes.txt"
-  assert_equal "$(git -C "$new_pool/2/proj" log -1 --format='%D %s')" "HEAD -> feat/T8-02 feat: ticket work"
+  assert_equal "$(git -C "${new_pool:?}/2/proj" log -1 --format='%D %s')" "HEAD -> feat/T8-02 feat: ticket work"
   assert_equal "$(git -C "${primary:?}" worktree list --porcelain | grep -c "^worktree $new_pool/")" 3
   assert_equal "$(stat -c %a "$new_pool/treehouse-state.json") $(stat -c %a "$new_pool/treehouse-state.key")" "640 600"
 }
@@ -157,7 +157,7 @@ then: team-open --task T8 --resume proj --ticket 02"
   run_bin -0 team-pool-move proj "$new_url"
   assert_equal "$(entries "$new_pool" | cut -f1,3 | paste -sd ' ')" "1	T7 2	T8--02 3	"
   assert_equal "$(git -C "${primary:?}" remote get-url origin)" "$new_url"
-  assert_equal "$(git -C "$new_pool/1/proj" status --porcelain | wc -l)" 2
+  assert_equal "$(git -C "${new_pool:?}/1/proj" status --porcelain | wc -l)" 2
 }
 
 @test "after a bare rename and set-url, it names the way back, which then finishes the move" {
@@ -199,6 +199,7 @@ team-pool-move: the state of $old_pool is refused: nothing was changed"
   run_bin -1 team-pool-move proj "$new_url"
   assert_equal "$output" "team-pool-move: slot 2 ($old_pool/2/proj) has 1 process(es) in it: stow or stop each session in a slot first"
   [[ -d $old_pool && ! -e $new_pool ]]
+  assert_equal "$(git -C "${primary:?}" remote get-url origin)" "$old_url"
 }
 
 @test "a pool already at the new name beside the old one is refused" {
@@ -206,6 +207,8 @@ team-pool-move: the state of $old_pool is refused: nothing was changed"
   run_bin -1 team-pool-move proj "$new_url"
   assert_equal "$output" "team-pool-move: both $old_pool and $new_pool exist: a lease after a bare set-url made the second; return and remove what it holds, then run this again"
   [[ -d $old_pool/1/proj ]]
+  assert_equal "$(find "${new_pool:?}" | sed "s|$new_pool|<new>|" | sort | paste -sd ' ')" "<new> <new>/1"
+  assert_equal "$(git -C "${primary:?}" remote get-url origin)" "$old_url"
 }
 
 @test "a URL other than the registry repo's, a git pool and a wrong command line are refused" {
@@ -216,4 +219,6 @@ team-pool-move: the state of $old_pool is refused: nothing was changed"
   assert_equal "$output" "team-pool-move: proj's pool is git, not treehouse: only a treehouse pool is named by its origin"
   run_bin -2 team-pool-move proj
   assert_equal "$output" "team-pool-move: usage: team-pool-move <project> <new url>"
+  [[ -d $old_pool && ! -e $new_pool ]]
+  assert_equal "$(git -C "${primary:?}" remote get-url origin)" "$old_url"
 }

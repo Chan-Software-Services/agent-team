@@ -33,7 +33,8 @@
 # A run stopped part way finishes when run again: a pool already renamed is rewritten (an entry
 # already under the new folder is kept as it is), and once the origin is <new url> a run only
 # checks the moved pool (refusing when no pool has the new name).
-# Exits 1 on any refusal, naming it, with nothing changed by the step that refused.
+# Exits 1 on any refusal, naming it, with nothing changed by the step that refused; 2 on a wrong
+# command line.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 

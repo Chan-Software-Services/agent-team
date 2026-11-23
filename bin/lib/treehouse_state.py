@@ -26,8 +26,9 @@ every entry whose seed inventory is known; refused (exit 1, one line on stderr) 
 
 reroot: under the pool's lock (treehouse-state.lock, the flock treehouse takes), rewrites the
 state of <new pool>, the folder already renamed from <old pool>: each entry's path under
-<old pool>/ is put under <new pool>/ and its digest recomputed with the pool's key; an entry
-already under <new pool>/ is kept, so a run again changes nothing. Every entry's digest is
+<old pool>/ is put under <new pool>/ and, for an entry whose seed inventory is known, its digest
+recomputed with the pool's key; an entry already under <new pool>/ is kept, so a run again
+changes nothing. Every entry's digest is
 checked first, at the path it holds, and nothing is written when one is not reproduced, one is
 under neither folder, or the version or key is not as check requires. The file is replaced
 atomically, keeping its mode. Then prints the entries as check does.
