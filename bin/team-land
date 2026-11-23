@@ -2,7 +2,8 @@
 # Land one pull request through its base's merge queue: enqueue it, post agent-review on each trial
 # commit the queue builds for it, wait on that commit's checks, and end once the queue merged it,
 # dropped it, or the deadline came. It is the landing alone, with no merge word and no ledger
-# event: team-merge is how the coordinator merges, and runs this on a base with a queue.
+# event but trial-unmarked and trial-marked (below): team-merge is how the coordinator merges, and
+# runs this on a base with a queue.
 #
 # Usage: team-land [--task T<n>] <pr url> <head>
 #   pr url  https://github.com/<owner>/<name>/pull/<n>, in a registered project's repo
@@ -36,6 +37,23 @@
 #   that commit, has the PR taken out of the queue and ends it, dequeued, so a commit that will
 #   never get agent-review does not hold the queue until its timeout. A PR GitHub does not let
 #   out of the queue is said, and tried again at each look;
+#   each look that did not end in a post (a hold or a post that failed, whatever its exit) is one
+#   line of the PR's look log, ~/.local/state/agent-team/merge/land/<owner>/<name>/<n>.log, beside
+#   the merge lock: "<UTC time>\t<trial sha>\t<hold or post>\t<exit>\t<reason line>", the reason
+#   team-merge --holds or the poster gave; a log that cannot be written is passed over;
+#   once the same trial commit has stood unmarked with the same step, exit and reason for 10
+#   minutes of looks (UNMARKED_SECONDS, counted as 20 looks WAIT_SECONDS apart, the first such
+#   look at 0), it says so once for that trial commit: it takes one look at the trial commit's
+#   other checks (team-ci-wait --merge-group <trial sha> --look --no-agent-review --json <pr url>),
+#   checks passed (outcome passed or none), pending, failed, or unknown (any other end), and says
+#   "PR <url> has had no agent-review on its merge queue trial commit <short> for 10 minutes, since
+#   <time>: <reason>", then what that look said; with --task it posts that in the task's thread
+#   (team-post T<n> --file), a post that fails said on its own line, and logs trial-unmarked (url,
+#   head, trial, reason, since, checks), which team-sweep's trial-unmarked finding reads; while the
+#   checks it logged are pending or unknown, each later unmarked look of that trial commit looks
+#   again, and logs trial-unmarked once more, with no post, the first time they show passed. A post
+#   on a trial commit this run logged trial-unmarked for logs trial-marked (url, head, trial);
+#   without --task neither is logged and nothing posted;
 #   once posted, it waits on the trial commit's checks with team-ci-wait --merge-group <trial sha>
 #   --json <pr url>, once per sha, which classes a failure as the PR's own or infrastructure as
 #   on a head, or as rules: a check the base's rules or the registry require that never reported
@@ -87,6 +105,8 @@ WAIT_SECONDS=30
 GONE_SECONDS=120
 CI_WAIT_SECONDS=5400
 DEADLINE_SECONDS=${TEAM_LAND_DEADLINE_SECONDS:-14400}
+# How long a trial commit may stand unmarked with one reason before it is said, in looks' seconds.
+UNMARKED_SECONDS=600
 
 [[ $DEADLINE_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_LAND_DEADLINE_SECONDS must be a number of seconds"
 usage="usage: team-land [--task T<n>] <pr url> <head>"
@@ -110,6 +130,8 @@ base=$(team_project "$project" base)
 
 dir=$(team_mktemp -d)
 echo '[]' >"$dir/failed"
+# The PR's look log, beside the merge lock.
+look_log=$HOME/.local/state/agent-team/merge/land/$repo/$number.log
 
 note() {
   printf 'team-land: %s\n' "$1"
@@ -180,6 +202,82 @@ take_out() {
   return 1
 }
 
+# missed <sha> <step> <exit> <reason>: a look that did not end in a post on the trial commit <sha>,
+# one line of the look log, and what unmarked counts by, in miss_at and miss_key.
+missed() {
+  miss_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) miss_key="$2 $3 $4" miss_reason=$4
+  { mkdir -p "${look_log%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "$miss_at" "$1" "$2" "$3" "$4" >>"$look_log"; } 2>/dev/null || true
+}
+
+# trial_look <sha>: one look at the trial commit's checks but agent-review, its checks (passed,
+# pending, failed or unknown) in look_checks and what it said in look_text.
+trial_look() {
+  local out outcome
+  out=$(TEAM_HOME=$TEAM_HOME "$bin/team-ci-wait" --merge-group "$1" --look --no-agent-review --json "$url" 2>"$dir/look.stderr" | tail -n 1) || true
+  outcome=$(jq -er '.outcome | strings' <<<"$out" 2>/dev/null) || outcome=''
+  case $outcome in
+    passed | none) look_checks=passed ;;
+    pending | failed) look_checks=$outcome ;;
+    *) look_checks=unknown ;;
+  esac
+  look_text=$(jq -er '.text | strings' <<<"$out" 2>/dev/null) ||
+    look_text="team-ci-wait gave no result: $(grep . "$dir/look.stderr" | tail -n 1 || echo "no output")"
+}
+
+# log_trial <kind> <sha> [<checks>]: with --task, log trial-unmarked of the trial commit <sha>, with
+# the reason and time it has stood unmarked since and <checks>, or trial-marked.
+log_trial() {
+  local event
+  [[ -n $task ]] || return 0
+  if [[ $1 == trial-unmarked ]]; then
+    event=$(jq -cn --arg task "$task" --arg url "$url" --arg head "$land_head" --arg trial "$2" \
+      --arg reason "$unmarked_reason" --arg since "$unmarked_since" --arg checks "$3" \
+      '{ts: (now | todate), task: $task, event: "trial-unmarked", url: $url, head: $head, trial: $trial,
+        reason: $reason, since: $since, checks: $checks}')
+  else
+    event=$(jq -cn --arg task "$task" --arg url "$url" --arg head "$land_head" --arg trial "$2" \
+      '{ts: (now | todate), task: $task, event: "trial-marked", url: $url, head: $head, trial: $trial}')
+  fi
+  # In a subshell, so a ledger that refuses it (its lock held too long, say) does not end the
+  # landing; neither kind is pushed or changes the inbox.
+  (ledger_append "$event" 30) 2>"$dir/ledger.stderr" ||
+    note "$1 of the trial commit ${2:0:7} could not be logged: $(grep . "$dir/ledger.stderr" | tail -n 1 || echo "ledger_append failed")"
+}
+
+# unmarked <sha>: after a look that did not post on the trial commit <sha> (missed), count it, and
+# once that trial commit has stood unmarked with one step, exit and reason for UNMARKED_SECONDS of
+# looks, say so once, as the header says; once said, look again while its checks were not seen
+# passed.
+unmarked() {
+  local text
+  if [[ $1 != "$unmarked_trial" || $miss_key != "$unmarked_key" ]]; then
+    unmarked_trial=$1 unmarked_key=$miss_key unmarked_reason=$miss_reason unmarked_since=$miss_at unmarked_n=0
+  else
+    unmarked_n=$((unmarked_n + 1))
+  fi
+  if [[ -z ${alerted[$1]:-} ]]; then
+    ((unmarked_n * WAIT_SECONDS >= UNMARKED_SECONDS)) || return 0
+    trial_look "$1"
+    alerted[$1]=$look_checks
+    text="PR $url has had no agent-review on its merge queue trial commit ${1:0:7} for $((unmarked_n * WAIT_SECONDS / 60)) minutes, since $unmarked_since: $unmarked_reason"
+    note "$text"
+    note "the other checks of the trial commit ${1:0:7}: $look_checks"
+    printf '%s\n' "$look_text" | sed 's/^/  /'
+    [[ -n $task ]] || return 0
+    printf '%s\n\n%s\n\n%s\n' "$text." "Its other checks: $(printf '%s\n' "${look_text#team-ci-wait: }" | sed 's/^ *//' | paste -sd ' ' -)" \
+      "team-land tries again at each look, and logs each in ${look_log/#"$HOME"/\~}." >"$dir/alert"
+    TEAM_HOME=$TEAM_HOME "$bin/team-post" "$task" --file "$dir/alert" >/dev/null 2>"$dir/alert.stderr" ||
+      note "the post of that to the thread of $task failed: $(grep . "$dir/alert.stderr" | tail -n 1 || echo "team-post failed")"
+    log_trial trial-unmarked "$1" "$look_checks"
+  elif [[ -n $task && ${alerted[$1]} == @(pending|unknown) ]]; then
+    trial_look "$1"
+    [[ $look_checks == passed ]] || return 0
+    alerted[$1]=passed
+    note "the other checks of the trial commit ${1:0:7} have passed, with still no agent-review there"
+    log_trial trial-unmarked "$1" passed
+  fi
+}
+
 # With --task, hold the merge again before agent-review goes on the trial commit <sha>, once per
 # sha once it holds: team-merge --holds, which changes nothing. A merge that does not hold takes
 # the PR out of the queue (exit 1); one that cannot be told now (any other exit) fails, with why
@@ -194,6 +292,7 @@ hold() {
   fi
   why=$(sed -n '/^  (/d; s/^  //p' "$dir/hold.stderr" | paste -sd '|' | sed 's/|/; /g')
   [[ -n $why ]] || why=$(grep . "$dir/hold.stderr" | tail -n 1) || why="team-merge --holds failed (exit $rc)"
+  missed "$1" hold "$rc" "$why"
   if ((rc == 1)); then
     take_out "the merge of $task does not hold now, so agent-review is not posted on the trial commit ${1:0:7}: $why" || true
   else
@@ -227,6 +326,7 @@ post() {
     fi
   fi
   out=$(grep . "$dir/post.stderr" | tail -n 1) || out="$poster failed"
+  missed "$1" post "$rc" "${out#"$poster": }"
   out="agent-review was not posted on the trial commit ${1:0:7}: ${out#"$poster": }"
   if ((rc == 1)) && read_pr && [[ $state == OPEN && $trial == "$1" ]]; then
     take_out "$out" || true
@@ -271,7 +371,8 @@ dropped() {
 first=true enqueued=false retried=false start_removal='' gone_n='' on_trial='' unposted='' enqueue_error='' ci_outcome=''
 rules_drop=''
 said_last='' seen=''
-declare -A posted=() waited=() held=()
+miss_at='' miss_key='' miss_reason='' unmarked_trial='' unmarked_key='' unmarked_reason='' unmarked_since='' unmarked_n=0
+declare -A posted=() waited=() held=() alerted=()
 while :; do
   if offline=$(offline_hold); then
     finish waiting 75 "$offline"
@@ -312,7 +413,14 @@ while :; do
           on_trial=$trial unposted=''
           echo '[]' >"$dir/failed"
         fi
-        if [[ -z ${posted[$on_trial]:-} ]] && hold "$on_trial" && post "$on_trial"; then posted[$on_trial]=1 unposted=''; fi
+        if [[ -z ${posted[$on_trial]:-} ]]; then
+          if hold "$on_trial" && post "$on_trial"; then
+            posted[$on_trial]=1 unposted=''
+            [[ -z ${alerted[$on_trial]:-} ]] || log_trial trial-marked "$on_trial"
+          else
+            unmarked "$on_trial"
+          fi
+        fi
         if [[ -n ${posted[$on_trial]:-} && -z ${waited[$on_trial]:-} ]]; then
           trial=$on_trial
           ci_wait "$trial"

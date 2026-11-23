@@ -153,6 +153,8 @@ closed team-close archive returned kept
 merged team-merge pr merge head by
 queued team-merge url head
 dequeued team-merge url head reason
+trial-unmarked team-land url head trial reason since checks
+trial-marked team-land url head trial
 history-rewritten team-clean-messages branch old_head head
 gate-lane-cleared team-clean-messages branch head tag
 caught-up team-catch-up url from head base

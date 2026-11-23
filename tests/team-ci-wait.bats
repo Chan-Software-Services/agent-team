@@ -1848,7 +1848,42 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_contains "$(jq -r .text <<<"$output")" "gh api graphql: no such pull request"
 }
 
-@test "--merge-group takes a full sha, no sha after the URL and no --look" {
+# T526: team-land takes one look at a trial commit it cannot mark, to say whether its other checks
+# are green.
+@test "--merge-group --look takes one look at the trial commit: a required check not reported yet is pending, and agent-review is left out with --no-agent-review" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  sed -i 's/^required_checks = .*/required_checks = ["test", "data"]/' "$TEAM_HOME/projects.toml"
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed success 7001)"
+  statuses 0
+  both --merge-group "$trial" --look --no-agent-review "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.outcome, .head, .text]' <<<"$output")" \
+    "[\"pending\",\"$trial\",\"team-ci-wait: no check has failed on 5e5e5e5 so far; still pending: data (not reported)\"]"
+  # Every required check passed, agent-review aside: passed at the first look, with no settle.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run test completed success 7001)" "$(check_run data completed success 7001 97002)"
+  both --look --no-agent-review --merge-group "$trial" "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.outcome, .text]' <<<"$output")" '["passed","team-ci-wait: every check passed on 5e5e5e5: test passed, data passed"]'
+  # A failed check fails the look, and an entry gone from the trial commit ends it at once.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run test completed failure 7001 97001)" "$(check_run data completed success 7001 97002)"
+  job 0 97001 runner-1 "Run tests=failure"
+  both --merge-group "$trial" --look "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, [.failures[].name]]' <<<"$output")" '["failed",["test"]]'
+  echo 0 >"$GH_DIR/look"
+  entry 0 OPEN 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+  both --merge-group "$trial" --look "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -r .outcome <<<"$output")" failed
+}
+
+@test "--merge-group takes a full sha and no sha after the URL" {
   trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
   run_bin team-ci-wait --merge-group 5e5e5e5 "$url"
   assert_equal "$status" 2
@@ -1857,7 +1892,7 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$status" 2
   run_bin team-ci-wait --merge-group "$trial" "$url" "$head"
   assert_equal "$status" 2
-  run_bin team-ci-wait --look --merge-group "$trial" "$url"
+  run_bin team-ci-wait --look --merge-group "$trial" "$url" "$head"
   assert_equal "$status" 2
   run_bin team-ci-wait --merge-group "$trial"
   assert_equal "$status" 2

@@ -37,6 +37,8 @@
     "merged": {"effect": "merge"},
     "queued": {},
     "dequeued": {},
+    "trial-unmarked": {},
+    "trial-marked": {},
     "asked": {"effect": "ask"},
     "answered": {"effect": "settle"},
     "merge-approved": {"effect": "settle"},
