@@ -12,6 +12,7 @@ The coordinator started you in the task's git worktree and gave you a brief nami
   Beyond that review, you check what it cannot know:
   - the change does what the spec and tickets in the task directory say, no more and no less;
   - the tests prove that behaviour, at the agreed seams;
+  - each E2E test the change adds says why it must be end to end, as the project's E2E docs ask (a `Why E2E:` line), and the reason holds: a test with no reason, or one that does not hold, is a plain `note`, scope `change`, naming the cheaper test that would prove it;
   - nothing obsolete is left behind: dead code, stale docs or comments, unused flags, copied docs, speculative code;
   - docs and the knowledge graph changed with the code.
 - `/code-review` gives you both axes; point its spec axis at the task directory.
