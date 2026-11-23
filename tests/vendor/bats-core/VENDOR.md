@@ -33,7 +33,7 @@ On an upgrade, read the new release's `bats_perform_test`: drop the patch only i
 Why: `bin/lib/confine-session` refuses a session directory or checkout path holding "zsh", since Claude Code reads "zsh" in a shell prefix first, and every test's sandbox sits under the run directory, so a random name holding it (about one run in 60,000) failed every test that writes a confined session, as a CI shard did.
 Reproduced on dev (T542): `tests/team-doctor-confine.bats`' first test fails its confine line with `TMPDIR` under `mktemp -d /tmp/zsh-T.XXXXXX`, naming the path that "holds "zsh"".
 `tests/harness.bats`' "the vendored bats makes its run directory again while its random name holds zsh ..." fails without the patch.
-A run directory set by `BATS_RUN_TMPDIR`, and a `TMPDIR` holding "zsh", are the caller's own names and stay as given.
+A run directory given with `--tempdir`, and a `TMPDIR` holding "zsh", are the caller's own names and stay as given.
 
 On an upgrade, reapply it at the line that makes the run directory.
 
