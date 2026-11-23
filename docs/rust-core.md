@@ -52,7 +52,7 @@ A Cargo workspace at the repository's root, its crates under `crates/` (T370's s
 | `adapter-discord`, `adapter-web` (later) | One UI each, a client process of `team-api` | `team-api` only |
 
 - `team-core` and `team-model` never name an OS or a UI, and an adapter never depends on `team-core`.
-- So the Discord fields of today's events (`discord_thread`, `discord_message`, 21 kinds carry one, the four first-hand words among them) cannot stay as they are in `team-model`: how such a reference crosses the interface seam is open (below).
+- So the Discord fields of today's events (`discord_thread`, `discord_message`, 22 kinds carry one, the kinds of three of the four first-hand words among them) cannot stay as they are in `team-model`: how such a reference crosses the interface seam is open (below).
 - What stays outside Rust: the MCP servers and toolkits in JavaScript (`servers/`, `toolkits/`), the vendored tools, and the role prompts, templates and SOPs, which are text.
 
 ## The platform seam
