@@ -34,7 +34,7 @@ handoff() {
       >>"$TEAM_HOME/assistant/handoffs.jsonl"
 }
 
-# The catch-up step, naming the thread cache's ids <known> (none by default): catch_up_line [<known>]
+# The catch-up step, naming the thread list's ids <known> (none by default): catch_up_line [<known>]
 catch_up_line() {
   echo "Catch up on Discord before anything else: messages sent while no assistant listened are never delivered to you, only readable. Read #assistant (1570965039278596199) and each thread of yours still open (your stow note's, and of the threads found so far: ${1:-none}) back to your own last message there with the Discord plugin's fetch_messages, which reads at most 100 messages, and answer first what Daniel asked that has no answer."
 }
@@ -65,7 +65,7 @@ $(catch_up_line)
 $(twin_line)"
 }
 
-@test "the catch-up step names the thread cache's ids itself, so the assistant need not read the file" {
+@test "the catch-up step names the thread list's ids itself, so the assistant need not read the file" {
   mkdir -p "$HOME/.local/state/agent-team"
   printf '%s\n' 1571000000000000101 1571000000000000202 >"$HOME/.local/state/agent-team/assistant-threads"
   start
