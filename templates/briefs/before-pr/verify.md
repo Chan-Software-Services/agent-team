@@ -26,8 +26,10 @@ Name each listed dependency in `review.md` with its version; one `spec.md` does 
 1. Run the project's local checks ({{local_checks}}) on `{{head}}` with `{{team_bin}}/team-checks {{project}} {{head}}`, which runs them as `team-merge` does, in a fresh detached worktree of that head; every one must pass, and `{{task_dir}}/rereview.md` says which local checks passed (they set no GitHub status, and with no PR there are no GitHub checks to wait for).
 {{> rereview}}
    Read nothing else: not the rest of the branch, the spec's or the story's acceptance list, or the knowledge graph; run the UI check only when that diff touches a UI file and your session lists `ui-check`, on the states it touched and their siblings.
-3. Every note sent back ({{findings}}) is fixed at `{{head}}`, and the diff holds nothing but those fixes and their tests.
-   When it changes more than the notes asked, this brief does not fit: send `{{task}} BLOCKED not a notes-only fix: <what else changed>` to `coordinator`.
+3. Every note sent back ({{findings}}) is fixed at `{{head}}`, and the diff holds nothing but those fixes, their tests and the claims check's sentence fixes.
+   A sentence fix changes a sentence in the PR body or a Markdown doc (never a template, role prompt or skill, which a session runs on) that a finding of `{{task_dir}}/claims-check.md` names and its `## Answers` line marks `fixed` or `cut`, in this round's report, whose `head:` is `{{head}}` or a commit of `git rev-list {{reviewed}}..{{head}}`: the report is the builder's list of them and the claims check's own evidence.
+   Read each against the code at `{{head}}`: one that does not say what the code does is a new finding on its line.
+   When it changes more than that, a code file above all, its comments, docstrings and header included, this brief does not fit: send `{{task}} BLOCKED not a notes-only fix: <what else changed>` to `coordinator`.
    Raise a new finding only on a line this diff adds or changes, so each new one's scope is `change`.
 {{> review-rules}}
 
