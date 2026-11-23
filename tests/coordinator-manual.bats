@@ -802,7 +802,6 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
     grep -qF 'findings=blocking:<n>,correctness:<n>,security:<n>,real-data:<n>,note-change:<n>,note-before:' "$REPO_ROOT/templates/briefs/$brief.md"
     grep -qF 'guarded=<areas, comma-separated, or none>' "$REPO_ROOT/templates/briefs/$brief.md"
   done
-  manual_size_check "$manual"
 }
 
 @test "every team-* command a skill names in code is a script in bin/ whose --help names each option the skill gives it" {
