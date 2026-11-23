@@ -82,6 +82,7 @@ docker_stub_answer() {
     'volume rm') docker_stub_volume_rm "${args[@]}" ;;
     'image rm') docker_stub_image_rm "${args[@]}" ;;
     'network rm') docker_stub_network_rm "${args[@]}" ;;
+    rm) docker_stub_container_rm "${args[@]}" ;;
     info) docker_stub_info "${args[@]}" ;;
     events) docker_stub_events "${args[@]}" ;;
     update) docker_stub_cpus "${args[@]}" ;;
@@ -328,8 +329,16 @@ docker_stub_project() {
 # Log the compose call with the stack identity and the team labels it sees, one JSON object per
 # line in $DOCKER_STATE/compose-env.jsonl (docker_compose_env).
 docker_stub_compose_env() {
-  jq -cn --arg call "$DOCKER_STUB_CALL" --arg project "$(docker_stub_project)" '
-    {call: $call, project: $project, COMPOSE_PROJECT_NAME: ($ENV.COMPOSE_PROJECT_NAME // null),
+  # The heavy-run lock's holder line while a process holds it, as a shared probe sees it.
+  local lock=$HOME/.local/state/agent-team/heavy.lock fd heavy=''
+  if [[ -e $lock ]]; then
+    exec {fd}<"$lock"
+    flock -n -s "$fd" || heavy=$(head -n 1 "$lock")
+    exec {fd}<&-
+  fi
+  jq -cn --arg call "$DOCKER_STUB_CALL" --arg project "$(docker_stub_project)" --arg heavy "$heavy" '
+    {call: $call, project: $project, heavy: (if $heavy == "" then null else $heavy end),
+     COMPOSE_PROJECT_NAME: ($ENV.COMPOSE_PROJECT_NAME // null),
      TH_PORTS: ($ENV.TH_PORTS // null), TH_WEB_PORT: ($ENV.TH_WEB_PORT // null),
      labels: {owner: $ENV.TEAM_OWNER, task: $ENV.TEAM_TASK, kind: $ENV.TEAM_KIND,
        worktree: $ENV.TEAM_WORKTREE, expires: $ENV.TEAM_EXPIRES}}' >>"$DOCKER_STATE/compose-env.jsonl"
@@ -375,9 +384,15 @@ docker_stub_compose_config() {
 # compose up -d --wait: the project's network and named volume made when missing (an existing
 # one keeps its labels, as Docker's do); its web container made, started when stopped, or
 # recreated with its anonymous volume when its labels changed; started with its port, TH_WEB_PORT
-# or, empty, one Docker picks.
+# or, empty, one Docker picks. compose up --no-start makes them all the same way and starts
+# nothing: a new or recreated container is created, a stopped one stays stopped.
 docker_stub_compose_up() {
-  docker_stub_options $# "$@" -d --wait || docker_stub_unplanned
+  local start=true
+  if docker_stub_options $# "$@" --no-start; then
+    start=false
+  else
+    docker_stub_options $# "$@" -d --wait || docker_stub_unplanned
+  fi
   local project labels now hash port id anonymous
   project=$(docker_stub_project)
   labels=$(docker_stub_team_labels)
@@ -409,11 +424,12 @@ docker_stub_compose_up() {
   docker_stub_update containers '
     (map(select(.Name == "/\($p)-web-1")) | first) as $old
     | if $old != null and $old.Config.Labels["com.docker.compose.config-hash"] == $hash then
-        map(if .Name == "/\($p)-web-1" and (.State.Running | not) then
+        map(if .Name == "/\($p)-web-1" and (.State.Running | not) and $start then
           .State += {Status: "running", Running: true, StartedAt: $now} else . end)
       else map(select(.Name != "/\($p)-web-1")) + [{Name: "/\($p)-web-1", Id: $id, Created: $now,
-        State: {Status: "running", Running: true, OOMKilled: false, ExitCode: 0, StartedAt: $now,
-          FinishedAt: "0001-01-01T00:00:00Z"},
+        State: (if $start then {Status: "running", Running: true, OOMKilled: false, ExitCode: 0, StartedAt: $now,
+          FinishedAt: "0001-01-01T00:00:00Z"} else {Status: "created", Running: false, OOMKilled: false, ExitCode: 0,
+          StartedAt: "0001-01-01T00:00:00Z", FinishedAt: "0001-01-01T00:00:00Z"} end),
         Image: "sha256:\("b" * 64)",
         Config: {Labels: ({"com.docker.compose.config-hash": $hash, "com.docker.compose.container-number": "1",
           "com.docker.compose.oneoff": "False", "com.docker.compose.project": $p,
@@ -425,7 +441,7 @@ docker_stub_compose_up() {
             Destination: "/cache", Driver: "local"}],
         NetworkSettings: {Ports: {"80/tcp": [{HostIp: "127.0.0.1", HostPort: $port}]}, Networks: {"\($p)_default": {}}}}] end' \
     --arg p "$project" --arg id "$id" --arg now "$now" --arg hash "$hash" --arg port "$port" \
-    --arg file "$COMPOSE_F" --arg anonymous "$anonymous" --argjson labels "$labels"
+    --arg file "$COMPOSE_F" --arg anonymous "$anonymous" --argjson labels "$labels" --argjson start "$start"
   docker_stub_running_stats
 }
 
@@ -560,6 +576,31 @@ docker_stub_image_rm() {
       echo "Untagged: $ref"
     fi
   done
+  exit "$status"
+}
+
+# rm --force --volumes <names or ids>...: each container removed, running or not, with the
+# anonymous volumes it mounts; one missing is refused as Docker refuses it, after the others are
+# removed.
+docker_stub_container_rm() {
+  [[ ${1:-} == --force && ${2:-} == --volumes && $# -gt 2 ]] || docker_stub_unplanned
+  shift 2
+  local ref name anonymous status=0
+  for ref in "$@"; do
+    name=$(jq -r --arg r "$ref" 'first(.[] | select(.Name == "/" + $r or (.Id | startswith($r))) | .Name) // empty' \
+      "$DOCKER_STATE/containers.json")
+    if [[ -z $name ]]; then
+      echo "Error response from daemon: No such container: $ref" >&2
+      status=1
+      continue
+    fi
+    anonymous=$(jq -c --arg n "$name" '[.[] | select(.Name == $n) | .Mounts[]?
+      | select(.Type == "volume" and (.Name | test("^[0-9a-f]{64}$"))) | .Name]' "$DOCKER_STATE/containers.json")
+    docker_stub_update containers 'map(select(.Name != $n))' --arg n "$name"
+    docker_stub_update volumes 'map(select(.Name as $v | $anonymous | index($v) | not))' --argjson anonymous "$anonymous"
+    echo "$ref"
+  done
+  docker_stub_running_stats
   exit "$status"
 }
 

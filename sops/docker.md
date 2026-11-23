@@ -48,7 +48,7 @@ Conventioner's `scripts/th-compose.sh` meets it, and `tests/fixtures/stack/compo
 The wrapper:
 
 - is run as `<worktree>/<compose> <compose arguments>` with `TH_DIR=<worktree>`, from the worktree, and resolves the worktree's own stack (Conventioner: the treehouse slot's project `conventioner-<slot>` and its fixed ports), unless the caller sets `COMPOSE_PROJECT_NAME` with `TH_PORTS=auto`, which names another project whose ports Docker assigns;
-- passes every other argument to `docker compose` with its files, so `config --format json`, `up -d --wait`, `logs`, `stop` and `down` work through it;
+- passes every other argument to `docker compose` with its files, so `config --format json`, `up --no-start`, `up -d --wait`, `logs`, `stop` and `down` work through it;
 - answers `ports` with `export COMPOSE_PROJECT_NAME=...` and one `export TH_<SERVICE>_PORT=...` line per running service, and exits 1 when the stack is not running;
 - turns the environment variables `TEAM_OWNER`, `TEAM_TASK`, `TEAM_KIND`, `TEAM_WORKTREE` and `TEAM_EXPIRES` into the labels of every service, named volume and network, each empty when its variable is unset;
 - creates each bind mount's host directory before `up` and runs every service that writes into a bind mount as the calling user, since Docker creates a missing source directory as root and a service running as root writes root-owned files into the worktree, which no session can remove without `sudo` (T3's `node_modules`, T21's and T24's gate worktrees).
@@ -68,7 +68,7 @@ An agent starts, reaches, stops and removes its stack with `~/agent-team/bin/tea
   When the stack's seed is not done, it first warns on stderr ("The stack record"), its stdout the same, so the `eval` still works and the warning shows in the caller's output.
 - `~/agent-team/bin/team-stack seed` runs the project's seed command again, from the worktree, with those exports, and records how it ended.
 - `~/agent-team/bin/team-stack stop` stops its containers and keeps its data; the next `up` starts them again and does not seed, unless its seed is owed.
-- `~/agent-team/bin/team-stack down` saves its logs and removes it, leaving no container, volume (named or anonymous) or network of it.
+- `~/agent-team/bin/team-stack down` saves its logs and removes it, leaving no container, volume (named or anonymous) or network of it, but for a network it leaves to the sweep while a heavy run holds the machine ("Network changes and the heavy-run lock").
 
 Each acts on the worktree it is run in (or `--worktree <path>`), resolved the same way:
 
@@ -86,10 +86,30 @@ Every stack starts fresh for its task:
 
 `down` saves the last 1 MiB of each `log_services` service's log to `<worktree>/<task_dir>/stack-logs/<project>-<service>.log`, for the builder while the task is open.
 `team-close`'s archive leaves `stack-logs/` out (`archive_left_out` in `bin/lib/team.sh`), so the logs never reach the records and go when the worktree is returned.
-It then runs `docker compose -p <project> down -v --remove-orphans`, removes any anonymous volume the stack's containers mounted that is still there, and fails naming each object of the stack left.
+It then runs `docker compose -p <project> down -v --remove-orphans` with the heavy-run lock held ("Network changes and the heavy-run lock"), removes any anonymous volume the stack's containers mounted that is still there, and fails naming each object of the stack left.
 With no stack, `stop` and `down` say so and exit 0; `env` and `seed` refuse.
 
-Exit codes: 0 done, 1 refused or failed (with the reason), 2 a malformed command line, 75 try again later (no room for the stack, or `team-capacity`'s lock still held, see "Admission").
+Exit codes: 0 done, 1 refused or failed (with the reason), 2 a malformed command line, 75 try again later (no room for the stack, or `team-capacity`'s lock still held, see "Admission"; or a heavy run still holding the heavy-run lock when a new stack's network was to be made).
+
+## Network changes and the heavy-run lock
+
+Making a stack's Docker network gives the host a new bridge with an IPv4 address, and removing it deletes that address.
+Chromium takes any address that comes or goes on the host for a network change, and fails every request it has in flight with `net::ERR_NETWORK_CHANGED`, those to `127.0.0.1` included, so a stack brought up or taken down in one worktree failed an end-to-end run in another (T505's reproduction, about one address change in 15 failing a load; T501's run of 2026-11-20).
+Since the host's `net.ipv6.conf.default.addr_gen_mode = 1` (2026-11-14), a container starting or stopping changes no address: its veth gets none, so `stop`, a stopped stack's `up` and the sweep's stop are harmless.
+
+So each `team-stack` step that makes or removes a network holds the machine's heavy-run lock, `~/.local/state/agent-team/heavy.lock` (`bin/team-heavy`), for as long as it takes, and no other step takes it:
+
+- A heavy run holds the lock for its whole run: `team-heavy run`, which a builder's local end-to-end run goes through (its project's `changed_tests` says so), and Conventioner's gate, whose `nm-test.sh` holds it from just before its stack starts until its teardown is done.
+  Under a heavy run (`TEAM_HEAVY_HELD` set) the run holds it already, so `team-stack` takes nothing.
+- `up` of a stack whose network is to be made (a new stack, one of another task taken down first, one whose network Docker lacks) waits for the lock up to `wait_minutes` ("Admission"), saying once on stderr for whom, then exits 75 naming the holder, its admission released.
+  With the lock it runs the wrapper's `up --no-start` (networks, volumes and containers made, none started), lets the lock go, and then runs `up -d --wait`, so the lock is never held through a stack's health checks.
+- `down`, and every other takedown (`up`'s of another task's stack, an instance's, the reaper's and the sweep's of a stack), takes the lock when it is free, or within 5 seconds while only a reader's shared lock holds it, as `team-heavy` waits, and runs `compose down`.
+  While a heavy run holds it, it removes the stack's containers (`docker rm --force --volumes`) and named volumes now and leaves its networks, saying so on stderr, and lists each in `~/.local/state/agent-team/stacks/networks-left.json` (`{project, name, at}`, written under `records.lock`), so `team-close` never waits on a heavy run.
+- `team-stack sweep` removes each listed network once no container in any state uses it, with the lock held, one line each in its output and `sweep.log`, for example `2026-11-24T10:00:00Z removed network conventioner-3_conventioner_network of conventioner-3: no container uses it`; one gone, or that the stack's next `up` took up again, leaves the list; while a heavy run holds the lock it removes none and says nothing, and the next sweep tries again.
+- `reap --apply` removes a network (the team network rule) only with the lock; while a heavy run holds it, it prints `left network <name> (<class>): <why>; a heavy run holds the heavy-run lock (<holder>), so team-stack sweep removes it once the run ends`, neither a removal nor a failure.
+- While `team-stack` holds the lock, its holder line is `team-stack <subcommand> (pid <pid>, <Compose project>) since <time>` (`networks` for the sweep's and the reaper's network removals), which `team-heavy status` prints and which is not `team-heavy`'s own form, so `team-heavy stop` never takes its pid for a run's.
+
+CI is spared all of this: a CI runner starts no stack while its Playwright runs, and none of its runs ever failed so (T322's count of 20 runs), so nothing changes there.
 
 ## The stack record
 
@@ -203,6 +223,8 @@ First, whether or not a team stack runs and before it reads the session list, it
 - Idle for at least `gate_idle_minutes` ("Admission" has the settings), it is removed as the reaper removes a gate stack (`docker compose -p <project> down -v --remove-orphans`, then its anonymous volumes, no logs), and one line is printed and added to `~/.local/state/agent-team/stacks/sweep.log`, for example `2026-11-11T10:00:00Z removed gate stack nmtest-1895520: no process in use in it since 2026-11-11T09:30:00Z (gate_idle_minutes 30), its test data removed`.
 - The daily reap's gate rule ("Removing what is left behind") still removes the gate stacks the readings never saw idle: a machine whose sweep is off, a stopped gate stack.
 
+Then it removes the networks a takedown left while a heavy run held the heavy-run lock, once the lock is free ("Network changes and the heavy-run lock").
+
 Then it stops each idle team stack:
 
 - It looks only at running team stacks: every container of the Compose project of class team, so gate and unowned stacks, and a project whose containers mix them with team ones, are never stopped; only containers count, so a team project holding an unowned volume is stopped, which keeps every object.
@@ -215,7 +237,7 @@ Then it stops each idle team stack:
 - A stack that is not busy is idle since its `last_busy` or its running containers' latest start, whichever is later, so one never seen busy counts from its start and one started again after its last busy time counts from that start; a missing or unreadable record is never seen busy.
 - Idle for more than `idle_minutes` ("Admission" has the settings), it is stopped with `docker compose -p <project> stop`, its data kept, and one line is printed and added to `~/.local/state/agent-team/stacks/sweep.log`, for example `2026-10-25T10:00:00Z stopped conventioner-2 of T7 in /home/daniel/.treehouse/Conventioner-d4c77a/2/Conventioner: last busy at 2026-10-25T09:20:00Z (idle_minutes 30), its data kept`.
   `~/agent-team/bin/team-stack up` starts it again with its data, without seeding unless its seed is owed.
-- Docker not answering means no stack runs: it says so on stderr and exits 0, so the heartbeat logs nothing for it; a session list that cannot be read exits 1 and stops nothing; a gate stack's removal or a stop that fails is named on stderr, the other stacks are still swept, and it exits 1.
+- Docker not answering means no stack runs: it says so on stderr and exits 0, so the heartbeat logs nothing for it; a session list that cannot be read exits 1 and stops nothing; a gate stack's or a network's removal or a stop that fails is named on stderr, the other stacks are still swept, and it exits 1.
 - Unowned stacks are never touched.
 - `down` removes the stack's record with the stack.
 - Instances (`--instance`) are team stacks labelled with their worktree, so they are swept the same way, but for the walk: no walk runs on one, so only a `dev` stack is held.
@@ -245,7 +267,7 @@ The janitor runs it daily with `--apply` ("The daily report and its alerts") onc
 - A team stack's logs, the last 1 MiB of each service's, go to its worktree's task directory as `stack-logs/<task>-<project>-<service>.log` for the project's `log_services` while the worktree is still a project's linked worktree, and otherwise to `~/.local/state/agent-team/stacks/logs/<project>-<local date>/`, for every service it has, since no `stack` block can be found for a worktree that is gone.
 - A gate run's stack is past `expires` only 2 hours after its start, longer than any gate run takes (its end-to-end lock waits at most 45 minutes), so the reaper never races a live run.
 - Without `--apply` (or with `--dry-run`, the default) it only reads, and prints `would remove <type> <name> (<class>, <size>): <why the rule matches>` for each action.
-  With `--apply` it holds the admission lock (`~/.local/state/agent-team/stacks.lock`) while it reads and removes, so no `up` starts a stack under it, and prints `removed ...` for each removal, a team stack's line ending with where its logs went, or `already gone ...` for an object that went before its turn.
+  With `--apply` it holds the admission lock (`~/.local/state/agent-team/stacks.lock`) while it reads and removes, so no `up` starts a stack under it, and prints `removed ...` for each removal, a team stack's line ending with where its logs went, or `already gone ...` for an object that went before its turn, or `left network ...` for a network while a heavy run holds the heavy-run lock ("Network changes and the heavy-run lock").
 - Then it prints `kept <type> <name> (<class>, <size>, <age> old)` for every object no rule matched that is not the team's (stacks, containers of no stack, volumes, images, and networks but Docker's own `bridge`, `host` and `none`), Daniel's primary stack and its volumes always among them, and one summary line with the totals by rule.
   A stack's size is its volumes'; a network has none, and a container of no stack shows none, since Docker gives a container's size only to a slower `docker ps --size`.
 - A tagged image is removed by `<repository>:<tag>`, a dangling one by its id, and a network by its id, since Docker lets two networks share a name; the 2 newest of a repository are its 2 newest images, every tag of either kept.
@@ -313,6 +335,8 @@ The heartbeat (`team-timers run`, every 5 minutes on the lease holder) can run t
 - A worktree kept with `--keep-worktree` keeps its stack, and a project without a `stack` block is never asked of Docker.
 - A teardown that fails stops the close with `team-stack`'s reason, the task half closed: fix the cause and run `team-close T<n>` again.
 - A project's own return command may tear its stack down as a second line (Conventioner's `th-return.sh` does).
+  For a project with a `stack` block, whose stack `team-stack down` has just taken down, `team-close` runs it with `TEAM_STACK_DOWN=1` in its environment, so it can skip that second teardown: during a heavy run `team-stack down` leaves the stack's network for the sweep ("Network changes and the heavy-run lock"), and a return command's own `compose down` would remove it under that run's browser.
+  Until `th-return.sh` reads `TEAM_STACK_DOWN`, a close during a heavy run can still remove that network.
 
 ## Rules for agents
 
@@ -341,4 +365,5 @@ These are a speed bump, as every deny rule is; the guarantee is that no script t
 - The sweep's tests stub `claude agents --json` (the sandbox's `claude` stub) with sessions in and around the worktree, and write the stored readings its gate rule reads.
 - The reaper's tests age the stub's objects with `docker_created` and refuse one removal with `docker_refuse`, and every test of `tests/team-stack.bats` and `tests/team-janitor.bats` fails when a Docker call it made pruned.
 - The janitor's tests add `oom` events with `docker_event`, set the free disk through the stub `df`, and stub Discord's answers to its posts (the sandbox's `curl` stub).
+- `tests/team-stack-network.bats` holds the sandbox's heavy-run lock with a process of its own, as a heavy run does, and reads from the stub's log of each compose call whether the lock was held then and by whom.
 - `tests/team-stack-live.bats` runs against the real Docker only with `TEAM_LIVE_DOCKER=1`, since a test that creates a network can break a gate run's end to end; it starts and removes the fixture's one-service stack under a project name of its own, races two `up` calls for the last room in the budget (a stored reading leaving room for one), has the sweep stop an idle stack that `up` then brings back with its data, runs the worktree's stack and two instances at once on ports of their own, and has `reap --apply` remove a closed task's stack and an expired gate stack and keep an unowned one, limited by the test seam `TEAM_STACK_REAP_PROJECTS` to its own projects, so it never reaps the machine.
