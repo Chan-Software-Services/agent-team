@@ -78,12 +78,13 @@ The rows, in order:
     team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
     team-review-comment, team-stow and claude-coordinator with any words; team-capacity install
     or place, team-config apply or capture, team-heavy run, team-lease take, renew or release,
-    team-secrets restore or save, team-stack down, seed, stop or up and team-timers disable,
-    enable or run, any of those among the words before a --; either kind passing with a first
-    word --help or -h, which the library answers before the script does anything. Reason: the
-    coordinator's acts, which an assistant session never runs (<the act and its subcommand>); its
-    --help and a read of its file pass. Each act but team-heavy run also refuses the assistant
-    itself (assistant_refusal in bin/lib/team.sh), where the walk cannot read a call.
+    team-quota usage (the heartbeat's usage reading), team-secrets restore or save, team-stack
+    down, seed, stop or up and team-timers disable, enable or run, any of those among the words
+    before a --; either kind passing with a first word --help or -h, which the library answers
+    before the script does anything. Reason: the coordinator's acts, which an assistant session
+    never runs (<the act and its subcommand>); its --help and a read of its file pass. Each act but
+    team-heavy run also refuses the assistant itself (assistant_refusal in bin/lib/team.sh), where
+    the walk cannot read a call.
   assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
     rules held by any gh api call with a field and any release, secret or variable call until this
     row, and the other groups' writes, many of which (gh gist create, gh workflow run) no deny
@@ -540,6 +541,7 @@ ASSISTANT_SUBCOMMAND_ACTS = {
     "team-config": ("apply", "capture"),
     "team-heavy": ("run",),
     "team-lease": ("take", "renew", "release"),
+    "team-quota": ("usage",),
     "team-secrets": ("restore", "save"),
     "team-stack": ("down", "seed", "stop", "up"),
     "team-timers": ("disable", "enable", "run"),

@@ -346,6 +346,7 @@ assert_nothing_written() {
     "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
     "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
     "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
+    "team-quota usage" "team-quota usage --if-due" "$REPO_ROOT/bin/team-quota usage" \
     "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
     "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
     "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
@@ -388,6 +389,7 @@ assert_nothing_written() {
     "cat ~/.claude/channels/discord-assistant/inbox/a.png" \
     "team-state" "team-lease status" "team-lease check" "team-timers health" "team-timers status --json" \
     "team-config diff" "team-secrets check" "team-stack ls" "team-capacity status" "team-doctor" \
+    "team-quota status" "team-quota status --json" \
     "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup" \
     "sed -n 1,40p bin/team-load-check | head -20" "grep -rn toolkit bin/claude-coordinator bin/claude-assistant" \
     "wc -l bin/team-checkpoint bin/team-review-comment" "team-load-check --help" "team-timers watch --once" \
