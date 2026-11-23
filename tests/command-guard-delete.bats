@@ -106,7 +106,7 @@ refuses_wrapped() {
     'T=`mktemp -d -p "$CLAUDE_JOB_DIR/tmp" x.XXXXXX`; rm -rf "${T}"' \
     'T="$(mktemp -d --tmpdir="$CLAUDE_JOB_DIR/tmp")"; rm -rf "$T"' \
     'T=$(mktemp -d build/x.XXXXXX); rm -rf "$T"' \
-    'D=build; rm -rf "$D"' 'D="$CLAUDE_JOB_DIR/tmp/check"; rm -rf "$D/x"' 'local D=build/x; rm -rf $D' \
+    'D=build; rm -rf "$D"' 'D="$CLAUDE_JOB_DIR/tmp/check"; rm -rf "$D/x"' 'D=build/x; rm -rf $D' \
     'export D=build; rm -rf "$D"' 'D=build; E="$D/x"; rm -rf "$E"' 'D=build; [ -d "$D" ] && rm -rf "$D"' \
     'D=build; rm -rf "${D}" && D=src/sub && rm -rf "$D"' \
     "bash -c 'D=build; rm -rf \"\$D\"'"
@@ -115,8 +115,9 @@ refuses_wrapped() {
 # An assignment holds at the delete only where Bash surely still holds it there: one at the top
 # level of the delete's text, in no pipeline of more than one command and not in the background,
 # that begins its and-or list, or that stands in the delete's own list joined to it by && alone;
-# trap's action reads those before the trap, and a shell's string its own. Anywhere else the
-# variable is unread.
+# trap's action reads those before the trap, and a shell's string its own, but for a script the
+# shell around expands first (an unquoted heredoc, a here-string or piped text holding a $ outside
+# single quotes). Anywhere else the variable is unread.
 @test "a variable is read as set only where its assignment surely holds at the delete" {
   # shellcheck disable=SC2016 # the call's own variables
   refuses "a recursive delete of \$W/fix, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); rm -rf \$W/fix" \
@@ -125,7 +126,11 @@ refuses_wrapped() {
     $'false &&\n'"W=$WT/a; rm -rf \$W/fix" "if false; then W=$WT/a; fi; rm -rf \$W/fix" \
     "f() { W=$WT/a; }; rm -rf \$W/fix" "export() { W=$WT/a; }; rm -rf \$W/fix" \
     "{ coproc W=$WT/a; }; rm -rf \$W/fix" "echo \$(W=$WT/a); rm -rf \$W/fix" \
-    "bash -c 'W=$WT/a'; rm -rf \$W/fix" "W=$WT/a; bash -c 'rm -rf \$W/fix'" "rm -rf \$W/fix; W=$WT/a"
+    "bash -c 'W=$WT/a'; rm -rf \$W/fix" "W=$WT/a; bash -c 'rm -rf \$W/fix'" "rm -rf \$W/fix; W=$WT/a" \
+    "W=$WT/a && true & rm -rf \$W/fix" "W=$WT/a || true & rm -rf \$W/fix" \
+    "export -q W=$WT/a; rm -rf \$W/fix" "declare -Z W=$WT/a; rm -rf \$W/fix" "declare -u W=$WT/a; rm -rf \$W/fix" \
+    $'bash <<EOF\n'"W=$WT/a"$'\nrm -rf $W/fix\nEOF' "bash <<< \"W=$WT/a; rm -rf \$W/fix\"" \
+    "echo \"W=$WT/a; rm -rf \$W/fix\" | bash"
   # An assignment that may not hold leaves the variable unread in a value, a cd target and find's start path too.
   refuses "a recursive delete of \$E, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); E=\$W/fix; rm -rf \$E"
   refuses "a recursive delete of x, $UNREAD" "$UNREAD_WAY" "(W=$WT/src); cd \$W; rm -rf x"
@@ -133,7 +138,22 @@ refuses_wrapped() {
   passes "W=$WT/a; rm -rf \$W/fix" "W=$WT/a && rm -rf \$W/fix" "true && W=$WT/a && rm -rf \$W/fix" \
     "W=$WT/a; (rm -rf \$W/fix)" "W=$WT/a; true || rm -rf \$W/fix" "W=$WT/a; if true; then rm -rf \$W/fix; fi" \
     "W=$WT/a; trap 'rm -rf \$W/fix' EXIT" "bash -c 'W=$WT/a && rm -rf \$W/fix'" "W=$WT/a; E=\$W/fix; rm -rf \$E" \
-    "W=$WT/src; cd \$W && rm -rf x" "W=$WT/a; find \$W/fix -delete" $'W='"$WT/a"$'\nrm -rf $W/fix'
+    "W=$WT/src; cd \$W && rm -rf x" "W=$WT/a; find \$W/fix -delete" $'W='"$WT/a"$'\nrm -rf $W/fix' \
+    "W=$WT/a; true & rm -rf \$W/fix" "W=$WT/a && rm -rf \$W/fix &" "declare -gx W=$WT/a; rm -rf \$W/fix" \
+    "export A=1 W=$WT/a; rm -rf \$W/fix" $'bash <<\'EOF\'\n'"W=$WT/a"$'\nrm -rf $W/fix\nEOF' \
+    "bash <<< 'W=$WT/a; rm -rf \$W/fix'" "echo 'W=$WT/a; rm -rf \$W/fix' | bash"
+  # Bash keeps its own value of a dynamic variable, whatever the command assigns it.
+  refuses "a recursive delete of \$FUNCNAME/fix, $UNREAD" "$UNREAD_WAY" "FUNCNAME=$WT/a; rm -rf \$FUNCNAME/fix"
+  refuses "a recursive delete of \$DIRSTACK, $UNREAD" "$UNREAD_WAY" "DIRSTACK=$WT/a; rm -rf \$DIRSTACK"
+}
+
+# Bash runs local only in a function: at the call's top level, or in eval's string there, it
+# assigns nothing, so the variable it names is unread.
+@test "local outside a function assigns nothing, so its variable is unread" {
+  # shellcheck disable=SC2016 # the call's own variables
+  refuses "a recursive delete of \$D, $UNREAD" "$UNREAD_WAY" 'local D=build/x; rm -rf $D'
+  refuses "a recursive delete of \$W/fix, $UNREAD" "$UNREAD_WAY" "local W=$WT/a; rm -rf \$W/fix" \
+    "eval 'local W=$WT/a; rm -rf \$W/fix'"
 }
 
 # A word Bash decodes from $'...' is unread, however often the same call deletes the path it

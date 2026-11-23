@@ -12,7 +12,8 @@ bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does, and call_redirecti
 redirection it makes in the same texts; its kill rows, kill_rules.py, import command_name,
 heads_behind and short_cluster, and its delete rows, delete_rules.py, those with the walk, simple_commands,
 plain_sequence (a call's commands in the order they run, below), places and top_pipelines (where
-each command stands, below) with SAME, find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
+each command stands, below) with SAME, expanded_scripts (the heredoc bodies, here-strings and piped text
+a shell reads as its script after the shell running the command expanded them), find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
 bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands,
 command_name, the option readers long_options and short_cluster, and redirection_targets, each
@@ -200,7 +201,7 @@ class Heredoc:
 @dataclass
 class Reading:
     """A command's pipelines (each its parent's pipeline and segment, or None, and its segments'
-    spans), its closed heredocs, its here-strings (each its pipeline, its segment and its word),
+    spans), its closed heredocs, its here-strings (each its pipeline, its segment, its word and that word as written),
     where its reading ended: past the ) that closes a group's reading, else the text's end, and
     each subscript read as one bracket pair in an assignment's place, where its word starts mapped
     to just past its ]."""
@@ -510,9 +511,10 @@ def read_command(text, start=0, group=False):
                 pop(i + 1)
             i += 1
         elif text.startswith("<<<", i):
-            word, _, end = _word(text, _past_blanks(text, i + 3))
+            begin = _past_blanks(text, i + 3)
+            word, _, end = _word(text, begin)
             if word is not None:
-                strings.append((*here(), word))
+                strings.append((*here(), word, text[begin:end]))
             i = max(end, i + 3)
         elif text.startswith("<<", i):
             tabs = text.startswith("<<-", i)
@@ -687,12 +689,9 @@ def code_parts(command):
     return _code_parts(command, 0)
 
 
-def _code_parts(command, depth):
-    """code_parts of a command, or of a script written depth scripts deep in one."""
-    if depth > DEPTH:
-        raise ValueError(f"a written script nested deeper than {DEPTH}")
-    reading = read_command(command)
-    bodies = {h.body[0]: h.end for h in reading.heredocs}
+def _shell_segments(command, reading, bodies):
+    """Of each segment of each pipeline of the command's reading, whether it runs a shell, and
+    whether that shell may read its script from stdin, as two lists of lists."""
     shells = [
         [_runs_shell(command, s, e, bodies, reading.subscripts) for s, e in segments]
         for _, segments in reading.pipelines
@@ -710,6 +709,86 @@ def _code_parts(command, depth):
             shells[parent[0]][parent[1]] = True
         if parent is not None and any(script):
             scripts[parent[0]][parent[1]] = True
+    return shells, scripts
+
+
+def _piped(reading, shells, scripts):
+    """Each segment piped into a shell, as (its pipeline, its start, its end, whether that shell
+    may read its script from stdin), once for each shell it is piped into."""
+    for pipeline, ((_, segments), shell, script) in enumerate(zip(reading.pipelines, shells, scripts)):
+        for k in range(1, len(segments)):
+            if shell[k]:
+                for s, e in segments[:k]:
+                    yield pipeline, s, e, script[k]
+
+
+def _piped_texts(command, s, e, script, bodies, subscripts):
+    """What code_parts adds of the segment from s to e, piped into a shell: the text of each of its
+    quoted strings and of each of its simple commands' words after the first, quotes dropped, and,
+    when the shell may read its script from stdin, what its echo and printf commands print."""
+    piped = command[s:e]
+    added = [single or double for single, double in QUOTED.findall(piped)]
+    for simple in SIMPLE.split(piped.replace("'", "").replace('"', "")):
+        added += simple.split(None, 1)[1:]
+    # What echo or printf prints into the pipe, decoded, as _writes reads it for a file.
+    if script:
+        for words in _segment_commands(command, s, e, bodies, subscripts):
+            added += list(_printed(words))
+    return added
+
+
+def _expands(written):
+    """Whether text as written holds a $ or a backtick the shell expands: one outside single
+    quotes and not escaped."""
+    quote, i = None, 0
+    while i < len(written):
+        c = written[i]
+        if c == "\\":
+            i += 2
+            continue
+        if quote is None and c == "'":
+            end = written.find("'", i + 1)
+            i = len(written) if end < 0 else end + 1
+            continue
+        if c == '"':
+            quote = None if quote else '"'
+        elif c in "$`":
+            return True
+        i += 1
+    return False
+
+
+def expanded_scripts(command):
+    """The texts a shell the command runs reads as its script after the shell running the command
+    expanded them, as code_parts adds them: the body of a heredoc under an unquoted marker; the
+    word of a here-string that holds, as written, a $ or a backtick outside single quotes; and what
+    code_parts adds of a segment piped into a shell whose text holds one so."""
+    reading = read_command(command)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    shells, scripts = _shell_segments(command, reading, bodies)
+    out = [
+        command[heredoc.body[0] : heredoc.body[1]]
+        for heredoc in reading.heredocs
+        if not heredoc.quoted and _fed(reading, shells, heredoc.pipeline, heredoc.segment)
+    ]
+    out += [
+        word
+        for pipeline, segment, word, written in reading.strings
+        if _fed(reading, shells, pipeline, segment) and _expands(written)
+    ]
+    for _, s, e, script in _piped(reading, shells, scripts):
+        if _expands(command[s:e]):
+            out += _piped_texts(command, s, e, script, bodies, reading.subscripts)
+    return [text for text in out if text]
+
+
+def _code_parts(command, depth):
+    """code_parts of a command, or of a script written depth scripts deep in one."""
+    if depth > DEPTH:
+        raise ValueError(f"a written script nested deeper than {DEPTH}")
+    reading = read_command(command)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    shells, scripts = _shell_segments(command, reading, bodies)
     out, start = [], 0
     for heredoc in reading.heredocs:
         lines = command[heredoc.body[0] : heredoc.body[1]].split("\n")[:-1]
@@ -726,23 +805,9 @@ def _code_parts(command, depth):
     # word character: bash -c "bash -c 'x'" adds both strings. Each is added to its line's end
     # only: its later lines already start lines of the text.
     added = [OPENING.sub("", text[match.end() :].split("\n", 1)[0]) for match in RUNS_STRING.finditer(text)]
-    added += [word for pipeline, segment, word in reading.strings if _fed(reading, shells, pipeline, segment)]
-    for (_, segments), shell, script in zip(reading.pipelines, shells, scripts):
-        for k in range(1, len(segments)):
-            if not shell[k]:
-                continue
-            for s, e in segments[:k]:
-                piped = command[s:e]
-                added += [single or double for single, double in QUOTED.findall(piped)]
-                for simple in SIMPLE.split(piped.replace("'", "").replace('"', "")):
-                    words = simple.split(None, 1)
-                    added += words[1:]
-                # What echo or printf prints into the pipe, decoded, as _writes reads it for a file,
-                # when the shell may read it as its script.
-                if not script[k]:
-                    continue
-                for words in _segment_commands(command, s, e, bodies, reading.subscripts):
-                    added += list(_printed(words))
+    added += [word for pipeline, segment, word, _ in reading.strings if _fed(reading, shells, pipeline, segment)]
+    for _, s, e, script in _piped(reading, shells, scripts):
+        added += _piped_texts(command, s, e, script, bodies, reading.subscripts)
     parts = [text] + [inner for inner in added if inner]
     return parts + _scripts(command, reading, parts, depth)
 
@@ -832,7 +897,7 @@ def _writes(text, reading=None):
         lines = text[heredoc.body[0] : heredoc.body[1]].split("\n")[:-1]
         body = "".join(line + "\n" for line in lines)
         pieces += [(file, (body,)) for file in reached(heredoc.pipeline, heredoc.segment)]
-    for pipeline, segment, word in reading.strings:
+    for pipeline, segment, word, _ in reading.strings:
         pieces += [(file, (word + "\n",)) for file in reached(pipeline, segment)]
     for pipeline, segments in enumerate(simple):
         for segment, found in enumerate(segments):

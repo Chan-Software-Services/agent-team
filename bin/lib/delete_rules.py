@@ -6,8 +6,8 @@ reason when it refuses (with an allowed way of its own, (reason, allowed)) and N
 and its allowed way, as kill_rules.py's are.
 bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
 operand, below: expand (a word as the paths the shell may make of it, read with no command it
-stands at, so a variable it names is each value it is given wherever its assignment stands, though
-one named in that value is read where that value is assigned), reachable (the
+stands at, so a variable it names, and one named in that one's value, is each value it is given
+wherever its assignment stands), reachable (the
 directories a relative one is read against, as Bases, those of _candidates or, past a cd it cannot
 follow, the rest) and Unread, which either raises, and find_paths (find's start paths among its
 words).
@@ -42,7 +42,11 @@ shell with an -O or +O value, holding a $ or a backtick names every option.
 Each operand is resolved without running anything, from the walk's word (its quotes removed, its
 unquoted brace lists expanded):
   - a backslash left in it (a quoted backslash), or a word the walk decoded from a $'...' escape
-    or made by a brace range ({1..3}), makes it unread, named as written;
+    or made by a brace range ({1..3}), makes it unread, named as written, though the call also
+    deletes the path it decodes to spelled plainly;
+  - a $ or a backtick in a command of a text a shell reads as its script after the shell running
+    the call expanded it, with its own values, makes it unread: a heredoc under an unquoted marker,
+    and a here-string or text piped into the shell holding a $ or a backtick outside single quotes;
   - a brace comma list ({a,b}, nested too) left in it is expanded;
   - a leading ~ or ~/ is HOME; ~user, ~+ and ~- are unread;
   - $HOME and $CLAUDE_JOB_DIR (each also as ${...}) are the hook's environment, an unset one
@@ -59,13 +63,18 @@ unquoted brace lists expanded):
     variable is read (an operand where the delete stands, a cd target where the cd does, another
     variable's value where that is assigned): one behind no wrapper at the top level of the text
     the reading stands in, before the pipeline holding it there, itself in no pipeline of more
-    than one command and not sent to the background, that begins its and-or list, or is joined to
-    that pipeline by && alone after no ||; for a command in eval's string or trap's action, one so
-    before the eval or the trap in the text around counts too. Any other counts for nothing: one
-    in a subshell, a group, a compound command, a function or a string another process runs (a
-    shell's -c), one after && or || in a list the reading does not stand in, one after || in its
-    own, and one after the reading; and a code part is read alone, so a command of it holds only
-    its own; a value that is $(mktemp ...) or
+    than one command, that begins its and-or list and that list ends with a ; (an & sends it all
+    to the background), or is joined to that pipeline by && alone after no ||; a bare one, or one
+    of export, declare, typeset or readonly with no word before it but another assignment, a --
+    or, for declare and typeset, an option of -g, -r, -t and -x (any other may change the value or
+    assign nothing), never local, which outside a function assigns nothing; for a command in
+    trap's action, one so before the trap in the text around counts too. Any other counts for
+    nothing: one in a subshell, a group, a compound command, a function or a string another
+    process runs (a shell's -c), one after && or || in a list the reading does not stand in, one
+    after || in its own, and one after the reading; and a code part, eval's string among them, is
+    read alone, so a command of it holds only its own. Bash's dynamic variables (FUNCNAME,
+    BASH_SOURCE, DIRSTACK, RANDOM and the rest of DYNAMIC), whose value it keeps whatever is
+    assigned, are unread; a value that is $(mktemp ...) or
     `mktemp ...` alone is the new path mktemp makes: its template under -p <dir> or --tmpdir=<dir>;
     its template's name under $TMPDIR (/tmp when it is empty) with -t, --tmpdir alone or no
     template (tmp.XXXXXXXXXX); else its template as written, relative to the cwd when relative; a
@@ -145,8 +154,8 @@ from dataclasses import dataclass, replace
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    FIND_EXEC, SAME, SCRIPT, SHELLS, SOURCE, blank_heredocs, code_parts, command_name, commands, heads_behind,
-    long_options, places, plain_sequence, short_cluster, simple_commands, top_pipelines, unquoted,
+    FIND_EXEC, SAME, SCRIPT, SHELLS, SOURCE, blank_heredocs, code_parts, command_name, commands, expanded_scripts,
+    heads_behind, long_options, places, plain_sequence, short_cluster, simple_commands, top_pipelines, unquoted,
 )
 
 ALLOWED_DELETE = (
@@ -195,6 +204,17 @@ KNOWN = ("HOME", "CLAUDE_JOB_DIR", "CLAUDE_PROJECT_DIR")
 # Those of them the Bash tool's shell does not set, though hooks get them: read as unset too.
 HOOK_ONLY = ("CLAUDE_PROJECT_DIR",)
 DECLARERS = frozenset(("export", "local", "declare", "typeset", "readonly"))
+# The declarers whose assignment the shell surely makes, each with the option letters by which it
+# keeps the value as given (declare -g, -r, -t and -x), so an option it does not take (export -q)
+# or one that changes the value (-i, -l, -u, an array's -a) makes it hold nothing the guard reads.
+GIVING = {"export": "", "readonly": "", "declare": "grtx", "typeset": "grtx"}
+ASSIGNS = re.compile(r"[A-Za-z_]\w*=")
+# The variables Bash keeps its own value of, whatever the command assigns them.
+DYNAMIC = frozenset((
+    "FUNCNAME", "BASH_SOURCE", "BASH_LINENO", "DIRSTACK", "BASH_COMMAND", "BASHPID", "BASH_SUBSHELL", "GROUPS",
+    "PIPESTATUS", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "HISTCMD", "EPOCHSECONDS", "EPOCHREALTIME",
+    "BASH_REMATCH",
+))
 # A variable as $NAME or ${NAME}.
 REFERENCE = re.compile(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
 GLOB = re.compile(r"[*?\[]")
@@ -344,25 +364,46 @@ def _places(context):
 
 
 @functools.lru_cache(maxsize=None)
+def _expanded(context):
+    """The commands of each text a shell reads as its script after the shell around expanded it
+    (expanded_scripts: a heredoc under an unquoted marker, a here-string or piped text holding a $
+    or a backtick outside single quotes), in every text _places walks."""
+    texts = [blank_heredocs(part) for part in code_parts(context.text)] + [context.text]
+    scripts = [script for text in texts for script in expanded_scripts(text)]
+    return frozenset(command for script in scripts for command in commands(blank_heredocs(script)))
+
+
+@functools.lru_cache(maxsize=None)
 def _tops(text):
     return top_pipelines(text)
 
 
 def _gives(command, name):
     """Whether the command, which the shell runs in its place, assigns the variable: a bare
-    assignment or one of export, local, declare, typeset or readonly, behind no wrapper."""
+    assignment, or one of export, declare, typeset or readonly, behind no wrapper, every word before
+    the assignment another assignment, a -- or an option the guard knows to keep the value as given
+    (GIVING); never local, which outside a function assigns nothing."""
     prefix = name + "="
     if command.wrappers:
         return False
     if not command.words:
         return any(word.startswith(prefix) for word in command.assignments)
-    return command_name(command.words[0]) in DECLARERS and any(word.startswith(prefix) for word in command.words[1:])
+    options = GIVING.get(command_name(command.words[0]))
+    if options is None:
+        return False
+    for word in command.words[1:]:
+        if word.startswith(prefix):
+            return True
+        if not (word == "--" or ASSIGNS.match(word) or (options and re.fullmatch(f"[-+][{options}]+", word))):
+            return False
+    return False
 
 
 def _before(name, place):
     """Whether an assignment of the variable surely runs before the pipeline at place.root of its
-    text, in that shell: one top_pipelines gives a Command before it, that begins its and-or list,
-    or stands in the place's own list joined to it by && alone, after no ||."""
+    text, in that shell: one top_pipelines gives a Command before it, that begins its and-or list
+    and that list ends with a ; (an & sends it all to the background), or stands in the place's own
+    list joined to it by && alone, after no ||."""
     tops = _tops(place.text)
     at = next((k for k, (root, _, _) in enumerate(tops) if root == place.root), 0)
     for k in range(at):
@@ -371,7 +412,9 @@ def _before(name, place):
             continue
         between = [separator for _, _, separator in tops[k:at]]
         begins = k == 0 or tops[k - 1][2] in (";", "&")
-        if begins and any(separator in (";", "&") for separator in between):
+        # The list it begins ends at its first ; or &, which sends the whole list to the background.
+        ends = next((separator for separator in between if separator in (";", "&")), None)
+        if begins and ends == ";":
             return True
         if all(separator == "&&" for separator in between) and (k == 0 or tops[k - 1][2] != "||"):
             return True
@@ -448,10 +491,13 @@ def _tilde(text, context):
     return text
 
 
-def _values(name, context, depth, at=None):
+def _values(name, context, depth, at=None, placed=True):
     """Each value $name may hold where the command runs; at, the command whose directories $PWD
     is (None: every directory the call may be in), and in an assigned value, the command that
-    assigns it, since Bash expands it there."""
+    assigns it, since Bash expands it there; with placed, an assigned variable is read only where
+    an assignment of it holds at at (_held), else wherever it is assigned."""
+    if name in DYNAMIC:
+        raise Unread
     if name in KNOWN:
         value = _environment(name, context)
         return [value, ""] if name in HOOK_ONLY and value else [value]
@@ -461,27 +507,27 @@ def _values(name, context, depth, at=None):
         return [base.path for base in _bases(context, at)]
     values = _assigned(name, context)
     # A variable no assignment of which surely holds where the command at runs may hold another value.
-    if values is None or depth >= MAX_DEPTH or (at is not None and not _held(name, at, context)):
+    if values is None or depth >= MAX_DEPTH or (placed and at is not None and not _held(name, at, context)):
         raise Unread
     out = []
     for value, assigning in values:
-        out += _value(value, context, depth + 1, assigning)
+        out += _value(value, context, depth + 1, assigning, placed)
     return out
 
 
-def _value(value, context, depth, at=None):
+def _value(value, context, depth, at=None, placed=True):
     """The paths an assignment's value stands for: mktemp's new path, else the value with its
     leading ~ and its variables expanded."""
     substitution = re.fullmatch(r"\$\((.*)\)|`(.*)`", value, re.DOTALL)
     if substitution:
         return _mktemp(substitution.group(1) if substitution.group(1) is not None else substitution.group(2),
-                       context, depth, at)
+                       context, depth, at, placed)
     if value.startswith("("):
         raise Unread
-    return _substitute(_tilde(value, context), context, depth, at)
+    return _substitute(_tilde(value, context), context, depth, at, placed)
 
 
-def _mktemp(text, context, depth, at=None):
+def _mktemp(text, context, depth, at=None, placed=True):
     """The paths mktemp's command text makes: each template under its directory."""
     if re.search(r"[;&|()`\n]|\$\(", text):
         raise Unread
@@ -514,7 +560,7 @@ def _mktemp(text, context, depth, at=None):
         else:
             templates.append(word)
     if directory is not None and directory != "":
-        bases = _substitute(_tilde(directory, context), context, depth, at)
+        bases = _substitute(_tilde(directory, context), context, depth, at, placed)
     elif under_tmpdir or not templates:
         if _rebound("TMPDIR", context):
             raise Unread
@@ -523,7 +569,7 @@ def _mktemp(text, context, depth, at=None):
         bases = [None]
     out = []
     for template in templates or ["tmp.XXXXXXXXXX"]:
-        for path in _substitute(_tilde(template, context), context, depth, at):
+        for path in _substitute(_tilde(template, context), context, depth, at, placed):
             for base in bases:
                 if base is None or path.startswith("/"):
                     out.append(path)
@@ -532,15 +578,15 @@ def _mktemp(text, context, depth, at=None):
     return out
 
 
-def _substitute(text, context, depth, at=None):
+def _substitute(text, context, depth, at=None, placed=True):
     """The text with each $NAME and ${NAME} it holds replaced by each value it may hold, $PWD by
-    the directories of the command at."""
+    the directories of the command at, read as _values reads them."""
     results, end = [""], 0
     for reference in REFERENCE.finditer(text):
         # An IFS the command sets may split a value where a blank would not.
         if _rebound("IFS", context):
             raise Unread
-        values = _values(reference.group(1) or reference.group(2), context, depth, at)
+        values = _values(reference.group(1) or reference.group(2), context, depth, at, placed)
         if any(re.search(r"\s", value) for value in values):
             raise Unread
         literal = text[end : reference.start()]
@@ -555,13 +601,17 @@ def _substitute(text, context, depth, at=None):
 
 
 def expand(word, context, at=None):
-    """The word as the paths the shell may make of it, relative ones as they stand."""
+    """The word as the paths the shell may make of it, relative ones as they stand, read where the
+    command at stands, or, with none, its variables and theirs wherever they are assigned."""
     # The walk decoded a $'...' escape or expanded a brace range in a word it marks written.
     if "\\" in word or getattr(word, "written", None) is not None:
         raise Unread
+    # In a script the shell around expanded first (an unquoted heredoc, a here-string, piped text).
+    if at is not None and re.search("[$`]", word) and at in _expanded(context):
+        raise Unread
     out = []
     for braced in _braces(word):
-        out += _substitute(_tilde(braced, context), context, 0, at)
+        out += _substitute(_tilde(braced, context), context, 0, at, at is not None)
     return out
 
 
@@ -620,8 +670,8 @@ def _reached(target, command, bases, context, placed=True):
     """The Bases of one cd target from each of bases: an absolute one alone, a relative one from
     each, both as the shell's logical cd reads it, from each path the base's PWD may hold, and as
     the file system does; Unread when the guard cannot follow it. Its variables are read where
-    the cd stands, but, with placed False, wherever they are assigned (those named in their values
-    still where those are assigned), as reachable reads a cd past one _candidates cannot follow. Read
+    the cd stands, but, with placed False, wherever they are assigned, and so are those named in
+    their values, as reachable reads a cd past one _candidates cannot follow. Read
     once per call for each set of bases, since each command's reading rereads the cds before it,
     keyed by the target as written too, since a word decoded from $'...' or made by a brace range
     equals its text."""
