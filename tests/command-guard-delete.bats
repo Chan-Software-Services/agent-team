@@ -123,7 +123,8 @@ refuses_wrapped() {
     "W=$WT/a | cat; rm -rf \$W/fix" "cat f | W=$WT/a; rm -rf \$W/fix" "true || W=$WT/a; rm -rf \$W/fix" \
     "false && W=$WT/a; rm -rf \$W/fix" "true || W=$WT/a && rm -rf \$W/fix" "W=$WT/a & rm -rf \$W/fix" \
     $'false &&\n'"W=$WT/a; rm -rf \$W/fix" "if false; then W=$WT/a; fi; rm -rf \$W/fix" \
-    "f() { W=$WT/a; }; rm -rf \$W/fix" "{ coproc W=$WT/a; }; rm -rf \$W/fix" "echo \$(W=$WT/a); rm -rf \$W/fix" \
+    "f() { W=$WT/a; }; rm -rf \$W/fix" "export() { W=$WT/a; }; rm -rf \$W/fix" \
+    "{ coproc W=$WT/a; }; rm -rf \$W/fix" "echo \$(W=$WT/a); rm -rf \$W/fix" \
     "bash -c 'W=$WT/a'; rm -rf \$W/fix" "W=$WT/a; bash -c 'rm -rf \$W/fix'" "rm -rf \$W/fix; W=$WT/a"
   # An assignment that may not hold leaves the variable unread in a value, a cd target and find's start path too.
   refuses "a recursive delete of \$E, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); E=\$W/fix; rm -rf \$E"

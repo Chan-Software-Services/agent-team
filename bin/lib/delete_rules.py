@@ -6,7 +6,8 @@ reason when it refuses (with an allowed way of its own, (reason, allowed)) and N
 and its allowed way, as kill_rules.py's are.
 bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
 operand, below: expand (a word as the paths the shell may make of it, read with no command it
-stands at, so a variable is each value it is given, wherever its assignment stands), reachable (the
+stands at, so a variable it names is each value it is given wherever its assignment stands, though
+one named in that value is read where that value is assigned), reachable (the
 directories a relative one is read against, as Bases, those of _candidates or, past a cd it cannot
 follow, the rest) and Unread, which either raises, and find_paths (find's start paths among its
 words).
@@ -360,14 +361,13 @@ def _gives(command, name):
 
 def _before(name, place):
     """Whether an assignment of the variable surely runs before the pipeline at place.root of its
-    text, in that shell: one top_pipelines gives a Command, not sent to the background, before it,
-    that begins its and-or list, or stands in the place's own list joined to it by && alone, after
-    no ||."""
+    text, in that shell: one top_pipelines gives a Command before it, that begins its and-or list,
+    or stands in the place's own list joined to it by && alone, after no ||."""
     tops = _tops(place.text)
     at = next((k for k, (root, _, _) in enumerate(tops) if root == place.root), 0)
     for k in range(at):
         _, command, separator = tops[k]
-        if command is None or separator == "&" or not _gives(command, name):
+        if command is None or not _gives(command, name):
             continue
         between = [separator for _, _, separator in tops[k:at]]
         begins = k == 0 or tops[k - 1][2] in (";", "&")
@@ -620,7 +620,8 @@ def _reached(target, command, bases, context, placed=True):
     """The Bases of one cd target from each of bases: an absolute one alone, a relative one from
     each, both as the shell's logical cd reads it, from each path the base's PWD may hold, and as
     the file system does; Unread when the guard cannot follow it. Its variables are read where
-    the cd stands, but, with placed False, wherever they are assigned (reachable's reading). Read
+    the cd stands, but, with placed False, wherever they are assigned (those named in their values
+    still where those are assigned), as reachable reads a cd past one _candidates cannot follow. Read
     once per call for each set of bases, since each command's reading rereads the cds before it,
     keyed by the target as written too, since a word decoded from $'...' or made by a brace range
     equals its text."""

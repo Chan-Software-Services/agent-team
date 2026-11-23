@@ -126,12 +126,14 @@ none is sent to the background or run after ! or coproc, and no command of it ru
 find -exec, a script file or a sourced file; else None.
 places(text) maps each Command of the walk to each Place it stands at: the text it is a simple
 command of (the text walked, or a command string), the pipeline at that text's top level holding
-it, and for a string whether the shell itself runs it (SAME: eval's, trap's action, behind no
-wrapper but command or builtin) or another process does (CHILD), with the Place of the command
-that runs it; what find -exec runs stands where find does. top_pipelines(text) gives each pipeline
-at the text's top level, in order, with its separator after it and its Command when the shell
-runs that command itself, in its place: its one segment one simple command, starting with no
-reserved word, so neither piped nor a group, a compound command, a function, ! or coproc.
+it, and for a string whether the shell itself runs it (SAME: eval's, trap's action, with no
+wrapper of its own but command or builtin and not run by find -exec) or another process does
+(CHILD), with the Place of the command that runs it; what find -exec runs stands where find does.
+top_pipelines(text) gives each pipeline at the text's top level, in order, with its separator
+after it and its Command when the shell runs that command itself, in its place: its one segment
+one simple command, starting with no reserved word and defining no function, and not sent to the
+background, so neither piped nor a group, a compound command, a function's definition, ! or
+coproc, nor a background job.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -1290,13 +1292,18 @@ def _rooted(command):
                 yield roots[k], words
 
 
+# A function's definition, by function or by its name and (), which runs nothing where it stands.
+FUNCTION = re.compile(r"function(?![^\s;&|()<>])|[^\s;&|()<>]+[ \t]*\([ \t]*\)")
+
+
 def top_pipelines(text):
     """Each pipeline at the text's top level that holds more than blanks or a comment, in order,
     as (its index, as Place.root gives it; its Command when the shell itself runs it in its place,
     else None; the separator after it: "&&", "||", "&" when it is sent to the background, else
-    ";"). Its Command is its one segment's when that segment is one simple command and starts with
-    no reserved word: not piped (a pipeline of more than one command runs each in a subshell),
-    nor a group, a compound command, a function, ! or coproc."""
+    ";"). Its Command is its one segment's when that segment is one simple command, starts with no
+    reserved word and defines no function (name() or function), and it is not sent to the
+    background: so it is not piped (a pipeline of more than one command runs each in a subshell),
+    nor a group, a compound command, a function's definition, ! or coproc, nor a background job."""
     reading = read_command(text)
     bodies = {h.body[0]: h.end for h in reading.heredocs}
     found = []
@@ -1304,16 +1311,21 @@ def top_pipelines(text):
         written = text[segments[0][0] : segments[-1][1]].strip() if segments else ""
         if parent is not None or not written or (len(segments) == 1 and written.startswith("#")):
             continue
-        command = None
-        if len(segments) == 1 and written.split(None, 1)[0] not in LEADING:
-            simple = _segment_commands(text, *segments[0], bodies, reading.subscripts)
-            if len(simple) == 1:
-                command = next(_walk(simple[0], text, 0, (), DIRECT))
         end = segments[-1][1]
         if text.startswith(("&&", "||"), end):
             separator = text[end : end + 2]
         else:
             separator = "&" if text.startswith("&", end) else ";"
+        command = None
+        if (
+            len(segments) == 1
+            and separator != "&"
+            and written.split(None, 1)[0] not in LEADING
+            and not FUNCTION.match(written)
+        ):
+            simple = _segment_commands(text, *segments[0], bodies, reading.subscripts)
+            if len(simple) == 1:
+                command = next(_walk(simple[0], text, 0, (), DIRECT))
         found.append((k, command, separator))
     return tuple(found)
 
@@ -1655,8 +1667,10 @@ def _walk(words, text, depth, outer, reached, texts=None, places=None, place=Non
         return
     name, args = os.path.basename(words[0]), words[1:]
     here = behind + (tuple(words),)
-    # eval and trap's action run in the shell itself, but not behind a program (env eval).
-    own = SAME if all(tuple(wrapper) in (("command",), ("builtin",)) for wrapper in wrappers) else CHILD
+    # eval and trap's action run in the shell itself, but not behind a wrapper of their own that is
+    # a program (env eval), nor run by find -exec.
+    plain = all(tuple(wrapper) in (("command",), ("builtin",)) for wrapper in wrappers)
+    own = SAME if plain and reached != FIND else CHILD
     if name == "find":
         for found in _exec_commands(args):
             yield from _walk(found, text, depth, here, FIND, texts, places, place)
