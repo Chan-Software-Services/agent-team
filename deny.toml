@@ -1,0 +1,36 @@
+# The dependency policy, for cargo-deny 0.20.2 (tools.lock's pin): tests/run rust runs
+# `cargo-deny check --config deny.toml` on the workspace, as CI's rust job does, so a crate outside
+# it fails a required check. A crate is added only by a ticket that names it. Guarded
+# (bin/lib/guarded): a change here comes back to Daniel for the per-head word.
+
+[advisories]
+# A vulnerability always fails. An unsound crate fails too, a yanked version fails, and an
+# unmaintained crate fails only as a direct dependency of a workspace crate.
+unsound = "all"
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+# Every license but these is refused; confidence-threshold stays at its default. An allowed
+# license no crate has yet is no warning: the list is the policy, not what the crates use today.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+# Crates come from crates.io alone: no other registry and no git source.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -75,7 +75,13 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `worker-login`: the worker login's GitHub account, one `login=<name>` line, a committed constant; with no such file the worker login is off and every session runs on the machine's own GitHub login.
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
+- `Cargo.lock`: the Cargo workspace's lock file, committed, which every build and check takes with `--locked`.
+- `Cargo.toml`: the Cargo workspace at the root, virtual (`members = ["crates/*"]`, resolver 3), its shared package keys and the lints every crate takes (`[workspace.lints]`).
+- `clippy.toml`: clippy's settings, the one place a test may unwrap, expect and panic.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
+- `crates/`: the team's Rust crates, one per directory, the workspace's members.
+  - `team-core/`: the core, a dependency-free skeleton (`version()` and its test) until step 2 of the port; each platform's implementation and each interface is a crate of its own beside it, which it never depends on.
+- `deny.toml`: the dependency policy, which `cargo-deny` holds every build to: the licenses allowed, the advisories that fail, the bans and crates.io as the one source.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
@@ -122,6 +128,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/compaction-drill.bats`: dry-runs `tests/compaction-drill` on a stub `claude`.
   - `tests/drill.bats`: the two-machine drill (handoff, steal, crash, outage, and the records rewrite's cutover on one machine).
   - `tests/fixtures/guard-corpus/allowed.jsonl`: the calls every guard hook must allow, one JSON object a line with the roles that make it, in the shapes of real ones with fixture values only.
+  - `tests/fixtures/rust-deny/`: a Cargo workspace of its own whose `app` depends by path on `refused-license` (`GPL-3.0-only`), which `tests/run rust` shows `deny.toml` refuses, offline.
   - `tests/guard-corpus.bats`: runs each role's PreToolUse hooks, as its settings files write them, on that corpus's calls, with the lease held and, for a call marked `local`, on a fenced machine and while the team holds offline.
   - `tests/guard-paths`: rewrites each unguarded path variable a test hands git or `rm -r` to `${var:?}`, and with `--check` names each one left.
   - `tests/helpers/`: the helpers, among them:
@@ -134,6 +141,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/merge-queue-drill.bats`: dry-runs `tests/merge-queue-drill` on a stub `gh`, a stub `team-land` and a bare repository.
   - `tests/shards`: splits the bats files into `tests/run bats --shard`'s shards by their seconds in `tests/timings.tsv`, and `tests/shards update` rewrites their Linux seconds from a CI run's shard jobs, keeping their macOS ones.
   - `tests/task-life.bats`: a whole task's life across the scripts.
+  - `tests/tests-run-rust.bats`: `tests/run rust` on stub Rust tools: its steps, their stop, the missing tool, the jobs and wrapper it sets, `--changed` and `--list`.
   - `tests/timings.tsv`: each bats file's seconds on Linux in one CI run, and on macOS as the last CI run with macOS jobs had them, which `tests/shards` weighs it by.
   - `tests/toolkits/`: the toolkits' Node tests.
   - `tests/vendor/`: bats-core, vendored, with the one line its `VENDOR.md` patches.
@@ -195,14 +203,17 @@ It holds:
 
 ## Tests and shellcheck
 
-- `tests/run` runs shellcheck (CI pins 0.11.0) on every shell script in `bin/`, `tests/`, `servers/` and `toolkits/`, then the whole bats suite, then the toolkit tests; `tests/run shellcheck`, `tests/run bats` and `tests/run toolkits` run one part each, as the CI jobs do; `tests/run bats --shard <k>/<n>` runs one shard of the bats files, as CI's `test-shards` jobs do, whose `test` job keeps the required id.
+- `tests/run` runs shellcheck (CI pins 0.11.0) on every shell script in `bin/`, `tests/`, `servers/` and `toolkits/`, then the whole bats suite, then the toolkit tests, then the Rust check; `tests/run shellcheck`, `tests/run bats`, `tests/run toolkits` and `tests/run rust` run one part each, as the CI jobs do; `tests/run bats --shard <k>/<n>` runs one shard of the bats files, as CI's `test-shards` jobs do, whose `test` job keeps the required id.
   `tests/run bats --changed [<base>]` runs only the bats files a change reaches, by the repository's naming, from the paths changed since `<base>` (default `origin/dev`) and in the working tree; its header says which files each path reaches.
   `tests/run shellcheck --changed [<base>]` checks only the shell scripts among those paths and each script that sources one of them, directly or through another, so a changed library is checked where it is read; it checks nothing, and says so, when the change reaches no shell script, and `--list` prints the scripts and checks none.
+  `tests/run rust` checks the Cargo workspace in six steps, each printed first as `rust: <step>`, stopping at the first that fails: `cargo fmt --check`, `cargo clippy` with `-D warnings`, `cargo nextest run`, `cargo test --doc`, `cargo-deny check` on `deny.toml` (which fetches the advisory database), and `deny.toml`'s refusal of `tests/fixtures/rust-deny/`, offline; it names a missing `cargo`, `cargo-nextest` or `cargo-deny` and `team-doctor` first.
+  It sets `CARGO_BUILD_JOBS` and `NEXTEST_TEST_THREADS` as the bats part chooses its count (but leaves cargo's default where that is `nproc`), and `RUSTC_WRAPPER=sccache` when that is unset and `sccache` is on `PATH`, and takes no heavy-run lock alone, since the skeleton builds in seconds; once it passes 5 minutes or 4 GiB on home-pc, it goes under `team-heavy`.
+  `tests/run rust --changed [<base>]` runs it only when a Rust path changed since `<base>` (the root's Cargo, clippy, deny and toolchain files, `tests/run`, `ci.yml`, or a path under `crates/`, `tests/fixtures/rust-deny/`, `toolkits/rust/` or `tests/toolkits/fixtures/rust-crate/`), else says so and passes, and `--list` prints those paths; its header has the exact list.
   Its bats files run in parallel, one bats per file and as many at once as `TEAM_JOBS` says when set, else as the team's CPU budget allows when a team home is found (`team-capacity jobs`, 3 at minor on 12 cores), else as there are CPUs (CI, a fresh clone), so every file must stay independent of the others; its last line is the wall time and the most files it ran at once.
   It stops a bats test that runs past `TESTS_TEST_SECONDS` (default 600) and a bats file that runs past `TESTS_FILE_MINUTES` (default 40), each failing with the test's or the file's name, so a hang names itself long before CI's job ends.
   `team-checks` gives the commands it runs `TEAM_JOBS` from `team-capacity jobs` unless it is set.
   `tests/shards` splits them by each file's seconds in CI (`tests/timings.tsv`, a file it lacks weighed by its bytes), so refresh the timings with `tests/shards update` when the shards' times drift apart, and a removed bats file takes its row with it, as `tests/repo.bats` holds.
-  Every part but `shellcheck` alone and a `--list` (a shard's or `--changed`'s) runs under the machine's heavy-run lock (`bin/team-heavy`, which `team-checks` takes for the local checks too), so two suites on one machine queue instead of overlapping, each in a process group (and on Linux a scope) of its own that leaves a cost sample, and the sandbox clears `TEAM_HEAVY_HELD`, `AGENT_TEAM_TASK` and `TEAM_JOBS` so the tests take their own.
+  Every part but `shellcheck` alone, `rust` alone and a `--list` (a shard's or `--changed`'s) runs under the machine's heavy-run lock (`bin/team-heavy`, which `team-checks` takes for the local checks too), so two suites on one machine queue instead of overlapping, each in a process group (and on Linux a scope) of its own that leaves a cost sample, and the sandbox clears `TEAM_HEAVY_HELD`, `AGENT_TEAM_TASK` and `TEAM_JOBS` so the tests take their own.
   No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
