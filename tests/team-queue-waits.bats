@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # A queued item's waits: line and its age: when that line last changed in the team home's git
-# history (a file git does not know yet, or a line not yet committed, reads the file's own time),
+# history (a file git does not know yet, or a line not yet committed, reads the file's own time,
+# and a history that cannot be read is said),
 # shown by team-queue list beside each wait and never in the index; and team-queue waits, the
 # count of the waits older than N days with their files.
 
@@ -149,12 +150,35 @@ ages() {
   assert_equal "$output" "0 waits older than 7 days"
 }
 
-@test "waits reads with no git history to read, from each file's own time" {
+@test "a history that cannot be read is said, on stderr and in the count's line, never read as the files' times alone" {
+  item a-old.md "waits: Daniel's word"
+  committed 20
+  # The file's time is its checkout's, so only the history knows the wait is old.
+  touch "$queued/a-old.md"
+  fails_on_call git log
+  run_bin -0 --separate-stderr team-queue waits
+  assert_equal "$stderr" "team-queue: cannot read the team home's history of tasks/queued/ (git log exited 5 with no reason given), so each wait's age is its file's own time"
+  assert_equal "$output" "0 waits older than 7 days (each age its file's own time: the team home's history cannot be read)"
+  run_bin -0 --separate-stderr team-queue waits --json
+  assert_equal "$(jq -c '{count, says, history_error}' <<<"$output")" \
+    '{"count":0,"says":"0 waits older than 7 days (each age its file'"'"'s own time: the team home'"'"'s history cannot be read)","history_error":"git log exited 5 with no reason given"}'
+  run_bin -0 --separate-stderr team-queue list
+  assert_equal "$stderr" "team-queue: cannot read the team home's history of tasks/queued/ (git log exited 5 with no reason given), so each wait's age is its file's own time"
+  assert_contains "$output" "- a-old.md (proj, priority 1, S): the a-old; waits for Daniel's word (under a day)"
+  # A history read is no history_error.
+  echo no-call-holds-this >"$STUB_FIXTURES/git.fail-on"
+  run_bin -0 --separate-stderr team-queue waits --json
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c '{count, history_error}' <<<"$output")" '{"count":1,"history_error":null}'
+}
+
+@test "a team home with no git history says so, naming git's reason, and reads each file's own time" {
   rm -rf "${TEAM_HOME:?}/.git"
   item a-old.md "waits: Daniel's word"
   touch -d "-9 days" "$queued/a-old.md"
   run_bin -0 --separate-stderr team-queue waits
-  assert_equal "$output" "1 wait older than 7 days
+  assert_contains "$stderr" "team-queue: cannot read the team home's history of tasks/queued/ (fatal: not a git repository"
+  assert_equal "$output" "1 wait older than 7 days (each age its file's own time: the team home's history cannot be read)
 - a-old.md: 9 days: Daniel's word"
 }
 

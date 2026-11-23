@@ -402,17 +402,21 @@ def queue_waited($ages; $now):
         | if . == null then null
           else {since: (.seconds | todate), days: ([($now - .seconds) / 86400 | floor, 0] | max), source} end));
 
-# team-queue waits' object, team-queue-waits/1, from the items (each with waited) and $days: the
-# waits older than $days days, of each queued item with a waits: line that no task opened (an item
-# with only after: never), oldest first, then by file: {schema, days, count, says: "<n> waits
-# older than <days> days", waits: [{file, waits, since, days, source}]}.
-def queue_waits($days; $now):
+# team-queue waits' object, team-queue-waits/1, from the items (each with waited), $days and
+# $history (why the team home's history could not be read, else null): the waits older than $days
+# days, of each queued item with a waits: line that no task opened (an item with only after:
+# never), oldest first, then by file: {schema, days, count, says: "<n> waits older than <days>
+# days", with " (each age its file's own time: the team home's history cannot be read)" after it
+# when $history is not null, history_error: $history, waits: [{file, waits, since, days, source}]}.
+def queue_waits($days; $now; $history):
   [.[] | select(.waits != null and .opened == null and .waited != null)
    | select($now - (.waited.since | fromdate) > $days * 86400)
    | {file, waits, since: .waited.since, days: .waited.days, source: .waited.source}]
   | sort_by([.since, .file])
   | {schema: "team-queue-waits/1", days: $days, count: length,
-     says: "\(length | queue_count("wait")) older than \($days | queue_count("day"))", waits: .};
+     says: ("\(length | queue_count("wait")) older than \($days | queue_count("day"))"
+            + if $history != null then " (each age its file's own time: the team home's history cannot be read)" else "" end),
+     history_error: $history, waits: .};
 
 # team-queue waits' text from its object: its says line, then "- <file>: <age>: <waits>" for
 # each wait (queue_age's "under a day", "1 day", "12 days"), ending in a newline.

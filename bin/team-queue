@@ -27,13 +27,15 @@
 #             does not hold k, or T<n> merged whole), "T<n> closed", a YYYY-MM-DD date (today's
 #             UTC date is that day or later; TEAM_QUEUE_TODAY stands for today), or "<name>.md"
 #             (that item left the queue: it is in some tasks/T<m>/queued/, not here)
-#   waits     one line naming what outside the ledger and the calendar it waits on, such as
-#             Daniel's word or an outside event (a date or a merge is an after: condition, which
-#             no one need reread); removed by hand when the wait ends. Its age is when the line
-#             last changed: the author date of the team home's newest commit whose diff adds or
-#             removes a "waits: " line of the file (a rename reads as a removal and an add), else,
-#             for a file git has no such commit of or whose waits: line differs from the committed
-#             one, the file's own modification time
+#   waits     one line naming what outside the ledger and the calendar it waits on; removed by
+#             hand when the wait ends. Its age is when the line last changed: the author date of
+#             the team home's newest commit whose diff adds or removes a "waits: " line of the
+#             file (a rename reads as a removal and an add), else, for a file git has no such
+#             commit of or whose waits: line differs from the committed one, the file's own
+#             modification time; when the history cannot be read (git log or diff fails), every
+#             file's, and list and waits say so on stderr, "team-queue: cannot read the team
+#             home's history of tasks/queued/ (<git's first fatal: line, else its last, else "git
+#             log exited <n> with no reason given">), so each wait's age is its file's own time"
 #   from      the tasks it came from, T<n> joined by ", "
 #   opened    the one task that builds it, T<n>
 #   takes     other queued items it carries, <name>.md joined by ", ", which leave with it
@@ -153,9 +155,11 @@
 # waits writes nothing. It counts the waits older than <days> days (--older, default 7) of each
 # queued item with a waits line that no task opened (an item with only after: never counts), by
 # the line's age as above, and prints "<n> waits older than <days> days" ("1 wait", "1 day"),
-# then "- <file>: <age>: <the waits line>" for each, oldest first, then by file. --json prints
-# one line, {schema: "team-queue-waits/1", days, count, says (that first line), waits: [{file,
-# waits, since, days, source}]}. It exits 0 whatever it counts.
+# with " (each age its file's own time: the team home's history cannot be read)" after it when
+# the history cannot be read, then "- <file>: <age>: <the waits line>" for each, oldest first,
+# then by file. --json prints one line, {schema: "team-queue-waits/1", days, count, says (that
+# first line), history_error (git's reason, as on stderr, else null), waits: [{file, waits,
+# since, days, source}]}. It exits 0 whatever it counts.
 # A push that fails keeps the commit for the next checkpoint to push, saying so on stderr, and
 # exits 0; a commit that fails (the team home's hooks refuse it) leaves the change written for the
 # next checkpoint to commit, saying so on stderr, and exits 1.
@@ -238,17 +242,30 @@ files() {
 # When each queued file's waits: line last changed, one "<file>\t<seconds>\t<source>" line a file:
 # git, the author date of the team home's newest commit whose diff adds or removes a "waits: "
 # line of that file, in one git log pass, renames read as a removal and an add; file, the file's
-# own modification time, for a file git has no such commit of (untracked, or no history to read)
-# or whose waits: line differs from the committed one: waits_ages
+# own modification time, for a file git has no such commit of (untracked) or whose waits: line
+# differs from the committed one. A git log or diff that fails (no history to read) leaves every
+# file its own time, and writes why into <dir>/history: git's first "fatal: " line on stderr, else
+# its last line (~ for the home directory), else "git <log or diff> exited <n> with no reason
+# given"; <dir> holds the git output:
+# waits_ages <dir>
 waits_ages() {
   local -A committed=() dirty=()
-  local name seconds
+  local name seconds rc=0 step=log why
+  git -C "$TEAM_HOME" log --no-renames -G'^waits: ' --format='@%at' --name-only -- tasks/queued/ >"$1/log" 2>"$1/err" || rc=$?
+  if ((rc == 0)); then
+    step=diff
+    git -C "$TEAM_HOME" diff --no-renames -G'^waits: ' --name-only HEAD -- tasks/queued/ >"$1/diff" 2>"$1/err" || rc=$?
+  fi
+  if ((rc)); then
+    why=$(grep -m 1 '^fatal: ' "$1/err") || why=$(grep . "$1/err" | tail -n 1) || why="git $step exited $rc with no reason given"
+    printf '%s\n' "${why//"$HOME/"/"~/"}" >"$1/history"
+    : >"$1/log"
+    : >"$1/diff"
+  fi
   while IFS=$'\t' read -r name seconds; do committed[$name]=$seconds; done < <(
-    git -C "$TEAM_HOME" log --no-renames -G'^waits: ' --format='@%at' --name-only -- tasks/queued/ 2>/dev/null |
-      awk '/^@/ { at = substr($0, 2); next }
-        /^tasks\/queued\/[^\/]+\.md$/ { name = substr($0, 14); if (!(name in seen)) { seen[name] = 1; print name "\t" at } }' || true)
-  while IFS= read -r name; do dirty[${name#tasks/queued/}]=1; done < <(
-    git -C "$TEAM_HOME" diff --no-renames -G'^waits: ' --name-only HEAD -- tasks/queued/ 2>/dev/null || true)
+    awk '/^@/ { at = substr($0, 2); next }
+      /^tasks\/queued\/[^\/]+\.md$/ { name = substr($0, 14); if (!(name in seen)) { seen[name] = 1; print name "\t" at } }' "$1/log")
+  while IFS= read -r name; do dirty[${name#tasks/queued/}]=1; done <"$1/diff"
   while IFS= read -r name; do
     if [[ -n ${committed[$name]:-} && -z ${dirty[$name]:-} ]]; then
       printf '%s\t%s\tgit\n' "$name" "${committed[$name]}"
@@ -256,6 +273,13 @@ waits_ages() {
       printf '%s\t%s\tfile\n' "$name" "$seconds"
     fi
   done < <(files)
+}
+
+# Say on stderr that the history could not be read, when waits_ages wrote why into <file>:
+# history_said <file>
+history_said() {
+  [[ -s $1 ]] || return 0
+  echo "${0##*/}: cannot read the team home's history of tasks/queued/ ($(<"$1")), so each wait's age is its file's own time" >&2
 }
 
 # Run one queue.jq program over every item, the ledger and what the items need: the registry's
@@ -564,7 +588,8 @@ case $command in
     work=$(team_mktemp -d)
     capacity_json costs "$work/costs" &
     costs_pid=$!
-    waits_ages >"$work/ages" &
+    mkdir "$work/git"
+    waits_ages "$work/git" >"$work/ages" &
     ages_pid=$!
     if [[ -z $plan_given ]]; then
       capacity_json plan "$work/plan" &
@@ -580,6 +605,7 @@ case $command in
     fi
     wait "$costs_pid" || true
     wait "$ages_pid" || true
+    history_said "$work/git/history"
     queue_jq -j --rawfile plan "$work/plan" --rawfile costs "$work/costs" --rawfile ages "$work/ages" --arg plan_name "$plan_name" \
       --argjson json "$json" \
       '($plan | queue_capacity($plan_name; "team-capacity-plan/1")) as $plan
@@ -597,10 +623,13 @@ case $command in
         *) usage_error "$usage" ;;
       esac
     done
-    ages=$(team_mktemp)
-    waits_ages >"$ages"
-    queue_jq -j --rawfile ages "$ages" --argjson days "${days:-7}" --argjson json "$json" \
-      '$items | queue_waited($ages; now) | queue_waits($days; now) | if $json then tojson + "\n" else queue_waits_text end'
+    work=$(team_mktemp -d)
+    waits_ages "$work" >"$work/ages"
+    history_said "$work/history"
+    queue_jq -j --rawfile ages "$work/ages" --rawfile history <(cat "$work/history" 2>/dev/null || true) --argjson days "${days:-7}" \
+      --argjson json "$json" \
+      '$items | queue_waited($ages; now) | queue_waits($days; now; $history | rtrimstr("\n") | if . == "" then null else . end)
+      | if $json then tojson + "\n" else queue_waits_text end'
     ;;
   *) usage_error "$usage" ;;
 esac
