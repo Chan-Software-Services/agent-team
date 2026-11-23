@@ -40,8 +40,8 @@
 # slot with changes stays leased, for Daniel to look at (a slot dirty before its lease, or leased by
 # an earlier run, may hold someone's work). Then makes the task directory (refused, and the slot
 # removed or returned again, unless git ignores it), writes tasks/T<n>/plan.md from
-# templates/plan.md, its ## Rust core section only on the team's own project (own_project), opens
-# the thread (team-thread) and appends opened.
+# templates/plan.md, with templates/plan-rust-core.md as its ## Rust core section only on the team's
+# own project (own_project), opens the thread (team-thread) and appends opened.
 # --queued opens the task that builds the queued item tasks/queued/<file>. Before anything is taken
 # it reads the item through team-queue list --json and refuses one that is not ready: not queued,
 # unranked, opened, taken, or waiting ("<file> waits for <reasons>; open it without --queued and
@@ -930,13 +930,10 @@ elif [[ -n $add ]]; then
 else
   plan=$TEAM_HOME/tasks/$task/plan.md
   if [[ ! -e $plan ]]; then
-    # The Rust core section, on the team's own project alone; with none, nothing in its place.
+    # The Rust core section's template, then a blank line, on the team's own project alone; with
+    # none, nothing in its place.
     rust_core=''
-    ! own_project "$project" || rust_core='## Rust core
-
-<!-- Where the change lands in the Rust core by the code'"'"'s `docs/rust-core.md` (its crate, seam and config), and the lines of that doc it adds or changes. A step of the Rust port reads that doc first, and its briefs list it first to read. -->
-
-'
+    ! own_project "$project" || rust_core="$(<"$templates/plan-rust-core.md")"$'\n\n'
     render_template "$(<"$templates/plan.md")" "$(jq -n --arg task "$task" --arg title "$title" \
       --arg project "$project" --arg path "$path" --arg base "$base" --arg branch "$branch" \
       --arg date "$(date +%F)" --arg rust_core "$rust_core" '$ARGS.named')" >"$plan"
