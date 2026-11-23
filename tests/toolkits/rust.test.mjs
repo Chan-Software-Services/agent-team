@@ -11,6 +11,11 @@
 // root's. The real-cargo cases need the toolchain rust-toolchain.toml pins: they skip, saying why,
 // where cargo --version in the repository's root gives another, unless RUST_TOOLKIT_TESTS=require,
 // which makes that skip a failure.
+// Its four eval cases, against their files: each case's frontmatter and graders, each scaffold run as
+// claude plugin eval runs one and copying the fixture with no cargo, the review case's diff applying
+// to the fixture (git apply --check), and the lint case's quoted line in the scaffolded copy; with
+// the pinned toolchain, that clippy gives the lint case's warning as its prompt quotes it and the
+// wildcard finding on the review case's diff.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
@@ -120,6 +125,13 @@ describe("the rust toolkit", () => {
     for (const part of ["`RUST_TOOLKIT_TESTS=require`", "tests/toolkits/fixtures/rust-crate/", "stub"]) {
       assert.ok(tests.includes(part), `"Tests" does not name ${part}`);
     }
+    for (const name of ["add-an-event-kind", "review-a-diff-with-a-missed-case", "fix-a-lint", "python-question"]) {
+      assert.ok(tests.includes(`\`${name}\``), `"Tests" does not name the eval case ${name}`);
+    }
+    const runs = [...readme.matchAll(/`(claude plugin eval [^`]*)`/g)].map(([, run]) => run);
+    assert.ok(runs.length > 0, "the README names no eval run");
+    for (const run of runs) assert.match(run, /--no-publish/, `${run} would publish its report`);
+    assert.ok(tests.includes("`claude plugin eval --no-publish --scaffold --trust-plugin toolkits/rust`"), "the README names no eval command");
   });
 
   test("its README marks each unmeasured cost and holds the build cache's and the confinement roots' rules", () => {
@@ -284,6 +296,133 @@ describe("the rust toolkit's fixture crate", () => {
     assert.match(source, /-> Result<Kind, ParseKindError>/);
     assert.match(source, /^impl Error for ParseKindError \{\}$/m);
     assert.match(source, /^#\[cfg\(test\)\]$/m);
+  });
+});
+
+// The eval cases claude plugin eval runs: three that read a copy of the fixture its scaffold makes and
+// fire the skill, graded on the answer, and one Python question that must not fire it.
+const evals = join(toolkit, "evals");
+const fixtureCases = ["add-an-event-kind", "fix-a-lint", "review-a-diff-with-a-missed-case"];
+const evalFile = (name, ...path) => readFileSync(join(evals, name, ...path), "utf8");
+const promptBody = (name) => evalFile(name, "prompt.md").split(/^---$/m)[2] ?? "";
+// The fenced block of the given language in a case's prompt.
+const fenced = (name, language) => promptBody(name).match(new RegExp("^```" + language + "\\n([\\s\\S]*?)^```$", "m"))?.[1];
+// The lint case's quoted line, by its location in clippy's warning and its source line.
+const lintQuote = () => {
+  const warning = fenced("fix-a-lint", "text") ?? "";
+  const [, file, line] = warning.match(/^ {2}--> (\S+):(\d+):\d+$/m) ?? [];
+  const source = warning.match(new RegExp(`^${line} \\| (.*)$`, "m"))?.[1];
+  return { warning, file, line: Number(line), source };
+};
+
+// Every file under a directory, by its path from it, with its text.
+function tree(dir, from = dir) {
+  const files = {};
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) Object.assign(files, tree(path, from));
+    else files[path.slice(from.length + 1)] = readFileSync(path, "utf8");
+  }
+  return files;
+}
+
+// A case's scaffold run as claude plugin eval runs one: bash on its real path, in an empty
+// directory, with only PATH, HOME and TMPDIR; a stub cargo first on PATH logs any call.
+function scaffold(name) {
+  const cwd = realpathSync(tempDir("eval-run"));
+  const log = join(tempDir("cargo-log"), "calls");
+  const bin = stubs({ cargo: `echo "$*" >>"${log}"; exit 1` });
+  const run = spawnSync("bash", [join(evals, name, "scaffold.sh")], {
+    cwd,
+    encoding: "utf8",
+    env: { PATH: `${bin}${delimiter}${testPath({ withOp: false })}`, HOME: tempDir("eval-home"), TMPDIR: tempDir("eval-tmp") },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(!existsSync(log), `the ${name} scaffold ran cargo`);
+  return cwd;
+}
+
+describe("the rust toolkit's evals", () => {
+  test("are four cases, three reading the fixture through a case.yaml and its scaffold, and a Python question", () => {
+    assert.deepEqual(readdirSync(evals).filter((name) => name !== "results").sort(),
+      ["add-an-event-kind", "fix-a-lint", "python-question", "review-a-diff-with-a-missed-case"]);
+    for (const name of fixtureCases) {
+      assert.deepEqual(readdirSync(join(evals, name)).sort(), ["case.yaml", "graders", "prompt.md", "scaffold.sh"], name);
+      assert.equal(evalFile(name, "case.yaml"), `schema_version: "1.1"\nname: ${name}\ncontext:\n  scaffold_script: scaffold.sh\n`);
+    }
+    assert.deepEqual(readdirSync(join(evals, "python-question")).sort(), ["graders", "prompt.md"]);
+  });
+
+  test("each run Opus for 15 turns in 600 s with Read, Glob, Grep and Skill alone", () => {
+    for (const name of [...fixtureCases, "python-question"]) {
+      const front = evalFile(name, "prompt.md").match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+      assert.ok(front, `${name}'s prompt.md has no frontmatter`);
+      const keys = [...front.matchAll(/^(\w+):/gm)].map(([, key]) => key);
+      assert.deepEqual(keys, ["description", "tags", "model", "max_turns", "timeout_seconds", "allowed_tools"], name);
+      assert.match(front, /^tags: \[rust\]$/m, name);
+      assert.match(front, /^model: claude-opus-5-5$/m, name);
+      assert.match(front, /^max_turns: 15$/m, name);
+      assert.match(front, /^timeout_seconds: 600$/m, name);
+      assert.match(front, /^allowed_tools: \[Read, Glob, Grep, Skill\]$/m, name);
+      assert.ok(promptBody(name).trim(), `${name}'s prompt.md has no prompt`);
+    }
+  });
+
+  test("fire the skill and grade the answer on the fixture, and leave the skill alone on a Python question", () => {
+    const skillMatch = `input_match: '"skill"\\s*:\\s*"(?:[\\w-]+:)?rust-core"'`;
+    for (const name of fixtureCases) {
+      assert.deepEqual(readdirSync(join(evals, name, "graders")).sort(), ["answer.md", "skill-fired.md"], name);
+      assert.equal(evalFile(name, "graders", "skill-fired.md"), `---\ntype: tool_used\ntool: Skill\n${skillMatch}\n---\n`);
+      const answer = evalFile(name, "graders", "answer.md");
+      assert.match(answer, /^---\ntype: llm\n---\n\nPASS if .+\n(?:.+\n)*FAIL if .+\n$/, name);
+    }
+    assert.deepEqual(readdirSync(join(evals, "python-question", "graders")), ["skill-not-fired.md"]);
+    assert.equal(evalFile("python-question", "graders", "skill-not-fired.md"),
+      `---\ntype: tool_used\ntool: Skill\n${skillMatch}\nmin: 0\nmax: 0\n---\n`);
+    assert.match(promptBody("python-question"), /list comprehension/);
+    assert.doesNotMatch(promptBody("python-question"), /\bRust\b|\bcargo\b/i);
+  });
+
+  // The answer graders name what each case is about: every match on Kind, the wildcard arm, the unwrap.
+  test("grade adding a variant on every match on Kind, the review on the wildcard arm, and the lint fix on no unwrap", () => {
+    const add = evalFile("add-an-event-kind", "graders", "answer.md");
+    for (const name of ["`label`", "`is_terminal`", "`next`", "`Reopened`", "`_`", "`unwrap`", "dependency"]) assert.ok(add.includes(name), name);
+    assert.match(promptBody("add-an-event-kind"), /`Reopened`/);
+    assert.match(promptBody("add-an-event-kind"), /change no files/);
+    const review = evalFile("review-a-diff-with-a-missed-case", "graders", "answer.md");
+    assert.match(review, /`_ => false`/);
+    assert.match(review, /`is_terminal`/);
+    assert.match(review, /approves/);
+    const lint = evalFile("fix-a-lint", "graders", "answer.md");
+    for (const name of ["Result", "#[allow(...)]", "expect", "test"]) assert.ok(lint.includes(name), name);
+  });
+
+  test("scaffold a copy of the fixture with no cargo, the lint case adding one function on its quoted line", () => {
+    const want = tree(fixture);
+    for (const name of ["add-an-event-kind", "review-a-diff-with-a-missed-case"]) assert.deepEqual(tree(scaffold(name)), want, name);
+    const lint = tree(scaffold("fix-a-lint"));
+    const { file, line, source } = lintQuote();
+    assert.equal(file, "src/lib.rs");
+    assert.deepEqual({ ...lint, [file]: undefined }, { ...want, [file]: undefined });
+    assert.ok(lint[file].startsWith(want[file]), "the lint case's scaffold changes the fixture's src/lib.rs");
+    assert.equal(lint[file].split("\n")[line - 1], source, `src/lib.rs:${line} is not the line the prompt quotes`);
+    assert.match(source, /\.unwrap\(\)/);
+    assert.doesNotMatch(lint[file], /#\[cfg\(test\)\]/, "the quoted line could be test code");
+    assert.ok(promptBody("fix-a-lint").includes(`\`${source.trim()}\``), "the prompt does not quote the line");
+  });
+
+  test("give the review a diff that applies to the fixture, handling Reopened in two functions and adding _ => false to is_terminal", () => {
+    const diff = fenced("review-a-diff-with-a-missed-case", "diff");
+    assert.ok(diff, "the review case's prompt has no diff");
+    const copy = realpathSync(tempDir("review-copy"));
+    cpSync(fixture, copy, { recursive: true });
+    const check = spawnSync("git", ["apply", "--check", "-"], { cwd: copy, input: diff, encoding: "utf8" });
+    assert.equal(check.status, 0, check.stderr);
+    assert.match(diff, /^\+ {4}Reopened,$/m);
+    assert.match(diff, /^\+ {8}Kind::Reopened => "reopened",$/m);
+    assert.match(diff, /^\+ {8}Kind::Reopened => Some\(Kind::Opened\),$/m);
+    assert.match(diff, /^@@ .* @@ pub fn is_terminal\(kind: Kind\) -> bool \{\n(?: .*\n)*\+ {8}_ => false,$/m);
+    assert.equal([...diff.matchAll(/^\+.*\b_ =>/gm)].length, 1);
   });
 });
 
@@ -813,5 +952,43 @@ describe("the rust toolkit's post-edit hook, on the real cargo and the fixture",
       env: { ...realEnv(), PATH: `${realCargo.dir}${delimiter}${testPath({ withOp: false })}` },
     });
     assert.equal(run.status, 0, run.stderr);
+  });
+});
+
+// The eval cases' code as the pinned clippy sees it: the lint case's warning is the one the prompt
+// quotes, and the review case's diff has the wildcard arm clippy names.
+describe("the rust toolkit's evals, on the real cargo", () => {
+  // clippy's JSON messages for a crate, as the rendered text of each warning and error.
+  function clippy(cwd) {
+    cpSync(join(repoRoot, "rust-toolchain.toml"), join(cwd, "rust-toolchain.toml"));
+    const run = spawnSync("cargo", ["clippy", "--message-format=json", "--all-targets", "--offline", "--locked"], {
+      cwd,
+      encoding: "utf8",
+      env: { ...realEnv(), PATH: `${realCargo.dir}${delimiter}${testPath({ withOp: false })}` },
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const rendered = run.stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line))
+      .filter((line) => line.reason === "compiler-message" && line.message.spans.length > 0)
+      .map((line) => line.message.rendered);
+    return [...new Set(rendered)];
+  }
+
+  realTest("the lint case's scaffold gives the one unwrap_used warning its prompt quotes", () => {
+    const [warning, ...rest] = clippy(scaffold("fix-a-lint"));
+    assert.deepEqual(rest, []);
+    assert.match(warning, /#unwrap_used\n/);
+    assert.equal(lintQuote().warning, `${warning.replace(/^ {3}= help: for further information .*\n/m, "").trimEnd()}\n`);
+  });
+
+  realTest("the review case's diff gives clippy's wildcard finding on its _ => false arm, and no other", () => {
+    const copy = realpathSync(tempDir("review-copy"));
+    cpSync(fixture, copy, { recursive: true });
+    const apply = spawnSync("git", ["apply", "-"], { cwd: copy, input: fenced("review-a-diff-with-a-missed-case", "diff"), encoding: "utf8" });
+    assert.equal(apply.status, 0, apply.stderr);
+    const [warning, ...rest] = clippy(copy);
+    assert.deepEqual(rest, []);
+    assert.match(warning, /^warning: wildcard matches only a single variant/);
+    assert.match(warning, /^\d+ \| +_ => false,$/m);
+    assert.match(warning, /help: try: `Kind::Reopened`/);
   });
 });
