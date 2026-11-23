@@ -52,7 +52,7 @@ A Cargo workspace at the repository's root, its crates under `crates/` (T370's s
 | `adapter-discord`, `adapter-web` (later) | One UI each, a client process of `team-api` | `team-api` only |
 
 - `team-core` and `team-model` never name an OS or a UI, and an adapter never depends on `team-core`.
-- What stays outside Rust: the MCP servers and toolkits in TypeScript (`servers/`, `toolkits/`), the vendored tools, and the role prompts, templates and SOPs, which are text.
+- What stays outside Rust: the MCP servers and toolkits in JavaScript (`servers/`, `toolkits/`), the vendored tools, and the role prompts, templates and SOPs, which are text.
 
 ## The platform seam
 
@@ -87,7 +87,7 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 
 1. No macOS CI and no macOS test run until Daniel says; the core still keeps the platform seam, so it is meant to build for macOS (Daniel, 2026-11-15, message 1571491639564959846, T370's decision 1; it overrides H1's "both in CI from the first crate").
 2. The core is a Cargo workspace inside this repository, so one PR replaces a bash script and its tests together (T370's decision 2).
-3. Rust is installed under the home directory with rustup, the toolchain pinned by `rust-toolchain.toml`, and rust-analyzer, cargo-nextest and sccache pinned in `bin/lib/tools.lock` with a `team-doctor` line and a `team-bootstrap` step (T370's decision 3).
+3. Rust is installed under the home directory with rustup, the toolchain and its rust-analyzer component pinned by `rust-toolchain.toml`, and cargo-nextest and sccache pinned in `bin/lib/tools.lock` with a `team-doctor` line and a `team-bootstrap` step (T370's decision 3).
 4. A crate is added only by a ticket that names it; `cargo-deny` gates licenses, advisories and sources (crates.io only); `Cargo.lock` is committed (T370's decision 4).
 5. The port runs one task at a time at queue priority 1 (T370's decision 5).
 6. The workspace sits at the repository's root, a virtual workspace with its crates under `crates/`, its first a skeleton `crates/team-core` that step 2 may rename (T370's spec).
@@ -269,7 +269,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/tools.lock` | `team-cli` | `platform` | Config: the pinned tools |
 | `bin/lib/uptime.jq` | `team-model` | `none` | |
 | `bin/lib/vendor/` | stays | `none` | Vendored: git filter-repo |
-| `bin/lib/worker-login` | `team-platform` | `vcs` | Config: the worker login |
+| `bin/lib/worker-login` | `team-platform` | `vcs` | Config: the worker login, absent while it is off |
 | `bin/lib/workers.jq` | `team-model` | `none` | |
 | `bin/lib/working-set.awk` | `team-platform-linux` | `platform` | |
 
@@ -304,10 +304,10 @@ Every kind is a variant of `team-model`'s event enum; the column says which comm
 | `merge-approved` | `team-log` | `give_merge_word` | `interface` |
 | `merge-default-restored` | `team-log` | `team-core`, on Daniel's word | `interface` |
 | `merge-default-withdrawn` | `team-log` | `withdraw_approval` | `interface` |
-| `merge-preapproval-withdrawn` | `team-log` | none: retired, read only | `none` |
-| `merge-preapproved` | `team-log` | none: retired, read only | `none` |
-| `merge-standing` | `team-log` | none: retired, read only | `none` |
-| `merge-standing-withdrawn` | `team-log` | none: retired, read only | `none` |
+| `merge-preapproval-withdrawn` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
+| `merge-preapproved` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
+| `merge-standing` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
+| `merge-standing-withdrawn` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
 | `merged` | `team-merge` | `team-core` | `vcs` |
 | `opened` | `team-open` | `team-core` | `none` |
 | `paused` | `team-log`, `team-worker` | `team-core` | `none` |
