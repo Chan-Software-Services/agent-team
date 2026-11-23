@@ -1,6 +1,7 @@
 # records hooks The team home's own core.hooksPath is the code's bin/hooks/records-git, by
 #               absolute path into the primary code checkout (a worktree's main one): the data
-#               check on records commits. The fix is Daniel's, as the git hooks line's is.
+#               and models checks on records commits. The fix is Daniel's, as the git hooks
+#               line's is.
 # shellcheck shell=bash
 # shellcheck disable=SC2154 # bin, the doctor's
 

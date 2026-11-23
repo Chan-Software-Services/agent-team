@@ -86,3 +86,72 @@ out of git; take each out, then commit again:
   assert_contains "$stderr" "commit again:
   tasks/T1/scratch/shot.png: an image"
 }
+
+@test "a staged models.toml that does not read is refused with team-models --check's lines" {
+  local head
+  head=$(git -C "${TEAM_HOME:?}" rev-parse HEAD)
+  record models.toml '"default" = { model = "gpt-5" }
+"reviewr" = { model = "sonnet" }'
+  git -C "${TEAM_HOME:?}" add models.toml
+  commit -1
+  assert_equal "$stderr" "pre-commit: refused: the staged models.toml does not read, so every launch from it would be refused; fix each line team-models --check names, then commit again:
+  models.toml: \"default\": model: 'gpt-5' is not opus, sonnet, haiku, fable or claude-<name>, each optionally with [1m], or default
+  models.toml: \"reviewr\": unknown category 'reviewr'; known: default, coordinator, coordinator.compaction-drill, assistant, assistant.load-check, planner, planner.feature, planner.research, planner.interview, planner.walk, planner.retro, planner.load-check, builder, builder.ticket, builder.deliver, builder.fix, builder.round, builder.merge-base, builder.load-check, reviewer, reviewer.review, reviewer.rereview, reviewer.verify, reviewer.load-check, ops, ops.load-check"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+  # The staged blob is what is read: a good file on disk does not let a broken one through.
+  git -C "${TEAM_HOME:?}" add models.toml
+  record models.toml '"default" = { model = "opus" }'
+  commit -1
+  assert_contains "${stderr%%$'\n'*}" "refused: the staged models.toml does not read"
+  # A commit of named paths only (commit_records' --only, GIT_LITERAL_PATHSPECS) reads its own index.
+  record models.toml '"default" = { model = "opus", effort = "huge" }'
+  run -1 --separate-stderr env GIT_LITERAL_PATHSPECS=1 git -C "${TEAM_HOME:?}" commit -q -m "chore: records" --only -- models.toml
+  assert_equal "$stderr" "pre-commit: refused: the staged models.toml does not read, so every launch from it would be refused; fix each line team-models --check names, then commit again:
+  models.toml: \"default\": effort: 'huge' is not one of low, medium, high, xhigh, max, default"
+  assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
+}
+
+@test "a staged models.toml that reads passes, its project= checked against the team home's own registry" {
+  cp "$REPO_ROOT/tests/fixtures/models.toml" "$TEAM_HOME/models.toml"
+  git -C "${TEAM_HOME:?}" add models.toml
+  commit -0
+  assert_equal "$stderr" ""
+  cp "$REPO_ROOT/tests/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  git -C "${TEAM_HOME:?}" add projects.toml
+  commit -0
+  record models.toml '"default" = { model = "opus", effort = "high" }
+"builder project=conventioner" = { model = "sonnet" }'
+  git -C "${TEAM_HOME:?}" add models.toml
+  commit -0
+  assert_equal "$stderr" ""
+  record models.toml '"default" = { model = "opus", effort = "high" }
+"builder project=nowhere" = { model = "sonnet" }'
+  git -C "${TEAM_HOME:?}" add models.toml
+  commit -1
+  assert_contains "$stderr" '
+  models.toml: "builder project=nowhere": '
+}
+
+@test "an unstaged or deleted models.toml is never read, and a refused one still has its addresses named" {
+  record tasks/T1/notes.md "nothing private"
+  record models.toml 'not toml at all ='
+  git -C "${TEAM_HOME:?}" add tasks
+  commit -0
+  assert_equal "$stderr" ""
+  # A broken file committed before the hook (with git's plumbing, which runs no hook), then
+  # deleted, is not read either.
+  git -C "${TEAM_HOME:?}" add models.toml
+  local before
+  before=$(git -C "${TEAM_HOME:?}" commit-tree -p HEAD -m "chore: before the hook" "$(git -C "${TEAM_HOME:?}" write-tree)")
+  git -C "${TEAM_HOME:?}" update-ref HEAD "$before"
+  git -C "${TEAM_HOME:?}" rm -q models.toml
+  commit -0
+  assert_equal "$stderr" ""
+  # Both checks run, so one commit names both problems.
+  record models.toml '"defualt" = { model = "opus" }'
+  record tasks/T1/notes.md "write to bo@$provider"
+  git -C "${TEAM_HOME:?}" add models.toml tasks
+  commit -1
+  assert_contains "${stderr%%$'\n'*}" "refused: the staged models.toml does not read"
+  assert_contains "$stderr" "data-check: refused: tasks/T1/notes.md adds an email address at a public provider"
+}
