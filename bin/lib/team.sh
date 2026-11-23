@@ -17,7 +17,8 @@
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
-# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
+# DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, TOPIC_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE,
+# TOPIC_REQUEST_MAX_AGE, TOPIC_MAX_OPEN, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays,
 # and bin/lib/temp-files.sh, whose header lists its own: team_mktemp, team_tmp_add, team_tmp_rm, team_tmp_clean, team_exit_trap and team_exit_action.
@@ -1779,6 +1780,22 @@ OPS_REQUEST_MAX_AGE=3600
 # included, which the scripts refuse as none set.
 # shellcheck disable=SC2034 # read by the scripts that source this library
 INTERVIEW_CHANNEL=${TEAM_INTERVIEW_CHANNEL-1565336720998928556}
+
+# The Discord channel under which each topic task's thread is opened (team-thread T<n>
+# --interview): the interview channel's, so topics sit beside the interviews, and moving them to a
+# channel of their own is this one line. TEAM_TOPIC_CHANNEL overrides it, an empty one included,
+# which team-thread refuses as none set.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+TOPIC_CHANNEL=${TEAM_TOPIC_CHANNEL-$INTERVIEW_CHANNEL}
+
+# The most seconds before a topic's open that Daniel's message asking for it may have been sent, by
+# the time in its id: team-open refuses an older one.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+TOPIC_REQUEST_MAX_AGE=3600
+
+# The most topic tasks open at once: team-open refuses another while that many are open.
+# shellcheck disable=SC2034 # read by the scripts that source this library
+TOPIC_MAX_OPEN=2
 
 # The Discord channel #assistant, the one the assistant session (claude-assistant) hears, with
 # the threads it opens under it: kept out of the coordinator's access.json groups, so the

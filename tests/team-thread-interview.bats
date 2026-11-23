@@ -248,6 +248,39 @@ reads() {
   assert_equal "$output" "2222"
 }
 
+# Open topic task T9, as team-open logs one: a topic in the ledger.
+topic_opened() {
+  echo '{"ts":"2026-10-01T11:00:00Z","task":"T9","event":"opened","project":"agent-team","path":"topic","type":"research","title":"Instagram ingest","branch":"research/T9-instagram","base":"dev","base_sha":"0123456","worktree":"/w/9","discord_message":"1571000000000000100","discord_channel":"1570965039278596199"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+}
+
+@test "a topic's thread opens under the topic channel, every other task's under the interview channel" {
+  topic_opened
+  export TEAM_TOPIC_CHANNEL=6666
+  run_bin -0 --separate-stderr team-thread T9 --interview
+  assert_equal "$output" "$THREAD"
+  assert_contains "$(stub_calls curl)" "\"https://discord.com/api/v10/channels/6666/threads\""
+  [[ $(stub_calls curl) != *"channels/$INTERVIEW/"* ]]
+  assert_equal "$(stub_calls curl | jq -r 'index("-d") as $i | .[$i + 1] | fromjson | .name')" \
+    "T9 · agent-team · Instagram ingest"
+  assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -c 'del(.ts)')" \
+    "{\"task\":\"T9\",\"event\":\"interview-thread\",\"discord_thread\":\"$THREAD\"}"
+  run_bin -0 --separate-stderr team-thread T7 --interview
+  assert_contains "$(stub_calls curl | tail -n 1)" "\"https://discord.com/api/v10/channels/$INTERVIEW/threads\""
+  run_bin -0 team-log --check
+}
+
+@test "with no topic channel set apart, a topic's thread opens under the interview channel; an empty one is refused" {
+  topic_opened
+  run_bin -0 --separate-stderr team-thread T9 --interview
+  assert_contains "$(stub_calls curl)" "\"https://discord.com/api/v10/channels/$INTERVIEW/threads\""
+  sed -i '$d' "$TEAM_HOME/ledger.jsonl"
+  : >"$STUB_CALLS/curl.log"
+  TEAM_TOPIC_CHANNEL='' run_bin -1 team-thread T9 --interview
+  assert_equal "$output" "team-thread: no topic channel is set: TEAM_TOPIC_CHANNEL is empty, and TOPIC_CHANNEL in bin/lib/team.sh names the channel a topic's thread opens under"
+  assert_equal "$(stub_calls curl)" ""
+}
+
 @test "with no interview channel set, nothing opens or waits, and the fix is named" {
   local fix="no interview channel is set: Daniel makes it (manual-steps.md), and a PR sets its id as INTERVIEW_CHANNEL in bin/lib/team.sh"
   export TEAM_INTERVIEW_CHANNEL=''

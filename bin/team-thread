@@ -15,7 +15,8 @@
 #             · <title>", logs it as thread and prints its id; one already logged is printed
 #             without calling Discord.
 #   --interview  Opens the open task's interview thread under the interview channel
-#             (INTERVIEW_CHANNEL in bin/lib/team.sh), named as its thread from its opened event,
+#             (INTERVIEW_CHANNEL in bin/lib/team.sh), a topic task's (opened with the path topic)
+#             under the topic channel (TOPIC_CHANNEL), named as its thread from its opened event,
 #             logs it as interview-thread and prints its id, or prints the one already logged.
 #             A new one brings the team home's waiting.md up to date (refresh_inbox in
 #             bin/lib/team.sh: team-inbox; a failure is one line on stderr, and the exit stays 0).
@@ -375,12 +376,19 @@ if [[ $# -eq 2 && $2 == --interview ]]; then
   task=$1
   [[ $task =~ ^T[1-9][0-9]*$ ]] || usage_error "$USAGE"
   if why=$(worker_refusal "$task" "opens a Discord thread"); then die "$why"; fi
-  [[ -n $INTERVIEW_CHANNEL ]] || die "$NO_CHANNEL"
   events=$(open_task_events "$task")
+  # A topic's thread is under the topic channel, every other task's under the interview channel.
+  parent=$INTERVIEW_CHANNEL
+  if jq -e 'any(.[]; .event == "opened" and .path == "topic")' <<<"$events" >/dev/null; then
+    parent=$TOPIC_CHANNEL
+    [[ -n $parent || ! -v TEAM_TOPIC_CHANNEL ]] ||
+      die "no topic channel is set: TEAM_TOPIC_CHANNEL is empty, and TOPIC_CHANNEL in bin/lib/team.sh names the channel a topic's thread opens under"
+  fi
+  [[ -n $parent ]] || die "$NO_CHANNEL"
   # Printing the thread already logged calls no one, so only a new one is fenced.
   jq -e 'any(.[]; .event == "interview-thread")' <<<"$events" >/dev/null ||
     fenced "opens no interview thread; the coordinator on the holder does."
-  open_thread "$task" interview-thread "$INTERVIEW_CHANNEL" \
+  open_thread "$task" interview-thread "$parent" \
     "$(jq -r 'map(select(.event == "opened")) | last | "\(.task) · \(.project) · \(.title)"' <<<"$events")"
   # The interview is listed in waiting.md once its thread is logged; one already logged changed nothing.
   if ((${#LEDGER_KINDS[@]})); then

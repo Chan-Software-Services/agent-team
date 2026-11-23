@@ -2,12 +2,14 @@
 # Open a task: its number, plan, worktree from the project's pool, Discord thread and ledger entry.
 #
 # Usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] [--builder-model <model>] <project> <path> <type> <slug> <title...>
+#        team-open [--task T<n>] --daniel <message id> --channel <channel id> <project> topic research <slug> <title...>
 #        team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] [--builder-model <model>] --queued <file> [<project> <path> <type> <slug> <title...>]
 #        team-open --task T<n> --add <project> <type> <slug>
 #        team-open --task T<n> --resume <project> [--ticket <NN>]
 #        team-open --task T<n> --ticket <NN>
 #   project  a project in projects.toml (team-project --list)
-#   path     feature | bug | small | research | retro (retro marks a retro task for team-retro)
+#   path     feature | bug | small | research | retro | topic (retro marks a retro task for team-retro;
+#            topic is a topic session's task, which team-topic open opens, below)
 #   type     the branch prefix: feat | fix | docs | chore | build | ci | test | refactor | perf | research
 #   slug     lower-case kebab case, at most 40 characters; the branch is <type>/T<n>-<slug>
 # Without --task, claims the next task number by creating tasks/T<n>/. With --task, opens that
@@ -40,7 +42,7 @@
 # slot with changes stays leased, for Daniel to look at (a slot dirty before its lease, or leased by
 # an earlier run, may hold someone's work). Then makes the task directory (refused, and the slot
 # removed or returned again, unless git ignores it), writes tasks/T<n>/plan.md from
-# templates/plan.md, opens the thread (team-thread) and appends opened.
+# templates/plan.md, opens the thread (team-thread) and appends opened; a topic, neither (below).
 # --queued opens the task that builds the queued item tasks/queued/<file>. Before anything is taken
 # it reads the item through team-queue list --json and refuses one that is not ready: not queued,
 # unranked, opened, taken, or waiting ("<file> waits for <reasons>; open it without --queued and
@@ -53,6 +55,19 @@
 # "From the queue: `tasks/queued/<file>`: <summary>" below its "## Why" comment, and team-queue take
 # T<n> <file> links the item; a take that fails is one line on stderr naming the command to run, and
 # the open still succeeds, since the heartbeat's queue step links an item a plan cites.
+# The path topic opens a topic task, on Daniel's word alone, and only with --daniel and --channel,
+# which go with no other path (a usage error), nor --queued ("a topic opens on Daniel's word alone,
+# with team-topic open"). Before anything is taken, each refused, exit 1, naming the message and
+# the channel: the channel is #assistant or a thread under it (assistant_place in bin/lib/team.sh,
+# read from Discord); the message was sent at most TOPIC_REQUEST_MAX_AGE seconds (an hour) before
+# the open, by the time in its id; it is Daniel's by Discord's own word (daniel_message) and never
+# edited. Then, under ~/.local/state/agent-team/topic-open.lock (flock, waiting up to
+# TEAM_TOPIC_OPEN_WAIT_SECONDS, default 60, then exit 75), held to the opened append so two opens
+# at once never both take the last place: no task's opened names the message as its
+# discord_message ("message <id> already opened T<n>"), and fewer than TOPIC_MAX_OPEN (2) topic
+# tasks are open. A topic opens no thread under #coordinator (no team-thread call, no thread event)
+# and writes no plan.md, which team-topic open writes from its own template, and its opened and
+# printed facts carry discord_message and discord_channel, and no thread.
 # --story names the backlog story the task builds, whose file must be in the team home's
 # projects/<project>/backlog/ (story_file in bin/lib/team.sh; refused before anything is taken
 # otherwise): opened and the printed facts carry it as story, and team-merge marks it done.
@@ -162,9 +177,12 @@ resume_usage="usage: team-open --task T<n> --resume <project> [--ticket <NN>]"
 ticket_usage="usage: team-open --task T<n> --ticket <NN>"
 queued_usage="usage: team-open [--task T<n>] [--story E<nn>/F<nn>/S<nn>] [--builder-model <model>] --queued <file> [<project> <path> <type> <slug> <title...>]"
 
+topic_usage="usage: team-open [--task T<n>] --daniel <message id> --channel <channel id> <project> topic research <slug> <title...>"
+
 task='' add='' resume='' story='' ticket='' queued_file='' queued_given='' builder_model='' builder_model_given=''
+daniel='' channel=''
 while [[ ${1:-} == --task || ${1:-} == --story || ${1:-} == --add || ${1:-} == --resume || ${1:-} == --ticket ||
-  ${1:-} == --queued || ${1:-} == --builder-model ]]; do
+  ${1:-} == --queued || ${1:-} == --builder-model || ${1:-} == --daniel || ${1:-} == --channel ]]; do
   case $1 in
     --add) add=1 && shift && continue ;;
     --resume) resume=1 && shift && continue ;;
@@ -186,6 +204,12 @@ while [[ ${1:-} == --task || ${1:-} == --story || ${1:-} == --add || ${1:-} == -
     # An alias or name as claude --model takes it, as team-worker's --model is checked.
     [[ $2 =~ ^[A-Za-z0-9][][A-Za-z0-9._-]*$ ]] || usage_error "--builder-model needs a model alias or name, got '$2'"
     builder_model=$2 builder_model_given=1
+    shift 2
+    continue
+  fi
+  if [[ $1 == --daniel || $1 == --channel ]]; then
+    [[ $2 =~ ^[1-9][0-9]{0,19}$ ]] || usage_error "$1 needs a Discord id, got '$2'"
+    if [[ $1 == --daniel ]]; then daniel=$2; else channel=$2; fi
     shift 2
     continue
   fi
@@ -236,9 +260,17 @@ else
   project=$1 path=$2 type=$3 slug=$4
   shift 4
   title="$*"
-  [[ $path =~ ^(feature|bug|small|research|retro)$ ]] ||
-    usage_error "path must be feature, bug, small, research or retro, got '$path'"
+  [[ $path =~ ^(feature|bug|small|research|retro|topic)$ ]] ||
+    usage_error "path must be feature, bug, small, research, retro or topic, got '$path'"
   [[ $title =~ [^[:space:]] ]] || usage_error "$usage"
+fi
+# A topic opens on Daniel's word, --daniel and --channel, which go with no other path.
+if [[ $path == topic ]]; then
+  [[ -z $queued_given ]] || usage_error "a topic opens on Daniel's word alone, with team-topic open"
+  [[ -n $daniel && -n $channel ]] || usage_error "a topic needs Daniel's message asking for it: $topic_usage"
+  [[ $type == research ]] || usage_error "a topic's type is research, got '$type'"
+elif [[ -n $daniel || -n $channel ]]; then
+  usage_error "--daniel and --channel go only with the path topic: $topic_usage"
 fi
 # A queued item: read through team-queue list before anything is taken, and refused unless it is
 # ready; the short form's arguments are derived from it.
@@ -349,6 +381,48 @@ room_to_open() {
   fi
   die "cannot tell whether a task fits: $reason"
 }
+
+# A topic's word (see the header), before anything is taken: the place and the age first, then
+# Discord's word, then, under the open lock held to the opened append, used once and the cap.
+if [[ $path == topic ]]; then
+  where="Discord message $daniel in channel $channel"
+  word_err=$(team_mktemp)
+  place=$(assistant_place "$channel" 2>"$word_err") || die "$where cannot open a topic: $(grep -m 1 . "$word_err")"
+  # A Discord id holds the milliseconds since 2015-01-01 above its low 22 bits.
+  sent=$(((10#$daniel >> 22) / 1000 + 1420070400))
+  (($(date +%s) - sent <= TOPIC_REQUEST_MAX_AGE)) ||
+    die "$where was sent at $(date -ud "@$sent" +%FT%TZ), more than $((TOPIC_REQUEST_MAX_AGE / 60)) minutes before this open, the limit for a topic's request: ask Daniel for a new message"
+  word=$(daniel_message "$daniel" "the topic's request" "$place" 2>"$word_err") ||
+    die "$where cannot open a topic: $(grep -m 1 . "$word_err")"
+  team_tmp_rm "$word_err"
+  edited=$(jq -r '.message.edited_timestamp // empty' <<<"$word")
+  [[ -z $edited ]] ||
+    die "$where was edited at $edited, so its text may not be what Daniel first sent: ask them to say it again as a new message"
+  topic_wait=${TEAM_TOPIC_OPEN_WAIT_SECONDS:-60}
+  [[ $topic_wait =~ ^[1-9][0-9]*$ ]] ||
+    die "TEAM_TOPIC_OPEN_WAIT_SECONDS must be a whole number of seconds from 1, not '$topic_wait'"
+  topic_lock=$HOME/.local/state/agent-team/topic-open.lock
+  mkdir -p "${topic_lock%/*}"
+  # Held on this descriptor until the script ends, past the opened append.
+  exec {topic_fd}<>"$topic_lock"
+  if ! flock -w "$topic_wait" -x "$topic_fd"; then
+    echo "team-open: another open held ~/.local/state/agent-team/topic-open.lock for $topic_wait seconds; run this again" >&2
+    exit 75
+  fi
+  used='' topics=()
+  if [[ -e $ledger ]]; then
+    used=$(ledger_jq 'first(ledger_events[] | select(.event == "opened" and (.discord_message | tostring) == $m) | .task) // empty' \
+      -nRr --arg m "$daniel" "$ledger")
+    mapfile -t topics < <(ledger_jq 'ledger_events | by_task | to_entries[] | select(.value | is_open)
+      | select(any(.value[]; .event == "opened" and .path == "topic")) | .key' -nRr "$ledger" | sort -V)
+  fi
+  [[ -z $used ]] || die "$where cannot open a topic: message $daniel already opened $used"
+  if ((${#topics[@]} >= TOPIC_MAX_OPEN)); then
+    count_words=(no one two three four five six seven eight nine)
+    count=${count_words[${#topics[@]}]:-${#topics[@]}}
+    die "$where cannot open a topic: $count topic sessions are open ($(printf '%s\n' "${topics[@]}" | paste -sd ',' | sed 's/,/, /g')), the most at once; close one with team-topic close first"
+  fi
+fi
 
 # The task number. Creating tasks/T<n>/ is the claim, so two runs never take the same number.
 # --add claims nothing: its task must be open, with no open worktree in the project yet. --resume
@@ -461,7 +535,7 @@ on_exit() {
       "team-open --task $task --add $project $type $slug" >&2
   else
     echo "team-open: $task is half open in $worktree; finish it with:" \
-      "team-open --task $task${queued_given:+ --queued $queued_file} $project $path $type $slug $(printf '%q' "$title")" >&2
+      "team-open --task $task${queued_given:+ --queued $queued_file}${daniel:+ --daniel $daniel --channel $channel} $project $path $type $slug $(printf '%q' "$title")" >&2
   fi
 }
 team_exit_trap on_exit
@@ -928,31 +1002,39 @@ elif [[ -n $add ]]; then
       worktree: $worktree, task_dir: $task_dir}'
 else
   plan=$TEAM_HOME/tasks/$task/plan.md
-  if [[ ! -e $plan ]]; then
+  # A topic's plan is team-topic open's, from its own template, and it has no thread under
+  # #coordinator.
+  if [[ ! -e $plan && $path != topic ]]; then
     render_template "$(<"$templates/plan.md")" "$(jq -n --arg task "$task" --arg title "$title" \
       --arg project "$project" --arg path "$path" --arg base "$base" --arg branch "$branch" \
       --arg date "$(date +%F)" '$ARGS.named')" >"$plan"
   fi
 
-  thread=$(TEAM_HOME=$TEAM_HOME "$bin/team-thread" "$task" "$project" "$title")
+  thread=''
+  [[ $path == topic ]] || thread=$(TEAM_HOME=$TEAM_HOME "$bin/team-thread" "$task" "$project" "$title")
 
   ledger_append "$(jq -cn --arg task "$task" --arg project "$project" --arg path "$path" --arg type "$type" \
     --arg title "$title" --arg branch "$branch" --arg base "$base" --arg base_sha "$base_sha" --arg worktree "$worktree" \
-    --arg story "$story" --arg builder_model "$builder_model" \
+    --arg story "$story" --arg builder_model "$builder_model" --arg daniel "$daniel" --arg channel "$channel" \
     '{ts: (now | todate), task: $task, event: "opened", project: $project, path: $path, type: $type,
       title: $title, branch: $branch, base: $base, base_sha: $base_sha, worktree: $worktree}
       + (if $story == "" then {} else {story: $story} end)
-      + {builder_model: $builder_model}')"
+      + {builder_model: $builder_model}
+      + (if $daniel == "" then {} else {discord_message: $daniel, discord_channel: $channel} end)')"
 
   [[ -z $queued_given ]] || link_queued
 
   jq -n --arg task "$task" --arg project "$project" --arg path "$path" --arg title "$title" --arg branch "$branch" \
     --arg base "$base" --arg base_sha "$base_sha" --arg worktree "$worktree" --arg task_dir "$worktree/$task_dir" \
     --arg thread "$thread" --arg plan "$plan" --arg story "$story" --arg builder_model "$builder_model" \
+    --arg daniel "$daniel" --arg channel "$channel" \
     '{task: $task, project: $project, path: $path, title: $title, branch: $branch, base: $base,
-      base_sha: $base_sha, worktree: $worktree, task_dir: $task_dir, thread: $thread, plan: $plan}
+      base_sha: $base_sha, worktree: $worktree, task_dir: $task_dir}
+      + (if $thread == "" then {} else {thread: $thread} end)
+      + {plan: $plan}
       + (if $story == "" then {} else {story: $story} end)
-      + {builder_model: $builder_model}'
+      + {builder_model: $builder_model}
+      + (if $daniel == "" then {} else {discord_message: $daniel, discord_channel: $channel} end)'
 fi
 
 # Overlap between tasks is the coordinator's judgment: show the project's other open tasks, each
