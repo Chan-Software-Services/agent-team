@@ -28,12 +28,13 @@ section() {
 # but the coordinator's, whose caps are below, is held, one line per role: its name and its cap in
 # bytes. The list is held to the roles/ directory, so a new role prompt fails until it has a cap.
 # The helper over_cap (tests/helpers/common.bash) words the failure, and tests/repo.bats tests its
-# message.
-ROLE_CAPS="assistant 8097
-builder 8000
-ops 5839
-planner 6300
-reviewer 7342"
+# message. Each cap is a ratchet: it only comes down, the assistant's at Daniel's 8 KB and the
+# others at their size after the cut by Daniel's rule (sops/worker-events.md holds the rare events).
+ROLE_CAPS="assistant 8192
+builder 4500
+ops 5800
+planner 3800
+reviewer 4600"
 
 @test "each role prompt but the coordinator's is at most its cap in bytes" {
   local role cap over=()
@@ -211,31 +212,38 @@ manual_task_numbers() {
   done
 }
 
-@test "each worker role says what to do on STOW and on a resume, within its line budget" {
-  local role body budget
+# A section of sops/worker-events.md: its lines under "## <heading>", up to the next heading.
+events_section() {
+  awk -v h="## $1" '$0 == h { on = 1; next } /^## / { on = 0 } on && NF' "$REPO_ROOT/sops/worker-events.md"
+}
+
+# Daniel's rule (2026-11-23): a role line stays only if most of the role's sessions need it, so
+# what a session does on a STOW, a hold, a resume or a twin coordinator is in the SOP, read then.
+@test "each worker role points its rare events at sops/worker-events.md, which says what to do on STOW and on a resume" {
+  local role body
   for role in builder planner reviewer; do
-    body=$(section "$role" 'On STOW and on resume')
-    budget=4
-    [[ $role != builder ]] || budget=6
-    echo "$role: $(wc -l <<<"$body") lines" >&2
-    (($(wc -l <<<"$body") <= budget))
-    grep -qF 'On `T<n> STOW`' <<<"$body"
-    grep -qF 'write `.scratch/task/handoff.md` (done, next, anything odd) and reply `T<n> PAUSED stowed`' <<<"$body"
-    grep -qF 'On a resume, read `.scratch/task/handoff.md` first when it exists, and delete it once the work it describes is done.' <<<"$body"
+    grep -qxF "On \`T<n> STOW\`, \`HOLD\` or \`RESUME\`, a resume, GitHub unreachable or a send that finds two coordinators, read \`~/agent-team/sops/worker-events.md\` and do as it says for the $role." <<<"$(section "$role" 'Rare events')"
+    if section "$role" 'What you do' | grep -F 'STOW'; then return 1; fi
   done
-  body=$(section builder 'On STOW and on resume')
+  grep -qxF 'When a send finds two coordinators, read `~/agent-team/sops/worker-events.md`.' <<<"$(section ops 'Talking to the coordinator')"
+  grep -qF 'On `ASSISTANT STOW`, or a send that finds two coordinators, read `~/agent-team/sops/worker-events.md`' <<<"$(section assistant 'Talking to the coordinator')"
+  grep -qF "When a send to \`coordinator\` fails with \"N agents are named 'coordinator'\", send it again at once to \`coordinator [<ref>]\`, the row \"on this machine\" most recently active" <<<"$(events_section 'A send finds two coordinators')"
+  body=$(events_section 'On STOW')
   grep -qF 'with a no-mistakes run active, wait for it first and say so in `handoff.md`' <<<"$body"
   grep -qF 'commit what is unfinished as `wip: <what is unfinished>` on the task branch and push it' <<<"$body"
   grep -qF 'Never rewrite a `wip:` commit' <<<"$body"
+  grep -qF 'In a ticket worktree, commit and reply without pushing' <<<"$body"
   # A run the level's STOW stopped is run again on resume, never fixed.
   grep -qF 'A test or gate run killed or aborted while a `T<n> STOW` waits is never a failure to fix: note it in `handoff.md` and run it again on resume.' <<<"$body"
   # A planner and a reviewer have nothing to commit: their stow is the handoff note alone.
-  for role in planner reviewer; do
-    if section "$role" 'On STOW and on resume' | grep -Eiw 'commit|push|wip'; then
-      echo "$role's stow commits or pushes" >&2
-      return 1
-    fi
-  done
+  grep -qxF -- '- On `T<n> STOW`, write `.scratch/task/handoff.md` (done, next, anything odd) and reply `T<n> PAUSED stowed`.' <<<"$body"
+  grep -qF 'On `ASSISTANT STOW`, write `assistant/handoff.md` in the team home' <<<"$body"
+  grep -qF 'reply `ASSISTANT PAUSED stowed` to `coordinator`' <<<"$body"
+  grep -qF 'read `.scratch/task/handoff.md` first when it exists, and delete it once the work it describes is done.' <<<"$(events_section 'On a resume')"
+  body=$(events_section 'When GitHub is unreachable')
+  grep -qF 'send `T<n> PAUSED offline <what failed>` and wait, without retrying' <<<"$body"
+  grep -qF 'reply `T<n> PAUSED held`' <<<"$body"
+  grep -qF 'On `T<n> RESUME`' <<<"$body"
 }
 
 # The statement every role prompt carries, without its end: the coordinator and ops go on with
@@ -294,12 +302,9 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   fi
 }
 
-@test "the assistant's role says it reads what the coordinator reads, but the secret files, /proc and the Discord state, and that its guard refuses an act or a GitHub write by the rows" {
-  local body
-  body=$(section assistant 'What you do')
-  grep -qxF -- '- Read the files and run the read-only views the coordinator does: the team scripts'"'"' files and their `--help` (but `team-land`'"'"'s), `team-queue list` and `index --check`, `team-log --check` and `--check-lifecycle`, `team-inbox --item <n>`, `gh` reads and GraphQL queries with their values written in (no `$`).' <<<"$body"
-  grep -qxF -- '- The secret files, the Discord state files, `/proc` to the Read tool and every process'"'"'s `/proc/<pid>/environ` stay closed to you.' <<<"$body"
-  grep -qxF -- '- Your command guard and the act scripts themselves refuse a run of the coordinator'"'"'s acts (a hand-off, a stow, a resume, a lease change, a load check, a stack'"'"'s start or stop), and your guard every `gh` or `gh-axi` call but a read, each refusal naming what it read, so a read never becomes an act.' <<<"$body"
+@test "the assistant's role says it reads what the coordinator reads, and that a refusal is a guardrail it never routes around" {
+  section assistant 'What you do' | grep -qxF -- '- Read what the coordinator reads; a refusal is a guardrail: never route around it (a process'"'"'s counters are `team-proc <pid>`).'
+  if grep -nF '/proc/<pid>/environ' "$REPO_ROOT/roles/assistant.md"; then return 1; fi
 }
 
 @test "the assistant's role names the four words that never relay through it, and sends them to #coordinator or the task's thread" {
@@ -311,16 +316,15 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   grep -qF 'ask them to say it in `#assistant` first' <<<"$words"
 }
 
-@test "the assistant's role says how it starts, stows, and behaves fenced and offline" {
-  local life
-  life=$(section assistant 'Start, stow and the lease')
-  grep -qF 'follow your digest' <<<"$life"
-  grep -qF '`fetch_messages`' <<<"$life"
-  grep -qF 'On `ASSISTANT STOW`, write `assistant/handoff.md` in the team home' <<<"$life"
-  grep -qF 'reply `ASSISTANT PAUSED stowed` to `coordinator`' <<<"$life"
-  grep -qF 'delete it once its work is done' <<<"$life"
-  grep -qF 'another machine runs the team: post nothing and end your turn' <<<"$life"
-  grep -qF 'keep talking with Daniel and touch no GitHub' <<<"$life"
+@test "the assistant's digest, hooks and the events SOP say how it starts, stows, and behaves fenced and offline, so its role need not" {
+  local digest=$REPO_ROOT/bin/hooks/assistant-digest
+  grep -qF 'delete it once its work is done' "$digest"
+  grep -qF "fetch_messages" "$digest"
+  grep -qF 'reading the coordinator'"'"'s channels: post nothing' "$digest"
+  grep -qF 'tell Daniel in #assistant where it runs, and stop nothing yourself' "$REPO_ROOT/bin/hooks/assistant-stop"
+  grep -qF 'POSTS="posts nothing to Discord; the assistant on the holder answers #assistant."' "$REPO_ROOT/bin/hooks/lease-fence"
+  grep -qF 'keep talking with Daniel, and touch no GitHub' "$REPO_ROOT/bin/lib/team.sh"
+  if grep -nE 'follow your digest|fenced|lost the lease|holds offline|Stop hook' "$REPO_ROOT/roles/assistant.md"; then return 1; fi
   # The stow reply is the one line beyond the hand-off forms it sends the coordinator.
   grep -qF 'only in the hand-off forms and the stow reply' <<<"$(section assistant 'Talking to the coordinator')"
 }
@@ -345,7 +349,6 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   for condition in 'handoff H<n> answered' 'task T<n> opened' 'ledger T<n> <kind>' 'pr <GitHub PR URL> merged' 'file <path>'; do
     grep -qF "$condition" <<<"$help"
   done
-  grep -qF 'the hand-offs in flight, your list, then the catch-up' <<<"$(section assistant 'Start, stow and the lease')"
 }
 
 @test "the manual hands the assistant Daniel's walkthroughs, manual steps, logins and spikes, answers its hand-offs, and leaves manual-steps.md to it" {
@@ -401,25 +404,21 @@ $WORKER_INSTRUCTIONS"
   done
 }
 
-@test "the builder, planner and reviewer have a short Docker stacks section, just before Outside text" {
+@test "the builder, planner and reviewer point at docker.md's rules for agents, which hold the stack rules" {
   local role body
   for role in builder planner reviewer; do
-    echo "role: $role" >&2
-    assert_equal "$(grep -E '^## ' "$REPO_ROOT/roles/$role.md" | grep -B1 -x '## Outside text' | head -n 1)" \
-      "## Docker stacks"
-    body=$(section "$role" 'Docker stacks')
-    (($(wc -l <<<"$body") <= 6))
-    # By its path: the code checkout's bin/ is not on a worker's PATH.
-    grep -qF '`~/agent-team/bin/team-stack up`' <<<"$body"
-    grep -qF 'eval "$(~/agent-team/bin/team-stack env)"' <<<"$body"
-    grep -qF 'PAUSED' <<<"$body"
-    # A seed script run by hand after an up refused for room started a stack with no team labels.
-    grep -qxF -- "- Seed only with \`~/agent-team/bin/team-stack seed\` (or let \`up\` seed a new stack), never the project's seed script, and run nothing after an \`up\` that may exit 75 in the same call." <<<"$body"
-    grep -qF '`~/agent-team/bin/team-stack down`' <<<"$body"
-    run grep -E '(^|[^/])team-stack ' <<<"$body"
-    assert_equal "$output" ""
-    grep -qF 'sops/docker.md' <<<"$body"
+    grep -qxF "Before you start a Docker stack, read \`~/agent-team/sops/docker.md\`'s \"Rules for agents\"." <<<"$(section "$role" 'Rare events')"
   done
+  body=$(awk '$0 == "## Rules for agents" { on = 1; next } /^## / { on = 0 } on && NF' "$REPO_ROOT/sops/docker.md")
+  # By its path: the code checkout's bin/ is not on a worker's PATH.
+  grep -qF '`~/agent-team/bin/team-stack up`' <<<"$body"
+  grep -qF 'eval "$(~/agent-team/bin/team-stack env)"' <<<"$body"
+  grep -qF 'PAUSED' <<<"$body"
+  # A seed script run by hand after an up refused for room started a stack with no team labels.
+  grep -qxF -- "- Seed only with \`~/agent-team/bin/team-stack seed\` (or let \`up\` seed a new stack), never the project's seed script, and run nothing after an \`up\` that may exit 75 in the same call." <<<"$body"
+  grep -qF '`~/agent-team/bin/team-stack down`' <<<"$body"
+  run grep -E '(^|[^/])team-stack ' <<<"$(grep -E '^- ' <<<"$body")"
+  assert_equal "$output" ""
 }
 
 @test "the manual's ops line logs the answer, once relayed, as its length with --relay, then ends the session" {
@@ -734,8 +733,8 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   for kind in $(grep -ohE '`(merge|plan)-[a-z-]+`' "$manual" "$sop" | tr -d '`' | grep -vx merge-due | sort -u); do
     assert_equal "$(jq -r --arg k "$kind" '[.kinds[$k].writer // empty] | flatten | index("team-log") != null' "$contract")" true
   done
-  # The reviewer's line and the stow skill's row of Daniel's decisions.
-  section reviewer 'What you do' | grep -qF 'since a merge on the default word, the approved plan, stands on them.'
+  # The review briefs' guarded areas and the stow skill's row of Daniel's decisions.
+  grep -qF 'and the guarded areas the change touches, of `ci`, `migrations`, `deploy`, `permissions`, `secrets` and `guardrails`' "$REPO_ROOT/templates/briefs/review/direct-pr.md"
   grep -E '^\| A decision Daniel made on a task \| .*`plan-approved`, `plan-approval-withdrawn`, `merge-approved`, `merge-default-withdrawn`, `merge-default-restored`' "$plugin/skills/stow/SKILL.md"
 }
 
@@ -756,16 +755,19 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
     "$REPO_ROOT/templates/briefs/builder-round.md"
   # The PR body names no local checks, so the round has no line of them to bring up to date.
   if grep -F 'local checks' "$REPO_ROOT/templates/briefs/builder-round.md"; then return 1; fi
-  section builder 'What you do' | grep -qxF -- '- On every delivery, send `PR <full url>` once the push and the PR body are in, and on a merge-base round `DONE merged ...` once its push is in.'
-  section builder 'What you do' | grep -qxF '  Then stop: past your brief'"'"'s `team-ci-run`, never wait on the PR'"'"'s GitHub checks.'
-  section builder 'What you do' | grep -qxF -- '- End every ticket and every round with the tests your brief names, whatever the `implement` skill says: never a whole suite on this machine, which runs only in CI (Daniel'"'"'s rule), unless your brief says nothing else runs it.'
-  section builder 'What you do' | grep -qxF '  Where your brief has you run `team-ci-run`, report only once it exits 0.'
+  # Each builder brief says where its delivery stops and which tests it runs, so the role only
+  # says to run the tests the brief names, whatever the implement skill says.
+  grep -qF 'and stop: the delivery ends there, with no wait after it on the PR'"'"'s GitHub checks' "$REPO_ROOT/templates/briefs/delivery/direct-pr.md"
+  grep -qF 'and stop: the delivery ends there, with no wait on the PR'"'"'s GitHub checks' "$REPO_ROOT/templates/briefs/delivery/no-mistakes.md"
+  grep -qF 'Run only the tests you wrote or changed, never the whole suite' "$REPO_ROOT/bin/team-brief"
+  grep -qF 'Report nothing until it exits 0' "$REPO_ROOT/bin/team-brief"
+  section builder 'What you do' | grep -qF 'and the tests your brief names whatever the skill says.'
   if section builder 'What you do' | grep -F -e 'tests/run' -e '--changed'; then return 1; fi
   # Daniel's rule, 2026-11-15: no whole suite on the team's machine, in the reviewer's and the planner's roles too.
   section reviewer 'What you do' | grep -qxF -- '- Run no test suite on this machine (Daniel'"'"'s rule): a whole suite runs only in CI, which is the coordinator'"'"'s wait; run at most the local checks your brief names, with `team-checks`.'
   section planner 'What you do' | grep -qxF -- '- Explore freely: read code, run commands, the app and single tests, never a whole suite (CI runs it).'
-  section builder 'What you do' | grep -qF -- '- Fix the review findings and failed checks the coordinator sends you on the same branch'
-  section reviewer 'What you do' | grep -qxF -- '- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read.'
+  grep -qF 'Fix each finding on the branch as narrowly as it asks' "$REPO_ROOT/templates/briefs/builder-round.md"
+  grep -qF 'There is no wait on the PR'"'"'s GitHub checks in a review' "$REPO_ROOT/templates/briefs/wait/direct-pr.md"
   if section builder 'What you do' | grep -F -e team-ci-wait -e 'When every finding it sends is a plain `note`'; then return 1; fi
   if section reviewer 'What you do' | grep -F team-ci-wait; then return 1; fi
   jq -er '.kinds.review.about | contains("or a plain note on a line the PR adds or changes, never one before lists")' \
@@ -782,7 +784,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   # The direct-PR delivery sends that review-ready under a Disclosure section, as the builder's role says.
   grep -qF 'Under a Disclosure section in a public repository, push nothing yet: send `{{task}} DONE review-ready <the full sha of HEAD>`' \
     "$REPO_ROOT/templates/briefs/delivery/direct-pr.md"
-  section builder 'What you do' | grep -qF 'in a public repository push nothing until a review has passed the branch'"'"'s wording'
+  section builder 'What you do' | grep -qF 'When the plan has a Disclosure section, it binds every commit message, test name, comment, doc and PR text you write.'
 }
 
 # T172 ticket 07: team-brief derives the deliver, round and verify briefs' facts.
@@ -794,11 +796,13 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 }
 
 @test "the reviewer's DONE carries each finding kind's count and the guarded areas, in review.md too" {
-  local talk
-  talk=$(section reviewer 'Talking to the coordinator')
-  grep -qF 'Send `T<n> DONE pass <PR url or head> findings=blocking:<n>,correctness:<n>,security:<n>,real-data:<n>,note-change:<n>,note-before:<n> before=<the before notes'"'"' numbers, comma-separated, or none> guarded=<areas, comma-separated, or none>`, with ` memory=.scratch/task/memory.md` after it when you added a memory, or `T<n> DONE findings <path>` with the same `findings=`, `before=`, `guarded=` and `memory=` after it' <<<"$talk"
-  section reviewer 'What you do' | grep -qF '(`ci`, `migrations`, `deploy`, `permissions`, `secrets`, `guardrails`)'
-  section reviewer 'What you do' | grep -qF 'in `review.md` and in your DONE'
+  local brief
+  grep -qF 'Send `coordinator` with SendMessage the `DONE` your brief gives, with ` memory=.scratch/task/memory.md` after it when you added a memory' <<<"$(section reviewer 'Talking to the coordinator')"
+  for brief in review/direct-pr review/direct-pr-before-pr review/no-mistakes rereview verify; do
+    grep -qF 'findings=blocking:<n>,correctness:<n>,security:<n>,real-data:<n>,note-change:<n>,note-before:' "$REPO_ROOT/templates/briefs/$brief.md"
+    grep -qF 'guarded=<areas, comma-separated, or none>' "$REPO_ROOT/templates/briefs/$brief.md"
+  done
+  manual_size_check "$manual"
 }
 
 @test "every team-* command a skill names in code is a script in bin/ whose --help names each option the skill gives it" {
@@ -1033,13 +1037,13 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
 }
 
 @test "reviewers and planners add the memories the hook keeps them from writing to their task directory, and the coordinator files them at close" {
-  local role line='- The hook refuses your memory directory too: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.'
+  local role line='- The hook refuses your memory directory: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.'
   for role in reviewer planner; do
     grep -qxF -- "$line" <<<"$(section "$role" 'What you do')"
     grep -qF 'memory=.scratch/task/memory.md' <<<"$(section "$role" 'Talking to the coordinator')"
   done
-  # The reviewer names it after guarded=, the pair team-log --from-message takes.
-  grep -qF 'guarded=<areas, comma-separated, or none>`, with ` memory=.scratch/task/memory.md` after it' "$REPO_ROOT/roles/reviewer.md"
+  # The reviewer names it after its brief's DONE, whose guarded= ends it: the pair team-log --from-message takes.
+  grep -qF 'the `DONE` your brief gives, with ` memory=.scratch/task/memory.md` after it' "$REPO_ROOT/roles/reviewer.md"
   grep -qF "7. **Close.** File each memory of a worker's \`.scratch/task/memory.md\` that holds in the project's memory, then run \`team-close T<n>\` once the PRs are merged:" "$manual"
   grep -qF "You write directly only \`tasks/\`, the projects' \`memory/<project>/\`," "$manual"
 }

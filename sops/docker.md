@@ -316,7 +316,7 @@ The heartbeat (`team-timers run`, every 5 minutes on the lease holder) can run t
 
 ## Rules for agents
 
-Builders, planners and reviewers carry these rules in a short `## Docker stacks` section of their role:
+Builders, planners and reviewers read these before they start a stack, as their role says:
 
 - Start the worktree's stack only with `~/agent-team/bin/team-stack up`, never `docker compose up`, the wrapper's `up` or `docker run`, and reach it with `eval "$(~/agent-team/bin/team-stack env)"`.
 - On `up`'s exit 75, send `T<n> PAUSED <its reason line>` and wait, rather than fighting for room.

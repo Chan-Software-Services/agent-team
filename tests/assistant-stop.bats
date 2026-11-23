@@ -191,9 +191,13 @@ $tail"
   done
 }
 
-@test "the assistant's role prompt says to act on each Stop finding, naming each kind and the supervision-off case" {
-  local role=$REPO_ROOT/roles/assistant.md
-  grep -qxF -- "- A Stop hook keeps your turn open once when it ends with something unattended: an item of your list that is due, a hand-off to you still open, or a twin, a second session named assistant on this machine." "$role"
-  grep -qxF -- "- Act on each finding before you end the turn: \`done\` or renew the item, run the hand-off with Daniel in its thread and answer it, and tell Daniel of the twin in \`#assistant\`, stopping nothing yourself." "$role"
-  grep -qxF -- "- When the Stop hook says supervision is off, find out why from what it names, and tell Daniel in \`#assistant\` when you cannot fix it." "$role"
+# Daniel's rule (2026-11-23): the hook's own reasons say what to do on each finding, so the role
+# prompt, which every session loads, says none of it.
+@test "the hook's reasons say what to do on each Stop finding and the supervision-off case, and the role prompt leaves it to them" {
+  local hook=$REPO_ROOT/bin/hooks/assistant-stop
+  grep -qF 'each done once it is done, or renewed with team-current renew <id> --review --reason <why>' "$hook"
+  grep -qF 'each read with team-assistant show H<n>, run with Daniel in its thread and answered' "$hook"
+  grep -qF 'tell Daniel in #assistant where it runs, and stop nothing yourself' "$hook"
+  grep -qF 'Find out why and fix it, or tell Daniel in #assistant' "$hook"
+  if grep -nF 'Stop hook' "$REPO_ROOT/roles/assistant.md"; then return 1; fi
 }

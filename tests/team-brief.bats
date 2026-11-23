@@ -2601,10 +2601,9 @@ There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$
     refute_grep -F -e team-ci-wait -e 'gh run list' -e 'delivers only once' -e 'explains the move' -e 'moved past `' \
       -e 'CI section' -e 'roll-up:' -e 'infrastructure:' -e '--watch' -e 'Act on how the wait ended' "$output"
   done
-  # The roles say the same, in one sentence each, with nothing of the old wait left.
-  grep -qxF -- "- On a PR, start no wait on its GitHub checks: read, and deliver on the head you read." "$REPO_ROOT/roles/reviewer.md"
+  # The briefs say it, so the roles leave it to them, with nothing of the old wait left.
   grep -qF "a whole suite runs only in CI, which is the coordinator's wait;" "$REPO_ROOT/roles/reviewer.md"
-  grep -qxF "  Then stop: past your brief's \`team-ci-run\`, never wait on the PR's GitHub checks." "$REPO_ROOT/roles/builder.md"
+  refute_grep -F 'GitHub checks' "$REPO_ROOT/roles/reviewer.md" "$REPO_ROOT/roles/builder.md"
   refute_grep -F -e team-ci-wait -e 'roll-up:' -e 'infrastructure:' -e 'verify` reviewer waits' "$REPO_ROOT/roles/reviewer.md" "$REPO_ROOT/roles/builder.md"
 }
 
@@ -2727,12 +2726,10 @@ findings_files() {
   done
   # The round's stowed-work check comes right after it.
   grep -A4 -xF '## Do' "$TEAM_HOME/tasks/T12/brief-builder-round.md" | sed -n 4p | grep -q '^2\. Your branch must hold what the stowed builder pushed'
-  # builder-fix starts a new branch from the base, and its later rounds come as messages the role
-  # line covers.
+  # builder-fix starts a new branch from the base, and its later rounds come as builder-round briefs.
   run_bin -0 team-brief T12 builder-fix --set read='- `AGENTS.md`.' --set commits=fix --set goal=g --name fix
   refute_grep -F 'merge --ff-only' "$TEAM_HOME/tasks/T12/brief-fix.md"
-  grep -qF 'Before each round on a branch whose PR exists, bring the branch to the PR'"'"'s head with `git fetch origin && git merge --ff-only origin/<branch>`; if the merge fails, send BLOCKED.' \
-    "$REPO_ROOT/roles/builder.md"
+  grep -qF 'git fetch origin && git merge --ff-only origin/{{branch}}' "$REPO_ROOT/templates/briefs/builder-round.md"
 
   # The commands as the round brief gives them, run in a worktree whose PR team-catch-up moved.
   brief=$TEAM_HOME/tasks/T12/brief-builder-round.md
@@ -3052,9 +3049,9 @@ If the coordinator answers that the task branch moved, merge it again, run the c
   # The record holds the ticket, and none of the facts.
   assert_equal "$(jq -c . "$TEAM_HOME/tasks/T14/brief-build-03.json")" \
     '{"template":"builder-ticket","project":"home","values":{"ticket":"03"}}'
-  # The role says the ticket worktree's push and merge rules right after its own push rule.
-  assert_equal "$(grep -A1 -F -- '- Commit and push the task branch before reporting DONE or PR' "$REPO_ROOT/roles/builder.md" | sed -n 2p)" \
-    '  In a ticket worktree, push its branch only where your brief has you run CI on it, and merge only the task branch into it, never the other way; at `T<n> STOW` or `HOLD`, commit and reply as below without pushing.'
+  # The brief gives the ticket worktree's merge, and sops/worker-events.md its stow without a push.
+  assert_contains "$brief" 'merge the task branch'"'"'s tip into your branch'
+  grep -qF -- '- In a ticket worktree, commit and reply without pushing: the checkpoint keeps the ticket branch.' "$REPO_ROOT/sops/worker-events.md"
   # --set ticket= may say the same ticket.
   run_bin -0 team-brief T14 builder-ticket --ticket 03 --set ticket=03 --name build-03 --force
   assert_equal "$(<"$TEAM_HOME/tasks/T14/brief-build-03.md")" "$brief"

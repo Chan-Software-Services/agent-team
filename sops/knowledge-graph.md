@@ -54,6 +54,7 @@ Required keys: `layer`, `kind`, and `verified` (except on `record`).
 Add a kind only when a real node fits none of these; say why in the project's graph hub.
 
 `verified` is the author's own calendar day, the day the node was read against the code.
+A builder moves it only after the delivery's claims check has read the node.
 Never backdate it to suit the time zone CI runs in; the checker allows for that (see "The checks").
 
 ### Rules for the content

@@ -209,9 +209,9 @@ SH
   run_bin -0 team-review-status https://github.com/owner/proj/pull/5 "$HEAD_SHA" failure "2 blocking"
   assert_equal "$output" "agent-review failure on Owner/Proj@$HEAD_SHA"
   assert_equal "$(stub_calls gh | grep -c statuses)" 2
-  # The reviewer's role says the verdict alone goes there.
-  grep -qF 'On a project whose `agent-review` the reviewer App posts, `team-review-status` refuses and says so: set no status there, and send your verdict alone' \
-    "$REPO_ROOT/roles/reviewer.md"
+  # The reviewer's brief there says the verdict alone goes to the coordinator.
+  grep -qF "Set no status on {{project}}: its \`agent-review\` is the reviewer App's check run, which the coordinator posts from the verdict you send below, and \`team-review-status\` refuses it." \
+    "$REPO_ROOT/templates/briefs/review-status/reviewer-app.md"
 }
 
 @test "--merge-group sets success on the queue's trial commit that is the reviewed head merged cleanly onto the entry's base" {
