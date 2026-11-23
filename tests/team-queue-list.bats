@@ -145,6 +145,39 @@ says() {
   assert_equal "$(says)" "no room: T313, opened at 15:00, has no worker yet"
 }
 
+@test "a task opened with no worker holds the room only while the team itself is about to launch it" {
+  room="room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  event T40 opened 2026-11-13T17:26:00Z '{project: "proj"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # Parked on Daniel's open ask, it waits on them, not on the team: the next open goes ahead.
+  event T40 asked 2026-11-13T17:27:30Z '{id: "p1", text: "approve the plan?"}'
+  assert_equal "$(says)" "$room"
+  # Answered, it is the team's to launch again.
+  event T40 answered 2026-11-13T18:00:00Z '{id: "p1", text: "yes"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # A wait on Daniel or outside the team, typed or as an old line reads it, and Daniel's hold,
+  # each let it go until a resumed ends it.
+  event T40 waiting 2026-11-13T18:05:00Z '{on: "Daniel", reason: "their call on the scope", cause: "daniel"}'
+  assert_equal "$(says)" "$room"
+  event T40 resumed 2026-11-13T18:10:00Z '{id: "waiting-1"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 waiting 2026-11-13T18:15:00Z '{on: "GitHub", reason: "the outage"}'
+  assert_equal "$(says)" "$room"
+  event T40 resumed 2026-11-13T18:20:00Z '{id: "waiting-2"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 held 2026-11-13T18:25:00Z '{reason: "Daniel holds it", cause: "daniel-hold", discord_message: "1000000000000000001"}'
+  assert_equal "$(says)" "$room"
+  event T40 resumed 2026-11-13T18:30:00Z '{id: "held-1", discord_message: "1000000000000000002"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # A park of the team's own, a room refusal, still holds it: the team launches it once it can.
+  event T40 paused 2026-11-13T18:35:00Z '{reason: "no room for session:planner at full", cause: "room"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # A parked task lets the next unstaffed one name itself.
+  event T41 opened 2026-11-13T18:40:00Z '{project: "proj"}'
+  event T40 asked 2026-11-13T18:45:00Z '{id: "p2", text: "which project?"}'
+  assert_equal "$(says)" "no room: T41, opened at 18:40, has no worker yet"
+}
+
 @test "a plan or costs that cannot be read is no room, naming why, never a failure" {
   ready a.md 1 S "the first"
   printf 'team-capacity: %s/.config/agent-team/capacity.json: "minor_share" is not above 0 and at most 1\n' "$HOME" \

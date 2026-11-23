@@ -336,13 +336,20 @@ def queue_capacity($name; $schema):
     elif type == "object" and .schema == $schema then .
     else {error: "\($name) is no \($schema) object"} end;
 
-# The open tasks whose latest opened no launch follows, [{task, ts}] by task number, from the
-# events by task (by_task's object).
+# The park causes of a task that waits on Daniel or on something outside the team, not on the
+# team itself: an open ask, a waiting on Daniel or outside, Daniel's hold.
+def queue_parked_off_team: ["ask", "daniel", "daniel-hold", "outside"];
+
+# The open tasks the team itself is about to launch: those whose latest opened no launch follows
+# and with no standing park of a queue_parked_off_team cause (one parked on Daniel or outside
+# waits on them, and holds back no open), [{task, ts}] by task number, from the events by task
+# (by_task's object).
 def queue_unstaffed($tasks):
   [$tasks | to_entries[] | .key as $t | .value
    | (last(to_entries[] | select(.value.event == "opened")) // null) as $o
    | select($o != null and (any(.[$o.key + 1:][]; .event == "launch") | not))
    | select(is_open)
+   | select(any(lifecycle.parks[]; (.passed | not) and IN(.cause; queue_parked_off_team[])) | not)
    | {task: $t, ts: $o.value.ts}]
   | sort_by(.task[1:] | tonumber);
 
@@ -352,9 +359,10 @@ def queue_unstaffed($tasks):
 # and is not over it, no task waits to resume or to launch (stowed and refused work comes first,
 # but for work something holds, a hold the plan gives, which it will not relaunch),
 # the budget less what is reserved is at least a builder's estimate (every task soon launches
-# one, the largest worker a task starts), and no open task has an opened with no launch since (a
-# task just opened gets its first worker before the next is named), the first that fails saying
-# why.
+# one, the largest worker a task starts), and no open task has an opened with no launch since
+# and no park on Daniel or outside the team (queue_unstaffed's: a task just opened gets its first
+# worker before the next is named, but one waiting on Daniel holds nothing back), the first that
+# fails saying why.
 def queue_room($plan; $costs; $tasks; $today):
   def no($why): {fits: false, says: "no room: \($why)"};
   if $plan.error != null then no("the plan cannot be read: \($plan.error)")
