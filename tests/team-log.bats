@@ -1975,6 +1975,9 @@ assert_no_answer_logged() {
     $'DONE review-ready a1b2c3d\nthe summary' \
     $'DONE merged dev a1b2c3d conflicts: none\nthe summary' \
     $'DONE 01 a1b2c3d the ticket\nand more' \
+    $'DONE gate run=r1 head=0123456\noutcome=pushed' \
+    $'DONE findings r.md findings=blocking:1,correctness:0,security:0,real-data:0,note-change:0,note-before:0\nguarded=none' \
+    $'BLOCKED git-push denied; took its allowed way\n(pushed the task branch)' \
     $'BLOCKED Bash(git push) denied:\nthe push target is a base branch' \
     $'PAUSED stowed,\nhandoff.md written' \
     $'NEED toolkit browser\nfor the UI check' \
