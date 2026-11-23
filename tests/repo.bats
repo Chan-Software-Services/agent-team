@@ -1069,6 +1069,33 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   grep -qF '`review.md` with its kind and scope' <<<"$line"
 }
 
+# Only the rust toolkit's sessions list rust-core, so the planner, builder and reviewer roles name
+# it, once each under "What you do", for a session that lists it, each with its duty: a session on
+# a task with no Rust code reads the line and does nothing.
+@test "the planner, builder and reviewer roles name the rust toolkit's rust-core, each with its duty, for a session that lists it" {
+  local role body line
+  assert_equal "$(sed -n 's/^name: //p' "$REPO_ROOT/toolkits/rust/skills/rust-core/SKILL.md")" rust-core
+  for role in planner builder reviewer; do
+    echo "role: $role" >&2
+    assert_equal "$(grep -c 'rust-core' "$REPO_ROOT/roles/$role.md")" 1
+    body=$(awk '$0 == "## What you do" { on = 1; next } /^## / { on = 0 } on' "$REPO_ROOT/roles/$role.md")
+    line=$(grep -F '`rust-core`' <<<"$body")
+    grep -qF 'when your session lists `rust-core`' <<<"$line"
+  done
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/planner.md")
+  grep -qF 'On a project with Rust code' <<<"$line"
+  grep -qF 'before you spec Rust code' <<<"$line"
+  grep -qF "toolchain's version and the check command" <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/builder.md")
+  grep -qF 'before you write Rust code' <<<"$line"
+  grep -qF 'run its check before you report DONE or PR' <<<"$line"
+  grep -qF '"Rust check" line in the PR body' <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/reviewer.md")
+  grep -qF 'on the head under review' <<<"$line"
+  grep -qF 'judge the diff against its rules' <<<"$line"
+  grep -qF '`review.md` with its kind and scope' <<<"$line"
+}
+
 # A reviewer proves nothing with a test of its own (its edit hook keeps it to the task directory):
 # it writes a suspected bug up with a test plan, and the builder writes and runs that test first.
 @test "a reviewer hands a suspected bug's test plan to the builder, who runs it before the fix" {

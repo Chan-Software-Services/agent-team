@@ -154,6 +154,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `prod-mongo/`: for the ops role only, backups of Conventioner's production database into `~/conventioner-backups`, their restore drills, rehearsals of a release's migrations on a dump and undos prepared for Daniel, on the read user's connection string from 1Password.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.
+  - `rust/`: for a planner, builder and reviewer writing Rust in agent-team's Cargo workspace, the `rust-core` skill (the core's rules, where to read a crate's real interface, the check `tests/run rust`) and rust-analyzer as a language server for navigation only; no MCP server.
   - `spec-review/`: the `spec-review` skill, two fresh readers of a task's spec and tickets, and `claims-check`, a fresh reader of a branch's prose against its code, which `team-worker` gives every delivering builder.
   - `vercel-read/`: for the ops role only, read-only access to Conventioner's two Vercel projects through the team's own MCP server, which sends only GET requests to a fixed set of endpoints on two project-scoped tokens from 1Password.
 
