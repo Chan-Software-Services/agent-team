@@ -414,8 +414,8 @@ def queue_waits($days; $now):
   | {schema: "team-queue-waits/1", days: $days, count: length,
      says: "\(length | queue_count("wait")) older than \($days | queue_count("day"))", waits: .};
 
-# team-queue waits' text from its object: its says line, then "- <file>: <n> days: <waits>" for
-# each wait, ending in a newline.
+# team-queue waits' text from its object: its says line, then "- <file>: <age>: <waits>" for
+# each wait (queue_age's "under a day", "1 day", "12 days"), ending in a newline.
 def queue_waits_text: [.says, (.waits[] | "- \(.file): \(.days | queue_age): \(.waits)")] | join("\n") + "\n";
 
 # An item as team-queue list --json gives it, its internal fields left out.

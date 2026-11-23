@@ -152,10 +152,10 @@
 # --check names". A plan or costs that cannot be read is no room, never a failure: list exits 0.
 # waits writes nothing. It counts the waits older than <days> days (--older, default 7) of each
 # queued item with a waits line that no task opened (an item with only after: never counts), by
-# the line's age as above, and prints "<n> waits older than <days> days" ("1 wait", "1 day"), the
-# line the digest carries, then "- <file>: <age>: <the waits line>" for each, oldest first, then
-# by file. --json prints one line, {schema: "team-queue-waits/1", days, count, says (that first
-# line), waits: [{file, waits, since, days, source}]}. It exits 0 whatever it counts.
+# the line's age as above, and prints "<n> waits older than <days> days" ("1 wait", "1 day"),
+# then "- <file>: <age>: <the waits line>" for each, oldest first, then by file. --json prints
+# one line, {schema: "team-queue-waits/1", days, count, says (that first line), waits: [{file,
+# waits, since, days, source}]}. It exits 0 whatever it counts.
 # A push that fails keeps the commit for the next checkpoint to push, saying so on stderr, and
 # exits 0; a commit that fails (the team home's hooks refuse it) leaves the change written for the
 # next checkpoint to commit, saying so on stderr, and exits 1.

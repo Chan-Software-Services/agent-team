@@ -2,7 +2,7 @@
 # A queued item's waits: line and its age: when that line last changed in the team home's git
 # history (a file git does not know yet, or a line not yet committed, reads the file's own time),
 # shown by team-queue list beside each wait and never in the index; and team-queue waits, the
-# count of the waits older than N days with their files, which the digest calls.
+# count of the waits older than N days with their files.
 
 load helpers/common
 
