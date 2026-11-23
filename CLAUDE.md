@@ -136,7 +136,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/task-life.bats`: a whole task's life across the scripts.
   - `tests/timings.tsv`: each bats file's seconds on Linux in one CI run, and on macOS as the last CI run with macOS jobs had them, which `tests/shards` weighs it by.
   - `tests/toolkits/`: the toolkits' Node tests.
-  - `tests/vendor/`: bats-core, vendored, with the one line its `VENDOR.md` patches.
+  - `tests/vendor/`: bats-core, vendored, with the two patches its `VENDOR.md` describes.
 - `toolkits/`: plugin directories a worker loads with `team-worker --toolkit <name>`: MCP config (`.mcp.json`) and the roles a server starts for when not every one (`mcp-roles.json`), skills, hooks (`hooks/hooks.json`), docs, scripts, and the skills' evals (`claude plugin eval`, on MCP mocks).
   - `browser/`: its session-start hook prints a banner for a UI task's builder and reviewer, whose `ui-check` skill captures and judges the screens a UI change touches.
   - `codegraph/`: for a setup trial's builders and reviewers, a session-start hook that, in a worktree with a `.codegraph/` directory, builds or syncs that worktree's CodeGraph index and prints a banner to locate code with `codegraph explore` first; no MCP server.
