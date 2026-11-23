@@ -1,6 +1,6 @@
 # The dependency policy, for cargo-deny 0.20.2 (tools.lock's pin): tests/run rust runs
-# `cargo-deny check --config deny.toml` on the workspace, as CI's rust job does, so a crate outside
-# it fails a required check. A crate is added only by a ticket that names it. Guarded
+# `cargo-deny --locked --config deny.toml check` on the workspace, so a crate outside it fails the
+# check. A crate is added only by a ticket that names it. Guarded
 # (bin/lib/guarded): a change here comes back to Daniel for the per-head word.
 
 [advisories]

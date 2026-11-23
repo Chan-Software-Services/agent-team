@@ -3,7 +3,7 @@
 # the stop at a failing step, the missing tool's line, the jobs and compiler wrapper it sets, that
 # it takes no heavy-run lock, its --changed and --list forms, and plain tests/run running all four
 # parts. Every Rust tool is a logging stub in a checkout of its own; tests/run rust itself runs the
-# real ones on the repository (a builder's machine, CI's rust job).
+# real ones on the repository, on a builder's machine.
 
 load helpers/common
 

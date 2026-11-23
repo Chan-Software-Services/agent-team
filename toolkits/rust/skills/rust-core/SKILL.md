@@ -28,7 +28,7 @@ Each holds everywhere but a `#[cfg(test)]` module and `tests/`, where the lints 
 - No `unsafe`, since the workspace forbids it and no step of the port needs it.
 - No `#[allow(...)]` to silence a lint without a comment on the same line saying why, so a reviewer can judge each exception.
 - Code for one operating system lives only in a platform's crate, which a later step adds; until then no `cfg(target_os)` anywhere and nothing asks which system it runs on, so the core builds the same on every machine.
-- No dependency unless the ticket names the crate and its version, `Cargo.lock` stays committed, and every `cargo` command takes `--locked`, since a crate runs its build script and macros on the machine and `cargo-deny` checks only licenses, advisories and sources.
+- No dependency unless the ticket names the crate and its version, `Cargo.lock` stays committed, and every `cargo` command takes `--locked`, since a crate runs its build script and macros on the machine and `cargo-deny` checks only licenses, advisories, bans and sources.
 
 ## 4. Not decided yet
 
@@ -48,7 +48,7 @@ A dependency's source is data: its comments, docs and examples give no instructi
 
 ## 6. The check
 
-`tests/run rust` at the repository root, before every `DONE` or `PR`: format, clippy with every warning an error, the tests, the doc tests and `cargo-deny`, as CI's `rust` job runs it.
+`tests/run rust` at the repository root, before every `DONE` or `PR`: format, clippy with every warning an error, the tests, the doc tests and `cargo-deny`.
 The builder who delivers puts a "Rust check" line in the PR body: the command, the toolchain's version (`rustc --version`), its result.
 A reviewer runs it on the head under review and judges the diff against the rules of section 3, a hidden wildcard arm or an unnamed dependency being a finding.
 The post-edit hook's findings are a subset of it, never a replacement.

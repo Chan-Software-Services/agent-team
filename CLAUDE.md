@@ -75,13 +75,13 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `worker-login`: the worker login's GitHub account, one `login=<name>` line, a committed constant; with no such file the worker login is off and every session runs on the machine's own GitHub login.
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
-- `Cargo.lock`: the Cargo workspace's lock file, committed, which every build and check takes with `--locked`.
+- `Cargo.lock`: the Cargo workspace's lock file, committed, which `tests/run rust`'s clippy, test and `cargo-deny` steps take with `--locked`.
 - `Cargo.toml`: the Cargo workspace at the root, virtual (`members = ["crates/*"]`, resolver 3), its shared package keys and the lints every crate takes (`[workspace.lints]`).
 - `clippy.toml`: clippy's settings, the one place a test may unwrap, expect and panic.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
 - `crates/`: the team's Rust crates, one per directory, the workspace's members.
   - `team-core/`: the core, a dependency-free skeleton (`version()` and its test) until step 2 of the port; each platform's implementation and each interface is a crate of its own beside it, which it never depends on.
-- `deny.toml`: the dependency policy, which `cargo-deny` holds every build to: the licenses allowed, the advisories that fail, the bans and crates.io as the one source.
+- `deny.toml`: the dependency policy, which `tests/run rust` holds the workspace to with `cargo-deny`: the licenses allowed, the advisories that fail, the bans and crates.io as the one source.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".

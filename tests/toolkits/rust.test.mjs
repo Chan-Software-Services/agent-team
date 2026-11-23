@@ -872,7 +872,8 @@ describe("the rust toolkit's post-edit hook, on stub cargo binaries", () => {
 });
 
 // The real cargo, as the session's PATH gives it: these cases run only where it is the pinned
-// toolchain's, which CI's toolkits job has from ticket 07 (RUST_TOOLKIT_TESTS=require there).
+// toolchain's, and fail instead of skipping with RUST_TOOLKIT_TESTS=require, which CI's toolkits job
+// does not set yet.
 const realCargo = (() => {
   const run = spawnSync("cargo", ["--version"], { cwd: repoRoot, encoding: "utf8", env: { ...process.env, RUSTUP_AUTO_INSTALL: "0" } });
   if (run.error) return { skip: `no cargo on PATH (${run.error.code}), so the pinned toolchain ${channel} is not here` };

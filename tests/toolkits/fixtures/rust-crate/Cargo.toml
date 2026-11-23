@@ -1,6 +1,6 @@
 # A workspace of its own, which the repository's workspace does not claim, for the rust toolkit:
 # tests/toolkits/rust.test.mjs runs the post-edit hook with the real cargo on a copy of it, and the
-# toolkit's evals copy it into each case's workspace. It has no dependency, so neither needs the
+# toolkit's three Rust eval cases copy it into their workspaces. It has no dependency, so neither needs the
 # network. Its lints are the root's [workspace.lints] and its clippy.toml the root's, which the test
 # holds, so a finding here is one the core's check would give.
 [workspace]
