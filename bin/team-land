@@ -250,8 +250,8 @@ log_trial() {
 
 # unmarked <sha>: after a look that did not post on the trial commit <sha> (missed), count it, and
 # once that trial commit has stood unmarked with one step, exit and reason for UNMARKED_SECONDS of
-# looks, say so once, as the header says; once said, look again while its checks were not seen
-# passed.
+# looks, say so once, as the header says; once said, with --task, look again while its checks
+# were pending or unknown.
 unmarked() {
   local text
   if [[ $1 != "$unmarked_trial" || $miss_key != "$unmarked_key" ]]; then

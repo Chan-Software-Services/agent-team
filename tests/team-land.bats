@@ -624,7 +624,8 @@ exit 75
 SH
 }
 
-# thread_posts: team-post's calls, and each post's text after "--", as the stub kept them.
+# thread_poster: stubs team-post, keeping each call's arguments and the text of the file it posts in
+# $GH_DIR/thread-posts.
 thread_poster() {
   poster team-post 1001
   stub_script team-post <<SH
