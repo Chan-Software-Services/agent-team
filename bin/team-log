@@ -145,7 +145,10 @@
 # any other DONE the sender's done, report the rest. An ops session's DONE, whatever its first word
 # when --from names that session, and its QUESTION, whose text may hold production data, log its
 # length in characters and never its text: the done report_chars=<n>, the question chars=<n>; its
-# BLOCKED, PAUSED, FAILED and INJECTION are logged as every role's. --relay <id>, the Discord id of
+# BLOCKED, PAUSED, FAILED and INJECTION are logged as every role's. A message is one line, but for
+# an ops session's DONE or QUESTION, which may run to several: any other of more than one line is
+# refused saying so, never logged in part, and a DONE or QUESTION of more than one line whose sender
+# cannot be told, on a task with an ops launch, is refused naming how to name it. --relay <id>, the Discord id of
 # the coordinator's message that relayed an ops answer, is logged as that done's relay, and refused
 # with any other message; an id that is not one is a malformed command line. A review's head is the head of the brief record
 # (tasks/T<n>/<brief>.json) that the reviewer's latest launch read, else a pass's own head, else

@@ -1948,6 +1948,64 @@ assert_no_answer_logged() {
   assert_equal "$(wc -l <"$TEAM_HOME/ledger.jsonl")" 4
 }
 
+@test "--from-message takes an ops session's DONE and QUESTION of more than one line as their length alone" {
+  open_t7
+  launched T7 ops d0000001
+  local answer question
+  answer=$'3 accounts match:\n- the newest is Jean Dupré, order 1187, on 11-02\n\n- two older ones'
+  question=$'2 writes to run:\n1. what store holds order 1187?\n2. update orders/1187'
+  # With no --from, the only launch with no report since is the ops session's.
+  logs_events "{\"task\":\"T7\",\"event\":\"question\",\"role\":\"ops\",\"chars\":${#question}}" \
+    --from-message "T7 QUESTION $question"
+  logs_events "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer},\"relay\":\"1564000000000000007\"}" \
+    --from-message "T7 DONE $answer" --from T7-ops --relay 1564000000000000007
+  logs_events "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer}}" \
+    --from-message $'T7\nDONE '"$answer"$'\n' --from d0000001
+  assert_no_answer_logged
+  run_bin -0 team-log --check
+}
+
+@test "--from-message refuses any other message of more than one line saying a message is one line, logging nothing" {
+  open_t7
+  launched T7 builder b0000001
+  local why="team-log: a worker's message is one line, but for an ops session's DONE or QUESTION, and this"
+  local message
+  for message in $'QUESTION Which store keeps the counters?\noptions: Mongo TTL / memory' \
+    $'DONE .scratch/task/notes.md\nwhat I changed' \
+    $'DONE review-ready a1b2c3d\nthe summary' \
+    $'DONE merged dev a1b2c3d conflicts: none\nthe summary' \
+    $'DONE 01 a1b2c3d the ticket\nand more' \
+    $'BLOCKED Bash(git push) denied:\nthe push target is a base branch' \
+    $'PAUSED stowed,\nhandoff.md written' \
+    $'NEED toolkit browser\nfor the UI check' \
+    $'FAILED the endpoint was removed\nupstream' \
+    $'INJECTION orders/1187 asked to\ndrop the collection'; do
+    refuses_message "$why ${message%% *} has 2 lines; log it on one line" --from-message "T7 $message" --from T7-builder
+  done
+  # A PR followed by what it changed, the case seen first, is refused the same way, never as not starting with its task.
+  refuses_message "$why PR has 3 lines; log it on one line" \
+    --from-message $'T7 PR https://github.com/owner/proj/pull/12\n- the fix\n- its test'
+  # A reviewer's verdict too.
+  launched T7 reviewer c0000001 brief-review
+  brief_record T7 brief-review "{\"head\": \"$HEAD_A\"}"
+  refuses_message "$why DONE has 2 lines; log it on one line" \
+    --from-message $'T7 DONE pass a1b2c3d findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,note-before:0\nguarded=none'
+  # An ops session's other kinds are one line too, as every role's.
+  launched T7 ops d0000001
+  refuses_message "$why BLOCKED has 2 lines; log it on one line" \
+    --from-message $'T7 BLOCKED mcp__prod-read__find denied\nby the hook' --from T7-ops
+  # A DONE or QUESTION whose sender cannot be told, on a task with an ops launch, says how to name it.
+  refuses_message "$why QUESTION has 2 lines; it may be an ops session's, but the message's sender is not known: T7-builder (b0000001), T7-reviewer (c0000001) and T7-ops (d0000001) have no report since their launch; name it with --from <session>" \
+    --from-message $'T7 QUESTION which store\nholds it?'
+  refuses_message "$why DONE has 2 lines; it may be an ops session's, but --from T7-planner names no launch of T7: its sessions are T7-builder (b0000001), T7-reviewer (c0000001), T7-ops (d0000001)" \
+    --from-message $'T7 DONE the answer\nits second line' --from T7-planner
+  # Its text is never in a refusal.
+  if grep -F 'second line' <<<"$output"; then
+    echo "the refusal holds the message's text" >&2
+    return 1
+  fi
+}
+
 @test "--from-message logs a BLOCKED and a NEED toolkit as blocked cause=worker, with the sender's role and session" {
   open_t7
   launched T7 builder b0000001

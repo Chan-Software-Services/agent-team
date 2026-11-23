@@ -605,6 +605,27 @@ no hand-off for QUESTION"
   assert_equal "$(bg_calls)" ""
 }
 
+@test "an ops session's DONE of more than one line is logged with --relay as its length alone, and a PR of more than one line is refused saying a message is one line" {
+  launched d0000001 "" '["prod-read"]' ops
+  local count answer=$'42 orders match:\n- the newest is Jean Dupré, 1187\n- 41 older ones'
+  count=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+  run_bin -0 team-next T7 --from T7-ops --relay 1564000000000000007 -- "T7 DONE $answer"
+  assert_equal "$output" "logged done role=ops session=d0000001 report_chars=${#answer} relay=1564000000000000007
+no hand-off for DONE"
+  run_bin -0 team-next T7 --from T7-ops --relay 1564000000000000007 -- "T7 DONE $answer"
+  assert_equal "$output" "already logged done role=ops session=d0000001 report_chars=${#answer} relay=1564000000000000007
+no hand-off for DONE"
+  assert_equal "$(logged_from $((count + 1)))" "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer},\"relay\":\"1564000000000000007\"}"
+  if grep -E 'Dupré|1187' "$TEAM_HOME/ledger.jsonl"; then
+    echo "the ledger holds the ops answer's text" >&2
+    return 1
+  fi
+  launched b0000001 brief
+  refused "team-log: a worker's message is one line, but for an ops session's DONE or QUESTION, and this PR has 2 lines; log it on one line" \
+    T7 -- $'T7 PR https://github.com/owner/proj/pull/12\nwith what it changed'
+  assert_equal "$(bg_calls)" ""
+}
+
 @test "--next with another message, and a malformed command line, are usage errors" {
   run_bin -2 team-next T7 --next 02 -- "T7 PAUSED stowed"
   assert_contains "$output" "--next is taken only with a builder's DONE <NN> message, not PAUSED"
