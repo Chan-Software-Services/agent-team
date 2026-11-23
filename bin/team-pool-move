@@ -12,20 +12,22 @@
 # in hex> (pool_name) in the folder of pools it finds for the primary checkout (treehouse_state.py
 # pools: <root>/.treehouse, root TREEHOUSE_ROOT, else that of the checkout's treehouse.toml when
 # it has one, else that of ~/.config/treehouse/config.toml, one empty as written HOME, else its
-# variables expanded and a relative one taken from the checkout), and authenticates each slot's state entry with a digest over its path, so a
-# bare set-url sends the next lease to a new, empty pool and a bare rename of the pool folder has
-# treehouse quarantine every slot, and free each one it finds safe, moving that slot's untracked
-# files out first (bin/lib/treehouse_state.py's header).
+# variables expanded and a relative one taken from the checkout), and authenticates each slot's
+# state entry with a digest over its path, so a bare set-url sends the next lease to a new, empty
+# pool and a bare rename of the pool folder has treehouse quarantine every slot, and free each one
+# it finds safe, moving that slot's untracked files out first (bin/lib/treehouse_state.py's
+# header).
 # So, with the origin still the old one:
 #   1. refuses, with nothing changed, a treehouse version whose state format
 #      bin/lib/treehouse_state.py was not checked against, a pool whose state it cannot read or
 #      whose digests its formula does not reproduce, a pool already at the new name beside the
 #      old one, a slot treehouse already quarantined (leased to its recovered holder), and a slot
 #      with a process in it (`treehouse status --json`'s processes);
-#   2. under the old pool's lock, which treehouse's own commands take, renames the pool folder to
-#      the name the new URL gives, never over an existing one, and rewrites the state there, each
-#      path and its digest with the pool's own key (treehouse_state.py reroot), so no treehouse
-#      command reads the pool between the two;
+#   2. under the old pool's lock, which treehouse's own commands take, waiting at most
+#      TEAM_POOL_LOCK_SECONDS (default 30) for it and refusing, with nothing changed, when it is
+#      not freed by then, renames the pool folder to the name the new URL gives, never over an
+#      existing one, and rewrites the state there, each path and its digest with the pool's own
+#      key (treehouse_state.py reroot), so no treehouse command reads the pool between the two;
 #   3. runs git worktree repair in the primary checkout on each slot's new path;
 #   4. sets the primary checkout's origin to <new url>;
 # then checks that `treehouse status --json`, the first treehouse command to read the moved pool,

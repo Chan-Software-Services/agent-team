@@ -288,14 +288,22 @@ team-pool-move: the state of $old_pool is refused: nothing was changed"
   assert_equal "$(entries "$new_pool" | cut -f1,3 | paste -sd ' ')" "1	T7 2	T8--02 3	"
 }
 
-@test "the rename waits for the old pool's lock, and refuses with nothing changed when it is not freed" {
+# hold_lock <seconds>: another process holds the old pool's lock for <seconds>, its pid holder,
+# returning once it holds it.
+hold_lock() {
   python3 -I -c 'import fcntl, sys, time
 f = open(sys.argv[1], "a")
 fcntl.flock(f, fcntl.LOCK_EX)
 open(sys.argv[2], "w").close()
-time.sleep(60)' "$old_pool/treehouse-state.lock" "$BATS_TEST_TMPDIR/held" >/dev/null 2>&1 3>&- &
-  local holder=$!
+time.sleep(float(sys.argv[3]))' "$old_pool/treehouse-state.lock" "$BATS_TEST_TMPDIR/held" "$1" >/dev/null 2>&1 3>&- &
+  holder=$!
   for _ in $(seq 50); do [[ ! -e $BATS_TEST_TMPDIR/held ]] || break; sleep 0.1; done
+  [[ -e $BATS_TEST_TMPDIR/held ]]
+}
+
+@test "the rename waits for the old pool's lock, and refuses with nothing changed when it is not freed" {
+  local holder
+  hold_lock 60
   TEAM_POOL_LOCK_SECONDS=0 run_bin -1 --separate-stderr team-pool-move proj "$new_url"
   kill "$holder"
   wait "$holder" || true
@@ -303,6 +311,16 @@ time.sleep(60)' "$old_pool/treehouse-state.lock" "$BATS_TEST_TMPDIR/held" >/dev/
 team-pool-move: the state of $old_pool is refused: nothing was changed"
   [[ -d $old_pool && ! -e $new_pool ]]
   assert_equal "$(git -C "${primary:?}" remote get-url origin)" "$old_url"
+}
+
+@test "the rename waits for the old pool's lock, and moves the pool once it is freed within the wait" {
+  local holder
+  hold_lock 1
+  TEAM_POOL_LOCK_SECONDS=10 run_bin -0 team-pool-move proj "$new_url"
+  wait "$holder"
+  [[ ! -e $old_pool && -d $new_pool ]]
+  assert_equal "$(entries "$new_pool" | cut -f1,3 | paste -sd ' ')" "1	T7 2	T8--02 3	"
+  assert_equal "$(git -C "${primary:?}" remote get-url origin)" "$new_url"
 }
 
 @test "the pools' root is found as treehouse finds it: the user config with no treehouse.toml, its variables expanded" {
