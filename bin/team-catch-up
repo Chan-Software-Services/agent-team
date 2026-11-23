@@ -16,10 +16,10 @@
 #   when no review names the head itself);
 #   every required check (the base's rules, its protection's and its rulesets' required checks,
 #   base_rules in bin/lib/team.sh, gh pr checks --required and the project's required_checks) on
-#   the head has passed (a skipped one passes), agent-review is on it, and no check on the head is
-#   failing or pending; rules that cannot be read end it as GitHub unreadable. Any other required
-#   check the head lacks is no reason: a check the base newly requires is made only on a commit
-#   pushed since, such as this merge, so the merge's own checks must bring it.
+#   the head has passed (a skipped one passes), a required agent-review is on it, and no check on
+#   the head is failing or pending; rules that cannot be read end it as GitHub unreadable. Any
+#   other required check the head lacks is no reason: a check the base newly requires is made only
+#   on a commit pushed since, such as this merge, so the merge's own checks must bring it.
 # Then it fetches the PR's branch and the base into the project's primary checkout, as team-merge
 # does, and refuses a fetched tip that is not the head GitHub showed (the head moved: run it
 # again). A head an earlier team-catch-up made must add only clean merges of the base to the
