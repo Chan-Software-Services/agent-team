@@ -307,10 +307,7 @@ Every kind is a variant of `team-model`'s event enum; the column says which comm
 | `merge-approved` | `team-log` | `give_merge_word` | `interface` |
 | `merge-default-restored` | `team-log` | `team-core`, on Daniel's word | `interface` |
 | `merge-default-withdrawn` | `team-log` | `withdraw_approval` | `interface` |
-| `merge-preapproval-withdrawn` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
-| `merge-preapproved` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
-| `merge-standing` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
-| `merge-standing-withdrawn` | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
+| The four retired merge-word kinds, which `sops/merging.md` names under "The retired words" | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
 | `merged` | `team-merge` | `team-core` | `vcs` |
 | `opened` | `team-open` | `team-core` | `none` |
 | `paused` | `team-log`, `team-worker` | `team-core` | `none` |
