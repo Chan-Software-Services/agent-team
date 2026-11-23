@@ -490,7 +490,7 @@
       "id": "coordinator-merge",
       "roles": ["assistant"],
       "tool": "Bash",
-      "input": "bin/team-merge T1",
+      "input": "bin/team-merge Tload-check-probe-absent",
       "expect": "script",
       "marker": "an assistant session merges no PR"
     },
@@ -506,7 +506,7 @@
       "id": "worker-launch",
       "roles": ["assistant"],
       "tool": "Bash",
-      "input": "bin/team-worker T1 builder x",
+      "input": "bin/team-worker Tload-check-probe-absent builder x",
       "expect": "script",
       "marker": "an assistant session launches no session"
     },

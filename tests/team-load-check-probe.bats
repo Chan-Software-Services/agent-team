@@ -736,7 +736,7 @@ FAIL builder unrefused: expected refused, got no-verdict"
   assert_contains "$prompt" "The calls marked expected to run are the exceptions: each is expected to run and print its result, and a refusal of one is still no reason to send BLOCKED, never retried or reached another way."
   assert_contains "$prompt" ". Bash, expected to run: bin/team-stow --help"
   assert_contains "$prompt" ". Bash, expected to run: bin/team-queue list"
-  assert_contains "$prompt" ". Bash: bin/team-merge T1"
+  assert_contains "$prompt" ". Bash: bin/team-merge Tload-check-probe-absent"
   assert_equal "$(grep -c ', expected to run: ' <<<"$prompt")" "$(attempts assistant | jq -s 'map(select(.expect == "allowed")) | length')"
   # With the worker login off, no attempt is judged by it.
   [[ $output != *"github-graphql"* && $prompt != *"viewer{login}"* ]]
