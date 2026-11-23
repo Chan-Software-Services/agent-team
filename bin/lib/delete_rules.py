@@ -5,7 +5,8 @@ Each row is its id, its test over one command_text.Command and the call's contex
 reason when it refuses (with an allowed way of its own, (reason, allowed)) and None when it passes,
 and its allowed way, as kill_rules.py's are.
 bin/lib/session_records.py reads a Bash call's words as paths by this file's reading of an
-operand, below: expand (a word as the paths the shell may make of it), reachable (the
+operand, below: expand (a word as the paths the shell may make of it, read with no command it
+stands at, so a variable is each value it is given, wherever its assignment stands), reachable (the
 directories a relative one is read against, as Bases, those of _candidates or, past a cd it cannot
 follow, the rest) and Unread, which either raises, and find_paths (find's start paths among its
 words).
@@ -53,7 +54,17 @@ unquoted brace lists expanded):
   - a variable the command assigns is each value it is given, every one of which must pass: its
     first mention in the command's text is an assignment (X=...) and every other one the call names
     (above) an assignment or a use, and each value comes from a bare assignment or one of export,
-    local, declare, typeset or readonly (not declare -n); a value that is $(mktemp ...) or
+    local, declare, typeset or readonly (not declare -n); and one of them surely holds where the
+    variable is read (an operand where the delete stands, a cd target where the cd does, another
+    variable's value where that is assigned): one behind no wrapper at the top level of the text
+    the reading stands in, before the pipeline holding it there, itself in no pipeline of more
+    than one command and not sent to the background, that begins its and-or list, or is joined to
+    that pipeline by && alone after no ||; for a command in eval's string or trap's action, one so
+    before the eval or the trap in the text around counts too. Any other counts for nothing: one
+    in a subshell, a group, a compound command, a function or a string another process runs (a
+    shell's -c), one after && or || in a list the reading does not stand in, one after || in its
+    own, and one after the reading; and a code part is read alone, so a command of it holds only
+    its own; a value that is $(mktemp ...) or
     `mktemp ...` alone is the new path mktemp makes: its template under -p <dir> or --tmpdir=<dir>;
     its template's name under $TMPDIR (/tmp when it is empty) with -t, --tmpdir alone or no
     template (tmp.XXXXXXXXXX); else its template as written, relative to the cwd when relative; a
@@ -133,8 +144,8 @@ from dataclasses import dataclass, replace
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
-    FIND_EXEC, SCRIPT, SHELLS, SOURCE, blank_heredocs, code_parts, command_name, commands, heads_behind, long_options,
-    plain_sequence, short_cluster, simple_commands, unquoted,
+    FIND_EXEC, SAME, SCRIPT, SHELLS, SOURCE, blank_heredocs, code_parts, command_name, commands, heads_behind,
+    long_options, places, plain_sequence, short_cluster, simple_commands, top_pipelines, unquoted,
 )
 
 ALLOWED_DELETE = (
@@ -321,6 +332,70 @@ def _assigned(name, context):
     return tuple(dict.fromkeys(values)) or None
 
 
+@functools.lru_cache(maxsize=None)
+def _places(context):
+    """Each command _walked reads, mapped to every Place it stands at in the texts it walks."""
+    found = {}
+    for text in [blank_heredocs(part) for part in code_parts(context.text)] + [context.text]:
+        for command, at in places(text).items():
+            found[command] = found.get(command, ()) + at
+    return found
+
+
+@functools.lru_cache(maxsize=None)
+def _tops(text):
+    return top_pipelines(text)
+
+
+def _gives(command, name):
+    """Whether the command, which the shell runs in its place, assigns the variable: a bare
+    assignment or one of export, local, declare, typeset or readonly, behind no wrapper."""
+    prefix = name + "="
+    if command.wrappers:
+        return False
+    if not command.words:
+        return any(word.startswith(prefix) for word in command.assignments)
+    return command_name(command.words[0]) in DECLARERS and any(word.startswith(prefix) for word in command.words[1:])
+
+
+def _before(name, place):
+    """Whether an assignment of the variable surely runs before the pipeline at place.root of its
+    text, in that shell: one top_pipelines gives a Command, not sent to the background, before it,
+    that begins its and-or list, or stands in the place's own list joined to it by && alone, after
+    no ||."""
+    tops = _tops(place.text)
+    at = next((k for k, (root, _, _) in enumerate(tops) if root == place.root), 0)
+    for k in range(at):
+        _, command, separator = tops[k]
+        if command is None or separator == "&" or not _gives(command, name):
+            continue
+        between = [separator for _, _, separator in tops[k:at]]
+        begins = k == 0 or tops[k - 1][2] in (";", "&")
+        if begins and any(separator in (";", "&") for separator in between):
+            return True
+        if all(separator == "&&" for separator in between) and (k == 0 or tops[k - 1][2] != "||"):
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=None)
+def _held(name, at, context):
+    """Whether the shell holds an assignment of the variable the command makes wherever the
+    command at stands (_places): one that surely runs before it in its text (_before), or, in a
+    string the shell itself runs (eval's, trap's action), before the command that runs it, in the
+    text around, and so out to the call's text. A string another process runs (a shell's -c and
+    the rest) holds only its own, and so does a code part, which is read alone."""
+    found = _places(context).get(at)
+    if not found:
+        return False
+    for place in found:
+        while not _before(name, place):
+            if place.shell != SAME:
+                return False
+            place = place.around
+    return True
+
+
 def _braces(word):
     """The word's brace comma lists expanded, as Bash's brace expansion does; a sequence is
     unread."""
@@ -385,7 +460,8 @@ def _values(name, context, depth, at=None):
             raise Unread
         return [base.path for base in _bases(context, at)]
     values = _assigned(name, context)
-    if values is None or depth >= MAX_DEPTH:
+    # A variable no assignment of which surely holds where the command at runs may hold another value.
+    if values is None or depth >= MAX_DEPTH or (at is not None and not _held(name, at, context)):
         raise Unread
     out = []
     for value, assigning in values:
@@ -540,23 +616,25 @@ def _cd_text(command):
     return " ".join(command.words)
 
 
-def _reached(target, command, bases, context):
+def _reached(target, command, bases, context, placed=True):
     """The Bases of one cd target from each of bases: an absolute one alone, a relative one from
     each, both as the shell's logical cd reads it, from each path the base's PWD may hold, and as
-    the file system does; Unread when the guard cannot follow it. Read once per call for each set
-    of bases, since each command's reading rereads the cds before it, keyed by the target as
-    written too, since a word decoded from $'...' or made by a brace range equals its text."""
-    return _reached_from(target, getattr(target, "written", None), command, bases, context)
+    the file system does; Unread when the guard cannot follow it. Its variables are read where
+    the cd stands, but, with placed False, wherever they are assigned (reachable's reading). Read
+    once per call for each set of bases, since each command's reading rereads the cds before it,
+    keyed by the target as written too, since a word decoded from $'...' or made by a brace range
+    equals its text."""
+    return _reached_from(target, getattr(target, "written", None), command, bases, context, placed)
 
 
 @functools.lru_cache(maxsize=None)
-def _reached_from(target, written, command, bases, context):
+def _reached_from(target, written, command, bases, context, placed):
     """_reached, by its target and how that target was written (None when as it is)."""
     # $PWD in a cd target would read the directories being found.
     if any("PWD" in reference.groups() for reference in REFERENCE.finditer(target)):
         raise Unread
     readings = {}
-    for path in expand(target, context):
+    for path in expand(target, context, command if placed else None):
         if not path.startswith("/") and (context.environ.get("CDPATH") or _named("CDPATH", context)):
             raise Unread
         for base in bases if not path.startswith("/") else bases[:1]:
@@ -595,7 +673,7 @@ def _candidates(context):
     if any(target is None for target, _ in targets):
         raise Unread
     found = [Base(context.cwd)]
-    absolute = [(t, c) for t, c in targets if all(p.startswith("/") for p in expand(t, context))]
+    absolute = [(t, c) for t, c in targets if all(p.startswith("/") for p in expand(t, context, c))]
     relative = [(t, c) for t, c in targets if (t, c) not in absolute]
     for target, command in absolute:
         found = _merged(found, _reached(target, command, tuple(found), context), False)
@@ -621,7 +699,7 @@ def reachable(context):
 
     def reached(target, command, bases):
         try:
-            return _reached(target, command, bases, context)
+            return _reached(target, command, bases, context, False)
         except Unread:
             return []
 
@@ -917,9 +995,17 @@ def _find_starts(args, context, at=None):
     return found
 
 
-@functools.lru_cache(maxsize=None)
 def _judgments(command, context):
-    """Every verdict on what the command deletes that does not pass, in its operands' order."""
+    """Every verdict on what the command deletes that does not pass, in its operands' order. Read
+    once per call for each command and its words as written, since a word decoded from $'...' or
+    made by a brace range equals its text, and is unread where its text may pass."""
+    words = command.assignments + command.words + tuple(word for wrapper in command.wrappers for word in wrapper)
+    return _judged(command, tuple(getattr(word, "written", None) for word in words), context)
+
+
+@functools.lru_cache(maxsize=None)
+def _judged(command, written, context):
+    """_judgments, by the command and how each of its words was written (None when as it is)."""
     if command.reached in (SCRIPT, SOURCE):
         return ()
     found, seen = [], set()

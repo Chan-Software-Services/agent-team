@@ -112,6 +112,36 @@ refuses_wrapped() {
     "bash -c 'D=build; rm -rf \"\$D\"'"
 }
 
+# An assignment holds at the delete only where Bash surely still holds it there: one at the top
+# level of the delete's text, in no pipeline of more than one command and not in the background,
+# that begins its and-or list, or that stands in the delete's own list joined to it by && alone;
+# trap's action reads those before the trap, and a shell's string its own. Anywhere else the
+# variable is unread.
+@test "a variable is read as set only where its assignment surely holds at the delete" {
+  # shellcheck disable=SC2016 # the call's own variables
+  refuses "a recursive delete of \$W/fix, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); rm -rf \$W/fix" \
+    "W=$WT/a | cat; rm -rf \$W/fix" "cat f | W=$WT/a; rm -rf \$W/fix" "true || W=$WT/a; rm -rf \$W/fix" \
+    "false && W=$WT/a; rm -rf \$W/fix" "true || W=$WT/a && rm -rf \$W/fix" "W=$WT/a & rm -rf \$W/fix" \
+    $'false &&\n'"W=$WT/a; rm -rf \$W/fix" "if false; then W=$WT/a; fi; rm -rf \$W/fix" \
+    "f() { W=$WT/a; }; rm -rf \$W/fix" "{ coproc W=$WT/a; }; rm -rf \$W/fix" "echo \$(W=$WT/a); rm -rf \$W/fix" \
+    "bash -c 'W=$WT/a'; rm -rf \$W/fix" "W=$WT/a; bash -c 'rm -rf \$W/fix'" "rm -rf \$W/fix; W=$WT/a"
+  # An assignment that may not hold leaves the variable unread in a value, a cd target and find's start path too.
+  refuses "a recursive delete of \$E, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); E=\$W/fix; rm -rf \$E"
+  refuses "a recursive delete of x, $UNREAD" "$UNREAD_WAY" "(W=$WT/src); cd \$W; rm -rf x"
+  refuses "$FIND \$W/fix, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); find \$W/fix -delete"
+  passes "W=$WT/a; rm -rf \$W/fix" "W=$WT/a && rm -rf \$W/fix" "true && W=$WT/a && rm -rf \$W/fix" \
+    "W=$WT/a; (rm -rf \$W/fix)" "W=$WT/a; true || rm -rf \$W/fix" "W=$WT/a; if true; then rm -rf \$W/fix; fi" \
+    "W=$WT/a; trap 'rm -rf \$W/fix' EXIT" "bash -c 'W=$WT/a && rm -rf \$W/fix'" "W=$WT/a; E=\$W/fix; rm -rf \$E" \
+    "W=$WT/src; cd \$W && rm -rf x" "W=$WT/a; find \$W/fix -delete" $'W='"$WT/a"$'\nrm -rf $W/fix'
+}
+
+# A word Bash decodes from $'...' is unread, however often the same call deletes the path it
+# decodes to by its plain spelling.
+@test "an operand decoded from ANSI-C quoting is unread beside the same path spelled plainly" {
+  refuses "a recursive delete of \\x79, $UNREAD" "$UNREAD_WAY" "cd $WT; rm -rf \$'\\x79'" \
+    "cd $WT; rm -rf y; rm -rf \$'\\x79'" "rm -rf y; rm -rf \$'\\x79'"
+}
+
 @test "a recursive delete outside the worktree and the job's tmp is refused, naming the path" {
   refuses_wrapped "a recursive delete of $TMP/x, $OUTSIDE" "$DELETE_WAY" "rm -rf /tmp/x"
   refuses_wrapped "a recursive delete of $HOME/x, $OUTSIDE" "$DELETE_WAY" 'rm -rf "$HOME/x"'

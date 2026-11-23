@@ -11,8 +11,8 @@ from it, with heads and the other readings of where a command's name may stand, 
 bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does, and call_redirections, each
 redirection it makes in the same texts; its kill rows, kill_rules.py, import command_name,
 heads_behind and short_cluster, and its delete rows, delete_rules.py, those with the walk, simple_commands,
-plain_sequence (a call's commands in the order they run, below), find's FIND_EXEC, SHELLS, the
-option readers and unquoted; outbound.py imports commands and the
+plain_sequence (a call's commands in the order they run, below), places and top_pipelines (where
+each command stands, below) with SAME, find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
 bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands,
 command_name, the option readers long_options and short_cluster, and redirection_targets, each
@@ -124,6 +124,14 @@ of its pipeline, or nothing at the end), when every pipeline of it is at its top
 its segments one simple command, none holds a group, substitution, compound command or function,
 none is sent to the background or run after ! or coproc, and no command of it runs a string, a
 find -exec, a script file or a sourced file; else None.
+places(text) maps each Command of the walk to each Place it stands at: the text it is a simple
+command of (the text walked, or a command string), the pipeline at that text's top level holding
+it, and for a string whether the shell itself runs it (SAME: eval's, trap's action, behind no
+wrapper but command or builtin) or another process does (CHILD), with the Place of the command
+that runs it; what find -exec runs stands where find does. top_pipelines(text) gives each pipeline
+at the text's top level, in order, with its separator after it and its Command when the shell
+runs that command itself, in its place: its one segment one simple command, starting with no
+reserved word, so neither piped nor a group, a compound command, a function, ! or coproc.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -1264,11 +1272,58 @@ def simple_commands(command):
     bodies and the reserved words it starts with left out. A word holding a substitution keeps its text, $ or backtick and all; a quote that never
     closes ends its word and the rest of its segment. A segment holding a compound command yields
     its words too, split at its separators, beside the group's own commands."""
+    for _, words in _rooted(command):
+        yield words
+
+
+def _rooted(command):
+    """simple_commands, each with the index of the pipeline at the command's top level it stands
+    in: its own, or the one holding the group, substitution or compound command it is in."""
     reading = read_command(command)
     bodies = {h.body[0]: h.end for h in reading.heredocs}
-    for _, segments in reading.pipelines:
+    roots = []
+    for k, (parent, segments) in enumerate(reading.pipelines):
+        # A pipeline's parent comes before it, so its top-level pipeline is known.
+        roots.append(k if parent is None else roots[parent[0]])
         for start, end in segments:
-            yield from _segment_commands(command, start, end, bodies, reading.subscripts)
+            for words in _segment_commands(command, start, end, bodies, reading.subscripts):
+                yield roots[k], words
+
+
+def top_pipelines(text):
+    """Each pipeline at the text's top level that holds more than blanks or a comment, in order,
+    as (its index, as Place.root gives it; its Command when the shell itself runs it in its place,
+    else None; the separator after it: "&&", "||", "&" when it is sent to the background, else
+    ";"). Its Command is its one segment's when that segment is one simple command and starts with
+    no reserved word: not piped (a pipeline of more than one command runs each in a subshell),
+    nor a group, a compound command, a function, ! or coproc."""
+    reading = read_command(text)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    found = []
+    for k, (parent, segments) in enumerate(reading.pipelines):
+        written = text[segments[0][0] : segments[-1][1]].strip() if segments else ""
+        if parent is not None or not written or (len(segments) == 1 and written.startswith("#")):
+            continue
+        command = None
+        if len(segments) == 1 and written.split(None, 1)[0] not in LEADING:
+            simple = _segment_commands(text, *segments[0], bodies, reading.subscripts)
+            if len(simple) == 1:
+                command = next(_walk(simple[0], text, 0, (), DIRECT))
+        end = segments[-1][1]
+        if text.startswith(("&&", "||"), end):
+            separator = text[end : end + 2]
+        else:
+            separator = "&" if text.startswith("&", end) else ";"
+        found.append((k, command, separator))
+    return tuple(found)
+
+
+def places(text):
+    """Each Command commands(text) yields, mapped to the Places it stands at, as a dict."""
+    found = {}
+    for _ in _commands(text, 0, (), DIRECT, None, found):
+        pass
+    return {command: tuple(at) for command, at in found.items()}
 
 
 # An assignment, as a command's word, of a variable or of an array's element (X[0]=1, its
@@ -1347,6 +1402,25 @@ SCRIPT, SOURCE = "script", "source"
 DEPTH = 20
 # A shell's long options that take a value.
 SHELL_VALUE_LONG = frozenset(("--rcfile", "--init-file"))
+
+
+# How the shell running a command string stands to the one running the command that runs it: the
+# same shell (eval, trap's action), or another process (a shell's -c, su's, env -S and the rest),
+# which holds only the variables exported to it.
+SAME, CHILD = "same", "child"
+
+
+@dataclass(frozen=True)
+class Place:
+    """Where a Command of the walk stands: the text it is a simple command of, the index of the
+    pipeline at that text's top level it stands in (top_pipelines'), and for a command string the
+    shell that runs it (SAME or CHILD) and the Place of the command that runs it (around), both
+    None in the text walked."""
+
+    text: str
+    root: int
+    shell: str | None = None
+    around: "Place | None" = None
 
 
 @dataclass(frozen=True)
@@ -1558,17 +1632,22 @@ def _trap_action(args):
     return args[0] if len(args) > 1 and args[0] != "-" else None
 
 
-def _walk(words, text, depth, outer, reached, texts=None):
+def _walk(words, text, depth, outer, reached, texts=None, places=None, place=None):
     """The Commands of one simple command's words, of the text being walked at depth, behind the
     outer wrappers: the command itself, then what it runs, as commands says; with a texts list,
-    each string it walks is appended to it (_commands)."""
+    each string it walks is appended to it (_commands), and with a places dict, each Command is
+    mapped to each Place it stands at: place for the command and what find -exec runs, a Place
+    in its string for a command of a string it runs."""
     assignments, words, strings, wrappers = _command(list(words))
     behind = outer + tuple(wrappers)
-    yield Command(tuple(assignments), tuple(words), behind, reached)
+    command = Command(tuple(assignments), tuple(words), behind, reached)
+    if places is not None:
+        places.setdefault(command, []).append(place)
+    yield command
 
-    def run(string, how, ran):
+    def run(string, how, ran, shell=CHILD):
         if string is not None and string != text:
-            yield from _commands(string, depth + 1, ran, how, texts)
+            yield from _commands(string, depth + 1, ran, how, texts, places, place, shell)
 
     for how, string in strings:
         yield from run(string, how, behind)
@@ -1576,9 +1655,11 @@ def _walk(words, text, depth, outer, reached, texts=None):
         return
     name, args = os.path.basename(words[0]), words[1:]
     here = behind + (tuple(words),)
+    # eval and trap's action run in the shell itself, but not behind a program (env eval).
+    own = SAME if all(tuple(wrapper) in (("command",), ("builtin",)) for wrapper in wrappers) else CHILD
     if name == "find":
         for found in _exec_commands(args):
-            yield from _walk(found, text, depth, here, FIND, texts)
+            yield from _walk(found, text, depth, here, FIND, texts, places, place)
     elif name in SHELLS:
         string = _shell_string(args)
         script = None if string is not None else _shell_script(args)
@@ -1594,20 +1675,23 @@ def _walk(words, text, depth, outer, reached, texts=None):
     elif name in STRING_OPTIONS:
         yield from run(_option_string(args, *STRING_OPTIONS[name]), STRING, here)
     elif name == "eval":
-        yield from run(" ".join(args), STRING, here)
+        yield from run(" ".join(args), STRING, here, own)
     elif name == "trap":
-        yield from run(_trap_action(args), STRING, here)
+        yield from run(_trap_action(args), STRING, here, own)
 
 
-def _commands(text, depth, outer, reached, texts=None):
+def _commands(text, depth, outer, reached, texts=None, places=None, around=None, shell=None):
     """The Commands the text runs, as commands says; with a texts list, the text and each string
-    the walk walks are appended to it, in the order walked."""
+    the walk walks are appended to it, in the order walked; with a places dict, each Command is
+    mapped to each Place it stands at in the text, run by the shell (SAME or CHILD) of the command
+    at around, or the walk's own text when around is None."""
     if depth > DEPTH:
         raise ValueError(f"a command string nested deeper than {DEPTH}")
     if texts is not None:
         texts.append(text)
-    for words in simple_commands(text):
-        yield from _walk(words, text, depth, outer, reached, texts)
+    for root, words in _rooted(text):
+        place = Place(text, root, shell, around) if places is not None else None
+        yield from _walk(words, text, depth, outer, reached, texts, places, place)
 
 
 def commands(text):
