@@ -229,22 +229,25 @@
 # The heavy-run lock, ~/.local/state/agent-team/heavy.lock (team-heavy's): making or removing a
 # stack's Docker network adds or deletes the host's address on the network's bridge, and a browser
 # on the machine then fails every request it has in flight with net::ERR_NETWORK_CHANGED, so each
-# step that makes or removes one holds the lock for as long as it takes, and no other step does; a
-# heavy run (team-heavy run, a gate's end-to-end phase) holds it for its whole run. While team-stack
-# holds it, its holder line is "team-stack <subcommand> (pid <pid>, <Compose project>, or networks
-# for the sweep's and the reaper's network removals) since <time>", which is not team-heavy's form,
-# so team-heavy stop never takes the pid for a run's. Under a heavy run (TEAM_HEAVY_HELD set) the
-# run holds it already, and team-stack takes nothing. up waits for it, before its admission, up to
-# wait_minutes, saying once on stderr that it waits, for whom and before what ("waiting up to <n>
-# minutes for the heavy-run lock, held by <holder line>, before <project>'s network is made: ..."),
-# then exits 75 ("... so team-stack up stops before <what>; run it again once the heavy run ends"),
-# holding no admission. A takedown and the sweep's and the reaper's network removals take it only
-# when it is free (or within 5 seconds, while only a reader's shared lock holds it, as team-heavy
-# waits): while a heavy run holds it, a takedown removes the stack's containers and named volumes
-# now and leaves its networks, saying on stderr "<project>'s network <names> is left for team-stack
-# sweep to remove once the heavy-run lock is free: it is held by <holder line>, ...", and adds each
-# to ~/.local/state/agent-team/stacks/networks-left.json, a JSON array of {project, name, at}
-# written under records.lock, which the sweep removes from.
+# step that makes or removes one holds the lock for as long as it takes, and only what comes with it
+# besides (up --no-start's pull or build of a missing image, and the log saving of up's takedown of
+# another task's stack); a heavy run (team-heavy run, a gate's end-to-end phase) holds it for its
+# whole run. While team-stack holds it, its holder line is "team-stack <subcommand> (pid <pid>,
+# <Compose project>, or networks for the sweep's and the reaper's network removals) since <time>",
+# which is not team-heavy's form, so team-heavy stop never takes the pid for a run's. Under a heavy
+# run (TEAM_HEAVY_HELD set) the run holds it already, and team-stack takes nothing. up waits for it,
+# before its admission, up to wait_minutes, saying once on stderr that it waits, for whom and before
+# what ("waiting up to <n> minutes for the heavy-run lock, held by <holder line>, before <project>'s
+# network is made: ..."), then exits 75 ("... so team-stack up stops before <what>; run it again
+# once the heavy run ends"), holding no admission; its takedown of another task's stack waits for it
+# the same way, and so never leaves a network. Every other takedown, and the sweep's and the
+# reaper's network removals, take it only when it is free (or within 5 seconds, while only a
+# reader's shared lock holds it, as team-heavy waits): while a heavy run holds it, such a takedown
+# removes the stack's containers and named volumes now and leaves its networks, saying on stderr
+# "<project>'s network <names> is left for team-stack sweep to remove once the heavy-run lock is
+# free: it is held by <holder line>, ...", and adds each to
+# ~/.local/state/agent-team/stacks/networks-left.json, a JSON array of {project, name, at} written
+# under records.lock, which the sweep removes from.
 #
 # The owner classes, from each object's own labels and its Compose project, and the registry's
 # stack blocks (team-project --help):

@@ -97,7 +97,7 @@ Making a stack's Docker network gives the host a new bridge with an IPv4 address
 Chromium takes any address that comes or goes on the host for a network change, and fails every request it has in flight with `net::ERR_NETWORK_CHANGED`, those to `127.0.0.1` included, so a stack brought up or taken down in one worktree failed an end-to-end run in another (T505's reproduction, about one address change in 15 failing a load; T501's run of 2026-11-20).
 Since the host's `net.ipv6.conf.default.addr_gen_mode = 1` (2026-11-14), a container starting or stopping changes no address: its veth gets none, so `stop`, a stopped stack's `up` and the sweep's stop are harmless.
 
-So each `team-stack` step that makes or removes a network holds the machine's heavy-run lock, `~/.local/state/agent-team/heavy.lock` (`bin/team-heavy`), for as long as it takes, and no other step takes it:
+So each `team-stack` step that makes or removes a network holds the machine's heavy-run lock, `~/.local/state/agent-team/heavy.lock` (`bin/team-heavy`), for as long as it takes, and no other step takes it, but for what comes with one (the pull or build of a missing image that `up --no-start` makes first, and the log saving of `up`'s takedown of another task's stack):
 
 - A heavy run holds the lock for its whole run: `team-heavy run`, which a builder's local end-to-end run goes through (its project's `changed_tests` says so), and Conventioner's gate, whose `nm-test.sh` holds it from just before its stack starts until its teardown is done.
   Under a heavy run (`TEAM_HEAVY_HELD` set) the run holds it already, so `team-stack` takes nothing.
