@@ -72,9 +72,9 @@
 #     ops.load-check             ops of T0
 # The templates resume and resume-crash take the category of the brief they resume, which
 # team-worker reads, so resolve refuses them; --role alone gives the role's own category, and
-# --load-check <role>.load-check, whatever the template. The coordinator, the assistant and the
-# load-check categories launch with no project and no path, so a line naming either for them is
-# refused, since it would never match.
+# --load-check <role>.load-check, whatever template of that role is given. The coordinator, the
+# assistant and the load-check categories launch with no project and no path, so a line naming
+# either for them is refused, since it would never match.
 #
 # Precedence: each axis (model, effort, subagent model, subagent effort) is resolved on its own,
 # to the most specific matching line that names it. A line matches a launch when its category is

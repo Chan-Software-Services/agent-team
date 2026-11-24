@@ -166,7 +166,7 @@ It holds:
 | `waiting.md` | What waits on Daniel, every open ask, PR ready to merge, interview and walk, and the asks and owed replies of the two kept lists, `tasks/current.md` and `assistant/current.md`, the assistant's marked, numbered and ranked by what each answer unblocks, as `team-inbox` last wrote it from the ledger and those files |
 | `waiting.json` | The same list with each item's number, key and count and the latest post, which `team-inbox` reads to keep each number while its item stands |
 | `projects.toml` | The project registry, read only through `bin/team-project`, whose `--help` documents every key |
-| `models.toml` | The model config, the model and effort each session category launches on, one line per choice, read only through `bin/team-models`, whose `--help` documents the line form, the categories and the precedence |
+| `models.toml` | The model config, the model and effort each session category launches on, one line per choice, read through `bin/team-models` (the doctor's `models` line also counts its keys), whose `--help` documents the line form, the categories and the precedence |
 | `tasks/` | Each task's plan, briefs and archived scratch; history, kept as written |
 | `projects/` | Each project's planning (Conventioner's backlog) |
 | `memory/` | Each registered project's Claude Code auto memory, `memory/<project>/`, which every machine and worktree of it shares once `team-config apply` points the project at it (a worker of it through `team-worker`'s settings), and the coordinator's, `memory/coordinator/`, the team home's own while it is no project's primary checkout, and the assistant's, `memory/assistant/`, which its settings name |

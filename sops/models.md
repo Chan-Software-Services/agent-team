@@ -55,7 +55,7 @@ Each category falls back through its parent, the part before its last dot, to `d
 - A brief's template is the one its record beside it names (`brief-<name>.json`, which `team-brief` writes); a hand-written brief has no record, so its launch takes its role's category.
 - A `resume` or a `resume-crash` brief takes the category of the brief it resumes: `team-worker` reads the resume record's `values.brief`, that brief's own record and its template.
   A resumed brief with no record naming a template takes the role's category, with a warning on stderr, and so does a template of another role.
-- A T0 launch takes `<role>.load-check` whatever its brief, so the load check runs on its role's line unless a line of its own says otherwise.
+- A T0 launch takes `<role>.load-check` whatever template of its role its brief has, so the load check runs on its role's line unless a line of its own says otherwise.
 
 ## Precedence
 
@@ -72,7 +72,7 @@ Each category falls back through its parent, the part before its last dot, to `d
 - A worker's model, first that applies:
   1. `team-worker --model <m>` names that launch's model (`model_from` `launch`); `--model default` means the config's word for this launch.
   2. A task's builder launches on its task's builder model (`task`): the `builder_model` `team-open --builder-model` put on its `opened` event, or the model of a later builder launch on `--model` or on the task's model (or of one from before 2026-11-17 that logged a model); any other builder launch, one on the config included, and `--model default` leave the task none from then on.
-     An `opened` `builder_model` of `default`, which a task opened from 2026-11-17 to 2026-11-24 with no builder model named carries, is no task model.
+     An `opened` `builder_model` of `default`, which a task opened from 2026-11-17 to 2026-11-24 with neither a builder model named nor a registry builder line carries, is no task model.
   3. Its category's line in the config (`config`).
   4. The settings' word, passing no `--model` (`settings`, or `default` with none).
 - A planner's or reviewer's `--model` is that launch's alone, as a paired review's is (`sops/model-trials.md`); a builder's becomes its task's builder model.

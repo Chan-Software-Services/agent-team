@@ -30,7 +30,7 @@ if [[ -n $(git diff --cached --name-only --no-renames --diff-filter=AMT -- ':(li
   if ! TEAM_HOME=$(git rev-parse --show-toplevel) "$TEAM_LIB/../team-models" --check --file "$staged" \
     2>"$problems" </dev/null; then
     {
-      echo "pre-commit: refused: the staged models.toml does not read, so every launch from it would be refused; fix each line team-models --check names, then commit again:"
+      echo "pre-commit: refused: the staged models.toml does not read, so every worker launch from it would be refused; fix each line team-models --check names, then commit again:"
       sed 's/^/  /' "$problems"
     } >&2
     refused=1
