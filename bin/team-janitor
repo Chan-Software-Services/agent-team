@@ -136,7 +136,8 @@
 #        team-janitor disk status [--json]
 #
 # The sweep of what nothing reads again in this user's home directory (bin/lib/disk.sh,
-# sops/disk.md), which reads nothing of Docker or /tmp. Its job part empties the job tmp,
+# sops/disk.md), which reads nothing of Docker or /tmp: a job part, then a Go part, each run
+# whatever the other did. Its job part empties the job tmp,
 # ~/.claude/jobs/<id>/tmp, of each team session: an entry of ~/.claude/jobs named by 8 lowercase
 # hex digits, a real directory of this user's, never a link, whose id the ledger has a launch of a
 # planner, builder or reviewer with (its session); the coordinator's, the assistant's, an ops
@@ -166,26 +167,57 @@
 # <machine>, <date>" at the day's first line. A run that clears nothing prints nothing. A clearing
 # that fails is said on stderr ("team-janitor: could not clear <path>: <rm's last line>"), and the
 # other jobs go on.
+# Its Go part holds Go's build cache to a cap. The cache is TEAM_GO_CACHE when set, else what go
+# env GOCACHE prints (given 20 s) when go is on the PATH and answers, else Go's own default:
+# GOCACHE from the environment, else ~/Library/Caches/go-build on macOS and
+# ${XDG_CACHE_HOME:-~/.cache}/go-build elsewhere. GOCACHE off or empty, or no directory there, is
+# no Go build cache, which prints nothing and fails nothing. A directory that is not this user's
+# or whose README does not begin with Go's own first line ("This directory holds cached build
+# artifacts from the Go build system.") is never trimmed: the run says "team-janitor: <path> is
+# not a Go build cache (no Go README); not trimmed" on stderr and exits 1, so a misread GOCACHE
+# never empties another directory. At or under its cap of 10 GiB (du), the run removes nothing and
+# prints nothing. Over it, the run removes its entries, a real file or directory named <hex>-a or
+# <hex>-d directly in a real two-hex directory, never through a link, oldest mtime first, until
+# the cache is at or under 8 GiB, 80% of the cap, so the next build does not trip it again; it
+# never removes an entry modified in the last 2 hours, since Go refreshes a used entry's mtime at
+# most hourly and a build running now holds those, nor README, trim.txt, testexpire.txt or
+# anything else. A file goes with rm -f, a directory made writable first with rm -rf
+# --one-file-system; Go reads a missing entry as a cache miss. The trim is one line, the newest
+# removed entry's mtime in UTC as its "since":
+#   trimmed the Go build cache /home/d/.cache/go-build from 14.2 GiB to 8.0 GiB: 31204 entries unused since 2026-11-20T03:12Z
+# and when what is left is still over the cap, every older entry gone, it says so once a local
+# day, which is no failure:
+#   the Go build cache <path> holds 12.1 GiB, over its 10.0 GiB cap, the rest used in the last 2 h; kept
+# Each goes in the day's file too. Why a size cap on every run: Go itself drops only entries
+# unused for 5 days and has no cap, so a busy day of builds (21 GiB of no-mistakes' in one day)
+# grew it to 51 GiB, while go clean -cache would throw away what builds use now.
 # One run at a time, by a lock on ~/.local/state/agent-team/disk.lock: a second run prints
 # "another team-janitor disk is running; skipped" and exits 0. The sweep needs no lease.
 # After each run but a dry run, the record ~/.local/state/agent-team/janitor/disk.json is written
 # whole (a temporary file and a rename) as team-disk/1: {schema, at (UTC), ok (whether the run
-# exits 0), go ({path, kb, cap_kb, trimmed_today}, null for now), jobs: {cleared_today: {count,
-# kb}}}, the day's totals starting again on a new local date.
-# --dry-run clears nothing, writes nothing, takes no lock, and prints "would clear" for "cleared".
+# exits 0), go: {path (null with no Go build cache), kb (its size after the run, or null), cap_kb,
+# trimmed_today: {entries, kb}, over_cap_said (the local date the over-cap line was last said, or
+# null)}, jobs: {cleared_today: {count, kb}}}, the day's totals starting again on a new local date.
+# --dry-run clears and trims nothing, writes nothing, takes no lock, and prints "would clear" and
+# "would trim" for "cleared" and "trimmed".
 #
-# status changes nothing and takes no lock: it reads the record for today's totals, all zero when
-# it is missing or of an earlier local date, as
-#   <n> job tmps cleared today (<size>)
-# --json prints it as team-disk-status/1: {schema, go ({path, kb, cap_kb, over_cap,
-# trimmed_today}, null for now), jobs: {cleared_today: {count, kb}}, last_run (the record's at, or
-# null)}.
+# status changes nothing and takes no lock: it measures the Go build cache now and reads the
+# record for today's totals, all zero when it is missing or of an earlier local date, as
+#   Go build cache <size> of its <cap> cap at <path>; <n> job tmps cleared today (<size>)
+# with "no Go build cache (GOCACHE is off)", "no Go build cache at <path>" or "no Go build cache at
+# <path> (no Go README)" for the Go part when there is none. --json prints it as
+# team-disk-status/1: {schema, go: {path (null with none), kb, cap_kb, over_cap, trimmed_today:
+# {entries, kb}, none (the Go part's words when there is none, else null)}, jobs: {cleared_today:
+# {count, kb}}, last_run (the record's at, or null)}.
 #
 # Test seams: TEAM_DISK_JOB_IDLE_MINUTES for the 24 hours (1440) a done or failed session must have
-# gone unchanged.
+# gone unchanged; TEAM_GO_CACHE for the Go build cache's path, TEAM_GO_CACHE_CAP_KB for its cap
+# (10485760 kilobytes, the target staying 80% of it) and TEAM_GO_CACHE_KEEP_MINUTES for the 2
+# hours (120) an entry used since is kept.
 #
-# Exit 0 done, nothing to clear included, 1 the ledger, the session list or the processes could
-# not be read, a clearing failed, or the day's file or the record could not be written, 2 usage
+# Exit 0 done, nothing to clear or trim included, 1 the ledger, the session list or the processes
+# could not be read, a clearing or a removal of the trim failed, the Go build cache could not be
+# listed or holds no Go README, or the day's file or the record could not be written, 2 usage
 # error.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
