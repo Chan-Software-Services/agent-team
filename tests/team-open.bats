@@ -81,6 +81,28 @@ advance_origin() {
   assert_equal "$(sed -n 4p "$plan")" 'Project: proj, base `main`, branch `fix/T1-sign-in-limit`.'
   assert_equal "$(sed -n 5p "$plan")" 'Path: bug.'
   assert_equal "$(grep '^## ' "$plan")" "$(printf '%s\n' '## Goal' '## Why' '## Scope' '## Acceptance criteria' '## Not in scope' '## Disclosure')"
+  # Another project's plan has nothing, a blank line included, where the Rust core section goes.
+  assert_contains "$(cat "$plan")" "observable behaviour. -->
+
+## Not in scope"
+  run grep -c '{{' "$plan"
+  assert_equal "$output" "0"
+}
+
+@test "the plan of the team's own project gets the Rust core section, before Not in scope, and another project's none" {
+  sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-open agent-team feature feat port-step "A port step"
+  local plan=$TEAM_HOME/tasks/T1/plan.md
+  assert_equal "$(grep '^## ' "$plan")" "$(printf '%s\n' '## Goal' '## Why' '## Scope' '## Acceptance criteria' '## Rust core' '## Not in scope' '## Disclosure')"
+  # The section's words are its own template's, followed by one blank line.
+  assert_contains "$(cat "$plan")" "observable behaviour. -->
+
+$(cat "$REPO_ROOT/templates/plan-rust-core.md")
+
+## Not in scope"
+  assert_contains "$(cat "$plan")" "## Rust core
+
+<!-- Where the change lands in the Rust core by the code's \`docs/rust-core.md\`"
   run grep -c '{{' "$plan"
   assert_equal "$output" "0"
 }

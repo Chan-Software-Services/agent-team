@@ -32,8 +32,9 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `drills.json`: the drill registry, each drill's name, what it is, who runs it (`coordinator`, or `daniel` when it needs them present) and the code it proves, with the one age past which a drill is due.
     - `error-view.sh`: a sibling script's failure as the `{error}` a view holds in its place, its last stderr line with `~` for the home directory, for `team-queue`, `team-snapshot` and `team-sweep`.
     - `fence_rules.py`: `bin/hooks/lease-fence`'s reader, the classes of command the fence holds (a `git push`, `gh`, the team scripts that post, answer, wait or write) among those a Bash call runs, by `command_text.py`'s walk, never where a call only names one.
-    - `gate-claude-settings.json`: the settings the gate's Claude takes with `--settings`, its commit attribution off and `command-guard` run on Bash from `~/agent-team`, since it loads no user settings.
+    - `gate-claude-settings.json`: the settings the gate's Claude takes with `--settings`, its commit attribution off, `gate-rules.md` printed at each session start and `command-guard` run on Bash from `~/agent-team`, since it loads no user settings.
     - `gate-config.awk`: reads and sets the one key the team writes in Daniel's no-mistakes config (`agent_path_override`'s opencode), and reads `agent_args_override`'s list for one agent.
+    - `gate-rules.md`: the rules every agent of the gate reads, on either agent: at most 4 busy CPU cores of added load with a timeout, each process stopped by its own pid, and names without a task's.
     - `github-api.sh`: the one reader of GitHub's REST answers for the scripts that poll it, its state one per GitHub login: a cache revalidated with ETags, the budget each answer reports, a rate-limit refusal held until it lifts, and a log of each request by the command that sent it.
     - `github-login.sh`: where the worker and owner logins live, sourced by `team.sh`: the worker login's constant read, its gh directory judged, a session's environment on it, gh or any command (`bounded` too) run on either login, and the team home's GitHub credential helpers on the owner login.
     - `guarded`: the short list, one extended regular expression per line with its area, `@<project>` or `@own` for one project's line, any changed path of which brings a merge on the default word, the approved plan, back to Daniel for the per-head word, read by `team-merge` from its own checkout.
@@ -45,12 +46,12 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `messages.jq`: reads a worker's message into the events the coordinator's message table gives it, for `team-log --from-message`.
     - `notice.jq`: the notice module, the one lifecycle of every notice of a standing problem the heartbeat posts in `#coordinator`: the notice record `notices.json`, the table of each source's rules, the judging, its outcomes and the move from the old records.
     - `notices.sh`: the notice record's reads and locked writes, and the move of each old record into it, sourced after `team.sh` by `team-timers` and `team-uptime`.
-    - `opencode-gate`: the gate's opencode wrapper, which `team-bootstrap` installs in `~/.no-mistakes/bin` and Daniel's no-mistakes config names on an opencode gate, and which loads `opencode-guard.js`.
+    - `opencode-gate`: the gate's opencode wrapper, which `team-bootstrap` installs in `~/.no-mistakes/bin` and Daniel's no-mistakes config names on an opencode gate, and which loads `opencode-guard.js` and names `gate-rules.md` as an instruction.
     - `opencode-guard.js`: the opencode plugin that runs `command-guard` before each bash call of an opencode gate's agents, refusing the call on any exit but 0.
     - `outbound.py`: whether a Bash command's `curl` or `wget` sends a request body or a file to a literal host outside the team's own local ones, directly or through a proxy, decided on each command of `command_text.py`'s walk, for `command_rules.py`'s upload row.
     - `prices.json`: each model's list prices per million tokens with the date read and the source, the weights `team-tokens` gives each reply.
     - `probe.json`: the refusal probe's data: each attempt `team-load-check --probe` has a worker role or the assistant make, the layer that should refuse it or a read's marker, each deny rule in a family, their PreToolUse hooks with an attempt or why none, and its GitHub calls as the worker login.
-    - `queue.jq`: the queue module, the one place that says an item's state, when its `after:` is met, how items rank, the room for one more task, the problems `team-queue index --check` names, the index's and the list's text, the sweep's findings and what `set`, `take` and `tidy` write.
+    - `queue.jq`: the queue module, the one place that says an item's state, when its `after:` is met, how items rank, the room for one more task, the problems `index --check` names, the index's and the list's text, the waits' ages, the sweep's findings and what `set`, `take` and `tidy` write.
     - `quota.sh`: the one Bash reader of `team-quota status --json`, its timeout and its reasons, which `team-capacity status` and the heartbeat's quota step take, and `team-tokens` keeps in Python.
     - `reading.sh`: one reading of the machine's load (its memory, its processes by directory and descent, the team's stacks), which `team-capacity sample` takes.
     - `records`: the team home's paths, which no tracked path matches.
@@ -76,6 +77,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
+- `docs/`: design docs, beside what a stranger reads first in `README.md`.
+  - `rust-core.md`: the Rust core's design and its port map, kept by hand: the crates, the platform and interface seams, what was decided since the first design, and each `bin/` script, ledger event kind and config file against its future crate and seam.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
@@ -114,6 +117,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tmp.md`: the team's temporary files: `team-janitor tmp`'s roots, rules and list and how a line is added, the session tmp and task-named scratch, what a run says and where, the warning, the heartbeat's step, the doctor's `tmp` line and the test seams.
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
+  - `plan-rust-core.md`: the `## Rust core` section `team-open` puts in a plan of the team's own project alone, where `templates/plan.md` has `{{rust_core}}`.
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
   - `tests/bootstrap-drill.bats`: runs `tests/bootstrap-drill` on a stub `team-bootstrap`.
@@ -136,7 +140,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/task-life.bats`: a whole task's life across the scripts.
   - `tests/timings.tsv`: each bats file's seconds on Linux in one CI run, and on macOS as the last CI run with macOS jobs had them, which `tests/shards` weighs it by.
   - `tests/toolkits/`: the toolkits' Node tests.
-  - `tests/vendor/`: bats-core, vendored, with the one line its `VENDOR.md` patches.
+  - `tests/vendor/`: bats-core, vendored, with the two patches its `VENDOR.md` describes.
 - `toolkits/`: plugin directories a worker loads with `team-worker --toolkit <name>`: MCP config (`.mcp.json`) and the roles a server starts for when not every one (`mcp-roles.json`), skills, hooks (`hooks/hooks.json`), docs, scripts, and the skills' evals (`claude plugin eval`, on MCP mocks).
   - `browser/`: its session-start hook prints a banner for a UI task's builder and reviewer, whose `ui-check` skill captures and judges the screens a UI change touches.
   - `codegraph/`: for a setup trial's builders and reviewers, a session-start hook that, in a worktree with a `.codegraph/` directory, builds or syncs that worktree's CodeGraph index and prints a banner to locate code with `codegraph explore` first; no MCP server.
@@ -206,7 +210,7 @@ It holds:
   No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
-  So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them and a gate's end-to-end run, and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
+  So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them, a builder's local end-to-end run and a gate's, and `team-stack`'s steps that make or remove a stack's network (`sops/docker.md`), and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
 - A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard jobs `shard-plan`, whose timings the shards split by, and `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main`, on each trial commit a merge queue builds (`merge_group`, its `checks_requested` type) and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
   On a trial commit the `data` job reads what it adds to the commit the queue built it on (the merge group's base and head shas).
   Each job has a time limit (`timeout-minutes`), about twice its longest recent run, and each that runs bats one above `tests/run`'s file limit, which `tests/repo.bats` holds.

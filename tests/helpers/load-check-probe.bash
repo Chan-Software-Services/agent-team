@@ -123,7 +123,8 @@ attempts() {
 # for an attempt named, one call per outcome given: hook, other-hook (a block by another hook's
 # message), script (the script's own refusal, its input's bin/ dropped), marked (a call that ran and
 # printed the attempt's marker), no-marker (a kernel attempt's refusal after its
-# marker's name with no value), none (a call with no result), skip (no call at all), as-<text> (a
+# marker's name with no value), not-found (a call whose shell never found its command, exit 127,
+# as bash words it), none (a call with no result), skip (no call at all), as-<text> (a
 # call that ran and printed <text>, which a login attempt does by default with the worker login),
 # or any outcome tool_result takes (ran, failed, rule, file-rule, automode, no-verdict,
 # safety-check, user-rejected). A
@@ -176,6 +177,7 @@ probe_transcript() {
             { echo "probe_transcript: bin/ refused $id without its marker" >&2; return 1; }
           echo "$result" ;;
         marked) tool_result "toolu_$role$n" ran "$marker"$'\n' ;;
+        not-found) tool_result "toolu_$role$n" failed "Exit code 127"$'\n'"/bin/bash: line 1: ${input%% *}: command not found" ;;
         none) ;;
         refused-by-kernel) tool_result "toolu_$role$n" ran "${marker:+$marker$'\n'}PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
         no-marker) tool_result "toolu_$role$n" ran "${marker%=*}="$'\n'"PermissionError: [Errno 13] Permission denied: 'kernel-delete'" ;;
