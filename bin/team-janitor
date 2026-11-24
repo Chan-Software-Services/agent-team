@@ -5,6 +5,8 @@
 # Usage: team-janitor [--dry-run]
 #        team-janitor tmp [--dry-run]   (the sweep of temporary files, below)
 #        team-janitor tmp status [--json]
+#        team-janitor disk [--dry-run]  (the sweep of the home directory's caches, below)
+#        team-janitor disk status [--json]
 #
 # With no subcommand, the daily Docker run: it runs team-stack reap --apply, then writes the
 # day's report, ~/.local/state/agent-team/janitor/<local date>.md, a second run of the day
@@ -129,6 +131,62 @@
 # Exit 0 done, nothing to remove included, 1 a removal failed, the processes, a root or the /tmp
 # root's file system could not be read, the day's file or the notice record could not be
 # written, or a post failed, 2 usage error.
+#
+# Usage: team-janitor disk [--dry-run]
+#        team-janitor disk status [--json]
+#
+# The sweep of what nothing reads again in this user's home directory (bin/lib/disk.sh,
+# sops/disk.md), which reads nothing of Docker or /tmp. Its job part empties the job tmp,
+# ~/.claude/jobs/<id>/tmp, of each team session: an entry of ~/.claude/jobs named by 8 lowercase
+# hex digits, a real directory of this user's, never a link, whose id the ledger has a launch of a
+# planner, builder or reviewer with (its session); the coordinator's, the assistant's, an ops
+# session's and Daniel's own sessions have none, so they are never touched. The ledger and the
+# session list (claude agents --json --all, given 30 s) are read once on each run that finds the
+# jobs root, so a broken one shows on a quiet machine too; when either cannot be read, no job tmp
+# is cleared and the run exits 1 saying why. Only a tmp that is a real directory, never a link,
+# holding an entry is looked at, and a job with no readable state.json is kept. A tmp is
+# cleared when the list gives its session no pid, no process of this user names a path under it
+# (as the tmp sweep's not-live rule reads them; when they cannot be read, nothing is cleared and
+# the run exits 1), and the first of these holds, which gives its why:
+#   T<n> is closed               its task is not open in the ledger
+#   not listed by Claude Code    the list does not name it, and --all names every job Claude Code
+#                                keeps, so nothing can wake it
+#   stopped                      its listed state is stopped, which Claude Code never wakes
+#   <state> and idle <age>       its listed state is done or failed, and its job's last change
+#                                (state.json's updatedAt, or that file's mtime) is more than 24
+#                                hours ago
+# A listed state of working or blocked, or any other, is kept. Each entry directly inside the tmp
+# is removed by its own path, a directory made writable first (chmod -R) and removed with rm -rf
+# --one-file-system, a file with rm -f, after the job directory and its tmp are checked again to
+# be real directories of this user's; the tmp directory itself is kept, with its mode, so a woken
+# session still finds it. Each clearing is one line on stdout, with the tmp's size (du):
+#   cleared the job tmp of T422's builder 0f178ea8 (9.5 GiB; done and idle 26 h)
+# and the same line, as "- HH:MM <line>" in local time, is appended to the day's file,
+# ~/.local/state/agent-team/janitor/disk-<local date>.md, made with the title "# Disk cleared on
+# <machine>, <date>" at the day's first line. A run that clears nothing prints nothing. A clearing
+# that fails is said on stderr ("team-janitor: could not clear <path>: <rm's last line>"), and the
+# other jobs go on.
+# One run at a time, by a lock on ~/.local/state/agent-team/disk.lock: a second run prints
+# "another team-janitor disk is running; skipped" and exits 0. The sweep needs no lease.
+# After each run but a dry run, the record ~/.local/state/agent-team/janitor/disk.json is written
+# whole (a temporary file and a rename) as team-disk/1: {schema, at (UTC), ok (whether the run
+# exits 0), go ({path, kb, cap_kb, trimmed_today}, null for now), jobs: {cleared_today: {count,
+# kb}}}, the day's totals starting again on a new local date.
+# --dry-run clears nothing, writes nothing, takes no lock, and prints "would clear" for "cleared".
+#
+# status changes nothing and takes no lock: it reads the record for today's totals, all zero when
+# it is missing or of an earlier local date, as
+#   <n> job tmps cleared today (<size>)
+# --json prints it as team-disk-status/1: {schema, go ({path, kb, cap_kb, over_cap,
+# trimmed_today}, null for now), jobs: {cleared_today: {count, kb}}, last_run (the record's at, or
+# null)}.
+#
+# Test seams: TEAM_DISK_JOB_IDLE_MINUTES for the 24 hours (1440) a done or failed session must have
+# gone unchanged.
+#
+# Exit 0 done, nothing to clear included, 1 the ledger, the session list or the processes could
+# not be read, a clearing failed, or the day's file or the record could not be written, 2 usage
+# error.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
@@ -139,6 +197,15 @@ if [[ ${1:-} == tmp ]]; then
   # shellcheck source=bin/lib/tmp.sh
   source "$TEAM_LIB/tmp.sh"
   tmp_main "${@:2}"
+fi
+
+# The sweep of the home directory's caches, before anything of Docker's is read.
+if [[ ${1:-} == disk ]]; then
+  # shellcheck source=bin/lib/tmp.sh
+  source "$TEAM_LIB/tmp.sh"
+  # shellcheck source=bin/lib/disk.sh
+  source "$TEAM_LIB/disk.sh"
+  disk_main "${@:2}"
 fi
 
 DRY=''
