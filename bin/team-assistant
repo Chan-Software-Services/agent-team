@@ -21,7 +21,10 @@
 # walkthrough (guide Daniel through steps: a manual step, a login, a secret restore), spike (a
 # research question of Daniel's), note. task and decision need Daniel's own message, --daniel
 # <message id> --channel <channel id>, which any kind may name: read from Discord now, in
-# #assistant (ASSISTANT_CHANNEL) or a thread whose parent is it (assistant_place), by an
+# #assistant (ASSISTANT_CHANNEL) or a thread whose parent is it (assistant_place), or in an open
+# topic's thread, the latest interview-thread of an open topic task that Discord says is a thread
+# under the topic channel (TOPIC_CHANNEL), "the topic thread <id> of T<n>" (topic_place: a closed
+# topic's thread, an earlier one, or a non-topic task's interview thread is refused), by an
 # allowFrom author (daniel_message), never edited. A task body has the lines "Project: <name>",
 # one team-project --list knows, "When: now" or "When: queue" (Daniel's word; queue when they
 # said neither) and "Model: opus" or "Model: fable" (fable only on Daniel's word). research needs
@@ -44,7 +47,7 @@
 #
 # show prints the hand-off's list line (below), a blank line and its file; for one naming Daniel's
 # message, a blank line, "Daniel's message <id> in <place>, verbatim:" and its text, read from
-# Discord again, exiting 1 with the reason when it no longer reads as Daniel's unedited message.
+# Discord again (from a topic's thread even once the topic is closed), exiting 1 with the reason when it no longer reads as Daniel's unedited message.
 #
 # answer, the hand-off's recipient's alone and once (a follow-up is a new hand-off), appends to
 # its file a blank line, "## Answer", a blank line, "<UTC time>, by the <role>:" and <text>, and
@@ -150,11 +153,21 @@ lease_check() {
 }
 
 # Daniel's message <message> in <channel>, read from Discord as daniel_message gives it, held to
-# #assistant and its threads and refused when edited: daniel_word <message> <channel>
+# #assistant and its threads, or to an open topic's thread when a task's interview-thread names
+# <channel> (topic_place; with "again", show's read of a word already taken, a closed topic's
+# too), and refused when edited: daniel_word <message> <channel> [again]
 daniel_word() {
-  local place word edited
-  place=$(assistant_place "$2" 2>"$scratch/error") || die "$(<"$scratch/error")"
-  word=$(daniel_message "$1" "Daniel's word" "$place" 2>"$scratch/error") || die "$(<"$scratch/error")"
+  local place read_in word edited
+  if [[ $2 != "$ASSISTANT_CHANNEL" && -n $(interview_thread_task "$2") ]]; then
+    place=$(topic_place "$2" ${3:+--closed} 2>"$scratch/error") || die "$(<"$scratch/error")"
+    # daniel_message reads a place by the id it ends in, so it is given the name up to the id.
+    read_in="the topic thread $2"
+  else
+    place=$(assistant_place "$2" 2>"$scratch/error") || die "$(<"$scratch/error")"
+    read_in=$place
+  fi
+  word=$(daniel_message "$1" "Daniel's word" "$read_in" 2>"$scratch/error") || die "$(<"$scratch/error")"
+  word=$(jq -c --arg place "$place" '.place = $place' <<<"$word")
   edited=$(jq -r '.message.edited_timestamp // empty' <<<"$word")
   [[ -z $edited ]] ||
     die "Discord message $1 was edited at $edited, so its text may not be what Daniel first sent: ask them to say it again as a new message"
@@ -357,7 +370,7 @@ case $command in
     text_of "$TEAM_HOME/$rel_dir/$id.md"
     daniel=$(jq -r '.daniel_message // empty' <<<"$record")
     if [[ -n $daniel ]]; then
-      word=$(daniel_word "$daniel" "$(jq -r '.daniel_channel // empty' <<<"$record")")
+      word=$(daniel_word "$daniel" "$(jq -r '.daniel_channel // empty' <<<"$record")" again)
       echo
       printf "Daniel's message %s in %s, verbatim:\n" "$daniel" "$(jq -r .place <<<"$word")"
       jq -r '.message.content' <<<"$word"

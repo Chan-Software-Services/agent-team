@@ -307,6 +307,14 @@ channel() {
   # The task's own thread is not under #assistant either.
   run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel 2222
   assert_equal "$stderr" "team-answer: channel 2222 is neither #assistant ($ASSISTANT) nor a thread under it, so Daniel's word there is not for the assistant"
+  # An open topic's thread takes a hand-off's word (team-assistant), never an answer.
+  jq -nc '{ts: "2026-10-01T10:00:00Z", task: "T5", event: "opened", project: "agent-team", path: "topic",
+    type: "research", title: "Five", branch: "research/T5-five", base: "dev", base_sha: "0123456", worktree: "/w/5",
+    discord_message: "1564000000000000005", discord_channel: "1570965039278596199"}' >>"$TEAM_HOME/ledger.jsonl"
+  echo '{"ts":"2026-10-01T10:00:01Z","task":"T5","event":"interview-thread","discord_thread":"1571000000000000005"}' >>"$TEAM_HOME/ledger.jsonl"
+  channel 1571000000000000005 1572000000000000500
+  TEAM_TOPIC_CHANNEL=1572000000000000500 run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel 1571000000000000005
+  assert_equal "$stderr" "team-answer: channel 1571000000000000005 is neither #assistant ($ASSISTANT) nor a thread under it, so Daniel's word there is not for the assistant"
   TEAM_ASSISTANT_CHANNEL='' run_bin -1 --separate-stderr team-answer T7 sign-in 1564000000000000001 --channel "$ASSISTANT"
   assert_equal "$stderr" "team-answer: no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so Daniel's word cannot be held to #assistant"
   cat >>"$TEAM_HOME/ledger.jsonl" <<'LEDGER'
