@@ -35,7 +35,8 @@
 #             modification time; when the history cannot be read (git log or diff fails), every
 #             file's, and list and waits say so on stderr, "team-queue: cannot read the team
 #             home's history of tasks/queued/ (<git's first fatal: line, else its last, else "git
-#             log exited <n> with no reason given">), so each wait's age is its file's own time"
+#             <log or diff> exited <n> with no reason given">), so each wait's age is its file's
+#             own time"
 #   from      the tasks it came from, T<n> joined by ", "
 #   opened    the one task that builds it, T<n>
 #   takes     other queued items it carries, <name>.md joined by ", ", which leave with it

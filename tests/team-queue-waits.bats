@@ -165,6 +165,11 @@ ages() {
   run_bin -0 --separate-stderr team-queue list
   assert_equal "$stderr" "team-queue: cannot read the team home's history of tasks/queued/ (git log exited 5 with no reason given), so each wait's age is its file's own time"
   assert_contains "$output" "- a-old.md (proj, priority 1, S): the a-old; waits for Daniel's word (under a day)"
+  # A git diff that fails once the log has read is said as the diff's.
+  fails_on_call git diff
+  run_bin -0 --separate-stderr team-queue waits
+  assert_equal "$stderr" "team-queue: cannot read the team home's history of tasks/queued/ (git diff exited 5 with no reason given), so each wait's age is its file's own time"
+  assert_equal "$output" "0 waits older than 7 days (each age its file's own time: the team home's history cannot be read)"
   # A history read is no history_error.
   echo no-call-holds-this >"$STUB_FIXTURES/git.fail-on"
   run_bin -0 --separate-stderr team-queue waits --json
