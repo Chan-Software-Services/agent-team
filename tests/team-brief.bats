@@ -643,6 +643,22 @@ EOF
   assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review-pr.json")" "$pr"
 }
 
+@test "a gated project's review made by hand while its PR is open, with no --set pr, is that PR's review" {
+  open_t12
+  branch_head T12 dev
+  local pr=https://github.com/Chan-Software-Services/Conventioner/pull/9 brief
+  event T12 pr "$(jq -cn --arg url "$pr" --arg h "$head" '{url: $url, head: $h}')"
+  run_bin -0 --separate-stderr team-brief T12 reviewer --name review --set head="$head" --set "checks=the checks"
+  brief=$(<"$output")
+  # The ledger's open PR is the one the brief reads, comments on and sets the status of.
+  assert_contains "$brief" "There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$head\`"
+  assert_contains "$brief" "The comment on PR $pr is that file, posted with this exact command, the only comment your settings allow: \`$REPO_ROOT/bin/team-review-comment $pr .scratch/task/review.md\`"
+  assert_contains "$brief" "\`$REPO_ROOT/bin/team-review-status $pr $head <success|failure> \"<one line, at most 140 characters>\"\`."
+  assert_contains "$brief" "- Send \`T12 DONE pass $pr findings="
+  [[ $brief != *"no PR yet"* && $brief != *"no-mistakes gate"* && $brief != *"Post nothing"* && $brief != *'{{'* ]]
+  assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review.json")" "$pr"
+}
+
 @test "a direct-PR project's review reads the PR, comments on it and sets its status" {
   reviewer_app off
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
