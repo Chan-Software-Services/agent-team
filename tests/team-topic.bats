@@ -88,7 +88,7 @@ word() {
   ms=$(($(date +%s%3N) - 60000))
   id=$((((ms - 1420070400000) << 22) | n))
   jq -n --arg c "$1" --arg id "$id" \
-    '{id: $id, channel_id: $c, content: "Yes, open a topic on the ingest.", author: {id: "757", username: "daniel"}, edited_timestamp: null}' \
+    '{id: $id, channel_id: $c, content: "Yes, open a topic on the checklist.", author: {id: "757", username: "daniel"}, edited_timestamp: null}' \
     >"$DISCORD_DIR/$1-$id.json"
   echo "$id"
 }
@@ -294,6 +294,30 @@ Daniel wants to design the release checklist: what it checks, when it runs, wher
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
     --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$(events launch | wc -l)" "2"
+}
+
+@test "a rerun whose session list cannot be read launches nothing, so a live session is never doubled" {
+  local daniel answer
+  daniel=$(word "$ASKED_IN")
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --daniel "$daniel" --channel "$ASKED_IN" \
+    --about "$about" --project proj release-checklist "The release checklist"
+  assert_equal "$(events launch | wc -l)" "1"
+  # A list that is no array, an object, a list of no JSON and a claude that fails each refuse the
+  # rerun, and no session is started.
+  for answer in '{}' 'not json' fail; do
+    if [[ $answer == fail ]]; then
+      stub_script claude <<'STUB'
+if [[ $1 == agents ]]; then echo "claude: no" >&2; exit 1; fi
+STUB
+    else
+      echo "$answer" >"$STUB_FIXTURES/agents.json"
+    fi
+    AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
+      --about "$about" --project proj release-checklist "The release checklist"
+    assert_contains "$stderr" "team-topic: cannot read the session list (claude agents --json --all)"
+    assert_equal "$(events launch | wc -l)" "1"
+    assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg")' | wc -l)" "1"
+  done
 }
 
 @test "--task refuses another message's topic, a closed one and a task of another path" {

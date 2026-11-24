@@ -37,9 +37,12 @@
 #      tasks/T<n>/brief.md, kept when it exists.
 #   6. team-worker T<n> topic <worktree> -- "Read your brief at <team home>/tasks/T<n>/brief.md",
 #      skipped when the ledger has a launch of role topic for T<n> and claude agents --json --all
-#      lists a T<n>-topic session in any state but stopped (its id is the one printed). Its exit
-#      75 (no room) is passed on, the task open, with the line "T<n> is open with no session yet:
-#      no room (<its reason>); run team-topic open --task T<n> ... again once there is".
+#      lists a T<n>-topic session in any state but stopped (its id is the one printed); with such
+#      a launch, a list that fails or is no JSON array refuses, exit 1, "cannot read the session
+#      list (claude agents --json --all)", launching nothing, so a live session is never doubled.
+#      Its exit 75 (no room) is passed on, the task open, with the line "T<n> is open with no
+#      session yet: no room (<its reason>); run team-topic open --task T<n> ... again once there
+#      is".
 #   7. Prints "T<n> topic open in <#<thread id>>: session <id>", the line the assistant passes on
 #      to Daniel, Discord showing <#<id>> as a link to the thread.
 #
@@ -246,8 +249,11 @@ brief=$TEAM_HOME/tasks/$task/brief.md
 session=''
 launched=$(task_event_array "$task" | jq -r 'map(select(.event == "launch" and .role == "topic")) | last | .session // empty')
 if [[ -n $launched ]]; then
-  session=$(claude agents --json --all 2>/dev/null | jq -r --arg name "$task-topic" \
-    'select(type == "array") | map(select(.name == $name and .state != "stopped")) | last | .id // empty' 2>/dev/null) ||
+  # A list that is no JSON array refuses, as a failed claude does, so a session it hides is never
+  # launched twice.
+  session=$(claude agents --json --all 2>/dev/null | jq -er --arg name "$task-topic" \
+    'if type == "array" then map(select(.name == $name and .state != "stopped")) | last | .id // ""
+     else error("no list") end' 2>/dev/null) ||
     die "cannot read the session list (claude agents --json --all)"
 fi
 if [[ -z $session ]]; then
