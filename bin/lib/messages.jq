@@ -382,11 +382,13 @@ def message_carried($tickets; $project; $open):
 
 # The parsed message (parse_message's, of the message $message) with --relay's id ($relay, or "")
 # on its ops session's done, the pointer to the coordinator's relay of its answer in Discord; any
-# other message is refused with it, naming its kind and its sender when it has one.
+# other message is refused with it, naming its kind and its sender when it has one. An ops done is
+# known by its done event's role ops, as message_ops writes it, never by a field name such as
+# report_chars, which a message may write itself (a DONE gate's pairs).
 def message_relay($task; $message; $relay):
   if $relay == "" or .problems then .
   else [.events[] | .fields | map({key: .[0], value: .[1]}) | from_entries] as $fields
-    | if any($fields[]; .report_chars != null) then
+    | if any(.events[]; .event == "done" and any(.fields[]; . == ["role", "ops"])) then
         .events |= map(if .event == "done" then .fields += [["relay", $relay]] else . end)
       else ($message | gsub("^\\s+"; "") | [splits("\\s+")][1]) as $kind
         | ([$fields[] | .role | strings] | first) as $role
