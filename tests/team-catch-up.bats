@@ -242,6 +242,11 @@ library() {
   [[ ! -e $GH_DIR/statuses ]]
 }
 
+@test "a head that holds the base already and lacks a required check is refused, naming it, since no merge brings it" {
+  echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint", "CodeQL"]}}}' >"$GH_DIR/branch.json"
+  refused "team-catch-up: $url holds dev already, so no merge brings the required check CodeQL it lacks: a rerun of its workflow on the head, or a push, does"
+}
+
 @test "a head whose latest review did not pass on it exactly is refused" {
   base_moves >/dev/null
   review "$head" findings
@@ -335,7 +340,7 @@ library() {
   refused "team-catch-up: the head ${evil:0:7} does not stand on the review of ${head:0:7}, which team-catch-up made it from: ${evil:0:7} changes more than the merge of its parents"
 }
 
-@test "a red, pending or missing required check, a closed PR or another base is refused with every reason at once" {
+@test "a red or pending required check, a closed PR or another base is refused with every reason at once, a missing check named in none" {
   base_moves >/dev/null
   echo '[
     {"name": "test", "bucket": "pending", "state": "PENDING"},
@@ -370,6 +375,13 @@ library() {
   [[ -s $GH_DIR/statuses ]]
   assert_equal "$(jq -c 'select(.event == "caught-up") | [.from, .head, .base]' "$TEAM_HOME/ledger.jsonl")" \
     "$(jq -cn --args '$ARGS.positional' "$head" "$merge" "$base")"
+  # One lacked check whose name holds " and " is one check, counted, not told by its text.
+  base_moves src/third.py >/dev/null
+  review "$merge" pass
+  echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint", "Build and test"]}}}' >"$GH_DIR/branch.json"
+  echo '[]' >"$GH_DIR/rules.json"
+  run_bin -0 --separate-stderr team-catch-up T14
+  assert_contains "$output" "team-catch-up: the head lacked the required check Build and test, which the checks of the merge "
 }
 
 @test "a head lacking a newly required check is still refused while another check failed or is pending, naming it" {

@@ -24,7 +24,8 @@
 # does, and refuses a fetched tip that is not the head GitHub showed (the head moved: run it
 # again). A head an earlier team-catch-up made must add only clean merges of the base to the
 # reviewed head (clean_base_merges in bin/lib/team.sh), else it is refused naming the first that is
-# not. A head that holds the base already prints "nothing to merge", exit 0, logging nothing.
+# not. A head that holds the base already prints "nothing to merge", exit 0, logging nothing, unless
+# it lacks a required check, which no merge brings: that is exit 1, naming each such check.
 # A merge that conflicts (git merge-tree, base_merge in bin/lib/team.sh) makes nothing and names
 # the conflicted files and the holder's builder-merge-base step, exit 1. A clean one on a base
 # with a merge queue (the queue of its rules, base_rules in bin/lib/team.sh) makes nothing either,
@@ -144,10 +145,12 @@ while IFS= read -r line; do if [[ -n $line ]]; then reasons+=("$line"); fi; done
     ([$required[] | select(IN($present[]))] - .checks.passed | .[] | "required check \(.) has not passed on the head"),
     (.checks.failing | select(length > 0) | "checks failing on the head: \(join(", "))"),
     (.checks.pending | select(length > 0) | "checks pending on the head: \(join(", "))")' <<<"$facts")
-# The required checks the head lacks, which the merge's own checks must bring, as "a and b".
+# The required checks the head lacks, which the merge's own checks must bring, as "check a" or
+# "checks a and b", the noun chosen by their count; empty when it lacks none.
 lacked=$(jq -r --slurpfile rules "$scratch/rules" '
   ((.required + [$rules[0].required[].context]) | unique) - (.checks.passed + .checks.failing + .checks.pending)
-  | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' <<<"$facts")
+  | if length == 0 then "" elif length == 1 then "check \(.[0])"
+    else "checks \(.[:-1] | join(", ")) and \(.[-1])" end' <<<"$facts")
 if ((${#reasons[@]})); then
   {
     echo "team-catch-up: $task cannot catch up PR #$number, so nothing changed:"
@@ -170,6 +173,8 @@ if [[ $reviewed != "$head" ]]; then
     die "the head ${head:0:7} does not stand on the review of ${reviewed:0:7}, which team-catch-up made it from: $unclean"
 fi
 if git -C "$primary" merge-base --is-ancestor "$onto" "$head"; then
+  [[ -z $lacked ]] ||
+    die "$url holds $base already, so no merge brings the required $lacked it lacks: a rerun of its workflow on the head, or a push, does"
   echo "team-catch-up: $url holds $base already; nothing to merge"
   exit 0
 fi
@@ -242,7 +247,7 @@ if [[ -n $unset_status ]]; then
 fi
 echo "team-catch-up: merged $base ${onto:0:7} cleanly onto ${head:0:7} as ${merge:0:7} and pushed it to $branch"
 if [[ -n $lacked ]]; then
-  echo "team-catch-up: the head lacked the required check$([[ $lacked != *" and "* ]] || echo s) $lacked, which the checks of the merge ${merge:0:7} must bring: team-merge refuses it while one is missing"
+  echo "team-catch-up: the head lacked the required $lacked, which the checks of the merge ${merge:0:7} must bring: team-merge refuses it while one is missing"
 fi
 echo "$merge"
 echo "next: arm team-next $task --ci with Bash run_in_background: it waits on the checks of the merge ${merge:0:7} and prints the merge ask at ${reviewed:0:7}, whose word holds through this merge"
