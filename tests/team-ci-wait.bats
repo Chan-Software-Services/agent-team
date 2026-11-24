@@ -1822,6 +1822,68 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["test","pr","failed"]]'
 }
 
+# Conventioner's Test workflow on a merge queue's trial commit while no runner is free, as GitHub
+# showed it on 2026-11-24: the e2e shards queued, and e2e, the roll-up job that needs them, listed
+# by neither the check runs nor the run's jobs until they run. A required check missing while a
+# workflow run of the trial commit is still open waits on runners, so it is never the rules'.
+@test "--merge-group classes a required roll-up not listed while its run's shards are still queued as infrastructure, never the rules'" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  rules_require backend e2e
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run knowledge-graph completed success 7001 97001)" "$(check_run backend completed success 7001 97002)" \
+    "$(check_run "e2e shard 1/2" queued '' 7001 97011)" "$(check_run "e2e shard 2/2" queued '' 7001 97012)"
+  head_runs 0 7001:Test:queued
+  statuses 0
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind, .run])]' <<<"$output")" \
+    '["failed",["e2e shard 1/2","infrastructure","queued",7001],["e2e shard 2/2","infrastructure","queued",7001],["e2e","infrastructure","missing",null]]'
+  assert_contains "$text_output" "
+  infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
+  [[ $text_output != *rules:* && $text_output != *"no workflow makes it"* ]]
+  [[ $(jq -c '[.failures[] | select(.source)]' <<<"$output") == '[]' ]]
+  # GitHub lists the roll-up too, waiting on the shards it needs: it is a queued check like them.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run backend completed success 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)" \
+    "$(check_run e2e waiting '' 7001 97010)"
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" \
+    '[["e2e shard 1/2","infrastructure","queued"],["e2e","infrastructure","queued"]]'
+  [[ $text_output != *rules:* ]]
+  # Every run of the trial commit completed and none made e2e: no run can make it now, so it is the
+  # rules'.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run backend completed success 7001 97002)"
+  head_runs 0 7001:Test:completed:success
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .source]]' <<<"$output")" '[["e2e","rules","missing","rules"]]'
+  assert_contains "$text_output" "
+  rules: e2e was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
+}
+
+# The queue gave the trial commit up for a failed check while the run's other jobs still waited on
+# runners: the roll-up of those is no more the rules' than while the entry stays.
+@test "--merge-group classes a required check not listed on a trial commit the queue dropped while its run was open as infrastructure" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  rules_require backend e2e "Analyze (python)"
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run backend completed failure 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)" \
+    "$(check_run "Analyze (python)" queued '' 7002 97021)"
+  job 0 97002 runner-1 "Set up job=success" "Run tests=failure"
+  head_runs 0 7001:Test:in_progress 7002:CodeQL:queued
+  statuses 0
+  entry 1 OPEN
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind])]' <<<"$output")" \
+    '["failed",["backend","pr","failed"],["e2e","infrastructure","missing"]]'
+  assert_contains "$text_output" "
+  infrastructure: e2e was not reported on the trial commit while its workflow runs 7001 (Test, in_progress) and 7002 (CodeQL, queued) are still open there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
+  [[ $text_output != *rules:* ]]
+}
+
 @test "--merge-group keeps the deadline and the unreadable limit, each exit 75" {
   trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
   entry 0 OPEN "$trial"

@@ -99,6 +99,19 @@ no_land_call() {
   assert_contains "$stderr" "  test failed on the trial merge as infrastructure"
   assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
   [[ $stderr != *builder-merge-base* ]]
+  # A required roll-up not listed while its shards waited for runners is infrastructure too: no
+  # team-doctor, merge_group trigger or ruleset step.
+  merge_again
+  queue_rule
+  land dequeued "the checks timed out" \
+    '[{"name": "e2e shard 1/2", "class": "infrastructure", "kind": "queued", "link": "https://github.com/owner/proj/actions/runs/1/job/3", "step": null},
+      {"name": "e2e", "class": "infrastructure", "kind": "missing", "link": null, "step": null}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  e2e shard 1/2 failed on the trial merge as infrastructure: https://github.com/owner/proj/actions/runs/1/job/3"
+  assert_contains "$stderr" "  e2e was not reported on the trial merge while a workflow run there was still open, as infrastructure
+"
+  assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
+  [[ $stderr != *team-doctor* && $stderr != *merge_group* && $stderr != *ruleset* && $stderr != *builder-merge-base* ]]
 }
 
 @test "a PR the queue dropped for a check its base's rules require that never reported on the trial commit names the rules step, never the merge-base brief, even beside a failure of its own" {

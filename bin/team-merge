@@ -130,7 +130,10 @@
 #             requires it and what to fix for such a check, and team-doctor and the ruleset left
 #             out with no check the rules require (rules_step in bin/lib/ledger.jq), even beside a
 #             failure of the PR's own, since the trial merge cannot be judged until every
-#             required check runs there;
+#             required check runs there; a required check not reported while a workflow run of
+#             the trial commit was still open (team-ci-wait's infrastructure, as a roll-up whose
+#             shards waited for a runner) is said as "<name> was not reported on the trial merge
+#             while a workflow run there was still open, as infrastructure", with no rules step;
 #             else with a failure of the PR's own, the builder-merge-base brief, since the trial
 #             merge failed what the head passed; else to run team-merge again once what dropped
 #             it is fixed;
@@ -851,6 +854,7 @@ if [[ -n $landing ]]; then
         echo "team-merge: the merge queue dropped PR #$number, which is not merged: $reason"
         jq -r --arg base "$base" '.failed // [] | .[] | if .class == "rules" then "  \(.name) was not reported on the trial merge, which "
             + (if (.source // "rules") == "rules" then "\($base)\u0027s rules require" else "the project\u0027s required_checks require" end)
+          elif .kind == "missing" then "  \(.name) was not reported on the trial merge while a workflow run there was still open, as \(.class)"
           else "  \(.name) failed on the trial merge"
             + (if .class == "pr" then "" else " as \(.class)" end)
             + (if (.step // "") == "" then "" else " (\(.step))" end)

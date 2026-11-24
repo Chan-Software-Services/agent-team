@@ -112,7 +112,8 @@
 #   no check pending but stuck or queued ones, no      exit 1, naming each failed, cancelled,
 #   workflow run open but a queued one's, and at       stuck or queued check in its class (below)
 #   least one failed, cancelled, stuck or queued       and, on a trial commit, each required
-#                                                      check no check lists as the rules', once
+#                                                      check no check lists in its class (the
+#                                                      rules' or infrastructure, below), once
 #                                                      that reading has stood for 2 minutes of
 #                                                      looks with no new check listed (a run
 #                                                      GitHub lists late is waited on)
@@ -154,8 +155,18 @@
 #                   failing step is GitHub's own (Set up job, Set up runner, Initialize containers,
 #                   Complete job) or a stock action's (Run actions/..., Post Run actions/...); and
 #                   each queued or stuck check: each line names its link and the gh run rerun (for
-#                   a queued one, gh run cancel first) to run before running team-ci-wait again
-#   rules           with --merge-group, a required check not listed on the trial commit: "rules:
+#                   a queued one, gh run cancel first) to run before running team-ci-wait again;
+#                   and with --merge-group, a required check not listed on the trial commit while a
+#                   workflow run of it is still open (queued, waiting or in progress):
+#                   "infrastructure: <name> was not reported on the trial commit while its workflow
+#                   run <id> (<its name>) is still <status> there (with several, "its workflow runs
+#                   <id> (<name>, <status>) and <id> (<name>, <status>) are still open there"):
+#                   GitHub lists a job only once the jobs it needs have run, so it waits on
+#                   runners, not on the rules", since a
+#                   roll-up job whose shards wait for a runner is listed by neither the check runs
+#                   nor the run's jobs
+#   rules           with --merge-group, a required check not listed on the trial commit, with no
+#                   workflow run of it still open, so none can make it there now: "rules:
 #                   <name> was not reported on the trial commit, though <base>'s rules require it
 #                   (or the project requires it, for one of the registry's alone): no workflow
 #                   makes it on a merge queue's trial commit", which no change of the PR's fixes
@@ -204,8 +215,9 @@
 # merged or closed PR as on a head; when a check of the trial commit failed, as a failure, exit 1,
 # the cancelled and pending checks of that look left out, since the queue cancels the rest of a
 # commit it gives up, and each required check no check of the look lists (a cancelled or pending
-# one counts as listed) named as the rules', that reading first held for 2 minutes of looks as
-# above; else exit 1 (other-head), naming where the entry is. --look and a <sha>
+# one counts as listed) named in its class (infrastructure while a workflow run of that look is
+# still open, else the rules'), that reading first held for 2 minutes of looks as above; else exit
+# 1 (other-head), naming where the entry is. --look and a <sha>
 # after the URL are refused with it.
 # With --run, the wait is on the one workflow run, read as a PR's checks are, but for what follows.
 # Each look reads, through the reader as above, the run (repos/<repo>/actions/runs/<id>), its jobs,
@@ -559,7 +571,8 @@ CLASSES='
 
 # report <missing>: sets text to the text of a wait that ends on a failure: today's first line, then
 # a line for each check the last readable look did not pass, classed, and each required check in
-# the JSON array <missing> (with --merge-group, each of class rules), the PR's (with --run, the
+# the JSON array <missing> (with --merge-group, each of class infrastructure while a workflow run of
+# the look is open, else rules), the PR's (with --run, the
 # branch's) first, then rules, then infrastructure, then roll-ups; and writes those
 # failures, in that order, to $dir/failures as --json gives them. It reads the Actions job of each
 # failed or cancelled check that is not a roll-up, once; one it cannot read stays the PR's.
@@ -578,14 +591,21 @@ report() {
     --arg unreported "$([[ -n $run_id ]] || echo " for $(span "$SETTLE_SECONDS")")" \
     --arg base "$base" --argjson group "$([[ -n $group ]] && echo true || echo false)" --argjson rules "$rules_required" \
     --argjson jobs "$(jq -s 'add // {}' "$dir/jobs")" "$CLASSES"'
-    [classed, ($missing[] | {name: ., class: (if $group then "rules" else "pr" end), kind: "missing", state: null,
-       link: null, run: null, job: null, step: null, rerun: null}
-       + if $group then
-           (if IN($rules[]) then "rules" else "required_checks" end) as $source
-           | {source: $source, line: ("rules: \(.) was not reported on the trial commit, though "
+    (.open_runs != []) as $open_runs
+    | (.open_runs | if length == 1 then "its workflow run \(.[0].id) (\(.[0].name)) is still \(.[0].status)"
+      else "its workflow runs " + (map("\(.id) (\(.name), \(.status))") | (.[:-1] | join(", ")) + " and " + .[-1])
+        + " are still open" end) as $open
+    | [classed, ($missing[] | {name: ., class: (if $group | not then "pr" elif $open_runs then "infrastructure" else "rules" end),
+         kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null}
+       | . + if .class == "infrastructure" then
+           {line: "infrastructure: \(.name) was not reported on the trial commit while \($open) there:"
+             + " GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"}
+         elif .class == "rules" then
+           (if .name | IN($rules[]) then "rules" else "required_checks" end) as $source
+           | {source: $source, line: ("rules: \(.name) was not reported on the trial commit, though "
                + (if $source == "rules" then "\($base)\u0027s rules require" else "the project requires" end)
                + " it: no workflow makes it on a merge queue\u0027s trial commit")}
-         else {line: "\($whose): \(.) was not reported\($unreported), and the project requires it"} end)]
+         else {line: "\($whose): \(.name) was not reported\($unreported), and the project requires it"} end)]
     | sort_by({pr: 0, rules: 1, infrastructure: 2, rollup: 3}[.class])' "$dir/look" >"$dir/classed"
   jq 'map(del(.line))' "$dir/classed" >"$dir/failures"
   text="team-ci-wait: the checks on ${head:0:7} did not pass:"$'\n'$(jq -r '.[] | "  " + .line' "$dir/classed")
@@ -785,7 +805,7 @@ while :; do
             next_look
             continue
           fi
-          jq '.checks |= map(select(.bucket != "cancel" and .bucket != "pending")) | .open_runs = []' "$dir/look" >"$dir/look.left"
+          jq '.checks |= map(select(.bucket != "cancel" and .bucket != "pending"))' "$dir/look" >"$dir/look.left"
           mv "$dir/look.left" "$dir/look"
           stuck_json='[]' queued_json='[]'
           report "$unseen"
