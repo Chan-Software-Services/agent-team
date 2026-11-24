@@ -2,6 +2,7 @@
 # directories. tests/repo.bats checks that every tracked path matches it and none matches the
 # records (bin/lib/records), so a new path is listed in its PR.
 bin/**
+docs/**
 tests/**
 roles/**
 settings/**

@@ -16,7 +16,10 @@
 #         team-heavy ends, and team-heavy exits with the command's status. The label defaults to
 #         the command's words and the directory it runs in (~ for the home directory).
 #         Conventioner's scripts/e2e-lock.sh takes the same file with its own form, "<who> since
-#         <time>", which status reads as a holder too.
+#         <time>", and team-stack takes it for each step that makes or removes a stack's network,
+#         "team-stack <subcommand> (pid <pid>, <project>) since <time>", which status reads as
+#         holders too and stop never stops (sops/docker.md, "Network changes and the heavy-run
+#         lock").
 #         A shared flock on the file, which status and team-capacity's reading take for an
 #         instant to see whether a run holds it, as a starting run does when it is refused, is no
 #         holder: a run refused while one is held waits up to 5 seconds for it to go, saying

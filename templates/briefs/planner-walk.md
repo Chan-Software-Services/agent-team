@@ -22,7 +22,7 @@ Interview thread: Discord thread `{{interview_thread}}`, under the interview cha
 ## Set up the walk
 
 1. Start the task's own stack with `{{team_bin}}/team-stack up`, run with Bash `run_in_background` as a call of its own, since it may wait for room, and reach it with `eval "$({{team_bin}}/team-stack env)"`.
-   When `up` exits 75, the team has no room: send `{{task}} PAUSED <its reason line>`, say in the thread that the walk waits for room, wait with `team-thread wait`, and try `up` again when Daniel answers.
+   When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack's network is made: send `{{task}} PAUSED <its reason line>`, say in the thread that the walk waits for room, wait with `team-thread wait`, and try `up` again when Daniel answers.
 2. Its page is `http://localhost:<port>/`, `<port>` being the front end's `TH_<SERVICE>_PORT` from that `env`.
 3. Your first post says who you are and what the walk is for, in a line or two, then has Daniel set up:
    - start the Agent Chrome with `{{team_code}}/toolkits/frontend/scripts/agent-chrome http://localhost:<port>/`, or when it is open already, open that page in a new tab of it;
