@@ -77,10 +77,20 @@ Why a size cap on every run, over a weekly trim or a doctor warning alone: a wee
 - `team-janitor disk --dry-run` prints `would clear` and `would trim` for each line, and clears, trims, writes and locks nothing.
 - `team-janitor disk status` (`--json` for `team-disk-status/1`) reads only: the Go build cache measured now against its cap, the day's trims, the job tmps cleared today and their size, and the last run, as `Go build cache 3.2 GiB of its 10.0 GiB cap at /home/d/.cache/go-build; 4 job tmps cleared today (2.1 GiB)`, or `no Go build cache (GOCACHE is off)`, `no Go build cache at <path>` or `no Go build cache at <path> (no Go README)` for its first part.
 
+## The heartbeat's step
+
+- The heartbeat runs `team-janitor disk` on the lease holder at every run, as its `disk` step, right after the `tmp` step and before the inbox step, with no setting and no lease needed by the command itself, which by hand runs on any machine.
+- The step never runs on a machine that is off the lease, fenced or offline, as no step on the holder does.
+- The step logs each line the command prints (`disk: cleared the job tmp of T422's builder 0f178ea8 (9.5 GiB; done and idle 26 h)`), and nothing on a quiet run.
+- A run that fails, or runs past its 180 s and is killed 10 s later, logs `disk: failed: <reason>`, the command's first line on stderr or `timed out after 180 s`; the later steps still run, the heartbeat run exits 1, and 12 failing runs in a row are the `step-disk` alert.
+- Why no setting, unlike the Docker janitor: like the `tmp` step it removes only what its rules prove nothing reads again, from this user's home, and Daniel asked for it.
+
 ## Test seams
 
 A test runs the real `team-janitor disk` in the bats sandbox, against a fixture jobs tree under the sandbox's `HOME`, never the machine's `~/.claude/jobs`, and a fixture Go build cache, never the machine's:
 
 - the sandbox's stub `claude` answers `agents --json --all`;
 - `TEAM_DISK_JOB_IDLE_MINUTES` replaces the 24 hours (1440 minutes), and a test ages a job by its `state.json`'s `updatedAt` or with `touch -d`;
-- `TEAM_GO_CACHE` names a fixture Go build cache under the test's directory, its entries aged with `touch -d`, `TEAM_GO_CACHE_CAP_KB` replaces the cap (10485760 kilobytes, the target staying 80% of it) and `TEAM_GO_CACHE_KEEP_MINUTES` the 2 hours (120 minutes).
+- `TEAM_GO_CACHE` names a fixture Go build cache under the test's directory, its entries aged with `touch -d`, `TEAM_GO_CACHE_CAP_KB` replaces the cap (10485760 kilobytes, the target staying 80% of it) and `TEAM_GO_CACHE_KEEP_MINUTES` the 2 hours (120 minutes);
+- the sandbox unsets `GOCACHE` and `GOENV`, so a heartbeat test, whose run has the `disk` step, never reaches a Go build cache the environment names;
+- `TEAM_TIMERS_DISK_SECONDS` replaces the heartbeat step's 180 s.
