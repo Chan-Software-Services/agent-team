@@ -13,6 +13,14 @@ setup() {
   export TEAM_JOBS=2
 }
 
+# link_script <name> <dest>: <dest> a hard link to the run's shared executable <name>, made the
+# first time from stdin, so no test writes an executable of its own (CLAUDE.md, "Tests and
+# shellcheck"); ln -f replaces a link already there, never writing into the shared file.
+link_script() {
+  shared_make "tests-run-rust/$1"
+  ln -f "$BATS_RUN_TMPDIR/shared/tests-run-rust/$1" "$2"
+}
+
 # A checkout of its own at <copy>, committed and tagged base: this checkout's bin/ and tests/run,
 # with a bin/team-heavy that logs to $STUB_CALLS/team-heavy and refuses, so a part that takes the
 # lock shows, and a bin/team-capacity whose jobs is 7. The Rust tools are stubs: cargo and
@@ -24,10 +32,9 @@ rust_checkout() {
   mkdir -p "$copy/tests" "$copy/crates/team-core/src"
   copy_bin "$copy/bin"
   link_shared tests-run "$REPO_ROOT/tests/run" "$copy/tests/run"
-  rm "$copy/bin/team-heavy" "$copy/bin/team-capacity"
-  printf '%s\n' '#!/usr/bin/env bash' 'echo "$*" >>"$STUB_CALLS/team-heavy"' 'exit 1' >"$copy/bin/team-heavy"
-  printf '%s\n' '#!/usr/bin/env bash' '[[ $1 == jobs ]] && echo 7' >"$copy/bin/team-capacity"
-  chmod +x "$copy/bin/team-heavy" "$copy/bin/team-capacity"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "$*" >>"$STUB_CALLS/team-heavy"' 'exit 1' |
+    link_script team-heavy-refusing "$copy/bin/team-heavy"
+  printf '%s\n' '#!/usr/bin/env bash' '[[ $1 == jobs ]] && echo 7' | link_script team-capacity "$copy/bin/team-capacity"
   echo '# the readme' >"$copy/README.md"
   echo 'pub fn version() {}' >"$copy/crates/team-core/src/lib.rs"
   git -C "${copy:?}" init -q
@@ -233,12 +240,12 @@ toolkits/rust/x"
 @test "plain tests/run runs all four parts, rust last" {
   local copy=$BATS_TEST_TMPDIR/copy
   rust_checkout "$copy"
-  printf '%s\n' '#!/usr/bin/env bash' 'while [[ $1 != -- ]]; do shift; done' 'shift' 'TEAM_HEAVY_HELD=1 exec "$@"' >"$copy/bin/team-heavy"
+  printf '%s\n' '#!/usr/bin/env bash' 'while [[ $1 != -- ]]; do shift; done' 'shift' 'TEAM_HEAVY_HELD=1 exec "$@"' |
+    link_script team-heavy-in-place "$copy/bin/team-heavy"
   mkdir -p "$copy/tests/vendor/bats-core/bin" "$copy/servers"
   link_shared tests-shards "$REPO_ROOT/tests/shards" "$copy/tests/shards"
-  printf '%s\n' '#!/usr/bin/env bash' 'echo "ok 1 a test"' >"$copy/tests/vendor/bats-core/bin/bats"
-  printf '%s\n' '#!/usr/bin/env bash' 'echo installed' >"$copy/servers/install"
-  chmod +x "$copy/tests/vendor/bats-core/bin/bats" "$copy/servers/install"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ok 1 a test"' | link_script bats "$copy/tests/vendor/bats-core/bin/bats"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo installed' | link_script servers-install "$copy/servers/install"
   echo '@test "one" { true; }' >"$copy/tests/one.bats"
   stub_command shellcheck node
   stub_script shellcheck <<<'[[ $1 != --version ]] || echo "version: 9.9.9"'

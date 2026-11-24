@@ -2,10 +2,10 @@
 # Run the code's checks: shellcheck on every shell script in bin/, tests/ (not the
 # vendored bats), servers/ and toolkits/, then the whole bats suite on the vendored bats-core,
 # then the toolkit tests (node --test on tests/toolkits/, after servers/install), which need
-# Docker for their throwaway MongoDB, then the Rust check (below). Each toolkit test and hook has a 5-minute limit (node
-# --test's --test-timeout), so a stuck one fails with its name long before CI's job limit, and
-# each file's process ends once its tests have (--test-force-exit), whatever a failed test left
-# running, so node --test never waits on it.
+# Docker for their throwaway MongoDB, then the Rust check (below). Each toolkit test and hook
+# has a 5-minute limit (node --test's --test-timeout), so a stuck one fails with its name long
+# before CI's job limit, and each file's process ends once its tests have (--test-force-exit),
+# whatever a failed test left running, so node --test never waits on it.
 # The bats files run as many at once as the team's CPU budget allows, each in a bats of its own
 # (every test is sandboxed, so files share nothing), the slowest first by tests/shards' weights:
 # one line per file as it ends, then the whole output of each file that failed, each skipped
