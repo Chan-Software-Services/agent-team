@@ -1960,7 +1960,7 @@ assert_no_answer_logged() {
   logs_events "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer},\"relay\":\"1564000000000000007\"}" \
     --from-message "T7 DONE $answer" --from T7-ops --relay 1564000000000000007
   logs_events "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer}}" \
-    --from-message $'T7\nDONE '"$answer"$'\n' --from d0000001
+    --from-message $'T7 DONE\n'"$answer"$'\n' --from d0000001
   assert_no_answer_logged
   run_bin -0 team-log --check
 }
@@ -1976,6 +1976,8 @@ assert_no_answer_logged() {
     $'DONE merged dev a1b2c3d conflicts: none\nthe summary' \
     $'DONE 01 a1b2c3d the ticket\nand more' \
     $'DONE gate run=r1 head=0123456\noutcome=pushed' \
+    $'DONE gate run=r1 head=0123456\noutcome=pushed chars=1' \
+    $'DONE gate run=r1 head=0123456\noutcome=pushed report_chars=1' \
     $'DONE findings r.md findings=blocking:1,correctness:0,security:0,real-data:0,note-change:0,note-before:0\nguarded=none' \
     $'BLOCKED git-push denied; took its allowed way\n(pushed the task branch)' \
     $'BLOCKED Bash(git push) denied:\nthe push target is a base branch' \
@@ -2004,6 +2006,14 @@ assert_no_answer_logged() {
     --from-message $'T7 DONE the answer\nits second line' --from T7-planner
   # Its text is never in a refusal.
   if grep -F 'second line' <<<"$output"; then
+    echo "the refusal holds the message's text" >&2
+    return 1
+  fi
+  # The task and the kind are read from the first line alone, and a message of more than one line
+  # that does not start so is refused without its text, which may be an ops answer.
+  refuses_message "team-log: a worker's message starts with its task, T7, then its kind, on its first line; got a message of 3 lines that does not" \
+    --from-message $'T7\nDONE the answer\nits second line' --from T7-ops
+  if grep -F 'the answer' <<<"$output"; then
     echo "the refusal holds the message's text" >&2
     return 1
   fi

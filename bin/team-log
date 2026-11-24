@@ -126,7 +126,7 @@
 # --from-message reads a worker's message whole (bin/lib/messages.jq) into the events the
 # coordinator's message table gives it, checks each as above, and logs them all, or with --print
 # prints them as JSON lines and logs nothing; any refusal logs none. The message starts with the
-# task. QUESTION <text> is a question; BLOCKED <text> and NEED toolkit <name> a blocked of cause
+# task and its kind on its first line. QUESTION <text> is a question; BLOCKED <text> and NEED toolkit <name> a blocked of cause
 # worker; PAUSED <why> a paused, its cause its first word's (stowed stow, held coordinator-hold,
 # offline offline, any other worker), its reason the whole why; each park carrying the sender's
 # role and session when the sender is known (--from's launch, else the only latest launch of a role
