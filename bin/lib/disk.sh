@@ -469,7 +469,7 @@ disk_write_record() {
 # The reading, read only: disk_status <usage> [--json]
 disk_status() {
   local disk_usage=$1 disk_json='' disk_today_count disk_today_kb disk_today_entries disk_today_trimmed_kb
-  local disk_last_at disk_noun disk_go_cap disk_go_keep disk_go disk_go_none disk_go_bad='' disk_kb='' disk_go_part
+  local disk_last_at disk_go_cap disk_go_keep disk_go disk_go_none disk_go_bad='' disk_kb=''
   shift
   case $* in
     '') ;;
@@ -492,14 +492,24 @@ disk_status() {
         last_run: (if $last == "" then null else $last end)}'
     return 0
   fi
-  if [[ -n $disk_go ]]; then
-    disk_go_part="Go build cache $(tmp_size "$disk_kb") of its $(tmp_size "$disk_go_cap") cap at $disk_go"
+  echo "$(disk_go_words "$disk_go" "$disk_kb" "$disk_go_cap" "$disk_go_none");" \
+    "$(disk_jobs_words "$disk_today_count" "$disk_today_kb")"
+}
+
+# The status line's two parts, which status and team-doctor's disk line both print: the Go part,
+# disk_go_words <path> <kb> <cap kb> <none words>, the none words when <path> is empty, and the
+# jobs part, disk_jobs_words <count> <kb>.
+disk_go_words() {
+  if [[ -n $1 ]]; then
+    echo "Go build cache $(tmp_size "$2") of its $(tmp_size "$3") cap at $1"
   else
-    disk_go_part=$disk_go_none
+    echo "$4"
   fi
-  disk_noun='job tmps'
-  ((disk_today_count != 1)) || disk_noun='job tmp'
-  echo "$disk_go_part; $disk_today_count $disk_noun cleared today ($(tmp_size "$disk_today_kb"))"
+}
+disk_jobs_words() {
+  local disk_noun='job tmps'
+  (($1 != 1)) || disk_noun='job tmp'
+  echo "$1 $disk_noun cleared today ($(tmp_size "$2"))"
 }
 
 # The run: disk_main [--dry-run | status [--json]]

@@ -77,6 +77,14 @@ Why a size cap on every run, over a weekly trim or a doctor warning alone: a wee
 - `team-janitor disk --dry-run` prints `would clear` and `would trim` for each line, and clears, trims, writes and locks nothing.
 - `team-janitor disk status` (`--json` for `team-disk-status/1`) reads only: the Go build cache measured now against its cap, the day's trims, the job tmps cleared today and their size, and the last run, as `Go build cache 3.2 GiB of its 10.0 GiB cap at /home/d/.cache/go-build; 4 job tmps cleared today (2.1 GiB)`, or `no Go build cache (GOCACHE is off)`, `no Go build cache at <path>` or `no Go build cache at <path> (no Go README)` for its first part.
 
+## The doctor's line
+
+- `team-doctor`'s `disk` line reads `team-janitor disk status --json`: PASS with the status' line, the home directory as `~`, as `Go build cache 3.2 GiB of its 10.0 GiB cap at ~/.cache/go-build; 4 job tmps cleared today (2.1 GiB)`.
+- It is WARN while the cache is over its cap, the status' line with `, over its cap` after the Go part, with the fix `team-janitor disk trims it; team-janitor disk status names it`, and WARN when the status does not answer, naming its first error.
+- It never fails, since the heartbeat's `disk` step trims the cache on its next run.
+- So a cache past its cap shows on a machine with no heartbeat.
+- Its tests (`tests/team-doctor-disk.bats`) take the fixture Go build cache `doctor_machine` names, the sandbox's `~/.cache/go-build` (`TEAM_GO_CACHE`), never what the doctor's stub `go` would answer.
+
 ## Test seams
 
 A test runs the real `team-janitor disk` in the bats sandbox, against a fixture jobs tree under the sandbox's `HOME`, never the machine's `~/.claude/jobs`, and a fixture Go build cache, never the machine's:

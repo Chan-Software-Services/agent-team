@@ -63,11 +63,14 @@ declare -gA FORMAT=(
 # cloned as the bootstrap clones them,
 # ~/.config/agent-team/home names the team home, and its core.hooksPath the code's records-git;
 # the user manager delegates cpu and memory and the team's slice is installed (team-capacity);
-# /tmp is a memory file system a tenth full (tmp_reading); and a reading of the machine's load and
-# one of the model windows were just taken, as a good heartbeat run just ended.
+# /tmp is a memory file system a tenth full (tmp_reading); the Go build cache is the sandbox's
+# ~/.cache/go-build, absent until a test makes it (TEAM_GO_CACHE), never what the go stub says;
+# and a reading of the machine's load and one of the model windows were just taken, as a good
+# heartbeat run just ended.
 doctor_machine() {
   # The whole doctor, until a test names its checks (only_checks).
   unset TEAM_DOCTOR_CHECKS
+  export TEAM_GO_CACHE=$HOME/.cache/go-build
   hold_lease home-pc >/dev/null
   fake_service_managers
   # shellcheck disable=SC2153 # sandbox sets TEAM_HOME
