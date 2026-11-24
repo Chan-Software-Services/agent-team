@@ -242,6 +242,11 @@ library() {
   [[ ! -e $GH_DIR/statuses ]]
 }
 
+@test "a head that holds the base already and lacks a required check is refused, naming it, since no merge brings it" {
+  echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint", "CodeQL"]}}}' >"$GH_DIR/branch.json"
+  refused "team-catch-up: $url holds dev already, so no merge brings the required check CodeQL it lacks: a rerun of its workflow on the head, or a push, does"
+}
+
 @test "a head whose latest review did not pass on it exactly is refused" {
   base_moves >/dev/null
   review "$head" findings
@@ -335,7 +340,7 @@ library() {
   refused "team-catch-up: the head ${evil:0:7} does not stand on the review of ${head:0:7}, which team-catch-up made it from: ${evil:0:7} changes more than the merge of its parents"
 }
 
-@test "a red, pending or missing required check, a closed PR or another base is refused with every reason at once" {
+@test "a red or pending required check, a closed PR or another base is refused with every reason at once, a missing check named in none" {
   base_moves >/dev/null
   echo '[
     {"name": "test", "bucket": "pending", "state": "PENDING"},
@@ -345,10 +350,55 @@ library() {
   refused "team-catch-up: T14 cannot catch up PR #5, so nothing changed:" \
     "  PR #5 is closed, not open" \
     "  PR #5 targets main, not proj's base dev" \
-    "  required check lint is missing on the head" \
     "  required check test has not passed on the head" \
     "  checks failing on the head: docs" \
     "  checks pending on the head: test"
+  # A check missing on the head is no reason of its own: the merge's checks bring it.
+  [[ $stderr != *lint* ]]
+}
+
+@test "a head lacking only checks the base newly requires is caught up, naming each check its merge must bring" {
+  local base merge
+  base=$(base_moves)
+  # dev's protection and a ruleset now require CodeQL and Analyze (python), which no run made on
+  # the head, since only a commit pushed after the base required them gets them.
+  echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint", "CodeQL"]}}}' >"$GH_DIR/branch.json"
+  echo '[{"type": "required_status_checks", "ruleset_id": 42, "parameters": {"required_status_checks": [
+    {"context": "Analyze (python)", "integration_id": 15368}]}}]' >"$GH_DIR/rules.json"
+  echo '{"id": 42, "name": "dev", "bypass_actors": []}' >"$GH_DIR/ruleset-42.json"
+  run_bin -0 --separate-stderr team-catch-up T14
+  merge=$(git --git-dir="${PROJ_ORIGIN:?}" rev-parse "refs/heads/$branch")
+  [[ $merge != "$head" ]]
+  assert_contains "$output" "merged dev ${base:0:7} cleanly onto ${head:0:7} as ${merge:0:7} and pushed it to $branch"
+  assert_contains "$output" "team-catch-up: the head lacked the required checks Analyze (python) and CodeQL, which the checks of the merge ${merge:0:7} must bring: team-merge refuses it while one is missing"
+  assert_equal "${lines[-2]}" "$merge"
+  [[ -s $GH_DIR/statuses ]]
+  assert_equal "$(jq -c 'select(.event == "caught-up") | [.from, .head, .base]' "$TEAM_HOME/ledger.jsonl")" \
+    "$(jq -cn --args '$ARGS.positional' "$head" "$merge" "$base")"
+  # One lacked check whose name holds " and " is one check, counted, not told by its text.
+  base_moves src/third.py >/dev/null
+  review "$merge" pass
+  echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint", "Build and test"]}}}' >"$GH_DIR/branch.json"
+  echo '[]' >"$GH_DIR/rules.json"
+  run_bin -0 --separate-stderr team-catch-up T14
+  assert_contains "$output" "team-catch-up: the head lacked the required check Build and test, which the checks of the merge "
+}
+
+@test "a head lacking a newly required check is still refused while another check failed or is pending, naming it" {
+  base_moves >/dev/null
+  echo '{"name": "dev", "protection": {"required_status_checks": {"contexts": ["lint", "CodeQL"]}}}' >"$GH_DIR/branch.json"
+  jq '.[1].bucket = "fail" | .[1].state = "FAILURE"' "$GH_DIR/checks.json" >"$GH_DIR/checks.next"
+  mv "$GH_DIR/checks.next" "$GH_DIR/checks.json"
+  refused "team-catch-up: T14 cannot catch up PR #5, so nothing changed:" \
+    "  required check lint has not passed on the head" \
+    "  checks failing on the head: lint"
+  [[ $stderr != *CodeQL* ]]
+  jq '.[1].bucket = "pending" | .[1].state = "PENDING"' "$GH_DIR/checks.json" >"$GH_DIR/checks.next"
+  mv "$GH_DIR/checks.next" "$GH_DIR/checks.json"
+  refused "team-catch-up: T14 cannot catch up PR #5, so nothing changed:" \
+    "  required check lint has not passed on the head" \
+    "  checks pending on the head: lint"
+  [[ $stderr != *CodeQL* ]]
 }
 
 @test "a branch that moves on origin while the merge is made refuses the push, and nothing is logged" {
@@ -617,4 +667,19 @@ SH
   refused "team-catch-up: dev merges through its queue, which needs no catch-up: run team-merge T14"
   base_moves src/tool.py >/dev/null
   refused "team-catch-up: $url conflicts with dev on src/tool.py: the holder merges it (builder-merge-base), then a rereview"
+}
+
+@test "on a base with a merge queue a head lacking a newly required check is caught up, since team-merge queues no head without it" {
+  local base merge
+  base=$(base_moves)
+  echo '[{"type": "merge_queue", "ruleset_id": 42, "parameters": {"merge_method": "MERGE"}},
+    {"type": "required_status_checks", "ruleset_id": 42, "parameters": {"required_status_checks": [
+    {"context": "lint", "integration_id": 15368}, {"context": "Analyze (python)", "integration_id": 15368}]}}]' >"$GH_DIR/rules.json"
+  echo '{"id": 42, "name": "dev", "bypass_actors": []}' >"$GH_DIR/ruleset-42.json"
+  run_bin -0 --separate-stderr team-catch-up T14
+  merge=$(git --git-dir="${PROJ_ORIGIN:?}" rev-parse "refs/heads/$branch")
+  [[ $merge != "$head" ]]
+  assert_equal "$(git --git-dir="${PROJ_ORIGIN:?}" rev-list --parents -n 1 "$merge")" "$merge $head $base"
+  assert_contains "$output" "team-catch-up: the head lacked the required check Analyze (python), which the checks of the merge ${merge:0:7} must bring: team-merge refuses it while one is missing"
+  assert_equal "$(jq -c 'select(.event == "caught-up") | .head' "$TEAM_HOME/ledger.jsonl")" "\"$merge\""
 }
