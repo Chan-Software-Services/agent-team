@@ -428,9 +428,10 @@ compose_env_since() {
   # The named volume and the network carry the task's labels too.
   assert_equal "$(jq -r --arg n "${PROJECT}_data" '.[] | select(.Name == $n) | .Labels["io.github.chanjdaniel.team.task"]' "$DOCKER_STATE/volumes.json")" T22
   assert_equal "$(jq -r --arg n "${PROJECT}_default" '.[] | select(.Name == $n) | .Labels["io.github.chanjdaniel.team.task"]' "$DOCKER_STATE/networks.json")" T22
-  # Through the wrapper: its config for the project, then (once admitted) up, then its ports for
-  # the seed.
+  # Through the wrapper: its config for the project, then (once admitted) up --no-start, which
+  # makes its network, then up, then its ports for the seed.
   assert_equal "$(docker_compose_env | jq -r '.call | sub(" -f [^ ]+"; "")')" "compose config --format json
+compose up --no-start
 compose up -d --wait
 compose port web 80"
   # The other stacks are untouched.
@@ -907,7 +908,7 @@ team-stack: no room for $PROJECT: stack:shop: the team is at level none: nothing
   ((checks >= 2 && checks <= 3))
 }
 
-@test "the admission lock is held through up -d --wait and released before the seed" {
+@test "the admission lock is held through up --no-start and up -d --wait and released before the seed" {
   open_task T22
   local lock=$HOME/.local/state/agent-team/stacks.lock
   local log=$BATS_TEST_TMPDIR/lock
@@ -922,6 +923,7 @@ SH
   printf 'if flock -n %q true; then echo free; else echo held; fi >>%q\n' "$lock" "$log" >>"$STACK_WORKTREE/scripts/seed.sh"
   run_bin -0 team-stack up --worktree "$STACK_WORKTREE"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/lock")" "held
+held
 free"
 }
 
@@ -1684,7 +1686,8 @@ unhealthy_wrapper() {
   cat >"$STACK_WORKTREE/scripts/compose.sh" <<SH
 #!/usr/bin/env bash
 "\$(dirname "\$0")/compose-real.sh" "\$@" || exit
-if [[ \${1:-} == up && -e "$BATS_TEST_TMPDIR/unhealthy" ]]; then echo "web is unhealthy" >&2; exit 1; fi
+# Only up -d --wait waits for health: up --no-start starts nothing.
+if [[ \${1:-} == up && " \$* " == *" --wait "* && -e "$BATS_TEST_TMPDIR/unhealthy" ]]; then echo "web is unhealthy" >&2; exit 1; fi
 SH
   chmod +x "$STACK_WORKTREE/scripts/compose.sh"
   touch "$BATS_TEST_TMPDIR/unhealthy"
@@ -2319,6 +2322,7 @@ wrapper_calls_since() {
   # instance's, with Docker's ports.
   assert_equal "$(wrapper_calls_since 1)" "compose config --format json $PROJECT -
 compose config --format json $PROJECT-a auto
+compose up --no-start $PROJECT-a auto
 compose up -d --wait $PROJECT-a auto
 compose port web 80 $PROJECT-a auto"
   # The worktree's own stack is not started.

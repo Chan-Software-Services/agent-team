@@ -43,12 +43,17 @@
 #   compose [-f <file>] up -d --wait    the network and named volume made when missing (an
 #                                       existing one keeps its labels), the web container made,
 #                                       started, or recreated when its labels changed
+#   compose [-f <file>] up --no-start   the same, starting nothing: a new or recreated
+#                                       container is created, a stopped one stays stopped
 #   compose [-f <file>] port web 80     the running web's address
 #   compose -p <project> logs --no-color --timestamps <service>
 #                                       $DOCKER_STATE/logs/<project>-<service>.log when the test
 #                                       wrote one, else one line
 #   compose -p <project> stop, compose -p <project> down -v --remove-orphans
-# Each compose call is logged with what it sees (docker_compose_env).
+#   rm --force --volumes <names or ids>...
+#                                       each container removed with its anonymous volumes
+# Each compose call is logged with what it sees (docker_compose_env), the sandbox's heavy-run
+# lock's holder line among it while a process holds the lock.
 # The machine's memory and disk, which team-stack's admission reads, are the sandbox's too: a
 # stub df answers df -Pk <path> from $DOCKER_STATE/disk-free (machine_disk_free; 200 GiB free
 # unless a test says otherwise), and TEAM_MEMINFO names $DOCKER_STATE/meminfo, read in place of
@@ -193,9 +198,9 @@ docker_created() {
     --arg name "$2" --argjson seconds "$3" --arg field "${field[$1]}" --arg form "${form[$1]}"
 }
 
-# The compose calls made, one compact JSON object per line: {call, project, COMPOSE_PROJECT_NAME,
-# TH_PORTS, TH_WEB_PORT, labels: {owner, task, kind, worktree, expires}}, each as the call saw
-# it (null when unset).
+# The compose calls made, one compact JSON object per line: {call, project, heavy (the heavy-run
+# lock's holder line while a process holds it), COMPOSE_PROJECT_NAME, TH_PORTS, TH_WEB_PORT,
+# labels: {owner, task, kind, worktree, expires}}, each as the call saw it (null when unset).
 docker_compose_env() {
   cat "$DOCKER_STATE/compose-env.jsonl" 2>/dev/null || true
 }
