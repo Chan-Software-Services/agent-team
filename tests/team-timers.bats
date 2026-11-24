@@ -1486,6 +1486,34 @@ JSON
   assert_equal "$(stops)" 21212121
 }
 
+@test "the finished step never stops a live topic session: not idle with a done logged by hand, nor after a stow and a later launch" {
+  local wt1=$HOME/slots/proj/1 wt2=$HOME/slots/proj/2
+  # T5 is a topic: its first session stowed and relaunched, both still listed idle; the later one
+  # with a done of its own logged by hand. T4's planner beside it, handed on by its done once its
+  # plan is approved, is stopped, so the step ran.
+  log_events <<LINES
+T5 {event: "opened", project: "proj", path: "topic", type: "research", title: "Interfaces", branch: "research/T5-interfaces", base: "main", base_sha: "0123456", worktree: "$wt1", discord_message: "1574454112324419625", discord_channel: "1561234567890123456"}
+T5 {event: "interview-thread", discord_thread: "1571111111111111111"}
+launch T5 topic 12121212 $wt1
+T5 {event: "paused", reason: "stowed", cause: "stow", role: "topic", session: "12121212"}
+T5 {event: "stowed", machine: "home-pc", cause: "level", roles: ["topic"], sessions: ["topic"], worktrees: []}
+launch T5 topic 13131313 $wt1
+T5 {event: "done", role: "topic", session: "13131313"}
+launch T4 planner 14141414 $wt2
+T4 {event: "done", role: "planner", session: "14141414"}
+T4 {event: "plan-approved", by: "Daniel"}
+LINES
+  cat >"$STUB_FIXTURES/agents.json" <<'JSON'
+[{"id": "12121212", "name": "T5-topic", "status": "idle"},
+ {"id": "13131313", "name": "T5-topic", "status": "idle"},
+ {"id": "14141414", "name": "T4-planner", "status": "idle"}]
+JSON
+  finished_stub
+  run_bin -0 team-timers run
+  assert_equal "$(grep ' finished: ' <<<"$output" | cut -d ' ' -f 2-)" "finished: stopped T4-planner 14141414: its work is handed on"
+  assert_equal "$(stops)" 14141414
+}
+
 @test "the finished step stops nothing off the lease or offline" {
   make_machine laptop
   on_machine laptop finished_workers

@@ -1972,6 +1972,43 @@ odd_names_branch() {
   assert_contains "$brief" "3. Check what is here against what your brief, the tickets and the build notes say is done: \`git status\`, \`git diff\` and \`git log origin/dev..HEAD\`"
 }
 
+@test "a topic's session relaunched after a stow or a crash gets the resume and resume-crash briefs for the role topic" {
+  # A topic task as team-topic open opens it: no thread under #coordinator, its interview thread.
+  mkdir -p "$TEAM_HOME/tasks/T20"
+  event T20 opened "$(jq -cn --arg wt "$HOME/agent-team/.claude/worktrees/3" '{project: "home", path: "topic",
+    type: "research", title: "the interfaces", branch: "research/T20-interfaces", base: "main", base_sha: "aba9d074",
+    worktree: $wt, discord_message: "1574454112324419625", discord_channel: "1561234567890123456"}')"
+  event T20 interview-thread '{discord_thread: "1565400000000000020"}'
+  run_bin -0 team-brief T20 resume --name resume-topic --set role=topic \
+    --set "brief=~/agent-team-records/tasks/T20/brief.md" --set "from=the handoff from home-pc at 2026-11-24T14:05:00Z" \
+    --set "snapshot=none: your worktree stayed in place, as you left it"
+  assert_equal "$output" "$TEAM_HOME/tasks/T20/brief-resume-topic.md"
+  local brief
+  brief=$(<"$output")
+  assert_equal "$(head -n 1 <<<"$brief")" "# T20 brief (topic): resume the interfaces"
+  assert_contains "$brief" "Path: topic; you are the topic, resuming the task after the handoff from home-pc at 2026-11-24T14:05:00Z."
+  assert_contains "$brief" "Worktree: \`~/agent-team/.claude/worktrees/3\`, branch \`research/T20-interfaces\`: the one you left"
+  assert_contains "$brief" "Task directory: \`.work/task/\` in the worktree, as you left it, or restored from the task's archive with the worktree."
+  # Step 1 is a builder's alone; the brief it sends the topic to reads the handoff, the notes and
+  # the thread's history before it posts.
+  assert_contains "$brief" "(any other role skips this step)"
+  assert_contains "$brief" "2. Read your brief \`~/agent-team-records/tasks/T20/brief.md\`"
+  assert_contains "$brief" "3. Then \`.work/task/handoff.md\` if it exists"
+  refute_grep '{{\|}}' "$output"
+  assert_equal "$(jq -c '[.template, .values.role, .values.brief]' "$TEAM_HOME/tasks/T20/brief-resume-topic.json")" \
+    '["resume","topic","~/agent-team-records/tasks/T20/brief.md"]'
+
+  run_bin -0 team-brief T20 resume-crash --name resume-topic --force --set role=topic \
+    --set "brief=~/agent-team-records/tasks/T20/brief.md" --set machine=home-pc --set checkpoint=2026-11-24T13:45:00Z \
+    --set "snapshot=none"
+  brief=$(<"$output")
+  assert_equal "$(head -n 1 <<<"$brief")" "# T20 brief (topic): resume the interfaces after a crash"
+  assert_contains "$brief" "Path: topic; you are the topic, resuming the task from the checkpoint of 2026-11-24T13:45:00Z: home-pc stopped without a handoff."
+  assert_contains "$brief" "Worktree: \`~/agent-team/.claude/worktrees/3\`, branch \`research/T20-interfaces\`, made on this machine"
+  assert_contains "$brief" "1. Read your brief \`~/agent-team-records/tasks/T20/brief.md\`"
+  refute_grep '{{\|}}' "$output"
+}
+
 @test "each delivery brings the branch up to date with the base before reporting, and never uses sudo" {
   open_t12
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"

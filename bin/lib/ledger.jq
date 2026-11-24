@@ -1115,7 +1115,8 @@ def waits_for_input($done):
 # fresh worker that resumes the work, and a resumed does not undo it); stowed is whether such a
 # paused follows it, so team-worker can count itself as that fresh worker. Any other paused is a
 # wait the worker comes back from, and a review carries no session, so a reviewer is handed on by
-# the done logged beside its review.
+# the done logged beside its review. A topic or ops session is never one of them, so neither the
+# heartbeat's finished step nor a later launch stops a topic waiting on Daniel.
 def handed_on_launches($role; $home):
   . as $events
   | [to_entries[] | .key as $i | .value
@@ -2053,7 +2054,9 @@ def waiting_on:
 # passes it ($activity: {sessions}, its object keyed by full session id, or {error} when it
 # failed, where none is stalled). A live session is judged by its latest launch, and one waiting
 # for input is not also called silent; stalled is a busy session, not waiting for input, whose
-# transcripts have gone unwritten past its limit (stall_limits).
+# transcripts have gone unwritten past its limit (stall_limits). A topic session is never silent:
+# its talk with Daniel is in Discord, not the ledger, so idle with no event since its launch it is
+# at work, waiting on them.
 # A session waits for input as waits_for_input says, which the launcher's launch_states reads
 # too: a builder that delivered, or that a later builder launch of its worktree superseded, with
 # no dialog open does not, and it is idle with an event since its launch.
@@ -2127,7 +2130,7 @@ def task_findings($sessions; $activity):
       | if .prompted then
           finding($task; "waiting-input"; .short; .name; "\(.name) \(.short) is waiting for input";
             "read claude logs \(.short), then answer it in one line or put the question to Daniel with team-log \($task) asked")
-        elif .live.status == "idle" and .quiet and (IN(.launch.ticket; $parked_tickets[]) | not) then
+        elif .live.status == "idle" and .quiet and .launch.role != "topic" and (IN(.launch.ticket; $parked_tickets[]) | not) then
           finding($task; "silent"; .short; .name;
             "\(.name) \(.short) is idle with no ledger event since its launch at \(.launch.ts)";
             "read claude logs \(.short), then send it one line or log what is known with team-log")
