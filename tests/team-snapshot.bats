@@ -926,7 +926,7 @@ queued() {
   run_bin -0 team-snapshot --json
   local snapshot=$output
   assert_equal "$(jq .queued <<<"$snapshot")" 5
-  run_bin -0 team-queue list --json
+  run_bin -0 --separate-stderr team-queue list --json
   assert_equal "$(jq -c .queue <<<"$snapshot")" "$(jq -c 'del(.findings)' <<<"$output")"
   assert_equal "$(jq -c '.queue | keys_unsorted' <<<"$snapshot")" '["schema","room","ready","waiting","opened","unranked","problems"]'
 

@@ -1,11 +1,13 @@
 # The queue of approved work, the team home's tasks/queued/: what each item's state is, when an
 # after: condition is met, how the items rank, the problems team-queue index --check names, the text
 # of the index, the judging of team-queue set's table, of team-queue take and of team-queue tidy's
-# links and moves, whether the level has room for one more task and team-queue list's object and
-# findings. Used by team-queue over the ledger's lines (jq -nR), with the items' cards (team-queue's
-# one awk pass: {file, title, keys, problems}), the registry's project names, the items that left
-# the queue, the queued files the tasks' plans cite, today's UTC date, the time now, and for list
-# team-capacity's plan and costs; team-queue's header documents the keys, the states and the words.
+# links and moves, whether the level has room for one more task, team-queue list's object and
+# findings, each waits: line's age and team-queue waits' count. Used by team-queue over the
+# ledger's lines (jq -nR), with the items' cards (team-queue's one awk pass: {file, title, keys,
+# problems}), the registry's project names, the items that left the queue, the queued files the
+# tasks' plans cite, today's UTC date, the time now, for list team-capacity's plan and costs, and
+# for list and waits when each waits: line last changed; team-queue's header documents the keys,
+# the states and the words.
 include "ledger";
 
 # The front matter keys, in the order team-queue writes them.
@@ -218,6 +220,14 @@ def queue_label: "(\(.project), priority \(.priority), \(.size)\(if .guarded != 
 # The lines under an item for each queued item it takes.
 def queue_taken_lines($items): .takes[] | $items[.] // empty | "   - takes \(.file): \(queue_what)";
 
+# A wait's age in days as the list says it: "under a day", "1 day", "12 days".
+def queue_age: if . == 0 then "under a day" elif . == 1 then "1 day" else "\(.) days" end;
+
+# Why a waiting item waits, as the index and the list say it: its waits: line, with its age in
+# parentheses when it has one (the list's), then each after: condition not met, joined by ", ".
+def queue_reasons_text:
+  (if .waited != null then .reasons[0] += " (\(.waited.days | queue_age))" else . end) | .reasons | join(", ");
+
 # The index's sections as lines, each section opening with a blank line, from queue_view's object:
 # Ready, ranked; Waiting; Opened; Unranked; a section with no item left out.
 def queue_section_lines:
@@ -225,7 +235,7 @@ def queue_section_lines:
   | (select($v.ready != []) | "", "## Ready, ranked", "",
      ($v.ready[] | "\(.rank). \(.file) \(queue_label): \(queue_what)", queue_taken_lines($v.items))),
     (select($v.waiting != []) | "", "## Waiting", "",
-     ($v.waiting[] | "- \(.file) \(queue_label): \(queue_what); waits for \(.reasons | join(", "))", queue_taken_lines($v.items))),
+     ($v.waiting[] | "- \(.file) \(queue_label): \(queue_what); waits for \(queue_reasons_text)", queue_taken_lines($v.items))),
     (select($v.opened != []) | "", "## Opened", "",
      ($v.opened[] | "- \(.file) (\(.project), \(.opened)): \(queue_what)", queue_taken_lines($v.items))),
     (select($v.unranked != []) | "", "## Unranked", "",
@@ -380,8 +390,40 @@ def queue_room($plan; $costs; $tasks; $today):
       end
   end;
 
+# The items, each given waited, the age of its waits: line, from team-queue's reading of when
+# each queued file's waits: line last changed ($ages, "<file>\t<seconds>\t<source>" lines, source
+# git or file) and now (seconds): {since (UTC), days (whole days since, never below 0), source},
+# or null for an item with no waits: or no reading.
+def queue_waited($ages; $now):
+  ($ages | split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: {seconds: (.[1] | tonumber), source: .[2]}})
+   | from_entries) as $read
+  | map(. as $i
+    | .waited = (if $i.waits == null then null else $read[$i.file] // null end
+        | if . == null then null
+          else {since: (.seconds | todate), days: ([($now - .seconds) / 86400 | floor, 0] | max), source} end));
+
+# team-queue waits' object, team-queue-waits/1, from the items (each with waited), $days and
+# $history (why the team home's history could not be read, else null): the waits older than $days
+# days, of each queued item with a waits: line that no task opened (an item with only after:
+# never), oldest first, then by file: {schema, days, count, says: "<n> waits older than <days>
+# days", with " (each age its file's own time: the team home's history cannot be read)" after it
+# when $history is not null, history_error: $history, waits: [{file, waits, since, days, source}]}.
+def queue_waits($days; $now; $history):
+  [.[] | select(.waits != null and .opened == null and .waited != null)
+   | select($now - (.waited.since | fromdate) > $days * 86400)
+   | {file, waits, since: .waited.since, days: .waited.days, source: .waited.source}]
+  | sort_by([.since, .file])
+  | {schema: "team-queue-waits/1", days: $days, count: length,
+     says: ("\(length | queue_count("wait")) older than \($days | queue_count("day"))"
+            + if $history != null then " (each age its file's own time: the team home's history cannot be read)" else "" end),
+     history_error: $history, waits: .};
+
+# team-queue waits' text from its object: its says line, then "- <file>: <age>: <waits>" for
+# each wait (queue_age's "under a day", "1 day", "12 days"), ending in a newline.
+def queue_waits_text: [.says, (.waits[] | "- \(.file): \(.days | queue_age): \(.waits)")] | join("\n") + "\n";
+
 # An item as team-queue list --json gives it, its internal fields left out.
-def queue_list_item: {file, title, summary, project, priority, size, after, waits, from, opened, takes, alone, guarded, unblocks, rank};
+def queue_list_item: {file, title, summary, project, priority, size, after, waits, waited, from, opened, takes, alone, guarded, unblocks, rank};
 
 # team-sweep's queue findings, each with task, session and name null, from the room
 # (queue_room's), queue_view's object, the problems (queue_problems') and the events by task:

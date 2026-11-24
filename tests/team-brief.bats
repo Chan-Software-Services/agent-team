@@ -261,6 +261,7 @@ Task directory: `.scratch/task/` in the worktree (excluded from git), for your s
    Fix each finding the coordinator sends you on the branch and push; once they are fixed, or the coordinator says the review passed, go on.
 4. Run `/no-mistakes` with the gate's ci step skipped for the run (`no-mistakes axi run --skip ci --intent "<the intent>"`), so the run ends with outcome `passed` once its pr step has opened or updated the PR, and CI is the coordinator's wait, as step 7 says; never wait for `checks-passed`, and never abort a run to end it.
    Give it an intent that says what this PR changes, in words a reader of the repository can follow, with no task, ticket, phase or retro number (the task's goal is "rate-limit the applicant sign-in endpoints (per address and per IP, Mongo TTL counters, 429 with Retry-After), so Conventioner cannot be used to flood addresses with sign-in codes or to guess codes.": on a phase, this phase's part of it alone), under a Disclosure section put in its terms, since the gate drafts the PR's title and body from it.
+   An intent about a test under load says what the test shows, never a load for the gate to add: every agent of the gate reads `@CODE@/bin/lib/gate-rules.md`, which holds any load it adds to at most 4 busy CPU cores with a timeout.
    A step that parks with no finding you approve yourself, with no QUESTION, only when the park is one of these kinds, named by its id:
    - `review-coverage`: the review step parks on "review coverage is incomplete" alone, and the team review read every file it names at a head this branch contains: a head you or the builder before you sent as `DONE review-ready`, or one the coordinator names as reviewed, that `git merge-base --is-ancestor <that head> HEAD` passes for and whose `git diff --name-only origin/dev...<that head>` lists the file.
    Approve it with `no-mistakes axi respond --action approve`, write a build note in `.scratch/task/build-notes/` naming the run, the step, the park's id and what the gate said, and put the ids of the parks the run approved in its `DONE gate` line as `approved=<ids, comma-separated>`.
@@ -481,7 +482,7 @@ walk_brief() {
   walk_brief
   local brief=$TEAM_HOME/tasks/T12/brief.md
   grep -qF "\`$REPO_ROOT/bin/team-stack up\`, run with Bash \`run_in_background\` as a call of its own" "$brief"
-  grep -qF 'When `up` exits 75, the team has no room: send `T12 PAUSED <its reason line>`' "$brief"
+  grep -qF 'When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack'"'"'s network is made: send `T12 PAUSED <its reason line>`' "$brief"
   grep -qF '/toolkits/frontend/scripts/agent-chrome http://localhost:<port>/' "$brief"
   grep -qF 'a fixture account' "$brief"
   grep -qF '`127.0.0.1:5173`' "$brief"
@@ -531,7 +532,7 @@ walk_brief() {
   # The stack: its own, started and stopped by team-stack, and what a refusal means.
   grep -qF "\`$REPO_ROOT/bin/team-stack up\`, run with Bash \`run_in_background\` as a call of its own" "$brief"
   grep -qF 'never the primary stack' "$brief"
-  grep -qF 'When `up` exits 75, the team has no room: send `T12 PAUSED <its reason line>`' "$brief"
+  grep -qF 'When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack'"'"'s network is made: send `T12 PAUSED <its reason line>`' "$brief"
   grep -qF "\`$REPO_ROOT/bin/team-stack stop\` once the tiles are taken" "$brief"
   # The tiles: where, numbered and captioned, fixture values only, posted by the allowed form.
   grep -qF 'Take the tiles into `.scratch/task/shots/`, numbered' "$brief"
