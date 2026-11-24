@@ -63,10 +63,11 @@
 # (its lines prefixed "usage: "); a failed export is a warning and fails nothing, since the
 # transcripts stay and the next checkpoint exports what this one could not.
 # Then, in the team home, the ledger's lock held: commits every records path bin/lib/records lists
-# (the ledger, level.jsonl, sessions.jsonl, drills.jsonl, tasks/ with the scratch archives, plans, briefs and their
-# records and tasks/current.md or its removal, projects/, projects.toml, memory/, machine/, usage/
-# and manual-steps.md), less what git ignores, as "chore: checkpoint" on the branch checked out (dev),
-# leaving whatever else is staged as it was, and pushes the branch when it is ahead of origin's.
+# (the ledger, level.jsonl, sessions.jsonl, drills.jsonl, tasks/ with the scratch archives, plans,
+# briefs and their records and tasks/current.md or its removal, projects/, projects.toml,
+# models.toml, memory/, machine/, usage/ and manual-steps.md), less what git ignores, as "chore:
+# checkpoint" on the branch checked out (dev), leaving whatever else is staged as it was, and
+# pushes the branch when it is ahead of origin's.
 # When that one commit fails (a path the team home's hook refuses: an image, an address at a
 # public provider), it commits group by group instead, the ledger's (ledger.jsonl and level.jsonl)
 # first, then each other in name order, each alone as "chore: checkpoint <group>", a group being a
