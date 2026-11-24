@@ -73,9 +73,10 @@
 # with an Actions job link that is not a roll-up (actions/jobs/<job id>), for its runner and
 # steps, and never a check's output. Of each failure that is still the PR's at a step of the
 # job's own, it then reads the job's log once (actions/jobs/<job id>/logs, through gh_call with
-# gh api's --allow-escape-sequences, since a log holds the runner's colours); and only when one of those logs shows apt's fetch failure (below), the
-# change's paths once: the PR's (pulls/<n>/files, every page), or with --run the branch's from
-# the project's base (compare/<base>...<head>).
+# gh api's --allow-escape-sequences, since a log holds the runner's colours); and only when one
+# of those logs shows apt's fetch failure (below), the change's paths once: the PR's
+# (pulls/<n>/files, every page), or with --run the branch's from the project's base
+# (compare/<base>...<head>).
 # A workflow run of the head that is not completed holds the wait whatever the checks show, since
 # in a re-run's or a push's first seconds the head's checks may list only another workflow's, and
 # an earlier attempt's failure may yet be replaced.
@@ -162,10 +163,12 @@
 #                   one of apt's fetch errors (E: Failed to fetch, E: Unable to fetch some archives,
 #                   E: Some index files failed to download), with no ##[group], ##[endgroup],
 #                   ##[start-action] or ##[end-action] line between them and at most 3 other
-#                   lines after apt's last such error, and the change touches
-#                   nothing under .github/, where its workflows, actions, install lists and apt
-#                   sources live (paths that cannot be read, or as many as GitHub lists at most,
-#                   3000 of a PR's or 300 of a compare's, count as touching it); and each queued
+#                   lines after apt's last such error, and the change touches neither .github/
+#                   (its workflows and actions) nor a path the step's Run lines or the scripts
+#                   their groups echo name (a script of the repository it runs, which may hold
+#                   its install list; step_paths below); paths that cannot be read, or as many
+#                   as GitHub lists at most, 3000 of a PR's or 300 of a compare's, count as
+#                   touching them; and each queued
 #                   or stuck check: each line names its link and the gh run rerun (for a queued
 #                   one, gh run cancel first) to run before running team-ci-wait again
 #   rules           with --merge-group, a required check not listed on the trial commit: "rules:
@@ -576,13 +579,14 @@ CLASSES='
 '
 
 # apt_fetch_failed <log> <started at> <completed at>: whether a job's log, each line "<time> <text>"
-# as actions/jobs/<id>/logs gives it, shows its step of that span failing because apt could not fetch packages: the step's
-# first ##[error] line comes after one of apt's fetch errors (E: Failed to fetch, E: Unable to fetch
-# some archives, E: Some index files failed to download), with no ##[group], ##[endgroup],
-# ##[start-action] or ##[end-action] line between them and at most 3 lines of any other kind after
-# apt's last such error (a wrapper's own words, as Playwright's install-deps prints 2), so apt
-# printed them in the group or action that failed, and no other command's output followed them
-# there. The span is the step's, to the second, as the job's steps give it.
+# as actions/jobs/<id>/logs gives it, shows its step of that span failing because apt could not
+# fetch packages: the step's first ##[error] line comes after one of apt's fetch errors (E: Failed
+# to fetch, E: Unable to fetch some archives, E: Some index files failed to download), with no
+# ##[group], ##[endgroup], ##[start-action] or ##[end-action] line between them and at most 3
+# lines of any other kind after apt's last such error (a wrapper's own words, as Playwright's
+# install-deps prints 2), so apt printed them in the group or action that failed, and no other
+# command's output followed them there. The span is the step's, to the second, as the job's steps
+# give it.
 apt_fetch_failed() {
   LC_ALL=C awk -v from="${2:0:19}" -v to="${3:0:19}" '
     { at = substr($0, 1, 19); text = substr($0, index($0, " ") + 1) }
@@ -594,19 +598,57 @@ apt_fetch_failed() {
     END { exit !found }' "$1"
 }
 
+# step_paths <log> <started at> <completed at>: the paths the step of that span names in what it
+# runs, one per line: each word of its ##[group]Run lines and of the script lines each such group
+# echoes before its ##[endgroup] (the runner's colours taken out), split at blanks, quotes and the
+# shell's operators and $, that holds a / or ends in a script's extension (.sh, .bash, .py, .rb,
+# .pl, .js, .mjs, .cjs, .ts) and a letter or digit, its leading ./ and ../ taken off, so a script
+# the step runs from the repository (../scripts/chromium-packages.sh) counts as an install list of
+# its own.
+step_paths() {
+  LC_ALL=C awk -v from="${2:0:19}" -v to="${3:0:19}" '
+    { at = substr($0, 1, 19); text = substr($0, index($0, " ") + 1) }
+    at < from || at > to { next }
+    text ~ /^##\[group\]Run / { run = 1; text = substr(text, 14) }
+    text ~ /^##\[endgroup\]/ { run = 0; next }
+    run {
+      gsub("\033\\[[0-9;]*m", "", text)
+      n = split(text, words, /[][ \t"\047`=;|&()<>{}$,]+/)
+      for (i = 1; i <= n; i++) {
+        word = words[i]
+        if (word !~ /\// && word !~ /\.(sh|bash|py|rb|pl|js|mjs|cjs|ts)$/) continue
+        while (sub(/^\.\.?\//, "", word)) ;
+        if (word ~ /[A-Za-z0-9]/) print word
+      }
+    }' "$1"
+}
+
 # change_touches_ci: whether the change under the wait may have caused its own runner's packages to
 # fail to fetch: a changed path under .github/ (a workflow, an action, an install list or an apt
-# source written there), or paths that cannot be read or may be cut short (GitHub lists at most
-# 3000 of a PR's, and 300 of a compare's). The change is the PR's (with --merge-group too), or with
-# --run the branch's from the project's base (compare <base>...<head>).
+# source written there), or one that is a path in $dir/named (step_paths' of each step that failed
+# on apt's fetch, a script it runs being an install list too), ends in / and such a path, or is
+# what such a path ends in after a / ($GITHUB_WORKSPACE/scripts/x.sh), or paths that cannot
+# be read or may be cut short (GitHub lists at most 3000 of a PR's, and 300 of a compare's). The
+# change is the PR's (with --merge-group too), or with --run the branch's from the project's base
+# (compare <base>...<head>).
 change_touches_ci() {
+  local most
   if [[ -n $run_id ]]; then
     gh_read "$dir" compare "repos/$repo/compare/$base...$head" || return 0
-    [[ $(jq -r '(.files | length) < 300 and all(.files[]; .filename | startswith(".github/") | not)' "$dir/compare" 2>/dev/null) != true ]]
+    [[ $(jq -r '.files | type' "$dir/compare" 2>/dev/null) == array ]] || return 0
+    jq -r '.files[].filename' "$dir/compare" >"$dir/changed" || return 0
+    most=300
   else
     gh_call "$dir" files api "repos/$repo/pulls/$number/files?per_page=100" --paginate --jq '.[].filename' || return 0
-    (($(wc -l <"$dir/files") >= 3000)) || grep -q '^\.github/' "$dir/files"
+    cp "$dir/files" "$dir/changed"
+    most=3000
   fi
+  (($(wc -l <"$dir/changed") < most)) || return 0
+  awk 'FILENAME == ARGV[1] { if ($0 != "") named[$0]; next }
+    /^\.github\// { hit = 1; exit }
+    { for (path in named) if ($0 == path || substr($0, length($0) - length(path)) == "/" path \
+        || substr(path, length(path) - length($0)) == "/" $0) { hit = 1; exit } }
+    END { exit !hit }' "$dir/named" "$dir/changed"
 }
 
 # report <missing>: sets text to the text of a wait that ends on a failure: today's first line, then
@@ -628,9 +670,11 @@ report() {
   # Each failure still the PR's at a step of its own, whose log is read once: those whose step
   # failed on apt's fetch are infrastructure, unless the change may have caused it.
   : >"$dir/fetched"
+  : >"$dir/named"
   while IFS=$'\t' read -r id from to; do
     if gh_call "$dir" "log-$id" api --allow-escape-sequences "repos/$repo/actions/jobs/$id/logs" && apt_fetch_failed "$dir/log-$id" "$from" "$to"; then
       echo "\"$id\"" >>"$dir/fetched"
+      step_paths "$dir/log-$id" "$from" "$to" >>"$dir/named"
     fi
   done < <(jq -r --argjson stuck "$stuck_json" --argjson queued "$queued_json" --arg repo "$repo" \
     --arg queued_span "" --arg whose "" --arg again "" --argjson jobs "$(jq -s 'add // {}' "$dir/jobs")" \

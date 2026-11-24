@@ -1297,6 +1297,33 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_contains "$output" "the PR's: e2e shard 4/10 failed"
 }
 
+@test "apt's fetch failure stays the PR's when the PR changes a script the failing step runs, outside .github/" {
+  # The step runs the project's own install script, named on its Run line by a relative path.
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
+  answer 0 files $'front-end/src/app.ts\nscripts/chromium-packages.sh'
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or by its bare name in the script the group echoes, in the runner's colours.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run set -e|; s|\x1b\[36;1mnpx playwright install-deps chromium\x1b\[0m|\x1b[36;1mbash install-browsers.sh --with-deps\x1b[0m|')"
+  answer 0 files ci/install-browsers.sh
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or by a path under the workspace, which ends in the PR's path.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run "$GITHUB_WORKSPACE/scripts/chromium-packages.sh" install|')"
+  answer 0 files scripts/chromium-packages.sh
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # A script the step runs that the PR leaves alone keeps the failure infrastructure.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
+  answer 0 files $'front-end/src/app.ts\nscripts/other-packages.sh\ndocs/chromium-packages.sh.md'
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "infrastructure: e2e shard 4/10 failed in setup"
+}
+
 @test "a failed step stays the PR's when apt's failure is not a fetch, when the failing command came after apt's, or when the log cannot be read" {
   answer 0 files src/app.ts
   # apt could not find a package the step names: the step's own list.

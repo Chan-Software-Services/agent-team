@@ -15,7 +15,7 @@
 2026-11-19T12:11:09.2879374Z ##[end-action id=__self_2.__run;outcome=skipped;conclusion=skipped;duration_ms=0]
 2026-11-19T12:11:09.2882401Z ##[start-action display=Install Chromium's system libraries;id=__self_2.__run_2]
 2026-11-19T12:11:09.3330815Z ##[group]Run npx playwright install-deps chromium
-2026-11-19T12:11:09.3331204Z ^[[36;1mnpx playwright install-deps chromium^[[0m
+2026-11-19T12:11:09.3331204Z [36;1mnpx playwright install-deps chromium[0m
 2026-11-19T12:11:09.3378646Z   RECORD_TEST_MAP: false
 2026-11-19T12:11:09.3378832Z ##[endgroup]
 2026-11-19T12:11:09.9588962Z Installing dependencies...
