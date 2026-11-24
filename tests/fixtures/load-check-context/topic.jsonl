@@ -1,0 +1,5 @@
+{"type":"permission-mode","permissionMode":"auto","sessionId":"5e5e5e5e-0000-4000-8000-000000000001"}
+{"type":"user","message":{"role":"user","content":"Reply with OK and nothing else."}}
+{"type":"attachment","attachment":{"type":"skill_listing","content":"- grilling: a skill body that never leaves the transcript","skillCount":2,"isInitial":true,"names":["grilling","domain-modeling"]}}
+{"type":"attachment","attachment":{"type":"deferred_tools_delta","addedNames":["Monitor","WebFetch","TaskCreate"],"removedNames":[]}}
+{"type":"assistant","message":{"id":"msg_t1","role":"assistant","content":[{"type":"text","text":"OK"}],"usage":{"input_tokens":7,"cache_creation_input_tokens":28000,"cache_read_input_tokens":10000,"output_tokens":4}}}
