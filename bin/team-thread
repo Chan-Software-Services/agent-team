@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Open a task's Discord thread under #coordinator and record it in the ledger, or its interview
-# thread under the interview channel, or wait in that thread for Daniel's next messages, or archive
-# the threads whose work is done.
+# thread under the interview channel, or wait in that thread for Daniel's next messages, or print
+# the whole conversation in it, or archive the threads whose work is done.
 # Every task has a thread; bin/team-worker refuses to launch a worker for a task without it.
 # Each thread opens with auto_archive_duration 1440 (THREAD_ARCHIVE_MINUTES in bin/lib/threads.sh),
 # which Discord now reads only as how long a quiet thread stays in the channel list: it archives
@@ -10,6 +10,7 @@
 # Usage: team-thread <task> <project> <title>
 #        team-thread T<n> --interview
 #        team-thread wait T<n> [--after <message id>]
+#        team-thread history T<n>
 #        team-thread archive [--all] [--dry-run]
 #   <task> <project> <title>  Opens the task's thread under #coordinator, named "T<n> · <project>
 #             · <title>", logs it as thread and prints its id; one already logged is printed
@@ -49,6 +50,14 @@
 #             walk-note, its id and the time, never its words, which keeps the walk counting
 #             (walk_holds in bin/lib/ledger.jq); a line that cannot be logged is said on stderr, and
 #             the messages still print.
+#   history   Prints every message of the open task's latest interview thread, Daniel's and the
+#             team's, oldest first, one JSON line each: {"id", "sent", "author" ("daniel" or
+#             "team"), "text" (verbatim), "attachments" (only when there are any: each one's
+#             {"url"}, never fetched)}, so a resumed topic session or planner picks the
+#             conversation up. The team is the bot's own user (GET users/@me), Daniel as for wait;
+#             any other author's message, another bot's included, is left out. It reads back from
+#             the newest message 100 at a time until a page short of 100, with wait's waits on a
+#             429, a failed connection or a 5xx, and writes and logs nothing.
 #   archive   Archives each of the team's threads whose work is done that bin/lib/threads.sh's rule
 #             allows: the team home's waiting.json (what waiting.md lists, its owed replies
 #             included) names nothing of it, by its task or its id, and its last message is at
@@ -73,10 +82,12 @@
 #             (exit 1), as does a Discord that cannot be read; in a worker session it is refused
 #             (worker_refusal), and on a machine that is fenced or that lost the lease
 #             (lease_refusal), as a post is.
-# --interview and wait refuse on a machine that is fenced or that lost the lease (lease_refusal,
-# checked before each read), and with no interview channel set; wait ends with the hold's
-# message (offline_hold) when the team holds offline. In a worker session only a planner's wait
-# on its own task runs (worker_refusal in bin/lib/team.sh); the coordinator opens the threads.
+# --interview, wait and history refuse on a machine that is fenced or that lost the lease
+# (lease_refusal, checked before each read), and with no channel set for the task's thread (the
+# topic channel for a topic, else the interview channel); wait and history end with the hold's
+# message (offline_hold) when the team holds offline. In a worker session only a planner's or a
+# topic session's wait and history on its own task run (worker_refusal in bin/lib/team.sh); the
+# coordinator opens the threads.
 # Needs the bot token in ~/.claude/channels/discord/.env.
 # Exit codes: 0 done, 1 refused or Discord refused a read, 2 a malformed command line, 75 the
 # team holds offline.
@@ -96,7 +107,7 @@ MAX_IMAGE=$((20 * 1024 * 1024))
 CDN_LINK='^https://(cdn\.discordapp\.com|media\.discordapp\.net)/[^[:space:][:cntrl:]]+$'
 FETCH_TIMEOUT=60
 FETCH_RETRIES_TIMEOUT=120
-USAGE="usage: team-thread <task> <project> <title> | team-thread T<n> --interview | team-thread wait T<n> [--after <message id>] | team-thread archive [--all] [--dry-run]"
+USAGE="usage: team-thread <task> <project> <title> | team-thread T<n> --interview | team-thread wait T<n> [--after <message id>] | team-thread history T<n> | team-thread archive [--all] [--dry-run]"
 NO_CHANNEL="no interview channel is set: Daniel makes it (manual-steps.md), and a PR sets its id as INTERVIEW_CHANNEL in bin/lib/team.sh"
 
 # Fail with why this machine must not <does>, if it must not: fenced <does>
@@ -125,20 +136,21 @@ open_thread() {
   echo "$id"
 }
 
-# Read the messages in <thread> at <query> into $page, as a JSON array oldest first, retrying a
-# 429, a failed connection and a 5xx after a wait, and failing on any other refusal; the hold and
-# the fence are checked before each try: read_page <thread> <query>
-read_page() {
+# Read Discord's <path> into $page through <filter>, retrying a 429, a failed connection, a 5xx and
+# an answer the filter refuses after a wait, and failing on any other refusal, named as reading
+# <what>; the hold and the fence ($fence_does) are checked before each try:
+# discord_read <path> <filter> <what>
+discord_read() {
   local backoff=$POLL_SECONDS status retry reply hold
   while true; do
     if hold=$(offline_hold); then
       echo "team-thread: $hold" >&2
       exit 75
     fi
-    fenced "$WAITS"
+    fenced "$fence_does"
     rm -f "$scratch/headers"
-    if reply=$(discord_api "channels/$1/messages?$2" --max-time "$READ_TIMEOUT" -D "$scratch/headers" 2>"$scratch/error") &&
-      page=$(jq -ce 'select(type == "array") | sort_by(.id | [length, .])' <<<"$reply" 2>/dev/null); then
+    if reply=$(discord_api "$1" --max-time "$READ_TIMEOUT" -D "$scratch/headers" 2>"$scratch/error") &&
+      page=$(jq -ce "$2" <<<"$reply" 2>/dev/null); then
       return 0
     fi
     touch "$scratch/headers"
@@ -150,9 +162,42 @@ read_page() {
       sleep "$backoff"
       backoff=$((backoff * 2 > MAX_BACKOFF ? MAX_BACKOFF : backoff * 2))
     else
-      die "Discord refused reading the interview thread $1: $(grep -m 1 . "$scratch/error" || echo "HTTP $status")"
+      die "Discord refused reading $3: $(grep -m 1 . "$scratch/error" || echo "HTTP $status")"
     fi
   done
+}
+
+# Read the messages in <thread> at <query> into $page, as a JSON array oldest first:
+# read_page <thread> <query>
+read_page() {
+  discord_read "channels/$1/messages?$2" 'select(type == "array") | sort_by(.id | [length, .])' \
+    "the interview thread $1"
+}
+
+# The open task's events, its interview thread and Daniel's ids, read for wait and history into
+# $events, $thread and $allow, refusing as both do (no channel set for the task's thread, no
+# thread logged, no allowFrom): interview_open <task>
+interview_open() {
+  events=$(open_task_events "$1")
+  thread_parent "$events" >/dev/null
+  thread=$(jq -r 'map(select(.event == "interview-thread") | .discord_thread | strings) | last // empty' <<<"$events")
+  [[ -n $thread ]] || die "$1 has no interview thread in the ledger; team-thread $1 --interview opens one"
+  allow=$(jq -ce '.allowFrom | select(type == "array" and length > 0) | map(tostring)' \
+    "$HOME/.claude/channels/discord/access.json" 2>/dev/null) ||
+    die "cannot read allowFrom from ~/.claude/channels/discord/access.json, so no message can be known as Daniel's"
+}
+
+# The channel the task's interview thread is under, from its <events>, or fail when none is set: a
+# topic's is the topic channel, every other task's the interview channel: thread_parent <events>
+thread_parent() {
+  local parent=$INTERVIEW_CHANNEL
+  if jq -e 'any(.[]; .event == "opened" and .path == "topic")' <<<"$1" >/dev/null; then
+    parent=$TOPIC_CHANNEL
+    [[ -n $parent || ! -v TEAM_TOPIC_CHANNEL ]] ||
+      die "no topic channel is set: TEAM_TOPIC_CHANNEL is empty, and TOPIC_CHANNEL in bin/lib/team.sh names the channel a topic's thread opens under"
+  fi
+  [[ -n $parent ]] || die "$NO_CHANNEL"
+  echo "$parent"
 }
 
 # Save the attachment <json> describes in $ui under a free name and print its path, or print why
@@ -227,8 +272,11 @@ print_message() {
   jq -c --slurpfile outcomes "$scratch/outcomes" 'if .attachments then .attachments = $outcomes else . end' <<<"$1"
 }
 
-# What a machine that may not wait does instead, as the lease-fence hook says it.
+# What a machine that may not wait or read the thread back does instead, as the lease-fence hook
+# says it for a wait.
 WAITS="waits on no interview; stop, since the coordinator on the holder takes the task on."
+READS="reads no interview thread; stop, since the coordinator on the holder takes the task on."
+fence_does=$WAITS
 
 # Log the latest message found as a walk note while the task's walk is on in this thread, read from
 # the ledger now, since it may have started or stopped during the wait. Only its id and the time,
@@ -255,13 +303,7 @@ if [[ ${1:-} == wait ]]; then
   done
   [[ $task =~ ^T[1-9][0-9]*$ ]] || usage_error "$USAGE"
   if why=$(worker_refusal "$task" "waits on Daniel in Discord" --interview); then die "$why"; fi
-  [[ -n $INTERVIEW_CHANNEL ]] || die "$NO_CHANNEL"
-  events=$(open_task_events "$task")
-  thread=$(jq -r 'map(select(.event == "interview-thread") | .discord_thread | strings) | last // empty' <<<"$events")
-  [[ -n $thread ]] || die "$task has no interview thread in the ledger; team-thread $task --interview opens one"
-  allow=$(jq -ce '.allowFrom | select(type == "array" and length > 0) | map(tostring)' \
-    "$HOME/.claude/channels/discord/access.json" 2>/dev/null) ||
-    die "cannot read allowFrom from ~/.claude/channels/discord/access.json, so no message can be known as Daniel's"
+  interview_open "$task"
   fenced "$WAITS"
   discord_token >/dev/null || die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
   scratch=$(team_mktemp -d)
@@ -293,6 +335,39 @@ if [[ ${1:-} == wait ]]; then
     fi
     sleep "$POLL_SECONDS"
   done
+fi
+
+if [[ ${1:-} == history ]]; then
+  (($# == 2)) && [[ $2 =~ ^T[1-9][0-9]*$ ]] || usage_error "$USAGE"
+  task=$2
+  if why=$(worker_refusal "$task" "reads Daniel's interview thread in Discord" --interview); then die "$why"; fi
+  interview_open "$task"
+  fence_does=$READS
+  fenced "$READS"
+  discord_token >/dev/null || die "no DISCORD_BOT_TOKEN in ~/.claude/channels/discord/.env"
+  scratch=$(team_mktemp -d)
+
+  # The bot's own user, so a post of another bot's is no post of the team's.
+  discord_read users/@me 'objects | .id | strings | select(test("^[0-9]+$"))' "the bot's user"
+  bot=$(jq -r . <<<"$page")
+  # Back from the newest, a page at a time, until a page short of 100 holds the first message.
+  query=limit=100
+  : >"$scratch/pages"
+  while true; do
+    read_page "$thread" "$query"
+    echo "$page" >>"$scratch/pages"
+    [[ $(jq length <<<"$page") -ge 100 ]] || break
+    before=$(jq -r 'first.id' <<<"$page")
+    [[ $before =~ ^[0-9]+$ ]] || die "Discord answered a message id that is not a number"
+    query="before=$before&limit=100"
+  done
+  jq -nc --argjson allow "$allow" --arg bot "$bot" '[inputs[]] | unique_by(.id | [length, .]) | .[]
+    | (.author.id | tostring) as $by
+    | (if $by == $bot then "team" elif .author.bot != true and ($by | IN($allow[])) then "daniel" else empty end) as $author
+    | {id, sent: .timestamp, author: $author, text: (.content // "")}
+      + ([.attachments // [] | .[] | select(.url | type == "string") | {url}]
+        | if . == [] then {} else {attachments: .} end)' "$scratch/pages"
+  exit 0
 fi
 
 if [[ ${1:-} == archive ]]; then
@@ -377,14 +452,7 @@ if [[ $# -eq 2 && $2 == --interview ]]; then
   [[ $task =~ ^T[1-9][0-9]*$ ]] || usage_error "$USAGE"
   if why=$(worker_refusal "$task" "opens a Discord thread"); then die "$why"; fi
   events=$(open_task_events "$task")
-  # A topic's thread is under the topic channel, every other task's under the interview channel.
-  parent=$INTERVIEW_CHANNEL
-  if jq -e 'any(.[]; .event == "opened" and .path == "topic")' <<<"$events" >/dev/null; then
-    parent=$TOPIC_CHANNEL
-    [[ -n $parent || ! -v TEAM_TOPIC_CHANNEL ]] ||
-      die "no topic channel is set: TEAM_TOPIC_CHANNEL is empty, and TOPIC_CHANNEL in bin/lib/team.sh names the channel a topic's thread opens under"
-  fi
-  [[ -n $parent ]] || die "$NO_CHANNEL"
+  parent=$(thread_parent "$events")
   # Printing the thread already logged calls no one, so only a new one is fenced.
   jq -e 'any(.[]; .event == "interview-thread")' <<<"$events" >/dev/null ||
     fenced "opens no interview thread; the coordinator on the holder does."
