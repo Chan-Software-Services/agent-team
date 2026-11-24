@@ -1071,13 +1071,14 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
 
 # Only the rust toolkit's sessions list rust-core, so the planner, builder and reviewer roles name
 # it, once each under "What you do", for a session that lists it, each with its duty: a session on
-# a task with no Rust code reads the line and does nothing.
+# a task with no Rust code reads the line and does nothing. The skill is named as `rust-core`, so
+# a line naming the design doc docs/rust-core.md is no second one.
 @test "the planner, builder and reviewer roles name the rust toolkit's rust-core, each with its duty, for a session that lists it" {
   local role body line
   assert_equal "$(sed -n 's/^name: //p' "$REPO_ROOT/toolkits/rust/skills/rust-core/SKILL.md")" rust-core
   for role in planner builder reviewer; do
     echo "role: $role" >&2
-    assert_equal "$(grep -c 'rust-core' "$REPO_ROOT/roles/$role.md")" 1
+    assert_equal "$(grep -cF '`rust-core`' "$REPO_ROOT/roles/$role.md")" 1
     body=$(awk '$0 == "## What you do" { on = 1; next } /^## / { on = 0 } on' "$REPO_ROOT/roles/$role.md")
     line=$(grep -F '`rust-core`' <<<"$body")
     grep -qF 'when your session lists `rust-core`' <<<"$line"
