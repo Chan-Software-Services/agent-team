@@ -202,9 +202,12 @@ LAUNCH_BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # (${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json), then their model key in that order; the effort
 # a CLAUDE_CODE_EFFORT_LEVEL in the env of each, then each one's modelSettings.<the model>.effortLevel,
 # then each one's effortLevel; with none, Claude Code's own default, logged default.
-# A missing file names nothing. A file that does not read (team-models exits non-zero) is a
-# warning on stderr, "<script>: models.toml does not read: <its first line>; launching on the
-# settings' model", and names nothing, so the session that fixes the file still starts.
+# A missing file names nothing. A file that does not read (team-models exits non-zero, its first
+# line a problem of the file, "models.toml: ...") is a warning on stderr, "<script>: models.toml
+# does not read: <its first line>; launching on the settings' model"; any other failure of
+# team-models (no team home named, say) is "<script>: cannot read the model config: <its first
+# line>; launching on the settings' model". Either names nothing, so the session that fixes the
+# file still starts.
 # TEAM_HOME, when set, names the team home to team-models, else it finds it as every script does.
 launch_models() {
   local category=$1 settings=$2 out status=0 user config_model='' config_effort='' sub='{}'
@@ -215,7 +218,12 @@ launch_models() {
     config_effort=$(jq -r '.effort // "" | select(. != "default")' <<<"$out")
     sub=$(jq -c '{subagent_model, subagent_effort} | with_entries(select(.value != null and .value != "default"))' <<<"$out")
   else
-    echo "${0##*/}: models.toml does not read: $(head -n 1 <<<"$out"); launching on the settings' model" >&2
+    out=$(head -n 1 <<<"$out")
+    if [[ $out == models.toml:* ]]; then
+      echo "${0##*/}: models.toml does not read: $out; launching on the settings' model" >&2
+    else
+      echo "${0##*/}: cannot read the model config: $out; launching on the settings' model" >&2
+    fi
   fi
   [[ -z $config_model ]] || LAUNCH_MODEL_ARGS+=(--model "$config_model")
   [[ -z $config_effort ]] || LAUNCH_MODEL_ARGS+=(--effort "$config_effort")

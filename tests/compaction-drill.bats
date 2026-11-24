@@ -417,7 +417,7 @@ API Error: the stub's turn 2 failed"
   [[ ! -e $HOME/.config/agent-team/home ]]
   run -0 --separate-stderr "$REPO_ROOT/tests/compaction-drill"
   assert_equal "${lines[-1]}" "== 10 of 10 checks passed"
-  assert_equal "$stderr" "compaction-drill: models.toml does not read: team-models: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home; launching on the settings' model
+  assert_equal "$stderr" "compaction-drill: cannot read the model config: team-models: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home; launching on the settings' model
 compaction-drill: not recorded: team-drill: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home"
 }
 
