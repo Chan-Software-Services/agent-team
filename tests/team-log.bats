@@ -2190,6 +2190,83 @@ assert_no_answer_logged() {
     --from-message 'T7 PR owner/proj#12'
 }
 
+# A ticket file of T7 in <project>'s worktree, its other lines (a Phase: line, its boxes) after its
+# Blocked by: line: ticket_file <project> <NN-slug> <blocked by> [<line>]...
+ticket_file() {
+  local dir=$BATS_TEST_TMPDIR/w/$1/.scratch/task/tickets
+  mkdir -p "$dir"
+  printf '# %s\n\nBlocked by: %s\n' "$2" "$3" >"$dir/$2.md"
+  if (($# > 3)); then printf '%s\n' "${@:4}" >>"$dir/$2.md"; fi
+}
+
+# A ticket-done a PR carried, as team-log logs it: carried <NN> <head>
+carried() {
+  jq -cn --arg n "$1" --arg head "$2" --arg url "$URL" '{task: "T7", event: "ticket-done", ticket: $n, commits: [$head], pr: $url}'
+}
+
+@test "--from-message logs, before a builder's PR, a ticket-done for each ticket of the PR's phase that it built with none of its own" {
+  open_t7
+  opened T7 conv worktree-added
+  launched T7 builder b0000001 brief
+  # One builder built both tickets, ticked, and delivers them in one PR, with no DONE <NN>.
+  ticket_file proj 01-doc None '- [x] the doc'
+  ticket_file proj 02-check 01 '- [x] the check'
+  # A ticket of another project is no ticket of this PR's.
+  ticket_file conv 03-other None
+  on_github "$URL" "$HEAD_A" feat/T7-x
+  logs_events "$(carried 01 "$HEAD_A")
+$(carried 02 "$HEAD_A")
+{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}" --from-message "T7 PR $URL"
+  run_bin -0 team-tickets T7
+  assert_equal "$output" "$(printf '%s\n' "01 done    doc" "02 done    check" "03 ready   other")"
+  run_bin -0 team-log --check
+  # The next round's PR carries none: every ticket of its phase is done.
+  on_github "$URL" "$HEAD_B" feat/T7-x
+  logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" --from-message "T7 PR $URL"
+}
+
+@test "a PR carries only its phase's tickets, the earliest of its project or the first its latest merged part left, never one done, running or with a box open outside a fenced block" {
+  open_t7
+  launched T7 builder b0000001 brief
+  # A deliverer's PR once its phase's tickets are done carries no ticket of a later phase.
+  ticket_file proj 01-one None
+  jq -cn '{ts: (now | todate), task: "T7", event: "ticket-done", ticket: "01", commits: ["0a1b2c3"]}' >>"$TEAM_HOME/ledger.jsonl"
+  ticket_file proj 02-two None 'Phase: 2'
+  on_github "$URL" "$HEAD_A" feat/T7-x
+  logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}" --from-message "T7 PR $URL"
+  # Phase 1 merged, phase 2 left: the next PR is phase 2's.
+  jq -cn --arg url "$URL" '{ts: (now | todate), task: "T7", event: "merged", pr: 12, merge: "9f8e7d6", head: "a1b2c3d4",
+    by: "x", project: "proj", url: $url, phases_left: [2]}' >>"$TEAM_HOME/ledger.jsonl"
+  ticket_file proj 03-open None 'Phase: 2' '- [x] built' '- [ ] not built'
+  ticket_file proj 04-running None 'Phase: 2'
+  launched T7 builder b0000004 brief-build-04
+  ticket_file proj 05-five 02 'Phase: 2' '* [X] built'
+  ticket_file proj 06-six None 'Phase: 3'
+  # A box quoted in a fenced code block is no box of the ticket's.
+  ticket_file proj 07-fenced None 'Phase: 2' '- [x] built' '```text' '- [ ] a quoted box' '```' '~~~' '1. [ ] another' '~~~'
+  on_github "$URL" "$HEAD_B" feat/T7-x
+  logs_events "$(carried 02 "$HEAD_B")
+$(carried 05 "$HEAD_B")
+$(carried 07 "$HEAD_B")
+{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" --from-message "T7 PR $URL"
+}
+
+@test "a PR whose tickets team-tickets cannot read is logged alone, with a line on stderr, and --print logs none" {
+  open_t7
+  launched T7 builder b0000001 brief
+  ticket_file proj 01-one None '- [x] built'
+  on_github "$URL" "$HEAD_A" feat/T7-x
+  run_bin -0 --separate-stderr team-log T7 --from-message "T7 PR $URL" --print
+  assert_equal "$(jq -c 'del(.ts)' <<<"$output")" "$(carried 01 "$HEAD_A")
+{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}"
+  assert_equal "$stderr" ""
+  assert_equal "$(ledger_events | tail -n 1)" launch
+  printf '# 02\n\nno blockers line\n' >"$BATS_TEST_TMPDIR/w/proj/.scratch/task/tickets/02-bad.md"
+  run_bin -0 --separate-stderr team-log T7 --from-message "T7 PR $URL"
+  assert_equal "$stderr" "team-log: cannot read T7's tickets (team-tickets: $BATS_TEST_TMPDIR/w/proj/.scratch/task/tickets/02-bad.md: no Blocked by: line; write 'Blocked by: None' or 'Blocked by: 01, 03'), so its PR carries no ticket"
+  assert_equal "$(logged_after 2)" "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}"
+}
+
 @test "--from-message logs a ticket's DONE as ticket-done and the builder's done" {
   open_t7
   launched T7 builder b0000001 brief-build-03
