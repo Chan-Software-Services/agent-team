@@ -178,6 +178,10 @@ refused() {
   assert_contains "$output" "       claude-assistant-read end"
   assert_contains "$output" "no read session to end"
   assert_contains "$output" "ops-log.md"
+  assert_contains "$output" "       claude-assistant-read start --load-check --request <link> --toolkit <kit> [--toolkit <kit>] --file <prompt>"
+  assert_contains "$output" "       claude-assistant-read end --load-check"
+  assert_contains "$output" ".claude/worktrees/T0-assistant-read"
+  assert_contains "$output" "ops-requests"
 }
 
 @test "a start launches assistant-read in the read directory, with its settings, MCP config, role prompt and the question, and prints its id" {
@@ -297,7 +301,8 @@ How many stalls are booked for the next convention?"
     "start --request $link --request $link --toolkit prod-read --file $question" \
     "start --request $link --toolkit prod-read --file $question --file $question" \
     "start --request $link --toolkit prod-read --file $question --model opus" \
-    "start --load-check --request $link --toolkit prod-read --file $question" \
+    "start --load-check --load-check --request $link --toolkit prod-read --file $question" \
+    "end --load-check now" "end now --load-check" "answer --load-check" \
     "start --request $link --toolkit --file $question" \
     "start --request $link --toolkit prod-read --file"; do
     # shellcheck disable=SC2086 # each case is its words
@@ -637,4 +642,160 @@ claude-assistant-read: claude rm 4f2a9c1e failed; its transcript is kept"
   assert_equal "$output" 4f2a9c1e
   assert_equal "$(bg_calls | wc -l)" 2
   [[ -d $dir/.scratch ]]
+}
+
+# The load check's forms: start --load-check, as the coordinator or a session with no role, on
+# Daniel's message in #coordinator, with the prompt file's text as the whole prompt; end --load-check.
+COORDINATOR=1562486564871995482
+
+# check_start [<run_bin option>...] -- <argument>...: claude-assistant-read start --load-check as
+# the coordinator.
+check_start() {
+  local opts=()
+  while [[ $1 != -- ]]; do opts+=("$1") && shift; done
+  shift
+  AGENT_TEAM_ROLE=coordinator run_bin "${opts[@]}" --separate-stderr claude-assistant-read start --load-check "$@"
+}
+
+# check_prompt: the load check's prompt file, prompt, and its session's directory, check_dir
+check_prompt() {
+  check_dir=$TEAM_HOME/.claude/worktrees/T0-assistant-read
+  prompt=$BATS_TEST_TMPDIR/load-check-prompt.md
+  printf 'This is an automated load check of the assistant'\''s read session on task T0.\n1. Wait for prod-read.\n' >"$prompt"
+}
+
+@test "the load check's start launches T0-assistant-read in its own directory on Daniel's message in #coordinator, its prompt the file's text, logging to tasks/T0" {
+  check_prompt
+  says "$COORDINATOR"
+  check_start -0 -- --request "$link" --toolkit prod-read --toolkit vercel-read --file "$prompt"
+  assert_equal "$output" 4f2a9c1e
+  assert_equal "$stderr" "claude-assistant-read: T0-assistant-read 4f2a9c1e started in $check_dir: Daniel approves one 1Password prompt per toolkit on the PC"
+  assert_equal "$(bg_calls)" "$(jq -cn --arg code "$REPO_ROOT" --arg state "$state" --arg prompt "$(cat "$prompt")" \
+    '["--bg", "--restricted", "--tools", "Read,Glob,Grep,Edit,Write,ToolSearch,SendMessage,ListAgents,Skill",
+      "--strict-mcp-config", "--mcp-config", "\($state)/T0-assistant-read.mcp.json",
+      "--plugin-dir", "\($code)/toolkits/prod-read", "--plugin-dir", "\($code)/toolkits/vercel-read",
+      "--settings", "\($state)/T0-assistant-read.settings.json",
+      "--append-system-prompt-file", "\($code)/roles/assistant-read.md",
+      "--permission-mode", "auto", "--name", "T0-assistant-read", $prompt]')"
+  assert_equal "$(cat "$STUB_CALLS/claude.cwd")" "$check_dir"
+  [[ -f $check_dir/docs/OPERATIONS.md && -d $check_dir/.scratch ]]
+  # Its hooks log to T0's directory, beside T0's ops launches, and its servers run as assistant-read.
+  assert_equal "$(jq -r '.hooks.PostToolUse[].hooks[].args[]' "$state/T0-assistant-read.settings.json" | grep -c "^$TEAM_HOME/tasks/T0$")" 1
+  assert_equal "$(jq -c '[.mcpServers[].env.AGENT_TEAM_ROLE] | unique' "$state/T0-assistant-read.mcp.json")" '["assistant-read"]'
+  # The request is recorded beside T0's ops launches, and the read's own files are left alone.
+  assert_equal "$(awk '{ print $1, $3 }' "$state/ops-requests")" "$message 4f2a9c1e"
+  [[ ! -e $state/assistant-read-requests && ! -e $dir && ! -e $state/assistant-read.settings.json ]]
+  [[ ! -e $TEAM_HOME/assistant/prod-reads ]]
+  # A session with no role, Daniel's shell, may run it too, on a new message.
+  rm -rf "${check_dir:?}"
+  says "$COORDINATOR"
+  AGENT_TEAM_ROLE='' run_bin -0 --separate-stderr claude-assistant-read start --load-check --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$output" 4f2a9c1e
+}
+
+@test "the load check's start needs Daniel's message in #coordinator, at most an hour old and used by no ops launch or load check" {
+  check_prompt
+  says "$ASSISTANT"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: the load check's request links a message in channel $ASSISTANT, not #coordinator ($COORDINATOR): the read session's load check runs on Daniel's message there"
+  says --ago 3700 "$COORDINATOR"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_contains "$stderr" ", more than 60 minutes before this launch, the limit for a load check's request: ask Daniel for a new message"
+  says --author 999 "$COORDINATOR"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: Discord message $message is by daniel (999), who is not in allowFrom of ~/.claude/channels/discord/access.json"
+  # A message an ops launch of T0's or of a task's used.
+  says "$COORDINATOR"
+  echo "$message 2026-11-24T10:00:00Z 5b3c0d2f" >"$state/ops-requests"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: Discord message $message asked for T0's launch 5b3c0d2f at 2026-11-24T10:00:00Z (~/.local/state/agent-team/ops-requests) already: each load check needs a new message of Daniel's"
+  says "$COORDINATOR"
+  jq -cn --arg m "$message" '{ts: "2026-11-24T11:00:00Z", task: "T9", event: "launch", role: "ops", session: "7a7a7a7a", discord_message: $m}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: Discord message $message asked for T9's ops launch 7a7a7a7a at 2026-11-24T11:00:00Z already: each load check needs a new message of Daniel's"
+  assert_equal "$(bg_calls)" ""
+  [[ ! -e $check_dir && ! -e $state/T0-assistant-read.settings.json && ! -e $state/T0-assistant-read.mcp.json ]]
+  # Once launched, its message is used.
+  says "$COORDINATOR"
+  check_start -0 -- --request "$link" --toolkit prod-read --file "$prompt"
+  rm -rf "${check_dir:?}"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_contains "$stderr" "claude-assistant-read: Discord message $message asked for T0's launch 4f2a9c1e at "
+}
+
+@test "the load check's start is refused while its own session or directory is there, and leaves a read of the assistant's alone" {
+  check_prompt
+  says "$COORDINATOR"
+  jq -cn '[{id: "9a8b7c6d", name: "T0-assistant-read", state: "idle", sessionId: "9a8b7c6d-1111-4222-8333-944455556666"}]' >"$STUB_FIXTURES/agents.json"
+  check_start -1 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: a read session is still there (9a8b7c6d idle): relay its answer and run claude-assistant-read end --load-check first"
+  # The assistant's own read is another session in another directory.
+  jq -cn '[{id: "9a8b7c6d", name: "assistant-read", state: "working", sessionId: "9a8b7c6d-1111-4222-8333-944455556666"}]' >"$STUB_FIXTURES/agents.json"
+  mkdir -p "$dir/.scratch"
+  check_start -0 -- --request "$link" --toolkit prod-read --file "$prompt"
+  [[ -d $dir/.scratch && -d $check_dir/.scratch ]]
+  # Held by its own lock, not the read's.
+  rm -rf "${check_dir:?}"
+  says "$COORDINATOR"
+  exec {held}>"$state/assistant-read.lock"
+  flock -n "$held"
+  check_start -0 -- --request "$link" --toolkit prod-read --file "$prompt"
+  exec {held}>&-
+  rm -rf "${check_dir:?}"
+  says "$COORDINATOR"
+  exec {held}>"$state/T0-assistant-read.lock"
+  flock -n "$held"
+  check_start -75 -- --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: another read is starting"
+  exec {held}>&-
+}
+
+@test "the load check's forms are refused to the assistant and to every worker role" {
+  check_prompt
+  says "$COORDINATOR"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read start --load-check --request "$link" --toolkit prod-read --file "$prompt"
+  assert_equal "$stderr" "claude-assistant-read: claude-assistant-read --load-check is the coordinator's load check: an assistant session runs none"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read end --load-check
+  assert_equal "$stderr" "claude-assistant-read: claude-assistant-read --load-check is the coordinator's load check: an assistant session runs none"
+  for role in planner builder reviewer ops assistant-read; do
+    AGENT_TEAM_ROLE=$role run_bin -1 --separate-stderr claude-assistant-read start --load-check --request "$link" --toolkit prod-read --file "$prompt"
+    assert_equal "$role: $stderr" "$role: claude-assistant-read: claude-assistant-read is the assistant's: a $role session starts no production read"
+    AGENT_TEAM_ROLE=$role run_bin -1 --separate-stderr claude-assistant-read end --load-check
+    assert_equal "$role: $stderr" "$role: claude-assistant-read: claude-assistant-read is the assistant's: a $role session starts no production read"
+  done
+  assert_equal "$(bg_calls)" ""
+  [[ ! -e $check_dir && ! -e $state/ops-requests ]]
+}
+
+@test "the load check's end removes T0-assistant-read and its directory and files, leaving the assistant's read" {
+  read_left
+  check_prompt
+  says "$COORDINATOR"
+  jq -c '.[0] | [.]' "$STUB_FIXTURES/agents.json" >"$BATS_TEST_TMPDIR/read.json"
+  echo '[]' >"$STUB_FIXTURES/agents.json"
+  check_start -0 -- --request "$link" --toolkit prod-read --file "$prompt"
+  local uuid2=5e5e5e5e-5555-4222-8333-944455556666
+  jq -c --arg cwd "$check_dir" --arg uuid "$uuid2" \
+    '. + [{id: "5e5e5e5e", sessionId: $uuid, name: "T0-assistant-read", state: "done", cwd: $cwd}]' \
+    "$BATS_TEST_TMPDIR/read.json" >"$STUB_FIXTURES/agents.json"
+  local slug=$HOME/.claude/projects/-team-home-.claude-worktrees-T0-assistant-read
+  mkdir -p "$slug"
+  echo '{}' >"$slug/$uuid2.jsonl"
+  AGENT_TEAM_ROLE=coordinator run_bin -0 --separate-stderr claude-assistant-read end --load-check
+  assert_equal "${output##*$'\n'}" "ended T0-assistant-read (5e5e5e5e)"
+  local path
+  for path in "$slug/$uuid2.jsonl" "$check_dir" "$state/T0-assistant-read.settings.json" "$state/T0-assistant-read.mcp.json"; do
+    assert_contains "$output"$'\n' "deleted $path"$'\n'
+    [[ ! -e $path ]] || { echo "still there: $path" >&2; return 1; }
+  done
+  assert_equal "$(end_calls)" "$(printf '%s\n' '["stop","5e5e5e5e"]' '["rm","5e5e5e5e"]')"
+  # The assistant's read, its session, directory and files, are untouched.
+  for path in "${left[@]}" "$dir/.scratch/answer.md" "$state/assistant-read.settings.json" "$state/assistant-read.mcp.json"; do
+    [[ -e $path ]] || { echo "deleted: $path" >&2; return 1; }
+  done
+  assert_equal "$(jq -r '.[].name' "$STUB_FIXTURES/agents.json")" assistant-read
+  # With nothing of its own left, it refuses.
+  AGENT_TEAM_ROLE='' run_bin -1 --separate-stderr claude-assistant-read end --load-check
+  assert_equal "$stderr" "claude-assistant-read: no read session to end"
 }
