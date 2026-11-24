@@ -127,8 +127,12 @@
 # lists hold no entry with a null hold (stowed and refused work comes first, but for work
 # something holds, which the plan will not relaunch), the budget less what is reserved is at
 # least the session:builder estimate (every task soon launches a builder, the largest worker a
-# task starts), and no open task has an opened with no launch after it (a task just opened gets
-# its first worker before the next is named). Its line, the first that holds: "no room: the plan
+# task starts), and no open task has an opened with no launch after it and no standing park on
+# Daniel or outside the team (a task just opened gets its first worker before the next is named,
+# but one parked whole on an open ask, a waiting of cause daniel or outside, or Daniel's hold
+# waits on them and holds back no open, where an ask naming tickets, which holds only their
+# builders, frees it only once none of the task's work is unfinished, as it then parks the
+# task). Its line, the first that holds: "no room: the plan
 # cannot be read: <why>" (team-capacity's last line on stderr, ~ for the home directory, "no plan
 # at <file>", or "<file> is no team-capacity-plan/1 object"), "no room: the level is none", "no
 # room: no reading of the machine's load, so no budget", "no room: over budget", "no room: T171
