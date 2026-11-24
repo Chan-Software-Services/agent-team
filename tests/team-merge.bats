@@ -169,10 +169,10 @@ ticket() {
   ticket 01 1 finished
   ticket 02 2 finished
   run_bin -0 team-merge T14
-  :
+  assert_equal "$(merged_events | jq -c .phases_left)" "[]"
   stub_reply claude "[]"
   run_bin -0 team-state T14 --json
-  :
+  assert_equal "$(jq -r .phase <<<"$output")" merged
 }
 
 @test "two tickets one builder built and delivered in one PR, with no DONE <NN>, merge as the whole task: no phases left, merged, the sweep says close it, and --fill launches nothing" {
