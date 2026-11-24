@@ -3799,6 +3799,17 @@ briefs_without_gotchas() {
   done
 }
 
+# The assistant's read session reads production, so its launcher, its settings and its role
+# prompt come back for Daniel's per-head word as the assistant's own do.
+@test "the assistant's read session's launcher, settings and role prompt are guardrails" {
+  local path patterns
+  patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
+  for path in bin/claude-assistant-read assistant-read.settings.json roles/assistant-read.md; do
+    [[ -e $REPO_ROOT/$path ]] || { echo "$path is missing" >&2; return 1; }
+    grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
+  done
+}
+
 # The names team-janitor tmp may remove (bin/lib/tmp-leftovers): each line a maker, a project of
 # the registry fixture or bats, and an expression that begins with at least 6 literal characters
 # and holds no |, so no alternation widens it past that beginning, and none is a name another
