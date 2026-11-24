@@ -433,18 +433,17 @@ if [[ $task != T0 ]]; then
   # Daniel's hold, an open ask --past-ask does not name, a feature task's build before its plan),
   # whether it has a thread, and its open worktrees, one a line as
   # "<worktree>\x1f<worktree> (<project>, <branch>)\x1f<project>\x1f<its compact JSON>".
-  refusal='' thread='' worktrees='' task_path=''
+  refusal='' thread='' worktrees='' task_path='' topic=''
   json_vars --ledger refusal='[launch_refusal($task; $role; $ARGS.positional; true)] | join("; ")' \
-    task_path='[.[] | select(.event == "opened") | .path | strings] | last // ""' \
-    thread='([.[] | select(.event == "opened") | .path] | last) as $path
-      | any(.[]; .event == (if $path == "topic" then "interview-thread" else "thread" end))' \
+    task_path='[.[] | select(.event == "opened") | .path | strings] | last // ""' topic='is_topic' \
+    thread='any(.[]; .event == (if is_topic then "interview-thread" else "thread" end))' \
     worktrees='[open_worktrees(.[]; $home) | [.worktree, "\(.worktree) (\(.project), \(.branch))", (.project // ""), tojson]
       | map(tostring) | join("\u001f")] | join("\n")' \
     -- --arg task "$task" --arg role "$role" --args -- ${past[@]+"${past[@]}"} <<<"$events"
   # A topic task takes only its topic session, and the topic role only a topic task, so no
   # builder, reviewer or ops comes of a topic, and no topic session of any other task.
-  [[ $task_path != topic || $role == topic ]] || die "$task is a topic, which takes only its topic session"
-  [[ $role != topic || -z $task_path || $task_path == topic ]] ||
+  [[ $topic != true || $role == topic ]] || die "$task is a topic, which takes only its topic session"
+  [[ $role != topic || -z $task_path || $topic == true ]] ||
     die "the topic role is only a topic task's: $task is a $task_path task"
   # Every task has its Discord thread before any worker starts (bin/team-thread): a topic its
   # interview thread, which team-topic open opens, and every other task its thread under

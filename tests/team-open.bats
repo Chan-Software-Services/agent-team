@@ -1047,6 +1047,15 @@ topic_open_logged() {
   echo '{"ts":"2026-11-24T00:00:01Z","task":"T5","event":"closed","archive":[],"returned":[],"kept":[]}' >>"$TEAM_HOME/ledger.jsonl"
   run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
   assert_equal "$(jq -r '"\(.task) \(.path)"' <<<"$output")" "T7 topic"
+  # A task whose latest opened is of another path is no topic, as is_topic reads it everywhere, so
+  # T3 opened again as a feature task frees its place.
+  word=$(topic_word "$TOPIC_THREAD")
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research more "More"
+  assert_contains "$stderr" "two topic sessions are open (T3, T7)"
+  jq -cn '{ts: "2026-11-24T00:00:02Z", task: "T3", event: "opened", project: "proj", path: "feature", type: "feat",
+    title: "A topic", branch: "feat/T3-a-topic", base: "main", base_sha: "0123456", worktree: "/w/T3"}' >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research more "More"
+  assert_equal "$(jq -r .path <<<"$output")" "topic"
 }
 
 @test "two topic opens at once with one place left: one opens, the other is refused with the cap's line" {

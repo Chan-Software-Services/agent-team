@@ -191,7 +191,7 @@ interview_open() {
 # topic's is the topic channel, every other task's the interview channel: thread_parent <events>
 thread_parent() {
   local parent=$INTERVIEW_CHANNEL
-  if jq -e 'any(.[]; .event == "opened" and .path == "topic")' <<<"$1" >/dev/null; then
+  if ledger_jq 'is_topic' -e <<<"$1" >/dev/null; then
     parent=$TOPIC_CHANNEL
     [[ -n $parent || ! -v TEAM_TOPIC_CHANNEL ]] ||
       die "no topic channel is set: TEAM_TOPIC_CHANNEL is empty, and TOPIC_CHANNEL in bin/lib/team.sh names the channel a topic's thread opens under"

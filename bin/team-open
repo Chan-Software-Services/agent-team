@@ -417,8 +417,8 @@ if [[ $path == topic ]]; then
   if [[ -e $ledger ]]; then
     used=$(ledger_jq 'first(ledger_events[] | select(.event == "opened" and (.discord_message | tostring) == $m) | .task) // empty' \
       -nRr --arg m "$daniel" "$ledger")
-    mapfile -t topics < <(ledger_jq 'ledger_events | by_task | to_entries[] | select(.value | is_open)
-      | select(any(.value[]; .event == "opened" and .path == "topic")) | .key' -nRr "$ledger" | sort -V)
+    mapfile -t topics < <(ledger_jq 'ledger_events | by_task | to_entries[] | select(.value | is_open and is_topic)
+      | .key' -nRr "$ledger" | sort -V)
   fi
   [[ -z $used ]] || die "$where cannot open a topic: message $daniel already opened $used"
   if ((${#topics[@]} >= TOPIC_MAX_OPEN)); then

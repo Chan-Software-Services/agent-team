@@ -1991,16 +1991,16 @@ interview_thread_task() {
 # team-answer --channel never takes a topic's thread; team-assistant holds Daniel's word to
 # either: topic_place <id> [--closed]
 topic_place() {
-  local channel=$1 closed=${2:-} task path latest status reply error
+  local channel=$1 closed=${2:-} task path topic latest status reply error
   task=$(interview_thread_task "$channel")
   [[ -n $task ]] || {
     echo "channel $channel is the interview thread of no task in the ledger, so it is no topic's thread" >&2
     return 1
   }
-  json_vars --ledger path='map(select(.event == "opened")) | last | .path // ""' \
+  json_vars --ledger path='map(select(.event == "opened")) | last | .path // ""' topic='is_topic' \
     latest='map(select(.event == "interview-thread")) | last | .discord_thread | tostring' \
     status='task_status' <<<"$(task_event_array "$task")"
-  [[ $path == topic ]] || {
+  [[ $topic == true ]] || {
     echo "channel $channel is the interview thread of $task, a ${path:-unopened} task, not a topic's, so Daniel's word there is not for the assistant" >&2
     return 1
   }
