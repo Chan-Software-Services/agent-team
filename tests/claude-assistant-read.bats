@@ -315,10 +315,12 @@ How many stalls are booked for the next convention?"
 
 @test "a toolkit but prod-read and vercel-read, or one given twice, is refused" {
   says "$ASSISTANT"
-  for kit in prod-write prod-mongo browser; do
+  for kit in prod-write prod-mongo; do
     refused 1 "the assistant reads production only through prod-read and vercel-read; $kit is the ops role's" \
       --request "$link" --toolkit prod-read --toolkit "$kit" --file "$question"
   done
+  refused 1 "the assistant reads production only through prod-read and vercel-read; browser is neither" \
+    --request "$link" --toolkit prod-read --toolkit browser --file "$question"
   refused 1 "the assistant reads production only through prod-read and vercel-read, each once; prod-read is given twice" \
     --request "$link" --toolkit prod-read --toolkit prod-read --file "$question"
 }

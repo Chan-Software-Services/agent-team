@@ -31,11 +31,14 @@
 # is refused them once the command line is read ("claude-assistant-read --load-check is the
 # coordinator's load check: an assistant session runs none").
 #
-# start refuses, starting nothing and writing nothing but its lock, in this order:
+# start refuses, starting nothing and writing nothing but its lock and, for a message in a thread
+# under #assistant, that thread's line in the assistant's thread cache (assistant_place), in this
+# order:
 #   1. a malformed command line (exit 2): no subcommand or another one, a missing or repeated
 #      --request or --file, no --toolkit, an option with no value, an unknown option;
 #   2. a toolkit but prod-read and vercel-read ("the assistant reads production only through
-#      prod-read and vercel-read; <kit> is the ops role's"), or one given twice;
+#      prod-read and vercel-read; <kit> is the ops role's" for prod-write and prod-mongo, "...;
+#      <kit> is neither" for any other), or one given twice;
 #   3. a machine that is fenced or that lost the lease (lease_refusal in bin/lib/team.sh);
 #   4. another start holding ~/.local/state/agent-team/assistant-read.lock (a non-blocking flock):
 #      exit 75, "another read is starting";
@@ -221,7 +224,8 @@ for i in "${!toolkits[@]}"; do
   kit=${toolkits[i]}
   case $kit in
     prod-read | vercel-read) ;;
-    *) die "the assistant reads production only through prod-read and vercel-read; $kit is the ops role's" ;;
+    prod-write | prod-mongo) die "the assistant reads production only through prod-read and vercel-read; $kit is the ops role's" ;;
+    *) die "the assistant reads production only through prod-read and vercel-read; $kit is neither" ;;
   esac
   for ((j = 0; j < i; j++)); do
     [[ ${toolkits[j]} != "$kit" ]] ||

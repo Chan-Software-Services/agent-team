@@ -296,8 +296,10 @@
 # the transcript's deletion. Its toolkits are prod-read, vercel-read or both, each once, and any
 # other set, a missing --request (Daniel's message in #coordinator, as the ops form's), or a
 # --worktree is a malformed command line (exit 2), before the doctor runs; a doctor FAIL of the
-# project whose toolkits list holds them stops it, as the ops form's worktree's project does. It
-# differs from the ops form in three things alone: the session, T0-assistant-read, is started by
+# project whose toolkits list holds them stops it, as the ops form's worktree's project does, and
+# no toolkit of it is refused as team-worker refuses one, since team-worker never launches it. It
+# differs from the ops form in these things too, besides its inventory's name and its drill line
+# below: the session, T0-assistant-read, is started by
 # claude-assistant-read start --load-check --request <link> --toolkit <name>... --file <prompt>,
 # with the ops form's prompt worded for the assistant's read session, written to a file of its own,
 # and ended by claude-assistant-read end --load-check, in place of team-worker and team-ops-end;
