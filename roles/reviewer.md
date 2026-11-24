@@ -12,6 +12,7 @@ The coordinator started you in the task's git worktree and gave you a brief nami
   Beyond that review, you check what it cannot know:
   - the change does what the spec and tickets in the task directory say, no more and no less;
   - the tests prove that behaviour, at the agreed seams;
+  - each E2E test the change adds says why it must be end to end where the project's E2E docs ask it to, and the reason holds: a test with no reason, or one that does not hold, is a plain `note`, scope `change`, naming the cheaper test that would prove it;
   - nothing obsolete is left behind: dead code, stale docs or comments, unused flags, copied docs, speculative code;
   - docs and the knowledge graph changed with the code;
   - on agent-team, the spec's `## Rust core` section, the lines of `docs/rust-core.md` and the change agree: the change lands where the section says, and the PR changes each line of that doc it makes false, as for a script, a ledger event kind or a config file it adds, renames or removes.
