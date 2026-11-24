@@ -245,6 +245,33 @@ stack_exists() {
   assert_equal "$(stowed_events)" "$(stowed_of T2 2 "$head2" handoff)"
 }
 
+# as_topic <task>: <task> made a topic task, as team-topic open opens one on Daniel's word: its
+# opened of the path topic, its launch of the role topic, and its session T<n>-topic, idle in
+# its thread's wait on Daniel.
+as_topic() {
+  jq -c --arg t "$1" 'if .task != $t then .
+    elif .event == "opened" then . + {path: "topic", type: "research", discord_message: "1574454112324419625",
+      discord_channel: "1561234567890123456"}
+    elif .event == "launch" then .role = "topic" else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  jq --arg t "$1" 'map(if .name == "\($t)-builder" then .name = "\($t)-topic" | .status = "idle" | .state = "done" else . end)' \
+    "$BATS_TEST_TMPDIR/sessions.json" >"$BATS_TEST_TMPDIR/sessions.next"
+  mv "$BATS_TEST_TMPDIR/sessions.next" "$BATS_TEST_TMPDIR/sessions.json"
+}
+
+@test "a topic's live session, idle on Daniel, is stopped, and its stowed names topic in its roles and sessions" {
+  as_topic T2
+  run_bin -0 --separate-stderr team-stow T2 --cause handoff
+  assert_equal "$stderr" ""
+  assert_contains "$output" "sessions: T2: stopped and removed T2-topic (a2a2a2a2)"
+  assert_contains "$output" "stowed: T2 roles topic; home feat/T2-work2 at ${head2:0:7}; cause handoff"
+  assert_equal "$(stops_and_removes)" "stop a2a2a2a2
+rm a2a2a2a2"
+  assert_equal "$(stowed_events)" "$(stowed_of T2 2 "$head2" handoff | jq -c '.roles = ["topic"] | .sessions = ["topic"]')"
+  assert_equal "$(jq -c 'select(.event == "stowing") | .roles' "$TEAM_HOME/ledger.jsonl")" '["topic"]'
+  run_bin -0 team-log --check
+}
+
 @test "a diverged branch refuses its task before its sessions stop, and the others still stow" {
   git -C "${wt1:?}" push -q origin feat/T1-work1
   git -C "${wt1:?}" reset -q --hard HEAD~1

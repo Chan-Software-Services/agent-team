@@ -793,6 +793,46 @@ EVENTS
   assert_equal "$(git -C "${laptop:?}/home/slots/home/1" status --porcelain)" ""
 }
 
+# as_topic: T1 made a topic task, as team-topic open opens one on Daniel's word: its opened of the
+# path topic, its launch of the role topic, and its live session T1-topic.
+as_topic() {
+  jq -c 'if .task != "T1" then .
+    elif .event == "opened" then . + {path: "topic", type: "research", discord_message: "1574454112324419625",
+      discord_channel: "1561234567890123456"}
+    elif .event == "launch" then .role = "topic" else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
+  mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  jq 'map(if .name == "T1-builder" then .name = "T1-topic" else . end)' "$HOME/sessions.json" >"$HOME/sessions.next"
+  mv "$HOME/sessions.next" "$HOME/sessions.json"
+}
+
+@test "a topic stowed at a handoff resumes with its worktree and scratch, and the report names topic to relaunch" {
+  as_topic
+  hand_off
+  on_machine laptop run_bin -0 --separate-stderr team-resume
+  report=$(reported)
+  assert_contains "$output" "T1 home: $laptop/home/slots/home/1 on feat/T1-work at ${head:0:7}, moved from $wt, scratch restored from tasks/T1/scratch"
+  assert_equal "$(cat "$laptop/home/slots/home/1/.scratch/task/spec.md")" "spec"
+  assert_equal "$(jq -c '.tasks | map({task, roles: .stowed.roles, sessions: .stowed.sessions, from: .stowed.machine, crashed, failures})' "$report")" \
+    '[{"task":"T1","roles":["topic"],"sessions":["topic"],"from":"home-pc","crashed":null,"failures":[]}]'
+}
+
+@test "a crashed topic lists topic to relaunch, for a resume-crash brief" {
+  as_topic
+  "$REPO_ROOT/bin/team-config" capture >/dev/null
+  git -C "${wt:?}" push -q origin HEAD:refs/heads/feat/T1-work
+  git -C "${TEAM_HOME:?}" add ledger.jsonl machine
+  git -C "${TEAM_HOME:?}" commit -q -m "chore: the ledger"
+  git -C "${TEAM_HOME:?}" push -q origin dev
+  age_lease 75
+
+  local tty=$BATS_TEST_TMPDIR/steal-tty
+  echo home-pc >"$tty"
+  TEAM_LEASE_TTY=$tty on_machine laptop run_bin -0 --separate-stderr team-resume --steal
+  report=$(reported)
+  assert_contains "$output" "T1: crashed on home-pc, with no handoff since its last launch; no checkpoint of it was found, to relaunch: topic"
+  assert_equal "$(jq -c '.tasks[0].crashed.roles' "$report")" '["topic"]'
+}
+
 @test "a crashed task whose last launch was ops lists no role to relaunch: Daniel asks again" {
   "$REPO_ROOT/bin/team-config" capture >/dev/null
   git -C "${wt:?}" push -q origin HEAD:refs/heads/feat/T1-work
