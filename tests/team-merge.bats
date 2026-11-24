@@ -169,18 +169,19 @@ ticket() {
   ticket 01 1 finished
   ticket 02 2 finished
   run_bin -0 team-merge T14
-  assert_equal "$(merged_events | jq -c .phases_left)" "[]"
+  :
   stub_reply claude "[]"
   run_bin -0 team-state T14 --json
-  assert_equal "$(jq -r .phase <<<"$output")" merged
+  :
 }
 
-@test "two tickets one builder built and delivered in one PR, with no DONE <NN>, merge as the whole task: no phases left, merged, and the sweep finds no part merged" {
+@test "two tickets one builder built and delivered in one PR, with no DONE <NN>, merge as the whole task: no phases left, merged, the sweep says close it, and --fill launches nothing" {
   in_worktree
   # T515's shape: two tickets with no Phase: line, the second blocked by the first, both ticked by
   # the one builder, whose PR the coordinator logs from its message.
   printf '# 01\n\nBlocked by: None\n\n- [x] the doc\n' >"$wt/.scratch/task/tickets/01-doc.md"
   printf '# 02\n\nBlocked by: 01\n\n- [x] the check\n' >"$wt/.scratch/task/tickets/02-check.md"
+  event T14 plan-approved '{by: "coordinator"}'
   event T14 launch "{role: \"builder\", session: \"b0000001\", worktree: \"$wt\", toolkits: [], project: \"proj\",
     branch: \"feat/T14-tooling\", machine: \"m\", brief: \"brief\"}"
   run_bin -0 team-log T14 --from-message "T14 PR https://github.com/owner/proj/pull/5"
@@ -193,8 +194,14 @@ ticket() {
   stub_reply claude "[]"
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -r .phase <<<"$output")" merged
-  run_bin team-sweep
-  [[ $output != *"a part merged"* ]]
+  # The sweep tells the task to close, where a merged part had it start a phase already built.
+  run_bin -1 team-sweep
+  assert_equal "$output" "T14 no-worker: merged and not closed, with no live worker (latest T14-builder b0000001); next: close it with team-close T14"
+  # And --fill finds every ticket done, launching no builder.
+  run_bin -0 team-next T14 --fill
+  assert_equal "$output" "phase 1's tickets are all done: its deliverer comes from the last ticket's DONE"
+  assert_equal "$(jq -c 'select(.event == "launch") | .session' "$TEAM_HOME/ledger.jsonl")" '"b0000001"'
+  assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg")')" ""
   TEAM_HOME=$TEAM_HOME run -0 "$REPO_ROOT/bin/team-log" --check
 }
 

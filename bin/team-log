@@ -137,7 +137,7 @@
 # pr its url) of each ticket the PR carried: each of the PR's project in the PR's phase, the
 # earliest of the project's tickets or, once its latest merged names phases left, the earliest of
 # those, that team-tickets T<n> --json calls neither done nor running and whose file has no box
-# left open ("- [ ]"), so a task one builder built and delivered whole, with no DONE <NN>, reads
+# left open ("- [ ]") outside a fenced code block, so a task one builder built and delivered whole, with no DONE <NN>, reads
 # its tickets done and its merge names no phase left (message_carried in bin/lib/messages.jq);
 # tickets team-tickets cannot read carry none, said on stderr. DONE <NN> <sha>... <line> is a ticket-done (commits
 # the shas of 7 to 40 hex digits, note the line) and the builder's done; DONE review-ready <sha> and
@@ -802,7 +802,8 @@ github_pr() {
 
 # The tickets a builder's PR carried, each a ticket-done added to lines before the pr's, with the
 # PR's head as its commits and its url as its pr: each ticket of the PR's project in the PR's phase
-# that is neither done nor running and whose file has no box left open (a list item "[ ]"), as
+# that is neither done nor running and whose file has no box left open (a list item "[ ]" outside a
+# fenced code block, as team-tickets reads its own lines), as
 # message_carried in bin/lib/messages.jq reads team-tickets T<n> --json. Tickets team-tickets
 # cannot read carry none, said on stderr, and the pr is logged alone.
 # carried_tickets <project> <head> <url>
@@ -814,7 +815,9 @@ carried_tickets() {
     return 0
   fi
   while IFS=$'\t' read -r ticket file; do
-    if grep -qE '^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+\[ \]' -- "$file" 2>/dev/null; then open+=("$ticket"); fi
+    if awk '/^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+      !fence && /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+\[ \]/ { found = 1; exit }
+      END { exit !found }' "$file" 2>/dev/null; then open+=("$ticket"); fi
   done < <(jq -r --arg p "$project" '.[] | select(.project == $p) | "\(.ticket)\t\(.file)"' <<<"$tickets")
   carried=$(jq -L "$TEAM_LIB" -r --argjson tickets "$tickets" --arg project "$project" \
     --argjson open "$(jq -cn '$ARGS.positional' --args -- "${open[@]}")" \

@@ -2154,7 +2154,7 @@ $(carried 02 "$HEAD_A")
   logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" --from-message "T7 PR $URL"
 }
 
-@test "a PR carries only its phase's tickets, the earliest of its project or the first its latest merged part left, never one done, running or with a box open" {
+@test "a PR carries only its phase's tickets, the earliest of its project or the first its latest merged part left, never one done, running or with a box open outside a fenced block" {
   open_t7
   launched T7 builder b0000001 brief
   # A deliverer's PR once its phase's tickets are done carries no ticket of a later phase.
@@ -2171,9 +2171,12 @@ $(carried 02 "$HEAD_A")
   launched T7 builder b0000004 brief-build-04
   ticket_file proj 05-five 02 'Phase: 2' '* [X] built'
   ticket_file proj 06-six None 'Phase: 3'
+  # A box quoted in a fenced code block is no box of the ticket's.
+  ticket_file proj 07-fenced None 'Phase: 2' '- [x] built' '```text' '- [ ] a quoted box' '```' '~~~' '1. [ ] another' '~~~'
   on_github "$URL" "$HEAD_B" feat/T7-x
   logs_events "$(carried 02 "$HEAD_B")
 $(carried 05 "$HEAD_B")
+$(carried 07 "$HEAD_B")
 {\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" --from-message "T7 PR $URL"
 }
 
