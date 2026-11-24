@@ -111,9 +111,9 @@ export async function startMongo() {
 }
 
 // Wait for a ping, which mongod answers before any login: up to <waitMs> (180 s, since a Docker
-// busy starting other stacks can take minutes), then fail with the time waited and container <name>'s last log lines. A container that exits
-// first fails the wait at once with its exit code: startMongo runs it without --rm, so it is still
-// there to read.
+// busy starting other stacks can take minutes), then fail with the time waited and container
+// <name>'s last log lines. A container that exits first fails the wait at once with its exit code:
+// startMongo runs it without --rm, so it is still there to read.
 export async function connectWhenReady(uri, name, waitMs = 180_000) {
   const start = Date.now();
   for (;;) {
