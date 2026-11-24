@@ -550,6 +550,14 @@
       "marker": "the coordinator's acts"
     },
     {
+      "id": "quota-usage",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-quota usage --load-check-probe",
+      "expect": "hook",
+      "marker": "the coordinator's acts"
+    },
+    {
       "id": "inbox-post",
       "roles": ["assistant"],
       "tool": "Bash",
@@ -628,6 +636,14 @@
       "input": "bin/team-stow --help",
       "expect": "allowed",
       "marker": "Usage: team-stow"
+    },
+    {
+      "id": "quota-status",
+      "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "bin/team-quota status --json",
+      "expect": "allowed",
+      "marker": "\"schema\":\"team-quota/1\""
     },
     {
       "id": "load-check-help",

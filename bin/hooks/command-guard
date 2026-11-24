@@ -22,8 +22,9 @@
 # among it), nor env or exec before an option, nor, for the assistant alone (AGENT_TEAM_ROLE
 # assistant), the coordinator's acts' names (team-checkpoint, team-handoff, team-ops-end,
 # team-records-rewrite, team-resume, team-review-comment, team-stow, claude-coordinator,
-# team-capacity, team-config, team-heavy, team-lease, team-secrets, team-stack and team-timers), gh
-# or gh-axi as a word, as written or with its quotes and backslashes removed (pk''ill, r\m), and
+# team-capacity, team-config, team-heavy, team-lease, team-quota, team-secrets, team-stack and
+# team-timers), gh or gh-axi as a word, as written or with its quotes and backslashes removed
+# (pk''ill, r\m), and
 # holding no $', no brace list or range ({,} or {..}), and no printf or echo with a > or tee, by
 # which a name may be spelled otherwise, at once, with no Python run. Any other is decided by one
 # rule table, bin/lib/command_rules.py, run once on the hook's input: it walks each simple command
@@ -100,7 +101,7 @@ text=$command$'\n'${stripped//[\'\"\\]/}
 # reads them.
 assistant_words=
 [[ ${AGENT_TEAM_ROLE:-} != assistant ]] ||
-  assistant_words='team-(checkpoint|handoff|ops-end|records-rewrite|resume|review-comment|stow|capacity|config|heavy|lease|secrets|stack|timers)|claude-coordinator|(^|[^[:alnum:]_.-])gh(-axi)?([^[:alnum:]_.-]|$)'
+  assistant_words='team-(checkpoint|handoff|ops-end|records-rewrite|resume|review-comment|stow|capacity|config|heavy|lease|quota|secrets|stack|timers)|claude-coordinator|(^|[^[:alnum:]_.-])gh(-axi)?([^[:alnum:]_.-]|$)'
 [[ $text == *team-worker* || $text == *team-load-check* || $text == *ui-capture* ||
   $text == *AGENT_TEAM_* || $text == *GH_CONFIG_DIR* || $text == *GH_TOKEN* || $text == *GITHUB_TOKEN* ||
   $text == *--steal* || $text == *team-ask* || $text == *team-answer* ||
