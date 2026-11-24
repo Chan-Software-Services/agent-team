@@ -17,6 +17,7 @@ A missing or wrong one is `team-doctor`'s line to report: quote its `tool` line 
 - Each crate is a directory under `crates/` whose `Cargo.toml` takes `edition.workspace = true` and the other package fields from the workspace, and `[lints] workspace = true`.
 - The core crate holds the team's rules alone; each platform's implementation and each interface (a command line, Discord) is a crate of its own, which the core never depends on.
 - A new crate, a renamed one or a new member path is a ticket's to name, never a builder's choice.
+- `docs/rust-core.md` says where each part of the team lands, its crate and its seam, with the port map: read it before a step of the port, and keep its lines true, as its "How it is kept" says.
 
 ## 3. The rules
 

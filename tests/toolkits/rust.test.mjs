@@ -198,11 +198,15 @@ describe("the rust-core skill", () => {
     assert.doesNotMatch(skill, /1\.\d+\.\d+/, "the skill writes a toolchain version, which rust-toolchain.toml alone holds");
   });
 
-  test("gives the layout: a virtual workspace, crates under crates/, each taking the workspace's lints", () => {
+  test("gives the layout: a virtual workspace, crates under crates/, each taking the workspace's lints, and the design doc", () => {
     const text = section("## 2. The layout");
     assert.match(text, /`crates\/`/);
     assert.match(text, /`\[lints\] workspace = true`/);
     assert.match(text, /ticket/);
+    const doc = text.split("\n").find((line) => line.includes("`docs/rust-core.md`"));
+    assert.ok(doc, "the layout does not point at docs/rust-core.md");
+    assert.match(doc, /How it is kept/);
+    assert.ok(existsSync(join(repoRoot, "docs", "rust-core.md")), "docs/rust-core.md is missing");
   });
 
   // Each rule is one bullet holding the rule and its reason.
