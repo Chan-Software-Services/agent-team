@@ -196,6 +196,16 @@ says() {
   assert_equal "$(says)" "no room: T50, opened at 17:05, has no worker yet"
 }
 
+@test "an ask naming tickets frees the room once none of the task's work is unfinished, as it then parks the task" {
+  event T50 opened 2026-11-13T17:00:00Z '{project: "proj"}'
+  event T50 launch 2026-11-13T17:01:00Z '{role: "builder", session: "aaaa0050", ticket: "01"}'
+  event T50 ticket-done 2026-11-13T17:02:00Z '{ticket: "01", commits: ["abc1234"]}'
+  event T50 asked 2026-11-13T17:03:00Z '{id: "t2", text: "ticket 02 takes which table?", tickets: ["02"]}'
+  event T50 opened 2026-11-13T17:05:00Z '{project: "proj"}'
+  event T51 opened 2026-11-13T17:06:00Z '{project: "proj"}'
+  assert_equal "$(says)" "no room: T51, opened at 17:06, has no worker yet"
+}
+
 @test "the causes that free the room are every cause the lifecycle table counts as a wait on Daniel, and outside" {
   assert_equal "$(jq -c -L "$REPO_ROOT/bin/lib" -n 'include "queue"; include "ledger"; queue_parked_off_team | sort')" \
     "$(jq -c '[.causes | to_entries[] | select(.value.class == "wait:daniel" or .key == "outside") | .key] | sort' \

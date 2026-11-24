@@ -344,16 +344,18 @@ def queue_capacity($name; $schema):
 def queue_parked_off_team: ["ask", "daniel", "daniel-hold", "outside"];
 
 # The open tasks the team itself is about to launch: those whose latest opened no launch follows
-# and with no standing park of a queue_parked_off_team cause that parks the whole task (one
-# parked on Daniel or outside waits on them, and holds back no open; a ticket's park, or an ask
-# naming tickets, holds only those tickets' builders, as parked reads it, so it frees nothing),
-# [{task, ts}] by task number, from the events by task (by_task's object).
+# and with no standing park of a queue_parked_off_team cause that parks the whole task, as
+# parked reads it (one parked on Daniel or outside waits on them, and holds back no open; a
+# ticket's park frees nothing, since it holds only that ticket's builder, and an ask naming
+# tickets frees the room only once none of the task's work is unfinished, when it parks the
+# whole task), [{task, ts}] by task number, from the events by task (by_task's object).
 def queue_unstaffed($tasks):
   [$tasks | to_entries[] | .key as $t | .value
    | (last(to_entries[] | select(.value.event == "opened")) // null) as $o
    | select($o != null and (any(.[$o.key + 1:][]; .event == "launch") | not))
    | select(is_open)
-   | select(any(lifecycle.parks[]; (.passed | not) and .ticket == null and .tickets == null
+   | (unfinished_roles == []) as $idle
+   | select(any(lifecycle.parks[]; (.passed | not) and .ticket == null and (.tickets == null or $idle)
        and IN(.cause; queue_parked_off_team[])) | not)
    | {task: $t, ts: $o.value.ts}]
   | sort_by(.task[1:] | tonumber);
