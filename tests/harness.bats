@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# The test harness itself: the sandbox, its guard, the stubs and the git helper.
+# The test harness itself: the sandbox, its guard, the stubs, the git helper and the vendored
+# bats' run directory.
 
 load helpers/common
 
@@ -152,4 +153,37 @@ not ok 2 after
 #   `false' failed
 TAP
 )"
+}
+
+@test "the vendored bats makes its run directory again while its random name holds zsh, which a confined session's path may not, and still fails when mktemp does" {
+  # mktemp gives the run directory two names holding "zsh", then the machine's own mktemp runs.
+  command -v mktemp >"$STUB_FIXTURES/mktemp.real"
+  stub_command mktemp
+  stub_script mktemp <<'SH'
+if [[ ${2-} == */bats-run-XXXXXX && -e $STUB_FIXTURES/mktemp.fail ]]; then exit 1; fi
+if [[ ${2-} == */bats-run-XXXXXX ]]; then
+  for name in zsh9Qx a1zshb; do
+    if [[ ! -e $STUB_FIXTURES/mktemp.$name ]]; then
+      : >"$STUB_FIXTURES/mktemp.$name"
+      mkdir -- "${2%XXXXXX}$name"
+      printf '%s\n' "${2%XXXXXX}$name"
+      exit 0
+    fi
+  done
+fi
+exec "$(<"$STUB_FIXTURES/mktemp.real")" "$@"
+SH
+  local dir=$BATS_TEST_TMPDIR/fixture
+  mkdir -p "$dir"
+  printf '%s\n' '@test "records its run directory" { printf "%s\n" "$BATS_RUN_TMPDIR" >"$RUN_DIR_FILE"; }' >"$dir/fixture.bats"
+  RUN_DIR_FILE=$BATS_TEST_TMPDIR/run-dir run -0 "$REPO_ROOT/tests/vendor/bats-core/bin/bats" "$dir/fixture.bats"
+  local run_dir
+  run_dir=$(<"$BATS_TEST_TMPDIR/run-dir")
+  [[ $run_dir == "$TMPDIR"/bats-run-?????? && $run_dir != *zsh* ]] || { echo "the run directory is $run_dir" >&2; return 1; }
+  # Each name holding "zsh" was asked for and removed, before the third call's.
+  assert_equal "$(grep -c 'bats-run-XXXXXX' "$STUB_CALLS/mktemp.log")" 3
+  [[ ! -e $TMPDIR/bats-run-zsh9Qx && ! -e $TMPDIR/bats-run-a1zshb ]] || { echo "a run directory holding zsh is left" >&2; return 1; }
+  : >"$STUB_FIXTURES/mktemp.fail"
+  run -1 "$REPO_ROOT/tests/vendor/bats-core/bin/bats" "$dir/fixture.bats"
+  assert_contains "$output" "Failed to create BATS_RUN_TMPDIR ($TMPDIR/bats-run-XXXXXX) with mktemp"
 }

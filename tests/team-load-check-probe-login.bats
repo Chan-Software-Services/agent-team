@@ -37,6 +37,12 @@ setup() {
   assert_contains "$output" "FAIL builder login: its call did not run: none"
   assert_contains "$output" "FAIL reviewer login: its call gave a result that is no GitHub login"
   [[ $output != *"HTTP-401"* ]]
+
+  # A shell that found no gh says so, as any other attempt's call does.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript builder login=not-found
+  run_bin -1 team-load-check --probe --role builder
+  assert_contains "$output" "FAIL builder login: its command not found (exit 127)"
 }
 
 @test "with the worker login off, the probe makes no github call and no login attempt, and says so in one line" {

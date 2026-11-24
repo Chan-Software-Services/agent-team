@@ -333,8 +333,9 @@ probe_rules() {
       or ((.expect | IN("hook", "script", "allowed")) and (.marker | type) != "string")
       or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel", "allowed") | not)))
       or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
-      or ((.expect == "rule") != (.family | type == "string"))
-      or (.family != null and (.family | IN($families[]) | not)))
+      or (.expect == "rule" and (.family | type) != "string")
+      or (.family != null and ((.family | type) != "string" or (.family | IN($families[]) | not)
+        or (.expect != "rule" and (.expect != "refused" or .roles != ["assistant"])))))
     | .id'
   out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
@@ -348,6 +349,23 @@ probe_rules() {
   assert_equal "$out" "no-marker
 number-marker
 login-hook"
+  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's refused
+  # one's, whose deny rule and hook both refuse it in bypass mode; never a worker's refused one,
+  # auto mode's stand-in, nor a hook's.
+  out=$(jq -r "$malformed" <<<'{"families": [{"family": "f"}], "attempts": [
+    {"id": "rule-bare", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule"},
+    {"id": "rule", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule", "family": "f"},
+    {"id": "refused-assistant", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-assistant-bare", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused"},
+    {"id": "refused-worker", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-both", "roles": ["builder", "assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "m", "family": "f"},
+    {"id": "unknown", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "g"}]}')
+  assert_equal "$out" "rule-bare
+refused-worker
+refused-both
+hook
+unknown"
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
 }
@@ -432,10 +450,10 @@ probe_denies() {
   return 1
 }
 
-@test "every rule attempt of the refusal probe is denied by a rule of its family in each of its roles' settings" {
+@test "every attempt of the refusal probe that names a family is denied by a rule of it in each of its roles' settings" {
   local role id tool input family rules list probe=$REPO_ROOT/bin/lib/probe.json missing=() n=0
   for role in "${PROBE_ROLES[@]}"; do
-    list=$(jq -r --arg role "$role" '.attempts[] | select(.expect == "rule" and any(.roles[]; . == $role))
+    list=$(jq -r --arg role "$role" '.attempts[] | select(.family != null and any(.roles[]; . == $role))
       | [.id, .tool, .input, .family] | @tsv' "$probe")
     while IFS=$'\t' read -r id tool input family; do
       rules=$(jq -r --arg family "$family" --argjson rules "$(probe_rules "$role")" \
@@ -446,6 +464,23 @@ probe_denies() {
   done
   assert_equal "${missing[*]}" ""
   ((n > 3))
+}
+
+# In bypass mode no auto mode judges the assistant's calls, so its refused attempt is one its deny
+# rules and its command guard both refuse, as team-load-check --help says: the live session shows
+# whichever answers first, so each is held here.
+@test "every refused attempt of the assistant is denied by one of its deny rules and refused by its command guard" {
+  local id input denied=() unguarded=() n=0 probe=$REPO_ROOT/bin/lib/probe.json
+  while IFS=$'\t' read -r id input; do
+    n=$((n + 1))
+    probe_denies "$(probe_rules assistant | jq -r '.[]')" Bash "$input" || denied+=("$id")
+    AGENT_TEAM_ROLE=assistant run_bin --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$input" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    [[ $status == 2 && $stderr == *"Blocked by command-guard: "* ]] || unguarded+=("$id")
+  done < <(jq -r '.attempts[] | select(.expect == "refused" and .roles == ["assistant"]) | [.id, .input] | @tsv' "$probe")
+  assert_equal "${denied[*]}" ""
+  assert_equal "${unguarded[*]}" ""
+  ((n >= 3))
 }
 
 # A hook attempt stands for the hook under bin/hooks/ whose file holds its marker.
@@ -2947,7 +2982,7 @@ shellcheck_checkout() {
 # tests/run in a checkout of its own, whose bats files are quick.bats, timed above what it takes,
 # and three that sleep 3 s: slow.bats, timed at 1 s, other.bats, timed only on the other platform,
 # and untimed.bats, which the timings lack.
-@test "tests/run names each bats file over 1.5 times and TESTS_SLOWER_BY seconds more than its timing on this platform, annotated under GitHub Actions, and never fails for it" {
+@test "tests/run names each bats file over 1.5 times and TESTS_SLOWER_BY seconds more than its timing on this platform, advising a refresh only of the committed timings, annotated under GitHub Actions, and never fails for it" {
   local copy=$BATS_TEST_TMPDIR/copy name timings slow
   unset TEAM_HOME GITHUB_ACTIONS TESTS_TIMINGS TESTS_SLOWER_BY
   mkdir -p "$copy/tests/vendor"
@@ -2960,7 +2995,7 @@ shellcheck_checkout() {
   timings=$'# timings\nfile\tlinux\tmacos\ntests/quick.bats\t2\t2\ntests/slow.bats\t1\t1\n'
   if [[ $(uname -s) == Darwin ]]; then timings+=$'tests/other.bats\t1\t\n'; else timings+=$'tests/other.bats\t\t1\n'; fi
   printf '%s' "$timings" >"$copy/tests/timings.tsv"
-  slow='tests/run: tests/slow\.bats took [3-9]s, 1s in tests/timings\.tsv; refresh the timings with tests/shards update, or find what slowed it'
+  slow='tests/run: tests/slow\.bats took [3-9]s, 1s in tests/timings\.tsv; find what slowed it, or refresh tests/timings\.tsv with tests/shards update if its seconds are stale'
 
   # Each line comes after the summary and before the wall time, and only under GitHub Actions as
   # an annotation too.
@@ -2969,13 +3004,14 @@ shellcheck_checkout() {
   [[ $(sed -n '/^bats: /,$p' <<<"$output" | sed '1d;$d') =~ ^${slow}$ ]] || { echo "not only slow.bats named after the summary" >&2; return 1; }
   [[ $output != *::warning* ]]
 
-  # A failing file fails the run, the warning beside it; TESTS_TIMINGS names the timings file.
+  # A failing file fails the run, the warning beside it; TESTS_TIMINGS names the timings file,
+  # as CI's shard-plan hands on the latest successful run's, which no refresh changes.
   mv "$copy/tests/timings.tsv" "$BATS_TEST_TMPDIR/timings.tsv"
   echo '@test "fails" { false; }' >"$copy/tests/fail.bats"
   GITHUB_ACTIONS=true TESTS_TIMINGS=$BATS_TEST_TMPDIR/timings.tsv TEAM_JOBS=5 TESTS_SLOWER_BY=1 \
     run -1 --separate-stderr "$copy/tests/run" bats --shard 1/1
   assert_contains "$output" "bats: 4 tests passed; 1 of 5 files failed"
-  slow=${slow//tests\/timings\\.tsv/${BATS_TEST_TMPDIR//./\\.}/timings\\.tsv}
+  slow="tests/run: tests/slow\\.bats took [3-9]s, 1s in ${BATS_TEST_TMPDIR//./\\.}/timings\\.tsv; find what slowed it"
   [[ $(sed -n '/^bats: /,$p' <<<"$output" | sed '1d;$d') =~ ^${slow}$'\n'::warning\ title=bats\ file\ slower::${slow}$ ]] ||
     { echo "not only slow.bats named and annotated after the summary" >&2; return 1; }
 
