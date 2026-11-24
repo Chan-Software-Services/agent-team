@@ -46,6 +46,11 @@ disk_own_dir() {
   [[ $(stat -c '%F|%u' -- "$1" 2>/dev/null) == "directory|$(id -u)" ]]
 }
 
+# Whether the directory <dir> holds at least one entry.
+disk_has_entries() {
+  [[ -n $(find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]
+}
+
 # Append <line> to the day's file, made with its title at the day's first line.
 disk_record() {
   local disk_state disk_dir disk_record_file disk_day disk_file disk_machine
@@ -70,13 +75,16 @@ disk_record() {
 # its tmp is not a real directory of this user's, or the tmp is empty.
 # disk_clear_job_tmp <job dir> <why> [<who>]
 disk_clear_job_tmp() {
-  local disk_job=$1 disk_why=$2 disk_who=${3:-${1##*/}} disk_tmp=$1/tmp disk_entry disk_err disk_left
+  local disk_job=$1 disk_why=$2 disk_who=${3:-${1##*/}} disk_tmp=$1/tmp disk_entry disk_err
   DISK_KB=0 DISK_LINE=''
   # Checked again just before the removal, so nothing is reached through a link put in its place.
   if ! disk_own_dir "$disk_job" || ! disk_own_dir "$disk_tmp"; then return 2; fi
-  [[ -n $(find "$disk_tmp" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]] || return 2
+  disk_has_entries "$disk_tmp" || return 2
   DISK_KB=$(disk_du "$disk_tmp")
-  disk_err=$(team_mktemp)
+  if ! disk_err=$(team_mktemp); then
+    echo "${0##*/}: could not clear $disk_tmp: no temporary file for rm's errors could be made" >&2
+    return 1
+  fi
   while IFS= read -r -d '' disk_entry; do
     if [[ $(stat -c %F -- "$disk_entry" 2>/dev/null) == directory ]]; then
       # A read-only tree, a Go module cache say, is made writable first; chmod changes no link.
@@ -86,8 +94,7 @@ disk_clear_job_tmp() {
       rm -f -- "$disk_entry" 2>>"$disk_err" || true
     fi
   done < <(find "$disk_tmp" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
-  disk_left=$(find "$disk_tmp" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)
-  if [[ -n $disk_left ]]; then
+  if disk_has_entries "$disk_tmp"; then
     echo "${0##*/}: could not clear $disk_tmp: $(tmp_last_line "$disk_err")" >&2
     return 1
   fi
@@ -184,21 +191,20 @@ disk_job_why() {
 
 # The job part: clear each team session's tmp the rules name, or on a dry run say it would.
 disk_jobs() {
-  local disk_root=$HOME/.claude/jobs disk_real disk_record disk_type disk_owner disk_id disk_why disk_reason
+  local disk_root=$HOME/.claude/jobs disk_real disk_line disk_type disk_owner disk_id disk_why disk_reason
   local disk_ids=() disk_whys=() disk_i disk_job disk_kb disk_who disk_rc disk_uid
   [[ -d $disk_root ]] || return 0
   disk_real=$(realpath -- "$disk_root") || return 0
   disk_uid=$(id -u)
   # The candidates: real directories of this user's named as a job is, holding a tmp with entries.
-  while IFS= read -r -d '' disk_record; do
-    disk_type=${disk_record%% *} disk_record=${disk_record#* }
-    disk_owner=${disk_record%% *} disk_id=${disk_record#* }
+  while IFS= read -r -d '' disk_line; do
+    disk_type=${disk_line%% *} disk_line=${disk_line#* }
+    disk_owner=${disk_line%% *} disk_id=${disk_line#* }
     [[ $disk_type == d && $disk_owner == "$disk_uid" && $disk_id =~ ^[0-9a-f]{8}$ ]] || continue
     disk_own_dir "$disk_real/$disk_id/tmp" || continue
-    [[ -n $(find "$disk_real/$disk_id/tmp" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]] || continue
+    disk_has_entries "$disk_real/$disk_id/tmp" || continue
     disk_ids+=("$disk_id")
   done < <(find "$disk_real" -mindepth 1 -maxdepth 1 -printf '%y %U %f\0' 2>/dev/null | LC_ALL=C sort -z)
-  ((${#disk_ids[@]})) || return 0
 
   # Nothing is cleared on a guess of whose a job is or whether it may be woken.
   if ! disk_read_ledger 2>"$TMP_WORK/ledger.err"; then
@@ -230,11 +236,8 @@ disk_jobs() {
   for disk_i in "${!disk_candidates[@]}"; do
     disk_id=${disk_candidates[disk_i]}
     disk_job=$disk_real/$disk_id
-    if [[ $disk_root == "$disk_real" ]]; then
-      tmp_live "$disk_job/tmp" && continue
-    else
-      tmp_live "$disk_job/tmp" "$disk_root/$disk_id/tmp" && continue
-    fi
+    # A process may name the tmp under the jobs root as resolved or as named.
+    tmp_live "$disk_job/tmp" "$disk_root/$disk_id/tmp" && continue
     disk_who="${DISK_TASKS[$disk_id]}'s ${DISK_ROLES[$disk_id]} $disk_id"
     if [[ -n $disk_dry ]]; then
       if ! disk_own_dir "$disk_job" || ! disk_own_dir "$disk_job/tmp"; then continue; fi

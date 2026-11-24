@@ -331,6 +331,14 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
   assert_equal "$output" "cleared the job tmp of T9's builder abab0001 (2 MB; not listed by Claude Code)"
 }
 
+@test "a broken session list fails the run on a quiet machine too, with nothing to clear" {
+  touch "$BATS_TEST_TMPDIR/agents.fail"
+  run_bin -1 --separate-stderr team-janitor disk
+  assert_equal "$output" ""
+  assert_equal "$stderr" "team-janitor: claude agents --json --all failed: agents: the background service did not answer, so no job tmp was cleared"
+  assert_equal "$(jq .ok "$RECORD")" false
+}
+
 @test "a clearing that fails is said on stderr, fails the run, and the other jobs go on" {
   launch T9 builder acac0001
   launch T9 builder acac0002

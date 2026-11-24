@@ -22,7 +22,7 @@ The sweep empties the tmp of a team session that nothing will wake again or that
   - its listed state is `stopped`: `stopped`, which Claude Code never wakes;
   - its listed state is `done` or `failed`, and its job's last change (`state.json`'s `updatedAt`, or that file's mtime) is more than 24 hours ago: `done and idle 26 h`.
 - A listed state of `working` or `blocked`, or any state Claude Code adds later, is kept.
-- The ledger and the session list are read once, and only when some job's tmp holds an entry; when either cannot be read, nothing is cleared and the run exits 1 saying why.
+- The ledger and the session list are read once on each run that finds `~/.claude/jobs`, so a broken one shows on a quiet machine too; when either cannot be read, nothing is cleared and the run exits 1 saying why.
 
 Why 24 hours: open tasks run from hours to days, a session settled for a day that is woken again has lost only temporary files, since its durable work is in `.scratch/task/`, and it matches the reaper's age for anonymous volumes.
 

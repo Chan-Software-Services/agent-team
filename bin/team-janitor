@@ -141,9 +141,10 @@
 # hex digits, a real directory of this user's, never a link, whose id the ledger has a launch of a
 # planner, builder or reviewer with (its session); the coordinator's, the assistant's, an ops
 # session's and Daniel's own sessions have none, so they are never touched. The ledger and the
-# session list (claude agents --json --all, given 30 s) are read once, only when such a job's tmp
-# (a real directory, never a link) holds an entry; when either cannot be read, no job tmp is
-# cleared and the run exits 1 saying why. A job with no readable state.json is kept. A tmp is
+# session list (claude agents --json --all, given 30 s) are read once on each run that finds the
+# jobs root, so a broken one shows on a quiet machine too; when either cannot be read, no job tmp
+# is cleared and the run exits 1 saying why. Only a tmp that is a real directory, never a link,
+# holding an entry is looked at, and a job with no readable state.json is kept. A tmp is
 # cleared when the list gives its session no pid, no process of this user names a path under it
 # (as the tmp sweep's not-live rule reads them; when they cannot be read, nothing is cleared and
 # the run exits 1), and the first of these holds, which gives its why:
