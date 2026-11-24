@@ -306,6 +306,136 @@ findings() {
     "queue: room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB: open split.md (proj, priority 1, L): split the hot files; next: team-open --queued split.md"
 }
 
+# Register <project> on a treehouse pool at ~/projects/<project>, beside proj, its
+# treehouse.toml setting max_trees to <max> when given ("" writes none):
+# treehouse_project <project> [<max>]
+treehouse_project() {
+  printf '%s\n' "[$1]" "repo = \"owner/$1\"" "path = \"projects/$1\"" 'base = "main"' 'delivery = "direct-pr"' \
+    'merge_method = "merge"' 'required_checks = []' 'task_dir = ".scratch/task"' 'docs = []' 'toolkits = []' \
+    "[$1.pool]" 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' 'return = "scripts/th-return.sh"' \
+    "slots = [\"pools/$1/1/$1\"]" >>"$TEAM_HOME/projects.toml"
+  mkdir -p "$HOME/projects/$1"
+  [[ -z ${2-} ]] || printf '# the pool\nmax_trees = %s # its cap\nroot = ""\n' "$2" >"$HOME/projects/$1/treehouse.toml"
+  if [[ ! -e $STUB_FIXTURES/treehouse.sh ]]; then
+    stub_command treehouse
+    # Each call's directory is logged, and its pool is that directory's fixture, pool-<dir>.json.
+    stub_script treehouse <<'SH'
+[[ $* == 'status --json' ]] || { echo "treehouse stub: unplanned call: $*" >&2; exit 64; }
+echo "${PWD##*/}" >>"$STUB_CALLS/treehouse.pwd"
+[[ -f $STUB_FIXTURES/pool-${PWD##*/}.json ]] || { echo "treehouse: no pool" >&2; exit 1; }
+print_file "$STUB_FIXTURES/pool-${PWD##*/}.json"
+SH
+  fi
+}
+
+# Set <project>'s pool, as treehouse status --json reports it, one slot per status given:
+# pool <project> <status>...
+pool() {
+  local project=$1 n=0 status
+  shift
+  for status; do
+    n=$((n + 1))
+    jq -cn --arg path "$HOME/pools/$project/$n/$project" --arg status "$status" --arg n "$n" \
+      '{name: $n, path: $path, status: $status, branch: "", lease_holder: (if $status == "leased" then "T\($n)" else "" end)}'
+  done | jq -cs . >"$STUB_FIXTURES/pool-$project.json"
+}
+
+# The pools treehouse was asked about since the last call, one directory a line, then forgotten.
+pools_read() {
+  cat "$STUB_CALLS/treehouse.pwd" 2>/dev/null || true
+  rm -f "$STUB_CALLS/treehouse.pwd"
+}
+
+@test "queue-ready skips a ready item whose treehouse pool has no free tree, the room's line naming the full pool" {
+  treehouse_project th 2
+  ready a-proj.md 2 S "work on proj"
+  item b-th.md "summary: work on th" "project: th" "priority: 1" "size: S"
+  local room="room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  # Both trees leased, at max_trees 2: th's item waits, and proj's is named.
+  pool th leased leased
+  assert_equal "$(listed | jq -c '.room, [.findings[] | .next]')" \
+    "{\"fits\":true,\"says\":\"$room; th's pool is full (2 of 2 trees, none free)\"}
+[\"team-open --queued a-proj.md\"]"
+  assert_equal "$(pools_read)" th
+  assert_equal "$(findings | jq -r .text)" \
+    "queue: $room; th's pool is full (2 of 2 trees, none free): open a-proj.md (proj, priority 2, S): work on proj; next: team-open --queued a-proj.md"
+  pools_read >/dev/null
+  # The text's first line is the same room's line.
+  run_bin -0 team-queue list
+  assert_equal "${lines[0]}" "$room; th's pool is full (2 of 2 trees, none free)"
+  pools_read >/dev/null
+  # A tree free to lease, or room for a new one under max_trees, is a free tree.
+  pool th leased available
+  assert_equal "$(listed | jq -c '.room.says, [.findings[] | .next]')" "\"$room\"
+[\"team-open --queued b-th.md\"]"
+  pool th leased
+  assert_equal "$(listed | jq -c '.room.says, [.findings[] | .next]')" "\"$room\"
+[\"team-open --queued b-th.md\"]"
+  # A dirty or in-use tree is not free.
+  pool th dirty in-use leased
+  assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued a-proj.md"
+  # A pool treehouse cannot report has no tree to give either.
+  rm "$STUB_FIXTURES/pool-th.json"
+  assert_equal "$(listed | jq -r '.room.says, (.findings[] | .next)')" \
+    "$room; th's pool cannot be read (treehouse status --json did not answer)
+team-open --queued a-proj.md"
+  pools_read >/dev/null
+  # A git pool is never full and never read; with no room, no pool is read.
+  ready a-proj.md 1 S "work on proj"
+  pool th leased leased
+  assert_equal "$(listed | jq -r '.room.says, (.findings[] | .next)')" "$room
+team-open --queued a-proj.md"
+  ready a-proj.md 2 S "work on proj"
+  plan '.over = true'
+  assert_equal "$(listed | jq -c '.room.says, .findings')" '"no room: over budget"
+[]'
+  assert_equal "$(pools_read)" ""
+}
+
+@test "max_trees is read as treehouse reads it: the checkout's treehouse.toml, else the user's config, else 16" {
+  treehouse_project th
+  item b-th.md "summary: work on th" "project: th" "priority: 1" "size: S"
+  pool th leased leased
+  # No config anywhere: max_trees is 16, so 2 trees leave room for a new one.
+  assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued b-th.md"
+  mkdir -p "$HOME/.config/treehouse"
+  printf 'max_trees = 2\n' >"$HOME/.config/treehouse/config.toml"
+  assert_equal "$(listed | jq -r '.room.says')" \
+    "room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB; th's pool is full (2 of 2 trees, none free)"
+  # The checkout's treehouse.toml wins whole, its max_trees 16 when it gives none; a key in a
+  # table is not the top-level max_trees.
+  printf 'root = ""\n[hooks]\nmax_trees = 2\n' >"$HOME/projects/th/treehouse.toml"
+  assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued b-th.md"
+  printf 'max_trees=3\n' >"$HOME/projects/th/treehouse.toml"
+  pool th leased leased leased
+  assert_equal "$(listed | jq -r '.room.says')" \
+    "room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB; th's pool is full (3 of 3 trees, none free)"
+}
+
+@test "with every ready item's pool full, no queue-ready, and the room's line names each full pool in rank order" {
+  treehouse_project th 2
+  treehouse_project tw 1
+  item a-th.md "summary: work on th" "project: th" "priority: 1" "size: S"
+  item b-tw.md "summary: work on tw" "project: tw" "priority: 2" "size: S"
+  item c-th.md "summary: more on th" "project: th" "priority: 3" "size: S"
+  pool th leased leased
+  pool tw leased
+  local room="room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  assert_equal "$(listed | jq -c '.room, .findings')" \
+    "{\"fits\":true,\"says\":\"$room; th's pool is full (2 of 2 trees, none free); tw's pool is full (1 of 1 tree, none free)\"}
+[]"
+  # Each pool is read once, in the order its first ready item ranks.
+  assert_equal "$(pools_read)" "th
+tw"
+  # The queue's problems are still named.
+  ready d-bad.md 5 S "a bad one"
+  assert_equal "$(findings | jq -r .kind)" queue
+  # Once tw has a free tree, its item is named.
+  pool tw available
+  assert_equal "$(findings | jq -r .next)" "team-open --queued b-tw.md
+fix each file team-queue index --check names"
+}
+
 @test "queue names the problems' count and the first two, with room or not" {
   plan '.over = true'
   ready a-bad.md 5 S "a bad one"

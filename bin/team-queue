@@ -127,7 +127,16 @@
 # "no room: the costs give no builder's estimate", "no room: 0.9 GiB free at minor (30%), a
 # builder needs 1.7 GiB", "no room: T312, opened at 14:05, has no worker yet" (the first by task
 # number; "at 2026-11-12 14:05" when not opened today, UTC), else "room for one more task at full
-# (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB". The text is that line, then the
+# (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB". While it fits, list reads the
+# worktree pools of the ready items' projects, each once, in the order its first ready item ranks,
+# until one has a free tree: a git pool always has one (team-open makes a worktree on demand,
+# with no cap), and a treehouse pool has one when `treehouse status --json`, run in the project's
+# primary checkout, reports a slot available or fewer slots than its max_trees (read as treehouse
+# reads it: the top-level key of the checkout's treehouse.toml when there is one, else of
+# ~/.config/treehouse/config.toml, else 16), so team-open's lease can get one. The room's line
+# then names each treehouse pool read with none, "; conventioner's pool is full (20 of 20 trees,
+# none free)", or one that did not answer, "; conventioner's pool cannot be read (treehouse
+# status --json did not answer)", in that order. The text is that line, then the
 # index's sections as index writes them. --json prints one line, {schema: "team-queue/1", room:
 # {fits, says}, ready, waiting, opened (each [item], in the index's order), unranked: [{file,
 # problems}], problems: [{file (null for the registry's), problem}] (every line --check names but
@@ -135,7 +144,8 @@
 # after: [{condition, met}], waits, from, opened, takes, alone, guarded, unblocks (how many queued
 # items' after names it), rank (null but for a ready one)}. findings are team-sweep's, each {task:
 # null, kind, session: null, name: null, next, text}: queue-ready while the room fits and an item
-# is ready, "queue: <the room's line>: open <file> (<project>, priority <p>, <size>): <summary,
+# of a project with a free tree is ready, the first such by rank (none while every ready item's
+# pool is full), "queue: <the room's line>: open <file> (<project>, priority <p>, <size>): <summary,
 # cut to 80 characters, the last three dots>; next: team-open --queued <file>", for an item that
 # runs alone "...; it runs alone: hold <project>'s other open tasks (T<a>, T<b>) first; next: ..."
 # while any is open; and queue while there are problems, "queue: <n> problem(s) in tasks/queued/:
@@ -399,6 +409,48 @@ commit() {
   die "the change is written but not committed; the next checkpoint commits it"
 }
 
+# A treehouse pool's max_trees, read as treehouse v3 reads it in the primary checkout <primary>:
+# from its treehouse.toml when there is one, else from the user's ~/.config/treehouse/config.toml,
+# the top-level key alone, and 16, treehouse's own default, when the file read gives none:
+# max_trees <primary>
+max_trees() {
+  local file=$1/treehouse.toml
+  [[ -f $file ]] || file=$HOME/.config/treehouse/config.toml
+  [[ -f $file ]] || { echo 16 && return 0; }
+  awk '/^[[:space:]]*\[/ { exit }
+    match($0, /^[[:space:]]*max_trees[[:space:]]*=[[:space:]]*[0-9]+/) {
+      value = substr($0, RSTART, RLENGTH); sub(/.*=[[:space:]]*/, "", value); found = 1; exit
+    }
+    END { print (found ? value + 0 : 16) }' "$file"
+}
+
+# The pools with no free tree among the ready items' projects of list's object <list>, read while
+# its room fits, in the order each project's first ready item ranks (queue_pool_order), until one
+# has a free tree: a git pool always has one (team-open makes a worktree on demand), and a
+# treehouse pool has one when treehouse status --json reports a slot available, or fewer slots than
+# max_trees, so treehouse can make one. A treehouse pool with none, or that does not answer, is
+# {project, says} in the JSON array printed; a project the registry cannot give stops the walk, as
+# a free tree does, so team-open names what is wrong: full_pools <list>
+full_pools() {
+  local project facts primary pool count free max no_tree=()
+  while IFS= read -r project; do
+    facts=$(team_project "$project" 2>/dev/null) || break
+    [[ $(jq -r .pool.provider <<<"$facts") == treehouse ]] || break
+    primary=$(jq -r .path <<<"$facts")
+    if ! pool=$(pool_status "$primary"); then
+      no_tree+=("$(jq -cn --arg project "$project" \
+        '{project: $project, says: "\($project)'"'"'s pool cannot be read (treehouse status --json did not answer)"}')")
+      continue
+    fi
+    max=$(max_trees "$primary")
+    read -r count free < <(jq -rs '"\(length) \(map(select(.status == "available")) | length)"' <<<"$pool")
+    ((free == 0 && count >= max)) || break
+    no_tree+=("$(jq -cn --arg project "$project" --argjson count "$count" --argjson max "$max" \
+      '{project: $project, says: "\($project)'"'"'s pool is full (\($count) of \($max) tree\(if $max == 1 then "" else "s" end), none free)"}')")
+  done < <(jq -r 'select(.room.fits) | .view_pools[]' "$1")
+  jq -cn '[$ARGS.positional[] | fromjson]' --args ${no_tree[@]+"${no_tree[@]}"}
+}
+
 # list and index --check read alone, so the assistant runs them as the coordinator does.
 read_form=()
 [[ ${1:-} != list && "$*" != "index --check" ]] || read_form=(--read)
@@ -538,11 +590,25 @@ case $command in
       plan_name=$plan_file
     fi
     wait "$costs_pid" || true
-    queue_jq -j --rawfile plan "$work/plan" --rawfile costs "$work/costs" --arg plan_name "$plan_name" --argjson json "$json" \
-      '($plan | queue_capacity($plan_name; "team-capacity-plan/1")) as $plan
-      | ($costs | queue_capacity("team-capacity costs --json'"'"'s output"; "team-capacity-costs/1")) as $costs
-      | $items | queue_list($plan; $costs; $events; $registry_error; $today)
-      | if $json then tojson + "\n" else queue_list_text($items | queue_view) end'
+    # The object first, with no pool read and the projects whose pools to read, then again with the
+    # full pools, unless none is and the object is what was asked for.
+    list_view() {
+      queue_jq -j --rawfile plan "$work/plan" --rawfile costs "$work/costs" --arg plan_name "$plan_name" \
+        --argjson json "$1" --argjson full "$2" \
+        '($plan | queue_capacity($plan_name; "team-capacity-plan/1")) as $plan
+        | ($costs | queue_capacity("team-capacity costs --json'"'"'s output"; "team-capacity-costs/1")) as $costs
+        | ($items | queue_view) as $view
+        | $items | queue_list($plan; $costs; $events; $registry_error; $today; $full)
+        | if $json == null then . + {view_pools: ($view | queue_pool_order)} | tojson + "\n"
+          elif $json then tojson + "\n" else queue_list_text($view) end'
+    }
+    list_view null '[]' >"$work/list"
+    full_json=$(full_pools "$work/list")
+    if [[ $json == true && $full_json == '[]' ]]; then
+      jq -c 'del(.view_pools)' "$work/list"
+    else
+      list_view "$json" "$full_json"
+    fi
     ;;
   *) usage_error "$usage" ;;
 esac

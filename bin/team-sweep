@@ -228,9 +228,11 @@
 #                  (coordinator, assistant, unattended) raise none, and a machine that does not hold
 #                  the lease has no problems
 #   queue-ready    after the health findings, with task and session null: team-queue list's, while
-#                  the level has room for one more task and an item is ready, the top one: "queue:
-#                  <the room's line>: open <file> (<project>, priority <p>, <size>): <summary>;
-#                  next: team-open --queued <file>" (team-queue --help has its words)
+#                  the level has room for one more task and an item of a project whose worktree
+#                  pool has a free tree is ready, the first such by rank, and none while every ready
+#                  item's pool is full: "queue: <the room's line, naming each full pool passed
+#                  over>: open <file> (<project>, priority <p>, <size>): <summary>; next: team-open
+#                  --queued <file>" (team-queue --help has its words)
 #   queue          after it, with task and session null: team-queue list's, while it names problems
 #                  in tasks/queued/: "queue: <n> problem(s) in tasks/queued/: <the first two>; next:
 #                  fix each file team-queue index --check names"; or, when team-queue fails or prints
