@@ -116,8 +116,9 @@
 # before it has done anything, its role prompt, settings, skills, tools and the given toolkits. It
 # rehearses no lease. In the same fresh worktree as the planner form it launches, through this
 # checkout's bin/team-worker, one T0 session per role (planner, builder and reviewer, or the one
-# --role names, topic among them; never ops, which needs Daniel), each with only the prompt "Reply with OK and nothing
-# else.", waits up to 5 minutes for each to reply and go idle, and prints one row per role:
+# --role names, topic among them; never ops, which needs Daniel), each with only the prompt "Reply
+# with OK and nothing else.", waits up to 5 minutes for each to reply and go idle, and prints one
+# row per role:
 #   role      context  skills  deferred tools  MCP servers
 #   builder     51004       5               4            2
 # context is the first reply's input plus cache write plus cache read tokens, from the session's

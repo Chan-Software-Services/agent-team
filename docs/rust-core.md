@@ -118,7 +118,6 @@ The open plans' Rust core lines, taken from their plans; each moves into the map
 | Plan | What | Crate | Seam |
 | - | - | - | - |
 | T513 | The model and effort config, one entry per session category, the most specific match winning, read by every launch and logged | `team-model` (its type), `team-core` (sessions) | `none` |
-| T514 | The topic role and its script (`team-topic open`) | `team-core` (sessions) | `platform`, `interface` |
 | T514 | The digest's schedule and its config line (an IANA zone and three local times) | `teamd` (a timer), `team-model` (its type) | `interface` (`Notifier`) |
 
 ## The port map
@@ -185,6 +184,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/team-time` | `team-core` | `none` | A read model view |
 | `bin/team-timers` | `teamd` | `platform` | The heartbeat becomes the service (step 3) |
 | `bin/team-tokens` | `team-cli` | `platform` | Reads the sessions' transcripts |
+| `bin/team-topic` | `team-core` | `platform`, `interface` | `topic_open`, with Daniel's `topic-request` `Attestation`; the cap a core rule |
 | `bin/team-ui` | `team-cli` | `interface` | |
 | `bin/team-uptime` | `teamd` | `interface` | `Notifier` |
 | `bin/team-worker` | `team-core` | `platform` | Spawn and confinement |

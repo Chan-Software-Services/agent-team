@@ -81,7 +81,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
-- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's and the assistant's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
+- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's and the assistant's included; `team-worker` follows a planner's, builder's, reviewer's or topic session's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
 - `rust-toolchain.toml`: the Rust toolchain every checkout builds with, its channel, profile and components, which rustup reads below the root and `team-doctor`'s `tool rust-toolchain` line checks.
 - `servers/`: the MCP servers the toolkits and sessions run, the MCP client `ui-capture` speaks with, the `chrome-devtools-axi` client the browser toolkit's test runs, and the packages the effect toolkit's tests check its skill, hook and Foldkit DevTools server against.
   - `install`: puts them in the gitignored `servers/node_modules/`, as `team-bootstrap` does while `team-doctor`'s `servers` line fails.
@@ -98,7 +98,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `typescript`: TypeScript 7, which `effect-tsgo diagnostics` needs installed beside it, though `@effect/tsgo` declares no peer.
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
   - `prod-mongo/`: the prod-mongo toolkit's server body: its start and tools, the backups root's rules, `childEnv` and `scrubbed`, a dump's counts, the throwaway MongoDB a drill or a rehearsal restores a dump into, the snapshots that say what changed, by ids, and the undo it prepares for Daniel.
-- `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder or reviewer loads (`--setting-sources user`), none of its worktree's `.claude/`.
+- `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder, reviewer or topic session loads (`--setting-sources user`), none of its worktree's `.claude/`.
 - `sops/`: standing procedures.
   - `ci-only.md`: moving a project's whole test suite off the team's machine into required CI checks, only when its repository goes public on Daniel's word: the workflow's task, Daniel's steps at github.com, the proof and the registry edit.
   - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
