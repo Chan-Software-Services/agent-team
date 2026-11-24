@@ -8,8 +8,9 @@ The team's own work on this repo goes through a task and a PR to `dev`, like any
 
 One path per bullet and one thing per line, alphabetical within each list, so two PRs that add different things edit different lines.
 
+- `assistant-read.settings.json`: the settings of the assistant's read session, which `claude-assistant-read` fills in: no shell or web, its one answer file, its production reads' log, Remote Control off and its role.
 - `assistant.settings.json`: the assistant's own settings, which `claude-assistant` fills in: its Discord state directory, its memory, its hooks and its denials.
-- `bin/`: the team's commands, `team-*`, `claude-assistant` and `claude-coordinator`.
+- `bin/`: the team's commands, `team-*`, `claude-assistant`, `claude-assistant-read` and `claude-coordinator`.
   - `bin/hooks/`: the sessions' hooks.
     - `git/`: git's hooks for the code checkout.
     - `records-git/`: git's hooks for the team home.
@@ -80,7 +81,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
-- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's and the assistant's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
+- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's, the assistant's and its read session's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
 - `rust-toolchain.toml`: the Rust toolchain every checkout builds with, its channel, profile and components, which rustup reads below the root and `team-doctor`'s `tool rust-toolchain` line checks.
 - `servers/`: the MCP servers the toolkits and sessions run, the MCP client `ui-capture` speaks with, the `chrome-devtools-axi` client the browser toolkit's test runs, and the packages the effect toolkit's tests check its skill, hook and Foldkit DevTools server against.
   - `install`: puts them in the gitignored `servers/node_modules/`, as `team-bootstrap` does while `team-doctor`'s `servers` line fails.

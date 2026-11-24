@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# Start the assistant's read session: one short-lived session per production question Daniel asks
+# in #assistant or a thread under it, which reads through prod-read, vercel-read or both, answers
+# the assistant by SendMessage and is then ended, its transcript and files deleted.
+#
+# Usage: claude-assistant-read start --request <link> --toolkit <kit> [--toolkit <kit>] --file <question>
+#   --request  the link to Daniel's own Discord message asking the question,
+#              https://discord.com/channels/<guild>/<channel>/<message>
+#   --toolkit  prod-read or vercel-read, each at most once; the ops role's prod-write and
+#              prod-mongo never reach a read
+#   --file     the question as the assistant relays it, text of at most 4,000 bytes holding no
+#              personal detail
+# It prints the session's id alone on stdout, and on stderr "claude-assistant-read: assistant-read
+# <id> started in <dir>: Daniel approves one 1Password prompt per toolkit on the PC".
+#
+# Who may run it: start only the assistant (AGENT_TEAM_ROLE assistant); the coordinator and a
+# session with no role are refused it ("claude-assistant-read start is the assistant's: a
+# coordinator session starts no production read"), and a worker role (planner, builder,
+# reviewer, ops, assistant-read, or any other) every form, before anything is read
+# ("claude-assistant-read is the assistant's: a <role> session starts no production read").
+#
+# start refuses, starting nothing and writing nothing but its lock, in this order:
+#   1. a malformed command line (exit 2): no subcommand or another one, a missing or repeated
+#      --request or --file, no --toolkit, an option with no value, an unknown option;
+#   2. a toolkit but prod-read and vercel-read ("the assistant reads production only through
+#      prod-read and vercel-read; <kit> is the ops role's"), or one given twice;
+#   3. a machine that is fenced or that lost the lease (lease_refusal in bin/lib/team.sh);
+#   4. another start holding ~/.local/state/agent-team/assistant-read.lock (a non-blocking flock):
+#      exit 75, "another read is starting";
+#   5. a session named assistant-read that `claude agents --json --all` lists in any state, or the
+#      read directory left: "a read session is still there (<id> <state>, or its directory
+#      <dir>): relay its answer and run claude-assistant-read end first"; and a session list that
+#      cannot be read;
+#   6. a --request that is no Discord message link (discord_link);
+#   7. a message whose channel is neither #assistant nor a thread under it, as Discord says
+#      (assistant_place), with its reason;
+#   8. a message sent more than OPS_REQUEST_MAX_AGE seconds (an hour) before, by the time in its
+#      id, "the limit for a read: ask Daniel for a new message";
+#   9. a message ~/.local/state/agent-team/assistant-read-requests names already: "Discord message
+#      <id> started a read already at <time> (<session>): each read needs a new message of
+#      Daniel's";
+#  10. a message that is not Daniel's from that place (daniel_message: its author in the
+#      plugin's allowFrom), or that Discord does not give, with its reason;
+#  11. a question file that is missing, empty, over 4,000 bytes, not text (a control character but
+#      tab, newline and carriage return, or bytes that are not UTF-8), or holding an email address
+#      at a public provider (refused_emails records), naming no address;
+#  12. no registry project whose toolkits list holds every given kit, or more than one: "no one
+#      project lists <kits> in its toolkits";
+#  13. a project base the primary checkout cannot read as origin/<base> after its fetch.
+#
+# The read directory is the team home's .claude/worktrees/assistant-read/: the team home is
+# trusted (team-doctor's trust team home line), its git ignores .claude/worktrees/, so nothing
+# there is committed or handed off, and Claude Code protects no write under .claude/worktrees/.
+# start fetches the project's base in its primary checkout (git fetch origin <base>, 30 seconds
+# at most); a fetch that fails is one stderr line, "could not fetch origin/<base> (<git's
+# line>); the read's docs are as last fetched", and the start goes on. It exports docs/,
+# CLAUDE.md and AGENTS.md, those of them origin/<base> holds, with git archive into the read
+# directory, so no git hook runs and the checkout gains no worktree, then makes its .scratch/,
+# where the session writes .scratch/answer.md, its one file.
+#
+# The files it writes:
+#   ~/.local/state/agent-team/assistant-read.settings.json
+#       assistant-read.settings.json of this checkout, @TEAM_CODE@ naming this checkout and
+#       @LOG_DIR@ the team home's assistant/prod-reads/<message id>/, which it makes, where the
+#       ops-log hook keeps each production call's inputs, masked, as an ops session's are
+#   ~/.local/state/agent-team/assistant-read.mcp.json
+#       each given toolkit's .mcp.json merged, @TEAM_CODE@ filled in, each server's env gaining
+#       AGENT_TEAM_ROLE assistant-read, which the 1Password read (servers/op-secret.mjs) checks
+#   ~/.local/state/agent-team/assistant-read-requests
+#       one line per launch, "<message id> <UTC time> <session id>", appended only once
+#       `claude --bg` printed an id, so each message starts one read at most
+# A start that fails or is ended by a signal after the read directory was made removes it, the
+# two generated files and the empty log directory on its way out, and records no request, so a
+# rerun on the same message passes.
+#
+# The launch, from the read directory: claude --bg --restricted --tools "Read,Glob,Grep,Edit,
+# Write,ToolSearch,SendMessage,ListAgents,Skill" --strict-mcp-config --mcp-config <mcp>
+# --plugin-dir <each toolkit's directory> --settings <settings> --append-system-prompt-file
+# roles/assistant-read.md --permission-mode auto --name assistant-read <prompt>, as team-worker
+# launches an ops session: no shell, no web, edits only of its answer file, no memory, and Remote
+# Control off by its settings, so claude.ai keeps no copy. No --model: it runs on the settings'
+# word. Its prompt names the place, the message and its link, then gives the question file's text.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+usage="usage: claude-assistant-read start --request <link> --toolkit <kit> [--toolkit <kit>] --file <question>"
+role=${AGENT_TEAM_ROLE:-}
+case $role in
+  assistant | coordinator | '') ;;
+  *) die "claude-assistant-read is the assistant's: a $role session starts no production read" ;;
+esac
+
+(($#)) && [[ $1 == start ]] || usage_error "$usage"
+shift
+request='' file='' toolkits=()
+while (($#)); do
+  [[ $# -ge 2 && -n $2 && $2 != -* ]] || usage_error "$usage"
+  case $1 in
+    --request) [[ -z $request ]] || usage_error "$usage"; request=$2 ;;
+    --file) [[ -z $file ]] || usage_error "$usage"; file=$2 ;;
+    --toolkit) toolkits+=("$2") ;;
+    *) usage_error "$usage" ;;
+  esac
+  shift 2
+done
+[[ -n $request && -n $file && ${#toolkits[@]} -gt 0 ]] || usage_error "$usage"
+
+if [[ $role != assistant ]]; then
+  who="a coordinator session"
+  [[ -n $role ]] || who="a session with no role"
+  die "claude-assistant-read start is the assistant's: $who starts no production read"
+fi
+
+for i in "${!toolkits[@]}"; do
+  kit=${toolkits[i]}
+  case $kit in
+    prod-read | vercel-read) ;;
+    *) die "the assistant reads production only through prod-read and vercel-read; $kit is the ops role's" ;;
+  esac
+  for ((j = 0; j < i; j++)); do
+    [[ ${toolkits[j]} != "$kit" ]] ||
+      die "the assistant reads production only through prod-read and vercel-read, each once; $kit is given twice"
+  done
+done
+
+if why=$(lease_refusal "starts no production read"); then die "$why"; fi
+
+# The code: the role, the settings template and the toolkits come from this checkout.
+code=$(dirname "$(dirname "$TEAM_LIB")")
+state=$HOME/.local/state/agent-team
+dir=$TEAM_HOME/.claude/worktrees/assistant-read
+settings=$state/assistant-read.settings.json
+mcp=$state/assistant-read.mcp.json
+requests=$state/assistant-read-requests
+mkdir -p "$state"
+exec {lock_fd}>"$state/assistant-read.lock"
+if ! flock -n "$lock_fd"; then
+  echo "claude-assistant-read: another read is starting" >&2
+  exit 75
+fi
+
+sessions=$(claude agents --json --all {lock_fd}>&- | jq -ce 'select(type == "array")' 2>/dev/null) ||
+  die "cannot read the session list (claude agents --json --all)"
+there=$(jq -r 'map(select(.name == "assistant-read")) | first
+  | if . then "\(.id // ((.sessionId // "")[:8])) \(.state // "unknown")" else empty end' <<<"$sessions")
+if [[ -z $there && -e $dir ]]; then there="its directory $dir"; fi
+[[ -z $there ]] || die "a read session is still there ($there): relay its answer and run claude-assistant-read end first"
+
+link=$(discord_link "$request") ||
+  die "--request must link Daniel's Discord message, https://discord.com/channels/<guild>/<channel>/<message>, got '$request'"
+read -r channel message <<<"$link"
+scratch=$(team_mktemp -d)
+place=$(assistant_place "$channel" 2>"$scratch/error") || die "$(<"$scratch/error")"
+
+# A Discord id holds the milliseconds since 2015-01-01 above its low 22 bits.
+sent=$(((10#$message >> 22) / 1000 + 1420070400))
+(($(date +%s) - sent <= OPS_REQUEST_MAX_AGE)) ||
+  die "Discord message $message was sent at $(date -ud "@$sent" +%FT%TZ), more than $((OPS_REQUEST_MAX_AGE / 60)) minutes before this launch, the limit for a read: ask Daniel for a new message"
+used=''
+if [[ -f $requests ]]; then
+  used=$(awk -v m="$message" '$1 == m { print "at " $2 " (" $3 ")"; exit }' "$requests")
+fi
+[[ -z $used ]] || die "Discord message $message started a read already $used: each read needs a new message of Daniel's"
+daniel_message "$message" "the read request" "$place" >/dev/null 2>"$scratch/error" || die "$(<"$scratch/error")"
+
+# The question: text the prompt carries as it is, so no control character but tab, newline and
+# carriage return, valid UTF-8, and no address at a public provider.
+[[ -f $file && -r $file ]] || die "the question file $file is missing"
+size=$(wc -c <"$file" | tr -d ' ')
+((size > 0)) || die "the question file $file is empty"
+((size <= 4000)) || die "the question file $file is $size bytes, over the 4000 a question may be"
+if [[ $(LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' <"$file" | wc -c | tr -d ' ') != "$size" ]] ||
+  ! iconv -f UTF-8 -t UTF-8 <"$file" >/dev/null 2>&1; then
+  die "the question file $file is not text"
+fi
+addresses=$(refused_emails records <"$file" | paste -sd ',' | sed 's/,/, /g')
+[[ -z $addresses ]] || die "the question file $file holds $addresses: a read's question holds no personal detail"
+text=$(<"$file")
+
+# The one project whose toolkits list holds every kit asked for.
+kits_words=$(printf '%s\n' "${toolkits[@]}" | sed '$!s/$/ and/' | paste -sd ' ')
+matches=()
+for kit in "${toolkits[@]}"; do
+  found=$(team_project --find toolkits "$kit") || die "cannot read the projects that list $kit from the registry"
+  if [[ $kit == "${toolkits[0]}" ]]; then
+    mapfile -t matches < <(grep . <<<"$found" || true)
+  elif ((${#matches[@]})); then
+    mapfile -t matches < <(grep -Fx -f <(printf '%s\n' "${matches[@]}") <<<"$found" || true)
+  fi
+done
+((${#matches[@]} == 1)) || die "no one project lists $kits_words in its toolkits"
+project=${matches[0]}
+primary=$(team_project "$project" path) || die "cannot read $project's primary checkout from the registry"
+base=$(team_project "$project" base) || die "cannot read $project's base from the registry"
+
+NET_ERR=$scratch/fetch NET_TIMEOUT=30
+if ! origin_git -C "$primary" fetch -q origin "$base"; then
+  echo "claude-assistant-read: could not fetch origin/$base ($(grep -m1 . "$NET_ERR" || echo "no reason given")); the read's docs are as last fetched" >&2
+fi
+git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base^{commit}" >/dev/null ||
+  die "$project's base origin/$base cannot be read in its primary checkout $primary, so the read has no docs"
+
+# From here every file made is removed on any end but a launch that printed an id.
+launched=0
+logs=$TEAM_HOME/assistant/prod-reads/$message
+undo_start() {
+  ((launched == 0)) || return 0
+  rm -rf -- "$dir"
+  rm -f -- "$settings" "$mcp"
+  rmdir -- "$logs" 2>/dev/null || true
+}
+team_exit_trap undo_start
+
+mkdir -p "$dir/.scratch" "$logs"
+mapfile -t exported < <(git -C "$primary" ls-tree --name-only "refs/remotes/origin/$base" -- docs CLAUDE.md AGENTS.md)
+if ((${#exported[@]})); then
+  git -C "$primary" archive "refs/remotes/origin/$base" -- "${exported[@]}" | tar -x -C "$dir" ||
+    die "could not export ${exported[*]} of origin/$base from $primary into $dir"
+fi
+
+# {placeholder: value}, each replaced as written, not as a pattern.
+substitute='walk(if type == "string" then split("@TEAM_CODE@") | join($code) | split("@LOG_DIR@") | join($logs) else . end)'
+jq --arg code "$code" --arg logs "$logs" "$substitute" "$code/assistant-read.settings.json" >"$settings.$$"
+mv -f -- "$settings.$$" "$settings"
+plugin_args=() mcp_files=()
+for kit in "${toolkits[@]}"; do
+  plugin_args+=(--plugin-dir "$code/toolkits/$kit")
+  mcp_files+=("$code/toolkits/$kit/.mcp.json")
+done
+jq -s --arg code "$code" --arg logs "$logs" '{mcpServers: (map(.mcpServers // {}) | add
+    | map_values(.env = (.env // {}) + {AGENT_TEAM_ROLE: "assistant-read"}))} | '"$substitute" \
+  "${mcp_files[@]}" >"$mcp.$$"
+mv -f -- "$mcp.$$" "$mcp"
+
+prompt="Daniel asked a production question in $place, their message $message ($request). Answer it as your role says, then send \`assistant\` your READ DONE.
+
+Their question, as the assistant relays it:
+
+$text"
+# --mcp-config and --tools take several values, so neither may come right before the prompt.
+out=$(cd "$dir" && claude --bg --restricted --tools "Read,Glob,Grep,Edit,Write,ToolSearch,SendMessage,ListAgents,Skill" \
+  --strict-mcp-config --mcp-config "$mcp" \
+  "${plugin_args[@]}" \
+  --settings "$settings" \
+  --append-system-prompt-file "$code/roles/assistant-read.md" \
+  --permission-mode auto \
+  --name assistant-read \
+  "$prompt" {lock_fd}>&-) || die "claude --bg failed, so no read started"
+[[ $out != *"send a prompt to start"* ]] || die "the session started without its prompt: $out"
+id=$(grep -oE '\b[0-9a-f]{8}\b' <<<"$out" | head -n 1) || die "could not read the session id from: $out"
+launched=1
+
+printf '%s %s %s\n' "$message" "$(date -u +%FT%TZ)" "$id" >>"$requests"
+echo "$id"
+echo "claude-assistant-read: assistant-read $id started in $dir: Daniel approves one 1Password prompt per toolkit on the PC" >&2
