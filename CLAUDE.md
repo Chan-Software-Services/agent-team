@@ -115,6 +115,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
   - `briefs/topic.md`: a topic session's brief, its task's facts, its interview thread and what Daniel asked for (`{{about}}`), opening the thread with its understanding of the topic.
+  - `topic-plan.md`: a topic task's `plan.md`, which `team-topic open` writes in place of a plan: the title, Daniel's message asking for it and what they asked for (`{{about}}`).
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
   - `tests/bootstrap-drill.bats`: runs `tests/bootstrap-drill` on a stub `team-bootstrap`.

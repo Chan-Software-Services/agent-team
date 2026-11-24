@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# Open a topic task, the assistant's read-only conversation with Daniel on one topic in a thread of
+# its own under the topic channel, on Daniel's word; or close one and file its report.
+#
+# Usage: team-topic open --daniel <message id> --channel <channel id> --about <file> [--project <name>] [--task T<n>] <slug> <title...>
+#        team-topic close T<n> [--no-report]
+# Run by the assistant (AGENT_TEAM_ROLE=assistant), the coordinator, or Daniel's own shell (none
+# set); any other session (a planner, builder, reviewer, ops or topic session) is refused, exit 1,
+# before anything is read, with worker_refusal's line, in every form but --help.
+# Its steps run its own checkout's team-open, team-thread, team-brief, team-worker, team-close and
+# team-log with AGENT_TEAM_ROLE and AGENT_TEAM_TASK removed from their environment and TEAM_HOME
+# passed, so their own refusals of the assistant do not refuse what this script has held to
+# Daniel's word; the assistant's command guard still refuses each of them called directly.
+#
+# open, in order, each step kept when it is done already, so a rerun with --task T<n> finishes a
+# topic a failed run left half open (a failure after the task's number is known says the rerun
+# line on stderr):
+#   1. Refuses, exit 1, before anything is taken: a fenced machine or one that lost the lease
+#      (lease_refusal in bin/lib/team.sh); an --about file that is missing, unreadable, empty,
+#      over 8 KiB, no text (an image, a NUL byte, or nothing but blanks), or holding an address
+#      refused_emails code refuses (named by its kind and count, never its value); a slug that is
+#      not lower-case kebab case of at most 40 characters, or a title with no text, as team-open
+#      would refuse them.
+#   2. team-open [--task T<n>] --daniel <id> --channel <id> <project> topic research <slug>
+#      <title>, with <project> --project's, else agent-team: team-open holds Daniel's word (their
+#      own message in #assistant or a thread under it, unedited, at most an hour old, used once)
+#      and the cap of two open topics, and its refusals and exit 75 are passed on. With --task, a
+#      task already opened is taken as opened when it is an open topic opened on the same message,
+#      and refused otherwise: a task of another path, a closed one, or a topic opened on another
+#      message.
+#   3. team-thread T<n> --interview, the topic's thread under TOPIC_CHANNEL, which prints the one
+#      already logged on a rerun.
+#   4. tasks/T<n>/plan.md written from templates/topic-plan.md, with the title, Daniel's message by
+#      id and channel, the --about text and "No plan, PR or merge: a topic's report goes to the
+#      assistant."; a plan that exists is kept as it is.
+#   5. team-brief T<n> topic --project <project> --set-file about=<file>, writing
+#      tasks/T<n>/brief.md, kept when it exists.
+#   6. team-worker T<n> topic <worktree> -- "Read your brief at <team home>/tasks/T<n>/brief.md",
+#      skipped when the ledger has a launch of role topic for T<n> and claude agents --json --all
+#      lists a T<n>-topic session in any state but stopped (its id is the one printed). Its exit
+#      75 (no room) is passed on, the task open, with the line "T<n> is open with no session yet:
+#      no room (<its reason>); run team-topic open --task T<n> ... again once there is".
+#   7. Prints "T<n> topic open in <#<thread id>>: session <id>", the line the assistant passes on
+#      to Daniel, Discord showing <#<id>> as a link to the thread.
+#
+# close files the topic's report and closes the task (ticket 05 of T514 builds it; until then it
+# is a usage error):
+#   1. Refuses a fenced machine, a task that is no open topic ("T<n> is not an open topic: close a
+#      task with team-close"), and without --no-report a topic whose worktree's task directory has
+#      no report.md ("T<n> has no report.md yet; ask it for its report, or close with
+#      --no-report").
+#   2. Copies report.md to the team home's assistant/research/<opened's UTC date>-T<n>-<slug>.md,
+#      overwriting only a file of that name, so a rerun writes the same file.
+#   3. team-close T<n>, its lines passed through; a busy session refuses as team-close refuses.
+#   4. Prints "T<n> closed; report at <path>" (or "T<n> closed with no report"). It commits
+#      nothing: the next checkpoint commits the report.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# The assistant runs it; every other worker is refused as worker_refusal refuses the coordinator's
+# scripts.
+if [[ ${AGENT_TEAM_ROLE:-} != assistant ]] && why=$(worker_refusal "" "opens or closes no topic"); then die "$why"; fi
+
+bin=$(dirname "$TEAM_LIB")
+templates=$(dirname "$bin")/templates
+open_usage="usage: team-topic open --daniel <message id> --channel <channel id> --about <file> [--project <name>] [--task T<n>] <slug> <title...>"
+close_usage="usage: team-topic close T<n> [--no-report]"
+ABOUT_MAX_BYTES=8192
+
+# Run the sibling script <name> of this checkout as Daniel's own shell would: sibling <name> <arg>...
+sibling() {
+  env -u AGENT_TEAM_ROLE -u AGENT_TEAM_TASK TEAM_HOME="$TEAM_HOME" "$bin/$1" "${@:2}"
+}
+
+[[ $# -ge 1 ]] || usage_error "$open_usage | $close_usage"
+case $1 in
+  open) shift ;;
+  close) usage_error "team-topic close is not built yet (T514's ticket 05): $close_usage" ;;
+  *) usage_error "$open_usage | $close_usage" ;;
+esac
+
+daniel='' channel='' about='' project=agent-team task=''
+while [[ ${1:-} == --* ]]; do
+  [[ $# -ge 2 ]] || usage_error "$open_usage"
+  case $1 in
+    --daniel | --channel)
+      [[ $2 =~ ^[1-9][0-9]{0,19}$ ]] || usage_error "$1 needs a Discord id, got '$2'"
+      if [[ $1 == --daniel ]]; then daniel=$2; else channel=$2; fi
+      ;;
+    --about) about=$2 ;;
+    --project) project=$2 ;;
+    --task)
+      [[ $2 =~ ^T[1-9][0-9]*$ ]] || usage_error "task must look like T<n>, got '$2'"
+      task=$2
+      ;;
+    *) usage_error "$open_usage" ;;
+  esac
+  shift 2
+done
+[[ -n $daniel && -n $channel && -n $about && $# -ge 2 ]] || usage_error "$open_usage"
+slug=$1
+shift
+title="$*"
+
+# 1. The refusals, before anything is taken.
+if why=$(lease_refusal "opens no topic: the assistant on the holder does"); then die "$why"; fi
+[[ -e $about ]] || die "the about file $about does not exist"
+[[ -f $about && -r $about ]] || die "cannot read the about file $about"
+size=$(wc -c <"$about")
+((size > 0)) || die "the about file $about is empty: write what Daniel asked the topic for"
+((size <= ABOUT_MAX_BYTES)) ||
+  die "the about file $about is $size bytes, over the 8 KiB a topic's about takes: say what Daniel asked for in fewer words"
+kind=$(image_magic <"$about")
+[[ -z $kind ]] || die "the about file $about is an image ($kind), not text"
+[[ $(tr -d '\000' <"$about" | wc -c) -eq $size ]] || die "the about file $about holds a NUL byte, so it is no text"
+grep -q '[^[:space:]]' "$about" || die "the about file $about has no text"
+refused=$(refused_emails code <"$about" | paste -sd ',' | sed 's/,/, /g')
+[[ -z $refused ]] || die "the about file $about holds $refused, which a topic's plan and brief never take; write it without the address"
+[[ $slug =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#slug} -le 40 ]] ||
+  die "slug must be lower-case kebab case of at most 40 characters, got '$slug'"
+[[ $title =~ [^[:space:]] ]] || die "the title has no text"
+
+rerun="team-topic open --task TASK --daniel $daniel --channel $channel --about $(printf '%q' "$about")"
+[[ $project == agent-team ]] || rerun+=" --project $(printf '%q' "$project")"
+rerun+=" $slug $(printf '%q' "$title")"
+
+# Once the task's number is known, a failure says how to finish it; the room refusal says its own.
+done='' said=''
+on_exit() {
+  local rc=$?
+  ((rc != 0)) && [[ -n $task && -z $done && -z $said ]] || return 0
+  echo "team-topic: $task is half open; finish it with: ${rerun/TASK/$task}" >&2
+}
+team_exit_trap on_exit
+
+# 2. The open, or the task already opened.
+opened=''
+[[ -z $task ]] || opened=$(task_event_array "$task" | jq -c 'map(select(.event == "opened")) | last // empty')
+if [[ -n $opened ]]; then
+  [[ $(task_status "$(task_event_array "$task")") == open ]] || { said=1; die "$task is closed: --task finishes only an open topic"; }
+  opened_path=$(jq -r '.path' <<<"$opened")
+  [[ $opened_path == topic ]] || { said=1; die "$task is a $opened_path task, not a topic: --task finishes only a half-open topic"; }
+  opened_message=$(jq -r '.discord_message // empty' <<<"$opened")
+  [[ $opened_message == "$daniel" ]] ||
+    { said=1; die "$task was opened on Daniel's message $opened_message, not $daniel: --task finishes only the topic that message opened"; }
+  project=$(jq -r '.project' <<<"$opened")
+  title=$(jq -r '.title' <<<"$opened")
+else
+  open_err=$(team_mktemp)
+  rc=0 given=$task task=''
+  facts=$(sibling team-open ${given:+--task "$given"} --daniel "$daniel" --channel "$channel" \
+    "$project" topic research "$slug" "$title" 2>"$open_err") || rc=$?
+  cat "$open_err" >&2
+  if ((rc != 0)); then
+    # Only a task team-open names half open is this script's rerun to finish; a refusal took
+    # nothing.
+    task=$(sed -nE 's/^team-open: (T[1-9][0-9]*) is half open in .*/\1/p' "$open_err" | tail -n 1)
+    exit "$rc"
+  fi
+  task=$(jq -r '.task' <<<"$facts")
+fi
+worktree=$(task_worktrees "$task" | jq -r --arg p "$project" 'select(.project == $p and .ticket == null) | .worktree' | tail -n 1)
+[[ -n $worktree ]] || die "$task has no open worktree in $project"
+
+# 3. The topic's thread.
+thread=$(sibling team-thread "$task" --interview | tail -n 1)
+[[ $thread =~ ^[0-9]+$ ]] || die "team-thread $task --interview printed no thread id"
+
+# 4. The plan, kept when it exists.
+plan=$TEAM_HOME/tasks/$task/plan.md
+if [[ ! -e $plan ]]; then
+  tmp=$(team_mktemp "$plan.XXXXXX")
+  render_template "$(<"$templates/topic-plan.md")" "$(jq -n --arg task "$task" --arg title "$title" \
+    --arg project "$project" --arg daniel "$daniel" --arg channel "$channel" --arg date "$(date -u +%F)" \
+    --rawfile about "$about" '$ARGS.named | .about |= sub("\n+$"; "")')" >"$tmp"
+  mv -f -- "$tmp" "$plan"
+fi
+
+# 5. The brief, kept when it exists.
+brief=$TEAM_HOME/tasks/$task/brief.md
+[[ -e $brief ]] || sibling team-brief "$task" topic --project "$project" --set-file about="$about" >/dev/null
+
+# 6. The session, unless the topic's launch is still listed.
+session=''
+launched=$(task_event_array "$task" | jq -r 'map(select(.event == "launch" and .role == "topic")) | last | .session // empty')
+if [[ -n $launched ]]; then
+  session=$(claude agents --json --all 2>/dev/null | jq -r --arg name "$task-topic" \
+    'select(type == "array") | map(select(.name == $name and .state != "stopped")) | last | .id // empty' 2>/dev/null) ||
+    die "cannot read the session list (claude agents --json --all)"
+fi
+if [[ -z $session ]]; then
+  worker_err=$(team_mktemp)
+  rc=0
+  session=$(sibling team-worker "$task" topic "$worktree" -- "Read your brief at $brief" 2>"$worker_err") || rc=$?
+  if ((rc == 75)); then
+    reason=$(grep . "$worker_err" | tail -n 1 | sed 's/^team-worker: //') || reason="team-worker gave no reason"
+    said=1
+    echo "team-topic: $task is open with no session yet: no room ($reason); run ${rerun/TASK/$task} again once there is" >&2
+    exit 75
+  fi
+  cat "$worker_err" >&2
+  ((rc == 0)) || exit "$rc"
+  session=$(tail -n 1 <<<"$session")
+fi
+
+# 7. The line for Daniel.
+done=1
+echo "$task topic open in <#$thread>: session $session"
