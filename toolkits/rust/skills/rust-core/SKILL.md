@@ -20,10 +20,8 @@ A missing or wrong one is `team-doctor`'s line to report: quote its `tool` line 
 
 ## 3. The rules
 
-Each holds everywhere but a `#[cfg(test)]` module and `tests/`, where the lints allow `unwrap`, `expect` and `panic!`.
-
 - A `match` on one of the workspace's own enums names every variant, with no `_` or catch-all binding arm, so a new variant fails to compile at every place that must handle it.
-- No `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!` or `dbg!` outside tests, and a function that can fail returns `Result`, so a guard reports a failure instead of ending the process.
+- No `unwrap`, `expect` or `panic!` outside a `#[cfg(test)]` module and `tests/`, where the lints allow them, no `todo!`, `unimplemented!` or `dbg!` anywhere, and a function that can fail returns `Result`, so a guard reports a failure instead of ending the process.
 - An error is an enum of its crate that implements `std::error::Error`, written by hand, never a `String` or a boxed error in a public signature, so a caller matches each failure by its variant.
 - No `unsafe`, since the workspace forbids it and no step of the port needs it.
 - No `#[allow(...)]` to silence a lint without a comment on the same line saying why, so a reviewer can judge each exception.
