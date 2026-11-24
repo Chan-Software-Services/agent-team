@@ -23,8 +23,12 @@
 #             with no phases_left that a builder launch, a PR or a merged part followed is none
 #             while T<n> is open; once T<n> closed, a merged with phases_left [] or none is,
 #             whatever followed it), "T<n> phase <k> merged" (a merged of T<n> whose phases_left
-#             does not hold k, or T<n> merged whole), "T<n> closed", a YYYY-MM-DD date (today's
-#             UTC date is that day or later; TEAM_QUEUE_TODAY stands for today), or "<name>.md"
+#             does not hold k and that leaves no PR of T<n> open, or T<n> merged whole: a phase is
+#             task-wide, as team-merge's phases_left and the lifecycle's merged-part read it, so in
+#             a task of two repositories it is merged once each repository's PR of it merged, and
+#             one repository's merge while the other's PR is open is none), "T<n> closed", a
+#             YYYY-MM-DD date (today's UTC date is that day or later; TEAM_QUEUE_TODAY stands for
+#             today), or "<name>.md"
 #             (that item left the queue: it is in some tasks/T<m>/queued/, not here)
 #   waits     one line naming what outside the ledger and the calendar it waits on; removed by
 #             hand when the wait ends

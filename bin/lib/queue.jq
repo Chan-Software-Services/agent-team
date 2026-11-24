@@ -49,7 +49,10 @@ def queue_seconds: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 # phases_left (a task with no tickets, or a merge from before team-merge logged them) that a builder
 # launch, a later PR or a merged part follows is none, or, once the task closed, any merged that
 # names no phase left (phases_left [] or absent, as team-merge logs a task with no tickets),
-# whatever followed it; each merged's phases_left where it names them; and the events that end it,
+# whatever followed it; the phases_left of each merged that names them and leaves no PR of the task
+# open, where the lifecycle moves the task to merged-part (phases_left is task-wide, every ticket of
+# the task in every repository, so a sibling repository's merge while this one's PR is open ends no
+# phase); and the events that end it,
 # its last merged when it is merged whole and its closed, the earliest first; and unmerged, its last
 # closed's {ts} when a feature, bug or small task (its latest opened's path) closed not merged
 # whole, which leaves its work unbuilt, else null (a research or retro task finishes by closing, and
@@ -59,15 +62,16 @@ def queue_task_facts:
    or (any(.[]; .event == "closed") and any(.[]; .event == "merged" and (.phases_left // []) == []))) as $whole
   | (last(.[] | select(.event == "opened") | .path) // null) as $path
   | {whole: $whole,
-     merges: [.[] | select(.event == "merged") | .phases_left | arrays],
+     merges: [foreach .[] as $e (lifecycle_start; lifecycle_step($e);
+       select($e.event == "merged" and lifecycle_open_prs == []) | $e.phases_left | arrays)],
      ends: ([(select($whole) | last(.[] | select(.event == "merged")) | {event, ts}),
              (.[] | select(.event == "closed") | {event, ts})] | sort_by(.ts)),
      unmerged: (if $whole or (IN($path; "feature", "bug", "small") | not) then null
                 else last(.[] | select(.event == "closed") | {ts}) // null end)};
 
 # Whether a parsed condition is met, given the tasks' facts, today's date, the queued files and
-# the files that left the queue: a phase is merged once a merged names phases left without it, or
-# the task is merged whole.
+# the files that left the queue: a phase is merged once a merged that leaves no PR of the task open
+# names phases left without it, or the task is merged whole.
 def queue_met($facts; $today; $queued; $left):
   if .kind == "merged" then $facts[.task].whole // false
   elif .kind == "phase" then . as $c | $facts[.task] // {} | .whole or any(.merges[]?; IN(.[]; $c.phase) | not)
