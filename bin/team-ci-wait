@@ -6,7 +6,7 @@
 #
 # Usage: team-ci-wait [--no-agent-review] [--json] [--look] <pr url> [<sha>]
 #        team-ci-wait [--json] [--look] --run <run url> [<sha>]
-#        team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>
+#        team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] [--look] <pr url>
 #   --no-agent-review
 #           leave the agent-review check out of every look, as though GitHub had not reported it:
 #           the checks wait after a pass and the findings round's look (team-next), which run once
@@ -205,8 +205,11 @@
 # the cancelled and pending checks of that look left out, since the queue cancels the rest of a
 # commit it gives up, and each required check no check of the look lists (a cancelled or pending
 # one counts as listed) named as the rules', that reading first held for 2 minutes of looks as
-# above; else exit 1 (other-head), naming where the entry is. --look and a <sha>
-# after the URL are refused with it.
+# above; else exit 1 (other-head), naming where the entry is. A <sha> after the URL is refused
+# with it. With --look it takes one readable look at the trial commit, as for a PR, with no grace,
+# for team-land to say whether a trial commit it cannot mark is green on its other checks: a
+# required check no check of the look lists is named pending, "<name> (not reported)", and an entry
+# no longer on the trial commit ends the look at once, with no settle.
 # With --run, the wait is on the one workflow run, read as a PR's checks are, but for what follows.
 # Each look reads, through the reader as above, the run (repos/<repo>/actions/runs/<id>), its jobs,
 # the latest attempt's (repos/<repo>/actions/runs/<id>/jobs?per_page=100), and the repository's runs
@@ -265,7 +268,7 @@ GRACE_SECONDS=${TEAM_CI_WAIT_GRACE_SECONDS:-120}
 [[ $QUEUED_SECONDS =~ ^[0-9]+$ ]] || usage_error "TEAM_CI_WAIT_QUEUED_SECONDS must be a number of seconds"
 usage="usage: team-ci-wait [--no-agent-review] [--json] [--look] <pr url> [<sha>]
        team-ci-wait [--json] [--look] --run <run url> [<sha>]
-       team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] <pr url>"
+       team-ci-wait --merge-group <trial sha> [--no-agent-review] [--json] [--look] <pr url>"
 without_review=false json=false look=false group='' run_url=''
 while [[ ${1:-} == --* ]]; do
   case $1 in
@@ -317,7 +320,7 @@ if [[ -n $run_url ]]; then
   SETTLE_SECONDS=0
 else
   if [[ -n $group ]]; then
-    if [[ $# -ne 1 ]] || $look; then usage_error "$usage"; fi
+    [[ $# -eq 1 ]] || usage_error "$usage"
     expected=$group
   else
     [[ $# -eq 1 || ($# -eq 2 && $2 =~ ^[0-9a-f]{7,40}$) ]] || usage_error "$usage"
@@ -603,10 +606,12 @@ no_job_text() {
 }
 
 # --look's end, at the first readable look of the head: each failed or cancelled check, classed,
-# then what is still pending.
+# then what is still pending, with --merge-group each required check no check lists among it.
 look_end() {
-  local pending
+  local pending unseen
   pending=$(pending_text)
+  unseen=$(unreported | jq -r 'map("\(.) (not reported)") | join("; ")')
+  [[ -z $unseen ]] || pending+=${pending:+; }$unseen
   if jq -e 'any(.checks[]; .bucket == "fail" or .bucket == "cancel")' "$dir/look" >/dev/null; then
     report '[]'
     [[ -z $pending ]] || text+=$'\n'"  still pending: $pending"
@@ -781,7 +786,7 @@ while :; do
         # which count as reported. A required check none lists is held for the settle first.
         if jq -e 'any(.checks[]; .bucket == "fail")' "$dir/look" >/dev/null; then
           unseen=$(unreported)
-          if [[ $unseen != '[]' ]] && ! stood; then
+          if [[ $unseen != '[]' ]] && ! $look && ! stood; then
             next_look
             continue
           fi
