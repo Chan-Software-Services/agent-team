@@ -878,13 +878,12 @@ channels/$THREAD/messages?before=1564000000000000151&limit=100"
   topic_interview_logged
   say 1564000000000000001 "$BOT" "What I understood"
   say 1564000000000000002 "$DANIEL" "Yes, and the ingest"
-  export TEAM_TOPIC_CHANNEL=6666
-  run_bin -0 team-thread wait T9
+  TEAM_TOPIC_CHANNEL=6666 run_bin -0 team-thread wait T9
   assert_equal "$(ids)" "1564000000000000002"
-  run_bin -0 team-thread history T9
+  TEAM_TOPIC_CHANNEL=6666 run_bin -0 team-thread history T9
   assert_equal "$(ids | paste -sd ' ')" "1564000000000000001 1564000000000000002"
   # The topic channel is the topic's, so an empty interview channel refuses it nothing.
-  TEAM_INTERVIEW_CHANNEL='' run_bin -0 team-thread history T9
+  TEAM_TOPIC_CHANNEL=6666 TEAM_INTERVIEW_CHANNEL='' run_bin -0 team-thread history T9
   : >"$STUB_CALLS/curl.log"
   local fix="team-thread: no topic channel is set: TEAM_TOPIC_CHANNEL is empty, and TOPIC_CHANNEL in bin/lib/team.sh names the channel a topic's thread opens under"
   TEAM_TOPIC_CHANNEL='' run_bin -1 team-thread wait T9
