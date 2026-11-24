@@ -82,6 +82,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `crates/`: the team's Rust crates, one per directory, the workspace's members.
   - `team-core/`: the core, a dependency-free skeleton (`version()` and its test) until step 2 of the port; each platform's implementation and each interface is a crate of its own beside it, which it never depends on.
 - `deny.toml`: the dependency policy, which `tests/run rust` holds the workspace to with `cargo-deny`: the licenses allowed, the advisories that fail, the bans and crates.io as the one source.
+- `docs/`: design docs, beside what a stranger reads first in `README.md`.
+  - `rust-core.md`: the Rust core's design and its port map, kept by hand: the crates, the platform and interface seams, what was decided since the first design, and each `bin/` script, ledger event kind and config file against its future crate and seam.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
@@ -120,6 +122,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tmp.md`: the team's temporary files: `team-janitor tmp`'s roots, rules and list and how a line is added, the session tmp and task-named scratch, what a run says and where, the warning, the heartbeat's step, the doctor's `tmp` line and the test seams.
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
+  - `plan-rust-core.md`: the `## Rust core` section `team-open` puts in a plan of the team's own project alone, where `templates/plan.md` has `{{rust_core}}`.
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
   - `tests/bootstrap-drill.bats`: runs `tests/bootstrap-drill` on a stub `team-bootstrap`.
@@ -218,7 +221,7 @@ It holds:
   No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
-  So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them and a gate's end-to-end run, and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
+  So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them, a builder's local end-to-end run and a gate's, and `team-stack`'s steps that make or remove a stack's network (`sops/docker.md`), and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
 - A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard jobs `shard-plan`, whose timings the shards split by, and `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main`, on each trial commit a merge queue builds (`merge_group`, its `checks_requested` type) and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
   On a trial commit the `data` job reads what it adds to the commit the queue built it on (the merge group's base and head shas).
   Each job has a time limit (`timeout-minutes`), about twice its longest recent run, and each that runs bats one above `tests/run`'s file limit, which `tests/repo.bats` holds.
