@@ -33,7 +33,7 @@ import { restoreLimit } from "../../servers/prod-mongo/restore.mjs";
 import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.mjs";
 import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
 import { opStub, repoRoot, startToolkitServer, stubDir, tempDir, testPath } from "./helpers/mcp.mjs";
-import { mongoImage, perThreadCaches, startMongo } from "./helpers/mongo.mjs";
+import { dataOnTmpfs, mongoImage, perThreadCaches, startMongo } from "./helpers/mongo.mjs";
 import { owned } from "./helpers/process.mjs";
 import { assertNoLeak, evalMockTools, launcherRefusalTests } from "./helpers/toolkit.mjs";
 
@@ -787,7 +787,7 @@ describe("restore-drill", () => {
       assert.deepEqual(await throwaway.stop(), { gone: true });
       assert.ok(gone(name));
     } finally {
-      spawnSync(realDocker, ["rm", "--force", name]);
+      spawnSync(realDocker, ["rm", "--force", "--volumes", name]);
       spawnSync(realDocker, ["network", "rm", network]);
     }
   });
@@ -813,7 +813,7 @@ describe("restore-drill", () => {
       assert.ok(gone(first) && gone(second));
     } finally {
       process.env.PATH = path;
-      for (const name of [first, second]) spawnSync(realDocker, ["rm", "--force", name]);
+      for (const name of [first, second]) spawnSync(realDocker, ["rm", "--force", "--volumes", name]);
     }
   });
 
@@ -1017,8 +1017,12 @@ describe("restore-drill", () => {
     const labels = (expires, toolkit = "prod-mongo") => ["--label", `${teamLabel("owner")}=agent-team`, "--label", `${teamLabel("kind")}=drill`, "--label", `${teamLabel("toolkit")}=${toolkit}`, "--label", `${teamLabel("expires")}=${expires}`];
     const made = { containers: [], networks: [], images: [] };
     const make = (name, labelArgs) => {
-      execFileSync(realDocker, ["run", "--detach", "--name", name, ...labelArgs, "--entrypoint", "sleep", mongoImage, "600"], { stdio: "pipe" });
+      execFileSync(realDocker, ["run", "--detach", "--name", name, ...labelArgs, ...dataOnTmpfs, "--entrypoint", "sleep", mongoImage, "600"], { stdio: "pipe" });
       made.containers.push(name);
+      // The image declares /data/db and /data/configdb as volumes, so a container started
+      // without tmpfs there leaves two anonymous volumes behind every run.
+      const [inspected] = JSON.parse(execFileSync(realDocker, ["container", "inspect", name], { encoding: "utf8" }));
+      assert.deepEqual(inspected.Mounts.filter(({ Type }) => Type === "volume"), [], `${name} has a volume`);
     };
     try {
       make(`prod-mongo-drill-expired-${tag}`, labels("2020-01-01T00:00:00Z"));
@@ -1050,7 +1054,7 @@ describe("restore-drill", () => {
       assert.equal(removals.filter((call) => call.at(-1) !== own).length, 3, JSON.stringify(removals));
       for (const call of removals.filter((args) => args.at(-1) !== own)) assert.match(call.at(-1), /^(sha256:)?[0-9a-f]{64}$/, call.join(" "));
     } finally {
-      for (const name of made.containers) spawnSync(realDocker, ["rm", "--force", name]);
+      for (const name of made.containers) spawnSync(realDocker, ["rm", "--force", "--volumes", name]);
       for (const name of made.networks) spawnSync(realDocker, ["network", "rm", name]);
       for (const name of made.images) spawnSync(realDocker, ["image", "rm", "--force", name]);
     }
