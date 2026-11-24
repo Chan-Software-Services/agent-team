@@ -31,6 +31,15 @@ The tmp directory itself is kept, with its mode, so a woken session still finds 
 A run stopped midway leaves whole entries, and the next run clears the rest.
 `disk_clear_job_tmp` is that one clearing, which `team-close`'s fallback calls too.
 
+### `team-close`'s fallback
+
+After its `claude rm` of each of the task's sessions, in a close and in `--ticket`, `team-close` looks for each one's job directory, whether `claude rm` succeeded or failed.
+When it is still there, its tmp is cleared by `disk_clear_job_tmp`, the directory and its `state.json` kept, and `team-close: cleared the job tmp of <id> (<size>), which claude rm left` is said on stderr.
+The day's file has the line with its why, `T<n> is closed`, or `T<n>'s ticket NN is returned` for `--ticket`.
+A clearing that fails is one line on stderr (`team-close: could not clear <path>: <rm's last line>`), and the close goes on.
+An ops session is never touched: its records are `team-ops-end`'s.
+A closed task's stack takes its volumes with it already: `team-close` runs `team-stack down` for each returned worktree's stack, which removes the anonymous volumes Compose leaves (`sops/docker.md`).
+
 ## What a run says, and where
 
 - Each clearing is one line on stdout, with the tmp's size and the why: `cleared the job tmp of T422's builder 0f178ea8 (9.5 GiB; done and idle 26 h)`.
