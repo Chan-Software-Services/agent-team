@@ -14,7 +14,8 @@
 #
 # open, in order, each step kept when it is done already, so a rerun with --task T<n> finishes a
 # topic a failed run left half open (a failure after the task's number is known says the rerun
-# line on stderr):
+# line on stderr, and while the task has no opened yet, that its team-open reads Daniel's message
+# again, so past the hour only a new message of theirs finishes it):
 #   1. Refuses, exit 1, before anything is taken: a fenced machine or one that lost the lease
 #      (lease_refusal in bin/lib/team.sh); an --about file that is missing, unreadable, empty,
 #      over 8 KiB, no text (an image, a NUL byte, or nothing but blanks), or holding an address
@@ -195,6 +196,11 @@ on_exit() {
   local rc=$?
   ((rc != 0)) && [[ -n $task && -z $done && -z $said ]] || return 0
   echo "team-topic: $task is half open; finish it with: ${rerun/TASK/$task}" >&2
+  # With no opened logged, the rerun's team-open holds Daniel's word again, its age included.
+  [[ $(task_event_array "$task" 2>/dev/null | jq -r 'any(.[]; .event == "opened")' 2>/dev/null) == true ]] ||
+    echo "team-topic: $task has no opened yet, so that rerun reads Daniel's message $daniel again, and once it is" \
+      "over an hour old it is refused: ask Daniel for a new message asking for the topic, and give its id and" \
+      "channel to --daniel and --channel" >&2
 }
 team_exit_trap on_exit
 

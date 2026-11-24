@@ -267,6 +267,8 @@ Daniel wants to design the release checklist: what it checks, when it runs, wher
     --about "$about" --project proj release-checklist "The release checklist"
   assert_contains "$stderr" "team-thread: Discord did not return a thread id"
   assert_contains "$stderr" "team-topic: T1 is half open; finish it with: team-topic open --task T1 --daniel $daniel --channel $ASKED_IN --about $about --project proj release-checklist The\\ release\\ checklist"
+  # Its opened is logged, so the rerun takes it as opened and reads no word again: no hour to say.
+  [[ $stderr != *"has no opened yet"* ]]
   assert_equal "$(events opened | wc -l)" "1"
   assert_equal "$(events interview-thread)" ""
   [[ ! -e $TEAM_HOME/tasks/T1/plan.md ]]
@@ -294,6 +296,24 @@ Daniel wants to design the release checklist: what it checks, when it runs, wher
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
     --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$(events launch | wc -l)" "2"
+}
+
+@test "a topic team-open left half open says a rerun past the hour needs Daniel's new message, which finishes it" {
+  local daniel new
+  daniel=$(word "$ASKED_IN")
+  : >>"$TEAM_HOME/ledger.jsonl"
+  chmod a-w "$TEAM_HOME/ledger.jsonl"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic open --daniel "$daniel" --channel "$ASKED_IN" \
+    --about "$about" --project proj release-checklist "The release checklist"
+  chmod u+w "$TEAM_HOME/ledger.jsonl"
+  assert_contains "$stderr" "team-topic: T1 is half open; finish it with: team-topic open --task T1 --daniel $daniel --channel $ASKED_IN"
+  assert_contains "$stderr" "team-topic: T1 has no opened yet, so that rerun reads Daniel's message $daniel again, and once it is over an hour old it is refused: ask Daniel for a new message asking for the topic, and give its id and channel to --daniel and --channel"
+  new=$(word "$ASKED_IN")
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$new" --channel "$ASKED_IN" \
+    --about "$about" --project proj release-checklist "The release checklist"
+  assert_equal "$output" "T1 topic open in <#1563000000000000001>: session 4f2a9c1e"
+  assert_equal "$(events opened | jq -r .discord_message)" "$new"
+  assert_equal "$(events launch | wc -l)" "1"
 }
 
 @test "a rerun whose session list cannot be read launches nothing, so a live session is never doubled" {

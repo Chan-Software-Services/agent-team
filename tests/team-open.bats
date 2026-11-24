@@ -912,7 +912,7 @@ topic_word() {
   ms=$(($(date +%s%3N) - ago * 1000))
   id=$((((ms - 1420070400000) << 22) | n))
   jq -n --arg c "$1" --arg id "$id" --arg a "$author" \
-    '{id: $id, channel_id: $c, content: "Open a topic on the ingest.", author: {id: $a, username: "daniel"}, edited_timestamp: null}' \
+    '{id: $id, channel_id: $c, content: "Open a topic on the checklist.", author: {id: $a, username: "daniel"}, edited_timestamp: null}' \
     >"$DISCORD_DIR/$1-$id.json"
   echo "$id"
 }
@@ -1083,4 +1083,23 @@ topic_open_logged() {
   assert_equal "$stderr" "team-open: another open held ~/.local/state/agent-team/topic-open.lock for 1 seconds; run this again"
   assert_equal "$(taken_state)" "$before"
   run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+}
+
+@test "a topic left half open says its rerun reads Daniel's word again, so past the hour it needs a new message, which finishes it" {
+  topic_discord
+  local word new
+  word=$(topic_word "$TOPIC_THREAD")
+  # The opened append fails once the slot holds the branch: the ledger cannot be written.
+  : >>"$TEAM_HOME/ledger.jsonl"
+  chmod a-w "$TEAM_HOME/ledger.jsonl"
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research release-checklist "The release checklist"
+  chmod u+w "$TEAM_HOME/ledger.jsonl"
+  assert_contains "$stderr" "team-open: T1 is half open in $slots/1; finish it with: team-open --task T1 --daniel $word --channel $TOPIC_THREAD proj topic research release-checklist The\\ release\\ checklist"
+  assert_contains "$stderr" "team-open: that rerun reads Daniel's message $word again, so once it is over an hour old it is refused: ask Daniel for a new message asking for the topic, and give its id and channel to --daniel and --channel"
+  assert_equal "$(events opened)" ""
+  # A new message of Daniel's finishes it, on the same task and slot.
+  new=$(topic_word "$TOPIC_THREAD")
+  run_bin -0 --separate-stderr team-open --task T1 --daniel "$new" --channel "$TOPIC_THREAD" proj topic research release-checklist "The release checklist"
+  assert_equal "$(jq -r '"\(.task) \(.worktree) \(.discord_message)"' <<<"$output")" "T1 $slots/1 $new"
+  assert_equal "$(events opened | jq -r .discord_message)" "$new"
 }

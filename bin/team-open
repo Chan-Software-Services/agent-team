@@ -69,7 +69,9 @@
 # discord_message ("message <id> already opened T<n>"), and fewer than TOPIC_MAX_OPEN (2) topic
 # tasks are open. A topic opens no thread under #coordinator (no team-thread call, no thread event)
 # and writes no plan.md, which team-topic open writes from its own template, and its opened and
-# printed facts carry discord_message and discord_channel, and no thread.
+# printed facts carry discord_message and discord_channel, and no thread. A topic left half open
+# says, after its finish line, that the rerun reads Daniel's message again, so once it is over an
+# hour old only a new message of theirs, given as --daniel and --channel, finishes it.
 # --story names the backlog story the task builds, whose file must be in the team home's
 # projects/<project>/backlog/ (story_file in bin/lib/team.sh; refused before anything is taken
 # otherwise): opened and the printed facts carry it as story, and team-merge marks it done.
@@ -538,6 +540,11 @@ on_exit() {
   else
     echo "team-open: $task is half open in $worktree; finish it with:" \
       "team-open --task $task${queued_given:+ --queued $queued_file}${daniel:+ --daniel $daniel --channel $channel} $project $path $type $slug $(printf '%q' "$title")" >&2
+    # A topic's rerun holds Daniel's word again, its age included, so past the hour only a new
+    # message of theirs finishes it.
+    [[ -z $daniel ]] ||
+      echo "team-open: that rerun reads Daniel's message $daniel again, so once it is over an hour old it is refused:" \
+        "ask Daniel for a new message asking for the topic, and give its id and channel to --daniel and --channel" >&2
   fi
 }
 team_exit_trap on_exit
