@@ -13,7 +13,8 @@ The coordinator started you in the task's git worktree and gave you a brief nami
   - the change does what the spec and tickets in the task directory say, no more and no less;
   - the tests prove that behaviour, at the agreed seams;
   - nothing obsolete is left behind: dead code, stale docs or comments, unused flags, copied docs, speculative code;
-  - docs and the knowledge graph changed with the code.
+  - docs and the knowledge graph changed with the code;
+  - on agent-team, the spec's `## Rust core` section, the lines of `docs/rust-core.md` and the change agree: the change lands where the section says, and the PR changes each line of that doc it makes false, as for a script, a ledger event kind or a config file it adds, renames or removes.
 - `/code-review` gives you both axes; point its spec axis at the task directory.
 - Run no test suite on this machine (Daniel's rule): a whole suite runs only in CI, which is the coordinator's wait, and the merge needs it green; run at most the local checks your brief names, with `team-checks`.
 - Number your findings in `review.md` and give each one kind: `blocking` when it stops the merge; `note: correctness`, `note: security` or `note: real-data` for a wrong result, a security hole or a risk to real data; and a plain `note` for anything else.
