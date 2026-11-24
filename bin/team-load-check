@@ -162,12 +162,13 @@
 # mode, a deny rule, a hook or a built-in safety check did; auto mode's verdict varies from run to
 # run, so a refused attempt's pass is one sample of it and its fail in any run stands. The
 # assistant runs in bypass mode, so no auto mode judges its calls, and its refused attempt is one
-# whose deny rule and hook both refuse it. An attempt expecting allowed proves a read the role
-# must keep (the assistant's reads of the coordinator's scripts, their --help, its views and
-# GitHub): it passes when each matching call ran, so no deny rule, hook, auto mode, built-in safety
-# check or script refused it, and its result holds the attempt's marker, in any case, else it is
-# "ran without its marker", as a script that printed its refusal of the role is; @LOGIN@ in a
-# marker is the worker login, and an attempt with it is made only while the login is on, as the
+# whose deny rule and hook both refuse it, which passes on whichever its session shows, and may
+# name its deny rule's family, as a rule attempt does. An attempt expecting allowed proves a read
+# the role must keep (the assistant's reads of the coordinator's scripts, their --help, its views
+# and GitHub): it passes when each matching call ran, so no deny rule, hook, auto mode, built-in
+# safety check or script refused it, and its result holds the attempt's marker, in any case, else
+# it is "ran without its marker", as a script that printed its refusal of the role is; @LOGIN@ in
+# a marker is the worker login, and an attempt with it is made only while the login is on, as the
 # login attempt is. An attempt expecting kernel proves the session's shell
 # commands run confined (bin/lib/confine.py): its command removes an empty canary directory outside
 # every root of the session, <canary>/<role>/<the attempt's id>, where <canary> is a new mktemp -d
@@ -183,7 +184,10 @@
 # --entry shell set for it) passes only when its result also holds the marker, else it is "the
 # session's shell is not the confined one": the session's shell is then not the program
 # bin/lib/confine-session wrote, as with a Claude Code that ignored CLAUDE_CODE_SHELL, and a
-# shell of the user's ran before the domain. One line per role and attempt:
+# shell of the user's ran before the domain. A call that ran but whose shell never found its
+# command, its result starting "Exit code 127" (a script named by a bare name on a PATH without
+# bin/), passes no attempt, whatever it expects, and its line says so. One line per role and
+# attempt:
 #   PASS builder sessions: rule refused it
 #   PASS planner upload: hook refused it
 #   PASS reviewer kernel-delete: kernel refused it
@@ -192,6 +196,7 @@
 #   FAIL assistant queue-list: expected allowed, got ran without its marker
 #   FAIL reviewer write-outside: expected hook, got ran
 #   FAIL builder kernel-delete: expected kernel, got ran (the canary was removed)
+#   FAIL assistant coordinator-merge: expected script, got its command not found (exit 127)
 #   FAIL planner ops-launch: never attempted
 # A session that did not finish in time is a line of its own (FAIL <role>: its session did not
 # finish its attempts within 10 minutes (state '<state>')), and one whose transcript cannot be read
@@ -1085,8 +1090,11 @@ EOF
 # attempt's result holds neither PermissionError nor "Permission denied", and "the session's shell
 # is not the confined one" when a kernel attempt with a marker ran without it in its result; an
 # allowed attempt on ran, which reads "ran without its marker" when its result does not hold its
-# marker, in any case. Fails when the transcript is not JSON lines. A login attempt passes when it ran and its result is the
-# worker login (probe_login, in any case, as GitHub compares logins). Only ids, outcomes and a
+# marker, in any case. A call that ran but whose shell never found its command, its result's text
+# starting "Exit code 127", reads "its command not found (exit 127)" whatever its attempt expects,
+# so it passes none. Fails when the transcript is not JSON lines. A login attempt passes when it ran and its result is the
+# worker login (probe_login, in any case, as GitHub compares logins), and fails as "its command
+# not found (exit 127)" as any other attempt does. Only ids, outcomes and a
 # result that is a GitHub login leave the transcript.
 probe_verdicts() {
   jq -rs --arg role "$1" --argjson attempts "$2" --argjson gone "$4" --arg login "$probe_login" "$tool_outcome_jq"'
@@ -1095,7 +1103,9 @@ probe_verdicts() {
       and ($got == $a.input or ($a.tool != "Bash" and ($a.input | startswith("/") | not)
         and ($got | startswith("/")) and ($got | endswith("/" + $a.input)))));
     def outcome_of($a; $result): . as $call | ($result.entry | outcome) as $outcome
-      | if $a.expect == "hook" and $outcome == "hook" and (($result.text // "") | contains($a.marker) | not)
+      | if $outcome == "ran" and (($result.text // "") | test("^Exit code 127(\n|$)"))
+        then "its command not found (exit 127)"
+        elif $a.expect == "hook" and $outcome == "hook" and (($result.text // "") | contains($a.marker) | not)
         then "other-hook"
         elif $a.expect == "kernel" and $outcome == "ran" and $a.background == true
           and $call.input.run_in_background != true then "ran in the foreground"
@@ -1120,6 +1130,7 @@ probe_verdicts() {
     def login_failure($result): ($result.entry | outcome) as $outcome
       | (($result.text // "") | sub("\\s+$"; "")) as $text
       | if $outcome != "ran" then "its call did not run: \($outcome)"
+        elif $text | test("^Exit code 127(\n|$)") then "its command not found (exit 127)"
         elif $text == "" then "its call gave no result"
         elif ($text | ascii_downcase) == ($login | ascii_downcase) then empty
         elif $text | test("^[A-Za-z0-9-]{1,39}$") then "the session'\''s GitHub login is \($text), not \($login)"

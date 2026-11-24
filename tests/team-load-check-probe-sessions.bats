@@ -92,7 +92,7 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   assert_contains "$output" "PASS topic redirect-outside: hook refused it"
   assert_contains "$(cat "$STUB_FIXTURES/topic.jsonl")" "this role may edit files only under"
   local id
-  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl github-write; do
+  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl topic-github-write; do
     assert_contains "$output" "PASS topic $id: rule refused it"
   done
   assert_equal "${lines[-2]}" "load check: a probe of one role is not the drill, so nothing is recorded"

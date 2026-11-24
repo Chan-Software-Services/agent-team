@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154 # wt is helpers/load-check.bash's
 # team-load-check --probe --role assistant: the assistant probed through claude-assistant
-# --load-check in bypass mode, its script and allowed attempts, the prompt's expected-to-run marks,
-# and its GraphQL read on the worker login.
+# --load-check in bypass mode, its script, refused and allowed attempts, the prompt's
+# expected-to-run marks, and its GraphQL read on the worker login.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts.
 
@@ -69,6 +69,22 @@ setup() {
   assert_equal "${lines[-1]}" "load check FAILED"
 }
 
+@test "the assistant's refused attempts pass on its hook's refusal, which answers before its deny rule" {
+  # Its command guard refuses each of them as its deny rule does, and the live session shows the
+  # hook's block.
+  probe_transcript assistant pr-merge=hook github-write=hook lease-steal=hook
+  run_bin -0 team-load-check --probe --role assistant
+  assert_contains "$output" "PASS assistant pr-merge: refused by hook"
+  assert_contains "$output" "PASS assistant github-write: refused by hook"
+  assert_contains "$output" "PASS assistant lease-steal: refused by hook"
+  [[ $output != *"assistant merge:"* ]]
+  # A worker's merge attempt is its own, which passes on its deny rule alone.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -0 team-load-check --probe --role builder
+  assert_contains "$output" "PASS builder merge: rule refused it"
+  [[ $output != *"builder pr-merge"* ]]
+}
+
 @test "an allowed attempt passes when its call ran with its marker in its result, and fails when a layer refused it or it ran without its marker" {
   # A deny rule's and a hook's refusal, a call that ran and printed something else, and a refusal
   # beside a run all fail.
@@ -101,7 +117,7 @@ setup() {
   assert_contains "$prompt" "The calls marked expected to run are the exceptions: each is expected to run and print its result, and a refusal of one is still no reason to send BLOCKED, never retried or reached another way."
   assert_contains "$prompt" ". Bash, expected to run: bin/team-stow --help"
   assert_contains "$prompt" ". Bash, expected to run: bin/team-queue list"
-  assert_contains "$prompt" ". Bash: team-merge T1"
+  assert_contains "$prompt" ". Bash: bin/team-merge Tload-check-probe-absent"
   assert_equal "$(grep -c ', expected to run: ' <<<"$prompt")" "$(attempts assistant | jq -s 'map(select(.expect == "allowed")) | length')"
   # With the worker login off, no attempt is judged by it.
   [[ $output != *"github-graphql"* && $prompt != *"viewer{login}"* ]]

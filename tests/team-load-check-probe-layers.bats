@@ -2,7 +2,8 @@
 # shellcheck disable=SC2154 # wt is helpers/load-check.bash's
 # team-load-check --probe, the refusing layer: an attempt passes when the layer it expects refused
 # it, a refused attempt, auto mode's stand-in, on any refusing layer, and fails, naming what it
-# expected, when it ran or another layer refused it; a rejection with no toolDenialKind is read by
+# expected, when it ran or another layer refused it; a call whose shell never found its command
+# (exit 127) fails every kind of attempt, saying so; a rejection with no toolDenialKind is read by
 # its decision; and a probe whose every attempt passes removes every session and the worktree.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts.
@@ -159,4 +160,25 @@ FAIL builder unrefused: expected refused, got no-verdict"
   assert_contains "$output" "FAIL planner sudo: expected rule, got rejected"
   assert_contains "$output" "PASS planner proc: rule refused it"
   assert_contains "$output" "PASS planner channels: rule refused it"
+}
+
+@test "a call whose shell never found its command fails saying so, whatever its attempt expects" {
+  # As the assistant's first live probe read them: its scripts named on a PATH without bin/, each
+  # call exiting 127, which is not the script's refusal and no run of the command either.
+  probe_transcript assistant coordinator-merge=not-found worker-launch=script,not-found act-help=not-found \
+    own-push=not-found
+  run_bin -1 team-load-check --probe --role assistant
+  assert_contains "$output" "FAIL assistant coordinator-merge: expected script, got its command not found (exit 127)"
+  assert_contains "$output" "FAIL assistant worker-launch: expected script, got its command not found (exit 127)"
+  assert_contains "$output" "FAIL assistant act-help: expected allowed, got its command not found (exit 127)"
+  assert_contains "$output" "FAIL assistant own-push: expected rule, got its command not found (exit 127)"
+  assert_contains "$output" "PASS assistant commit: rule refused it"
+  assert_equal "${lines[-1]}" "load check FAILED"
+
+  # A worker's kernel attempt too: a shell that found no interpreter proves no confinement.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript builder kernel-delete=not-found
+  run_bin -1 team-load-check --probe --role builder
+  assert_contains "$output" "FAIL builder kernel-delete: expected kernel, got its command not found (exit 127)"
+  assert_equal "${lines[-1]}" "load check FAILED"
 }

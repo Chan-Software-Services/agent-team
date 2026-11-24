@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29970
+manual_bytes=29961
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -277,7 +277,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
 @test "the assistant's role says it reads what the coordinator reads, but the secret files, /proc and the Discord state, and that its guard refuses an act or a GitHub write by the rows" {
   local body
   body=$(section assistant 'What you do')
-  grep -qxF -- '- Read the files and run the read-only views the coordinator does: the team scripts'"'"' files and their `--help` (but `team-land`'"'"'s), `team-queue list` and `index --check`, `team-log --check` and `--check-lifecycle`, `team-inbox --item <n>`, `gh` reads and GraphQL queries with their values written in (no `$`).' <<<"$body"
+  grep -qxF -- '- Read the files and run the read-only views the coordinator does: the team scripts'"'"' files and their `--help` (but `team-land`'"'"'s), `team-queue list`, `waits` and `index --check`, `team-log --check` and `--check-lifecycle`, `team-inbox --item <n>`, `gh` reads and GraphQL queries with their values written in (no `$`).' <<<"$body"
   grep -qxF -- '- The secret files, the Discord state files, `/proc` to the Read tool and every process'"'"'s `/proc/<pid>/environ` stay closed to you.' <<<"$body"
   grep -qxF -- '- Your command guard and the act scripts themselves refuse a run of the coordinator'"'"'s acts (a hand-off, a stow, a resume, a lease change, a load check, a stack'"'"'s start or stop), and your guard every `gh` or `gh-axi` call but a read, each refusal naming what it read, so a read never becomes an act.' <<<"$body"
 }
@@ -974,6 +974,13 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF "the snapshot's denials line" "$plugin/skills/status-report/SKILL.md"
   # The form the role sentence gives is one team-log --from-message reads.
   grep -qF '"BLOCKED <what> <why>; took its allowed way [<way>]"' "$REPO_ROOT/bin/lib/messages.jq"
+}
+
+@test "the manual writes a date or a merge as after:, keeps waits: for what no script sees, and looks at the old waits each Monday" {
+  grep -qF '(a date or a merge is its `after:`, `waits:` only what no script sees, as Daniel'"'"'s word; end it with the wait)' "$manual"
+  grep -qF 'each Monday after the week'"'"'s reset, look only at the waits `team-queue waits` flags.' "$manual"
+  # The command it names is a form team-queue has.
+  "$REPO_ROOT/bin/team-queue" --help | grep -qxF '       team-queue waits [--older <days>] [--json]'
 }
 
 @test "the manual and the status-report skill keep the waiting list in waiting.md, post it fresh, and route a reply by number" {
