@@ -339,7 +339,11 @@ if [[ -n "${BATS_RUN_TMPDIR:-}" ]]; then
     printf "Error: Failed to create BATS_RUN_TMPDIR (%s)\n" "$BATS_RUN_TMPDIR" >&2
     exit 1
   fi
-elif ! BATS_RUN_TMPDIR=$(mktemp -d "${BATS_TMPDIR}/bats-run-XXXXXX"); then
+elif ! BATS_RUN_TMPDIR=$(
+  # agent-team's patch (VENDOR.md): a random name holding "zsh" is made again.
+  while dir=$(mktemp -d "${BATS_TMPDIR}/bats-run-XXXXXX") && [[ ${dir##*/} == *zsh* ]]; do rmdir -- "$dir"; done
+  [[ -n $dir ]] && printf '%s\n' "$dir"
+); then
   printf "Error: Failed to create BATS_RUN_TMPDIR (%s) with mktemp\n" "${BATS_TMPDIR}/bats-run-XXXXXX" >&2
   exit 1
 fi

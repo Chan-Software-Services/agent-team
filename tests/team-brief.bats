@@ -481,7 +481,7 @@ walk_brief() {
   walk_brief
   local brief=$TEAM_HOME/tasks/T12/brief.md
   grep -qF "\`$REPO_ROOT/bin/team-stack up\`, run with Bash \`run_in_background\` as a call of its own" "$brief"
-  grep -qF 'When `up` exits 75, the team has no room: send `T12 PAUSED <its reason line>`' "$brief"
+  grep -qF 'When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack'"'"'s network is made: send `T12 PAUSED <its reason line>`' "$brief"
   grep -qF '/toolkits/frontend/scripts/agent-chrome http://localhost:<port>/' "$brief"
   grep -qF 'a fixture account' "$brief"
   grep -qF '`127.0.0.1:5173`' "$brief"
@@ -531,7 +531,7 @@ walk_brief() {
   # The stack: its own, started and stopped by team-stack, and what a refusal means.
   grep -qF "\`$REPO_ROOT/bin/team-stack up\`, run with Bash \`run_in_background\` as a call of its own" "$brief"
   grep -qF 'never the primary stack' "$brief"
-  grep -qF 'When `up` exits 75, the team has no room: send `T12 PAUSED <its reason line>`' "$brief"
+  grep -qF 'When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack'"'"'s network is made: send `T12 PAUSED <its reason line>`' "$brief"
   grep -qF "\`$REPO_ROOT/bin/team-stack stop\` once the tiles are taken" "$brief"
   # The tiles: where, numbered and captioned, fixture values only, posted by the allowed form.
   grep -qF 'Take the tiles into `.scratch/task/shots/`, numbered' "$brief"

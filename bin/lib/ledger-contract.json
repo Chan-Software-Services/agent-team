@@ -80,6 +80,17 @@
       "required": {"url": "string", "head": "string", "reason": "string"},
       "optional": {"failed": "array"}
     },
+    "trial-unmarked": {
+      "writer": "team-land",
+      "about": "team-land, run by team-merge T<n>, has not posted agent-review on the merge queue's trial commit of the PR for 10 minutes of looks with one reason: url is the PR's; head the full sha it lands; trial the trial commit's full sha; reason the reason line team-merge --holds or the poster gave at the latest look; since the UTC time of the first look of that trial commit with that step, exit and reason; checks what one look at the trial commit's other checks showed (team-ci-wait --merge-group --look --no-agent-review): passed, pending, failed or unknown; logged once a trial commit, after 10 minutes of looks with one reason, and once more with checks passed when a later look first shows them so; team-sweep's trial-unmarked finding reads the latest one of a PR standing in the queue",
+      "required": {"url": "string", "head": "string", "trial": "string", "reason": "string", "since": "string",
+        "checks": ["passed", "pending", "failed", "unknown"]}
+    },
+    "trial-marked": {
+      "writer": "team-land",
+      "about": "team-land posted agent-review on a trial commit of the PR after it logged trial-unmarked, on that trial commit or on the next one the queue rebuilt the entry onto: url is the PR's; head the full sha it lands; trial the full sha of the trial commit posted on; it ends the standing of every trial-unmarked of the url before it",
+      "required": {"url": "string", "head": "string", "trial": "string"}
+    },
     "history-rewritten": {
       "writer": "team-clean-messages",
       "required": {"branch": "string", "old_head": "string", "head": "string"},

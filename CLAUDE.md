@@ -76,6 +76,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `workers.jq`: `team-time`'s worker lifetimes, from each launch to its done, pr or ticket-done, review, replacement, stow or close, with their averages by role, path, project, model and toolkits, the longest, the running, and the classes and breakdown of their time rows.
     - `working-set.awk`: a cgroup's working set, its `memory.current` less the reclaimable page cache, the one measure of memory use `team-capacity`, `team-heavy` and `team-level` read a cgroup by.
 - `coordinator.settings.json`: the coordinator's own settings: Discord, its hooks, its denials and the skills kept out of its listing.
+- `docs/`: design docs, beside what a stranger reads first in `README.md`.
+  - `rust-core.md`: the Rust core's design and its port map, kept by hand: the crates, the platform and interface seams, what was decided since the first design, and each `bin/` script, ledger event kind and config file against its future crate and seam.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
@@ -115,6 +117,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
   - `briefs/topic.md`: a topic session's brief, its task's facts, its interview thread and what Daniel asked for (`{{about}}`), opening the thread with its understanding of the topic.
+  - `plan-rust-core.md`: the `## Rust core` section `team-open` puts in a plan of the team's own project alone, where `templates/plan.md` has `{{rust_core}}`.
   - `topic-plan.md`: a topic task's `plan.md`, which `team-topic open` writes in place of a plan: the title, Daniel's message asking for it and what they asked for (`{{about}}`).
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
@@ -138,7 +141,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tests/task-life.bats`: a whole task's life across the scripts.
   - `tests/timings.tsv`: each bats file's seconds on Linux in one CI run, and on macOS as the last CI run with macOS jobs had them, which `tests/shards` weighs it by.
   - `tests/toolkits/`: the toolkits' Node tests.
-  - `tests/vendor/`: bats-core, vendored, with the one line its `VENDOR.md` patches.
+  - `tests/vendor/`: bats-core, vendored, with the two patches its `VENDOR.md` describes.
 - `toolkits/`: plugin directories a worker loads with `team-worker --toolkit <name>`: MCP config (`.mcp.json`) and the roles a server starts for when not every one (`mcp-roles.json`), skills, hooks (`hooks/hooks.json`), docs, scripts, and the skills' evals (`claude plugin eval`, on MCP mocks).
   - `browser/`: its session-start hook prints a banner for a UI task's builder and reviewer, whose `ui-check` skill captures and judges the screens a UI change touches.
   - `codegraph/`: for a setup trial's builders and reviewers, a session-start hook that, in a worktree with a `.codegraph/` directory, builds or syncs that worktree's CodeGraph index and prints a banner to locate code with `codegraph explore` first; no MCP server.
@@ -208,7 +211,7 @@ It holds:
   No session runs a whole test suite on the team's machine (Daniel's rule, 2026-11-15): a worker runs only the tests of the code it changed and the whole suite runs in CI, but for a project with no CI, whose builder runs it once at its end until the project moves to CI-only (`sops/ci-only.md`).
   What runs where: a builder of a project whose `projects.toml` entry has `branch_ci`, as agent-team's has `ci.yml`, runs only `tests/run shellcheck --changed` and the single test files it wrote or changed on the machine, and the suite on GitHub, whose `shellcheck` job checks every script.
   At its round's end it pushes its branch, a ticket branch too, and runs `team-ci-run <project> <branch> <sha>` in the background, which waits through `team-ci-wait --run` on `ci.yml`'s run of that exact head (one already there, as the PR's own is when a PR is open, else one it starts with `workflow_dispatch`), and it reports `DONE` or `PR` only once that exits 0.
-  So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them and a gate's end-to-end run, and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
+  So the heavy-run lock queues only what still runs here, a `tests/run` by hand, `team-checks`' local checks of a project that lists them, a builder's local end-to-end run and a gate's, and `team-stack`'s steps that make or remove a stack's network (`sops/docker.md`), and `tests/run bats --changed` stays a by-hand tool that no brief or role names.
 - A PR to `dev` is checked on GitHub: `.github/workflows/ci.yml` runs its jobs (`shellcheck`, `test`, `toolkits`, `data` and `zizmor`, with the shard jobs `shard-plan`, whose timings the shards split by, and `test-shards`, which `test` waits for), all on Linux and none on macOS, on every PR to `dev` and to `main`, on each trial commit a merge queue builds (`merge_group`, its `checks_requested` type) and by hand (`workflow_dispatch`), which is how `team-ci-run` starts a run on a builder's branch when CI has none of its head.
   On a trial commit the `data` job reads what it adds to the commit the queue built it on (the merge group's base and head shas).
   Each job has a time limit (`timeout-minutes`), about twice its longest recent run, and each that runs bats one above `tests/run`'s file limit, which `tests/repo.bats` holds.

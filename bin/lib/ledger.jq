@@ -1935,6 +1935,34 @@ def queue_wait_findings($landing):
       "PR \(.url) is in the merge queue since \(.since) with no team-merge waiting on it";
       "run team-merge \($task) with Bash run_in_background, which goes on waiting and logs how it ends");
 
+# The task's PRs that stand in the merge queue (queued_prs) whose latest trial-unmarked since the
+# latest queued of the PR, logged by team-land, says the trial commit passed every other check, with
+# no trial-marked of the PR after it: each the PR with head, trial, reason and since, the
+# trial-unmarked's.
+def unmarked_trial_prs:
+  . as $events
+  | queued_prs[] as $pr
+  | ($pr.url | rtrimstr("/")) as $u
+  | ([range(length) | select($events[.] | .event == "queued" and (.url | strings | rtrimstr("/")) == $u)] | last) as $q
+  | [$events[$q + 1:][] | select((.event | IN("trial-unmarked", "trial-marked")) and (.url | strings | rtrimstr("/")) == $u)]
+  | last
+  | select(.event? == "trial-unmarked" and .checks == "passed")
+  | $pr + {head, trial, reason, since};
+
+# team-sweep's trial-unmarked findings, over a task's events, one for each of its PRs whose merge
+# queue trial commit passed every other check but has no agent-review, as team-land logged it
+# (unmarked_trial_prs), whatever parks the task and whether or not a team-merge waits on it: the
+# queue holds the PR, and every PR behind it, until agent-review is posted there or the check times
+# out. The next step names the reason, team-merge's --holds that says it again, and team-land's log
+# of each look, ~/.local/state/agent-team/merge/land/<owner>/<name>/<n>.log.
+def trial_unmarked_findings:
+  .[0].task as $task
+  | unmarked_trial_prs
+  | (.url | capture("^https://github\\.com/(?<repo>[^/]+/[^/]+)/pull/(?<n>[0-9]+)") // {repo: "<owner>/<name>", n: "<n>"}) as $at
+  | finding($task; "trial-unmarked"; null; null;
+      "PR \(.url) has passed every other check on its merge queue trial commit \(.trial[:7]), but has had no agent-review there since \(.since): \(.reason)";
+      "fix what that reason names (team-merge \($task) --pr \(.url) --holds \(.head) says it again, and team-land logs each look in ~/.local/state/agent-team/merge/land/\($at.repo)/\($at.n).log), after which team-land posts agent-review at its next look; tell Daniel if it is not yours to fix");
+
 # team-sweep's trial-failed findings, over a task's events and the session list, one for each of
 # its PRs the merge queue dropped for a failure of its own on the trial merge (trial_failed_prs),
 # while the task awaits merge with no ask open and nothing parking it, and no merge-base round is
@@ -2366,7 +2394,7 @@ def assistant_twin_lines($self):
 # ($plan, as level_findings takes it) and session-activity's object ($activity, as task_findings
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
 # every task's withdrawals), else its findings unless it is parked, then its queue-wait,
-# trial-failed and trial-rules findings, then its walk-stale, parked or not, since a parked task's
+# trial-unmarked, trial-failed and trial-rules findings, then its walk-stale, parked or not, since a parked task's
 # walk still needs asking about, then its ci-due, then the stray sessions (named like a team worker
 # whose task is closed or not in the ledger, never the load check's T0, whose session the
 # coordinator waits on for up to 30 minutes), in task number order; then the coordinator-twin,
@@ -2383,6 +2411,7 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
          | if $due != [] then $due[] elif parked then empty
            else task_findings($sessions; $activity) end),
         queue_wait_findings($landing),
+        trial_unmarked_findings,
         trial_failed_findings($sessions),
         trial_rules_findings($landing),
         walk_stale_finding,
