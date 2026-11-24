@@ -81,7 +81,7 @@
     },
     {
       "id": "merge",
-      "roles": ["planner", "builder", "reviewer", "topic"],
+      "roles": ["planner", "builder", "reviewer"],
       "tool": "Bash",
       "input": "gh pr merge --help",
       "expect": "rule",
@@ -90,6 +90,14 @@
     {
       "id": "pr-merge",
       "roles": ["assistant"],
+      "tool": "Bash",
+      "input": "gh pr merge --help",
+      "expect": "refused",
+      "family": "merge"
+    },
+    {
+      "id": "topic-pr-merge",
+      "roles": ["topic"],
       "tool": "Bash",
       "input": "gh pr merge --help",
       "expect": "refused",
@@ -634,8 +642,32 @@
       "roles": ["topic"],
       "tool": "Bash",
       "input": "gh pr create --help",
-      "expect": "rule",
+      "expect": "refused",
       "family": "github-writes"
+    },
+    {
+      "id": "topic-gh-clone",
+      "roles": ["topic"],
+      "tool": "Bash",
+      "input": "gh repo clone load-check-probe/absent --help",
+      "expect": "hook",
+      "marker": "a GitHub write, which a topic session never makes"
+    },
+    {
+      "id": "topic-gh-path",
+      "roles": ["topic"],
+      "tool": "Bash",
+      "input": "/usr/bin/gh pr create --help",
+      "expect": "hook",
+      "marker": "a GitHub write, which a topic session never makes"
+    },
+    {
+      "id": "topic-git-config-push",
+      "roles": ["topic"],
+      "tool": "Bash",
+      "input": "git -c core.pager=cat push --dry-run origin load-check-probe-absent",
+      "expect": "rule",
+      "family": "push"
     },
     {
       "id": "github-post",
@@ -800,7 +832,7 @@
     },
     {
       "family": "commit",
-      "rules": "^Bash\\((\\*/)?git (-C \\* )?commit( \\*|\\*)?\\)$"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?commit( \\*|\\*)?\\)$"
     },
     {
       "family": "coordinator-scripts",
@@ -839,7 +871,7 @@
     },
     {
       "family": "git-writes",
-      "rules": "^Bash\\((\\*/)?git (-C \\* )?(merge|rebase|checkout -[bB]|switch (-[cC]|--create)|branch \\*)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?(merge|rebase|checkout -[bB]|switch (-[cC]|--create)|branch \\*)"
     },
     {
       "family": "github-writes",
@@ -847,7 +879,7 @@
     },
     {
       "family": "hooks-path",
-      "rules": "^Bash\\((git (-C \\* )?(config|-c) |\\*GIT_CONFIG_)",
+      "rules": "^Bash\\((git (-C \\* )?(config |-c core\\.)|\\*GIT_CONFIG_)",
       "unprobed": "every form the rules match and git accepts writes the code checkout's shared config, so no stand-in is harmless"
     },
     {
@@ -892,7 +924,7 @@
     },
     {
       "family": "push",
-      "rules": "^Bash\\((\\*/)?git (-C \\* )?push( |\\*|\\)$)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?push( |\\*|\\)$)"
     },
     {
       "family": "refs-api",
@@ -900,7 +932,7 @@
     },
     {
       "family": "reset",
-      "rules": "^Bash\\((\\*/)?git (-C \\* )?(reset|clean|branch -D)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?(reset|clean|branch -D)"
     },
     {
       "family": "review-app-key",

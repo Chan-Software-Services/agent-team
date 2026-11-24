@@ -107,6 +107,12 @@ The rows, in order:
     browse, status, licenses, completion, help, version) pass. Reason: a GitHub write, which an
     assistant session never makes (<the method, the body, the field, the mutation, the query it
     cannot read, or the group and subcommand>).
+  topic-github-write, for a topic session alone: the same reading of every gh or gh-axi call, but
+    with a topic's reads (TOPIC_GITHUB_READS) in place of the assistant's: gh pr view, list and
+    diff, gh issue view and list, gh run view and list, gh repo view, gh search and gh auth status,
+    and gh-axi's same, so its clones, downloads, gh pr checks, gh browse and gh status are refused
+    too, by any path or wrapper its settings' gh deny rules never matched. Reason: a GitHub write,
+    which a topic session never makes (<what it read, as the assistant's row says it>).
   assistant-thread-cache, for the assistant alone: a call naming the thread cache the Discord
     guard trusts (assistant-threads, as written or with its quotes and backslashes removed, or the
     library's ASSISTANT_THREADS or assistant_thread_keep), which its deny rule refused whatever it
@@ -632,6 +638,22 @@ GH_CONFIG_KEYS = frozenset((
 # GraphQL's operation keywords that write or stream, as whole names (case-sensitive, as GraphQL's are).
 GRAPHQL_WRITES = re.compile(r"(?<![_0-9A-Za-z])(?:mutation|subscription)(?![_0-9A-Za-z])")
 GITHUB_REASON = "a GitHub write, which an assistant session never makes ({})"
+# A topic session's reads, fewer than the assistant's: the spec's list (gh pr view, list and diff,
+# gh issue view and list, gh run view and list, gh repo view and gh search), gh auth status, which
+# a load check's login attempts run, and gh api's reads; every other group and subcommand, the
+# assistant's clones, downloads, gh pr checks, gh browse and gh status among them, is no read of a
+# topic's, since a clone or a download writes outside its task directory.
+TOPIC_GITHUB_READS = {
+    "gh": {
+        "auth": _reads("status"), "issue": _reads("list", "view"), "pr": _reads("list", "view", "diff"),
+        "repo": _reads("view"), "run": _reads("list", "view"), "search": ANY_READ,
+    },
+    "gh-axi": {
+        "issue": _reads("list", "view"), "pr": _reads("list", "view", "diff"), "repo": _reads("view"),
+        "run": _reads("list", "view"), "search": ANY_READ,
+    },
+}
+TOPIC_GITHUB_REASON = "a GitHub write, which a topic session never makes ({})"
 
 
 def _cobra_commands(args):
@@ -728,6 +750,20 @@ def _github_write(command, context):
     role's call is not this row's."""
     if context is None or context.role != "assistant":
         return None
+    return _gh_write(command, GITHUB_READS, GITHUB_REASON)
+
+
+def _topic_github_write(command, context):
+    """A topic session's gh or gh-axi call that is none of its reads (TOPIC_GITHUB_READS), the
+    reason naming what it read; any other role's call is not this row's."""
+    if context is None or context.role != "topic":
+        return None
+    return _gh_write(command, TOPIC_GITHUB_READS, TOPIC_GITHUB_REASON)
+
+
+def _gh_write(command, table, reason):
+    """The first gh or gh-axi call of <command> that is no read by <table>, as <reason> words it,
+    or None."""
     for words in heads(command):
         if not words or command_name(words[0]) not in GITHUB_CLIS:
             continue
@@ -737,20 +773,20 @@ def _github_write(command, context):
         if group == "api":
             write = _api_write(args[found[0] + 1 :])
             if write is not None:
-                return GITHUB_REASON.format(write)
-        elif group is not None and (write := _group_write(name, args, found)) is not None:
-            return GITHUB_REASON.format(write)
+                return reason.format(write)
+        elif group is not None and (write := _group_write(name, args, found, table)) is not None:
+            return reason.format(write)
     return None
 
 
-def _group_write(name, args, found):
+def _group_write(name, args, found, table=GITHUB_READS):
     """What makes a gh or gh-axi call past its group no read, or None: a group the guard knows no
     read of, a subcommand (or a subcommand's own) outside its reads, gh auth status showing the
     token, and gh-axi update but its --check. A group with no subcommand prints its help."""
     group = args[found[0]]
     if name == "gh-axi" and group == "update":
         return None if "--check" in args else f"{name} update, a command the guard knows no read of"
-    reads = GITHUB_READS[name].get(group)
+    reads = table[name].get(group)
     if reads is None:
         return f"{name} {group}, a command the guard knows no read of"
     if reads == ANY_READ or len(found) < 2:
@@ -1144,6 +1180,7 @@ ROWS = (
     ),
     Row("assistant-acts", _assistant_act, None),
     Row("assistant-github-write", _github_write, None),
+    Row("topic-github-write", _topic_github_write, None),
     Row("assistant-thread-cache", lambda command, context: None, None, call=_cache_call),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),

@@ -119,7 +119,8 @@ attempts() {
 # file-rule's shape for a file tool; script: the script's own refusal, run for the role; kernel:
 # it ran with the kernel's refusal as its result, after its marker when it has one, a background
 # attempt's call made with run_in_background; allowed: it ran and printed its marker; refused: auto
-# mode, or for the assistant, in bypass mode, a deny rule), or
+# mode, or for the assistant, in bypass mode, a deny rule, and for a topic its command-guard row's
+# block, which comes before its deny rule), or
 # for an attempt named, one call per outcome given: hook, other-hook (a block by another hook's
 # message), script (the script's own refusal, its input's bin/ dropped), marked (a call that ran and
 # printed the attempt's marker), no-marker (a kernel attempt's refusal after its
@@ -149,7 +150,7 @@ probe_transcript() {
     case $role:$expect:$tool in
       *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes='file-rule' ;; *:script:*) outcomes=script ;;
       *:kernel:*) outcomes=refused-by-kernel ;; *:login:*) outcomes=as-$(login) ;; *:allowed:*) outcomes=marked ;;
-      assistant:*) outcomes=rule ;; *) outcomes=automode ;;
+      assistant:*) outcomes=rule ;; topic:refused:*) outcomes=hook ;; *) outcomes=automode ;;
     esac
     outcomes=${given[$id]:-$outcomes}
     for outcome in ${outcomes//,/ }; do
@@ -195,13 +196,13 @@ call_id() {
 }
 
 # passes <role>...: the PASS line of each attempt of each role, refused as it expects (a refused
-# attempt by auto mode, the assistant's by a deny rule, a login attempt answered with the worker
-# login, an allowed attempt run), in order
+# attempt by auto mode, the assistant's by a deny rule, a topic's by a hook, a login attempt
+# answered with the worker login, an allowed attempt run), in order
 passes() {
   local role
   for role; do
     attempts "$role" | jq -r --arg role "$role" --arg login "$(login)" '"PASS \($role) \(.id): " +
-      (if .expect == "refused" then "refused by \(if $role == "assistant" then "rule" else "automode" end)"
+      (if .expect == "refused" then "refused by \(if $role == "assistant" then "rule" elif $role == "topic" then "hook" else "automode" end)"
         elif .expect == "login" then "the session'\''s GitHub login is \($login)"
         elif .expect == "allowed" then "ran"
         else "\(.expect) refused it" end)'

@@ -79,21 +79,33 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   left_nothing
 }
 
-@test "--role topic probes a topic session, launched through team-worker as T0-topic, its read-only attempts each refused by a deny rule, and one that ran fails" {
+@test "--role topic probes a topic session, launched through team-worker as T0-topic, its read-only attempts each refused by a deny rule or its GitHub row, and one that ran fails" {
   run_bin -0 team-load-check --probe --role topic
   assert_equal "$(verdicts)" "$(passes topic)"
   assert_equal "$(launched)" topic
   assert_contains "$output" "load check: topic 5e5e5e5e started, with $(attempts topic | wc -l) attempts"
   assert_contains "$(cat "$BATS_TEST_TMPDIR/argv-topic")" "$TEAM_HOME/tasks/T0/settings.topic.code.json"
-  # Every attempt of the planner's, its scratch hook's blocks the real hook's, and the writes a
-  # read-only session never makes.
-  assert_equal "$(jq -r '[.attempts[] | select(any(.roles[]; . == "planner") and (any(.roles[]; . == "topic") | not)) | .id] | join(" ")' "$(data)")" ""
+  # Every call of the planner's attempts (gh pr merge under an attempt of its own, which its hook
+  # refuses first), its scratch hook's blocks the real hook's, and the writes a read-only session
+  # never makes.
+  assert_equal "$(jq -r '[.attempts[] | select(any(.roles[]; . == "topic")) | [.tool, .input]] as $topic
+    | [.attempts[] | select(any(.roles[]; . == "planner")) | select(IN([.tool, .input]; $topic[]) | not) | .id]
+    | join(" ")' "$(data)")" ""
   assert_contains "$output" "PASS topic write-outside: hook refused it"
   assert_contains "$output" "PASS topic redirect-outside: hook refused it"
   assert_contains "$(cat "$STUB_FIXTURES/topic.jsonl")" "this role may edit files only under"
   local id
-  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl topic-github-write; do
+  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl \
+    topic-git-config-push; do
     assert_contains "$output" "PASS topic $id: rule refused it"
+  done
+  # Its GitHub writes: the real command-guard's topic row blocks a clone and gh by a path, and a
+  # write its deny rules also hold, which the hook refuses first.
+  for id in topic-gh-clone topic-gh-path; do
+    assert_contains "$output" "PASS topic $id: hook refused it"
+  done
+  for id in topic-github-write topic-pr-merge; do
+    assert_contains "$output" "PASS topic $id: refused by hook"
   done
   assert_equal "${lines[-2]}" "load check: a probe of one role is not the drill, so nothing is recorded"
   assert_equal "${lines[-1]}" PASS

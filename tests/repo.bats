@@ -327,7 +327,7 @@ probe_rules() {
       or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
       or (.expect == "rule" and (.family | type) != "string")
       or (.family != null and ((.family | type) != "string" or (.family | IN($families[]) | not)
-        or (.expect != "rule" and (.expect != "refused" or .roles != ["assistant"])))))
+        or (.expect != "rule" and (.expect != "refused" or (.roles - ["assistant", "topic"]) != [] or .roles == [])))))
     | .id'
   out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
@@ -341,19 +341,22 @@ probe_rules() {
   assert_equal "$out" "no-marker
 number-marker
 login-hook"
-  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's refused
-  # one's, whose deny rule and hook both refuse it in bypass mode; never a worker's refused one,
-  # auto mode's stand-in, nor a hook's.
+  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's or a
+  # topic's refused one's, whose deny rule and hook both refuse it (the hook first, as a live run
+  # shows); never another worker's refused one, auto mode's stand-in, nor a hook's.
   out=$(jq -r "$malformed" <<<'{"families": [{"family": "f"}], "attempts": [
     {"id": "rule-bare", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule"},
     {"id": "rule", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule", "family": "f"},
     {"id": "refused-assistant", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "refused-assistant-bare", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused"},
+    {"id": "refused-topic", "roles": ["topic"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-topic-worker", "roles": ["topic", "planner"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "refused-worker", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "refused-both", "roles": ["builder", "assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "m", "family": "f"},
     {"id": "unknown", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "g"}]}')
   assert_equal "$out" "rule-bare
+refused-topic-worker
 refused-worker
 refused-both
 hook

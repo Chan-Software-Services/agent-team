@@ -1219,7 +1219,7 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
   done
 }
 
-@test "every gh and gh-axi call goes to Python past the fast path only for the assistant, so fails closed there when Python fails" {
+@test "every gh and gh-axi call goes to Python past the fast path only for the assistant and a topic session, so fails closed there when Python fails" {
   printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
   chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
   local command
@@ -1228,12 +1228,58 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
     AGENT_TEAM_ROLE=builder guard -0 "$command"
     assert_equal "$stderr" ""
     guard -0 "$command"
-    AGENT_TEAM_ROLE=assistant guard -2 "$command"
-    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
-      { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
+    for role in assistant topic; do
+      AGENT_TEAM_ROLE=$role guard -2 "$command"
+      [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+        { echo "the $role's $command passed the fast path: $stderr" >&2; return 1; }
+    done
   done
-  # An assistant's call naming gh only inside a word still exits at once.
+  # An assistant's or a topic's call naming gh only inside a word still exits at once.
   AGENT_TEAM_ROLE=assistant guard -0 'cat high.txt github.md'
+  AGENT_TEAM_ROLE=topic guard -0 'cat high.txt github.md'
+}
+
+TOPIC_GITHUB="a GitHub write, which a topic session never makes"
+
+@test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes by -c and --git-dir are denied" {
+  local command
+  # The spellings the review found passing: a group or subcommand its settings never listed, gh
+  # by a path or behind a wrapper.
+  refuses_as topic "$TOPIC_GITHUB (gh repo clone)" "" 'gh repo clone load-check-probe/absent --help' \
+    'gh repo clone o/r /tmp/r' 'env A=1 gh repo clone o/r' "bash -c 'gh repo clone o/r'"
+  refuses_as topic "$TOPIC_GITHUB (gh pr create)" "" '/usr/bin/gh pr create --help' 'bin/gh pr create' \
+    'gh -R o/r pr create' 'gh pr create --help'
+  refuses_as topic "$TOPIC_GITHUB (gh gist, a command the guard knows no read of)" "" 'gh gist clone x'
+  refuses_as topic "$TOPIC_GITHUB (gh run download)" "" 'gh run download 1'
+  refuses_as topic "$TOPIC_GITHUB (gh release, a command the guard knows no read of)" "" 'gh release download v1' 'gh release list'
+  refuses_as topic "$TOPIC_GITHUB (gh pr checks)" "" 'gh pr checks 5'
+  refuses_as topic "$TOPIC_GITHUB (gh browse, a command the guard knows no read of)" "" 'gh browse --no-browser'
+  refuses_as topic "$TOPIC_GITHUB (gh status, a command the guard knows no read of)" "" 'gh status'
+  refuses_as topic "$TOPIC_GITHUB (gh-axi pr create)" "" 'gh-axi pr create' '/opt/bin/gh-axi pr create'
+  refuses_as topic "$TOPIC_GITHUB (gh api --method POST)" "" 'gh api -X POST repos/o/r/issues' '/usr/bin/gh api -X POST x'
+  refuses_as topic "$TOPIC_GITHUB (gh api with a field and no --method GET or HEAD, which sends a POST)" "" \
+    'gh api repos/o/r/issues -f title=x'
+  refuses_as topic "$TOPIC_GITHUB (gh auth status --show-token, which prints the token)" "" 'gh auth status -t'
+  # Its reads: the spec's list, gh api's reads, and gh auth status, which a probe's login attempts run.
+  for command in 'gh api repos/o/r/pulls' 'gh api -X GET search/issues -f q=x' 'gh api user --jq .login' \
+    "gh api graphql -f query='{viewer{login}}'" 'gh pr view 5' 'gh pr list' 'gh pr diff 5' 'gh issue view 5' \
+    'gh issue list' 'gh run view 1 --log' 'gh run list' 'gh repo view o/r' 'gh search prs x' '/usr/bin/gh pr view 5' \
+    'gh' 'gh --help' 'gh pr --help' 'gh auth status' 'gh-axi pr view 5' 'gh-axi issue list' 'gh-axi run view 1' \
+    'gh-axi repo view' 'gh-axi search issues x' "grep -rn 'gh pr create' bin"; do
+    AGENT_TEAM_ROLE=topic guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # git's writes by a configuration option or another git directory, which its deny rules hold
+  # beside git push, git -C <dir> push and */git push.
+  for command in 'git -c core.pager=cat push --dry-run origin load-check-probe-absent' 'git -c a=b commit -m x' \
+    'git --git-dir=/w/.git commit -m x' 'git --git-dir /w/.git push' '/usr/bin/git -c a=b merge x' \
+    'git -c a=b rebase main' 'git --git-dir=d reset HEAD' 'git -c a=b checkout -b x' 'git -c a=b switch -c x' \
+    'git --git-dir=d branch x' '/usr/bin/git --git-dir=d switch --create x'; do
+    denied_in "$REPO_ROOT/settings/topic.json" "$command" || { echo "settings/topic.json lets through: $command" >&2; return 1; }
+  done
+  for command in 'git -c core.pager=cat log' 'git --git-dir=d status' 'git -c a=b diff'; do
+    if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
+  done
 }
 
 # A write of the thread cache the Discord guard trusts, which the assistant's deny rule held by any
