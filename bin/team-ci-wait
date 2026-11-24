@@ -167,12 +167,12 @@
 #                   (its workflows and the actions kept there) nor a path the step's Run lines or
 #                   the lines their groups print name (a script of the repository it runs, which
 #                   may hold its install list, or a file of a directory it names, as a local
-#                   action's action.yml kept elsewhere; step_paths below); paths that cannot be
-#                   read, or as many
-#                   as GitHub lists at most, 3000 of a PR's or 300 of a compare's, count as
-#                   touching them; and each queued
-#                   or stuck check: each line names its link and the gh run rerun (for a queued
-#                   one, gh run cancel first) to run before running team-ci-wait again
+#                   action's action.yml kept elsewhere, or the root's action.yml for an action
+#                   run as ./; step_paths below); paths that cannot be read, or as many as
+#                   GitHub lists at most, 3000 of a PR's or 300 of a compare's, count as touching
+#                   them; and each queued or stuck check: each line names its link and the gh run
+#                   rerun (for a queued one, gh run cancel first) to run before running
+#                   team-ci-wait again
 #   rules           with --merge-group, a required check not listed on the trial commit: "rules:
 #                   <name> was not reported on the trial commit, though <base>'s rules require it
 #                   (or the project requires it, for one of the registry's alone): no workflow
@@ -603,16 +603,19 @@ apt_fetch_failed() {
 # step_paths <log> <started at> <completed at>: the paths the step of that span names in what it
 # runs, one per line: each word of its ##[group]Run lines and of every line each such group prints
 # before its ##[endgroup] (the script, its shell and its with: and env: values; the runner's
-# colours taken out), split at blanks, quotes and the
-# shell's operators and $, that holds a / or ends in a script's extension (.sh, .bash, .py, .rb,
-# .pl, .js, .mjs, .cjs, .ts) and a letter or digit, its leading ./ and ../ taken off, so a script
-# the step runs from the repository (../scripts/chromium-packages.sh) counts as an install list of
-# its own.
+# colours taken out), split at blanks, quotes and the shell's operators and $, that holds a / or
+# ends in a script's extension (.sh, .bash, .py, .rb, .pl, .js, .mjs, .cjs, .ts) and a letter or
+# digit, its trailing /s and its leading ./ and ../ taken off, so a script the step runs from the
+# repository (../scripts/chromium-packages.sh) counts as an install list of its own; and
+# action.yml and action.yaml for a Run ./ line, a local action at the repository's root.
 step_paths() {
   LC_ALL=C awk -v from="${2:0:19}" -v to="${3:0:19}" '
     { at = substr($0, 1, 19); text = substr($0, index($0, " ") + 1) }
     at < from || at > to { next }
-    text ~ /^##\[group\]Run / { run = 1; text = substr(text, 14) }
+    text ~ /^##\[group\]Run / {
+      run = 1; text = substr(text, 14)
+      if (text ~ /^\.\/+[ \t]*$/) { print "action.yml"; print "action.yaml" }
+    }
     text ~ /^##\[endgroup\]/ { run = 0; next }
     run {
       gsub("\033\\[[0-9;]*m", "", text)
@@ -620,6 +623,7 @@ step_paths() {
       for (i = 1; i <= n; i++) {
         word = words[i]
         if (word !~ /\// && word !~ /\.(sh|bash|py|rb|pl|js|mjs|cjs|ts)$/) continue
+        sub(/\/+$/, "", word)
         while (sub(/^\.\.?\//, "", word)) ;
         if (word ~ /[A-Za-z0-9]/) print word
       }
@@ -632,10 +636,9 @@ step_paths() {
 # on apt's fetch, a script it runs being an install list too), ends in / and such a path, is
 # what such a path ends in after a / ($GITHUB_WORKSPACE/scripts/x.sh), or starts with such a path
 # and / (a file of a directory the step names, as a local action's action.yml under the
-# ./ci/actions/install-deps it runs), or paths that cannot
-# be read or may be cut short (GitHub lists at most 3000 of a PR's, and 300 of a compare's). The
-# change is the PR's (with --merge-group too), or with --run the branch's from the project's base
-# (compare <base>...<head>).
+# ./ci/actions/install-deps it runs), or paths that cannot be read or may be cut short (GitHub
+# lists at most 3000 of a PR's, and 300 of a compare's). The change is the PR's (with --merge-group
+# too), or with --run the branch's from the project's base (compare <base>...<head>).
 change_touches_ci() {
   local most
   if [[ -n $run_id ]]; then

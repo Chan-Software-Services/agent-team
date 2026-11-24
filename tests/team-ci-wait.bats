@@ -1298,6 +1298,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
 }
 
 @test "apt's fetch failure stays the PR's when the PR changes a script the failing step runs, outside .github/" {
+  local files
   # The step runs the project's own install script, named on its Run line by a relative path.
   apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
   answer 0 files $'front-end/src/app.ts\nscripts/chromium-packages.sh'
@@ -1322,6 +1323,20 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   answer 0 files ci/actions/install-deps/action.yml
   run_bin team-ci-wait "$url"
   assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or the same directory written with a trailing slash.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./ci/actions/install-deps/|')"
+  answer 0 files ci/actions/install-deps/action.yml
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or an action at the repository's root (uses: ./), whose action.yml the PR changes.
+  for files in action.yml action.yaml; do
+    echo 0 >"$GH_DIR/look"
+    apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./|')"
+    answer 0 files "$files"
+    run_bin team-ci-wait "$url"
+    assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  done
   # A script the step runs that the PR leaves alone keeps the failure infrastructure.
   echo 0 >"$GH_DIR/look"
   apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
