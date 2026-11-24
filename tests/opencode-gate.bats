@@ -62,7 +62,7 @@ fake_guard() {
   run -0 env OPENCODE_CONFIG=/elsewhere.json OPENCODE_CONFIG_CONTENT='{"plugin":[]}' OPENCODE_PURE=1 \
     "$BATS_TEST_TMPDIR/opencode-gate" serve --hostname 127.0.0.1 'a b'
   assert_equal "$output" "OPENCODE_CONFIG=$HOME/.no-mistakes/opencode-gate.json
-OPENCODE_CONFIG_CONTENT={\"plugin\":[\"$PLUGIN\"]}
+OPENCODE_CONFIG_CONTENT={\"plugin\":[\"$PLUGIN\"],\"instructions\":[\"$HOME/agent-team/bin/lib/gate-rules.md\"]}
 OPENCODE_DISABLE_CLAUDE_CODE=1
 OPENCODE_PURE=unset
 arg=serve
