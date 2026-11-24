@@ -1,7 +1,7 @@
 # shellcheck shell=bash
-# The load check's sandbox, shared by tests/team-load-check.bats and tests/team-load-check-probe.bats:
-# load it with `load helpers/load-check` after `load helpers/common`, and call load_check_sandbox
-# in setup.
+# The load check's sandbox, shared by tests/team-load-check.bats and the
+# tests/team-load-check-probe-*.bats files: load it with `load helpers/load-check` after `load
+# helpers/common`, and call load_check_sandbox in setup.
 #
 #   load_check_sandbox       sandbox, then the code checkout, code (a sandbox repo ignoring .scratch/
 #                            and .claude/worktrees/, with a CLAUDE.md, pushed to origin/main), which
