@@ -74,8 +74,9 @@ unquoted brace lists expanded):
     right after || in its own, and one after the reading; and a code part, eval's string among them, is
     read alone, so a command of it holds only its own. A command string the shell around expands
     before it runs (a -c, eval or trap string whose word as written holds a $ or a backtick outside
-    single quotes, or one inside such a string) holds none of its own: its commands are read
-    before the command that runs it, and a code part that is one holds none. Bash's dynamic variables (FUNCNAME,
+    single quotes, or one inside such a string) holds none of its own: the commands of an eval or
+    trap string are read before the command that runs it, and those of a string another process
+    runs, or of a code part that is one, hold none. Bash's dynamic variables (FUNCNAME,
     BASH_SOURCE, DIRSTACK, RANDOM and the rest of DYNAMIC), whose value it keeps whatever is
     assigned, and its read-only ones (UID, EUID, PPID and the rest of READ_ONLY), which a declarer
     fails to assign, are unread; a value that is $(mktemp ...) or
@@ -437,15 +438,15 @@ def _held(name, at, context):
     text around, and so out to the call's text. A string another process runs (a shell's -c and
     the rest) holds only its own, and so does a code part, which is read alone. A string the shell
     around expanded first (_outer_expanded) holds none of its own, since that shell expanded its
-    variables before any of them ran: one is read before the command that runs it, and a code
-    part that is one holds none."""
+    variables before any of them ran: one the shell itself runs is read before the command that
+    runs it, and one another process runs, or a code part that is one, holds none."""
     found = _places(context).get(at)
     if not found:
         return False
     for place in found:
         while True:
             if _outer_expanded(place, context):
-                if place.around is None:
+                if place.around is None or place.shell != SAME:
                     return False
                 place = place.around
                 continue
