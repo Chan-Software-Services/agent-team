@@ -374,11 +374,16 @@ pools_read() {
   # A dirty or in-use tree is not free.
   pool th dirty in-use leased
   assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued a-proj.md"
-  # A pool treehouse cannot report has no tree to give either.
+  # A pool treehouse cannot report stops the walk, as a free tree does, its item named with the
+  # room's line saying why, so team-open names what is wrong; alone in the queue, it is named too.
   rm "$STUB_FIXTURES/pool-th.json"
   assert_equal "$(listed | jq -r '.room.says, (.findings[] | .next)')" \
     "$room; th's pool cannot be read (treehouse status --json did not answer)
-team-open --queued a-proj.md"
+team-open --queued b-th.md"
+  mv "$queued/a-proj.md" "$BATS_TEST_TMPDIR/a-proj.md"
+  assert_equal "$(findings | jq -r .text)" \
+    "queue: $room; th's pool cannot be read (treehouse status --json did not answer): open b-th.md (th, priority 1, S): work on th; next: team-open --queued b-th.md"
+  mv "$BATS_TEST_TMPDIR/a-proj.md" "$queued/a-proj.md"
   pools_read >/dev/null
   # A git pool is never full and never read; with no room, no pool is read.
   ready a-proj.md 1 S "work on proj"

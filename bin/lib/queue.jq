@@ -385,14 +385,15 @@ def queue_room($plan; $costs; $tasks; $today):
 def queue_list_item: {file, title, summary, project, priority, size, after, waits, from, opened, takes, alone, guarded, unblocks, rank};
 
 # team-sweep's queue findings, each with task, session and name null, from the room
-# (queue_room's, its line naming the full pools), queue_view's object, the problems
-# (queue_problems'), the events by task and the full pools ([{project, says}], each project whose
-# worktree pool has no free tree): queue-ready while the room fits and an item of a project with
-# a free tree is ready, naming the top one and the command that opens it, and for an item that
-# runs alone the project's other open tasks to hold first; queue while there are problems, their
-# count and the first two.
+# (queue_room's, its line naming the pools below), queue_view's object, the problems
+# (queue_problems'), the events by task and the pools team-queue list names ([{project, full,
+# says}], full for each project whose worktree pool has no free tree, and not for one that could
+# not be read): queue-ready while the room fits and an item of a project with no full pool is
+# ready, naming the top one and the command that opens it, and for an item that runs alone the
+# project's other open tasks to hold first; queue while there are problems, their count and the
+# first two.
 def queue_findings($room; $view; $problems; $tasks; $full):
-  ([$full[].project] as $no_tree | first($view.ready[] | select(IN(.project; $no_tree[]) | not)) // null) as $open
+  ([$full[] | select(.full) | .project] as $no_tree | first($view.ready[] | select(IN(.project; $no_tree[]) | not)) // null) as $open
   | (select($room.fits and $open != null) | $open
    | . as $top
    | (queue_what | if length > 80 then .[:77] + "..." else . end) as $what
@@ -412,7 +413,7 @@ def queue_findings($room; $view; $problems; $tasks; $full):
 def queue_pool_order: reduce .ready[].project as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
 
 # team-queue list's object, team-queue/1, from the items and the inputs queue_room and
-# queue_findings take, the full pools ([{project, says}]) named after the room's line while it
+# queue_findings take, the pools it names ([{project, full, says}]) after the room's line while it
 # fits: {schema, room, ready, waiting, opened, unranked, problems, findings}.
 def queue_list($plan; $costs; $events; $registry_error; $today; $full):
   ($events | by_task) as $tasks
