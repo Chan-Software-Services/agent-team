@@ -364,7 +364,8 @@ def _assigned(name, context):
 
 @functools.lru_cache(maxsize=None)
 def _places(context):
-    """Each command _walked reads, mapped to every Place it stands at in the texts it walks."""
+    """Each command _walked reads but a script file or a sourced file, mapped to every Place it
+    stands at in the texts it walks."""
     found = {}
     for text in [blank_heredocs(part) for part in code_parts(context.text)] + [context.text]:
         for command, at in places(text).items():

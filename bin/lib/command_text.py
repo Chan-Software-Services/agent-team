@@ -127,7 +127,8 @@ of its pipeline, or nothing at the end), when every pipeline of it is at its top
 its segments one simple command, none holds a group, substitution, compound command or function,
 none is sent to the background or run after ! or coproc, and no command of it runs a string, a
 find -exec, a script file or a sourced file; else None.
-places(text) maps each Command of the walk to each Place it stands at: the text it is a simple
+places(text) maps each Command of the walk but a script file's or a sourced file's to each
+Place it stands at: the text it is a simple
 command of (the text walked, or a command string), the pipeline at that text's top level holding
 it, and for a string whether the shell itself runs it (SAME: eval's, trap's action, with no
 wrapper of its own but a bare command or builtin and not run by find -exec) or another process does
@@ -135,8 +136,8 @@ wrapper of its own but a bare command or builtin and not run by find -exec) or a
 top_pipelines(text) gives each pipeline at the text's top level, in order, with its separator
 after it and its Command when the shell runs that command itself, in its place: its one segment
 one simple command, starting with none of the reserved words LEADING holds and defining no
-function, and not sent to the background, so neither piped nor a group, a compound command, a
-function's definition, ! or coproc, nor a background job.
+function, and not sent to the background, so neither piped nor a group, an if, while or until
+command, a function's definition, ! or coproc, nor a background job; a [[ ... ]] test does get one.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -1404,7 +1405,8 @@ def top_pipelines(text):
     ";"). Its Command is its one segment's when that segment is one simple command, starts with none of
     the reserved words LEADING holds and defines no function (name() or function), and it is not sent to the
     background: so it is not piped (a pipeline of more than one command runs each in a subshell),
-    nor a group, a compound command, a function's definition, ! or coproc, nor a background job."""
+    nor a group, an if, while or until command, a function's definition, ! or coproc, nor a
+    background job; a [[ ... ]] test does get one."""
     reading = read_command(text)
     bodies = {h.body[0]: h.end for h in reading.heredocs}
     found = []
@@ -1432,7 +1434,8 @@ def top_pipelines(text):
 
 
 def places(text):
-    """Each Command commands(text) yields, mapped to the Places it stands at, as a dict."""
+    """Each Command commands(text) yields but a script file's or a sourced file's, mapped to the
+    Places it stands at, as a dict."""
     found = {}
     for _ in _commands(text, 0, (), DIRECT, None, found):
         pass
@@ -1748,8 +1751,8 @@ def _trap_action(args):
 def _walk(words, text, depth, outer, reached, texts=None, places=None, place=None):
     """The Commands of one simple command's words, of the text being walked at depth, behind the
     outer wrappers: the command itself, then what it runs, as commands says; with a texts list,
-    each string it walks is appended to it (_commands), and with a places dict, each Command is
-    mapped to each Place it stands at: place for the command and what find -exec runs, a Place
+    each string it walks is appended to it (_commands), and with a places dict, each Command but a
+    script file's or a sourced file's is mapped to each Place it stands at: place for the command and what find -exec runs, a Place
     in its string for a command of a string it runs."""
     assignments, words, strings, wrappers = _command(list(words))
     behind = outer + tuple(wrappers)
@@ -1797,8 +1800,8 @@ def _walk(words, text, depth, outer, reached, texts=None, places=None, place=Non
 
 def _commands(text, depth, outer, reached, texts=None, places=None, around=None, shell=None):
     """The Commands the text runs, as commands says; with a texts list, the text and each string
-    the walk walks are appended to it, in the order walked; with a places dict, each Command is
-    mapped to each Place it stands at in the text, run by the shell (SAME or CHILD) of the command
+    the walk walks are appended to it, in the order walked; with a places dict, each Command but a
+    script file's or a sourced file's is mapped to each Place it stands at in the text, run by the shell (SAME or CHILD) of the command
     at around, or the walk's own text when around is None."""
     if depth > DEPTH:
         raise ValueError(f"a command string nested deeper than {DEPTH}")
