@@ -1842,6 +1842,15 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
   [[ $text_output != *rules:* && $text_output != *"no workflow makes it"* ]]
   [[ $(jq -c '[.failures[] | select(.source)]' <<<"$output") == '[]' ]]
+  # GitHub names no job it has not listed, so any open run counts: lint, which no workflow makes on
+  # a trial commit, reads as infrastructure too while the run is open, as chosen.
+  echo 0 >"$GH_DIR/look"
+  rules_require backend e2e lint
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | select(.kind == "missing") | [.name, .class]]' <<<"$output")" \
+    '[["e2e","infrastructure"],["lint","infrastructure"]]'
+  rules_require backend e2e
   # GitHub lists the roll-up too, waiting on the shards it needs: it is a queued check like them.
   echo 0 >"$GH_DIR/look"
   check_runs 0 "$(check_run backend completed success 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)" \

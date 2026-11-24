@@ -162,9 +162,11 @@
 #                   run <id> (<its name>) is still <status> there (with several, "its workflow runs
 #                   <id> (<name>, <status>) and <id> (<name>, <status>) are still open there"):
 #                   GitHub lists a job only once the jobs it needs have run, so it waits on
-#                   runners, not on the rules", since a
-#                   roll-up job whose shards wait for a runner is listed by neither the check runs
-#                   nor the run's jobs
+#                   runners, not on the rules", since a roll-up job whose shards wait for a runner
+#                   is listed by neither the check runs nor the run's jobs; GitHub names no job it
+#                   has not listed, so any open run counts, and a check no workflow makes on a
+#                   trial commit reads as infrastructure too while another run there is open, and
+#                   is named the rules' only on a trial commit whose runs all completed
 #   rules           with --merge-group, a required check not listed on the trial commit, with no
 #                   workflow run of it still open, so none can make it there now: "rules:
 #                   <name> was not reported on the trial commit, though <base>'s rules require it
