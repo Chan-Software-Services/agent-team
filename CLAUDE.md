@@ -27,6 +27,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `confine.py`: the kernel layer, which enters a Landlock domain and runs its command there, so a remove or a rename of a directory entry succeeds only under its roots (`--root`, and those of `--session <file>`, read from that file alone), and runs it unconfined, saying so, with no Landlock.
     - `data-check`: the one scan the CI's `data` job and the records' hook refuse with.
     - `delete_rules.py`: `command_rules.py`'s delete rows, refusing a recursive delete (`rm -r`, `find -delete`, `find -exec rm`) outside the worktree and the job's tmp, of either, its `.scratch/task` or what holds one, of a `.git`, an empty variable or no `find` start path, or of an unread path.
+    - `disk.sh`: `team-janitor disk`'s sweep of the home directory's caches, which empties the job tmp of each team session nothing will wake or quiet for a day, and `disk_clear_job_tmp`, its one clearing, which `team-close` calls too.
     - `doctor.d/`: `team-doctor`'s checks, one file each, which it sources in the order of their names (a new check is a new file, its number between its neighbours').
     - `drills.jq`: the drills module, the one place that says what a line of the team home's `drills.jsonl` is, when a drill is due and how `team-drill status` shows it.
     - `drills.json`: the drill registry, each drill's name, what it is, who runs it (`coordinator`, or `daniel` when it needs them present) and the code it proves, with the one age past which a drill is due.
@@ -100,6 +101,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `sops/`: standing procedures.
   - `ci-only.md`: moving a project's whole test suite off the team's machine into required CI checks, only when its repository goes public on Daniel's word: the workflow's task, Daniel's steps at github.com, the proof and the registry edit.
   - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
+  - `disk.md`: what the team clears from its home directory so its disk does not fill, by what and when: the job tmps of finished sessions, the day's file, the record, the status and the test seams.
   - `docker.md`: the team's Docker stacks: labels, owner classes, the wrapper contract, `team-stack`'s subcommands, instances, admission, the idle sweep, the reaper, `team-janitor`'s daily report, the heartbeat's steps, the close teardown and the agents' rules.
   - `drills.md`: the drills, live runs of the paths the team's portability and guards rest on: the record in `drills.jsonl`, who runs one, and each drill's runbook, its steps, who takes each, its duration, what passes and how it is recorded.
   - `frontend-patterns.md`: rules that hold beyond one project for a UI's dev-only component library, combobox, large list, dialog, realistic fixture and bundle growth, each with its why.
