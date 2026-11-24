@@ -436,7 +436,7 @@ if [[ $task != T0 ]]; then
   refusal='' thread='' worktrees='' task_path='' topic=''
   json_vars --ledger refusal='[launch_refusal($task; $role; $ARGS.positional; true)] | join("; ")' \
     task_path='[.[] | select(.event == "opened") | .path | strings] | last // ""' topic='is_topic' \
-    thread='any(.[]; .event == (if is_topic then "interview-thread" else "thread" end))' \
+    thread='(if is_topic then "interview-thread" else "thread" end) as $kind | any(.[]; .event == $kind)' \
     worktrees='[open_worktrees(.[]; $home) | [.worktree, "\(.worktree) (\(.project), \(.branch))", (.project // ""), tojson]
       | map(tostring) | join("\u001f")] | join("\n")' \
     -- --arg task "$task" --arg role "$role" --args -- ${past[@]+"${past[@]}"} <<<"$events"
