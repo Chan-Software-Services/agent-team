@@ -102,7 +102,7 @@ printed() {
 
 @test "a worker session is refused; the coordinator, the assistant and a session with no role read" {
   local role
-  for role in builder planner reviewer ops; do
+  for role in builder planner reviewer ops topic; do
     AGENT_TEAM_ROLE=$role run_bin -1 team-proc 4242
     assert_equal "$output" "team-proc: a $role session runs no team-proc: it is the coordinator's and the assistant's, and a worker's deny rules keep /proc"
   done

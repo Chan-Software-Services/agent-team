@@ -13,7 +13,7 @@
 # Refused, exit 1 naming why, before it reads anything: any name but those five (environ, cmdline,
 # mem, maps, fd, cwd, root, exe and every other), under /proc/<pid>/task/<tid>/ too; a path of
 # any other shape (self, thread-self, .., a name below a counter); and a worker session
-# (AGENT_TEAM_ROLE builder, planner, reviewer or ops), whose deny rules keep /proc. A counter
+# (AGENT_TEAM_ROLE builder, planner, reviewer, ops or topic), whose deny rules keep /proc. A counter
 # named both in the path and after it is a malformed command line, exit 2. It reads each file only by the path built from those digits and
 # that name, and only when that path resolved is the same path under the resolved /proc, so a link
 # reaches nothing else. A counter it cannot read (a process that ended, another user's io) is one
@@ -26,7 +26,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 counters=(io cgroup status stat smaps_rollup)
 usage="usage: team-proc <pid>[/task/<tid>] [<counter>...] | team-proc /proc/<pid>[/task/<tid>][/<counter>]"
 
-[[ ${AGENT_TEAM_ROLE:-} != @(builder|planner|reviewer|ops) ]] ||
+[[ ${AGENT_TEAM_ROLE:-} != @(builder|planner|reviewer|ops|topic) ]] ||
   die "a $AGENT_TEAM_ROLE session runs no team-proc: it is the coordinator's and the assistant's, and a worker's deny rules keep /proc"
 (($#)) || usage_error "$usage"
 
