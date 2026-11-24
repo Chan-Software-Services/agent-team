@@ -360,9 +360,11 @@ EOF
   refute_grep -F '"T14: value of goal"' "$TEAM_HOME/tasks/T14/brief-builder-deliver.md"
   refute_grep no-mistakes "$TEAM_HOME/tasks/T14/brief-builder-fix.md"
   refute_grep 'gh pr create' "$TEAM_HOME/tasks/T12/brief-builder-deliver.md"
-  # So do the review partials: a gated project's first review comes before its PR.
+  # So do the review partials, but with the PR logged and open a gated project's review is that
+  # PR's too; its review before the gate, with no PR, is the gated review test's.
   assert_contains "$(<"$TEAM_HOME/tasks/T14/brief-reviewer.md")" 'team-review-comment https://github.com/Chan-Software-Services/agent-team/pull/9'
-  refute_grep -e team-review -e '/pull/9' "$TEAM_HOME/tasks/T12/brief-reviewer.md"
+  assert_contains "$(<"$TEAM_HOME/tasks/T12/brief-reviewer.md")" 'team-review-comment https://github.com/Chan-Software-Services/Conventioner/pull/9'
+  refute_grep -e 'no PR yet' -e 'no-mistakes gate' "$TEAM_HOME/tasks/T12/brief-reviewer.md"
   assert_contains "$(<"$TEAM_HOME/tasks/T12/brief-rereview.md")" "the gate's own commits"
   refute_grep 'gate' "$TEAM_HOME/tasks/T14/brief-rereview.md"
 }
