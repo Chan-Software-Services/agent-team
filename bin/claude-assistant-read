@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Start the assistant's read session: one short-lived session per production question Daniel asks
-# in #assistant or a thread under it, which reads through prod-read, vercel-read or both, answers
-# the assistant by SendMessage and is then ended, its transcript and files deleted.
+# Start, answer from and end the assistant's read session: one short-lived session per production
+# question Daniel asks in #assistant or a thread under it, which reads through prod-read,
+# vercel-read or both, answers the assistant by SendMessage and is then ended, its transcript and
+# files deleted.
 #
 # Usage: claude-assistant-read start --request <link> --toolkit <kit> [--toolkit <kit>] --file <question>
+#        claude-assistant-read answer
+#        claude-assistant-read end
 #   --request  the link to Daniel's own Discord message asking the question,
 #              https://discord.com/channels/<guild>/<channel>/<message>
 #   --toolkit  prod-read or vercel-read, each at most once; the ops role's prod-write and
@@ -13,8 +16,12 @@
 # It prints the session's id alone on stdout, and on stderr "claude-assistant-read: assistant-read
 # <id> started in <dir>: Daniel approves one 1Password prompt per toolkit on the PC".
 #
-# Who may run it: start only the assistant (AGENT_TEAM_ROLE assistant); the coordinator and a
-# session with no role are refused it ("claude-assistant-read start is the assistant's: a
+# answer prints the read session's answer file, <read directory>/.scratch/answer.md, as written,
+# or exits 1 with "no answer yet: <file> is not written". end ends the read: below.
+#
+# Who may run it: start only the assistant (AGENT_TEAM_ROLE assistant); answer and end the
+# assistant, the coordinator and a session with no role (Daniel's shell). The coordinator and a
+# session with no role are refused start ("claude-assistant-read start is the assistant's: a
 # coordinator session starts no production read"), and a worker role (planner, builder,
 # reviewer, ops, assistant-read, or any other) every form, before anything is read
 # ("claude-assistant-read is the assistant's: a <role> session starts no production read").
@@ -80,17 +87,74 @@
 # launches an ops session: no shell, no web, edits only of its answer file, no memory, and Remote
 # Control off by its settings, so claude.ai keeps no copy. No --model: it runs on the settings'
 # word. Its prompt names the place, the message and its link, then gives the question file's text.
+#
+# end stops and removes every session named assistant-read that `claude agents --json --all`
+# lists, in any state, and deletes what each left on this machine by its full uuid: its
+# transcript and <uuid>/ directory, its own MCP logs, its session-env/ and file-history/
+# directories (purge_sessions in bin/lib/session-purge.sh, as team-ops-end does). Then it deletes
+# the read directory, the answer file with it, and the two generated files, printing "deleted
+# <path>" for each, and "ended assistant-read (<id>)" for each session, or "ended assistant-read
+# (no session listed)" when only the directory was left. It keeps the team home's
+# assistant/prod-reads/<message id>/ops-log.md, the inputs-only record, which the next checkpoint
+# commits, and the request line. It refuses "no read session to end" when neither a session nor
+# the read directory is there, and a session list it cannot read. A claude rm that fails deletes
+# nothing more and keeps the read directory, so a rerun retries all of it; an MCP log it cannot
+# read is named on stderr and kept, and the end fails once the rest is deleted.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 
-usage="usage: claude-assistant-read start --request <link> --toolkit <kit> [--toolkit <kit>] --file <question>"
+# shellcheck source=bin/lib/session-purge.sh
+source "$TEAM_LIB/session-purge.sh"
+
+usage="usage: claude-assistant-read start --request <link> --toolkit <kit> [--toolkit <kit>] --file <question>
+       claude-assistant-read answer
+       claude-assistant-read end"
 role=${AGENT_TEAM_ROLE:-}
 case $role in
   assistant | coordinator | '') ;;
   *) die "claude-assistant-read is the assistant's: a $role session starts no production read" ;;
 esac
 
-(($#)) && [[ $1 == start ]] || usage_error "$usage"
+state=$HOME/.local/state/agent-team
+dir=$TEAM_HOME/.claude/worktrees/assistant-read
+settings=$state/assistant-read.settings.json
+mcp=$state/assistant-read.mcp.json
+
+(($#)) || usage_error "$usage"
+case $1 in
+  start) ;;
+  answer)
+    (($# == 1)) || usage_error "$usage"
+    answer=$dir/.scratch/answer.md
+    [[ -f $answer && ! -L $answer ]] || die "no answer yet: $answer is not written"
+    cat -- "$answer"
+    exit 0
+    ;;
+  end)
+    (($# == 1)) || usage_error "$usage"
+    listed=$(claude agents --json --all | jq -ce 'select(type == "array")
+      | map(select(.name == "assistant-read")) | length' 2>/dev/null) ||
+      die "cannot read the session list (claude agents --json --all)"
+    ((listed > 0)) || [[ -e $dir || -L $dir ]] || die "no read session to end"
+    PURGED_IDS=() PURGED_UNREAD_LOGS=0
+    # A claude rm that fails dies here, so the read directory stays for a rerun to retry.
+    ((listed == 0)) || purge_sessions assistant-read
+    for path in "$dir" "$settings" "$mcp"; do
+      if [[ -e $path || -L $path ]]; then
+        rm -rf -- "$path"
+        echo "deleted $path"
+      fi
+    done
+    if ((${#PURGED_IDS[@]})); then
+      for id in "${PURGED_IDS[@]}"; do echo "ended assistant-read ($id)"; done
+    else
+      echo "ended assistant-read (no session listed)"
+    fi
+    ((PURGED_UNREAD_LOGS == 0)) || die "an MCP log above could not be read and is kept; delete it by hand if it is the session's"
+    exit 0
+    ;;
+  *) usage_error "$usage" ;;
+esac
 shift
 request='' file='' toolkits=()
 while (($#)); do
@@ -127,10 +191,6 @@ if why=$(lease_refusal "starts no production read"); then die "$why"; fi
 
 # The code: the role, the settings template and the toolkits come from this checkout.
 code=$(dirname "$(dirname "$TEAM_LIB")")
-state=$HOME/.local/state/agent-team
-dir=$TEAM_HOME/.claude/worktrees/assistant-read
-settings=$state/assistant-read.settings.json
-mcp=$state/assistant-read.mcp.json
 requests=$state/assistant-read-requests
 mkdir -p "$state"
 exec {lock_fd}>"$state/assistant-read.lock"

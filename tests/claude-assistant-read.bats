@@ -2,7 +2,8 @@
 # claude-assistant-read: the assistant's start of one read session per production question, on
 # Daniel's own message in #assistant or a thread under it, at most an hour old and used once, with
 # prod-read, vercel-read or both, in a directory of the team home holding the project's docs; each
-# refusal in its order, with nothing started.
+# refusal in its order, with nothing started; and the answer it prints and the end that removes the
+# session and deletes what it left, by its uuid, keeping only its inputs-only ops log.
 
 load helpers/common
 load helpers/signals
@@ -104,8 +105,9 @@ says() {
   link=https://discord.com/channels/1560000000000000000/$1/$message
 }
 
-# The stub claude: its session list is $STUB_FIXTURES/agents.json (an empty list without one),
-# and a launch prints a session id, or fails when $STUB_FIXTURES/claude-fails exists; each
+# The stub claude: its session list is $STUB_FIXTURES/agents.json (an empty list without one);
+# stop succeeds, and rm takes the session off the list, or fails while $STUB_FIXTURES/rm-fails
+# exists; a launch prints a session id, or fails when $STUB_FIXTURES/claude-fails exists; each
 # launch's working directory is a line of $STUB_CALLS/claude.cwd.
 stub_claude() {
   stub_script claude <<'EOF'
@@ -113,6 +115,14 @@ if [[ $* == "agents --json --all" ]]; then
   cat "$STUB_FIXTURES/agents.json" 2>/dev/null || echo '[]'
   exit 0
 fi
+case $1 in
+  stop) exit 0 ;;
+  rm)
+    [[ ! -e $STUB_FIXTURES/rm-fails ]] || { echo "Error: the daemon did not answer" >&2; exit 1; }
+    jq -c --arg id "$2" 'map(select(.id != $id))' "$STUB_FIXTURES/agents.json" >"$STUB_FIXTURES/agents.json.new"
+    mv "$STUB_FIXTURES/agents.json.new" "$STUB_FIXTURES/agents.json"
+    exit 0 ;;
+esac
 printf '%s\n' "$PWD" >>"$STUB_CALLS/claude.cwd"
 if [[ -e $STUB_FIXTURES/claude-fails ]]; then
   echo "Error: the daemon did not answer" >&2
@@ -156,7 +166,7 @@ refused() {
   nothing_started
 }
 
-@test "--help prints the header: start's form, who may run it, its refusals in order and its files" {
+@test "--help prints the header: the three forms, who may run each, start's refusals in order, its files and the end's deletion" {
   run_bin -0 claude-assistant-read --help
   assert_contains "$output" "Usage: claude-assistant-read start --request <link> --toolkit <kit> [--toolkit <kit>] --file <question>"
   assert_contains "$output" "assistant-read.settings.json"
@@ -164,6 +174,10 @@ refused() {
   assert_contains "$output" "assistant-read-requests"
   assert_contains "$output" ".claude/worktrees/assistant-read"
   assert_contains "$output" "another read is starting"
+  assert_contains "$output" "       claude-assistant-read answer"
+  assert_contains "$output" "       claude-assistant-read end"
+  assert_contains "$output" "no read session to end"
+  assert_contains "$output" "ops-log.md"
 }
 
 @test "a start launches assistant-read in the read directory, with its settings, MCP config, role prompt and the question, and prints its id" {
@@ -276,7 +290,7 @@ How many stalls are booked for the next convention?"
 
 @test "a malformed command line is refused with exit 2, nothing started" {
   says "$ASSISTANT"
-  for args in "" "start" "answer" "end" "begin --request $link --toolkit prod-read --file $question" \
+  for args in "" "start" "answer now" "end now" "begin --request $link --toolkit prod-read --file $question" \
     "start --toolkit prod-read --file $question" \
     "start --request $link --file $question" \
     "start --request $link --toolkit prod-read" \
@@ -446,12 +460,181 @@ How many stalls are booked for the next convention?"
     AGENT_TEAM_ROLE=$role run_bin -1 --separate-stderr claude-assistant-read start --request "$link" --toolkit prod-read --file "$question"
     assert_equal "$role: $stderr" "$role: claude-assistant-read: claude-assistant-read is the assistant's: a $role session starts no production read"
     # Every form, a malformed one too.
-    AGENT_TEAM_ROLE=$role run_bin -1 --separate-stderr claude-assistant-read answer
-    assert_equal "$role: $stderr" "$role: claude-assistant-read: claude-assistant-read is the assistant's: a $role session starts no production read"
+    for form in answer end "end now"; do
+      # shellcheck disable=SC2086 # each form is its words
+      AGENT_TEAM_ROLE=$role run_bin -1 --separate-stderr claude-assistant-read $form
+      assert_equal "$role $form: $stderr" "$role $form: claude-assistant-read: claude-assistant-read is the assistant's: a $role session starts no production read"
+    done
   done
   AGENT_TEAM_ROLE=coordinator run_bin -1 --separate-stderr claude-assistant-read start --request "$link" --toolkit prod-read --file "$question"
   assert_equal "$stderr" "claude-assistant-read: claude-assistant-read start is the assistant's: a coordinator session starts no production read"
   AGENT_TEAM_ROLE='' run_bin -1 --separate-stderr claude-assistant-read start --request "$link" --toolkit prod-read --file "$question"
   assert_equal "$stderr" "claude-assistant-read: claude-assistant-read start is the assistant's: a session with no role starts no production read"
   nothing_started
+}
+
+# native_cache: Claude Code's cache root on the OS the tests run on, XDG_CACHE_HOME unset, as the
+# library reads it: Library/Caches on macOS, ~/.cache elsewhere.
+native_cache() {
+  if [[ $(uname -s) == Darwin ]]; then
+    echo "$HOME/Library/Caches/claude-cli-nodejs"
+  else
+    echo "$HOME/.cache/claude-cli-nodejs"
+  fi
+}
+
+# read_left: a read started on a new message of Daniel's in #assistant, its session listed as done
+# in the read directory with its answer written, and what Claude Code left of it on this machine:
+# its transcript and <uuid>/ directory, an MCP log naming its uuid, its session directory and its
+# file checkpoints, beside another session's. Sets uuid, logs (its log directory, holding its ops
+# log), left (each path of the session's) and kept (each path of another's).
+read_left() {
+  says "$ASSISTANT"
+  start -0 -- --request "$link" --toolkit prod-read --file "$question"
+  uuid=4f2a9c1e-1111-4222-8333-944455556666
+  logs=$TEAM_HOME/assistant/prod-reads/$message
+  echo '- prod-read find stalls {"filter": {"_id": "<masked>"}}' >"$logs/ops-log.md"
+  echo "42 stalls are booked." >"$dir/.scratch/answer.md"
+  jq -cn --arg uuid "$uuid" --arg cwd "$dir" \
+    '[{id: "4f2a9c1e", sessionId: $uuid, name: "assistant-read", state: "done", cwd: $cwd},
+      {id: "aaaaaaaa", sessionId: "aaaaaaaa-1111-4222-8333-944455556666", name: "T5-builder", state: "working"}]' \
+    >"$STUB_FIXTURES/agents.json"
+  local slug=$HOME/.claude/projects/-team-home-.claude-worktrees-assistant-read cache
+  cache=$(native_cache)/-team-home-.claude-worktrees-assistant-read/mcp-logs-prod-read
+  mkdir -p "$slug/$uuid/tool-results" "$cache" "$HOME/.claude/session-env/$uuid" "$HOME/.claude/file-history/$uuid"
+  echo '{}' >"$slug/$uuid.jsonl"
+  echo "42 stalls" >"$slug/$uuid/tool-results/r.txt"
+  printf '{"debug":"Tool returned 42 documents","sessionId":"%s"}\n' "$uuid" >"$cache/2026-11-24T10-00-00-000Z.jsonl"
+  echo env >"$HOME/.claude/session-env/$uuid/hook-1.sh"
+  echo "42 stalls are booked." >"$HOME/.claude/file-history/$uuid/3f1c2a9b8e7d6c5a@v1"
+  left=("$slug/$uuid.jsonl" "$slug/$uuid" "$cache/2026-11-24T10-00-00-000Z.jsonl"
+    "$HOME/.claude/session-env/$uuid" "$HOME/.claude/file-history/$uuid")
+  kept=("$slug/aaaaaaaa-1111-4222-8333-944455556666.jsonl" "$cache/2026-11-24T09-00-00-000Z.jsonl"
+    "$HOME/.claude/session-env/aaaaaaaa-1111-4222-8333-944455556666")
+  echo '{}' >"${kept[0]}"
+  printf '{"debug":"asked about %s","sessionId":"aaaaaaaa-1111-4222-8333-944455556666"}\n' "$uuid" >"${kept[1]}"
+  mkdir -p "${kept[2]}"
+}
+
+# The claude calls that stopped or removed a session, one JSON array each.
+end_calls() {
+  stub_calls claude | jq -c 'select(.[0] == "stop" or .[0] == "rm")'
+}
+
+@test "end stops and removes the read session, deletes what it left and the read directory, printing each path, and keeps its ops log" {
+  read_left
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr claude-assistant-read end
+  local path
+  for path in "${left[@]}" "$dir" "$state/assistant-read.settings.json" "$state/assistant-read.mcp.json"; do
+    assert_contains "$output"$'\n' "deleted $path"$'\n'
+    [[ ! -e $path ]] || { echo "still there: $path" >&2; return 1; }
+  done
+  for path in "${kept[@]}"; do
+    [[ -e $path ]] || { echo "deleted: $path" >&2; return 1; }
+  done
+  assert_equal "${output##*$'\n'}" "ended assistant-read (4f2a9c1e)"
+  assert_equal "$stderr" ""
+  assert_equal "$(end_calls)" "$(printf '%s\n' '["stop","4f2a9c1e"]' '["rm","4f2a9c1e"]')"
+  # The inputs-only record stays for the next checkpoint to commit.
+  assert_equal "$(cat "$logs/ops-log.md")" '- prod-read find stalls {"filter": {"_id": "<masked>"}}'
+  [[ -f $state/assistant-read-requests ]]
+}
+
+@test "end with the read directory and no session removes the directory, and with neither refuses" {
+  read_left
+  echo '[]' >"$STUB_FIXTURES/agents.json"
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr claude-assistant-read end
+  assert_equal "$output" "deleted $dir
+deleted $state/assistant-read.settings.json
+deleted $state/assistant-read.mcp.json
+ended assistant-read (no session listed)"
+  [[ ! -e $dir && ! -e $state/assistant-read.settings.json && ! -e $state/assistant-read.mcp.json ]]
+  assert_equal "$(end_calls)" ""
+  # What Claude Code left is found only by a listed session's uuid, so none of it is touched.
+  local path
+  for path in "${left[@]}"; do [[ -e $path ]]; done
+  # Nothing left to end.
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read end
+  assert_equal "$output" ""
+  assert_equal "$stderr" "claude-assistant-read: no read session to end"
+  # A session list that cannot be read is refused, nothing deleted.
+  mkdir -p "$dir/.scratch"
+  echo 'not json' >"$STUB_FIXTURES/agents.json"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read end
+  assert_equal "$stderr" "claude-assistant-read: cannot read the session list (claude agents --json --all)"
+  [[ -d $dir/.scratch ]]
+}
+
+@test "a claude rm that fails deletes nothing more, keeps the read directory and fails, and a rerun ends it" {
+  read_left
+  touch "$STUB_FIXTURES/rm-fails"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read end
+  assert_equal "$output" ""
+  # claude's own reason, then the refusal.
+  assert_equal "$stderr" "Error: the daemon did not answer
+claude-assistant-read: claude rm 4f2a9c1e failed; its transcript is kept"
+  local path
+  for path in "${left[@]}" "$dir/.scratch/answer.md" "$state/assistant-read.settings.json" "$state/assistant-read.mcp.json"; do
+    [[ -e $path ]] || { echo "deleted: $path" >&2; return 1; }
+  done
+  rm "$STUB_FIXTURES/rm-fails"
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr claude-assistant-read end
+  assert_equal "${output##*$'\n'}" "ended assistant-read (4f2a9c1e)"
+  for path in "${left[@]}" "$dir"; do [[ ! -e $path ]]; done
+}
+
+@test "an MCP log end cannot read is named and kept, the rest deleted, and the end fails" {
+  [[ $EUID -ne 0 ]] || skip "root reads every file"
+  read_left
+  local locked=${left[2]%/*}/locked.jsonl
+  printf '{"sessionId":"%s"}\n' "$uuid" >"$locked"
+  chmod 000 "$locked"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read end
+  chmod 600 "$locked"
+  [[ -f $locked ]]
+  local path
+  for path in "${left[@]}" "$dir" "$state/assistant-read.settings.json" "$state/assistant-read.mcp.json"; do
+    [[ ! -e $path ]] || { echo "still there: $path" >&2; return 1; }
+  done
+  assert_equal "${output##*$'\n'}" "ended assistant-read (4f2a9c1e)"
+  assert_contains "$stderr" "$locked"
+  assert_contains "$stderr" "claude-assistant-read: an MCP log above could not be read and is kept; delete it by hand if it is the session's"
+}
+
+@test "answer prints the answer file as written, and refuses while there is none" {
+  read_left
+  printf '42 stalls are booked.\n\n  Ids: 6541a2b3c4d5e6f708192a3b\n\n' >"$dir/.scratch/answer.md"
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr claude-assistant-read answer
+  assert_equal "$output" "$(cat "$dir/.scratch/answer.md")"
+  AGENT_TEAM_ROLE=assistant "$REPO_ROOT/bin/claude-assistant-read" answer >"$BATS_TEST_TMPDIR/printed"
+  cmp "$BATS_TEST_TMPDIR/printed" "$dir/.scratch/answer.md"
+  rm "$dir/.scratch/answer.md"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read answer
+  assert_equal "$output" ""
+  assert_equal "$stderr" "claude-assistant-read: no answer yet: $dir/.scratch/answer.md is not written"
+  # No read directory at all.
+  rm -rf "${dir:?}"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr claude-assistant-read answer
+  assert_contains "$stderr" "claude-assistant-read: no answer yet"
+}
+
+@test "the coordinator and a session with no role may read the answer and end the read" {
+  for role in coordinator ''; do
+    read_left
+    AGENT_TEAM_ROLE=$role run_bin -0 --separate-stderr claude-assistant-read answer
+    assert_equal "$output" "42 stalls are booked."
+    AGENT_TEAM_ROLE=$role run_bin -0 --separate-stderr claude-assistant-read end
+    assert_equal "${output##*$'\n'}" "ended assistant-read (4f2a9c1e)"
+    [[ ! -e $dir ]]
+  done
+}
+
+@test "after end, a start on a new message of Daniel's passes the read-still-there check" {
+  read_left
+  AGENT_TEAM_ROLE=assistant run_bin -0 claude-assistant-read end
+  says "$ASSISTANT"
+  start -0 -- --request "$link" --toolkit prod-read --file "$question"
+  assert_equal "$output" 4f2a9c1e
+  assert_equal "$(bg_calls | wc -l)" 2
+  [[ -d $dir/.scratch ]]
 }
