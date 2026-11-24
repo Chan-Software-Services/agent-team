@@ -65,6 +65,7 @@ STUB
   echo '[]' >"$STUB_FIXTURES/agents.json"
   stub_script claude <<'STUB'
 if [[ $1 == agents ]]; then cat "$STUB_FIXTURES/agents.json"; exit 0; fi
+if [[ $1 == stop || $1 == rm ]]; then exit 0; fi
 name=${*: -2:1}
 jq --arg name "$name" '. + [{id: "4f2a9c1e", name: $name, state: "idle", status: "idle", pid: 4242}]' \
   "$STUB_FIXTURES/agents.json" >"$STUB_FIXTURES/agents.next"
@@ -188,7 +189,12 @@ Daniel wants to design the Instagram ingest: what to pull, how often, where it l
   AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic open --task 7 --daniel 1 --channel "$ASKED_IN" --about "$about" x "X"
   assert_equal "$stderr" "team-topic: task must look like T<n>, got '7'"
   AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic open --daniel 1 --channel "$ASKED_IN" --about "$about" --later x "X"
-  AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic close T1
+  AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic close
+  assert_equal "$stderr" "team-topic: usage: team-topic close T<n> [--no-report]"
+  AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic close 7
+  assert_equal "$stderr" "team-topic: task must look like T<n>, got '7'"
+  AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic close T1 --later
+  AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr team-topic close T1 T2
   assert_equal "$(files_state)" "$before"
 }
 
@@ -341,4 +347,126 @@ SH
     --about "$about" --project proj instagram-ingest "The Instagram ingest"
   assert_equal "$output" "T1 topic open in <#1563000000000000001>: session 4f2a9c1e"
   assert_equal "$(events launch | jq -r .role)" "topic"
+}
+
+# Open a topic T<n> in proj, its session listed idle, and print its task directory in its
+# worktree: open_topic <slug> <title>
+open_topic() {
+  local daniel
+  daniel=$(word "$ASKED_IN")
+  AGENT_TEAM_ROLE=assistant run_bin -0 team-topic open --daniel "$daniel" --channel "$ASKED_IN" --about "$about" \
+    --project proj "$1" "$2"
+}
+
+# The task directory of T<n>'s worktree: topic_dir T<n>
+topic_dir() {
+  echo "$(events launch | jq -r --arg t "$1" 'select(.task == $t) | .worktree' | tail -n 1)/.scratch/task"
+}
+
+@test "the assistant closes a topic: its report filed under the research, the task closed" {
+  local dir filed
+  open_topic instagram-ingest "The Instagram ingest"
+  dir=$(topic_dir T1)
+  printf '%s\n' "# T1 report: the Instagram ingest" "" "Decided: pull daily (Daniel, 1574454112324419625)." >"$dir/report.md"
+  filed=$TEAM_HOME/assistant/research/$(events opened | jq -r '.ts[:10]')-T1-instagram-ingest.md
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic close T1
+  assert_equal "$output" "T1 closed; report at $filed"
+  [[ $stderr != *"team-topic:"* ]]
+  assert_equal "$(cat "$filed")" "$(printf '%s\n' "# T1 report: the Instagram ingest" "" "Decided: pull daily (Daniel, 1574454112324419625).")"
+  assert_equal "$(ls "$TEAM_HOME/assistant/research")" "$(basename "$filed")"
+  assert_equal "$(events closed | jq -r .task)" "T1"
+  # team-close archived the task directory and returned the worktree.
+  [[ -f $TEAM_HOME/tasks/T1/scratch/report.md && ! -e $dir ]]
+  run_bin -0 team-log --check
+
+  # A closed topic is no open topic.
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic close T1
+  assert_equal "$stderr" "team-topic: T1 is not an open topic: close a task with team-close"
+}
+
+@test "close refuses a fenced machine, a task that is no open topic and a topic with no report.md" {
+  local before
+  open_topic ingest "The ingest"
+  run_bin -0 team-open proj feature feat other "Other"
+  before=$(taken_state)
+  # refused <stderr> <arg>...: the close refused with exactly <stderr>, nothing changed.
+  refused() {
+    AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic close "${@:2}"
+    assert_equal "$output" ""
+    assert_equal "$stderr" "team-topic: $1"
+    assert_equal "$(taken_state)" "$before"
+    [[ ! -e $TEAM_HOME/assistant/research ]]
+  }
+  refused "T1 has no report.md yet; ask it for its report, or close with --no-report" T1
+  refused "T2 is not an open topic: close a task with team-close" T2
+  refused "T2 is not an open topic: close a task with team-close" T2 --no-report
+  refused "T9 is not an open topic: close a task with team-close" T9
+  echo "# report" >"$(topic_dir T1)/report.md"
+  mkdir -p "$HOME/.local/state/agent-team"
+  echo '{"since": "2026-10-22T14:00:00Z", "holder": "laptop", "epoch": 2}' >"$HOME/.local/state/agent-team/fenced"
+  refused "home-pc is fenced since 2026-10-22T14:00:00Z (holder seen laptop, epoch 2): a fenced machine closes no topic: the assistant on the holder does" T1
+}
+
+@test "--no-report closes a topic with no report, and files none" {
+  open_topic ingest "The ingest"
+  echo "# report" >"$(topic_dir T1)/report.md"
+  AGENT_TEAM_ROLE=coordinator run_bin -0 --separate-stderr team-topic close T1 --no-report
+  assert_equal "$output" "T1 closed with no report"
+  [[ ! -e $TEAM_HOME/assistant/research ]]
+  assert_equal "$(events closed | jq -r .task)" "T1"
+}
+
+@test "a busy topic session refuses the close as team-close does, the report filed, and a rerun closes it" {
+  local filed
+  open_topic ingest "The ingest"
+  echo "# first" >"$(topic_dir T1)/report.md"
+  filed=$TEAM_HOME/assistant/research/$(events opened | jq -r '.ts[:10]')-T1-ingest.md
+  # Another file of the research is never touched.
+  mkdir -p "$TEAM_HOME/assistant/research"
+  echo "# a spike" >"$TEAM_HOME/assistant/research/2026-11-01-spike.md"
+  jq 'map(.status = "busy" | .state = "busy")' "$STUB_FIXTURES/agents.json" >"$STUB_FIXTURES/agents.next"
+  mv "$STUB_FIXTURES/agents.next" "$STUB_FIXTURES/agents.json"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic close T1
+  assert_equal "$output" ""
+  assert_contains "$stderr" "team-close: T1 cannot close, so nothing changed:
+  T1-topic 4f2a9c1e is busy"
+  assert_equal "$(cat "$filed")" "# first"
+  assert_equal "$(events closed)" ""
+
+  # The topic rewrote its report; the rerun files it under the same name and closes.
+  echo "# final" >"$(topic_dir T1)/report.md"
+  jq 'map(.status = "idle" | .state = "idle")' "$STUB_FIXTURES/agents.json" >"$STUB_FIXTURES/agents.next"
+  mv "$STUB_FIXTURES/agents.next" "$STUB_FIXTURES/agents.json"
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic close T1
+  assert_equal "$output" "T1 closed; report at $filed"
+  assert_equal "$(cat "$filed")" "# final"
+  assert_equal "$(ls "$TEAM_HOME/assistant/research")" "$(printf '%s\n' 2026-11-01-spike.md "$(basename "$filed")" | sort)"
+  assert_equal "$(cat "$TEAM_HOME/assistant/research/2026-11-01-spike.md")" "# a spike"
+  assert_equal "$(events closed | jq -r .task)" "T1"
+}
+
+@test "a close that failed once the worktree was returned is finished by a rerun, the report read from the archive" {
+  local real_close filed
+  code_checkout
+  open_topic ingest "The ingest"
+  echo "# the report" >"$(topic_dir T1)/report.md"
+  filed=$TEAM_HOME/assistant/research/$(events opened | jq -r '.ts[:10]')-T1-ingest.md
+  # team-close fails at its end, its worktree returned and its task directory archived, with no
+  # closed logged.
+  real_close=$BATS_TEST_TMPDIR/team-close.real
+  cp "$CODE_CHECKOUT/bin/team-close" "$real_close"
+  sed -i 's/^ledger_append "$(jq -cn --arg task "$task" --argjson archive /die "cannot log the close"\n&/' \
+    "$CODE_CHECKOUT/bin/team-close"
+  grep -q '^die "cannot log the close"$' "$CODE_CHECKOUT/bin/team-close"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic close T1
+  assert_contains "$stderr" "team-close: cannot log the close"
+  assert_equal "$(events closed)" ""
+  assert_equal "$(events worktree-returned | jq -r .task)" "T1"
+  rm "$filed"
+
+  cp -f "$real_close" "$CODE_CHECKOUT/bin/team-close"
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic close T1
+  assert_equal "$output" "T1 closed; report at $filed"
+  assert_equal "$(cat "$filed")" "# the report"
+  assert_equal "$(events closed | jq -r .task)" "T1"
 }
