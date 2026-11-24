@@ -130,7 +130,9 @@ refuses_wrapped() {
     "W=$WT/a && true & rm -rf \$W/fix" "W=$WT/a || true & rm -rf \$W/fix" \
     "export -q W=$WT/a; rm -rf \$W/fix" "declare -Z W=$WT/a; rm -rf \$W/fix" "declare -u W=$WT/a; rm -rf \$W/fix" \
     $'bash <<EOF\n'"W=$WT/a"$'\nrm -rf $W/fix\nEOF' "bash <<< \"W=$WT/a; rm -rf \$W/fix\"" \
-    "echo \"W=$WT/a; rm -rf \$W/fix\" | bash"
+    "echo \"W=$WT/a; rm -rf \$W/fix\" | bash" "bash -c \"W=$WT/a; rm -rf \$W/fix\"" \
+    "eval \"W=$WT/a; rm -rf \$W/fix\"" "trap \"W=$WT/a; rm -rf \$W/fix\" EXIT" \
+    "bash -c \"bash -c 'W=$WT/a; rm -rf \$W/fix'\""
   # An assignment that may not hold leaves the variable unread in a value, a cd target and find's start path too.
   refuses "a recursive delete of \$E, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); E=\$W/fix; rm -rf \$E"
   refuses "a recursive delete of x, $UNREAD" "$UNREAD_WAY" "(W=$WT/src); cd \$W; rm -rf x"
@@ -141,10 +143,15 @@ refuses_wrapped() {
     "W=$WT/src; cd \$W && rm -rf x" "W=$WT/a; find \$W/fix -delete" $'W='"$WT/a"$'\nrm -rf $W/fix' \
     "W=$WT/a; true & rm -rf \$W/fix" "W=$WT/a && rm -rf \$W/fix &" "declare -gx W=$WT/a; rm -rf \$W/fix" \
     "export A=1 W=$WT/a; rm -rf \$W/fix" $'bash <<\'EOF\'\n'"W=$WT/a"$'\nrm -rf $W/fix\nEOF' \
-    "bash <<< 'W=$WT/a; rm -rf \$W/fix'" "echo 'W=$WT/a; rm -rf \$W/fix' | bash"
+    "bash <<< 'W=$WT/a; rm -rf \$W/fix'" "echo 'W=$WT/a; rm -rf \$W/fix' | bash" \
+    "bash -c \"W=$WT/a; rm -rf \\\$W/fix\"" "eval \"W=$WT/a; rm -rf \\\$W/fix\"" \
+    "trap \"W=$WT/a; rm -rf \\\$W/fix\" EXIT" "W=$WT/a; trap \"rm -rf \$W/fix\" EXIT"
   # Bash keeps its own value of a dynamic variable, whatever the command assigns it.
   refuses "a recursive delete of \$FUNCNAME/fix, $UNREAD" "$UNREAD_WAY" "FUNCNAME=$WT/a; rm -rf \$FUNCNAME/fix"
   refuses "a recursive delete of \$DIRSTACK, $UNREAD" "$UNREAD_WAY" "DIRSTACK=$WT/a; rm -rf \$DIRSTACK"
+  # A read-only one keeps its value through a declarer, which fails and lets the shell go on.
+  refuses "a recursive delete of \$UID/fix, $UNREAD" "$UNREAD_WAY" "export UID=$WT/a; rm -rf \$UID/fix"
+  refuses "a recursive delete of \$PPID/fix, $UNREAD" "$UNREAD_WAY" "declare PPID=$WT/a; rm -rf \$PPID/fix"
 }
 
 # Bash runs local only in a function: at the call's top level, or in eval's string there, it

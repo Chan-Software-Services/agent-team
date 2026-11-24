@@ -42,8 +42,8 @@ shell with an -O or +O value, holding a $ or a backtick names every option.
 Each operand is resolved without running anything, from the walk's word (its quotes removed, its
 unquoted brace lists expanded):
   - a backslash left in it (a quoted backslash), or a word the walk decoded from a $'...' escape
-    or made by a brace range ({1..3}), makes it unread, named as written, though the call also
-    deletes the path it decodes to spelled plainly;
+    or made by a brace range ({1..3}), makes it unread, named as written, even where the call also
+    deletes the path it decodes to, spelled plainly;
   - a $ or a backtick in a command of a text a shell reads as its script after the shell running
     the call expanded it, with its own values, makes it unread: a heredoc under an unquoted marker,
     and a here-string or text piped into the shell holding a $ or a backtick outside single quotes;
@@ -72,9 +72,13 @@ unquoted brace lists expanded):
     nothing: one in a subshell, a group, a compound command, a function or a string another
     process runs (a shell's -c), one after && or || in a list the reading does not stand in, one
     right after || in its own, and one after the reading; and a code part, eval's string among them, is
-    read alone, so a command of it holds only its own. Bash's dynamic variables (FUNCNAME,
+    read alone, so a command of it holds only its own. A command string the shell around expands
+    before it runs (a -c, eval or trap string whose word as written holds a $ or a backtick outside
+    single quotes, or one inside such a string) holds none of its own: its commands are read
+    before the command that runs it, and a code part that is one holds none. Bash's dynamic variables (FUNCNAME,
     BASH_SOURCE, DIRSTACK, RANDOM and the rest of DYNAMIC), whose value it keeps whatever is
-    assigned, are unread; a value that is $(mktemp ...) or
+    assigned, and its read-only ones (UID, EUID, PPID and the rest of READ_ONLY), which a declarer
+    fails to assign, are unread; a value that is $(mktemp ...) or
     `mktemp ...` alone is the new path mktemp makes: its template under -p <dir> or --tmpdir=<dir>;
     its template's name under $TMPDIR (/tmp when it is empty) with -t, --tmpdir alone or no
     template (tmp.XXXXXXXXXX); else its template as written, relative to the cwd when relative; a
@@ -155,7 +159,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from command_text import (  # noqa: E402
     FIND_EXEC, SAME, SCRIPT, SHELLS, SOURCE, blank_heredocs, code_parts, command_name, commands, expanded_scripts,
-    heads_behind, long_options, places, plain_sequence, short_cluster, simple_commands, top_pipelines, unquoted,
+    expanded_strings, expanding_words, heads_behind, long_options, places, plain_sequence, short_cluster,
+    simple_commands, top_pipelines, unquoted,
 )
 
 ALLOWED_DELETE = (
@@ -215,6 +220,9 @@ DYNAMIC = frozenset((
     "PIPESTATUS", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "HISTCMD", "EPOCHSECONDS", "EPOCHREALTIME",
     "BASH_REMATCH",
 ))
+# The variables Bash makes read-only, whose value a declarer's assignment leaves as it was: the
+# declarer fails and the shell goes on (a bare assignment to one ends the shell).
+READ_ONLY = frozenset(("BASHOPTS", "BASH_VERSINFO", "EUID", "PPID", "SHELLOPTS", "UID"))
 # A variable as $NAME or ${NAME}.
 REFERENCE = re.compile(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
 GLOB = re.compile(r"[*?\[]")
@@ -427,16 +435,50 @@ def _held(name, at, context):
     command at stands (_places): one that surely runs before it in its text (_before), or, in a
     string the shell itself runs (eval's, trap's action), before the command that runs it, in the
     text around, and so out to the call's text. A string another process runs (a shell's -c and
-    the rest) holds only its own, and so does a code part, which is read alone."""
+    the rest) holds only its own, and so does a code part, which is read alone. A string the shell
+    around expanded first (_outer_expanded) holds none of its own, since that shell expanded its
+    variables before any of them ran: one is read before the command that runs it, and a code
+    part that is one holds none."""
     found = _places(context).get(at)
     if not found:
         return False
     for place in found:
-        while not _before(name, place):
+        while True:
+            if _outer_expanded(place, context):
+                if place.around is None:
+                    return False
+                place = place.around
+                continue
+            if _before(name, place):
+                break
             if place.shell != SAME:
                 return False
             place = place.around
     return True
+
+
+def _outer_expanded(place, context):
+    """Whether the place's text is a command string the shell around expanded first: in a string
+    the walk runs, one holding a word of the text around whose spelling there it expands
+    (expanding_words), or standing in a string that is one; else a code part expanded_strings gives."""
+    if place.around is None:
+        return place.text in _expanded_parts(context)
+    if any(word in place.text for word in _expanding(place.around.text)):
+        return True
+    return _outer_expanded(place.around, context)
+
+
+@functools.lru_cache(maxsize=None)
+def _expanding(text):
+    return tuple(word for word in expanding_words(text) if re.search("[$`]", word))
+
+
+@functools.lru_cache(maxsize=None)
+def _expanded_parts(context):
+    """The code parts of the call that are command strings the shell around expanded first, as
+    _places walks them."""
+    texts = [blank_heredocs(part) for part in code_parts(context.text)] + [context.text]
+    return frozenset(blank_heredocs(string) for text in texts for string in expanded_strings(text))
 
 
 def _braces(word):
@@ -496,7 +538,7 @@ def _values(name, context, depth, at=None, placed=True):
     is (None: every directory the call may be in), and in an assigned value, the command that
     assigns it, since Bash expands it there; with placed, an assigned variable is read only where
     an assignment of it holds at at (_held), else wherever it is assigned."""
-    if name in DYNAMIC:
+    if name in DYNAMIC or name in READ_ONLY:
         raise Unread
     if name in KNOWN:
         value = _environment(name, context)

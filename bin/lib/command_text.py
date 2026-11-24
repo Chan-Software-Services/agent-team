@@ -13,7 +13,9 @@ redirection it makes in the same texts; its kill rows, kill_rules.py, import com
 heads_behind and short_cluster, and its delete rows, delete_rules.py, those with the walk, simple_commands,
 plain_sequence (a call's commands in the order they run, below), places and top_pipelines (where
 each command stands, below) with SAME, expanded_scripts (the heredoc bodies, here-strings and piped text
-a shell reads as its script after the shell running the command expanded them), find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
+a shell reads as its script after the shell running the command expanded them), expanded_strings
+(the command strings code_parts adds that it expanded first) and expanding_words (the words it
+expands), find's FIND_EXEC, SHELLS, the option readers and unquoted; outbound.py imports commands and the
 option readers long_options and short_cluster, and team-tokens without_heredocs.
 bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands,
 command_name, the option readers long_options and short_cluster, and redirection_targets, each
@@ -737,11 +739,12 @@ def _piped_texts(command, s, e, script, bodies, subscripts):
     return added
 
 
-def _expands(written):
+def _expands(written, start=0, end=None):
     """Whether text as written holds a $ or a backtick the shell expands: one outside single
-    quotes and not escaped."""
-    quote, i = None, 0
-    while i < len(written):
+    quotes and not escaped; with start and end, one from start to end, the text before read for
+    its quotes."""
+    quote, i, end = None, 0, len(written) if end is None else end
+    while i < end:
         c = written[i]
         if c == "\\":
             i += 2
@@ -752,7 +755,7 @@ def _expands(written):
             continue
         if c == '"':
             quote = None if quote else '"'
-        elif c in "$`":
+        elif c in "$`" and i >= start:
             return True
         i += 1
     return False
@@ -780,6 +783,36 @@ def expanded_scripts(command):
         if _expands(command[s:e]):
             out += _piped_texts(command, s, e, script, bodies, reading.subscripts)
     return [text for text in out if text]
+
+
+def expanded_strings(command):
+    """The command strings code_parts adds of the command (a shell's -c, eval's and the rest
+    RUNS_STRING finds) that the shell running the command expands first: those whose word as
+    written holds a $ or a backtick outside single quotes, read with the quotes of its line before
+    it, so a string inside a double-quoted one is expanded too."""
+    out = []
+    for match in RUNS_STRING.finditer(command):
+        start = match.end()
+        start += len(dashes.group()) if (dashes := re.match(r"--[ \t]+", command[start:])) else 0
+        line = command.rfind("\n", 0, match.start()) + 1
+        stop = command.find("\n", start)
+        stop = len(command) if stop < 0 else stop
+        end = min(_command_word(command, start, stop)[1], stop)
+        if _expands(command[line:end], start - line):
+            out.append(OPENING.sub("", command[match.end() : stop]))
+    return [text for text in out if text]
+
+
+def expanding_words(command):
+    """The words of the command's simple commands, in every pipeline, as simple_commands reads them,
+    whose text as written holds a $ or a backtick the shell expands (_expands)."""
+    reading = read_command(command)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    found = []
+    for _, segments in reading.pipelines:
+        for start, end in segments:
+            _segment_commands(command, start, end, bodies, reading.subscripts, expanding=found)
+    return found
 
 
 def _code_parts(command, depth):
@@ -1266,12 +1299,13 @@ def _brace_words(raw, word):
     return out
 
 
-def _segment_commands(text, start, end, bodies, subscripts, redirects=None):
+def _segment_commands(text, start, end, bodies, subscripts, redirects=None, expanding=None):
     """The simple commands of the segment from start to end, each its words, as simple_commands
     says; bodies maps where each heredoc body starts to where its closing line ends, and subscripts
     where each subscript read_command read as one bracket pair starts its word to just past its ].
     With a redirects list, each redirection with a word as its target is appended to it as its
-    operator (the fd before it included) and that word."""
+    operator (the fd before it included) and that word; with an expanding list, each word whose
+    text as written holds a $ or a backtick the shell expands (_expands), as _command_word reads it."""
     commands, words, i = [], [], start
 
     def close():
@@ -1321,6 +1355,8 @@ def _segment_commands(text, start, end, bodies, subscripts, redirects=None):
             i = after
         else:
             word, j = _command_word(text, i, end)
+            if expanding is not None and _expands(text[i:j]):
+                expanding.append(word)
             if ASSIGNMENT.match(word) and all(w in LEADING or ASSIGNMENT.match(w) for w in words):
                 # Bash expands no brace in an assignment before a command's name.
                 words.append(word)
