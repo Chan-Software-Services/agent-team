@@ -64,6 +64,7 @@ team-config capture
 team-lease take
 team-lease renew
 team-lease release
+team-quota usage
 team-secrets restore
 team-secrets save
 team-stack down
@@ -78,7 +79,7 @@ ACTS
 
 @test "the acting subcommands' scripts answer the assistant's --help and run its read subcommands" {
   local script
-  for script in team-capacity team-config team-heavy team-lease team-secrets team-stack team-timers; do
+  for script in team-capacity team-config team-heavy team-lease team-quota team-secrets team-stack team-timers; do
     AGENT_TEAM_ROLE=assistant run_bin -0 "$script" --help
     [[ $output == *"Usage: $script"* ]] || { echo "$script --help printed no usage: $output" >&2; return 1; }
     AGENT_TEAM_ROLE=assistant run_bin -0 "$script" -h
@@ -91,6 +92,8 @@ ACTS
   not_refused team-config own
   not_refused team-lease status
   not_refused team-lease check
+  not_refused team-quota status
+  not_refused team-quota status --json
   not_refused team-secrets check
   not_refused team-stack ls
   not_refused team-timers status

@@ -324,8 +324,9 @@ probe_rules() {
       or ((.expect | IN("hook", "script", "allowed")) and (.marker | type) != "string")
       or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel", "allowed") | not)))
       or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
-      or ((.expect == "rule") != (.family | type == "string"))
-      or (.family != null and (.family | IN($families[]) | not)))
+      or (.expect == "rule" and (.family | type) != "string")
+      or (.family != null and ((.family | type) != "string" or (.family | IN($families[]) | not)
+        or (.expect != "rule" and (.expect != "refused" or .roles != ["assistant"])))))
     | .id'
   out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
@@ -339,6 +340,23 @@ probe_rules() {
   assert_equal "$out" "no-marker
 number-marker
 login-hook"
+  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's refused
+  # one's, whose deny rule and hook both refuse it in bypass mode; never a worker's refused one,
+  # auto mode's stand-in, nor a hook's.
+  out=$(jq -r "$malformed" <<<'{"families": [{"family": "f"}], "attempts": [
+    {"id": "rule-bare", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule"},
+    {"id": "rule", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule", "family": "f"},
+    {"id": "refused-assistant", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-assistant-bare", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused"},
+    {"id": "refused-worker", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-both", "roles": ["builder", "assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "m", "family": "f"},
+    {"id": "unknown", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "g"}]}')
+  assert_equal "$out" "rule-bare
+refused-worker
+refused-both
+hook
+unknown"
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
 }
@@ -423,10 +441,10 @@ probe_denies() {
   return 1
 }
 
-@test "every rule attempt of the refusal probe is denied by a rule of its family in each of its roles' settings" {
+@test "every attempt of the refusal probe that names a family is denied by a rule of it in each of its roles' settings" {
   local role id tool input family rules list probe=$REPO_ROOT/bin/lib/probe.json missing=() n=0
   for role in "${PROBE_ROLES[@]}"; do
-    list=$(jq -r --arg role "$role" '.attempts[] | select(.expect == "rule" and any(.roles[]; . == $role))
+    list=$(jq -r --arg role "$role" '.attempts[] | select(.family != null and any(.roles[]; . == $role))
       | [.id, .tool, .input, .family] | @tsv' "$probe")
     while IFS=$'\t' read -r id tool input family; do
       rules=$(jq -r --arg family "$family" --argjson rules "$(probe_rules "$role")" \
@@ -437,6 +455,23 @@ probe_denies() {
   done
   assert_equal "${missing[*]}" ""
   ((n > 3))
+}
+
+# In bypass mode no auto mode judges the assistant's calls, so its refused attempt is one its deny
+# rules and its command guard both refuse, as team-load-check --help says: the live session shows
+# whichever answers first, so each is held here.
+@test "every refused attempt of the assistant is denied by one of its deny rules and refused by its command guard" {
+  local id input denied=() unguarded=() n=0 probe=$REPO_ROOT/bin/lib/probe.json
+  while IFS=$'\t' read -r id input; do
+    n=$((n + 1))
+    probe_denies "$(probe_rules assistant | jq -r '.[]')" Bash "$input" || denied+=("$id")
+    AGENT_TEAM_ROLE=assistant run_bin --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$input" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    [[ $status == 2 && $stderr == *"Blocked by command-guard: "* ]] || unguarded+=("$id")
+  done < <(jq -r '.attempts[] | select(.expect == "refused" and .roles == ["assistant"]) | [.id, .input] | @tsv' "$probe")
+  assert_equal "${denied[*]}" ""
+  assert_equal "${unguarded[*]}" ""
+  ((n >= 3))
 }
 
 # A hook attempt stands for the hook under bin/hooks/ whose file holds its marker.
