@@ -1316,6 +1316,12 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   answer 0 files scripts/chromium-packages.sh
   run_bin team-ci-wait "$url"
   assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or a local action kept outside .github/, named by its directory, whose action.yml the PR changes.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./ci/actions/install-deps|')"
+  answer 0 files ci/actions/install-deps/action.yml
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
   # A script the step runs that the PR leaves alone keeps the failure infrastructure.
   echo 0 >"$GH_DIR/look"
   apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
