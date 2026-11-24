@@ -244,7 +244,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/ledger-contract.json` | `team-model` | `none` | Config: becomes the event enum and its schema |
 | `bin/lib/ledger.jq` | `team-model` | `none` | The read model (step 2) |
 | `bin/lib/lifecycle.json` | `team-model` | `none` | Config: the lifecycle table |
-| `bin/lib/messages.jq` | `team-model` | `none` | Retires once reports are claims (step 3) |
+| `bin/lib/messages.jq` | `team-model` | `none` | Retires once reports are claims (step 3); its `message_carried`, the tickets a PR carried, moves to the PR claim's handling |
 | `bin/lib/notice.jq` | `team-model` | `none` | |
 | `bin/lib/notices.sh` | `team-core` | `interface` | `Notifier` |
 | `bin/lib/opencode-gate` | stays | `none` | The gate's opencode wrapper |
@@ -331,7 +331,7 @@ Every kind is a variant of `team-model`'s event enum; the column says which comm
 | `stowed` | `team-stow` | `team-core` | `platform` |
 | `stowing` | `team-stow` | `team-core` | `platform` |
 | `thread` | `team-thread` | `adapter-discord` through `team-api` | `interface` |
-| `ticket-done` | `team-log` | a worker's claim, the first kind (step 3) | `none` |
+| `ticket-done` | `team-log` | a worker's claim, the first kind (step 3), and one for each ticket a builder's PR claim carried, built with no claim of its own (`message_carried`) | `none` |
 | `waiting` | `team-log` | `team-core` | `none` |
 | `walk` | `team-ui` | `team-core` | `interface` |
 | `walk-note` | `team-thread`, `team-ui` | `adapter-discord` through `team-api` | `interface` |

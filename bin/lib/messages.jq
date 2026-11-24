@@ -337,6 +337,21 @@ def parse_message($task; $events; $records; $from; $sent_back; $apps; $pr_projec
           {events: [message_event("injection"; [["role", .role], ["source", $i.source], ["text", $i.text]])]}) end
     else unreadable end;
 
+# The tickets a builder's PR in $project carried, by number, for team-log to log a ticket-done of
+# each before the pr, so a task one builder built and delivered whole reads its tickets done, and
+# its merge names no phase left: of $tickets (team-tickets T<n> --json), each of $project in the
+# PR's phase that is neither done nor running and is none of $open (the tickets whose file has a
+# box not ticked). The PR's phase is the earliest of $project's tickets', or, once $project's latest
+# merged (one naming no project counts) names phases left, the earliest of those. So a deliverer's
+# PR, its phase's tickets done by their own builders, carries none, and no PR carries a later
+# phase's ticket. The input is the task's events.
+def message_carried($tickets; $project; $open):
+  [$tickets[] | select(.project == $project)] as $mine
+  | (last(.[] | select(.event == "merged" and (.phases_left | type) == "array" and (.project // $project) == $project)) // null) as $merged
+  | ([$mine[].phase] | if $merged != null and $merged.phases_left != [] then map(select(IN($merged.phases_left[]))) else . end
+     | min) as $phase
+  | [$mine[] | select(.phase == $phase and (.state | IN("done", "running") | not) and (IN(.ticket; $open[]) | not)) | .ticket];
+
 # The parsed message (parse_message's, of the message $message) with --relay's id ($relay, or "")
 # on its ops session's done, the pointer to the coordinator's relay of its answer in Discord; any
 # other message is refused with it, naming its kind and its sender when it has one.

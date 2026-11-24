@@ -175,6 +175,29 @@ ticket() {
   assert_equal "$(jq -r .phase <<<"$output")" merged
 }
 
+@test "two tickets one builder built and delivered in one PR, with no DONE <NN>, merge as the whole task: no phases left, merged, and the sweep finds no part merged" {
+  in_worktree
+  # T515's shape: two tickets with no Phase: line, the second blocked by the first, both ticked by
+  # the one builder, whose PR the coordinator logs from its message.
+  printf '# 01\n\nBlocked by: None\n\n- [x] the doc\n' >"$wt/.scratch/task/tickets/01-doc.md"
+  printf '# 02\n\nBlocked by: 01\n\n- [x] the check\n' >"$wt/.scratch/task/tickets/02-check.md"
+  event T14 launch "{role: \"builder\", session: \"b0000001\", worktree: \"$wt\", toolkits: [], project: \"proj\",
+    branch: \"feat/T14-tooling\", machine: \"m\", brief: \"brief\"}"
+  run_bin -0 team-log T14 --from-message "T14 PR https://github.com/owner/proj/pull/5"
+  # Logged at 02:00 with the fixture's other events, an hour before Daniel's word.
+  jq -c '.ts = "2026-10-22T02:00:00Z"' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-tickets T14
+  assert_equal "$output" "$(printf '%s\n' "01 done    doc" "02 done    check")"
+  run_bin -0 --separate-stderr team-merge T14
+  assert_equal "$(merged_events | jq -c .phases_left)" "[]"
+  stub_reply claude "[]"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -r .phase <<<"$output")" merged
+  run_bin team-sweep
+  [[ $output != *"a part merged"* ]]
+  TEAM_HOME=$TEAM_HOME run -0 "$REPO_ROOT/bin/team-log" --check
+}
+
 @test "a task with no tickets logs no phases_left" {
   in_worktree
   run_bin -0 --separate-stderr team-merge T14

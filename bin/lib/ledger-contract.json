@@ -117,9 +117,9 @@
     "ticket-done": {
       "inbox": true,
       "writer": "team-log",
-      "about": "head is the task branch's tip a ticket landed as, which team-next logs through team-log only when it integrated the ticket from its ticket worktree, absent for a ticket built in the task worktree",
+      "about": "head is the task branch's tip a ticket landed as, which team-next logs through team-log only when it integrated the ticket from its ticket worktree, absent for a ticket built in the task worktree; pr is the url of the builder's PR that carried the ticket, logged by team-log --from-message before that pr for each ticket of the PR's phase built with no DONE <NN> of its own (message_carried in bin/lib/messages.jq), its commits the PR's head",
       "required": {"ticket": "string", "commits": "array"},
-      "optional": {"repo": "string", "head": "string"}
+      "optional": {"repo": "string", "head": "string", "pr": "string"}
     },
     "question": {
       "writer": ["team-log", "team-ask"],
