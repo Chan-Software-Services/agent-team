@@ -1387,8 +1387,9 @@ logged_choices() {
     $'["builder","sonnet","task"]\n["builder","sonnet","task"]\n["reviewer","opus","config"]\n["planner","opus","config"]'
   run_bin -0 team-log --check
 
-  # A task whose builder model is default (opened with no --builder-model since T451) names none:
-  # its builders take the config, and a launch on the config leaves it none.
+  # A task whose builder model is default (one opened from T451 to the config with no
+  # --builder-model and no registry builder line) names none: its builders take the config, and a
+  # launch on the config leaves it none.
   thread T8
   opened T8 proj feat/T8-task "$wt2" '{"builder_model": "default"}'
   run_bin -0 team-worker T8 builder "$wt2" -- go

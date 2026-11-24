@@ -80,7 +80,7 @@ Each category falls back through its parent, the part before its last dot, to `d
 - No option names an effort: the config is the one place an effort is chosen, and a trial changes a line.
 - The settings' word is read as written, each key in the session's generated settings and then in the user settings (`${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`) before the next key: the model from `env.ANTHROPIC_MODEL`, then `model`; the effort from `env.CLAUDE_CODE_EFFORT_LEVEL`, then `modelSettings[<the model>].effortLevel`, then `effortLevel`.
   An `ANTHROPIC_MODEL` in the launching process's environment or in managed settings is not read.
-- A missing `models.toml` gives every launch the settings' word, as before the config, logged `settings`, and the doctor's `models` line WARNs.
+- A missing `models.toml` names no axis, so a launch nothing else names a model or effort for runs on the settings' word, as before the config (logged `settings`, or `default` with none), and the doctor's `models` line WARNs.
 - A `models.toml` that does not read refuses a worker launch, exit 1, before the lease or anything is started or logged: "models.toml does not read: <its first problem>; fix it, then team-models --check".
   The coordinator and the assistant launch anyway, warning "models.toml does not read: ...; launching on the settings' model", since the coordinator is the session that fixes the file; `team-open` opens the task with a warning and prints `default` as its builder model.
 
