@@ -13,10 +13,16 @@
 # ledger names its job) that nothing will wake again or that has been quiet for a day: its task is
 # closed, Claude Code no longer lists it, it is stopped, or it is done or failed and unchanged for
 # 24 hours; never one with a process. The tmp directory itself is kept.
+# The Go part holds Go's build cache (TEAM_GO_CACHE, else go env GOCACHE, else Go's default) to
+# its cap: once it passes 10 GiB, a run removes its least recently used entries (<hash>-a and
+# <hash>-d under its two-hex directories) down to 8 GiB, never one used in the last 2 hours, and
+# only in a directory whose README is Go's.
 # It reuses tmp.sh's process reader (tmp_read_processes, tmp_live) and its sizes and ages
 # (tmp_size, tmp_age), never a copy of them.
 # Test seams: TEAM_DISK_JOB_IDLE_MINUTES for the 24 hours (1440) a done or failed session must
-# have been unchanged.
+# have been unchanged; TEAM_GO_CACHE for the cache's path, TEAM_GO_CACHE_CAP_KB for its cap
+# (10485760, 10 GiB; the trim goes down to 80% of it) and TEAM_GO_CACHE_KEEP_MINUTES for the 2
+# hours (120) an entry used since is kept.
 # shellcheck shell=bash
 
 # Set when the run ends with exit 1.
@@ -25,6 +31,11 @@ DISK_FAILED=''
 DISK_CLEARED=0 DISK_CLEARED_KB=0
 # The size, in kilobytes, of the last tmp disk_clear_job_tmp cleared, and its line.
 DISK_KB=0 DISK_LINE=''
+# The Go build cache's path and size after the run (empty with none), the entries the run trimmed
+# and their kilobytes, and the local date the over-cap line was last said (empty if never).
+DISK_GO_PATH='' DISK_GO_KB='' DISK_TRIMMED=0 DISK_TRIMMED_KB=0 DISK_GO_SAID=''
+# The first line of Go's README, by which a directory is known as its build cache.
+DISK_GO_README='This directory holds cached build artifacts from the Go build system.'
 
 # The state directory, the day's file and the record of the last run.
 disk_paths() {
@@ -257,32 +268,195 @@ disk_jobs() {
   done
 }
 
+# The Go cap and keep window, checked whole numbers: sets disk_go_cap (kilobytes) and
+# disk_go_keep (minutes).
+disk_go_settings() {
+  disk_go_cap=${TEAM_GO_CACHE_CAP_KB:-10485760}
+  [[ $disk_go_cap =~ ^[0-9]+$ ]] ||
+    die "TEAM_GO_CACHE_CAP_KB is '$disk_go_cap', not a whole number of kilobytes"
+  disk_go_keep=${TEAM_GO_CACHE_KEEP_MINUTES:-120}
+  [[ $disk_go_keep =~ ^[0-9]+$ ]] ||
+    die "TEAM_GO_CACHE_KEEP_MINUTES is '$disk_go_keep', not a whole number of minutes"
+}
+
+# Where Go keeps its build cache: TEAM_GO_CACHE when set, else go env GOCACHE (given 20 s) when go
+# is on the PATH and answers, else Go's own default, GOCACHE from the environment or the user
+# cache directory's go-build. Sets disk_go to the cache's real path, or leaves it empty and sets
+# disk_go_none to why there is none: GOCACHE off or empty, no directory there, or a directory
+# that holds no Go README.
+disk_go_locate() {
+  local disk_raw=''
+  disk_go='' disk_go_none=''
+  if [[ -n ${TEAM_GO_CACHE+set} ]]; then
+    disk_raw=$TEAM_GO_CACHE
+  elif command -v go >/dev/null 2>&1 && disk_raw=$(bounded 20 go env GOCACHE 2>/dev/null); then
+    :
+  elif [[ -n ${GOCACHE:-} ]]; then
+    disk_raw=$GOCACHE
+  elif [[ ${TEAM_KERNEL:-$(uname -s)} == Darwin ]]; then
+    disk_raw=$HOME/Library/Caches/go-build
+  else
+    disk_raw=${XDG_CACHE_HOME:-$HOME/.cache}/go-build
+  fi
+  if [[ -z $disk_raw || $disk_raw == off ]]; then
+    disk_go_none='no Go build cache (GOCACHE is off)'
+    return 0
+  fi
+  if [[ ! -d $disk_raw ]] || ! disk_go=$(realpath -- "$disk_raw" 2>/dev/null); then
+    disk_go='' disk_go_none="no Go build cache at $disk_raw"
+    return 0
+  fi
+  if ! disk_own_dir "$disk_go" || ! disk_go_readme "$disk_go"; then
+    disk_go_none="no Go build cache at $disk_go (no Go README)"
+    disk_go_bad=$disk_go disk_go=''
+  fi
+}
+
+# Whether <dir>'s README, a regular file and never a link, begins with Go's first line.
+disk_go_readme() {
+  local disk_first=''
+  [[ -f $1/README && ! -L $1/README ]] || return 1
+  IFS= read -r disk_first <"$1/README" 2>/dev/null || [[ -n $disk_first ]] || return 1
+  [[ $disk_first == "$DISK_GO_README" ]]
+}
+
+# The Go part: trim the Go build cache to 80% of its cap once it is over the cap, the least
+# recently used entries first, never one used within the keep window, or on a dry run say it
+# would.
+disk_go_trim() {
+  local disk_go disk_go_none disk_go_bad='' disk_kb disk_target disk_cutoff disk_summary
+  local disk_n disk_got disk_last disk_after disk_since='' disk_type disk_entry disk_err disk_today_day disk_line
+  disk_go_locate
+  if [[ -n $disk_go_bad ]]; then
+    echo "${0##*/}: $disk_go_bad is not a Go build cache (no Go README); not trimmed" >&2
+    DISK_FAILED=1
+    return 0
+  fi
+  [[ -n $disk_go ]] || return 0
+  DISK_GO_PATH=$disk_go
+  disk_kb=$(disk_du "$disk_go")
+  DISK_GO_KB=$disk_kb
+  ((disk_kb > disk_go_cap)) || return 0
+
+  disk_target=$((disk_go_cap * 80 / 100))
+  disk_cutoff=$((disk_now - disk_go_keep * 60))
+  # The entries, a real file or directory named <hex>-a or <hex>-d directly in a real two-hex
+  # directory (find follows no link, and the names hold no line break), oldest first; then the
+  # oldest of those used before the cutoff until enough kilobytes are picked, a directory measured
+  # with du. The summary is the count, the kilobytes and the newest pick's mtime.
+  if ! disk_summary=$(cd "$disk_go" &&
+    find . -mindepth 2 -maxdepth 2 -regextype posix-extended -regex '\./[0-9a-f]{2}/[0-9a-f]+-[ad]' \
+      \( -type f -o -type d \) -printf '%T@ %y %k %P\n' 2>"$TMP_WORK/go-find.err" |
+    LC_ALL=C sort -n -k 1,1 |
+    awk -v cutoff="$disk_cutoff" -v need=$((disk_kb - disk_target)) -v picked="$TMP_WORK/go-picked" '
+      stop || $1 + 0 > cutoff { stop = 1; next }
+      {
+        kb = $3 + 0
+        if ($2 == "d") { cmd = "du -sk -- " $4; if ((cmd | getline line) > 0) { split(line, f, " "); kb = f[1] + 0 }; close(cmd) }
+        print $2 " " $4 > picked
+        n++; got += kb; last = $1
+        if (got >= need) stop = 1
+      }
+      END { printf "%d %d %d\n", n, got, last }'); then
+    echo "${0##*/}: could not list the Go build cache $disk_go" >&2
+    DISK_FAILED=1
+    return 0
+  fi
+  if [[ -s $TMP_WORK/go-find.err ]]; then
+    echo "${0##*/}: could not list all of the Go build cache $disk_go: $(tmp_last_line "$TMP_WORK/go-find.err")" >&2
+    DISK_FAILED=1
+  fi
+  read -r disk_n disk_got disk_last <<<"$disk_summary"
+  if ((disk_n > 0)); then disk_since=$(date -u -d "@$disk_last" +%FT%H:%MZ); fi
+
+  if [[ -n $disk_dry ]]; then
+    disk_after=$((disk_kb - disk_got))
+    ((disk_n == 0)) ||
+      echo "would trim the Go build cache $disk_go from $(tmp_size "$disk_kb") to $(tmp_size "$disk_after"): $disk_n entries unused since $disk_since"
+  elif ((disk_n > 0)); then
+    disk_err=$TMP_WORK/go-rm.err
+    : >"$disk_err"
+    # Checked again just before the removal, so nothing is reached through a link put in its place.
+    if ! disk_own_dir "$disk_go"; then
+      echo "${0##*/}: $disk_go is no longer a directory of this user's; not trimmed" >&2
+      DISK_FAILED=1
+      return 0
+    fi
+    (
+      cd "$disk_go" || exit 1
+      awk '$1 == "f" { print $2 }' "$TMP_WORK/go-picked" | tr '\n' '\0' | xargs -0 -r rm -f -- 2>>"$disk_err"
+      while read -r disk_type disk_entry; do
+        [[ $disk_type == d && $(stat -c %F -- "$disk_entry" 2>/dev/null) == directory ]] || continue
+        chmod -R u+rwX -- "$disk_entry" 2>/dev/null || true
+        rm -rf --one-file-system -- "$disk_entry" 2>>"$disk_err" || true
+      done <"$TMP_WORK/go-picked"
+    ) || echo "could not enter $disk_go" >>"$disk_err"
+    if [[ -s $disk_err ]]; then
+      echo "${0##*/}: could not trim the Go build cache $disk_go: $(tmp_last_line "$disk_err")" >&2
+      DISK_FAILED=1
+    fi
+    disk_after=$(disk_du "$disk_go")
+    DISK_GO_KB=$disk_after
+    DISK_TRIMMED=$disk_n
+    ((disk_kb <= disk_after)) || DISK_TRIMMED_KB=$((disk_kb - disk_after))
+    disk_line="trimmed the Go build cache $disk_go from $(tmp_size "$disk_kb") to $(tmp_size "$disk_after"): $disk_n entries unused since $disk_since"
+    echo "$disk_line"
+    disk_record "$disk_line"
+  else
+    disk_after=$disk_kb
+  fi
+
+  # What is left over the cap was used within the keep window: said once a local day.
+  ((disk_after > disk_go_cap)) || return 0
+  disk_today_day=$(date +%F)
+  [[ $DISK_GO_SAID != "$disk_today_day" ]] || return 0
+  disk_line="the Go build cache $disk_go holds $(tmp_size "$disk_after"), over its $(tmp_size "$disk_go_cap") cap, the rest used in the last $(tmp_age $((disk_go_keep * 60))); kept"
+  echo "$disk_line"
+  [[ -n $disk_dry ]] && return 0
+  disk_record "$disk_line"
+  DISK_GO_SAID=$disk_today_day
+}
+
 # Today's totals from the record of the last run, all zero when it is missing or of an earlier
-# local date: sets disk_today_count, disk_today_kb and disk_last_at (empty with no record).
+# local date: sets disk_today_count and disk_today_kb (the job tmps cleared), disk_today_entries
+# and disk_today_trimmed_kb (the Go entries trimmed), disk_last_at (empty with no record) and
+# DISK_GO_SAID (the local date the over-cap line was last said, empty if never).
 disk_today() {
   local disk_state disk_dir disk_record_file disk_fields disk_day
   disk_paths
-  disk_today_count=0 disk_today_kb=0 disk_last_at=''
-  disk_fields=$(jq -r 'select(.schema == "team-disk/1") | "\(.at) \(.jobs.cleared_today.count // 0) \(.jobs.cleared_today.kb // 0)"' \
-    "$disk_record_file" 2>/dev/null) || return 0
+  disk_today_count=0 disk_today_kb=0 disk_today_entries=0 disk_today_trimmed_kb=0 disk_last_at='' DISK_GO_SAID=''
+  disk_fields=$(jq -r 'select(.schema == "team-disk/1") | [.at, (.jobs.cleared_today.count // 0),
+      (.jobs.cleared_today.kb // 0), (.go.trimmed_today.entries // 0), (.go.trimmed_today.kb // 0),
+      (.go.over_cap_said // "-" | strings)] | map(tostring) | join(" ")' "$disk_record_file" 2>/dev/null) || return 0
   [[ -n $disk_fields ]] || return 0
-  read -r disk_last_at disk_today_count disk_today_kb <<<"$disk_fields"
+  read -r disk_last_at disk_today_count disk_today_kb disk_today_entries disk_today_trimmed_kb DISK_GO_SAID <<<"$disk_fields"
+  [[ $DISK_GO_SAID != - ]] || DISK_GO_SAID=''
   disk_day=$(date -d "$disk_last_at" +%F 2>/dev/null) || disk_day=''
-  if [[ $disk_day != "$(date +%F)" ]]; then disk_today_count=0 disk_today_kb=0; fi
+  if [[ $disk_day != "$(date +%F)" ]]; then
+    disk_today_count=0 disk_today_kb=0 disk_today_entries=0 disk_today_trimmed_kb=0
+  fi
 }
 
 # Write the record of this run, whole through a temporary file and a rename.
 disk_write_record() {
-  local disk_state disk_dir disk_record_file disk_today_count disk_today_kb disk_last_at disk_new
+  local disk_state disk_dir disk_record_file disk_today_count disk_today_kb disk_today_entries
+  local disk_today_trimmed_kb disk_last_at disk_new disk_said=$DISK_GO_SAID
   disk_paths
+  # The day the over-cap line was said is this run's when it said it, else the last record's.
   disk_today
+  [[ -z $disk_said ]] || DISK_GO_SAID=$disk_said
   disk_new=$disk_record_file.new.$$
   if ! {
     mkdir -p "$disk_dir" &&
       jq -n --arg at "$(date -u +%FT%TZ)" --argjson ok "$([[ -z $DISK_FAILED ]] && echo true || echo false)" \
         --argjson count $((disk_today_count + DISK_CLEARED)) --argjson kb $((disk_today_kb + DISK_CLEARED_KB)) \
+        --arg go "$DISK_GO_PATH" --arg go_kb "$DISK_GO_KB" --argjson cap "$disk_go_cap" \
+        --argjson entries $((disk_today_entries + DISK_TRIMMED)) --argjson trimmed $((disk_today_trimmed_kb + DISK_TRIMMED_KB)) \
+        --arg said "$DISK_GO_SAID" \
         '{schema: "team-disk/1", at: $at, ok: $ok,
-          go: {path: null, kb: null, cap_kb: null, trimmed_today: null},
+          go: {path: (if $go == "" then null else $go end), kb: (if $go_kb == "" then null else ($go_kb | tonumber) end),
+            cap_kb: $cap, trimmed_today: {entries: $entries, kb: $trimmed},
+            over_cap_said: (if $said == "" then null else $said end)},
           jobs: {cleared_today: {count: $count, kb: $kb}}}' >"$disk_new" &&
       mv -f -- "$disk_new" "$disk_record_file"
   } 2>/dev/null; then
@@ -294,31 +468,44 @@ disk_write_record() {
 
 # The reading, read only: disk_status <usage> [--json]
 disk_status() {
-  local disk_usage=$1 disk_json='' disk_today_count disk_today_kb disk_last_at disk_noun
+  local disk_usage=$1 disk_json='' disk_today_count disk_today_kb disk_today_entries disk_today_trimmed_kb
+  local disk_last_at disk_noun disk_go_cap disk_go_keep disk_go disk_go_none disk_go_bad='' disk_kb='' disk_go_part
   shift
   case $* in
     '') ;;
     --json) disk_json=1 ;;
     *) usage_error "$disk_usage" ;;
   esac
+  disk_go_settings
+  disk_go_locate
+  [[ -z $disk_go ]] || disk_kb=$(disk_du "$disk_go")
   disk_today
   if [[ -n $disk_json ]]; then
     jq -n --argjson count "$disk_today_count" --argjson kb "$disk_today_kb" --arg last "$disk_last_at" \
+      --arg go "$disk_go" --arg go_kb "$disk_kb" --argjson cap "$disk_go_cap" --arg none "$disk_go_none" \
+      --argjson entries "$disk_today_entries" --argjson trimmed "$disk_today_trimmed_kb" \
       '{schema: "team-disk-status/1",
-        go: {path: null, kb: null, cap_kb: null, over_cap: null, trimmed_today: null},
+        go: {path: (if $go == "" then null else $go end), kb: (if $go_kb == "" then null else ($go_kb | tonumber) end),
+          cap_kb: $cap, over_cap: ($go_kb != "" and ($go_kb | tonumber) > $cap),
+          trimmed_today: {entries: $entries, kb: $trimmed}, none: (if $none == "" then null else $none end)},
         jobs: {cleared_today: {count: $count, kb: $kb}},
         last_run: (if $last == "" then null else $last end)}'
     return 0
   fi
+  if [[ -n $disk_go ]]; then
+    disk_go_part="Go build cache $(tmp_size "$disk_kb") of its $(tmp_size "$disk_go_cap") cap at $disk_go"
+  else
+    disk_go_part=$disk_go_none
+  fi
   disk_noun='job tmps'
   ((disk_today_count != 1)) || disk_noun='job tmp'
-  echo "$disk_today_count $disk_noun cleared today ($(tmp_size "$disk_today_kb"))"
+  echo "$disk_go_part; $disk_today_count $disk_noun cleared today ($(tmp_size "$disk_today_kb"))"
 }
 
 # The run: disk_main [--dry-run | status [--json]]
 disk_main() {
   local disk_usage="usage: team-janitor disk [--dry-run] | team-janitor disk status [--json]" disk_arg disk_dry=''
-  local disk_state disk_dir disk_record_file disk_lock disk_now disk_idle_minutes
+  local disk_state disk_dir disk_record_file disk_lock disk_now disk_idle_minutes disk_go_cap disk_go_keep
   if [[ ${1:-} == status ]]; then
     disk_status "$disk_usage" "${@:2}"
     exit 0
@@ -332,6 +519,7 @@ disk_main() {
   disk_idle_minutes=${TEAM_DISK_JOB_IDLE_MINUTES:-1440}
   [[ $disk_idle_minutes =~ ^[0-9]+$ ]] ||
     die "TEAM_DISK_JOB_IDLE_MINUTES is '$disk_idle_minutes', not a whole number of minutes"
+  disk_go_settings
   disk_now=$(date +%s)
   disk_paths
 
@@ -347,6 +535,11 @@ disk_main() {
 
   TMP_WORK=$(team_mktemp -d)
   disk_jobs
+  # The day the over-cap line was last said, so it is said once a day; then the Go part, which
+  # runs whatever the job part did.
+  local disk_today_count disk_today_kb disk_today_entries disk_today_trimmed_kb disk_last_at
+  disk_today
+  disk_go_trim
   [[ -n $disk_dry ]] || disk_write_record
   [[ -z $DISK_FAILED ]] || exit 1
   exit 0

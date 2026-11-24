@@ -17,6 +17,9 @@ setup() {
   STATE=$HOME/.local/state/agent-team
   DAY_FILE=$STATE/janitor/disk-$(date +%F).md
   RECORD=$STATE/janitor/disk.json
+  # The Go build cache is a fixture of the test's own, absent until go_cache makes it.
+  GC=$BATS_TEST_TMPDIR/go-build
+  export TEAM_GO_CACHE=$GC
   echo '[]' >"$BATS_TEST_TMPDIR/sessions.json"
   stub_script claude <<'EOF'
 if [[ $* == 'agents --json --all' ]]; then
@@ -138,7 +141,7 @@ kept() {
   assert_equal "$(head -n 1 "$DAY_FILE")" "# Disk cleared on home-pc, $(date +%F)"
   grep -Eq "^- [0-9]{2}:[0-9]{2} cleared the job tmp of T422's builder 0f178ea8 \(2 MB; T422 is closed\)$" "$DAY_FILE"
   assert_equal "$(jq -c '{schema, ok, go, jobs}' "$RECORD")" \
-    '{"schema":"team-disk/1","ok":true,"go":{"path":null,"kb":null,"cap_kb":null,"trimmed_today":null},"jobs":{"cleared_today":{"count":1,"kb":'"$kb"'}}}'
+    '{"schema":"team-disk/1","ok":true,"go":{"path":null,"kb":null,"cap_kb":10485760,"trimmed_today":{"entries":0,"kb":0},"over_cap_said":null},"jobs":{"cleared_today":{"count":1,"kb":'"$kb"'}}}'
 
   # The next run has nothing to clear and prints nothing.
   run_bin -0 team-janitor disk
@@ -396,10 +399,10 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
 
 @test "the record adds up the day's clearings, starts again on a new day, and status reads it back, changing nothing" {
   run_bin -0 team-janitor disk status
-  assert_equal "$output" "0 job tmps cleared today (0 MB)"
+  assert_equal "$output" "no Go build cache at $GC; 0 job tmps cleared today (0 MB)"
   run_bin -0 team-janitor disk status --json
   assert_equal "$(jq -c . <<<"$output")" \
-    '{"schema":"team-disk-status/1","go":{"path":null,"kb":null,"cap_kb":null,"over_cap":null,"trimmed_today":null},"jobs":{"cleared_today":{"count":0,"kb":0}},"last_run":null}'
+    "{\"schema\":\"team-disk-status/1\",\"go\":{\"path\":null,\"kb\":null,\"cap_kb\":10485760,\"over_cap\":false,\"trimmed_today\":{\"entries\":0,\"kb\":0},\"none\":\"no Go build cache at $GC\"},"'"jobs":{"cleared_today":{"count":0,"kb":0}},"last_run":null}'
   [[ ! -e $STATE ]]
 
   launch T9 builder afaf0001
@@ -410,7 +413,7 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
   kb=$(($(kb_of afaf0001) * 2))
   run_bin -0 team-janitor disk
   run_bin -0 team-janitor disk status
-  assert_equal "$output" "1 job tmp cleared today (2 MB)"
+  assert_equal "$output" "no Go build cache at $GC; 1 job tmp cleared today (2 MB)"
   job afaf0002
   run_bin -0 team-janitor disk
   local at
@@ -419,7 +422,7 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
   local before
   before=$(files_state)
   run_bin -0 team-janitor disk status
-  assert_equal "$output" "2 job tmps cleared today (4 MB)"
+  assert_equal "$output" "no Go build cache at $GC; 2 job tmps cleared today (4 MB)"
   run_bin -0 team-janitor disk status --json
   assert_equal "$(jq -c '{jobs, last_run}' <<<"$output")" "{\"jobs\":{\"cleared_today\":{\"count\":2,\"kb\":$kb}},\"last_run\":\"$at\"}"
   assert_equal "$(files_state)" "$before"
@@ -430,7 +433,7 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
   jq '.at = "2026-01-01T12:00:00Z"' "$RECORD" >"$RECORD.edit"
   mv "$RECORD.edit" "$RECORD"
   run_bin -0 team-janitor disk status
-  assert_equal "$output" "0 job tmps cleared today (0 MB)"
+  assert_equal "$output" "no Go build cache at $GC; 0 job tmps cleared today (0 MB)"
   run_bin -0 team-janitor disk
   assert_equal "$(jq -c .jobs.cleared_today "$RECORD")" '{"count":0,"kb":0}'
 }
@@ -461,4 +464,331 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
   assert_contains "$output" "team-janitor disk [--dry-run]"
   assert_contains "$output" "team-janitor disk status [--json]"
   assert_contains "$output" "cleared the job tmp of T422's builder 0f178ea8 (9.5 GiB; done and idle 26 h)"
+  assert_contains "$output" "trimmed the Go build cache"
+  assert_contains "$output" "TEAM_GO_CACHE_CAP_KB"
+  assert_contains "$output" "TEAM_GO_CACHE_KEEP_MINUTES"
+}
+
+# The Go build cache part. A fixture cache at $GC holds Go's README and trim.txt and entries made
+# by go_entry, each aged with touch -d; its sizes are read with du, as the run reads them.
+
+# go_cache [<README first line>]: the fixture cache, with Go's README unless another first line is
+# given, and trim.txt and testexpire.txt, all last modified 30 days ago.
+go_cache() {
+  mkdir -p "$GC"
+  printf '%s\n%s\n' "${1:-This directory holds cached build artifacts from the Go build system.}" \
+    'Run "go clean -cache" if the directory is getting too large.' >"$GC/README"
+  echo 1763000000 >"$GC/trim.txt"
+  echo 1763000000 >"$GC/testexpire.txt"
+  touch -d '30 days ago' "$GC/README" "$GC/trim.txt" "$GC/testexpire.txt"
+}
+
+# go_entry <path under the cache> <kb> <minutes since last use>: a file of <kb> kilobytes, or with
+# a trailing / a directory holding one, last modified <minutes> ago.
+go_entry() {
+  local path=$GC/${1%/}
+  mkdir -p "${path%/*}"
+  if [[ $1 == */ ]]; then
+    mkdir -p "$path"
+    head -c $(($2 * 1024)) /dev/zero >"$path/reapmain"
+    touch -d "$3 minutes ago" "$path/reapmain"
+  else
+    head -c $(($2 * 1024)) /dev/zero >"$path"
+  fi
+  touch -d "$3 minutes ago" "$path"
+}
+
+# go_cap <kb>: the cap the runs of this test take (TEAM_GO_CACHE_CAP_KB).
+go_cap() {
+  export TEAM_GO_CACHE_CAP_KB=$1
+}
+
+# <kilobytes> as the run says a size below 1024 MB.
+mb() {
+  echo "$((($1 + 512) / 1024)) MB"
+}
+
+# The cache's kilobytes, as du counts them.
+gc_kb() {
+  du -sk "$GC" | cut -f 1
+}
+
+# The UTC minute an entry <path under the cache> was last modified, as the trim line names it.
+used_at() {
+  date -u -d "@$(stat -c %Y "$GC/$1")" +%FT%H:%MZ
+}
+
+# ten_old_two_new: ten 400 KB entries used 10 to 1 days ago, the oldest a -d directory, and two
+# used in the last hour; and, all old, what is not an entry: a file of another name, an entry
+# under a directory that is not two hex digits, an uppercase name, a link to a file outside the
+# cache, and a two-hex directory that is a link to one outside it.
+ten_old_two_new() {
+  local i
+  go_cache
+  go_entry 0a/0a000001-d/ 400 $((10 * 1440))
+  for i in 2 3 4 5 6 7 8 9; do go_entry "0$i/0${i}00000$i-a" 400 $(((11 - i) * 1440)); done
+  go_entry 0b/0b000010-d 400 1440
+  go_entry ff/ff000011-a 400 30
+  go_entry ff/ff000012-d 400 50
+  go_entry 0a/notes.txt 1 $((30 * 1440))
+  go_entry zz/abcd-a 1 $((30 * 1440))
+  go_entry 0a/ABCD-a 1 $((30 * 1440))
+  mkdir -p "$BATS_TEST_TMPDIR/outside/dir"
+  echo target >"$BATS_TEST_TMPDIR/outside/0c000001-a"
+  echo target >"$BATS_TEST_TMPDIR/outside/dir/0d000001-a"
+  touch -d '30 days ago' "$BATS_TEST_TMPDIR/outside/0c000001-a" "$BATS_TEST_TMPDIR/outside/dir/0d000001-a"
+  mkdir -p "$GC/0c"
+  ln -s "$BATS_TEST_TMPDIR/outside/0c000001-a" "$GC/0c/0c000001-a"
+  ln -s "$BATS_TEST_TMPDIR/outside/dir" "$GC/0d"
+  touch -h -d '30 days ago' "$GC/0c/0c000001-a" "$GC/0d"
+}
+
+# Whether what ten_old_two_new made that is not an entry is all there.
+not_entries_kept() {
+  local path
+  for path in README trim.txt testexpire.txt 0a/notes.txt zz/abcd-a 0a/ABCD-a; do
+    [[ -f $GC/$path ]] || { echo "$path is gone" >&2; return 1; }
+  done
+  [[ -L $GC/0c/0c000001-a && -L $GC/0d ]] || { echo "a link is gone" >&2; return 1; }
+  [[ -f $BATS_TEST_TMPDIR/outside/0c000001-a && -f $BATS_TEST_TMPDIR/outside/dir/0d000001-a ]] ||
+    { echo "a link's target is gone" >&2; return 1; }
+}
+
+@test "over its cap, team-janitor disk trims the Go build cache to 80% of it, least recently used first, keeping recent entries and what is not an entry" {
+  ten_old_two_new
+  local before cap after i
+  before=$(gc_kb)
+  # 1000 KB over the cap, so the trim to 80% of it takes the five oldest entries.
+  cap=$((before - 1000))
+  go_cap "$cap"
+  # The newest of the five it removes.
+  local since
+  since=$(used_at 05/05000005-a)
+
+  run_bin -0 --separate-stderr team-janitor disk
+  after=$(gc_kb)
+  assert_equal "$stderr" ""
+  assert_equal "$output" \
+    "trimmed the Go build cache $GC from $(mb "$before") to $(mb "$after"): 5 entries unused since $since"
+  ((after <= cap * 80 / 100))
+  [[ ! -e $GC/0a/0a000001-d ]]
+  for i in 2 3 4 5; do [[ ! -e $GC/0$i/0${i}00000$i-a ]]; done
+  for i in 6 7 8 9; do [[ -f $GC/0$i/0${i}00000$i-a ]]; done
+  [[ -f $GC/0b/0b000010-d && -f $GC/ff/ff000011-a && -f $GC/ff/ff000012-d ]]
+  not_entries_kept
+  grep -Eq "^- [0-9]{2}:[0-9]{2} trimmed the Go build cache $GC from " "$DAY_FILE"
+  assert_equal "$(jq -c .go "$RECORD")" \
+    "{\"path\":\"$GC\",\"kb\":$after,\"cap_kb\":$cap,\"trimmed_today\":{\"entries\":5,\"kb\":$((before - after))},\"over_cap_said\":null}"
+  assert_equal "$(jq .ok "$RECORD")" true
+
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "Go build cache $(mb "$after") of its $(mb "$cap") cap at $GC; 0 job tmps cleared today (0 MB)"
+  run_bin -0 team-janitor disk status --json
+  assert_equal "$(jq -c .go <<<"$output")" \
+    "{\"path\":\"$GC\",\"kb\":$after,\"cap_kb\":$cap,\"over_cap\":false,\"trimmed_today\":{\"entries\":5,\"kb\":$((before - after))},\"none\":null}"
+
+  # Under the cap now, a second run trims nothing, and the day's total stands.
+  run_bin -0 team-janitor disk
+  assert_equal "$output" ""
+  assert_equal "$(jq -c .go.trimmed_today "$RECORD")" "{\"entries\":5,\"kb\":$((before - after))}"
+}
+
+@test "at or under its cap, the Go build cache is left whole and the run prints nothing; status says it against the cap" {
+  ten_old_two_new
+  local kb
+  kb=$(gc_kb)
+  go_cap "$kb"
+
+  run_bin -0 --separate-stderr team-janitor disk
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  assert_equal "$(gc_kb)" "$kb"
+  [[ -d $GC/0a/0a000001-d ]]
+  [[ ! -e $DAY_FILE ]]
+  assert_equal "$(jq -c .go "$RECORD")" \
+    "{\"path\":\"$GC\",\"kb\":$kb,\"cap_kb\":$kb,\"trimmed_today\":{\"entries\":0,\"kb\":0},\"over_cap_said\":null}"
+
+  # Status measures the cache now, so a lower cap reads as over it, changing nothing.
+  local before
+  before=$(files_state)
+  TEAM_GO_CACHE_CAP_KB=1024 run_bin -0 team-janitor disk status
+  assert_equal "$output" "Go build cache $(mb "$kb") of its 1 MB cap at $GC; 0 job tmps cleared today (0 MB)"
+  TEAM_GO_CACHE_CAP_KB=1024 run_bin -0 team-janitor disk status --json
+  assert_equal "$(jq -c '.go | {kb, cap_kb, over_cap}' <<<"$output")" "{\"kb\":$kb,\"cap_kb\":1024,\"over_cap\":true}"
+  assert_equal "$(files_state)" "$before"
+  assert_equal "$(gc_kb)" "$kb"
+  # With its default cap, the line says 10.0 GiB.
+  unset TEAM_GO_CACHE_CAP_KB
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "Go build cache $(mb "$kb") of its 10.0 GiB cap at $GC; 0 job tmps cleared today (0 MB)"
+}
+
+@test "when only recently used entries keep the Go build cache over its cap, the run says so once a local day, failing nothing" {
+  local i
+  go_cache
+  go_entry 01/01000001-a 400 $((3 * 1440))
+  go_entry 02/02000002-a 400 $((2 * 1440))
+  for i in 3 4 5 6 7 8; do go_entry "0$i/0${i}00000$i-a" 400 30; done
+  local before cap since after
+  before=$(gc_kb)
+  # Removing both old entries still leaves it over the cap.
+  cap=$((before - 4 * 400))
+  go_cap "$cap"
+  since=$(used_at 02/02000002-a)
+
+  run_bin -0 --separate-stderr team-janitor disk
+  after=$(gc_kb)
+  assert_equal "$stderr" ""
+  assert_equal "$output" "trimmed the Go build cache $GC from $(mb "$before") to $(mb "$after"): 2 entries unused since $since
+the Go build cache $GC holds $(mb "$after"), over its $(mb "$cap") cap, the rest used in the last 2 h; kept"
+  for i in 3 4 5 6 7 8; do [[ -f $GC/0$i/0${i}00000$i-a ]]; done
+  grep -Fq "over its $(mb "$cap") cap, the rest used in the last 2 h; kept" "$DAY_FILE"
+  assert_equal "$(jq -r .go.over_cap_said "$RECORD")" "$(date +%F)"
+  assert_equal "$(jq .ok "$RECORD")" true
+
+  # Said once a day: the next run is quiet.
+  run_bin -0 team-janitor disk
+  assert_equal "$output" ""
+  assert_equal "$(jq -r .go.over_cap_said "$RECORD")" "$(date +%F)"
+  run_bin -0 team-janitor disk status --json
+  assert_equal "$(jq .go.over_cap <<<"$output")" true
+
+  # Said on an earlier day: said again.
+  jq '.go.over_cap_said = "2026-01-01"' "$RECORD" >"$RECORD.edit"
+  mv "$RECORD.edit" "$RECORD"
+  run_bin -0 team-janitor disk
+  assert_equal "$output" "the Go build cache $GC holds $(mb "$after"), over its $(mb "$cap") cap, the rest used in the last 2 h; kept"
+
+  # TEAM_GO_CACHE_KEEP_MINUTES replaces the 2 hours: kept for 10 minutes only, the rest may go.
+  TEAM_GO_CACHE_KEEP_MINUTES=10 run_bin -0 team-janitor disk
+  assert_contains "$output" "trimmed the Go build cache $GC from "
+  (($(gc_kb) <= cap * 80 / 100))
+}
+
+@test "a directory without Go's README is not trimmed: the run names it, exits 1, and the job part still runs" {
+  launch T9 builder abab0001
+  job abab0001
+  mkdir -p "$GC/01"
+  head -c 409600 /dev/zero >"$GC/01/01000001-a"
+  touch -d '3 days ago' "$GC/01/01000001-a"
+  go_cap 1
+
+  run_bin -1 --separate-stderr team-janitor disk
+  assert_equal "$output" "cleared the job tmp of T9's builder abab0001 (2 MB; not listed by Claude Code)"
+  assert_equal "$stderr" "team-janitor: $GC is not a Go build cache (no Go README); not trimmed"
+  [[ -f $GC/01/01000001-a ]]
+  assert_equal "$(jq -c '{ok, path: .go.path}' "$RECORD")" '{"ok":false,"path":null}'
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "no Go build cache at $GC (no Go README); 1 job tmp cleared today (2 MB)"
+
+  # A README of another first line is no Go README either.
+  go_cache "This directory holds something else."
+  run_bin -1 --separate-stderr team-janitor disk
+  assert_equal "$stderr" "team-janitor: $GC is not a Go build cache (no Go README); not trimmed"
+  [[ -f $GC/01/01000001-a ]]
+}
+
+@test "a session list that cannot be read still lets the Go part trim, and the run exits 1" {
+  launch T9 builder abab0002
+  job abab0002
+  touch "$BATS_TEST_TMPDIR/agents.fail"
+  go_cache
+  go_entry 01/01000001-a 400 $((3 * 1440))
+  go_entry 02/02000002-a 400 $((2 * 1440))
+  go_cap $(($(gc_kb) - 400))
+
+  run_bin -1 --separate-stderr team-janitor disk
+  assert_contains "$output" "trimmed the Go build cache $GC from "
+  assert_contains "$stderr" "so no job tmp was cleared"
+  kept abab0002
+  [[ ! -e $GC/01/01000001-a ]]
+  assert_equal "$(jq -c '{ok, entries: .go.trimmed_today.entries}' "$RECORD")" '{"ok":false,"entries":2}'
+}
+
+@test "team-janitor disk --dry-run says what it would trim and removes nothing" {
+  ten_old_two_new
+  local before cap old i
+  before=$(gc_kb)
+  cap=$((before - 1000))
+  go_cap "$cap"
+  # The five oldest entries' kilobytes, as the trim counts them.
+  old=$(du -sk "$GC/0a/0a000001-d" "$GC"/0[2-5]/0[2-5]00000[2-5]-a | awk '{ kb += $1 } END { print kb }')
+  local since
+  since=$(used_at 05/05000005-a)
+
+  run_bin -0 --separate-stderr team-janitor disk --dry-run
+  assert_equal "$stderr" ""
+  assert_equal "$output" "would trim the Go build cache $GC from $(mb "$before") to $(mb $((before - old))): 5 entries unused since $since"
+  assert_equal "$(gc_kb)" "$before"
+  for i in 2 3 4 5; do [[ -f $GC/0$i/0${i}00000$i-a ]]; done
+  [[ ! -e $STATE ]]
+}
+
+@test "the Go build cache is TEAM_GO_CACHE, else go env GOCACHE, else Go's default; off, empty or missing is no Go build cache and no failure" {
+  stub_command go
+  stub_script go <<'STUB'
+if [[ $* == 'env GOCACHE' ]]; then
+  [[ ! -e $BATS_TEST_TMPDIR/go.fail ]] || exit 1
+  cat "$BATS_TEST_TMPDIR/gocache"
+  exit 0
+fi
+exit 3
+STUB
+  go_cache
+  echo "$BATS_TEST_TMPDIR/from-go-env" >"$BATS_TEST_TMPDIR/gocache"
+
+  # TEAM_GO_CACHE wins over go env.
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "Go build cache $(mb "$(gc_kb)") of its 10.0 GiB cap at $GC; 0 job tmps cleared today (0 MB)"
+  # Set but empty, it is off.
+  TEAM_GO_CACHE='' run_bin -0 team-janitor disk status
+  assert_equal "$output" "no Go build cache (GOCACHE is off); 0 job tmps cleared today (0 MB)"
+
+  unset TEAM_GO_CACHE
+  echo "$GC" >"$BATS_TEST_TMPDIR/gocache"
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "Go build cache $(mb "$(gc_kb)") of its 10.0 GiB cap at $GC; 0 job tmps cleared today (0 MB)"
+  # go env names the cache the run trims too.
+  go_entry 01/01000001-a 400 $((3 * 1440))
+  go_entry 02/02000002-a 400 $((2 * 1440))
+  TEAM_GO_CACHE_CAP_KB=$(($(gc_kb) - 400)) run_bin -0 team-janitor disk
+  assert_contains "$output" "trimmed the Go build cache $GC from "
+  [[ ! -e $GC/01/01000001-a ]]
+
+  echo off >"$BATS_TEST_TMPDIR/gocache"
+  run_bin -0 --separate-stderr team-janitor disk
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  run_bin -0 team-janitor disk status --json
+  assert_equal "$(jq -c .go <<<"$output")" \
+    '{"path":null,"kb":null,"cap_kb":10485760,"over_cap":false,"trimmed_today":{"entries":2,"kb":'"$(jq .go.trimmed_today.kb "$RECORD")"'},"none":"no Go build cache (GOCACHE is off)"}'
+  : >"$BATS_TEST_TMPDIR/gocache"
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "no Go build cache (GOCACHE is off); 0 job tmps cleared today (0 MB)"
+
+  # Where go env does not answer, Go's own default: GOCACHE, else the user cache directory.
+  touch "$BATS_TEST_TMPDIR/go.fail"
+  stub_command uname
+  stub_reply uname Linux
+  GOCACHE=$GC run_bin -0 team-janitor disk status
+  assert_equal "$output" "Go build cache $(mb "$(gc_kb)") of its 10.0 GiB cap at $GC; 0 job tmps cleared today (0 MB)"
+  XDG_CACHE_HOME=$BATS_TEST_TMPDIR/xdg run_bin -0 --separate-stderr team-janitor disk
+  assert_equal "$output" ""
+  assert_equal "$stderr" ""
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "no Go build cache at $HOME/.cache/go-build; 0 job tmps cleared today (0 MB)"
+  XDG_CACHE_HOME=$BATS_TEST_TMPDIR/xdg run_bin -0 team-janitor disk status
+  assert_equal "$output" "no Go build cache at $BATS_TEST_TMPDIR/xdg/go-build; 0 job tmps cleared today (0 MB)"
+  as_macos
+  run_bin -0 team-janitor disk status
+  assert_equal "$output" "no Go build cache at $HOME/Library/Caches/go-build; 0 job tmps cleared today (0 MB)"
+}
+
+@test "the Go cap and keep window are whole numbers" {
+  TEAM_GO_CACHE_CAP_KB=10G run_bin -1 team-janitor disk
+  assert_contains "$output" "TEAM_GO_CACHE_CAP_KB is '10G', not a whole number of kilobytes"
+  TEAM_GO_CACHE_CAP_KB=10G run_bin -1 team-janitor disk status
+  assert_contains "$output" "TEAM_GO_CACHE_CAP_KB is '10G'"
+  TEAM_GO_CACHE_KEEP_MINUTES=2h run_bin -1 team-janitor disk
+  assert_contains "$output" "TEAM_GO_CACHE_KEEP_MINUTES is '2h', not a whole number of minutes"
 }
