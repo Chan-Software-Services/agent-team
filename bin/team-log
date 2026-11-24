@@ -59,9 +59,9 @@
 # message that is no Discord id, and when no approval stands. On a topic task (path topic,
 # team-topic's), which has no plan, PR or merge, plan-approved, plan-approval-withdrawn,
 # merge-approved and merge-preapproved are refused first, "T<n> is a topic, which has no plan or
-# PR, so it takes no <kind>", so no word of Daniel's is ever logged on a topic. A kind the contract
-# marks retired is refused before anything else but that is read, logging nothing, with its
-# reason: merge-preapproved,
+# PR, so it takes no <kind>", so no plan approval or merge word is ever logged on a topic. A kind
+# the contract marks retired is refused before anything else but that is read, logging nothing,
+# with its reason: merge-preapproved,
 # merge-preapproval-withdrawn, merge-standing and merge-standing-withdrawn, retired by T276, since
 # the approved plan is the merge word, which merge-default-withdrawn withdraws; --check still passes
 # the lines logged before. A merge-default-withdrawn, Daniel's withdrawal of the default merge word,
@@ -325,8 +325,8 @@ check_event() {
 event=$1
 shift
 
-# A topic (is_topic in bin/lib/ledger.jq) has no plan, PR or merge, so no word of Daniel's is ever
-# logged on it, whatever its thread says: the four words' kinds are refused first.
+# A topic (is_topic in bin/lib/ledger.jq) has no plan, PR or merge, so no plan approval or merge
+# word is ever logged on it, whatever its thread says: those kinds are refused first.
 case $event in
   plan-approved | plan-approval-withdrawn | merge-approved | merge-preapproved)
     task_events_once
