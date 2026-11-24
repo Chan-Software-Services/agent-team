@@ -1759,11 +1759,11 @@ def task_state($sessions; $home):
 # ("checks <state>", checks_wait's), the PR's place in the merge queue while it stands in it
 # ("in the merge queue since <ts>, team-merge is waiting", or ", no team-merge waits on it: run
 # team-merge T<n>", the pr's queued), the words on the PR, the walk, a stow under way, and last
-# the standing parks:
+# the standing parks; a phase that only says the path again, as the snapshot's topic, is said once:
 # T14 agent-team feature building | T14-builder idle 302k on build-04 | tickets 3/7, graph stale | review 4 findings, sent back 5, 6 | PR #5 a1b2c3d 16 behind dev checks 2/2 agent-review missing
 def state_line:
   .task as $task
-  | ([.task, .project, .path, .phase] | map(select(. != null)) | join(" "))
+  | ([.task, .project, .path] + if .phase == .path then [] else [.phase] end | map(select(. != null)) | join(" "))
   + " | "
   + ([.workers[] | select(.live)
       | "\(.name // "\($task)-\(.role)") \(.status)" + (if .state == null or .state == "working" then "" else " \(.state)" end)
@@ -2499,7 +2499,8 @@ def snapshot_denials:
 # resource level ($level, team-level status --json's object or {error}), the withdrawals of the
 # default merge word that stand ($withdrawn, default_withdrawals' list), the session list, each
 # registered project's open PRs ($prs), the current items ($items) and the production checks' last
-# results ($production, team-uptime status --json's object or {error}). It carries $level as level,
+# results ($production, team-uptime status --json's object or {error}). A topic's state carries
+# "topic" in place of its phase, since no event moves a topic's. It carries $level as level,
 # the open tasks stowed, waiting to resume, as awaiting_resume, the resources_line as resources
 # (null when $level is {error}), $production as production, the open tasks' denials of the last
 # day (snapshot_denials) as denials, and $queue (team-queue list --json's object, {error}, or null
@@ -2508,7 +2509,7 @@ def snapshot($tasks; $states; $level; $withdrawn; $sessions; $prs; $items; $prod
   team_sessions($tasks; $sessions) as $team
   | ($tasks | awaiting_resume) as $stowed
   | {schema: "team-snapshot/1",
-     tasks: $states,
+     tasks: [$states[] | if .path == "topic" then .phase = "topic" else . end],
      level: $level,
      awaiting_resume: $stowed,
      resources: resources_line($level; $stowed),
@@ -2636,11 +2637,17 @@ def default_may_hold: by_task | any(.[]; is_open and phase == "awaiting-merge" a
 
 # The following defs serve team-inbox, a task's events as an array, then every ledger event as one.
 
+# Whether the task is a topic, the assistant's conversation with Daniel on one topic (team-topic):
+# its latest opened's path is topic. Over a task's events as an array.
+def is_topic: (map(select(.event == "opened")) | last | .path) == "topic";
+
 # Whether the task's latest interview thread still holds an interview: no planner's done and no
-# plan-approved logged after its interview-thread.
+# plan-approved logged after its interview-thread; a topic's holds from its interview-thread to its
+# close, since its session logs no planner's done, so is_open alone ends it.
 def interview_under_way:
   latest_index("interview-thread") as $i
-  | $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not);
+  | $i >= 0 and (is_topic
+    or all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not));
 
 # Whether the event is a merge-approved naming the PR $pr (one of task_prs) at its head: its url is
 # the PR's, a trailing slash aside, and its head the PR's, or none, as a legacy line.
@@ -2697,7 +2704,8 @@ def blocked_on_counts:
 # merge ({key: "pr <url, its trailing slash dropped>", kind: "pr", task, title, url}), as
 # merge_ready_prs has them over $own (own_projects' {projects, app}, or null),
 # then the interviews under way ({key: "interview <task> <thread>", kind: "interview", task, title,
-# thread}), none whose walk is on in that thread, which the walks list, then the walks under way
+# thread}, and topic: true for a topic's, its thread while the topic is open, which holds no task),
+# none whose walk is on in that thread, which the walks list, then the walks under way
 # ({key: "walk <task> <its start's ts>", kind: "walk", task, title, thread (the thread it runs in,
 # or null)}), then the asks of both lists of current items, $notes' of kind ask ({key: "note <id>",
 # kind: "note", task (T<n> or -), title: null, id (team-current's), text, where, list (coordinator
@@ -2707,7 +2715,7 @@ def blocked_on_counts:
 # while the item holds its task (an ask no launch went past, a PR ready to merge, an interview or a
 # walk under way), tasks is 1 for it and 1 for each other open task blocked on it
 # (blocked_on_counts) and tickets its ready tickets, $tickets' count for it ({"T<n>": n}, 0 when it
-# has none), else both are 0, as for a note, which holds no task; prs is 1 for a PR ready to merge
+# has none), else both are 0, as for a note or a topic, which hold no task; prs is 1 for a PR ready to merge
 # and for an ask whose text names one of its task's PRs not merged, else 0. withdrawn: the
 # withdrawals of the default merge word that stand (default_withdrawals), in ledger order; owed: the
 # replies owed to Daniel, $notes' of kind owe, as {task, text, where, list}. $notes is both lists'
@@ -2744,8 +2752,10 @@ def inbox_items($own; $notes; $tickets):
       + [.[] | select(.events | interview_under_way and (qc_walk.thread != "interview"))
         | (.events | map(select(.event == "interview-thread")) | last) as $interview
         | ($interview.discord_thread | tostring) as $thread
-        | {key: "interview \(.task) \($thread)", kind: "interview", task, title, thread: $thread, since: $interview.ts,
-           unblocks: unblocks(.task; true; 0)}]
+        | (.events | is_topic) as $topic
+        | {key: "interview \(.task) \($thread)", kind: "interview", task, title, thread: $thread}
+          + (if $topic then {topic: true} else {} end)
+          + {since: $interview.ts, unblocks: unblocks(.task; $topic | not; 0)}]
       + [.[] | (.events | qc_walk) as $walk | select($walk != null)
         | (if $walk.thread == "interview" then "interview-thread" else "thread" end) as $kind
         | {key: "walk \(.task) \($walk.since)", kind: "walk", task, title,
@@ -2784,7 +2794,8 @@ def waiting_rank: [.unblocks // {} | .[] | numbers] | add // 0;
 # which Discord and GitHub both renumber, and every URL in <>, which keeps Discord from showing a
 # preview card for it: an ask linked to the question's message in guild $guild (null when unknown),
 # to the task's thread when either is unknown, and to nothing with no thread; a PR, "ready to
-# merge", with its URL; an interview, "interview under way", with its thread; a walk, "walk under
+# merge", with its URL; an interview, "interview under way", with its thread, or a topic's, "topic
+# under way"; a walk, "walk under
 # way", with the thread it runs in, or nothing with none; an ask of a list of current items with
 # "Assistant: " first when it is the assistant's, its task unless -, and its where when that is a
 # URL (note_text); then what its answer unblocks, " - unblocks <n>", n being its unblocks' sum, and
@@ -2806,6 +2817,7 @@ def waiting_line($guild):
     elif .kind == "pr" then "\(named): ready to merge <\(.url)>"
     elif .kind == "note" then note_text
     elif .kind == "walk" then "\(named): walk under way" + if .thread == null then "" else " <#\(.thread)>" end
+    elif .topic then "\(named): topic under way <#\(.thread)>"
     else "\(named): interview under way <#\(.thread)>" end
   + " - unblocks \(waiting_rank)" + if $parts == "" then "" else " (\($parts))" end;
 

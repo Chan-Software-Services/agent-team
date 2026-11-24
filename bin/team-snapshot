@@ -8,7 +8,8 @@
 # Open tasks are those with events and no closed, in task number order, each as its team-state
 # line, which carries its progress (the brief each live worker is on, the tickets done of its
 # total, the latest review and how far its PR is behind its base), so the coordinator's
-# session-start digest shows where each task is. After them, one line for each open task whose
+# session-start digest shows where each task is; an open topic (path topic, team-topic's), whose
+# phase no event moves, shows "topic" in place of its phase, "T5 agent-team topic | T5-topic idle". After them, one line for each open task whose
 # latest pass's checks no wait has ended (team-state's checks_wait waiting or pending): "Checks
 # waits to arm unless running: team-next T<n> --ci (<url> at <short>, since <ts>)", none when there
 # is none. The resources line follows, as the list
@@ -47,8 +48,9 @@
 # line with no tasks/queued/. Text lines are cut at 120 columns, an open task's, the resources
 # line, the Production line, the denials line, a waiting line, an item and the queue's line at
 # 200, and the text form shows the first 40 items, then how many more.
-# With --json, the versioned snapshot (schema team-snapshot/1): tasks (each team-state's JSON, or
-# {task, error} when its state could not be told, as for a PR naming an unregistered project),
+# With --json, the versioned snapshot (schema team-snapshot/1): tasks (each team-state's JSON, a
+# topic's with phase "topic", or {task, error} when its state could not be told, as for a PR naming
+# an unregistered project),
 # level (team-level status --stored --json's object, or {error} with the last line team-level said
 # when it fails, which the text says as "Resources unreadable: <error>"), awaiting_resume (the open
 # tasks stowed, waiting to resume, in task number order), resources (the resources line, null when

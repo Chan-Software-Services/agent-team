@@ -161,6 +161,40 @@ $RANKED"
 $RANKED"
 }
 
+@test "an open topic is one item, topic under way in its thread, keyed as an interview and counting 0, from its interview-thread to its close" {
+  jq -nc '{ts: "2026-10-01T10:00:00Z", task: "T12", event: "opened", project: "agent-team", path: "topic",
+    type: "research", title: "Twelve", branch: "research/T12-twelve", base: "dev", base_sha: "0123456",
+    worktree: "/w/T12", discord_message: "1564000000000000012", discord_channel: "1562486564871995482"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  opened T9 "Nine" >>"$TEAM_HOME/ledger.jsonl"
+  log_events '{"task":"T9","event":"interview-thread","discord_thread":"9999"}'
+  # Before its thread, a topic waits on nothing.
+  run_bin -0 team-inbox
+  assert_equal "$output" "wrote waiting.md: 1 item"
+  log_events '{"task":"T12","event":"interview-thread","discord_thread":"1212"}' \
+    '{"task":"T12","event":"launch","role":"topic","session":"abcd1234","name":"T12-topic"}'
+  run_bin -0 --separate-stderr team-inbox
+  assert_equal "$output" "wrote waiting.md: 2 items"
+  assert_equal "$stderr" ""
+  # It holds no task, so it ranks after the interview that does.
+  assert_equal "$(waiting_items_shown)" "- **1** T9 Nine: interview under way <#9999> - unblocks 1 (1 task)
+- **2** T12 Twelve: topic under way <#1212> - unblocks 0
+$RANKED"
+  assert_equal "$(jq -c '.items[1]' "$TEAM_HOME/waiting.json")" \
+    '{"n":2,"key":"interview T12 1212","kind":"interview","task":"T12","title":"Twelve","thread":"1212","topic":true,"since":"2026-10-01T11:00:00Z","unblocks":{"tasks":0,"tickets":0,"prs":0},"line":"- **2** T12 Twelve: topic under way <#1212> - unblocks 0"}'
+  run_bin -0 team-inbox --item 2
+  assert_equal "$output" "interview T12 1212"
+  # A done of its session or of a planner ends no topic, as it ends an interview; its close does.
+  log_events '{"task":"T12","event":"done","role":"topic","session":"abcd1234"}' \
+    '{"task":"T12","event":"done","role":"planner","session":"abcd1234"}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown | sed -n 2p)" "- **2** T12 Twelve: topic under way <#1212> - unblocks 0"
+  log_events '{"task":"T12","event":"closed","archive":[],"returned":[],"kept":[]}'
+  run_bin -0 team-inbox
+  assert_equal "$(waiting_items_shown)" "- **1** T9 Nine: interview under way <#9999> - unblocks 1 (1 task)
+$RANKED"
+}
+
 # The id team-current gives an item line: the first 6 hex digits of the sha256 of the line without
 # its "- ".
 item_id() {

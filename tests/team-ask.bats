@@ -289,6 +289,21 @@ EOF
   assert_equal "$(logged)" ""
 }
 
+@test "a topic task is asked nothing, since its questions are its own, in its thread, and nothing is posted or logged" {
+  printf '%s\n' \
+    '{"ts":"2026-10-01T10:00:06Z","task":"T10","event":"opened","project":"agent-team","path":"topic","type":"research","title":"t","branch":"research/T10-t","base":"dev","base_sha":"0123456","worktree":"/w/10","discord_message":"1563000000000000010","discord_channel":"1563000000000000011"}' \
+    '{"ts":"2026-10-01T10:00:07Z","task":"T10","event":"interview-thread","discord_thread":"4444"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  local before
+  before=$(cat "$TEAM_HOME/ledger.jsonl")
+  run_bin -1 team-ask T10 sign-in --file "$BATS_TEST_TMPDIR/q.md"
+  assert_equal "$output" "team-ask: T10 is a topic: its questions are its own, in its thread"
+  run_bin -1 team-ask T10 run --file "$BATS_TEST_TMPDIR/q.md" --script "$BATS_TEST_TMPDIR/q.md"
+  assert_equal "$output" "team-ask: T10 is a topic: its questions are its own, in its thread"
+  assert_equal "$(stub_calls curl)" ""
+  assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" "$before"
+}
+
 @test "a malformed command line is a usage error, and nothing is posted or logged" {
   local args
   for args in "" "T7" "T7 sign-in" "T7 sign-in --file" "7 sign-in --file q.md" "T7 --file q.md" \
