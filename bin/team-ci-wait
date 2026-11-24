@@ -530,8 +530,8 @@ tick() {
 # The classes, as jq definitions over a look, with $stuck and $queued the names of the checks that
 # ran out their clocks, $jobs each Actions job read by its id, $fetched the ids of the jobs whose
 # failing step's log shows apt could not fetch the runner's packages (apt_fetch_failed), when the
-# change touches nothing under .github/ (change_touches_ci), $repo, and the mode's $whose and
-# $again. unpassed is each check
+# change touches neither .github/ nor a path the step names and its paths could be read in full
+# (change_touches_ci), $repo, and the mode's $whose and $again. unpassed is each check
 # that did not pass, failed, cancelled, stuck or queued, with its run_id and job_id from its Actions
 # job link (else null) and shards, the names of the checks of its run, failed, cancelled, stuck or
 # queued, that make a failed or cancelled check a roll-up of them. classed is each of them as
