@@ -18,8 +18,8 @@
 # naming none of team-worker, team-load-check, ui-capture, AGENT_TEAM_, GH_CONFIG_DIR, GH_TOKEN,
 # GITHUB_TOKEN, --steal, team-ask, team-answer, team-inbox, team-thread, team-run-approved, curl,
 # wget, kill (pkill, killall and tmux's kill-server among it), fuser, -delete, push with an f after
-# a dash or a +, .config/agent-team, .claude/channels, discord and rm as a word of its own (git rm
-# among it), nor env or exec before an option, nor, for the assistant alone (AGENT_TEAM_ROLE
+# a dash or a +, .config/agent-team, .claude/channels, discord, and rm and docker as words of their
+# own (git rm among them), nor env or exec before an option, nor, for the assistant alone (AGENT_TEAM_ROLE
 # assistant), the coordinator's acts' names (team-checkpoint, team-handoff, team-ops-end,
 # team-records-rewrite, team-resume, team-review-comment, team-stow, claude-coordinator,
 # team-capacity, team-config, team-heavy, team-lease, team-secrets, team-stack and team-timers), gh
@@ -44,7 +44,8 @@
 # cat, grep or jq by its bare name, or anything but a plain list of them joined by |, &&, || and ;),
 # an upload of a file or body to a host outside the team's own (as bin/lib/outbound.py reads it), a
 # worker's or the assistant's force push or cd into the team's keys' or the Discord bot's
-# directories, a kill that reaches what is not the session's own (by name or pattern, tmux's kill-*,
+# directories, a planner's, builder's or reviewer's docker run or docker create past docker's global
+# options (a container started by hand, which outlives the session), a kill that reaches what is not the session's own (by name or pattern, tmux's kill-*,
 # of PIDs read from input, of a PID it cannot read, of a process group, of a literal PID whose
 # process is not proven its own; bin/lib/kill_rules.py), and a recursive delete that reaches what is
 # not the worker's own (outside the worktree and the job's tmp, either of them or its .scratch/task,
@@ -113,7 +114,7 @@ assistant_words=
   $text == *curl* || $text == *wget* || $text == *kill* || $text == *fuser* || $text == *-delete* ||
   ($text == *push* && ($text == *-*f* || $text == *+*)) ||
   $text == *.config/agent-team* || $text == *.claude/channels* || $text == *discord* ||
-  $text =~ (^|[^[:alnum:]_.-])rm([^[:alnum:]_.-]|$) ||
+  $text =~ (^|[^[:alnum:]_.-])rm([^[:alnum:]_.-]|$) || $text =~ (^|[^[:alnum:]_.-])docker([^[:alnum:]_.-]|$) ||
   $text == *env*[[:space:]]-* || $text == *exec*[[:space:]]-* ||
   (-n $assistant_words && $text =~ $assistant_words) ||
   $command == *"\$'"* || $command == *\{*,*\}* || $command == *\{*..*\}* ||
