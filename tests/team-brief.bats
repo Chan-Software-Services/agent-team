@@ -1978,7 +1978,7 @@ odd_names_branch() {
   mkdir -p "$TEAM_HOME/tasks/T20"
   event T20 opened "$(jq -cn --arg wt "$HOME/agent-team/.claude/worktrees/3" '{project: "home", path: "topic",
     type: "research", title: "the interfaces", branch: "research/T20-interfaces", base: "main", base_sha: "aba9d074",
-    worktree: $wt, discord_message: "1574454112324419625", discord_channel: "1561234567890123456"}')"
+    worktree: $wt, discord_message: "1564000000000000514", discord_channel: "1561234567890123456"}')"
   event T20 interview-thread '{discord_thread: "1565400000000000020"}'
   run_bin -0 team-brief T20 resume --name resume-topic --set role=topic \
     --set "brief=~/agent-team-records/tasks/T20/brief.md" --set "from=the handoff from home-pc at 2026-11-24T14:05:00Z" \

@@ -2151,7 +2151,7 @@ walk_note_at() {
 topic() {
   event "$1" opened "{project: \"proj\", path: \"topic\", type: \"research\", title: \"Interfaces\",
     branch: \"research/$1-interfaces\", base: \"main\", base_sha: \"0123456\", worktree: \"/w/1\",
-    discord_message: \"1574454112324419625\", discord_channel: \"1561234567890123456\"}"
+    discord_message: \"1564000000000000514\", discord_channel: \"1561234567890123456\"}"
   event "$1" interview-thread '{discord_thread: "1571111111111111111"}'
   launch "$1" topic 4f2a9c1e
 }

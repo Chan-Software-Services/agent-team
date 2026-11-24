@@ -250,7 +250,7 @@ stack_exists() {
 # its thread's wait on Daniel.
 as_topic() {
   jq -c --arg t "$1" 'if .task != $t then .
-    elif .event == "opened" then . + {path: "topic", type: "research", discord_message: "1574454112324419625",
+    elif .event == "opened" then . + {path: "topic", type: "research", discord_message: "1564000000000000514",
       discord_channel: "1561234567890123456"}
     elif .event == "launch" then .role = "topic" else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
   mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"

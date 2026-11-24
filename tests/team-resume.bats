@@ -797,7 +797,7 @@ EVENTS
 # path topic, its launch of the role topic, and its live session T1-topic.
 as_topic() {
   jq -c 'if .task != "T1" then .
-    elif .event == "opened" then . + {path: "topic", type: "research", discord_message: "1574454112324419625",
+    elif .event == "opened" then . + {path: "topic", type: "research", discord_message: "1564000000000000514",
       discord_channel: "1561234567890123456"}
     elif .event == "launch" then .role = "topic" else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/ledger.next"
   mv "$TEAM_HOME/ledger.next" "$TEAM_HOME/ledger.jsonl"

@@ -76,7 +76,7 @@ STUB
   # A reading of the machine with room for every launch.
   capacity_room $((16 * 1073741824))
   about=$BATS_TEST_TMPDIR/about.md
-  printf '%s\n' "Daniel wants to design the Instagram ingest: what to pull, how often, where it lands." >"$about"
+  printf '%s\n' "Daniel wants to design the release checklist: what it checks, when it runs, where it reports." >"$about"
 }
 
 # Print the id of a new message of Daniel's (757) in <channel>, sent a minute ago, whose id holds
@@ -114,24 +114,24 @@ thread_posts() {
   local daniel
   daniel=$(word "$ASKED_IN")
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$output" "T1 topic open in <#1563000000000000001>: session 4f2a9c1e"
   assert_equal "$stderr" ""
 
   assert_equal "$(events opened | jq -c '{task, project, path, type, title, branch, discord_message, discord_channel}')" \
     "$(jq -cn --arg m "$daniel" --arg c "$ASKED_IN" '{task: "T1", project: "proj", path: "topic", type: "research",
-      title: "The Instagram ingest", branch: "research/T1-instagram-ingest", discord_message: $m, discord_channel: $c}')"
+      title: "The release checklist", branch: "research/T1-release-checklist", discord_message: $m, discord_channel: $c}')"
   assert_equal "$(events thread)" ""
   assert_equal "$(events interview-thread | jq -r .discord_thread)" "1563000000000000001"
   assert_equal "$(thread_posts)" "https://discord.com/api/v10/channels/$TOPICS/threads"
   assert_equal "$(stub_calls curl | jq -r 'select(any(.[]; . == "POST")) | index("-d") as $i | .[$i + 1] | fromjson | .name')" \
-    "T1 · proj · The Instagram ingest"
+    "T1 · proj · The release checklist"
   assert_equal "$(events launch | jq -c '{role, session, worktree, brief}')" \
     "$(jq -cn --arg wt "$slots/1" '{role: "topic", session: "4f2a9c1e", worktree: $wt, brief: "brief"}')"
   run_bin -0 team-log --check
 
   # The plan, from the topic's template.
-  assert_equal "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "# T1: The Instagram ingest
+  assert_equal "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "# T1: The release checklist
 
 A topic, opened by the assistant on Daniel's word, $(date -u +%F).
 Project: proj.
@@ -142,10 +142,10 @@ No plan, PR or merge: a topic's report goes to the assistant.
 
 ## What Daniel asked for
 
-Daniel wants to design the Instagram ingest: what to pull, how often, where it lands."
+Daniel wants to design the release checklist: what it checks, when it runs, where it reports."
   # The brief, with the about text and the thread, which the session was told to read.
-  assert_equal "$(head -n 1 "$TEAM_HOME/tasks/T1/brief.md")" "# T1 brief (topic): The Instagram ingest"
-  assert_contains "$(cat "$TEAM_HOME/tasks/T1/brief.md")" "Daniel wants to design the Instagram ingest"
+  assert_equal "$(head -n 1 "$TEAM_HOME/tasks/T1/brief.md")" "# T1 brief (topic): The release checklist"
+  assert_contains "$(cat "$TEAM_HOME/tasks/T1/brief.md")" "Daniel wants to design the release checklist"
   assert_contains "$(cat "$TEAM_HOME/tasks/T1/brief.md")" "Discord thread \`1563000000000000001\`"
   assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "--bg") | [.[-2], .[-1]] | join(" ")')" \
     "T1-topic Read your brief at $TEAM_HOME/tasks/T1/brief.md"
@@ -264,22 +264,22 @@ Daniel wants to design the Instagram ingest: what to pull, how often, where it l
   printf '%s\n' '#!/usr/bin/env bash' 'echo "team-thread: Discord did not return a thread id" >&2' 'exit 1' >"$CODE_CHECKOUT/bin/team-thread"
   chmod +x "$CODE_CHECKOUT/bin/team-thread"
   AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-topic open --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_contains "$stderr" "team-thread: Discord did not return a thread id"
-  assert_contains "$stderr" "team-topic: T1 is half open; finish it with: team-topic open --task T1 --daniel $daniel --channel $ASKED_IN --about $about --project proj instagram-ingest The\\ Instagram\\ ingest"
+  assert_contains "$stderr" "team-topic: T1 is half open; finish it with: team-topic open --task T1 --daniel $daniel --channel $ASKED_IN --about $about --project proj release-checklist The\\ release\\ checklist"
   assert_equal "$(events opened | wc -l)" "1"
   assert_equal "$(events interview-thread)" ""
   [[ ! -e $TEAM_HOME/tasks/T1/plan.md ]]
 
   mv -f "$real_thread" "$CODE_CHECKOUT/bin/team-thread"
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$output" "T1 topic open in <#1563000000000000001>: session 4f2a9c1e"
   # A kept plan is not rewritten, and a run once all is done changes nothing but prints the line.
   echo "Daniel's note." >>"$TEAM_HOME/tasks/T1/plan.md"
   cp "$TEAM_HOME/tasks/T1/plan.md" "$BATS_TEST_TMPDIR/plan.before"
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$output" "T1 topic open in <#1563000000000000001>: session 4f2a9c1e"
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "$(cat "$BATS_TEST_TMPDIR/plan.before")"
   assert_equal "$(ls "$TEAM_HOME/tasks")" "T1"
@@ -292,7 +292,7 @@ Daniel wants to design the Instagram ingest: what to pull, how often, where it l
   jq 'map(.state = "stopped")' "$STUB_FIXTURES/agents.json" >"$STUB_FIXTURES/agents.next"
   mv "$STUB_FIXTURES/agents.next" "$STUB_FIXTURES/agents.json"
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$(events launch | wc -l)" "2"
 }
 
@@ -335,16 +335,16 @@ exec "$0.real" "$@"
 SH
   chmod +x "$CODE_CHECKOUT/bin/team-capacity"
   AGENT_TEAM_ROLE=assistant run_bin -75 --separate-stderr team-topic open --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$output" ""
-  assert_equal "$(grep '^team-topic:' <<<"$stderr")" "team-topic: T1 is open with no session yet: no room (team-capacity: no room for session:topic at level minor: 2.0 GiB free of the 6.0 GiB budget); run team-topic open --task T1 --daniel $daniel --channel $ASKED_IN --about $about --project proj instagram-ingest The\\ Instagram\\ ingest again once there is"
+  assert_equal "$(grep '^team-topic:' <<<"$stderr")" "team-topic: T1 is open with no session yet: no room (team-capacity: no room for session:topic at level minor: 2.0 GiB free of the 6.0 GiB budget); run team-topic open --task T1 --daniel $daniel --channel $ASKED_IN --about $about --project proj release-checklist The\\ release\\ checklist again once there is"
   assert_equal "$(events opened | jq -r .task) $(events interview-thread | jq -r .task) $(events launch | wc -l)" "T1 T1 0"
   [[ -e $TEAM_HOME/tasks/T1/plan.md && -e $TEAM_HOME/tasks/T1/brief.md ]]
   run_bin -0 team-log --check
 
   mv -f "$real_capacity" "$CODE_CHECKOUT/bin/team-capacity"
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic open --task T1 --daniel "$daniel" --channel "$ASKED_IN" \
-    --about "$about" --project proj instagram-ingest "The Instagram ingest"
+    --about "$about" --project proj release-checklist "The release checklist"
   assert_equal "$output" "T1 topic open in <#1563000000000000001>: session 4f2a9c1e"
   assert_equal "$(events launch | jq -r .role)" "topic"
 }
@@ -365,14 +365,14 @@ topic_dir() {
 
 @test "the assistant closes a topic: its report filed under the research, the task closed" {
   local dir filed
-  open_topic instagram-ingest "The Instagram ingest"
+  open_topic release-checklist "The release checklist"
   dir=$(topic_dir T1)
-  printf '%s\n' "# T1 report: the Instagram ingest" "" "Decided: pull daily (Daniel, 1574454112324419625)." >"$dir/report.md"
-  filed=$TEAM_HOME/assistant/research/$(events opened | jq -r '.ts[:10]')-T1-instagram-ingest.md
+  printf '%s\n' "# T1 report: the release checklist" "" "Decided: run it daily (Daniel, 1564000000000000514)." >"$dir/report.md"
+  filed=$TEAM_HOME/assistant/research/$(events opened | jq -r '.ts[:10]')-T1-release-checklist.md
   AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-topic close T1
   assert_equal "$output" "T1 closed; report at $filed"
   [[ $stderr != *"team-topic:"* ]]
-  assert_equal "$(cat "$filed")" "$(printf '%s\n' "# T1 report: the Instagram ingest" "" "Decided: pull daily (Daniel, 1574454112324419625).")"
+  assert_equal "$(cat "$filed")" "$(printf '%s\n' "# T1 report: the release checklist" "" "Decided: run it daily (Daniel, 1564000000000000514).")"
   assert_equal "$(ls "$TEAM_HOME/assistant/research")" "$(basename "$filed")"
   assert_equal "$(events closed | jq -r .task)" "T1"
   # team-close archived the task directory and returned the worktree.

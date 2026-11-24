@@ -3635,7 +3635,7 @@ JSON
 open_topic() {
   ledger_line --arg t "$1" --arg wt "$wt1" '{ts: (now | todate), task: $t, event: "opened", project: "proj", path: "topic",
     type: "research", title: "A topic", branch: "research/\($t)-a-topic", base: "main", base_sha: "0123456", worktree: $wt,
-    discord_message: "1574454112324419625", discord_channel: "1570000000000000100"}'
+    discord_message: "1564000000000000514", discord_channel: "1570000000000000100"}'
   [[ ${2:-} == --no-thread ]] ||
     ledger_line --arg t "$1" '{ts: (now | todate), task: $t, event: "interview-thread", discord_thread: "1564"}'
 }

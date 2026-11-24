@@ -259,7 +259,7 @@ reads() {
 
 # Open topic task T9, as team-open logs one: a topic in the ledger.
 topic_opened() {
-  echo '{"ts":"2026-10-01T11:00:00Z","task":"T9","event":"opened","project":"agent-team","path":"topic","type":"research","title":"Instagram ingest","branch":"research/T9-instagram","base":"dev","base_sha":"0123456","worktree":"/w/9","discord_message":"1571000000000000100","discord_channel":"1570965039278596199"}' \
+  echo '{"ts":"2026-10-01T11:00:00Z","task":"T9","event":"opened","project":"agent-team","path":"topic","type":"research","title":"Release checklist","branch":"research/T9-release-checklist","base":"dev","base_sha":"0123456","worktree":"/w/9","discord_message":"1571000000000000100","discord_channel":"1570965039278596199"}' \
     >>"$TEAM_HOME/ledger.jsonl"
 }
 
@@ -271,7 +271,7 @@ topic_opened() {
   assert_contains "$(stub_calls curl)" "\"https://discord.com/api/v10/channels/6666/threads\""
   [[ $(stub_calls curl) != *"channels/$INTERVIEW/"* ]]
   assert_equal "$(stub_calls curl | jq -r 'index("-d") as $i | .[$i + 1] | fromjson | .name')" \
-    "T9 · agent-team · Instagram ingest"
+    "T9 · agent-team · Release checklist"
   assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -c 'del(.ts)')" \
     "{\"task\":\"T9\",\"event\":\"interview-thread\",\"discord_thread\":\"$THREAD\"}"
   run_bin -0 --separate-stderr team-thread T7 --interview

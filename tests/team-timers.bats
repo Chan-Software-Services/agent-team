@@ -1492,7 +1492,7 @@ JSON
   # with a done of its own logged by hand. T4's planner beside it, handed on by its done once its
   # plan is approved, is stopped, so the step ran.
   log_events <<LINES
-T5 {event: "opened", project: "proj", path: "topic", type: "research", title: "Interfaces", branch: "research/T5-interfaces", base: "main", base_sha: "0123456", worktree: "$wt1", discord_message: "1574454112324419625", discord_channel: "1561234567890123456"}
+T5 {event: "opened", project: "proj", path: "topic", type: "research", title: "Interfaces", branch: "research/T5-interfaces", base: "main", base_sha: "0123456", worktree: "$wt1", discord_message: "1564000000000000514", discord_channel: "1561234567890123456"}
 T5 {event: "interview-thread", discord_thread: "1571111111111111111"}
 launch T5 topic 12121212 $wt1
 T5 {event: "paused", reason: "stowed", cause: "stow", role: "topic", session: "12121212"}

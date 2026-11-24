@@ -935,12 +935,12 @@ topic_open_logged() {
   topic_discord
   local word worktree=$slots/1 base_sha
   word=$(topic_word "$TOPIC_THREAD")
-  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research instagram-ingest "The Instagram ingest"
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research release-checklist "The release checklist"
   base_sha=$(git -C "${primary:?}" rev-parse origin/main)
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" --arg home "$TEAM_HOME" \
     --arg m "$word" --arg c "$TOPIC_THREAD" '{
-    task: "T1", project: "proj", path: "topic", title: "The Instagram ingest",
-    branch: "research/T1-instagram-ingest", base: "main", base_sha: $sha, worktree: $wt,
+    task: "T1", project: "proj", path: "topic", title: "The release checklist",
+    branch: "research/T1-release-checklist", base: "main", base_sha: $sha, worktree: $wt,
     task_dir: "\($wt)/.scratch/task", plan: "\($home)/tasks/T1/plan.md", builder_model: "default",
     discord_message: $m, discord_channel: $c}')"
   assert_equal "$(events opened | jq -c '{path, type, discord_message, discord_channel}')" \
