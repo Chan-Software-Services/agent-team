@@ -14,8 +14,8 @@ setup() {
 }
 
 # link_script <name> <dest>: <dest> a hard link to the run's shared executable <name>, made the
-# first time from stdin, so no test writes an executable of its own (CLAUDE.md, "Tests and
-# shellcheck"); ln -f replaces a link already there, never writing into the shared file.
+# first time from stdin, so no test writes an executable of its own, as CLAUDE.md's tests section
+# says; ln -f replaces a link already there, never writing into the shared file.
 link_script() {
   shared_make "tests-run-rust/$1"
   ln -f "$BATS_RUN_TMPDIR/shared/tests-run-rust/$1" "$2"
