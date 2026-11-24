@@ -18,7 +18,7 @@
 // wildcard finding on the review case's diff.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
+import { accessSync, constants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
   symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { describe, test } from "node:test";
@@ -734,6 +734,30 @@ describe("the rust toolkit's post-edit hook, on stub cargo binaries", () => {
     }
   });
 
+  // A session's cwd follows a Bash cd, so the session's directory is CLAUDE_PROJECT_DIR when set.
+  test("takes CLAUDE_PROJECT_DIR as the session's directory once a cd has moved the event's cwd", () => {
+    const ws = stubbedWorkspace();
+    const file = "crates/demo/src/lib.rs";
+    writeOut(ws.bin, [message({ file, rendered: finding(1) })]);
+    const src = join(ws.demo, "src");
+    // Below the package, no package lies up to cwd; in another crate, the file lies outside it.
+    silent(runStubbed(ws, { cwd: src, file: join(src, "lib.rs") }));
+    assert.equal(existsSync(join(ws.bin, "pwd")), false);
+    const other = join(ws.cwd, "crates", "other");
+    mkdirSync(other, { recursive: true });
+    silent(runStubbed(ws, { cwd: other, file: join(src, "lib.rs") }));
+    assert.equal(existsSync(join(ws.bin, "pwd")), false);
+    for (const cwd of [src, other]) {
+      const text = context(runStubbed(ws, { cwd, file: join(src, "lib.rs"), env: { CLAUDE_PROJECT_DIR: ws.cwd } }));
+      assert.equal(text, `rust: 1 finding in ${file} (cargo clippy)\n${finding(1).trimEnd()}`, cwd);
+      assert.equal(readFileSync(join(ws.bin, "pwd"), "utf8").trim(), ws.demo, cwd);
+    }
+    // A relative file_path is still taken from cwd.
+    rmSync(join(ws.bin, "pwd"));
+    context(runStubbed(ws, { cwd: src, file: "lib.rs", env: { CLAUDE_PROJECT_DIR: ws.cwd } }));
+    assert.equal(readFileSync(join(ws.bin, "pwd"), "utf8").trim(), ws.demo);
+  });
+
   // A hook stays off the network and installs no toolchain; sccache wraps rustc as the session's
   // own cargo has it, unless the session set a wrapper, an empty one included.
   test("sets RUSTC_WRAPPER=sccache only with sccache on PATH and none set, and RUSTUP_AUTO_INSTALL=0 when unset", () => {
@@ -852,6 +876,15 @@ describe("the rust toolkit's post-edit hook, on stub cargo binaries", () => {
     const mute = stubbedWorkspace("exit 4");
     assert.equal(context(runStubbed(mute, { cwd: mute.cwd, file: join(mute.demo, "src", "lib.rs") })),
       "rust: cargo clippy failed (exit 4): no stderr");
+    // Compiler messages that give no finding (no primary span, or a note) are no finding: a failure
+    // with only those is still the failure line.
+    const spanless = stubbedWorkspace("echo 'error: could not compile `demo` (lib) due to 1 previous error' >&2\nexit 101");
+    writeOut(spanless.bin, [
+      message({ file: "crates/demo/src/lib.rs", level: "error", rendered: "error[E0463]: can't find crate for `std`", spans: false }),
+      message({ file: "crates/demo/src/lib.rs", level: "note", rendered: "note: the `x` target may not be installed" }),
+    ]);
+    assert.equal(context(runStubbed(spanless, { cwd: spanless.cwd, file: join(spanless.demo, "src", "lib.rs") })),
+      "rust: cargo clippy failed (exit 101): error: could not compile `demo` (lib) due to 1 previous error");
   });
 
   test("cuts cargo's error line at 300 characters", () => {

@@ -5,11 +5,15 @@
 //
 // Usage: node rust-diagnostics.mjs < <PostToolUse event JSON>
 // Claude Code runs it from the toolkit's hooks/hooks.json, with the event on stdin; it reads only
-// tool_input.file_path and cwd (https://code.claude.com/docs/en/hooks, "PostToolUse input").
+// tool_input.file_path and cwd (https://code.claude.com/docs/en/hooks, "PostToolUse input"), and
+// CLAUDE_PROJECT_DIR from its environment.
+// The session's directory is CLAUDE_PROJECT_DIR when set, else cwd, since a session's cwd follows
+// a Bash cd; a relative file_path is taken from cwd.
 // It does nothing (no output, exit 0, no process started) unless the file's name ends in .rs, its
-// real path lies under cwd's real path and outside any directory named target, and some directory
-// from the file's up to cwd holds a Cargo.toml with a [package] table: the nearest such is the
-// package. A path inside cwd that resolves outside it is judged by where it resolves.
+// real path lies under the session directory's real path and outside any directory named target,
+// and some directory from the file's up to the session's directory holds a Cargo.toml with a
+// [package] table: the nearest such is the package. A path inside the session's directory that
+// resolves outside it is judged by where it resolves.
 // It runs `cargo clippy --message-format=json --all-targets --offline` in the package's directory,
 // cargo found on PATH, in a process group of its own, with the environment it was given plus, where
 // unset, RUSTC_WRAPPER=sccache when sccache is on PATH and RUSTUP_AUTO_INSTALL=0, so it never
@@ -22,22 +26,24 @@
 // a [workspace] table, else the package's own, unless it is absolute.
 // It prints, as the event's documented JSON output ("PostToolUse decision control",
 // hookSpecificOutput with hookEventName "PostToolUse" and additionalContext):
-//   - with findings in the edited file: `rust: <n> finding(s) in <path from cwd> (cargo clippy)`,
-//     then their rendered text, cut at a line's end so the whole context stays within 4,000
-//     characters, with a line `rust: cut <n> more characters; tests/run rust gives the rest`;
+//   - with findings in the edited file: `rust: <n> finding(s) in <path from the session's
+//     directory> (cargo clippy)`, then their rendered text, cut at a line's end so the whole
+//     context stays within 4,000 characters, with a line `rust: cut <n> more characters; tests/run
+//     rust gives the rest`;
 //   - with findings in other files: `rust: <n> finding(s) in other files of <package>; cargo clippy
 //     -p <package> shows them`, after the file's own when there are both;
 //   - on the deadline, after killing the process group: `rust: cargo clippy on <package> did not
 //     finish in <s> s; run tests/run rust before delivering`;
-//   - when cargo gives no compiler-message and fails (no toolchain, a broken manifest, a
-//     dependency not fetched): `rust: cargo clippy failed (exit <code>): <line>`, the line being its
-//     stderr's first line starting with "error", else its first non-empty one, cut at 300
-//     characters; `signal <name>` in place of the exit for a signal, and `could not start` with the
-//     reason when cargo did not start.
+//   - when cargo gives no finding and fails (no toolchain, a broken manifest, a dependency not
+//     fetched, or only messages with no primary span): `rust: cargo clippy failed (exit <code>):
+//     <line>`, the line being its stderr's first line starting with "error", else its first
+//     non-empty one, cut at 300 characters; `signal <name>` in place of the exit for a signal, and
+//     `could not start` with the reason when cargo did not start.
 // A clean package prints nothing. It never blocks the edit: it always exits 0, never 2.
 // The findings are a subset of tests/run rust, the rust-core skill's check, never a replacement.
 //
 // Environment:
+//   CLAUDE_PROJECT_DIR            the session's directory, which Claude Code sets for a hook
 //   RUST_DIAGNOSTICS_DEADLINE_MS  the deadline in milliseconds, in place of the default of 20 s
 //                                 (hooks.json's timeout is the deadline plus 5 s); the test's
 //                                 seam, never set by settings
@@ -86,12 +92,12 @@ function manifest(dir) {
 
 const hasTable = (text, name) => new RegExp(`^\\s*\\[${name}\\]\\s*(#.*)?$`, "m").test(text);
 
-// The nearest directory from the file's up to cwd whose Cargo.toml has a [package] table.
-function nearestPackage(file, cwd) {
+// The nearest directory from the file's up to top whose Cargo.toml has a [package] table.
+function nearestPackage(file, top) {
   for (let dir = dirname(file); ; dir = dirname(dir)) {
     const text = manifest(dir);
     if (text !== undefined && hasTable(text, "package")) return { dir, text };
-    if (dir === cwd || dirname(dir) === dir) return undefined;
+    if (dir === top || dirname(dir) === dir) return undefined;
   }
 }
 
@@ -127,12 +133,11 @@ function onPath(name, env) {
 const plural = (n) => `${n} finding${n === 1 ? "" : "s"}`;
 
 // The compiler's findings in cargo's JSON lines, once each, split by whether their primary span is
-// the file; undefined when no line is a compiler-message.
+// the file; undefined when there is none.
 function findingsOf(stdout, file, root) {
   const own = [];
   const others = [];
   const seen = new Set();
-  let messages = 0;
   for (const line of stdout.split("\n")) {
     if (!line.startsWith("{")) continue;
     let record;
@@ -142,7 +147,6 @@ function findingsOf(stdout, file, root) {
       continue;
     }
     if (record?.reason !== "compiler-message") continue;
-    messages++;
     const message = record.message;
     if (message?.level !== "error" && message?.level !== "warning") continue;
     const span = Array.isArray(message.spans) ? message.spans.find((s) => s?.is_primary) : undefined;
@@ -153,7 +157,7 @@ function findingsOf(stdout, file, root) {
     const path = isAbsolute(span.file_name) ? span.file_name : join(root, span.file_name);
     (real(path) === file ? own : others).push(text);
   }
-  return messages === 0 ? undefined : { own, others };
+  return own.length + others.length === 0 ? undefined : { own, others };
 }
 
 // The context for the findings: the file's own under their head, cut to the cap at a line's end,
@@ -185,10 +189,12 @@ function main() {
   const given = event?.tool_input?.file_path;
   if (typeof given !== "string" || !given.endsWith(".rs")) return;
   const cwd = real(typeof event.cwd === "string" && event.cwd !== "" ? event.cwd : process.cwd());
+  const project = process.env.CLAUDE_PROJECT_DIR;
+  const top = typeof project === "string" && project !== "" ? real(project) : cwd;
   const file = real(isAbsolute(given) ? given : resolve(cwd, given));
-  const shown = under(cwd, file);
+  const shown = under(top, file);
   if (shown === undefined || shown.split(sep).includes("target")) return;
-  const pkg = nearestPackage(file, cwd);
+  const pkg = nearestPackage(file, top);
   if (!pkg) return;
   const name = packageName(pkg.text, pkg.dir);
   const root = workspaceRoot(pkg.dir);
