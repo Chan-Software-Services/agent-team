@@ -10,8 +10,9 @@
 #     with discord_api GET channels/<id> bounded at 10 seconds (--max-time 10), and passes on
 #     Discord's answer alone. A thread that passes is appended to the thread list,
 #     ~/.local/state/agent-team/assistant-threads (ASSISTANT_THREADS, assistant_thread_keep),
-#     which the start digest names and no guard reads: an id there grants nothing. Every failure
-#     of the read refuses: an error, a rate limit (HTTP 429), no answer in time, no token.
+#     which the start digest names and no guard reads to decide a call: an id there grants
+#     nothing, and the guard reads it only to append an id once. Every failure of the read
+#     refuses: an error, a rate limit (HTTP 429), no answer in time, no token.
 #   reply's files pass only when each, an absolute path, resolves (symlinks followed) to a file
 #     under ~/.local/state/agent-team/assistant-files/ or the team home's assistant/, so a link
 #     there into ~/.claude/channels/ or the records attaches nothing.
