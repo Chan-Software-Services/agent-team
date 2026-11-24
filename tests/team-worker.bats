@@ -1494,9 +1494,9 @@ logged_choices() {
   opened T7 proj feat/T7-one "$wt1"
   run_bin -1 --separate-stderr team-worker T7 reviewer "$wt1" -- go
   assert_contains "$stderr" "unknown project 'proj'"
-  registry --first 'models = { reviewer = 5 }' proj
+  registry --first 'confine = "maybe"' proj
   run_bin -1 --separate-stderr team-worker T7 reviewer "$wt1" -- go
-  assert_contains "$stderr" "proj.models.reviewer: must be a string"
+  assert_contains "$stderr" "proj.confine: must be one of off, on"
   [[ ! -s $STUB_CALLS/claude.log ]]
   assert_equal "$(launches)" ""
 }
