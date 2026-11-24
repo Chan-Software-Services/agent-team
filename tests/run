@@ -405,8 +405,7 @@ slow_files() {
 run_bats() {
   local file failed=0 names minutes="$file_minutes minutes"
   ((file_minutes != 1)) || minutes='1 minute'
-  out=$(mktemp -d)
-  trap 'rm -rf "$out"' EXIT
+  out=$(team_mktemp -d)
   # Each file's output goes to $out/<file>, with $out/<file>.failed beside it when it fails,
   # $out/<file>.stopped when its time limit stopped it, and $out/<file>.seconds its seconds.
   bats_files >"$out/files" || { echo "bats: tests/shards could not split the files"; return 1; }

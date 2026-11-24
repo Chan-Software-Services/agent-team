@@ -2576,6 +2576,8 @@ SH
   assert_contains "$output" "ok tests/repo.bats ("
   assert_contains "$output" "bats: 1 tests passed; 0 of 1 files failed"
   assert_equal "$(cat "$STUB_CALLS/bats-ran")" repo.bats
+  # Its directory of the files' output is gone once it exits.
+  assert_equal "$(ls -A "$TMPDIR")" ""
 }
 
 # A skipped test counts as passed, and its line is named after the file lines, since a file's ok
@@ -2978,6 +2980,8 @@ limits_checkout() {
 ok 2 after it"
   [[ $(grep '^not ok tests/hangs.bats' <<<"$output") =~ ^"not ok tests/hangs.bats ("[0-9]+"s)"$ ]]
   assert_contains "$output" "bats: 2 tests passed; 1 of 2 files failed"
+  # A failed run removes its directory of the files' output too.
+  assert_equal "$(ls -A "$TMPDIR")" ""
 }
 
 @test "tests/run stops a bats file still running after TESTS_FILE_MINUTES, printing its output so far and what held it" {
@@ -3289,14 +3293,18 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   assert_equal "$found" ""
 }
 
-# The shell code of bin/: each script, each sourced file (.sh) and each doctor check, but the
-# vendored code.
-bin_shell_files() {
-  local file
+# The shell code the library's EXIT trap holds: each script, sourced file (.sh) and doctor check
+# of bin/, and each tracked script or .sh file elsewhere with a line that sources the library
+# (team.sh or temp-files.sh), as tests/run, tests/shards and servers/install do; never the vendored
+# code, nor a bats file or helper, which run under bats' own EXIT trap.
+library_shell_files() {
+  local file line
   while IFS= read -r file; do
-    [[ $file != bin/lib/vendor/* ]] || continue
-    if [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; }; then echo "$file"; fi
-  done < <(git -C "${REPO_ROOT:?}" ls-files bin)
+    [[ $file != bin/lib/vendor/* && $file != tests/vendor/* && -f $file ]] || continue
+    [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; } || continue
+    [[ $file == bin/* ]] || grep -qE '^[^#]*source .*/(team|temp-files)\.sh"' "$file" || continue
+    echo "$file"
+  done < <(git -C "${REPO_ROOT:?}" ls-files)
 }
 
 # Each line of <file>... that runs a bare mktemp, as <file>:<line>: a bare mktemp: <text>: mktemp
@@ -3317,8 +3325,8 @@ bare_mktemps() {
 # bin/lib/temp-files.sh owns the one EXIT trap of every shell that sources it, which removes the
 # files team_mktemp made, so a file made with a bare mktemp, or an EXIT trap set after the
 # library (or temp-files.sh) is sourced, would leave a file when a signal ends the script.
-@test "every script under bin/ makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
-  local file upto found
+@test "every script under bin/ and every one that sources the library makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
+  local file upto found files
   cd "$REPO_ROOT"
   # An EXIT trap before the line that sources the library is the one it takes as the exit action.
   found=$(while IFS= read -r file; do
@@ -3329,11 +3337,16 @@ bare_mktemps() {
       /^[[:space:]]*#/ { next }
       FNR > upto && /(^|[;&|({[:space:]])trap( [^#]*)? (EXIT|0)([;)[:space:]]|$)/ { print file ":" FNR ": an EXIT trap: " $0 }
     ' "$file"
-  done < <(bin_shell_files))
+  done < <(library_shell_files))
   assert_equal "$found" ""
-  # The walk reads the scripts it holds to.
-  bin_shell_files | grep -qx bin/team-merge
-  bin_shell_files | grep -qx bin/lib/threads.sh
+  # The walk reads the scripts it holds to, and none that never sources the library outside bin/.
+  files=$(library_shell_files)
+  grep -qx bin/team-merge <<<"$files"
+  grep -qx bin/lib/threads.sh <<<"$files"
+  grep -qx tests/run <<<"$files"
+  grep -qx tests/shards <<<"$files"
+  grep -qx servers/install <<<"$files"
+  assert_equal "$(grep -E '^tests/merge-queue-drill$|\.(bats|bash)$' <<<"$files")" ""
 }
 
 @test "the bare-mktemp check finds mktemp as a command word in each form a script may run it, and leaves a name, a text and a case pattern" {
