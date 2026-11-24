@@ -806,9 +806,9 @@ oplog_lines() {
   run_bin -2 team-load-check --role ops --worktree "$wt" --request load-check --toolkit prod-read
   assert_equal "$output" "team-load-check: --request must link Daniel's Discord message, https://discord.com/channels/<guild>/<channel>/<message>, got 'load-check'"
   run_bin -2 team-load-check --request "$(ops_request "$OPS_COORDINATOR")"
-  assert_equal "$output" "team-load-check: --request is for --role ops only"
+  assert_equal "$output" "team-load-check: --request is for --role ops and --role assistant-read only"
   run_bin -2 team-load-check --context --request "$(ops_request "$OPS_COORDINATOR")"
-  assert_equal "$output" "team-load-check: --request is for --role ops only"
+  assert_equal "$output" "team-load-check: --request is for --role ops and --role assistant-read only"
   [[ ! -e $BATS_TEST_TMPDIR/doctor-ran ]]
   assert_equal "$(stub_calls claude)" ""
   cp "$BATS_TEST_TMPDIR/doctor.pass" "$TEAM_DOCTOR"

@@ -36,9 +36,9 @@
 # ops launch's rules (Daniel's, at most an hour old, used by no other ops launch), so each load
 # check of the ops role needs a new message. Without it, or with a value that is not a Discord
 # message link (discord_link in bin/lib/team.sh), the ops form is a malformed command line (exit
-# 2), and so is --request in any other form, before the doctor runs. The probe form launches
-# each role bare: --toolkit, --worktree, --request or --context with --probe is a malformed command
-# line (exit 2).
+# 2), and so is --request in any form but it and the assistant-read form, before the doctor runs.
+# The probe form launches each role bare: --toolkit, --worktree, --request or --context with
+# --probe is a malformed command line (exit 2).
 #
 # The planner form first rehearses a lease of each project whose pool is treehouse: the project's
 # lease command leases a slot from the primary checkout to a holder of this run's own,
@@ -299,7 +299,7 @@
 # project whose toolkits list holds them stops it, as the ops form's worktree's project does. It
 # differs from the ops form in three things alone: the session, T0-assistant-read, is started by
 # claude-assistant-read start --load-check --request <link> --toolkit <name>... --file <prompt>,
-# the prompt the ops form's of the assistant's read session, written to a file of the run's own,
+# with the ops form's prompt worded for the assistant's read session, written to a file of its own,
 # and ended by claude-assistant-read end --load-check, in place of team-worker and team-ops-end;
 # it runs in the team home's .claude/worktrees/T0-assistant-read, which that launcher makes and
 # removes, and its hooks log to tasks/T0/ops-log.md; and it has no autoMode lines to check, which
@@ -360,7 +360,7 @@ if [[ -n $probe ]]; then
   [[ -z $context ]] || usage_error "--probe and --context are two forms; give one"
   ((${#expected[@]} == 0)) || usage_error "--probe launches each role bare, so it takes no --toolkit"
   [[ -z $worktree ]] || usage_error "--worktree is for --role ops only"
-  [[ -z $request ]] || usage_error "--request is for --role ops only"
+  [[ -z $request ]] || usage_error "--request is for --role ops and --role assistant-read only"
   case $role in
     '') probe_roles=(planner builder reviewer) ;;
     planner | builder | reviewer | assistant) probe_roles=("$role") ;;
@@ -423,7 +423,7 @@ if [[ ($role == ops || -n $read_form) && -z $context ]]; then
   discord_link "$request" >/dev/null ||
     usage_error "--request must link Daniel's Discord message, https://discord.com/channels/<guild>/<channel>/<message>, got '$request'"
 elif [[ -n $request ]]; then
-  usage_error "--request is for --role ops only"
+  usage_error "--request is for --role ops and --role assistant-read only"
 fi
 
 # main_checkout <dir>: the main checkout of the git checkout <dir> is in, or nothing when it is none
