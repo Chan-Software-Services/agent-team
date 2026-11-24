@@ -1212,6 +1212,45 @@ sha() {
   run_bin -0 team-log --check
 }
 
+@test "a topic task takes none of the four words' kinds, so no word of Daniel's is logged on it, while a feature task still does" {
+  plan_task
+  jq -cn --arg wt "$BATS_TEST_TMPDIR/wt" '"2026-01-01T00:00:00Z" as $ts
+    | {ts: $ts, task: "T15", event: "opened", project: "proj", path: "topic", type: "research", title: "Talk",
+       branch: "research/T15-talk", base: "dev", base_sha: "0123456", worktree: $wt,
+       discord_message: "1563000000000000015", discord_channel: "1563000000000000016"},
+      {ts: $ts, task: "T15", event: "interview-thread", discord_thread: "1563000000000000017"},
+      {ts: $ts, task: "T14", event: "pr", url: $url, head: $head}' \
+    --arg url "$URL" --arg head "$HEAD_A" >>"$TEAM_HOME/ledger.jsonl"
+  # Even with a plan file and an ask in its records, a topic takes no approval.
+  plan_md T15
+  run_bin -0 team-log T15 asked id=plan 'text=Approve the plan?'
+  local before kind
+  before=$(cat "$TEAM_HOME/ledger.jsonl")
+  local -A args=(
+    [plan-approved]="by=Daniel ask=plan discord_message=$(soon)"
+    [plan-approval-withdrawn]="discord_message=$(soon)"
+    [merge-approved]="url=$URL discord_message=$(soon) head=$HEAD_A"
+    [merge-preapproved]="project=proj ask=plan discord_message=$(soon) scope=src/"
+  )
+  for kind in plan-approved plan-approval-withdrawn merge-approved merge-preapproved; do
+    # shellcheck disable=SC2086 # each kind's pairs, split on blanks
+    run_bin -1 team-log T15 "$kind" ${args[$kind]}
+    assert_equal "$output" "team-log: T15 is a topic, which has no plan or PR, so it takes no $kind"
+  done
+  run_bin -1 team-log T15 plan-approved by=coordinator
+  assert_equal "$output" "team-log: T15 is a topic, which has no plan or PR, so it takes no plan-approved"
+  assert_equal "$(cat "$TEAM_HOME/ledger.jsonl")" "$before"
+  # The feature task takes the three that are not retired, and the fourth is refused as retired.
+  run_bin -0 team-log T14 plan-approved by=coordinator
+  run_bin -0 team-log T14 plan-approval-withdrawn discord_message="$(soon)"
+  run_bin -0 team-log T14 merge-approved url="$URL" discord_message="$(soon)" head="$HEAD_A"
+  run_bin -1 team-log T14 merge-preapproved project=proj ask=plan discord_message="$(soon)" scope=src/
+  assert_equal "$output" "team-log: merge-preapproved is retired by T276: the approved plan is the merge word; withdraw it with merge-default-withdrawn"
+  assert_equal "$(tail -n 3 "$TEAM_HOME/ledger.jsonl" | jq -r '"\(.task) \(.event)"')" "T14 plan-approved
+T14 plan-approval-withdrawn
+T14 merge-approved"
+}
+
 # The default word's withdrawals and givings back logged, one "<event> <task> <scope>" per line.
 default_events() {
   jq -r 'select(.event | startswith("merge-default-")) | "\(.event) \(.task) \(.scope)"' "$TEAM_HOME/ledger.jsonl"

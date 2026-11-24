@@ -56,8 +56,12 @@
 # and a second approval whose by, plan and parallel equal the one standing (plan_approval in
 # bin/lib/ledger.jq). A plan-approval-withdrawn (discord_message=<id>, Daniel's message, which
 # team-log takes as named, since a withdrawal only stops work) is refused for a closed task, a
-# message that is no Discord id, and when no approval stands. A kind the contract marks retired is
-# refused before anything else is read, logging nothing, with its reason: merge-preapproved,
+# message that is no Discord id, and when no approval stands. On a topic task (path topic,
+# team-topic's), which has no plan, PR or merge, plan-approved, plan-approval-withdrawn,
+# merge-approved and merge-preapproved are refused first, "T<n> is a topic, which has no plan or
+# PR, so it takes no <kind>", so no word of Daniel's is ever logged on a topic. A kind the contract
+# marks retired is refused before anything else but that is read, logging nothing, with its
+# reason: merge-preapproved,
 # merge-preapproval-withdrawn, merge-standing and merge-standing-withdrawn, retired by T276, since
 # the approved plan is the merge word, which merge-default-withdrawn withdraws; --check still passes
 # the lines logged before. A merge-default-withdrawn, Daniel's withdrawal of the default merge word,
@@ -321,8 +325,20 @@ check_event() {
 event=$1
 shift
 
-# A retired kind (its contract entry's retired, the reason) is refused before anything else is
-# read, so the ledger lines logged before it still check while no new one is logged.
+# A topic (is_topic in bin/lib/ledger.jq) has no plan, PR or merge, so no word of Daniel's is ever
+# logged on it, whatever its thread says: the four words' kinds are refused first.
+case $event in
+  plan-approved | plan-approval-withdrawn | merge-approved | merge-preapproved)
+    task_events_once
+    if ledger_jq 'is_topic' -e <<<"$TASK_EVENTS" >/dev/null; then
+      die "$task is a topic, which has no plan or PR, so it takes no $event"
+    fi
+    ;;
+esac
+
+# A retired kind (its contract entry's retired, the reason) is refused before anything else but a
+# topic's refusal is read, so the ledger lines logged before it still check while no new one is
+# logged.
 retired=$(ledger_jq '$contract.kinds[$event].retired // empty' -nr --arg event "$event")
 [[ -z $retired ]] || die "$event is retired by $retired"
 

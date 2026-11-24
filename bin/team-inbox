@@ -12,7 +12,9 @@
 # the PR not merged, no merge-approved logged at its head and Daniel's per-head word not standing
 # for it, below), "<task> <title>: ready to merge <its full URL>"; each interview under way (an
 # interview-thread with no planner's done or plan-approved after it) with no walk on in that
-# thread, "<task> <title>: interview under way <its thread>"; each walk under way (team-ui --walk,
+# thread, "<task> <title>: interview under way <its thread>", and each open topic's thread (a
+# topic task, team-topic's, from its interview-thread to its closed), "<task> <title>: topic under
+# way <its thread>", keyed as an interview is and holding no task; each walk under way (team-ui --walk,
 # on), "<task> <title>: walk under way <the thread it runs in>", or no thread with none; and the
 # asks of the team home's two lists, the coordinator's tasks/current.md, then the assistant's
 # assistant/current.md (team-current's ask lines, questions to Daniel with no asked, in the form
@@ -23,7 +25,7 @@
 # each other open task whose standing blocked park is on that task (cause task), and the task's
 # tickets team-tickets T<n> --json says are ready; and 1 for a PR ready to merge, or for an ask
 # whose text names one of its task's PRs not merged. A current.md ask holds no task the ledger
-# knows, so it counts 0. Ties go oldest first (an ask by its asked's ts, a PR by its first pr
+# knows, and a topic waits on no answer of Daniel's to go on, so each counts 0. Ties go oldest first (an ask by its asked's ts, a PR by its first pr
 # event's, an interview by its interview-thread's, a walk by its start's, a current.md ask after
 # every dated one, in its order), then the asks, the PRs, the interviews and the walks, each in
 # task number order. team-tickets runs once per task with an item, its stderr dropped; a task
