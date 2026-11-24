@@ -899,6 +899,45 @@ team-stack: stackfix-1 is removed, its logs in $wt/.scratch/task/stack-logs"
   assert_equal "$(jq -c .returned <<<"$output")" "$(jq -cn --arg wt "$wt" '[$wt]')"
 }
 
+# conv_stack: as home_stack, for conv, the treehouse project: its slot's stack is stackfix-conv.
+conv_stack() {
+  mkdir -p "$conv/scripts"
+  cp "$REPO_ROOT/tests/fixtures/stack/compose.sh" "$conv/scripts/compose.sh"
+  cp "$REPO_ROOT/tests/fixtures/stack/docker-compose.yml" "$conv/docker-compose.yml"
+  git -C "${conv:?}" add scripts/compose.sh docker-compose.yml
+  git -C "${conv:?}" commit -q -m "feat: add the stack"
+  git -C "${conv:?}" push -q origin HEAD
+  cat >>"$TEAM_HOME/projects.toml" <<'TOML'
+
+[conv.stack]
+compose = "scripts/compose.sh"
+seed = "scripts/seed.sh"
+log_services = ["web"]
+TOML
+  docker_stub "${conv_slots[0]}"
+}
+
+# The return command logs TEAM_STACK_DOWN as it sees it ("unset" when it is not set) to
+# $BATS_TEST_TMPDIR/stack-down.
+log_stack_down() {
+  # shellcheck disable=SC2016 # expanded when the return command runs
+  printf '%s\n' 'echo "${TEAM_STACK_DOWN-unset}" >>"$BATS_TEST_TMPDIR/stack-down"' >>"$conv/scripts/th-return.sh"
+}
+
+@test "a treehouse return after team-stack down runs the return command with TEAM_STACK_DOWN=1, so it does not tear the stack down again" {
+  conv_stack
+  log_stack_down
+  run_bin -0 team-open conv feature feat move "Move it"
+  local slot=${conv_slots[0]}
+  run_bin -0 team-stack up --worktree "$slot" --no-seed
+  stack_exists stackfix-conv
+  work_and_push "$slot" move.txt
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-stack: stackfix-conv is removed, its logs in $slot/.scratch/task/stack-logs"
+  stack_gone stackfix-conv
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/stack-down")" 1
+}
+
 @test "a project without a stack block closes with no Docker call at all" {
   docker_stub "${home_slots[0]}"
   open_home_task
@@ -1131,7 +1170,10 @@ SH
   work_and_push "$home_wt" feature.txt
   work_and_push "$conv_wt" move.txt
 
+  log_stack_down
   run_bin -0 --separate-stderr team-close T1
+  # No team-stack down ran for it, so its return command tears down what it would.
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/stack-down")" unset
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/scratch/spec.md")" "home spec"
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/scratch-conv/notes.md")" "conv notes"
   [[ ! -e $home_wt ]]

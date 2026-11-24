@@ -20,7 +20,7 @@ Path: {{path}}.
 
 <!-- How the coordinator and the reviewer know it is done: tests, checks, observable behaviour. -->
 
-## Not in scope
+{{rust_core}}## Not in scope
 
 <!-- What a worker might expect to do here but must leave alone. -->
 
