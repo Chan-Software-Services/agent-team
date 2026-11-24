@@ -43,17 +43,21 @@
 #   7. Prints "T<n> topic open in <#<thread id>>: session <id>", the line the assistant passes on
 #      to Daniel, Discord showing <#<id>> as a link to the thread.
 #
-# close files the topic's report and closes the task (ticket 05 of T514 builds it; until then it
-# is a usage error):
-#   1. Refuses a fenced machine, a task that is no open topic ("T<n> is not an open topic: close a
-#      task with team-close"), and without --no-report a topic whose worktree's task directory has
-#      no report.md ("T<n> has no report.md yet; ask it for its report, or close with
-#      --no-report").
+# close files the topic's report and closes the task:
+#   1. Refuses, exit 1, before anything is changed: a fenced machine or one that lost the lease
+#      (lease_refusal), a task that is no open topic (no events, another path, or closed: "T<n> is
+#      not an open topic: close a task with team-close"), and without --no-report a topic with no
+#      report.md in its open worktree's task directory ("T<n> has no report.md yet; ask it for its
+#      report, or close with --no-report"); once a failed close has returned that worktree, the
+#      report is read from the task directory's archive, tasks/T<n>/scratch/report.md.
 #   2. Copies report.md to the team home's assistant/research/<opened's UTC date>-T<n>-<slug>.md,
-#      overwriting only a file of that name, so a rerun writes the same file.
-#   3. team-close T<n>, its lines passed through; a busy session refuses as team-close refuses.
-#   4. Prints "T<n> closed; report at <path>" (or "T<n> closed with no report"). It commits
-#      nothing: the next checkpoint commits the report.
+#      the slug its branch's, overwriting only a file of that name, so a rerun writes the same
+#      file. --no-report files nothing, even when there is a report.md.
+#   3. team-close T<n>, its lines passed through on stderr and its JSON left out; a busy session
+#      refuses as team-close refuses, exit 1, the report filed already, and any failure of
+#      team-close is passed on, a rerun of team-topic close finishing it.
+#   4. Prints "T<n> closed; report at <path>" (or "T<n> closed with no report"), nothing else on
+#      stdout. It commits nothing: the next checkpoint commits the report.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # The assistant runs it; every other worker is refused as worker_refusal refuses the coordinator's
@@ -71,10 +75,69 @@ sibling() {
   env -u AGENT_TEAM_ROLE -u AGENT_TEAM_TASK TEAM_HOME="$TEAM_HOME" "$bin/$1" "${@:2}"
 }
 
+# close T<n> [--no-report]: file the topic's report and close the task, as the header says.
+close_topic() {
+  local task='' no_report='' events opened opened_path date slug source='' dir filed tmp
+  while (($#)); do
+    case $1 in
+      --no-report) no_report=1 ;;
+      T*)
+        [[ -z $task ]] || usage_error "$close_usage"
+        task=$1
+        ;;
+      *)
+        [[ -n $task || $1 == -* ]] && usage_error "$close_usage"
+        usage_error "task must look like T<n>, got '$1'"
+        ;;
+    esac
+    shift
+  done
+  [[ -n $task ]] || usage_error "$close_usage"
+  [[ $task =~ ^T[1-9][0-9]*$ ]] || usage_error "task must look like T<n>, got '$task'"
+
+  # 1. The refusals, before anything is changed.
+  if why=$(lease_refusal "closes no topic: the assistant on the holder does"); then die "$why"; fi
+  events=$(task_event_array "$task")
+  opened=$(jq -c 'map(select(.event == "opened")) | last // empty' <<<"$events")
+  opened_path=''
+  [[ -z $opened ]] || opened_path=$(jq -r '.path' <<<"$opened")
+  [[ $opened_path == topic && $(task_status "$events") == open ]] ||
+    die "$task is not an open topic: close a task with team-close"
+  if [[ -z $no_report ]]; then
+    # The report is in the topic's open worktree; once a failed close has returned that worktree,
+    # in the task directory's archive, which team-close mirrored first.
+    dir=$(plan_task_dir "$task" | cut -f 1)
+    if [[ -n $dir ]]; then
+      [[ ! -f $dir/report.md ]] || source=$dir/report.md
+    elif [[ -f $TEAM_HOME/tasks/$task/scratch/report.md ]]; then
+      source=$TEAM_HOME/tasks/$task/scratch/report.md
+    fi
+    [[ -n $source ]] || die "$task has no report.md yet; ask it for its report, or close with --no-report"
+
+    # 2. The report, filed under a name the task fixes, so a rerun writes the same file.
+    date=$(jq -r '.ts[:10]' <<<"$opened")
+    slug=$(jq -r --arg t "$task" '.branch | sub("^[^/]*/" + $t + "-"; "")' <<<"$opened")
+    filed=$TEAM_HOME/assistant/research/$date-$task-$slug.md
+    mkdir -p -- "$(dirname "$filed")"
+    tmp=$(team_mktemp "$filed.XXXXXX")
+    cp -- "$source" "$tmp"
+    mv -f -- "$tmp" "$filed"
+  fi
+
+  # 3. The close, team-close's lines on stderr, its JSON left out.
+  sibling team-close "$task" >/dev/null
+
+  # 4. The line for Daniel.
+  if [[ -n $no_report ]]; then echo "$task closed with no report"; else echo "$task closed; report at $filed"; fi
+}
+
 [[ $# -ge 1 ]] || usage_error "$open_usage | $close_usage"
 case $1 in
   open) shift ;;
-  close) usage_error "team-topic close is not built yet (T514's ticket 05): $close_usage" ;;
+  close)
+    close_topic "${@:2}"
+    exit 0
+    ;;
   *) usage_error "$open_usage | $close_usage" ;;
 esac
 
