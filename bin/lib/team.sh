@@ -16,7 +16,7 @@
 # pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, assistant_place, interview_thread_task, topic_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, TOPIC_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE,
 # TOPIC_REQUEST_MAX_AGE, TOPIC_MAX_OPEN, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -1970,6 +1970,65 @@ assistant_place() {
   }
   assistant_thread_keep "$channel"
   echo "the #assistant thread $channel"
+}
+
+# The task whose interview-thread event names the Discord channel <id>, the latest such, or
+# nothing when none does: interview_thread_task <id>
+interview_thread_task() {
+  [[ ! -e $TEAM_HOME/ledger.jsonl ]] ||
+    jq -nrR --arg id "$1" '[inputs | fromjson? | select(type == "object" and .event == "interview-thread"
+      and ((.discord_thread // "") | tostring) == $id) | .task] | last // empty' "$TEAM_HOME/ledger.jsonl"
+}
+
+# The daniel_message place of the Discord channel <id> when it is a topic's thread: the latest
+# interview-thread of a topic task (its latest opened's path topic) that is open, and, read from
+# Discord (GET channels/<id>) every time, a thread (type 10, 11 or 12) whose parent is the topic
+# channel (TOPIC_CHANNEL); "the topic thread <id> of T<n>". With --closed, a closed topic's latest
+# thread is taken too, for a word read again after it was taken (team-assistant show). Fails with
+# the one reason on stderr: no task's interview-thread names it, its task is no topic, it is an
+# earlier thread of the topic, the topic is closed, no topic channel is set (TEAM_TOPIC_CHANNEL
+# empty), or Discord cannot read it or puts it elsewhere. assistant_place keeps its own rule, so
+# team-answer --channel never takes a topic's thread; team-assistant holds Daniel's word to
+# either: topic_place <id> [--closed]
+topic_place() {
+  local channel=$1 closed=${2:-} task path latest status reply error
+  task=$(interview_thread_task "$channel")
+  [[ -n $task ]] || {
+    echo "channel $channel is the interview thread of no task in the ledger, so it is no topic's thread" >&2
+    return 1
+  }
+  json_vars --ledger path='map(select(.event == "opened")) | last | .path // ""' \
+    latest='map(select(.event == "interview-thread")) | last | .discord_thread | tostring' \
+    status='task_status' <<<"$(task_event_array "$task")"
+  [[ $path == topic ]] || {
+    echo "channel $channel is the interview thread of $task, a ${path:-unopened} task, not a topic's, so Daniel's word there is not for the assistant" >&2
+    return 1
+  }
+  [[ $latest == "$channel" ]] || {
+    echo "channel $channel is an earlier thread of the topic $task, whose thread is $latest now, so Daniel's word there is not for the assistant" >&2
+    return 1
+  }
+  [[ $status == open || ($status == closed && $closed == --closed) ]] || {
+    echo "the topic $task is $status, so its thread $channel takes no word of Daniel's" >&2
+    return 1
+  }
+  [[ -n $TOPIC_CHANNEL ]] || {
+    echo "no topic channel is set (TEAM_TOPIC_CHANNEL is empty), so channel $channel cannot be held to $task's topic thread" >&2
+    return 1
+  }
+  error=$(team_mktemp)
+  if ! reply=$(discord_api "channels/$channel" 2>"$error"); then
+    echo "channel $channel cannot be read from Discord, so it is not known to be under the topic channel ($TOPIC_CHANNEL): $(grep -m1 . "$error" || echo "no reason given")" >&2
+    team_tmp_rm "$error"
+    return 1
+  fi
+  team_tmp_rm "$error"
+  jq -e --arg parent "$TOPIC_CHANNEL" 'type == "object" and ([.type] | inside([10, 11, 12]))
+    and ((.parent_id // "") | tostring) == $parent' >/dev/null 2>&1 <<<"$reply" || {
+    echo "channel $channel is not a thread under the topic channel ($TOPIC_CHANNEL), as Discord reads it, so it is not $task's topic thread" >&2
+    return 1
+  }
+  echo "the topic thread $channel of $task"
 }
 
 # Read Discord message <message> as Daniel's answer to <task>'s ask <id>, held to what an answer

@@ -200,7 +200,7 @@ assistant/research/2026-11-14-doctor.md"
 @test "a worker session is refused every form, writing and reading nothing" {
   local role before
   before=$(records_state)
-  for role in planner builder reviewer ops; do
+  for role in planner builder reviewer ops topic; do
     AGENT_TEAM_ROLE=$role AGENT_TEAM_TASK=T7 run_bin -1 --separate-stderr team-assistant send note --file "$body"
     assert_contains "$stderr" "team-assistant: a"
     assert_contains "$stderr" " $role session cannot hand off: that is the assistant's and the coordinator's"
@@ -548,4 +548,109 @@ H3 note assistant->coordinator 2026-11-14T10:02:00Z open"
   assert_equal "$matched" "assistant/handoffs/H1.md
 assistant/handoffs.jsonl
 assistant/current.md"
+}
+
+TOPICS=1572000000000000500
+TOPIC_THREAD=1572000000000000501
+EARLIER_THREAD=1572000000000000502
+INTERVIEWS=1572000000000000600
+INTERVIEW_THREAD=1572000000000000601
+TOPIC_WORD=1572000000000000100
+
+# An open topic, T5, with its thread under the topic channel and Daniel's message in it, beside
+# T7's interview thread under the interview channel: open_topic
+open_topic() {
+  export TEAM_TOPIC_CHANNEL=$TOPICS TEAM_INTERVIEW_CHANNEL=$INTERVIEWS
+  jq -nc --arg word "$DANIEL" --arg channel "$ASSISTANT" '{ts: "2026-10-02T10:00:00Z", task: "T5", event: "opened",
+    project: "agent-team", path: "topic", type: "research", title: "Interfaces", branch: "research/T5-interfaces",
+    base: "dev", base_sha: "0123456", worktree: "/w/5", discord_message: $word, discord_channel: $channel}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  cat >>"$TEAM_HOME/ledger.jsonl" <<LEDGER
+{"ts":"2026-10-02T10:00:01Z","task":"T5","event":"interview-thread","discord_thread":"$TOPIC_THREAD"}
+{"ts":"2026-10-02T10:00:02Z","task":"T7","event":"interview-thread","discord_thread":"$INTERVIEW_THREAD"}
+LEDGER
+  git -C "${TEAM_HOME:?}" commit -qam "test: a topic"
+  channel "$TOPIC_THREAD" "$TOPICS"
+  channel "$INTERVIEW_THREAD" "$INTERVIEWS"
+  message "$TOPIC_THREAD" "$TOPIC_WORD" 757 "Make it a task: the widget's interface."
+  message "$INTERVIEW_THREAD" "$TOPIC_WORD" 757 "Make it a task."
+}
+
+@test "a hand-off takes Daniel's message in an open topic's thread under the topic channel, named the topic thread of its task" {
+  open_topic
+  AGENT_TEAM_ROLE=assistant run_bin -0 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$TOPIC_THREAD"
+  assert_equal "$output" "H1 assistant/handoffs/H1.md"
+  assert_equal "$stderr" ""
+  assert_equal "$(sed -n 7,8p "$TEAM_HOME/assistant/handoffs/H1.md")" "daniel_message: $TOPIC_WORD
+daniel_channel: $TOPIC_THREAD"
+  assert_equal "$(handoffs)" "{\"id\":\"H1\",\"event\":\"sent\",\"kind\":\"task\",\"from\":\"assistant\",\"to\":\"coordinator\",\"daniel_message\":\"$TOPIC_WORD\",\"daniel_channel\":\"$TOPIC_THREAD\"}"
+  # Discord says the thread is under the topic channel, then gives Daniel's message from it.
+  assert_equal "$(stub_calls curl | jq -r '.[-1]')" "https://discord.com/api/v10/channels/$TOPIC_THREAD
+https://discord.com/api/v10/channels/$TOPIC_THREAD/messages/$TOPIC_WORD"
+  # A topic's thread is not the assistant's, for its Discord guard.
+  [[ ! -e $HOME/.local/state/agent-team/assistant-threads ]]
+  assert_equal "$(pushed | head -n 3)" "chore: handoff H1 task
+assistant/handoffs.jsonl
+assistant/handoffs/H1.md"
+  # Every kind takes it, a hand-off naming the topic logged on it as any is.
+  printf 'Daniel asks for the widget notes.\n' >"$body"
+  AGENT_TEAM_ROLE=assistant run_bin -0 team-assistant send note --file "$body" --task T5 \
+    --daniel "$TOPIC_WORD" --channel "$TOPIC_THREAD"
+  assert_equal "$output" "H2 assistant/handoffs/H2.md"
+  assert_equal "$(tail -n 1 "$TEAM_HOME/ledger.jsonl" | jq -c 'del(.ts)')" '{"task":"T5","event":"handoff","id":"H2","kind":"note","from":"assistant","state":"sent"}'
+  TEAM_HOME=$TEAM_HOME run "$REPO_ROOT/bin/team-log" --check
+  assert_equal "$status" 0
+  # show reads it again from the same place, and still does once the topic is closed.
+  run_bin -0 team-assistant show H1
+  assert_contains "$output" "Daniel's message $TOPIC_WORD in the topic thread $TOPIC_THREAD of T5, verbatim:
+Make it a task: the widget's interface."
+  echo '{"ts":"2026-10-03T10:00:00Z","task":"T5","event":"closed","archive":[],"returned":[],"kept":[]}' >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-assistant show H1
+  assert_contains "$output" "Daniel's message $TOPIC_WORD in the topic thread $TOPIC_THREAD of T5, verbatim:"
+}
+
+@test "a closed topic's thread, an earlier one, a non-topic task's interview thread and a topic thread Discord puts elsewhere are refused, writing nothing" {
+  local before
+  open_topic
+  before=$(records_state)
+  # T7 is a feature task: its interview thread takes no hand-off.
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$INTERVIEW_THREAD"
+  assert_equal "$stderr" "team-assistant: channel $INTERVIEW_THREAD is the interview thread of T7, a feature task, not a topic's, so Daniel's word there is not for the assistant"
+  # A thread the ledger names but Discord puts under another channel.
+  channel "$TOPIC_THREAD" "$INTERVIEWS"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$TOPIC_THREAD"
+  assert_equal "$stderr" "team-assistant: channel $TOPIC_THREAD is not a thread under the topic channel ($TOPICS), as Discord reads it, so it is not T5's topic thread"
+  rm "$discord/channel-$TOPIC_THREAD.json"
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$TOPIC_THREAD"
+  assert_equal "$stderr" "team-assistant: channel $TOPIC_THREAD cannot be read from Discord, so it is not known to be under the topic channel ($TOPICS): curl: (22) The requested URL returned error: 404"
+  channel "$TOPIC_THREAD" "$TOPICS"
+  TEAM_TOPIC_CHANNEL='' AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$TOPIC_THREAD"
+  assert_equal "$stderr" "team-assistant: no topic channel is set (TEAM_TOPIC_CHANNEL is empty), so channel $TOPIC_THREAD cannot be held to T5's topic thread"
+  # A thread the topic had before its latest.
+  echo "{\"ts\":\"2026-10-02T11:00:00Z\",\"task\":\"T5\",\"event\":\"interview-thread\",\"discord_thread\":\"$EARLIER_THREAD\"}" >>"$TEAM_HOME/ledger.jsonl"
+  git -C "${TEAM_HOME:?}" commit -qam "test: a later thread"
+  before=$(records_state)
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$TOPIC_THREAD"
+  assert_equal "$stderr" "team-assistant: channel $TOPIC_THREAD is an earlier thread of the topic T5, whose thread is $EARLIER_THREAD now, so Daniel's word there is not for the assistant"
+  # A closed topic's thread.
+  echo '{"ts":"2026-10-03T10:00:00Z","task":"T5","event":"closed","archive":[],"returned":[],"kept":[]}' >>"$TEAM_HOME/ledger.jsonl"
+  git -C "${TEAM_HOME:?}" commit -qam "test: closed"
+  before=$(records_state)
+  channel "$EARLIER_THREAD" "$TOPICS"
+  message "$EARLIER_THREAD" "$TOPIC_WORD" 757 "Make it a task."
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$TOPIC_WORD" --channel "$EARLIER_THREAD"
+  assert_equal "$stderr" "team-assistant: the topic T5 is closed, so its thread $EARLIER_THREAD takes no word of Daniel's"
+  assert_equal "$(records_state)" "$before"
+  [[ ! -e $TEAM_HOME/assistant/handoffs.jsonl ]]
+  # A thread no task's interview-thread names is judged as before, under #assistant or nothing.
+  AGENT_TEAM_ROLE=assistant run_bin -1 --separate-stderr team-assistant send task --file "$body" \
+    --daniel "$DANIEL" --channel "$OTHER_THREAD"
+  assert_equal "$stderr" "team-assistant: channel $OTHER_THREAD is neither #assistant ($ASSISTANT) nor a thread under it, so Daniel's word there is not for the assistant"
 }

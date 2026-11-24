@@ -969,6 +969,23 @@ COMMANDS
   guard -0 'team-stack up'
 }
 
+@test "the assistant's team-topic passes its guard and its settings, every form: a topic is the assistant's to open and close" {
+  local command
+  # shellcheck disable=SC2088 # the command as an agent types it
+  for command in 'team-topic open --help' 'team-topic close --help' \
+    'team-topic open --daniel 1566 --channel 1570 --about assistant/topic-about.md interfaces "Design the interfaces"' \
+    '~/agent-team/bin/team-topic open --task T5 --daniel 1566 --channel 1570 --about /tmp/about.md --project proj ingest Ingest' \
+    'team-topic close T5' '~/agent-team/bin/team-topic close T5 --no-report'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+    # The rule table passes it too, past the hook's fast path, which a name added to it would skip.
+    AGENT_TEAM_ROLE=assistant run -0 --separate-stderr python3 -I "$REPO_ROOT/bin/lib/command_rules.py" <<<"$(jq -cn \
+      --arg c "$command" '{hook_event_name: "PreToolUse", cwd: env.HOME, tool_name: "Bash", tool_input: {command: $c}}')"
+    assert_equal "$output$stderr" ""
+    if denied_in "$REPO_ROOT/assistant.settings.json" "$command"; then echo "assistant.settings.json denies: $command" >&2; return 1; fi
+  done
+}
+
 @test "the acts' names go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
   printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
   chmod +x "$BATS_TEST_TMPDIR/stubs/python3"

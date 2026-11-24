@@ -146,6 +146,7 @@
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "~/agent-team/bin/team-assistant thread \"Set up the laptop\" --from 1566"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "~/agent-team/bin/team-assistant send question --file assistant/handoff-body.md; ~/agent-team/bin/team-assistant list --open"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "~/agent-team/bin/team-assistant show H3 | head -60"}, "cwd": "@TEAM_HOME@"}
+{"roles": ["assistant"], "tool": "Bash", "input": {"command": "~/agent-team/bin/team-topic open --daniel 1566 --channel @ASSISTANT_THREAD@ --about assistant/topic-about.md widget-interfaces \"Design the widget interfaces\""}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "gh pr view 12 --repo example-org/example-repo --json state,mergedAt -q '[.state, .mergedAt] | @tsv'"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "cd ~/agent-team-records && git add assistant/research/2026-01-02-widget-counts.md manual-steps.md && git commit -qm \"docs: the widget spike's report\" && git push -q origin dev"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "mcp__plugin_discord_discord__reply", "input": {"chat_id": "@ASSISTANT_CHANNEL@", "text": "Step 2: run the login in your own terminal."}, "cwd": "@TEAM_HOME@"}
