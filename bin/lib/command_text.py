@@ -750,8 +750,8 @@ def _expands(written, start=0, end=None):
             i += 2
             continue
         if quote is None and c == "'":
-            end = written.find("'", i + 1)
-            i = len(written) if end < 0 else end + 1
+            close = written.find("'", i + 1)
+            i = len(written) if close < 0 else close + 1
             continue
         if c == '"':
             quote = None if quote else '"'

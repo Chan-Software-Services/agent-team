@@ -132,7 +132,8 @@ refuses_wrapped() {
     $'bash <<EOF\n'"W=$WT/a"$'\nrm -rf $W/fix\nEOF' "bash <<< \"W=$WT/a; rm -rf \$W/fix\"" \
     "echo \"W=$WT/a; rm -rf \$W/fix\" | bash" "bash -c \"W=$WT/a; rm -rf \$W/fix\"" \
     "eval \"W=$WT/a; rm -rf \$W/fix\"" "trap \"W=$WT/a; rm -rf \$W/fix\" EXIT" \
-    "bash -c \"bash -c 'W=$WT/a; rm -rf \$W/fix'\""
+    "bash -c \"bash -c 'W=$WT/a; rm -rf \$W/fix'\"" "bash -c 'W=$WT/a; rm -rf '\"\$W/fix\"" \
+    "bash <<< ''\"W=$WT/a; rm -rf \$W/fix\"" "echo 'x'; eval \"W=$WT/a; rm -rf \$W/fix\""
   # An assignment that may not hold leaves the variable unread in a value, a cd target and find's start path too.
   refuses "a recursive delete of \$E, $UNREAD" "$UNREAD_WAY" "(W=$WT/a); E=\$W/fix; rm -rf \$E"
   refuses "a recursive delete of x, $UNREAD" "$UNREAD_WAY" "(W=$WT/src); cd \$W; rm -rf x"
