@@ -6,9 +6,10 @@
 // preset, a device and a free size, read back through the page's own metrics (/v1/test/page),
 // and moved by a second open in the same host; status, targets and stop; the runtime directory's, socket's and token's modes and the token check; two
 // opens at once, a killed host, a stale start lock taken over by eight clients at once and by a
-// client that read it stale before another took it, and a host of another protocol; install's
-// call of Playwright's own installer; and an engine whose browser is missing. Every engine the
-// machine has runs; under CI=true a missing one fails, elsewhere it skips with its reason.
+// client that read it stale before another took it, a client that read no token before the
+// host wrote its own, and a host of another protocol; install's call of Playwright's own
+// installer; and an engine whose browser is missing. Every engine the machine has runs; under
+// CI=true a missing one fails, elsewhere it skips with its reason.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -391,6 +392,34 @@ syncBuiltinESMExports();
     assert.equal(hosts.length, 1, `hosts: ${hosts.join(", ")}`);
     assert.equal((await proto.run(["status"])).stdout, `proto: host ${hosts[0]}; no window\n`);
     assert.equal(existsSync(lock), false);
+  });
+
+  test("a client that read no token before the host wrote its own is answered once it is there", async (t) => {
+    const proto = protoSession(t);
+    // Preloaded in the host: its token's rename into place waits 3 s, so a client that reads the
+    // token file while the socket is bound reads none, as a client a moment early does.
+    const dir = tempDir("slow-token");
+    const hook = join(dir, "slow-token.mjs");
+    writeFileSync(hook, `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const renameSync = fs.renameSync;
+fs.renameSync = (from, to, ...rest) => {
+  if (String(to).endsWith("/token") && process.argv[1]?.endsWith("host.mjs")) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_000);
+  return renameSync(from, to, ...rest);
+};
+syncBuiltinESMExports();
+`);
+    const starting = proto.run(["targets"], { env: { NODE_OPTIONS: `--import=${pathToFileURL(hook).href}` } });
+    const deadline = Date.now() + 20_000;
+    while (!existsSync(join(proto.dir, "host.sock"))) {
+      assert.ok(Date.now() < deadline, "the host bound its socket");
+      await sleep(20);
+    }
+    assert.equal(existsSync(join(proto.dir, "token")), false, "the token is not there yet");
+    const status = await proto.run(["status"]);
+    assert.equal((await starting).status, 0);
+    const [host] = hostsOf(proto.dir);
+    assert.deepEqual([status.status, status.stderr, status.stdout], [0, "", `proto: host ${host}; no window\n`]);
   });
 
   test("a host answering another protocol number is named with its fix", async (t) => {

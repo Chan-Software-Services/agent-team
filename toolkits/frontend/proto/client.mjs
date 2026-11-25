@@ -47,15 +47,32 @@ class HostError extends Error {
   }
 }
 
-// One request over the socket. Rejects with error.code ENOENT or ECONNREFUSED when no host
-// listens there, and a HostError carrying the status for an answer with `error`.
-function send(paths, method, path, body, { timeoutMs = 30_000 } = {}) {
-  let token = "";
+const readToken = (paths) => {
   try {
-    token = readFileSync(paths.token, "utf8").trim();
+    return readFileSync(paths.token, "utf8").trim();
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
+    return "";
   }
+};
+
+// One request over the socket. Rejects with error.code ENOENT or ECONNREFUSED when no host
+// listens there, and a HostError carrying the status for an answer with `error`. A host holds a
+// request until it has written its token, so one sent with the token read a moment before (none,
+// or a gone host's) is refused 401 with another token in the file by then: it is sent again
+// with that one, and a 401 on the file's own token is the refusal.
+async function send(paths, method, path, body, options) {
+  for (;;) {
+    const token = readToken(paths);
+    try {
+      return await sendOnce(paths, token, method, path, body, options);
+    } catch (error) {
+      if (error.status !== 401 || readToken(paths) === token) throw error;
+    }
+  }
+}
+
+function sendOnce(paths, token, method, path, body, { timeoutMs = 30_000 } = {}) {
   const payload = body === undefined ? undefined : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const request = httpRequest({
@@ -144,7 +161,7 @@ export async function connect({ start = false, env = process.env } = {}) {
 }
 
 // Polls until the host answers, `until` passes or `gaveUp()` names a reason to stop. A refused
-// token while a host starts is its token not yet renamed into place, so it is asked again.
+// token while a host starts is asked again.
 async function answering(paths, until, gaveUp = () => null) {
   for (;;) {
     try {
