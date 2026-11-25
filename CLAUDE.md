@@ -88,6 +88,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `docs/`: design docs, beside what a stranger reads first in `README.md`.
   - `rust-core.md`: the Rust core's design and its port map, kept by hand: the crates, the platform and interface seams, what was decided since the first design, and each `bin/` script, ledger event kind and config file against its future crate and seam.
 - `LICENSE`: the Apache License 2.0; vendored bats-core and git filter-repo keep their own.
+- `plugins/assistant-skills/`: skills loaded only into the assistant by `bin/claude-assistant`: `walk`, through what waits on Daniel one item at a time.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
 - `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's, the assistant's and its read session's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.

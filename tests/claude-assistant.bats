@@ -74,6 +74,7 @@ launch_argv() {
     "--channels", "plugin:discord@claude-plugins-official",
     "--dangerously-skip-permissions",
     "--append-system-prompt-file", "\($code)/roles/assistant.md",
+    "--plugin-dir", "\($code)/plugins/assistant-skills",
     "--settings", "\($state)/assistant.settings.json",
     $prompt]'
 }
@@ -306,7 +307,10 @@ assert_nothing_written() {
     '[false,false,false,false]'
   local argv
   argv=$(stub_calls claude | tail -n 1)
-  assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
+  assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
+  # Its one plugin directory is its own, never the coordinator's skills.
+  assert_equal "$(jq -c '[indices("--plugin-dir")[] as $i | .[$i + 1]]' <<<"$argv")" \
+    "$(jq -cn --arg code "$REPO_ROOT" '["\($code)/plugins/assistant-skills"]')"
 }
 
 @test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts, GitHub's writes and the thread cache's writes" {
@@ -531,6 +535,7 @@ load_check_argv() {
     "--mcp-config", "\($state)/assistant-load-check.mcp.json",
     "--dangerously-skip-permissions",
     "--append-system-prompt-file", "\($code)/roles/assistant.md",
+    "--plugin-dir", "\($code)/plugins/assistant-skills",
     "--settings", "\($state)/assistant-load-check.settings.json",
     $prompt]'
 }
@@ -704,4 +709,14 @@ $(with_flags "$(launch_argv)" --model haiku --effort high)"
   assert_contains "$text" "the assistant line of the team home's models.toml"
   assert_contains "$text" "assistant.load-check"
   assert_contains "$text" "sessions.jsonl"
+}
+
+@test "its role triggers exactly its plugin's skills, and its header names the plugin" {
+  local role=$REPO_ROOT/roles/assistant.md skills=$REPO_ROOT/plugins/assistant-skills/skills
+  # Each "`<name>` skill" the role names, against each directory of the plugin's skills.
+  assert_equal "$(grep -oE '`[a-z]+(-[a-z]+)*` skill' "$role" | sed -E 's/^`([^`]*)`.*/\1/' | sort -u | paste -sd ' ')" \
+    "$(cd "$skills" && find . -mindepth 1 -maxdepth 1 -type d -printf '%P\n' | sort | paste -sd ' ')"
+  grep -qF '`walk` skill' "$role"
+  run_bin -0 claude-assistant --help
+  assert_contains "$(tr -s ' \n' '  ' <<<"$output")" "its skills, walk, load from plugins/assistant-skills; no other session loads them"
 }
