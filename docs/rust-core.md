@@ -151,7 +151,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/team-handoff` | `team-core` | `platform`, `vcs` | The lease (step 7) |
 | `bin/team-heavy` | `team-platform` | `platform` | The heavy-run lock and its scope: the trait here, each OS's body (systemd's or launchd's scope) in its own crate |
 | `bin/team-inbox` | `team-core` | `interface` | The one inbox (step 4); `list_waiting` |
-| `bin/team-janitor` | `team-core` | `platform` | Docker and `/tmp` |
+| `bin/team-janitor` | `team-core` | `platform` | Docker, `/tmp` and the home directory's caches |
 | `bin/team-land` | `team-core` | `vcs` | The merge queue |
 | `bin/team-lease` | `team-core` | `vcs`, `platform` | The lease, the epoch and the fence (step 7) |
 | `bin/team-level` | `team-core` | `platform` | |
@@ -228,6 +228,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/confine.py` | `team-platform-linux` | `platform` | Landlock |
 | `bin/lib/data-check` | `team-guard` | `none` | |
 | `bin/lib/delete_rules.py` | `team-guard` | `platform` | |
+| `bin/lib/disk.sh` | `team-core` | `platform` | |
 | `bin/lib/doctor.d/` | `team-cli` | `platform`, `vcs` | One check per file |
 | `bin/lib/drills.jq` | `team-model` | `none` | |
 | `bin/lib/drills.json` | `team-model` | `none` | Config: the drill registry |

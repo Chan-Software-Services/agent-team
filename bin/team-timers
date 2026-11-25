@@ -1647,7 +1647,7 @@ github_rate_limit() {
   [[ -z $GITHUB_WHY ]]
 }
 
-# The inbox step, on the holder after the tmp step: team-inbox, logged only when it retired the
+# The inbox step, on the holder after the disk step: team-inbox, logged only when it retired the
 # message it kept in #coordinator before waiting.md, numbered the list afresh (which no later run
 # would show), or failed, and never failing the run, since the next run writes the list again.
 inbox_step() {
