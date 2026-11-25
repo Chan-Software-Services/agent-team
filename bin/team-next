@@ -275,12 +275,12 @@
 #                    naming the PR and head, one line per failure, the PR's, then infrastructure,
 #                    then roll-ups, each with its class, name, kind (a missing one with what
 #                    requires it, the base's rules or the project's required_checks), failing
-#                    step, link and rerun command, and a closing line: the PR's are the round's blocking findings, the
-#                    others not), logs ci outcome=failed failed=<every failure's name, class,
-#                    kind, link and step>, reruns nothing, and prints the round's hand-off as a
-#                    findings round's: the message to fix "the failed checks <the PR's names> of
-#                    <short> in <the report>" for the holder under 250k, else its STOW, after
-#                    recovering it when gone, exit 0
+#                    step, link and rerun command, and a closing line: the PR's are the round's
+#                    blocking findings, the others not), logs ci outcome=failed failed=<every
+#                    failure's name, class, kind, link and step>, reruns nothing, and prints the
+#                    round's hand-off as a findings round's: the message to fix "the failed
+#                    checks <the PR's names> of <short> in <the report>" for the holder under
+#                    250k, else its STOW, after recovering it when gone, exit 0
 #                    with infrastructure and roll-up failures alone: reruns each never-started,
 #                    setup or stuck check (never a queued one, a roll-up or one of the PR's own)
 #                    that no ci-rerun of the head names since its latest ci outcome=infrastructure,

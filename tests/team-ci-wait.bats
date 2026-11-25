@@ -1747,8 +1747,27 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   checks 0 "$(check test SUCCESS 7001)"
   run_bin --separate-stderr team-ci-wait "$url"
   assert_equal "$status" 0
-  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held until a look reads them: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
   assert_equal "${lines[-1]}" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  # Each look tries the rules again, so a wait of 5 looks read the branch 5 times.
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 5
+}
+
+# A read of the rules that fails is tried again at each look on a PR's head, so one failure at the
+# start does not leave a rules-required check unheld for the whole wait.
+@test "a PR's head reads the base's rules again at the next look after a read that failed, and holds them once one succeeds" {
+  rules_require test "Analyze (python)"
+  answer 0 branch fail
+  answer 1 branch '{"protected": true}'
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held until a look reads them: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  assert_equal "${lines[-1]}" "  the PR's: Analyze (python) was not reported for 2 minutes, though dev's rules require it"
+  # Read twice, the second time with its rules and ruleset, then never again.
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rulesets/41' "$GH_DIR/calls")" 1
 }
 
 @test "--look on a PR's head and --run read no rules, since neither holds a check not reported" {

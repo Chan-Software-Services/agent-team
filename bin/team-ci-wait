@@ -76,15 +76,17 @@
 # in a re-run's or a push's first seconds the head's checks may list only another workflow's, and
 # an earlier attempt's failure may yet be replaced.
 # A run GitHub does not list yet holds nothing, so a reading of no check, or of every check passed,
-# counts only once it has stood for 2 minutes of looks (SETTLE_SECONDS), with no run open and no
-# new check listed: until then any of these restarts it. The required checks are the project's
+# counts only once it has stood for 2 minutes of looks (SETTLE_SECONDS), with no run open and no new
+# check listed: until then any of these restarts it. The required checks are the project's
 # required_checks, read through team-project, and, but for a PR's head's --look and a --run wait,
-# beside them every context the base's rules require: before its first look it reads them once
+# beside them every context the base's rules require: before its first look it reads them
 # (base_rules in bin/lib/team.sh, for the project's base on the PR's repository, on the login it
-# runs on), and a read that fails prints one line on stderr, "team-ci-wait: <base>'s rules on
-# <repo> could not be read, so only the registry's required checks are held: <its first error
-# line>", and the wait goes on with those. A required check still not listed when that reading
-# has stood is a failure.
+# runs on), and a read that fails prints one line on stderr, "team-ci-wait: <base>'s rules on <repo>
+# could not be read, so only the registry's required checks are held until a look reads them: <its
+# first error line>", and the wait goes on with those, reading the rules again before each later
+# look until a read succeeds, the line said once (with --merge-group, below, it reads them once). A
+# required check still not listed when that reading has stood is a failure, of the registry's alone
+# when no read has succeeded by then.
 # agent-review is never among them here, since a reviewer sets it at its verdict, apart from CI.
 # Before each look, while the team holds offline (offline_hold), it ends at once with exit 75 and
 # the hold's text.
@@ -201,21 +203,22 @@
 # classes, deadlines and outcomes, --json's head the trial commit, and these differences. Each look
 # reads the PR's state and its queue entry's head commit (gh api graphql, through gh_call, one
 # GraphQL point a look, never cached) in place of pulls/<n>, and the rest as a PR's look does, at
-# the trial commit: its check runs and statuses and its workflow runs, with the repository's runs
-# in progress. There is no grace, since the caller read the trial commit from the entry. It reads
-# the base's rules as a PR's head's wait does, with --look too, and holds every context they
-# require but agent-review, which team-land posts itself. Once the entry's head commit is no
-# longer <trial sha> (the queue rebuilt the entry onto another trial commit, landed it or dropped
-# it), the wait ends at that look: on a merged or closed PR as on a head;
-# when a check of the trial commit failed, as a failure, exit 1,
-# the cancelled and pending checks of that look left out, since the queue cancels the rest of a
-# commit it gives up, and each required check no check of the look lists (a cancelled or pending
-# one counts as listed) named as the rules', that reading first held for 2 minutes of looks as
-# above; else exit 1 (other-head), naming where the entry is. A <sha> after the URL is refused
-# with it. With --look it takes one readable look at the trial commit, as for a PR, with no grace,
-# for team-land to say whether a trial commit it cannot mark is green on its other checks: a
-# required check no check of the look lists is named pending, "<name> (not reported)", and an entry
-# no longer on the trial commit ends the look at once, with no settle.
+# the trial commit: its check runs and statuses and its workflow runs, with the repository's runs in
+# progress. There is no grace, since the caller read the trial commit from the entry. It reads the
+# base's rules as a PR's head's wait does, with --look too, and holds every context they require but
+# agent-review, which team-land posts itself, but reads them once: a read that fails says so on the
+# same line without "until a look reads them", and the registry's checks alone are held for the
+# whole wait. Once the entry's head commit is no longer <trial sha> (the queue rebuilt the entry
+# onto another trial commit, landed it or dropped it), the wait ends at that look: on a merged or
+# closed PR as on a head; when a check of the trial commit failed, as a failure, exit 1, the
+# cancelled and pending checks of that look left out, since the queue cancels the rest of a commit
+# it gives up, and each required check no check of the look lists (a cancelled or pending one counts
+# as listed) named as the rules', that reading first held for 2 minutes of looks as above; else exit
+# 1 (other-head), naming where the entry is. A <sha> after the URL is refused with it. With --look
+# it takes one readable look at the trial commit, as for a PR, with no grace, for team-land to say
+# whether a trial commit it cannot mark is green on its other checks: a required check no check of
+# the look lists is named pending, "<name> (not reported)", and an entry no longer on the trial
+# commit ends the look at once, with no settle.
 # With --run, the wait is on the one workflow run, read as a PR's checks are, but for what follows.
 # Each look reads, through the reader as above, the run (repos/<repo>/actions/runs/<id>), its jobs,
 # the latest attempt's (repos/<repo>/actions/runs/<id>/jobs?per_page=100), and the repository's runs
@@ -694,21 +697,30 @@ sleep_limit() {
   elapsed=$((elapsed + seconds))
 }
 # hold_rules: on a PR's head (but with --look) and with --merge-group, read the base's rules
-# (base_rules, on the login this runs on), once, at the wait's start, and add every context they
+# (base_rules, on the login this runs on) at the wait's start, and add every context they
 # require but agent-review, which a reviewer sets at its verdict and team-land posts itself on a
 # trial commit, to the required checks, keeping those in rules_required; a read that fails is said
-# on one line on stderr, and the registry's required checks alone are held.
-rules_required='[]' rules_read=false wants_rules=false
+# on one line on stderr, and the registry's required checks alone are held: with --merge-group for
+# the whole wait, on a PR's head until a later look's read succeeds, since each look tries again.
+rules_required='[]' rules_read=false rules_told=false wants_rules=false
 # A PR's head's --look holds no check not reported, and a run's required checks are the registry's.
 if [[ -n $group ]] || { [[ -z $run_id ]] && ! $look; }; then wants_rules=true; fi
 hold_rules() {
   local rules
-  rules_read=true
   if rules=$(base_rules "$repo" "$base" 2>"$dir/rules.error"); then
+    rules_read=true
     rules_required=$(jq -c '[.required[].context | select(. != "agent-review")] | unique' <<<"$rules")
     required=$(jq -c --argjson rules "$rules_required" '. + ($rules - .)' <<<"$required")
-  else
-    echo "team-ci-wait: $base's rules on $repo could not be read, so only the registry's required checks are held: $(grep -m1 . "$dir/rules.error" || echo "no reason given")" >&2
+    return
+  fi
+  # On a trial commit the wait goes on with the registry's checks; on a PR's head the next look
+  # reads the rules again, the line said once.
+  [[ -z $group ]] || rules_read=true
+  if ! $rules_told; then
+    local until=''
+    [[ -n $group ]] || until=' until a look reads them'
+    echo "team-ci-wait: $base's rules on $repo could not be read, so only the registry's required checks are held$until: $(grep -m1 . "$dir/rules.error" || echo "no reason given")" >&2
+    rules_told=true
   fi
 }
 
