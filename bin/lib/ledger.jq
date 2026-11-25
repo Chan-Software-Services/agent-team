@@ -844,6 +844,11 @@ def task_status: lifecycle.status;
 # (the fold's prs).
 def task_prs: lifecycle.prs | map({url, head, number});
 
+# What team-merge is given to act on the PR at $url, over the task's events: T<n>, and --pr <url>
+# after it when the task has more than one PR (task_prs), since team-merge T<n> alone takes the
+# latest pr event's.
+def merge_args($url): .[0].task + (if (task_prs | length) > 1 then " --pr \($url)" else "" end);
+
 # The head the ledger knows for the PR at $url, from task_prs.
 def pr_head($url): task_prs | map(select(.url == $url)) | last | .head;
 
@@ -1386,9 +1391,9 @@ def runner_backlog:
     and (((.reason // "") | split(";") | .[0]) == "checks_timed_out"
       or (any($f[]; waited) and all($f[]; waited or .class == "rollup")));
 # The next step after such a drop, the one team-merge, team-next --ci and team-sweep's merge-due
-# name.
-def runner_step($repo; $task):
-  "the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of \($repo)'s merge queue while the backlog stands, and run team-merge \($task) again once they say the runners are back";
+# name, $merge being what team-merge is given: T<n>, or merge_args' for a reader of the ledger.
+def runner_step($repo; $merge):
+  "the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of \($repo)'s merge queue while the backlog stands, and run team-merge \($merge) again once they say the runners are back";
 
 # Where the PR at $url stands with its base's merge queue, over the task's events, or null: by the
 # latest queued, dequeued or merged naming the URL (a trailing slash aside), which team-merge logs
@@ -1912,15 +1917,16 @@ def default_holds($pr; $withdrawals; $own):
           own_in($own; $project); $withdrawals)
          | any(.words[]; .word == "default" and .holds));
 
-# merge-due's next step for its PRs $due, those of them in $behind dropped by the merge queue for a
-# runner backlog: team-merge T<n> with none dropped; else team-merge T<n> --pr for each other one,
-# then the runners' step (runner_step) for each dropped one, after "for <url>, " unless it is the
-# only PR due.
+# merge-due's next step for its PRs $due, those of them in $behind, each {url, merge} with merge its
+# merge_args, dropped by the merge queue for a runner backlog: team-merge T<n> with none dropped;
+# else team-merge T<n> --pr for each other one, then the runners' step (runner_step) for each
+# dropped one.
 def merge_due_step($task; $due; $behind):
   if $behind == [] then "run team-merge \($task)"
-  else [($due - $behind)[] | "run team-merge \($task) --pr \(.)"]
-    + [$behind[] | (if ($due | length) > 1 then "for \(.), " else "" end)
-        + runner_step((capture("^https://github\\.com/(?<repo>[^/]+/[^/]+)/pull/") // {repo: "<owner>/<name>"}).repo; $task)]
+  else [($due - [$behind[].url])[] | "run team-merge \($task) --pr \(.)"]
+    + [$behind[] | .merge as $merge
+        | .url | capture("^https://github\\.com/(?<repo>[^/]+/[^/]+)/pull/") // {repo: "<owner>/<name>"}
+        | runner_step(.repo; $merge)]
     | join("; ")
   end;
 
@@ -1955,11 +1961,12 @@ def merge_due_finding($withdrawals; $sessions; $own; $landing):
       | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
          | select($events | default_holds($pr; $withdrawals; $own)) | .url] as $due
       | select($due != [])
-      | [$due[] as $url | $events | queue_state($url) | select(.runners_due? == true) | {url: $url, since}] as $behind
+      | [$due[] as $url | $events | merge_args($url) as $merge | queue_state($url) | select(.runners_due? == true)
+         | {url: $url, since, $merge}] as $behind
       | finding($task; "merge-due"; null; null;
           "awaiting the merge of \($due | join(", ")) on the default word, the approved plan, with no ask open"
             + ($behind | map("; the merge queue dropped \(.url) at \(.since)") | add // "");
-          "\(merge_due_step($task; $due; [$behind[].url])); on a refusal, ask Daniel for the per-head word with team-ask")
+          "\(merge_due_step($task; $due; $behind)); on a refusal, ask Daniel for the per-head word with team-ask")
     else empty end;
 
 # team-sweep's queue-wait findings, over a task's events, one for each of its PRs that stands in

@@ -266,6 +266,22 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   assert_contains "$(tail -n 1 <<<"$output")" "merge base: $url is 3 behind main and conflicts on one.txt"
 }
 
+@test "--ci's merge runners line names team-merge --pr in a task with a PR in another repository, since team-merge alone takes the latest pr event's" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 0
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "pr", url: "https://github.com/owner/other/pull/3", head: "0123456"},
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "checks_timed_out"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge runners: $url was dropped by the merge queue at 2026-10-23T10:00:00Z: the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of owner/proj's merge queue while the backlog stands, and run team-merge T7 --pr $url again once they say the runners are back"
+}
+
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {
   # The branch is not on origin, so the fetch fails.
   reviewing "$sha"

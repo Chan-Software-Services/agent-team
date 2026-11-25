@@ -1299,8 +1299,14 @@ rules_drop() {
   no_github
 }
 
-@test "merge-due: of two due PRs, a runner backlog drop of one names team-merge on the other and the runners for the dropped one" {
+@test "merge-due: of two PRs, the runners step of one dropped for a runner backlog names team-merge --pr on it, after team-merge --pr on one not dropped" {
   local url=https://github.com/owner/proj/pull/5 other=https://github.com/owner/other/pull/9
+  # step <repo> <url>: the runners step for the PR at <url>.
+  step() {
+    echo "the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of $1's merge queue while the backlog stands, and run team-merge T3 --pr $2 again once they say the runners are back"
+  }
+  local due="T3 merge-due: awaiting the merge of $url, $other on the default word, the approved plan, with no ask open; the merge queue dropped $url at 2026-10-22T03:30:00Z"
+  local ask="on a refusal, ask Daniel for the per-head word with team-ask"
   register other
   opened T3
   event T3 worktree-added '{project: "other", branch: "feat/T3-work", base: "dev", base_sha: "0123456", worktree: "/w/2"}'
@@ -1312,8 +1318,18 @@ rules_drop() {
   sessions "$(session 11111111 T3-reviewer idle)"
   ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
   ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
+  # team-merge T3 alone takes the latest pr event's PR, the other one, so each step names its PR.
   run_bin -1 team-sweep
-  assert_equal "$output" "T3 merge-due: awaiting the merge of $url, $other on the default word, the approved plan, with no ask open; the merge queue dropped $url at 2026-10-22T03:30:00Z; next: run team-merge T3 --pr $other; for $url, the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of owner/proj's merge queue while the backlog stands, and run team-merge T3 again once they say the runners are back; on a refusal, ask Daniel for the per-head word with team-ask"
+  assert_equal "$output" "$due; next: run team-merge T3 --pr $other; $(step owner/proj "$url"); $ask"
+  # Both dropped: each its own runners step.
+  ledger_line --arg url "$other" '{ts: "2026-10-22T03:40:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "other"}'
+  ledger_line --arg url "$other" '{ts: "2026-10-22T04:00:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$due; the merge queue dropped $other at 2026-10-22T04:00:00Z; next: $(step owner/proj "$url"); $(step owner/other "$other"); $ask"
+  # The other merged, the dropped one alone is due, and still named with --pr.
+  ledger_line --arg url "$other" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "merged", url: $url, pr: 9, head: "a1b2c3d4e5", project: "other"}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep merge-due <<<"$output")" "T3 merge-due: awaiting the merge of $url on the default word, the approved plan, with no ask open; the merge queue dropped $url at 2026-10-22T03:30:00Z; next: $(step owner/proj "$url"); $ask"
   no_github
 }
 
