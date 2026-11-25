@@ -16,11 +16,13 @@
 //            defaults to the project's url (http://localhost:5173/ without one), the target to
 //            the window's own, else chromium/laptop; an engine or a size alone keeps the other.
 //   set      switches the open window to the target, on the page it shows now, and prints the
-//            same line; an engine or a size alone keeps the other. Another engine reopens the
-//            page there with the window's localhost cookies and localStorage and closes the old
-//            browser; a new scale, mobile or touch flag or user agent reopens it in a fresh
-//            context of the same browser, carrying them the same way; a new width and height
-//            alone resize the window in place, keeping the page as it is. A switch that fails
+//            same line; an engine or a size alone keeps the other. Another launched engine
+//            reopens the page there with the window's localhost cookies and localStorage and
+//            closes the old browser, and in a launched engine a new scale, mobile or touch flag
+//            or user agent reopens it in a fresh context of the same browser, carrying them the
+//            same way; the Agent Chrome takes no login along, is detached from rather than
+//            closed, and is emulated anew in its one tab. A new width and height alone resize
+//            the window in place, keeping the page as it is. A switch that fails
 //            leaves the window as it was. Refused with no window open: run `proto open`
 //   capture  starts the host when none runs and takes the page at every target asked, each in a
 //            headless browser of its own, never in the window, which keeps its engine, size and

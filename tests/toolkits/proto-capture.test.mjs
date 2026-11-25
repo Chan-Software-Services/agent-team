@@ -11,9 +11,10 @@
 // window left as it was and no overlay in a capture, the defaults (the project's matrix, else
 // every launched engine at the five presets, the output directory in the checkout), an
 // unavailable engine's rows, a row that fails alone (no element at one width, a navigation off
-// localhost, a redirect off localhost, a load past 30 s), the exit status, the refusals with
-// nothing written, matrix.md, and two captures at once running one after the other. Every engine
-// the machine has runs; under CI=true a missing one fails, elsewhere it skips with its reason.
+// localhost, a load past 30 s), a redirect off localhost failing its rows, the exit status, the
+// refusals with nothing written, matrix.md, and two captures at once running one after the
+// other. Every engine the machine has runs; under CI=true a missing one fails, elsewhere it
+// skips with its reason.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";

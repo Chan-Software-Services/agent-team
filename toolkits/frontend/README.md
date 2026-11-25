@@ -175,7 +175,7 @@ What `proto install` does on Linux, after Playwright's installer (`proto/webkit-
 WebKit's availability is that check, at every reading of it (`proto targets`, a switch or `proto open` to WebKit): when a library goes missing, WebKit is unavailable, "WebKit <version> lacks <sonames> on this machine; run `proto install`".
 It runs each time because Playwright's own check runs once per revision and never again.
 On macOS none of this runs: Playwright's Mac WebKit links the system's own frameworks.
-The placed libraries take Ubuntu's later security updates only at a refresh, which a Playwright bump brings; they load only in a browser the host keeps on localhost.
+The placed libraries take Ubuntu's later security updates only at a refresh, which a Playwright bump brings; the host opens only localhost pages in that WebKit and blocks its main-frame navigations off localhost, though a frame, a script or a redirect off localhost still loads there.
 
 What moves, what catches it and what fixes it:
 
