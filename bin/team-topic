@@ -9,8 +9,9 @@
 # before anything is read, with worker_refusal's line, in every form but --help.
 # Its steps run its own checkout's team-open, team-thread, team-brief, team-worker and team-close
 # with AGENT_TEAM_ROLE and AGENT_TEAM_TASK removed from their environment and TEAM_HOME passed, so
-# their own refusals of the assistant do not refuse what this script has held to Daniel's word; the
-# assistant's command guard still refuses each of them called directly.
+# their own refusals of the assistant do not refuse what this script has held to Daniel's word;
+# called directly, team-open, team-worker and team-close still refuse the assistant
+# (worker_refusal), and its command guard refuses team-thread T<n>.
 #
 # open, in order, each step kept when it is done already, so a rerun with --task T<n> finishes a
 # topic a failed run left half open (a failure after the task's number is known says the rerun
