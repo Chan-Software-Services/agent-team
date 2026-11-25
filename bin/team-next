@@ -335,17 +335,17 @@
 # followed (queue_state's round_due in bin/lib/ledger.jq) gets that brief's step too, whatever its
 # base: "merge base: <url> failed <checks> on the merge queue's trial merge, which dropped it at
 # <ts>, so the builder fixes it on the branch (step 6): ...", never the merge line, which would
-# enqueue the same failing head again, even beside a rules failure. A PR the merge queue dropped
-# for a check the base's rules require that no run made on the trial commit, with no failure of
-# its own, no pr event of its URL and no review of the task since (queue_state's rules_due), gets
-# the rules step team-merge names instead, whatever its base: "merge rules: <url> was dropped by the merge queue at
-# <ts>: <checks> never reported on its trial commit, which <base>'s rules require; the base's rules
-# require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix
-# the workflow's merge_group trigger or ask Daniel to change <repo>'s ruleset, then run team-merge
-# T<n> again", a check the project's required_checks alone require said as theirs, in its own
-# clause, and the step as team-merge words it for them (rules_reason and rules_step in
-# bin/lib/ledger.jq), never the merge line nor the merge-base step, since the trial merge cannot
-# be judged until every required check runs there.
+# enqueue the same failing head again, even beside a rules failure. A PR the merge queue dropped for
+# a check the base's rules require that no run made on the trial commit, with no failure of its own,
+# no pr event of its URL and no review of the task since (queue_state's rules_due), gets the rules
+# step team-merge names instead, whatever its base: "merge rules: <url> was dropped by the merge
+# queue at <ts>: <checks> never reported on its trial commit, which <base>'s rules require; the
+# base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue
+# line), fix the workflow's merge_group trigger or ask Daniel to change <repo>'s ruleset, then run
+# team-merge T<n> again", a check the project's required_checks alone require said as theirs, in its
+# own clause, and the step as team-merge words it for them (rules_reason and rules_step in
+# bin/lib/ledger.jq), never the merge line nor the merge-base step, since the trial merge cannot be
+# judged until every required check runs there.
 # The churn rule: when this review sent back a finding its widening= marks (one in what the last
 # fix added), the task's previous review in the verdict's project (project_reviews: the latest
 # made there before this one, on a rerun the latest before the line that holds it, another

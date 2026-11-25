@@ -130,12 +130,11 @@
 #                  its own on the trial merge (its latest queued, dequeued or merged is a dequeued
 #                  whose failed holds one of class pr, whatever else failed, with no pr event of it
 #                  and no review since; queue_state's round_due in bin/lib/ledger.jq), with session
-#                  null: "PR <url>
-#                  failed <checks> on the merge queue's trial merge, which dropped it at <the
-#                  dequeued's time>; next: run team-next T<n> --ci, which names the
-#                  builder-merge-base step and who takes it, then a rereview; never team-merge
-#                  T<n> on the same head", beside the task's other findings; never for a PR
-#                  trial-rules names
+#                  null: "PR <url> failed <checks> on the merge queue's trial merge, which dropped
+#                  it at <the dequeued's time>; next: run team-next T<n> --ci, which names the
+#                  builder-merge-base step and who takes it, then a rereview; never team-merge T<n>
+#                  on the same head", beside the task's other findings; never for a PR trial-rules
+#                  names
 #   trial-rules    an open task in awaiting-merge, with no ask open and nothing parking it and no
 #                  process holding its merge lock, whose PR the merge queue dropped for a check the
 #                  base's rules require and no workflow made on the trial commit (its latest
