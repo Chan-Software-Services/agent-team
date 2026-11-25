@@ -67,10 +67,14 @@
 # library reads or runs is, like any other. A named base that is no commit is a usage error; a
 # missing origin/dev is refused.
 # After the bats, it names each file that took over 1.5 times and 60 seconds more than its seconds
-# in tests/timings.tsv for this platform, as a warning annotation under GitHub Actions.
-# TESTS_TIMINGS names the timings file it and tests/shards read (default tests/timings.tsv), and
-# TESTS_SLOWER_BY the margin in seconds (a whole number, default 60, else refused); neither changes
-# the exit code.
+# in the timings for this platform, as a warning annotation under GitHub Actions, advising to find
+# what slowed it. TESTS_TIMINGS names the timings file it and tests/shards read (default
+# tests/timings.tsv), and TESTS_SLOWER_BY the margin in seconds (a whole number, default 60, else
+# refused); neither changes the exit code. On CI, TESTS_TIMINGS names shard-plan's timings, the
+# latest successful run's seconds (a copy of the committed tests/timings.tsv only when that job
+# cannot read a run, which it warns of), so refreshing the committed file changes only that there; a
+# run without TESTS_TIMINGS, a local one, reads the committed file, which goes stale, so only then
+# does the advice add refreshing it with tests/shards update if its seconds are stale.
 # Exit 0 when every check passes; CI runs each part as its own job. The last line is the wall
 # time, so a slower suite shows, and when the bats ran, how many files at once.
 set -euo pipefail
@@ -374,11 +378,14 @@ parallelism() {
 }
 
 # One line for each bats file whose seconds in <dir>/<name>.seconds exceed both 1.5 times and
-# TESTS_SLOWER_BY more than its seconds in the timings (see the header) for this platform, and
-# under GitHub Actions the same text as a warning annotation; a file the timings lack, or lack for
-# this platform, is never named.
+# TESTS_SLOWER_BY more than its seconds in the timings (see the header) for this platform, with its
+# advice (see the header), and under GitHub Actions the same text as a warning annotation; a file
+# the timings lack, or lack for this platform, is never named.
 slow_files() {
   local dir=$1 file column=linux label=${TESTS_TIMINGS:-tests/timings.tsv} timings
+  local advice='find what slowed it'
+  [[ -n ${TESTS_TIMINGS:-} ]] ||
+    advice+=', or refresh tests/timings.tsv with tests/shards update if its seconds are stale'
   timings=${TESTS_TIMINGS:-$root/tests/timings.tsv}
   [[ $(uname -s) != Darwin ]] || column=macos
   [[ -f $timings ]] || return 0
@@ -386,7 +393,7 @@ slow_files() {
     [[ -e $file ]] || continue
     printf 'tests/%s\t%s\n' "$(basename "$file" .seconds)" "$(<"$file")"
   done | awk -F'\t' -v column="$column" -v margin="${TESTS_SLOWER_BY:-60}" -v label="$label" \
-    -v annotate="$([[ ${GITHUB_ACTIONS:-} == true ]] && echo 1)" '
+    -v advice="$advice" -v annotate="$([[ ${GITHUB_ACTIONS:-} == true ]] && echo 1)" '
     FILENAME != "-" {
       if (/^#/) next
       if ($1 == "file") { for (i = 2; i <= NF; i++) if ($i == column) c = i; next }
@@ -394,7 +401,7 @@ slow_files() {
       next
     }
     ($1 in seconds) && $2 > seconds[$1] * 1.5 && $2 > seconds[$1] + margin {
-      text = sprintf("tests/run: %s took %ds, %ds in %s; refresh the timings with tests/shards update, or find what slowed it", $1, $2, seconds[$1], label)
+      text = sprintf("tests/run: %s took %ds, %ds in %s; %s", $1, $2, seconds[$1], label, advice)
       print text
       if (annotate) print "::warning title=bats file slower::" text
     }' "$timings" -
@@ -405,8 +412,7 @@ slow_files() {
 run_bats() {
   local file failed=0 names minutes="$file_minutes minutes"
   ((file_minutes != 1)) || minutes='1 minute'
-  out=$(mktemp -d)
-  trap 'rm -rf "$out"' EXIT
+  out=$(team_mktemp -d)
   # Each file's output goes to $out/<file>, with $out/<file>.failed beside it when it fails,
   # $out/<file>.stopped when its time limit stopped it, and $out/<file>.seconds its seconds.
   bats_files >"$out/files" || { echo "bats: tests/shards could not split the files"; return 1; }

@@ -10,7 +10,11 @@
 # start opencode when that file is not there, when HOME holds a quote or a backslash, which the
 # JSON would need escaped, or when an argument is --pure, which loads no plugin, since an opencode
 # without the plugin would run the agents unguarded; OPENCODE_PURE, the same, it unsets.
+# The same content names the code's rules for the gate's agents, ~/agent-team/bin/lib/gate-rules.md,
+# as an instruction, which opencode adds to that config's instructions and reads into each agent's
+# system prompt, as gate-claude-settings.json's SessionStart hook does on a Claude gate.
 plugin=$HOME/agent-team/bin/lib/opencode-guard.js
+rules=$HOME/agent-team/bin/lib/gate-rules.md
 case $HOME in
 *'"'* | *\\*)
   echo "opencode-gate: HOME ($HOME) holds a quote or a backslash, so it cannot name the command-guard plugin $plugin; the gate's agents would run unguarded" >&2
@@ -29,7 +33,7 @@ for arg; do
 done
 unset OPENCODE_PURE
 OPENCODE_CONFIG=$HOME/.no-mistakes/opencode-gate.json
-OPENCODE_CONFIG_CONTENT=$(printf '{"plugin":["%s"]}' "$plugin")
+OPENCODE_CONFIG_CONTENT=$(printf '{"plugin":["%s"],"instructions":["%s"]}' "$plugin" "$rules")
 OPENCODE_DISABLE_CLAUDE_CODE=1
 export OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_DISABLE_CLAUDE_CODE
 exec opencode "$@"

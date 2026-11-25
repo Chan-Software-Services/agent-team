@@ -259,11 +259,12 @@ def message_builder_done($task; $events; $from; $report):
   with_sender($task; $events; $from; "builder"; {events: [message_event("done"; [["role", "builder"], ["session", .session], ["report", $report]])]});
 
 # An ops session's DONE or QUESTION, whose text may hold production data: its event with the
-# text's length in characters (report_chars, chars) and never the text.
+# text's length in characters (report_chars, chars) and never the text, marked ops: true, the mark
+# message_one_line takes a message of more than one line by and parse_message drops.
 def message_ops($event; $l; $text):
   if $event == "done" then
-    {events: [message_event("done"; [["role", "ops"], ["session", $l.session], ["report_chars", ($text | length | tostring)]])]}
-  else {events: [message_event("question"; [["role", "ops"], ["chars", ($text | length | tostring)]])]} end;
+    {events: [message_event("done"; [["role", "ops"], ["session", $l.session], ["report_chars", ($text | length | tostring)]])], ops: true}
+  else {events: [message_event("question"; [["role", "ops"], ["chars", ($text | length | tostring)]])], ops: true} end;
 
 # Whether --from ($from) names an ops session of the task, which takes its DONE whatever its
 # first word.
@@ -273,7 +274,7 @@ def message_from_ops($task; $events; $from):
 # A DONE: an ops session's when --from names one, else the forms above by their first word, else
 # the sender's done with its report, or an ops sender's with its length.
 def message_done($task; $events; $records; $from; $sent_back; $apps; $pr_project; $rest):
-  ($rest | capture("^(?<word>\\S+)(?:\\s+(?<more>.*))?$"; "s")) as $d
+  ($rest | capture("^(?<word>\\S+)(?:\\s+(?<more>.*))?$"; "p")) as $d
   | ($d.more // "") as $more
   | if message_from_ops($task; $events; $from) then
       with_sender($task; $events; $from; null; message_ops("done"; .; $rest))
@@ -293,25 +294,39 @@ def message_done($task; $events; $records; $from; $sent_back; $apps; $pr_project
       if .role == "ops" then message_ops("done"; .; $rest)
       else {events: [message_event("done"; [["role", .role], ["session", .session], ["report", $rest]])]} end) end;
 
-# The message (the input) of $task read into {events: [{event, fields}...]}, or {problems}. $events
-# are the task's events, $records its brief records by name (brief-review: {template, project,
-# values}), $from the --from session or "", $sent_back the --sent-back list or "", $apps the
+# A message of more than one line ($text, of kind $kind), read (the input, parse_message's reading
+# of it, {} for a kind that may not run on): taken when it is an ops session's DONE or QUESTION
+# (message_ops' reading, known by its mark, never by a field name the message may write itself:
+# its length alone, so the answer of several lines the coordinator relays to Discord goes through
+# as it was sent), else refused saying a message is one line, never with its text.
+# Every other kind's text is one line: the ledger keeps it, and its views (state_line,
+# retro_digest_text) print it within one line. A DONE or QUESTION whose sender cannot be told, on
+# a task with an ops launch, may be that session's, so the refusal names message_sender's reason,
+# which says how to name it.
+def message_one_line($task; $events; $from; $kind; $text):
+  if .ops == true then .
+  else (message_sender($task; $events; $from; null) | .problems // [] | first) as $unknown
+    | message_refused("a worker's message is one line, but for an ops session's DONE or QUESTION, and this \($kind) has "
+      + "\($text | [splits("\n")] | length) lines; "
+      + if $unknown != null and ($kind | IN("DONE", "QUESTION")) and any($events[]; .event == "launch" and .role == "ops")
+        then "it may be an ops session's, but \($unknown)" else "log it on one line" end) end;
+
+# The message (the input) of $task read into {events: [{event, fields}...]}, or {problems}. Its
+# task and kind are read from its first line alone, and its capture's flag p lets its rest run past
+# a newline, a message that does taken or refused by message_one_line; a message of more than one
+# line whose first line is not its task and kind is refused without its text, which may be an ops
+# answer. $events are the task's events, $records its brief records by name (brief-review:
+# {template, project, values}), $from the --from session or "", $sent_back the --sent-back list or "", $apps the
 # task's projects whose agent-review the reviewer App posts, and $pr_project the project of the PR
 # a DONE pass names, or "" (message_app_sender). A pr event's head is left for the caller to read from
 # GitHub: it carries github: <url> and no head.
 def parse_message($task; $events; $records; $from; $sent_back; $apps; $pr_project):
   gsub("^\\s+|\\s+$"; "") as $text
-  | ($text | capture("^(?<task>T[0-9]+)\\s+(?<kind>\\S+)(?:\\s+(?<rest>.*))?$"; "s") // null) as $m
+  | ($text | capture("^(?<task>T[0-9]+)[ \\t]+(?<kind>\\S+)(?:\\s+(?<rest>.*))?$"; "p") // null) as $m
   | ($m.rest // "") as $rest
   | def unreadable: message_refused("cannot read '\($text)': expected one of \(message_forms | join(", "))");
-    if $m == null or ($text | test("^T[0-9]+\\s") | not) then
-      message_refused("a worker's message starts with its task, \($task), then its kind; got '\($text)'")
-    elif $m.task != $task then message_refused("the message is for \($m.task), not \($task)")
-    elif $sent_back != "" and ($m.kind != "DONE" or ($rest | test("^(findings|pass)(\\s|$)") | not)) then
-      message_refused("--sent-back is taken only with a DONE findings or DONE pass message, not "
-        + (if $m.kind == "DONE" then "DONE " + ([$rest | splits("\\s+")][0]) else $m.kind end))
-    elif $rest == "" then unreadable
-    elif $m.kind == "QUESTION" then
+    def read:
+    if $m.kind == "QUESTION" then
       with_sender($task; $events; $from; null;
         if .role == "ops" then message_ops("question"; .; $rest)
         else {events: [message_event("question"; [["role", .role], ["text", $rest]])]} end)
@@ -336,6 +351,34 @@ def parse_message($task; $events; $records; $from; $sent_back; $apps; $pr_projec
         else with_sender($task; $events; $from; null;
           {events: [message_event("injection"; [["role", .role], ["source", $i.source], ["text", $i.text]])]}) end
     else unreadable end;
+    (if $m == null and ($text | test("\n")) then
+      message_refused("a worker's message starts with its task, \($task), then its kind, on its first line; "
+        + "got a message of \($text | [splits("\n")] | length) lines that does not")
+    elif $m == null or ($text | test("^T[0-9]+[ \\t]") | not) then
+      message_refused("a worker's message starts with its task, \($task), then its kind; got '\($text)'")
+    elif $m.task != $task then message_refused("the message is for \($m.task), not \($task)")
+    elif $sent_back != "" and ($m.kind != "DONE" or ($rest | test("^(findings|pass)(\\s|$)") | not)) then
+      message_refused("--sent-back is taken only with a DONE findings or DONE pass message, not "
+        + (if $m.kind == "DONE" then "DONE " + ([$rest | splits("\\s+")][0]) else $m.kind end))
+    elif $rest == "" then unreadable
+    elif ($text | test("\n") | not) then read
+    elif $m.kind | IN("DONE", "QUESTION") then read | message_one_line($task; $events; $from; $m.kind; $text)
+    else {} | message_one_line($task; $events; $from; $m.kind; $text) end) | del(.ops);
+
+# The tickets a builder's PR in $project carried, by number, for team-log to log a ticket-done of
+# each before the pr, so a task one builder built and delivered whole reads its tickets done, and
+# its merge names no phase left: of $tickets (team-tickets T<n> --json), each of $project in the
+# PR's phase that is neither done nor running and is none of $open (the tickets whose file has a
+# box not ticked). The PR's phase is the earliest of $project's tickets', or, once $project's latest
+# merged (one naming no project counts) names phases left, the earliest of those. So a deliverer's
+# PR, its phase's tickets done by their own builders, carries none, and no PR carries a later
+# phase's ticket. The input is the task's events.
+def message_carried($tickets; $project; $open):
+  [$tickets[] | select(.project == $project)] as $mine
+  | (last(.[] | select(.event == "merged" and (.phases_left | type) == "array" and (.project // $project) == $project)) // null) as $merged
+  | ([$mine[].phase] | if $merged != null and $merged.phases_left != [] then map(select(IN($merged.phases_left[]))) else . end
+     | min) as $phase
+  | [$mine[] | select(.phase == $phase and (.state | IN("done", "running") | not) and (IN(.ticket; $open[]) | not)) | .ticket];
 
 # The parsed message (parse_message's, of the message $message) with --relay's id ($relay, or "")
 # on its ops session's done, the pointer to the coordinator's relay of its answer in Discord; any

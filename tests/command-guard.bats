@@ -918,6 +918,9 @@ team-heavy run|team-heavy --label x run -- sh -c x
 team-lease take|team-lease take
 team-lease renew|team-lease renew
 team-lease release|team-lease release
+team-quota usage|team-quota usage
+team-quota usage|team-quota usage --if-due
+team-quota usage|bin/team-quota usage --load-check-probe
 team-secrets restore|team-secrets restore
 team-secrets save|team-secrets save discord-bot-env
 team-stack down|team-stack down
@@ -936,6 +939,9 @@ COMMANDS
   # shellcheck disable=SC2016
   refuses_as assistant "$ACTS (team-lease take); $ACTS_TAIL" "" '$B/team-lease take' "bash -c 'team-lease take'" \
     "eval 'bin/team-lease take'" 'env A=1 ~/agent-team/bin/team-lease take --load-check-probe'
+  # shellcheck disable=SC2016
+  refuses_as assistant "$ACTS (team-quota usage); $ACTS_TAIL" "" '$B/team-quota usage' \
+    'env A=1 ~/agent-team/bin/team-quota usage --if-due'
   # A --help that is not the first word reaches the act, since the library answers only a first one.
   refuses_as assistant "$ACTS (team-stow); $ACTS_TAIL" "" 'team-stow T1 --help' 'team-stow T1 -h'
   refuses_as assistant "$ACTS (team-heavy run); $ACTS_TAIL" "" 'team-heavy run --help' 'team-heavy run -- --help'
@@ -949,7 +955,8 @@ COMMANDS
     'team-records-rewrite --help' 'team-ops-end --help' 'claude-coordinator --help' '$B/team-stow --help' \
     'team-timers watch --once' 'team-timers watch' 'team-timers health' 'team-timers status --json' 'team-stack ls' \
     'team-stack --help' 'team-lease status' 'team-lease check' 'team-capacity status' 'team-config diff' \
-    'team-secrets check' 'team-heavy --help' 'team-heavy --help run' 'team-stack --help up' 'team-heavy status -- run' \
+    'team-secrets check' 'team-quota status' 'team-quota status --json' 'team-quota line' 'team-quota --help' \
+    'team-quota --help usage' 'team-heavy --help' 'team-heavy --help run' 'team-stack --help up' 'team-heavy status -- run' \
     'sed -n 1,40p bin/team-load-check | head -20' 'grep -rn toolkit bin/claude-coordinator bin/claude-assistant' \
     'wc -l bin/team-checkpoint bin/team-review-comment' 'cat bin/team-stow' 'grep -n take bin/team-lease' \
     "git log --oneline -- bin/team-stack" "grep -rn 'team-stack up' sops" 'git commit -m "fix: team-stow T1 says so"'; do
@@ -959,7 +966,7 @@ COMMANDS
   # A worker's same calls are not the row's: each passes the guard as it did.
   for role in builder planner reviewer; do
     for command in 'team-stow T1' 'team-handoff laptop' 'team-resume --wait' 'claude-coordinator' 'team-stack up' \
-      'team-lease take' 'team-heavy run -- tests/run' 'team-timers run' 'team-load-check --probe --role builder'; do
+      'team-lease take' 'team-heavy run -- tests/run' 'team-timers run' 'team-quota usage' 'team-load-check --probe --role builder'; do
       AGENT_TEAM_ROLE=$role guard -0 "$command"
       assert_equal "$stderr" ""
     done
@@ -967,6 +974,10 @@ COMMANDS
   # And a gate agent's, which has no role.
   guard -0 'team-stow T1'
   guard -0 'team-stack up'
+  guard -0 'team-quota usage --if-due'
+  # And the coordinator's, whose settings run the guard with its own role.
+  AGENT_TEAM_ROLE=coordinator guard -0 'team-quota usage --if-due'
+  assert_equal "$stderr" ""
 }
 
 @test "the acts' names go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
@@ -974,7 +985,7 @@ COMMANDS
   chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
   local word
   for word in team-checkpoint team-handoff team-ops-end team-records-rewrite team-resume team-review-comment team-stow \
-    claude-coordinator team-capacity team-config team-heavy team-lease team-secrets team-stack team-timers; do
+    claude-coordinator team-capacity team-config team-heavy team-lease team-quota team-secrets team-stack team-timers; do
     AGENT_TEAM_ROLE=builder guard -0 "$word x"
     assert_equal "$stderr" ""
     guard -0 "$word x"
