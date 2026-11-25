@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29958
+manual_bytes=29961
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -328,7 +328,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   discord=$(section coordinator Discord)
   # The Discord bullet: who Daniel's direct contact is, what goes to it, how, and the one line to
   # Daniel; then a topic task, the assistant's, of which the coordinator keeps only the session.
-  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks for, and each step of yours that needs their hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in a line to go to \`#assistant\`. A topic task (\`team-topic\`) is the assistant's: open, plan, review, merge and ping nothing of it; stow, resume (\`resume\`, \`resume-crash\`) and recover its \`T<n>-topic\` session as any worker's." <<<"$discord"
+  grep -qxF -- "- Daniel's direct contact is the assistant in \`#assistant\`, which \`claude-assistant\` starts and you never hear: hand it each walkthrough, manual step, login or spike Daniel asks for, and each step of yours that needs their hands, with \`team-assistant send walkthrough\` or \`spike --file <body>\` and \`COORDINATOR H<n> <kind>\` sent to \`assistant\`, and tell Daniel in a line to go to \`#assistant\`. A topic task (\`team-topic\`) is the assistant's: open, plan, review, merge or ping none of it; stow, resume (\`resume\`, \`resume-crash\`) and recover its \`T<n>-topic\` session as any worker's." <<<"$discord"
   # The coordinator no longer keeps manual-steps.md: each new step goes to the assistant, as the
   # Discord bullet above says how.
   grep -qxF -- "- You write directly only \`tasks/\`, the projects' \`memory/<project>/\`, and the ledger through the scripts; \`manual-steps.md\` is the assistant's, so a new step only Daniel can take goes to it (Discord)." "$manual"
