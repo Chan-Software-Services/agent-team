@@ -32,9 +32,11 @@ updates:
         # - chrome-devtools-mcp and chrome-devtools-axi, to bin/lib/tools.lock's global installs,
         #   which tests/repo.bats ("every session's chrome-devtools-axi runs the
         #   chrome-devtools-mcp that servers/ pins") holds equal and Dependabot never edits.
-        # - @foldkit/devtools-mcp, @foldkit/vite-plugin, foldkit and vite, to the Foldkit app the
-        #   team builds and to each other, and mongodb, to the version the pinned MongoDB MCP server
-        #   installs, as CLAUDE.md's Layout says; no test holds these.
+        # - @foldkit/devtools-mcp, @foldkit/vite-plugin and foldkit, to the Foldkit app the team
+        #   builds and to each other, which tests/toolkits/effect-devtools.test.mjs ("runs the
+        #   @foldkit/devtools-mcp servers/ pins, the version released with foldkit 0.170.0") holds.
+        # - vite, to the Foldkit app the team builds, and mongodb, to the version the pinned MongoDB
+        #   MCP server installs, as CLAUDE.md's Layout says; no test holds these.
         exclude-patterns:
           - "chrome-devtools-mcp"
           - "chrome-devtools-axi"
