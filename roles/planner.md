@@ -13,6 +13,7 @@ The coordinator started you in the task's git worktree and gave you a brief.
   When a phase has tickets that may build at once, propose its cap with one `Parallel:` line in `spec.md`, a cap from 1 to 3 per phase (`Parallel: 2` or `Parallel: 2, 1`), 1 where they share too much to gain.
 - For a task that changes a UI, read `~/agent-team/sops/frontend-patterns.md` before you spec a reusable component, a long list, a dialog, a prototype's data or a bundle budget.
 - On a project with Effect code, when your session lists `effect-v4`, invoke it before you spec Effect code, and put the installed `effect` version and the check command it gives in the spec.
+- On a project with Rust code, when your session lists `rust-core`, invoke it before you spec Rust code, and put the toolchain's version and the check command it gives in the spec.
 - For a research task, write the report your brief asks for, into the same task directory.
 - Explore freely: read code, run commands, run the app and single tests, never a whole suite, which runs only in CI. You may edit files only inside the task directory; a hook blocks everything else.
   When your task has worktrees in two repositories, the hook also lets you write the `.scratch/task/` of each of your task's other open worktrees (never a ticket worktree's), never its code: when that is the repository's task directory, write each repository's tickets, its own `scope.txt` and a `spec.md` straight into it, where `team-tickets` reads them.

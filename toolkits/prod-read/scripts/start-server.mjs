@@ -4,6 +4,8 @@ import { startMongodbMcp } from "../../../servers/mongodb-mcp.mjs";
 
 await startMongodbMcp({
   name: "prod-read",
+  // An ops launch, and the assistant's read session (bin/claude-assistant-read).
+  roles: ["ops", "assistant-read"],
   reference: "op://agent-team/conventioner-prod-read/uri",
   settings: {
     MDB_MCP_READ_ONLY: "true",

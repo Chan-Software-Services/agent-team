@@ -5,6 +5,8 @@ import { startVercelMcp } from "../../../servers/vercel-mcp.mjs";
 
 await startVercelMcp({
   name: "vercel-read",
+  // An ops launch, and the assistant's read session (bin/claude-assistant-read).
+  roles: ["ops", "assistant-read"],
   teamIdReference: "op://agent-team/conventioner-vercel-read/team-id",
   projects: {
     "front-end": {

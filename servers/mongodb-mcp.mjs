@@ -1,16 +1,20 @@
 // Start the pinned MongoDB MCP server in this process, with a connection string read from
 // 1Password: the shared body of each MongoDB toolkit's scripts/start-server.mjs.
 //
-//   await startMongodbMcp({ name, reference, settings })
+//   await startMongodbMcp({ name, reference, settings, roles })
 //   connectionStringRefusal(value)   the check of the value read, which prod-mongo's server
 //                                    passes to readSecrets too
 //
 // It reads the secret reference with `op read --no-newline` (execFileSync, no shell, stdin
-// ignored because stdin is the MCP transport), runs `op signout`, drops every inherited MDB_MCP_*
-// variable, sets the connection string, the toolkit's settings and the fixed ones below in its
-// own process.env, refuses every child process, then imports the server's entry point. Nothing
-// is exec'd and nothing exported, so the string is never in a starting environment: not in this
-// process's /proc/<pid>/environ, and not in a child's, since there are none.
+// ignored because stdin is the MCP transport) only in a launch of one of `roles`, readSecrets'
+// list (op-secret.mjs): an ops launch by default, as prod-write's launcher has it, and for
+// prod-read's an ops launch or the assistant's read session (bin/claude-assistant-read), though
+// bin/team-worker gives either kit to the ops role alone. It runs `op signout`, drops every
+// inherited MDB_MCP_* variable, sets the connection string, the toolkit's settings and the fixed
+// ones below in its own process.env, refuses every child process, then imports the server's
+// entry point. Nothing is exec'd and nothing exported, so the string is never in a starting
+// environment: not in this process's /proc/<pid>/environ, and not in a child's, since there are
+// none.
 // On any failure it exits 1 before the server starts, with one line on stderr that never holds
 // the value.
 import { readFileSync } from "node:fs";
@@ -37,7 +41,7 @@ export function connectionStringRefusal(value) {
   if (!/^mongodb(\+srv)?:\/\//.test(value)) return "op read returned something that is not a MongoDB connection string";
 }
 
-export async function startMongodbMcp({ name, reference, settings }) {
+export async function startMongodbMcp({ name, reference, settings, roles }) {
   const fail = (reason) => {
     process.stderr.write(`${name}: ${reason}\n`);
     process.exit(1);
@@ -52,7 +56,7 @@ export async function startMongodbMcp({ name, reference, settings }) {
     fail("the pinned MongoDB MCP server is not installed: run servers/install");
   }
 
-  const [value] = readSecrets(name, [reference], connectionStringRefusal);
+  const [value] = readSecrets(name, [reference], connectionStringRefusal, roles);
 
   for (const key of Object.keys(process.env)) {
     if (key.startsWith("MDB_MCP_")) delete process.env[key];

@@ -29,7 +29,9 @@ setup() {
 }
 
 # answer <look> <what> <answer>: from look <look> on, gh answers <what> (view, checks, runs, running,
-# run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub),
+# run-<run id>, jobs-<run id>, job-<job id>, log-<job id> (the job's log, its text),
+# files (the PR's changed paths, one per line, as gh api --jq prints them) or compare) with
+# <answer>: JSON (for log-<job id> and files, text), "fail" (gh cannot reach GitHub),
 # "limited:<refusal>" (a refusal for the limit, github_limited's arguments: "limited:primary",
 # "limited:retry-after 60") or, for checks, "none" (no check run and no status).
 answer() {
@@ -143,10 +145,13 @@ case "${args[*]}" in
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") what=running ;;
   "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${GITHUB_ENDPOINT%/jobs*} what=jobs-${what##*/} ;;
   "api repos/owner/proj/actions/runs/"*) what=run-${GITHUB_ENDPOINT##*/} ;;
+  "api --allow-escape-sequences repos/owner/proj/actions/jobs/"*"/logs") what=${GITHUB_ENDPOINT%/logs} what=log-${what##*/} ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${GITHUB_ENDPOINT##*/} ;;
   "api repos/owner/proj/branches/dev") what=branch ;;
   "api repos/owner/proj/rules/branches/dev --paginate") what=rules ;;
   "api repos/owner/proj/rulesets/"*) what=ruleset-${GITHUB_ENDPOINT##*/} ;;
+  "api repos/owner/proj/pulls/217/files?per_page=100 --paginate --jq .[].filename") what=files ;;
+  "api repos/owner/proj/compare/"*) what=compare ;;
   *) echo "unplanned gh call: ${args[*]}" >&2; exit 1 ;;
 esac
 # A PR's head's check runs and statuses come from its planned checks, when the test planned some.
@@ -1242,6 +1247,192 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 1
   assert_contains "$output" "
   the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/71"
+}
+
+# apt_mirror <log>: check e2e shard 4/10 failed in run 7001's job 71, which is a Conventioner e2e
+# shard's job of 2026-11-19 (tests/fixtures/ci-wait/apt-mirror-job.json), its first failing step
+# "Run ./.github/actions/e2e-stack", and GitHub gives its log as <log> (a file).
+apt_mirror() {
+  checks 0 "$(check "e2e shard 4/10" FAILURE 7001 71)"
+  answer 0 job-71 "$(cat "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror-job.json")"
+  answer 0 log-71 "$(cat "$1")"
+}
+
+# The job's log with the apt lines that failed edited by the sed script <script>, into a file of the
+# test's, whose path it prints.
+apt_log() {
+  sed "$1" "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log" >"$BATS_TEST_TMPDIR/apt.log"
+  echo "$BATS_TEST_TMPDIR/apt.log"
+}
+
+@test "a step that failed because apt could not fetch the runner's packages is infrastructure in setup, when the PR changes nothing under .github/" {
+  apt_mirror "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log"
+  answer 0 files $'front-end/src/app.ts\nREADME.md'
+  both "$url"
+  assert_equal "$text_status" 1
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  infrastructure: e2e shard 4/10 failed in setup, at its step \"Run ./.github/actions/e2e-stack\", where apt could not fetch the runner's packages (https://github.com/owner/proj/actions/runs/7001/job/71); rerun it with gh run rerun 7001 --job 71 --repo owner/proj, then run team-ci-wait again"
+  assert_equal "$(jq -c '.failures[] | [.name, .class, .kind, .step, .rerun]' <<<"$output")" \
+    '["e2e shard 4/10","infrastructure","setup","Run ./.github/actions/e2e-stack","gh run rerun 7001 --job 71 --repo owner/proj"]'
+  # The log and the PR's files are read once a wait, at its end.
+  assert_equal "$(grep -c -F 'actions/jobs/71/logs' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -c -F 'pulls/217/files' "$GH_DIR/calls")" 2
+}
+
+@test "apt's fetch failure stays the PR's when the PR changes anything under .github/, or its files cannot be read" {
+  local files
+  for files in $'src/app.ts\n.github/actions/e2e-stack/action.yml' .github/workflows/ci.yml fail; do
+    echo 0 >"$GH_DIR/look"
+    apt_mirror "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log"
+    answer 0 files "$files"
+    run_bin team-ci-wait "$url"
+    assert_equal "$status" 1
+    assert_equal "$output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: e2e shard 4/10 failed: https://github.com/owner/proj/actions/runs/7001/job/71"
+  done
+  # As many changed paths as GitHub lists at most (3000) may leave one out, so they count as one
+  # under .github/.
+  echo 0 >"$GH_DIR/look"
+  answer 0 files "$(seq -f 'src/f%g.ts' 3000)"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+}
+
+@test "apt's fetch failure stays the PR's when the PR changes a script the failing step runs, outside .github/" {
+  local files
+  # The step runs the project's own install script, named on its Run line by a relative path.
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
+  answer 0 files $'front-end/src/app.ts\nscripts/chromium-packages.sh'
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or by its bare name in the script the group echoes, in the runner's colours.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run set -e|; s|\x1b\[36;1mnpx playwright install-deps chromium\x1b\[0m|\x1b[36;1mbash install-browsers.sh --with-deps\x1b[0m|')"
+  answer 0 files ci/install-browsers.sh
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or by a path under the workspace, which ends in the PR's path.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run "$GITHUB_WORKSPACE/scripts/chromium-packages.sh" install|')"
+  answer 0 files scripts/chromium-packages.sh
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or a local action kept outside .github/, named by its directory, whose action.yml the PR changes.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./ci/actions/install-deps|')"
+  answer 0 files ci/actions/install-deps/action.yml
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or the same directory written with a trailing slash.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./ci/actions/install-deps/|')"
+  answer 0 files ci/actions/install-deps/action.yml
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or an action at the repository's root (uses: ./), whose action.yml the PR changes.
+  for files in action.yml action.yaml; do
+    echo 0 >"$GH_DIR/look"
+    apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./|')"
+    answer 0 files "$files"
+    run_bin team-ci-wait "$url"
+    assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  done
+  # A script the step runs that the PR leaves alone keeps the failure infrastructure.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
+  answer 0 files $'front-end/src/app.ts\nscripts/other-packages.sh\ndocs/chromium-packages.sh.md'
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "infrastructure: e2e shard 4/10 failed in setup"
+}
+
+@test "a failed step stays the PR's when apt's failure is not a fetch, when the failing command came after apt's, or when the log cannot be read" {
+  answer 0 files src/app.ts
+  # apt could not find a package the step names: the step's own list.
+  apt_mirror "$(apt_log 's/E: Failed to fetch .*/E: Unable to locate package fonts-nonesuch/; /E: Unable to fetch some archives/d')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # apt's fetch failed in a command that went on, and the tests after it failed: in a group of their
+  # own, or in the same run script (apt-get install ... || true), whose output comes between.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log '/Failed to install browser dependencies/i\
+2026-11-19T12:16:14.3160000Z ##[group]Run npx playwright test')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log '/Failed to install browser dependencies/i\
+2026-11-19T12:16:14.3150001Z Running 412 tests using 4 workers\
+2026-11-19T12:16:14.3150002Z   ok 1 sign-in works\
+2026-11-19T12:16:14.3150003Z   ok 2 sign-out works\
+2026-11-19T12:16:14.3150004Z   x 3 the schedule page loads\
+2026-11-19T12:16:14.3150005Z   1 failed')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # apt's lines come before the step began, in an earlier step that went on.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's/^2026-11-19T12:16:14\.31\([0-9]*Z E: \)/2026-11-19T12:11:01.31\1/')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log"
+  answer 0 log-71 fail
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # No file of the PR is read when no log showed apt's failure.
+  if grep -F 'pulls/217/files' "$GH_DIR/calls"; then return 1; fi
+}
+
+@test "a failure classed by its step reads no log, and a test step's failure reads its job's log once" {
+  checks 0 "$(check test FAILURE 7001 71)" "$(check lint FAILURE 7001 72)"
+  job 0 71 "GitHub Actions 2" "Set up job=success" "Run actions/checkout@v4=failure"
+  answer 0 job-72 '{"id": 72, "runner_name": "GitHub Actions 2", "status": "completed", "steps": [
+    {"name": "Set up job", "number": 1, "status": "completed", "conclusion": "success",
+     "started_at": "2026-11-19T11:59:58Z", "completed_at": "2026-11-19T11:59:59Z"},
+    {"name": "Run the lint", "number": 2, "status": "completed", "conclusion": "failure",
+     "started_at": "2026-11-19T11:59:59Z", "completed_at": "2026-11-19T12:00:00Z"}]}'
+  answer 0 log-72 '2026-11-19T12:00:00.0000000Z ##[error]Process completed with exit code 1.'
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: lint failed"
+  if grep -F 'actions/jobs/71/logs' "$GH_DIR/calls"; then return 1; fi
+  assert_equal "$(grep -c -F 'actions/jobs/72/logs' "$GH_DIR/calls")" 1
+}
+
+@test "--run reads the branch's changes from the base, and --merge-group the PR's, for apt's fetch failure" {
+  the_run 0 completed failure
+  run_jobs 0 "$(run_job "e2e shard 4/10" completed failure 71)"
+  answer 0 job-71 "$(cat "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror-job.json")"
+  answer 0 log-71 "$(cat "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log")"
+  answer 0 compare '{"files": [{"filename": "src/app.ts"}]}'
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "infrastructure: e2e shard 4/10 failed in setup, at its step \"Run ./.github/actions/e2e-stack\", where apt could not fetch the runner's packages (https://github.com/owner/proj/actions/runs/7001/job/71); rerun it with gh run rerun 7001 --job 71 --repo owner/proj, then wait on the run again"
+  grep -F "api repos/owner/proj/compare/dev...$head" "$GH_DIR/calls"
+  echo 0 >"$GH_DIR/look"
+  answer 0 compare '{"files": [{"filename": "src/app.ts"}, {"filename": ".github/actions/e2e-stack/action.yml"}]}'
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_contains "$output" "the branch's: e2e shard 4/10 failed"
+  # GitHub's compare lists 300 files at most, so as many count as one under .github/.
+  echo 0 >"$GH_DIR/look"
+  answer 0 compare "$(jq -cn '{files: [range(300) | {filename: "src/f\(.).ts"}]}')"
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_contains "$output" "the branch's: e2e shard 4/10 failed"
+
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  echo 0 >"$GH_DIR/look"
+  entry 0 OPEN "$trial"
+  workflow_run 0 7001 completed failure
+  head_runs 0 7001:CI:completed:failure
+  check_runs 0 "$(check_run "e2e shard 4/10" completed failure 7001 71)"
+  statuses 0
+  entry 1 OPEN
+  answer 0 files src/app.ts
+  run_bin team-ci-wait --merge-group "$trial" --json "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["e2e shard 4/10","infrastructure","setup"]]'
 }
 
 @test "a check whose job cannot be read is the PR's, and so said; one with no Actions link reads no job" {
