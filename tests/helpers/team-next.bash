@@ -145,6 +145,11 @@ passed() {
   run_bin -0 --separate-stderr team-next T7 --ci
 }
 
+# The ci events logged, each as its url, head and outcome.
+ci_logged() {
+  jq -c 'select(.event == "ci") | [.url, .head, .outcome]' "$TEAM_HOME/ledger.jsonl"
+}
+
 # red_checks <head>: --ci's wait ends failed on <head>, exit 1, with a roll-up, a failed shard of
 # the PR's own, a runner that never started, a required check not reported and a lint step of the
 # PR's own, in that order, as team-ci-wait --json gives them.

@@ -5,9 +5,9 @@
 # the next ready ticket's builder, or the deliverer once every ticket is done, through team-brief
 # and team-worker; a ticket builder's DONE integrates its ticket worktree into the task branch.
 # The review hand-off is tests/team-next-review.bats', the verdicts tests/team-next-verdicts.bats',
-# the checks wait tests/team-next-ci.bats', two repositories and the reviewer App
-# tests/team-next-repos.bats', and --fill tests/team-next-tickets.bats'; the sandbox is
-# helpers/team-next's.
+# the checks wait tests/team-next-ci.bats', what a passed wait prints tests/team-next-merge.bats',
+# two repositories and the reviewer App tests/team-next-repos.bats', and --fill
+# tests/team-next-tickets.bats'; the sandbox is helpers/team-next's.
 
 load helpers/common
 load helpers/github-api
