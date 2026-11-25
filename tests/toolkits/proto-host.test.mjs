@@ -4,9 +4,9 @@
 // session gate (the CLI's, the host's and client.mjs's connect's), the localhost guard and the
 // catalogue's refusals before anything opens; a window opened in each launched engine at a
 // preset, a device and a free size, read back through the page's own metrics (/v1/test/page),
-// and moved by a second open in the same host; status,
-// targets and stop; the runtime directory's, socket's and token's modes and the token check; two
-// opens at once, a killed host, a stale start lock and a host of another protocol; install's
+// and moved by a second open in the same host; status, targets and stop; the runtime directory's, socket's and token's modes and the token check; two
+// opens at once, a killed host, a stale start lock taken over by eight clients at once and by a
+// client that read it stale before another took it, and a host of another protocol; install's
 // call of Playwright's own installer; and an engine whose browser is missing. Every engine the
 // machine has runs; under CI=true a missing one fails, elsewhere it skips with its reason.
 import assert from "node:assert/strict";
@@ -15,6 +15,8 @@ import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSyn
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { describe, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { serveFixture } from "./helpers/chrome.mjs";
 import { repoRoot, tempDir } from "./helpers/mcp.mjs";
 import { children, ownedPid, startingEnvironment } from "./helpers/process.mjs";
@@ -318,16 +320,74 @@ describe("the host's life", () => {
     assert.equal((await proto.run(["status"])).stdout, `proto: host ${host}; window chromium/laptop on ${site.url}\n`);
   });
 
-  test("a start lock older than 30 s is taken over", async (t) => {
+  test("a start lock older than 30 s is taken over by eight clients at once, which leave one host", async (t) => {
     const proto = protoSession(t);
     mkdirSync(join(proto.dir, "start.lock"), { recursive: true, mode: 0o700 });
     const old = new Date(Date.now() - 31_000);
     utimesSync(join(proto.dir, "start.lock"), old, old);
     const started = Date.now();
-    const result = await proto.run(["targets"]);
-    assert.equal(result.status, 0, result.stderr);
+    const results = await Promise.all(Array.from({ length: 8 }, () => proto.run(["targets"])));
+    for (const result of results) assert.equal(result.status, 0, result.stderr);
     assert.ok(Date.now() - started < 20_000);
+    const hosts = hostsOf(proto.dir);
+    for (const pid of hosts) ownedPid(t, pid);
+    assert.equal(hosts.length, 1, `hosts: ${hosts.join(", ")}`);
+    assert.equal((await proto.run(["status"])).stdout, `proto: host ${hosts[0]}; no window\n`);
     assert.equal(existsSync(join(proto.dir, "start.lock")), false);
+  });
+
+  test("a client that read a crashed start's lock as stale never takes over the lock another client took after it", async (t) => {
+    const proto = protoSession(t);
+    const lock = join(proto.dir, "start.lock");
+    mkdirSync(lock, { recursive: true, mode: 0o700 });
+    const old = new Date(Date.now() - 61_000);
+    utimesSync(lock, old, old);
+    // Preloaded in the late client alone: its first stat of start.lock is answered only once
+    // another client has taken the lock afresh and its host has bound the socket, so it acts on a
+    // stale reading of a fresh lock, as a client paused between its stat and its rename would.
+    const dir = tempDir("late-client");
+    const read = join(dir, "read");
+    const taken = join(dir, "taken");
+    const hook = join(dir, "late.mjs");
+    writeFileSync(hook, `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const statSync = fs.statSync;
+let late = true;
+fs.statSync = (path, ...rest) => {
+  const seen = statSync(path, ...rest);
+  if (late && String(path).endsWith("start.lock")) {
+    late = false;
+    fs.writeFileSync(${JSON.stringify(read)}, "");
+    const until = Date.now() + 20_000;
+    for (;;) {
+      let fresh = false;
+      try {
+        fresh = Date.now() - statSync(path).mtimeMs < 10_000 && fs.existsSync(${JSON.stringify(join(proto.dir, "host.sock"))});
+      } catch {}
+      if (fresh) fs.writeFileSync(${JSON.stringify(taken)}, "");
+      if (fresh || Date.now() > until) break;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+  return seen;
+};
+syncBuiltinESMExports();
+`);
+    const lateRun = proto.run(["targets"], { env: { NODE_OPTIONS: `--import=${pathToFileURL(hook).href}` } });
+    const deadline = Date.now() + 20_000;
+    while (!existsSync(read)) {
+      assert.ok(Date.now() < deadline, "the late client read the lock");
+      await sleep(20);
+    }
+    const first = await proto.run(["targets"]);
+    const late = await lateRun;
+    const hosts = hostsOf(proto.dir);
+    for (const pid of hosts) ownedPid(t, pid);
+    assert.ok(existsSync(taken), "the late client went on only once the first had taken the lock and its host had bound");
+    assert.deepEqual([first.status, late.status], [0, 0], first.stderr + late.stderr);
+    assert.equal(hosts.length, 1, `hosts: ${hosts.join(", ")}`);
+    assert.equal((await proto.run(["status"])).stdout, `proto: host ${hosts[0]}; no window\n`);
+    assert.equal(existsSync(lock), false);
   });
 
   test("a host answering another protocol number is named with its fix", async (t) => {
