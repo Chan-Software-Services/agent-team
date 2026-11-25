@@ -42,4 +42,5 @@ For a task with worktrees in two repositories, each repository's tickets, its ow
 ## Rules
 
 Read `{{team_code}}/sops/platform-gotchas.md` before your first command.
+Fanning a sweep out to forks: read `{{team_code}}/sops/fan-out.md` first.
 Markdown: one sentence per line; never the em dash, use "-"; refer to Daniel with they/them.
