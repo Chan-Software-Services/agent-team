@@ -1671,10 +1671,10 @@ The PR's failures, \`test-shards (2)\`, \`build\`, \`data\` and \`lint\`, are th
   assert_equal "$(tail -n 2 <<<"$output")" "brief $TEAM_HOME/tasks/T7/brief-round-1.md
 launched T7-builder c0000001"
   assert_equal "$(record round-1 | jq -cS .)" "$(jq -cnS --arg url "$url" --arg r "$report" --arg s "$short" '{template: "builder-round",
-    values: {findings: "the failed checks test-shards (2), build and lint of \($s)", findings_file: $r,
+    values: {findings: "the failed checks test-shards (2), build, data and lint of \($s)", findings_file: $r,
       goal: "Coordinator toil goes to the scripts.", pr: $url}}')"
   assert_contains "$(<"$TEAM_HOME/tasks/T7/brief-round-1.md")" \
-    "and findings the failed checks test-shards (2), build and lint of $short in \`$report\`."
+    "and findings the failed checks test-shards (2), build, data and lint of $short in \`$report\`."
   # A second stow after that launch launches nothing.
   run_bin -0 --separate-stderr team-next T7 -- "T7 PAUSED stowed"
   assert_equal "$(tail -n 1 <<<"$output")" "no hand-off for PAUSED stowed: no review's sent-back findings or failed checks wait for a round"
@@ -1684,7 +1684,7 @@ launched T7-builder c0000001"
   run_bin -0 --separate-stderr team-next T7 -- "T7 PR $url"
   assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
   assert_equal "$(record rereview-2 | jq -r .template)" rereview
-  grep -qxF "The last review, of \`$short\`, passed; then the checks test-shards (2), build and lint failed on it, which this round fixed." \
+  grep -qxF "The last review, of \`$short\`, passed; then the checks test-shards (2), build, data and lint failed on it, which this round fixed." \
     "$TEAM_HOME/tasks/T7/brief-rereview-2.md"
   # A stow after a pass with no failed ci since launches nothing.
   review_logged pass "$fix" '[]'
