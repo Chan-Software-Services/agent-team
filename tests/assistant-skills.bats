@@ -80,6 +80,7 @@ code_spans() {
   grep -qF "one hand-off per message of Daniel's: a message answering items of two tasks is one hand-off" "$skill"
   grep -qF "A hand-off's body leaves out every item whose answer is one of those words" "$skill"
   grep -qF 'closes the items of both lists whose condition holds' "$skill"
+  grep -qF "for an interview, while its \`phase\` is still \`planning\`, with no plan approved since" "$skill"
   # A PR is re-checked by when its latest word was given, never by merge_approved, which stays true
   # once any word is given, though a review since asks for it again.
   if grep -nF merge_approved "$skill"; then
