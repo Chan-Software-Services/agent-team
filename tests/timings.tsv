@@ -1,5 +1,5 @@
 # The seconds each bats file took on Linux in CI run 45589961652 (head 66ecd5b, 2026-11-25T09:55:08Z),
-# and on macOS as the timings before it had them, since CI runs no bats on macOS; tests/shards update rewrites it.
+# and on macOS as the timings before it had them, since CI runs no macOS job; tests/shards update rewrites it.
 file	linux	macos
 tests/assistant-acts.bats	10	
 tests/assistant-digest.bats	4	
