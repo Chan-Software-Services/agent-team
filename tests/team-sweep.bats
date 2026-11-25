@@ -2967,6 +2967,21 @@ handoff_sent() {
   assert_equal "$output$stderr" ""
 }
 
+@test "current-stale: an item whose own task closed and whose until task closed unmerged is one item, its id listed once per task" {
+  opened T8
+  ledger_line '{ts: "2026-11-03T04:00:00Z", task: "T8", event: "closed", archive: [], returned: [], kept: []}'
+  opened T9
+  ledger_line '{ts: "2026-11-04T04:00:00Z", task: "T9", event: "closed", archive: [], returned: [], kept: []}'
+  local item='next T9 tell its builder to merge dev | ledger 2026-11-01T07:08:11Z | until task T8 merged | added 2026-11-01T07:08:11Z'
+  local id
+  id=$(printf '%s' "$item" | sha256sum | cut -c1-6)
+  mkdir -p "$TEAM_HOME/tasks"
+  printf '%s\n' '# Current items' "- $item" >"$TEAM_HOME/tasks/current.md"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "current: 1 item names a closed task: $id (T9, closed 2026-11-04), $id (T8, closed 2026-11-03); next: team-current done <id> for each that is done, or add it again under an open task"
+}
+
 @test "current-due and assistant-handoff: each due item of the coordinator's list and each hand-off to it waiting past 30 minutes, after current-stale" {
   local today past later legacy assistants
   # One now for the sweep's count of a hand-off's wait and for team-current's due day, so 29 and

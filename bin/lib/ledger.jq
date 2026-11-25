@@ -2457,7 +2457,7 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
 # list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
 # team-current check --json's ($current), one current-stale finding naming each item whose task
 # closed, and each until item on a task T<m> merged that closed with no merge (its closed entry's
-# task being T<m>), then team-current due --json's for the coordinator's list ($due), one current-due finding
+# task being T<m>), counting items by id, so an item with both entries is one, then team-current due --json's for the coordinator's list ($due), one current-due finding
 # for each item whose review date has come, then team-assistant list --open --to coordinator
 # --json's list ($handoffs), one assistant-handoff finding for each sent more than 30 minutes
 # before $now (seconds); each view null when there is nothing to read, and {error} when its
@@ -2474,7 +2474,7 @@ def sweep_views($queue; $current; $due; $handoffs; $now):
      | if . == null then []
        elif .error != null then [failed("current"; "team-current")]
        elif (.closed // []) == [] then []
-       else (.closed | length) as $n
+       else ([.closed[].id] | unique | length) as $n
          | "team-current done <id> for each that is done, or add it again under an open task" as $next
          | [{task: null, kind: "current-stale", session: null, name: null, next: $next,
              text: "current: \($n) item\(if $n == 1 then " names" else "s name" end) a closed task: \(
