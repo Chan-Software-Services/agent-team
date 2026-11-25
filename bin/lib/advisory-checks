@@ -5,8 +5,9 @@
 # One line each: the workflow's file name under .github/workflows/, one space, the check's name
 # (its job's). team-ci-wait neither waits on such a check or its workflow's run nor fails on it,
 # and pr_part (team-state, team-merge, team-catch-up) keeps it out of the passed, failing and
-# pending checks. A name the project's required_checks or the base's rules require is never passed
-# over, and no other project's check of the same name is. Each workflow runs on pull requests and
-# by hand, never on a merge queue's trial commit, and no job of it is a required check, which
-# tests/repo.bats holds.
+# pending checks. No other project's check of the same name is passed over, and neither is a name
+# the project's required_checks require; pr_part holds one the PR's server-required checks or the
+# base's rules require too, and team-ci-wait holds the rules' with --merge-group, the one mode
+# that reads them. Each workflow runs on pull requests and by hand, never on a merge queue's trial
+# commit, and no job of it is a required check, which tests/repo.bats holds.
 rust-macos.yml rust-macos

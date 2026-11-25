@@ -508,7 +508,7 @@ read_pr() {
       /dev/null "${files[@]}")" '
     ($head_runs[0].workflow_runs | map({key: (.id | tostring), value: {id, status, conclusion, updated_at}}) | from_entries)
       + $runs as $runs
-    # The checks no merge waits on, a required name never among them, and their workflows files.
+    # The checks no merge waits on, a required name never among them, and their workflow files.
     | [$advisory[] | select(.check as $c | $required | index([$c]) | not)] as $aside
     | [$aside[].check] as $names | [$aside[] | ".github/workflows/\(.workflow)"] as $paths
     | [$head_runs[0].workflow_runs[] | select(.status != "completed")] as $open

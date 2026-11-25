@@ -359,7 +359,7 @@ merge on the default word: run team-merge T7 for $url at $sha, agent-review succ
   pr_on_github "$sha" 0 "[${macos/BUCKET/pending}]"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_equal "$(tail -n 1 <<<"$output")" \
-    "merge ask: $url at $sha, agent-review success, checks green; no merge waits on rust-macos, which is still running"
+    "merge ask: $url at $sha, agent-review success, checks green; no merge waits on rust-macos, which is still running, so read its end later and fix a failure in a task of its own"
   pr_on_github "$sha" 0 "[${macos/BUCKET/pass}]"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_equal "$(tail -n 1 <<<"$output")" "merge ask: $url at $sha, agent-review success, checks green"

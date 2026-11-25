@@ -82,8 +82,9 @@
 # (the paths bats --changed starts from): Cargo.toml, Cargo.lock, clippy.toml, deny.toml,
 # rust-toolchain.toml, tests/run, .github/workflows/ci.yml, .github/workflows/rust-macos.yml, or
 # anything under crates/, tests/fixtures/rust-deny/, toolkits/rust/ or
-# tests/toolkits/fixtures/rust-crate/, printing them first, and otherwise prints "rust: no Rust path changed, nothing to check" and passes; --list
-# prints those paths, one per line, and runs nothing.
+# tests/toolkits/fixtures/rust-crate/, printing them first, and otherwise prints "rust: no Rust
+# path changed, nothing to check" and passes; --list prints those paths, one per line, and runs
+# nothing.
 # After the bats, it names each file that took over 1.5 times and 60 seconds more than its seconds
 # in the timings for this platform, as a warning annotation under GitHub Actions, advising to find
 # what slowed it. TESTS_TIMINGS names the timings file it and tests/shards read (default

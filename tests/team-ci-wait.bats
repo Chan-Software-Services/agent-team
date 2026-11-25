@@ -2487,7 +2487,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
 }
 
 # The team's own project (agent-team by name), whose one check that holds nothing is the macOS Rust
-# job of bin/lib/advisory-checks: own_project_checks
+# job of bin/lib/advisory-checks: own_team_project
 own_team_project() {
   sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
 }
@@ -2607,4 +2607,12 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   run_bin team-ci-wait --merge-group "$trial" "$url"
   assert_equal "$status" 0
   assert_contains "$output" "every check passed on ${trial:0:7}: test passed$aside rust-macos failed ($macos_link)"
+  # A name the base's rules require, which a trial commit's wait reads, is held as any check.
+  rules_require rust-macos
+  job 0 97002 "GitHub Actions 1" "Check=failure"
+  answer 0 log-97002 ""
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
 }

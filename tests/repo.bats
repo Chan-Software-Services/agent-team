@@ -2611,14 +2611,15 @@ YAML
     file=$REPO_ROOT/.github/workflows/$workflow
     [[ -f $file ]] || { echo "$workflow is no workflow" >&2; return 1; }
     # The workflow's jobs are the listed checks, each named by its id.
-    jobs=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$file")
+    jobs=$(sed -n '/^jobs:$/,$s/^  \([A-Za-z0-9_-]*\):$/\1/p' "$file")
     assert_equal "$jobs" "$(awk -v w="$workflow" '$1 == w { print $2 }' <<<"$listed")"
     if grep -nE '^    name:' "$file"; then echo "$workflow names a job, so its check is not named by its id" >&2; return 1; fi
     if grep -nE '^\s*merge_group:' "$file"; then echo "$workflow runs on a merge queue's trial commit" >&2; return 1; fi
     jq -e --arg check "$check" 'index($check) | not' <<<"$required" >/dev/null || { echo "$check is a required check" >&2; return 1; }
     for file in "$REPO_ROOT"/.github/workflows/*.yml; do
       [[ ${file##*/} != "$workflow" ]] || continue
-      if grep -nxF "  $check:" "$file"; then echo "${file##*/} has a job $check too" >&2; return 1; fi
+      # By its id or by a name of its own.
+      if grep -nxF -e "  $check:" -e "    name: $check" "$file"; then echo "${file##*/} has a job $check too" >&2; return 1; fi
     done
   done <<<"$listed"
   for file in "$REPO_ROOT"/.github/workflows/*.yml; do
