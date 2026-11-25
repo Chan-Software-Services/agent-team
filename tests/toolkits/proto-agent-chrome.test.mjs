@@ -7,7 +7,8 @@
 // tab opened at the window's URL in front while every other tab keeps its page and gets no
 // toolbar, even reloaded, a size applied by emulation and `window` clearing it, a switch away and
 // `proto stop` leaving the Agent Chrome as it was, the host's tab reused, no cookie or storage
-// written into it, the Chrome quitting while attached, and the frontend toolkit's MCP server
+// written into it, the tab on a page off localhost getting no toolbar and its binding refused,
+// the Chrome quitting while attached, and the frontend toolkit's MCP server
 // sharing the Chrome with the host. A launched engine the switch-away cases need runs as in the
 // other proto tests: under CI=true a missing one fails, elsewhere it skips with its reason.
 import assert from "node:assert/strict";
@@ -356,6 +357,41 @@ describe("a window on the Agent Chrome", () => {
     const { body } = await proto.request("GET", "/v1/targets");
     assert.equal(body.engines.find((each) => each.name === "agent-chrome").available, false);
     assert.equal((await proto.run(["set", "phone"])).stderr, "proto: no window is open; run `proto open`\n");
+  });
+});
+
+describe("the host's tab on a page off localhost", () => {
+  test("gets no toolbar, and the host answers its binding as any other page's", async (t) => {
+    const site = await fixture(t);
+    // A second site on [::1], off localhost by the guard's rule, which the Agent Chrome's tab may
+    // reach, as it has no navigation guard.
+    const off = createServer((request, response) => {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end("<!doctype html><title>off</title><p>a page off localhost</p>");
+    });
+    await new Promise((resolve, reject) => {
+      off.once("error", reject);
+      off.listen(0, "::1", resolve);
+    });
+    t.after(() => new Promise((resolve) => {
+      off.closeAllConnections();
+      off.close(resolve);
+    }));
+    const offUrl = `http://[::1]:${off.address().port}/off`;
+    const chrome = await agentChrome(t, site);
+    const proto = protoSession(t, { env: hostEnv(chrome) });
+    assert.equal((await proto.run(["open", `${site.url}other`, "--target", "agent-chrome/phone"])).status, 0);
+    await proto.toolbarUntil((toolbar) => toolbar.drawn, "the toolbar draws on the localhost page");
+    assert.equal((await proto.page("navigate", { url: offUrl })).url, offUrl);
+    assert.deepEqual(await proto.page("send", { message: { type: "hello" } }), { answer: { show: false } });
+    for (const message of [{ type: "reload" }, { type: "collapse", collapsed: true }, { type: "set_target", target: "phone-small" }]) {
+      const { answer } = await proto.page("send", { message });
+      assert.equal(answer.error, "this page is not the prototyping window's", JSON.stringify(message));
+    }
+    const read = await proto.toolbar("read");
+    assert.deepEqual(read, { drawn: false });
+    assert.equal((await proto.page("metrics")).url, offUrl, "nothing reloaded or moved the page");
+    assert.equal((await proto.request("GET", "/v1/status")).body.window.target, "agent-chrome/phone", "no switch began");
   });
 });
 

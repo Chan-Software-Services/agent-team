@@ -8,10 +8,12 @@
 //                              before its own scripts (overlay.js itself runs in the top frame
 //                              alone); each message is answered by onMessage(message, { own }),
 //                              `own` true only for the main frame of ownPage(), the window's page
-//                              (null while it is not made yet); a page that is not it is
-//                              answered { show: false } to hello by the host
-//   pushState(page, state)     window.__protoOverlay.update(state) in `page`; a page between
-//                              documents is skipped, its next hello reads the state
+//                              (null while it is not made yet), while that frame is on localhost
+//                              (guards.mjs's isLocalUrl); a page that is not it is answered
+//                              { show: false } to hello by the host
+//   pushState(page, state)     window.__protoOverlay.update(state) in `page` while it is on
+//                              localhost, else nothing; a page between documents is skipped, its
+//                              next hello reads the state
 //   await toolbarAction(page, { action, name, value })
 //                              the test seam's act on the page's toolbar: "select" the option
 //                              `value` (its value or its text) of the combobox `name`, "fill" the
@@ -27,6 +29,7 @@
 //                              window.__protoOverlay, the answer to its hello and its count of
 //                              <proto-overlay> elements; then closed
 import { fileURLToPath } from "node:url";
+import { isLocalUrl } from "./guards.mjs";
 
 export const overlayScript = fileURLToPath(new URL("./overlay.js", import.meta.url));
 
@@ -36,13 +39,18 @@ const roles = ["combobox", "spinbutton", "button"];
 export async function installOverlay(context, ownPage, onMessage) {
   await context.exposeBinding("__protoHost", async (source, message) => {
     const page = ownPage();
-    const own = page !== null && source.page === page && source.frame === page.mainFrame();
+    // The window's page off localhost (the Agent Chrome's tab, which no route guards, or a
+    // redirect) is any other page: no toolbar, and its scripts drive nothing.
+    const own = page !== null && source.page === page && source.frame === page.mainFrame() && isLocalUrl(source.frame.url());
     return onMessage ? onMessage(message, { own }) : { show: false };
   });
   await context.addInitScript({ path: overlayScript });
 }
 
-export const pushState = (page, state) => page.evaluate((next) => window.__protoOverlay?.update(next), state).catch(() => {});
+export const pushState = async (page, state) => {
+  if (!isLocalUrl(page.url())) return;
+  await page.evaluate((next) => window.__protoOverlay?.update(next), state).catch(() => {});
+};
 
 // The aria snapshot's nodes, depth first.
 function* nodes(list) {

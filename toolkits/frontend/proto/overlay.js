@@ -12,7 +12,8 @@
 // every message is { type, ...body }, and the host dispatches on `type`, answering { error } for
 // one it does not know, so a later phase's message (phase 2's `selection`) is a new type:
 //   hello                        on DOMContentLoaded: { show: false } for a page that is not the
-//                                window's (another tab of the context), else the state
+//                                window's (another tab of the context, or the window's page off
+//                                localhost), else the state
 //   set_target { target }        the state, a switch begun (an engine or a size alone keeps the
 //                                other), or { error }
 //   reload                       { reloading: true }; the page reloads

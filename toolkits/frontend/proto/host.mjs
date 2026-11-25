@@ -74,10 +74,10 @@
 // The overlay (overlay.js), an init script on the window's context, asks the host by its binding,
 // one message at a time, each dispatched on its `type` (overlay.js's header lists them, and an
 // unknown one is answered { error } and changes nothing): hello is answered { show: false } for
-// any page that is not the window's, else the state, { show, engines, sizes, current,
+// any page that is not the window's, the window's page off localhost included, else the state, { show, engines, sizes, current,
 // switching, status, collapsed }; set_target begins a switch as POST /v1/target does, reload
 // reloads the page, and collapse sets the collapsed flag the host keeps across reloads and
-// switches. Each change of the state is pushed to the window's page.
+// switches. Each change of the state is pushed to the window's page while it is on localhost.
 // A window whose page or browser Daniel closes is dropped (status's window null, "no window")
 // while the host runs on; `proto open` opens a new one.
 // An error answers { error: "<one line>" }: 400 a bad body, target or URL (one off localhost is
