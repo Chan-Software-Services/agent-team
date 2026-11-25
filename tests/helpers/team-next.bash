@@ -371,3 +371,14 @@ ticket_wt() {
   jq -r --arg n "$1" 'select(.event == "worktree-added" and .ticket == $n) | .worktree' "$TEAM_HOME/ledger.jsonl" |
     tail -n 1
 }
+
+# looks_counted: a stub sleep that counts its calls in $BATS_TEST_TMPDIR/looks, each one look on;
+# the uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
+looks_counted() {
+  stub_command sleep uname
+  stub_reply uname Linux
+  echo 0 >"$BATS_TEST_TMPDIR/looks"
+  stub_script sleep <<EOF
+echo \$((\$(cat "$BATS_TEST_TMPDIR/looks") + 1)) >"$BATS_TEST_TMPDIR/looks"
+EOF
+}

@@ -540,6 +540,9 @@ SH
 
 @test "a findings verdict on a head the PR moved past posts no check with the reviewer App on, and says so" {
   own_app
+  # The findings round's look at the reviewed head sees the PR's head moved, and keeps its grace for
+  # a push through the stub sleep's looks, not two minutes of the real clock.
+  looks_counted
   reviewing "$sha"
   local moved
   moved=$(commit two.txt "feat: after the review")

@@ -105,17 +105,6 @@ reruns_logged() {
   jq -c 'select(.event == "ci-rerun") | [.check, .run, .job]' "$TEAM_HOME/ledger.jsonl"
 }
 
-# looks_counted: a stub sleep that counts its calls in $BATS_TEST_TMPDIR/looks, each one look on;
-# the uname stub keeps it ahead of Homebrew's GNU sleep on macOS.
-looks_counted() {
-  stub_command sleep uname
-  stub_reply uname Linux
-  echo 0 >"$BATS_TEST_TMPDIR/looks"
-  stub_script sleep <<EOF
-echo \$((\$(cat "$BATS_TEST_TMPDIR/looks") + 1)) >"$BATS_TEST_TMPDIR/looks"
-EOF
-}
-
 # T172 ticket 14: a reviewer's verdict, and the fix round's stow.
 
 @test "a pass whose PR head moved past the reviewed head is refused naming both, nothing logged" {
