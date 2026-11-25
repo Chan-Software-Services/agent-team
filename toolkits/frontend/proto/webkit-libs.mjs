@@ -47,7 +47,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
@@ -415,14 +414,13 @@ function packagesIndex(bytes, url) {
   return index;
 }
 
-function machine() {
-  let name = process.platform;
+// The OS the pins were checked on, never the machine's name, since the pin file is published.
+function operatingSystem() {
   try {
-    name = /^NAME="?([^"\n]+)"?$/m.exec(readFileSync("/etc/os-release", "utf8"))?.[1] ?? name;
+    return /^NAME="?([^"\n]+)"?$/m.exec(readFileSync("/etc/os-release", "utf8"))?.[1] ?? process.platform;
   } catch {
-    // No os-release: the platform's name stands.
+    return process.platform; // No os-release: the platform's name stands.
   }
-  return `${hostname()} (${name})`;
 }
 
 export async function refreshPins(revisionDir, { file = pinsFile(), env = process.env, build = webkitBuild(), series, add = [], say }) {
@@ -490,7 +488,7 @@ export async function refreshPins(revisionDir, { file = pinsFile(), env = proces
   const pins = {
     checkedFor: { playwrightCore, webkitRevision: build.revision, webkitVersion: build.version },
     series,
-    checked: `${new Date().toISOString().slice(0, 10)}, ${machine()}`,
+    checked: `${new Date().toISOString().slice(0, 10)}, ${operatingSystem()}`,
     packages: work.map((each) => each.pin),
   };
   const temporary = staged(dirname(file), basename(file));

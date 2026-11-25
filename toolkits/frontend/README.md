@@ -99,7 +99,7 @@ The Agent Chrome is a target too, `agent-chrome`, attached rather than launched,
   The host attaches with Playwright's `noDefaults`, so the Agent Chrome's downloads, focus and colour scheme stay at its own settings while it is attached.
 - When the Agent Chrome quits, or Daniel closes the host's tab, the host drops the window and runs on (`proto status`: "no window").
 
-Sharing the Agent Chrome with the `frontend` MCP server and `ui-capture` was checked on 2026-11-24, on daniel-pc with a throwaway headless Google Chrome 156.0.8078.47 started the Agent Chrome's way, `playwright-core` 1.65.1 attached as the host attaches and the pinned `chrome-devtools-mcp` 1.12.0 started with `.mcp.json`'s flags:
+Sharing the Agent Chrome with the `frontend` MCP server and `ui-capture` was checked on 2026-11-24, on Daniel's machine with a throwaway headless Google Chrome 156.0.8078.47 started the Agent Chrome's way, `playwright-core` 1.65.1 attached as the host attaches and the pinned `chrome-devtools-mcp` 1.12.0 started with `.mcp.json`'s flags:
 
 - nothing disturbed the other: the host's overlay, binding and emulated size held while the server attached, listed and selected the page, took a snapshot and a screenshot and evaluated a script, and the server saw the host's size, then its resize and reload made with the server still attached;
 - disconnecting closed no tab and gave the window its own size back at once, and after the next reload neither the overlay nor the binding was there;
@@ -160,7 +160,7 @@ The guards:
 ## WebKit on Linux
 
 Playwright gives every Linux it does not know, Arch and EndeavourOS among them, its `ubuntu24.04-x64` WebKit build, which links four sonames such a machine may lack: `libicudata.so.74`, `libicui18n.so.74` and `libicuuc.so.74` (Ubuntu's `libicu74`) and `libxml2.so.2` (Ubuntu's `libxml2`).
-daniel-pc has ICU 78 and libxml2's `.so.16` instead, so that build will not start there (read on 2026-11-24).
+Daniel's machine (EndeavourOS) has ICU 78 and libxml2's `.so.16` instead, so that build will not start there (read on 2026-11-24).
 The fix needs no sudo: `proto install` places those libraries, taken from Ubuntu's own packages, in WebKit's own bundle and nowhere else.
 They go into each bundle's `sys/lib` (`minibrowser-gtk` for a headed window, `minibrowser-wpe` for a headless one, in Playwright's `webkit-<revision>` directory), since each bundle's `MiniBrowser` wrapper sets `LD_LIBRARY_PATH` to its own `lib` and `sys/lib`, dropping any a launch passes.
 
@@ -181,12 +181,12 @@ What moves, what catches it and what fixes it:
 | What moves | What catches it | What fixes it |
 | - | - | - |
 | Playwright is upgraded (a new WebKit revision is a new directory, holding none of the placed files) | the launch check, naming the sonames and `proto install` | `proto install` |
-| `playwright-core`'s pin is bumped in a PR without new pins | the offline pin test in `tests/toolkits/proto-webkit-libs.test.mjs` fails CI | `proto install --refresh-pins` on daniel-pc, in that PR |
+| `playwright-core`'s pin is bumped in a PR without new pins | the offline pin test in `tests/toolkits/proto-webkit-libs.test.mjs` fails CI | `proto install --refresh-pins` on Daniel's machine, in that PR |
 | Playwright moves its fallback build to `ubuntu26.04` | the launch check names the new sonames; `proto install` says no pin provides them | `proto install --refresh-pins --series <codename>`, or nothing when Arch has them natively |
 | Ubuntu ships an update, so the pinned file leaves `archive.ubuntu.com`'s pool | nothing needs to: the Launchpad fallback serves it, by the same SHA-256 | none; the next refresh takes the update |
 | Arch drops a library WebKit uses, or Playwright reinstalls the revision over the placed files | the launch check, which runs every time | `proto install`, or a refresh with `--add <package>` |
 
-The upgrade's steps, on daniel-pc, in a worktree of this repository:
+The upgrade's steps, on Daniel's machine, in a worktree of this repository:
 
 1. Bump `playwright-core` in `servers/package.json` and `servers/package-lock.json`, then run `servers/install`.
 2. Run `toolkits/frontend/scripts/proto install --refresh-pins` from that worktree: it installs the browsers, reads `dists/<series>-updates/main/binary-amd64/Packages.gz` (else the release pocket's) for each pinned package's current version, file and SHA-256, takes a file only when `archive.ubuntu.com` and Launchpad both serve it with that SHA-256, places it, and, only once the check finds nothing missing, writes that worktree's `proto/webkit-libs.json` with the new versions, the installed `checkedFor` and today's `checked`.

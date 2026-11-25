@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { hostname } from "node:os";
 import { basename, join } from "node:path";
 import { describe, test } from "node:test";
 import { gzipSync, zstdCompressSync } from "node:zlib";
@@ -241,7 +242,7 @@ describe("the pins", () => {
     assert.deepEqual(JSON.parse(text), {
       checkedFor: { playwrightCore: "1.65.1", webkitRevision: "2388", webkitVersion: "27.2" },
       series: "noble",
-      checked: "2026-11-24, daniel-pc (EndeavourOS)",
+      checked: "2026-11-24, EndeavourOS",
       packages: [
         {
           name: "libicu74",
@@ -548,7 +549,8 @@ describe("proto install --refresh-pins", linuxOnly, () => {
         { name: "libxml2", version: "2.9.14+dfsg-1.3ubuntu3.11", pool: files.libxml2[1], sha256: xml.sha256, links: { "libxml2.so.2": "libxml2.so.2.9.15" } },
       ],
     });
-    assert.match(pins.checked, /^\d{4}-\d\d-\d\d, \S+ \(.+\)$/);
+    assert.match(pins.checked, /^\d{4}-\d\d-\d\d, [^,()]+$/);
+    assert.ok(!pins.checked.includes(hostname()), "the pins name the OS, never the machine");
     assert.equal(readFileSync(session.pins, "utf8"), formatPins(pins));
     for (const dir of session.browsers.libs) {
       const held = holdings(dir);

@@ -1,7 +1,7 @@
 {
   "checkedFor": { "playwrightCore": "1.65.1", "webkitRevision": "2388", "webkitVersion": "27.2" },
   "series": "noble",
-  "checked": "2026-11-24, daniel-pc (EndeavourOS)",
+  "checked": "2026-11-24, EndeavourOS",
   "packages": [
     {
       "name": "libicu74",
