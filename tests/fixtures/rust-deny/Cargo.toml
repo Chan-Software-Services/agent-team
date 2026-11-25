@@ -1,0 +1,5 @@
+# A workspace of its own, which the repository's workspace does not claim, for tests/run rust's
+# last step: cargo-deny with the root's deny.toml must refuse refused-license's GPL-3.0-only.
+[workspace]
+members = ["app", "refused-license"]
+resolver = "3"

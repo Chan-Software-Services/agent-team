@@ -289,7 +289,7 @@ assert_nothing_written() {
     "$(printf '%s\n' 'claude.ai Claude Docs' codegraph plugin:mongodb-atlas:mongodb-atlas vercel)"
 }
 
-@test "its settings keep the coordinator's keys and compaction, and it takes no model or effort of its own" {
+@test "its settings keep the coordinator's keys and compaction and name no model or effort, and with no models.toml its launch names none" {
   run_bin -0 claude-assistant
   local settings=$state/assistant.settings.json coordinator=$REPO_ROOT/coordinator.settings.json key
   # But for what the coordinator alone trims from its starting context: its skill listing
@@ -593,4 +593,102 @@ echo "Started a background session"
 SH
   run_bin -1 --separate-stderr claude-assistant --load-check "$wt" --prompt x
   assert_equal "$stderr" "claude-assistant: could not read the session id from: Started a background session"
+}
+
+# The model config, the team home's models.toml (bin/team-models, sops/models.md), as
+# tests/claude-coordinator.bats has it: the assistant launches on the assistant line, the load
+# check's on assistant.load-check, and only the assistant's launch is a line of sessions.jsonl.
+
+# models <toml line>...: the team home's models.toml, as those lines.
+models() {
+  printf '%s\n' "$@" >"$TEAM_HOME/models.toml"
+}
+
+# A command line with the model flags given after --name: with_flags <argv> <flag>...
+with_flags() {
+  jq -c '.[0:3] + $ARGS.positional + .[3:]' --args -- "${@:2}" <<<"$1"
+}
+
+# sessions.jsonl's lines, each but its ts.
+session_lines() {
+  jq -c 'del(.ts)' "$TEAM_HOME/sessions.jsonl"
+}
+
+@test "with no models.toml it launches as before, logging the user settings' word" {
+  mkdir -p "$HOME/.claude"
+  echo '{"model": "opus", "effortLevel": "high"}' >"$HOME/.claude/settings.json"
+  run_bin -0 claude-assistant
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(launch_argv)"
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"assistant","category":"assistant","model":"opus","model_from":"settings","effort":"high","effort_from":"settings","id":"4d5e6f70"}'
+}
+
+@test "the assistant line's model and effort are its flags, its subagent fields its settings' env, all logged" {
+  models '"default" = { model = "opus", effort = "high" }' \
+    '"assistant" = { model = "sonnet", effort = "medium", subagent_model = "haiku" }' \
+    '"coordinator" = { model = "fable" }'
+  run_bin -0 claude-assistant
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(with_flags "$(launch_argv)" --model sonnet --effort medium)"
+  assert_equal "$(jq -c '.env | [.CLAUDE_CODE_SUBAGENT_MODEL, has("CLAUDE_CODE_SUBAGENT_EFFORT")]' "$state/assistant.settings.json")" '["haiku",false]'
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"assistant","category":"assistant","model":"sonnet","model_from":"config","effort":"medium","effort_from":"config","id":"4d5e6f70","subagent_model":"haiku"}'
+}
+
+@test "changing the assistant's line between two launches changes the second" {
+  models '"default" = { model = "opus", effort = "high" }'
+  run_bin -0 claude-assistant
+  models '"default" = { model = "opus", effort = "high" }' '"assistant" = { model = "haiku" }'
+  run_bin -0 claude-assistant
+  assert_equal "$(stub_calls claude | grep -F '"--bg"')" "$(with_flags "$(launch_argv)" --model opus --effort high)
+$(with_flags "$(launch_argv)" --model haiku --effort high)"
+  assert_equal "$(jq -c '[.model, .model_from]' "$TEAM_HOME/sessions.jsonl")" '["opus","config"]
+["haiku","config"]'
+}
+
+@test "a models.toml that does not read warns and launches on the settings' word, logged settings" {
+  models '"default" = { model = "opus", effort = "hgh" }'
+  local first
+  first=$("$REPO_ROOT/bin/team-models" --check 2>&1 | head -n 1)
+  [[ -n $first ]]
+  run_bin -0 --separate-stderr claude-assistant
+  assert_equal "$stderr" "claude-assistant: models.toml does not read: $first; launching on the settings' model"
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(launch_argv)"
+  assert_equal "$(jq -c '[.model_from, .effort_from]' "$TEAM_HOME/sessions.jsonl")" '["default","default"]'
+}
+
+@test "a sessions.jsonl that cannot be written is a warning, and a failed launch logs none" {
+  mkdir "$TEAM_HOME/sessions.jsonl"
+  run_bin -0 --separate-stderr claude-assistant
+  assert_contains "$output" "Started background session 4d5e6f70 (assistant)"
+  assert_contains "$stderr" "claude-assistant: could not record the launch in $TEAM_HOME/sessions.jsonl:"
+  rmdir "$TEAM_HOME/sessions.jsonl"
+  echo 3 >"$BATS_TEST_TMPDIR/launch.status"
+  run_bin -3 claude-assistant
+  [[ ! -e $TEAM_HOME/sessions.jsonl ]]
+}
+
+@test "--load-check launches on assistant.load-check, which falls back to the assistant's, and logs no session" {
+  local wt=$BATS_TEST_TMPDIR/load-check
+  mkdir -p "$wt"
+  models '"default" = { model = "opus", effort = "high" }' '"assistant" = { model = "sonnet", subagent_effort = "low" }'
+  run_bin -0 claude-assistant --load-check "$wt"
+  assert_equal "$output" 4d5e6f70
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(with_flags "$(load_check_argv)" --model sonnet --effort high)"
+  assert_equal "$(jq -c '.env.CLAUDE_CODE_SUBAGENT_EFFORT' "$state/assistant-load-check.settings.json")" '"low"'
+  models '"default" = { model = "opus", effort = "high" }' '"assistant" = { model = "sonnet" }' \
+    '"assistant.load-check" = { model = "haiku", effort = "low" }'
+  run_bin -0 claude-assistant --load-check "$wt"
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(with_flags "$(load_check_argv)" --model haiku --effort low)"
+  # Its settings are written afresh: the earlier subagent effort is gone.
+  assert_equal "$(jq -c '.env | has("CLAUDE_CODE_SUBAGENT_EFFORT")' "$state/assistant-load-check.settings.json")" false
+  [[ ! -e $TEAM_HOME/sessions.jsonl ]]
+}
+
+@test "its header says where its model and effort come from and that it logs its launch" {
+  run_bin -0 claude-assistant --help
+  local text
+  text=$(tr -s ' \n' '  ' <<<"$output")
+  assert_contains "$text" "the assistant line of the team home's models.toml"
+  assert_contains "$text" "assistant.load-check"
+  assert_contains "$text" "sessions.jsonl"
 }
