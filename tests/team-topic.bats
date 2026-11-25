@@ -126,8 +126,8 @@ thread_posts() {
   assert_equal "$(thread_posts)" "https://discord.com/api/v10/channels/$TOPICS/threads"
   assert_equal "$(stub_calls curl | jq -r 'select(any(.[]; . == "POST")) | index("-d") as $i | .[$i + 1] | fromjson | .name')" \
     "T1 · proj · The release checklist"
-  assert_equal "$(events launch | jq -c '{role, session, worktree, brief}')" \
-    "$(jq -cn --arg wt "$slots/1" '{role: "topic", session: "4f2a9c1e", worktree: $wt, brief: "brief"}')"
+  assert_equal "$(events launch | jq -c '{role, session, worktree, brief, category}')" \
+    "$(jq -cn --arg wt "$slots/1" '{role: "topic", session: "4f2a9c1e", worktree: $wt, brief: "brief", category: "topic"}')"
   run_bin -0 team-log --check
 
   # The plan, from the topic's template.

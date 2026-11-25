@@ -17,7 +17,7 @@ This SOP says what the file holds, how a launch reads it, what each launch logs,
   ```
   The last three lines are examples; the file ships as `tests/fixtures/models.toml`, its header comment and the one `default` line, Opus at `high`, today's choice for every session.
 - A key is a category, then optionally ` project=<registry name>` and then ` path=<path>`, in that order, with single spaces between.
-  A path is `team-open`'s: `feature`, `bug`, `small`, `research` or `retro`.
+  A path is `team-open`'s: `feature`, `bug`, `small`, `research`, `retro` or `topic`.
   A project is a name `team-project --list` gives.
 - The key must be quoted: a bare dotted key (`reviewer.rereview = ...`) is TOML's nested table, which `team-models --check` refuses as "quote the key".
 - A value's fields are each optional, and a line names at least one:
@@ -50,6 +50,8 @@ Each category falls back through its parent, the part before its last dot, to `d
 | `reviewer.load-check` | a reviewer of T0 |
 | `ops` | the template `ops`, and an ops brief of no template |
 | `ops.load-check` | ops of T0 |
+| `topic` | the template `topic`, a topic session `team-topic` launches, and a topic brief of no template |
+| `topic.load-check` | a topic session of T0 |
 
 - The table lives in `bin/team-models` alone, as data, and `team-models templates` prints its template map; `tests/team-models.bats` fails naming any template in `templates/briefs/` the table does not map, so a new template is not launched without a category.
 - A brief's template is the one its record beside it names (`brief-<name>.json`, which `team-brief` writes); a hand-written brief has no record, so its launch takes its role's category.
