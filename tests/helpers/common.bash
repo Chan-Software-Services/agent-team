@@ -514,6 +514,16 @@ assistant_reads() {
   assert_equal "$(find "$TEAM_HOME" "$HOME" -type f -print0 | sort -z | xargs -0r sha256sum)" "$before"
 }
 
+# The CPU seconds the shell's waited-for children have used so far, in CPU: cpu_now. Read with the
+# times builtin in this shell (a subshell would read its own), so a bound on a script's CPU holds on
+# a loaded machine, where its wall time does not.
+cpu_now() {
+  times >"$BATS_TEST_TMPDIR/times"
+  # shellcheck disable=SC2034 # CPU is the caller's
+  CPU=$(awk 'NR == 2 { split($1, u, /[ms]/); split($2, s, /[ms]/); print u[1] * 60 + u[2] + s[1] * 60 + s[2] }' \
+    "$BATS_TEST_TMPDIR/times")
+}
+
 # The calls made to stub <cmd>, one JSON array of arguments per line (nothing if never called).
 stub_calls() {
   cat "$STUB_CALLS/$1.log" 2>/dev/null || true

@@ -2038,7 +2038,30 @@ retro due since $(plus "$opened" 24) (every 24h, last retro T30): run the retro 
   [[ $output != *slots* ]]
 }
 
-@test "a ledger of 1,000 events sweeps in under two seconds" {
+# jq work that none of the sweep's code has a part in, the timing test's baseline: eight runs of jq,
+# each building and grouping 20,000 objects.
+baseline() {
+  local i
+  for i in 1 2 3 4 5 6 7 8; do
+    jq -n '[range(20000) | {i: ., t: "T\(. % 50)"}] | group_by(.t) | length' >/dev/null
+  done
+}
+
+# timed <name> <command> [<argument>...]: run <command> and add to $BATS_TEST_TMPDIR/timed the line
+# "<name> <CPU before> <CPU after> <time before> <time after>", in seconds, the CPU as cpu_now's.
+timed() {
+  local name=$1 cpu start end
+  shift
+  cpu_now
+  cpu=$CPU
+  start=$(date +%s.%N)
+  "$@"
+  end=$(date +%s.%N)
+  cpu_now
+  echo "$name $cpu $CPU $start $end" >>"$BATS_TEST_TMPDIR/timed"
+}
+
+@test "a ledger of 1,000 events sweeps within 4 times the CPU and 6 times the wall time of a baseline of jq runs" {
   jq -cn '
     range(1000) as $i | ($i % 50 + 1) as $n | "T\($n)" as $t
     | {ts: "2026-10-22T02:00:00Z", task: $t}
@@ -2056,16 +2079,27 @@ retro due since $(plus "$opened" 24) (every 24h, last retro T30): run the retro 
     line=$(jq -cn --arg s "$((i + 10000000))-1111-4222-8333-444455556666" '{type: "assistant",
       timestamp: "2026-10-22T02:10:09Z", sessionId: $s, message: {role: "assistant", content: [{type: "tool_use",
       id: "toolu_01", name: "Bash", input: {command: "tests/run bats"}}, {type: "text", text: ("x" * 60)}]}}')
-    yes "$line" | head -n 20000 | transcript - $((i + 10000000)) 1
+    # Where SIGPIPE is ignored, as on CI, yes says the pipe broke once head has its lines.
+    yes "$line" 2>/dev/null | head -n 20000 | transcript - $((i + 10000000)) 1
   done
   sessions "$(session 10000007 T8-builder idle)" "$(session 10000014 T15-builder idle blocked)" "${busy[@]}"
-  local start end
-  start=$(date +%s%N)
-  run_bin -1 team-sweep
-  end=$(date +%s%N)
-  # Every task but the ten busy builders' finds something.
-  assert_equal "${#lines[@]}" 40
-  (((end - start) < 2000000000))
+  # A fixed number of seconds fails on a loaded runner, so the sweep is bounded by a baseline
+  # measured beside it, which a slower or busier machine slows too. CPU time moves little with load,
+  # so its bound is the tight one, on the sweep's work; wall time moves more, and its looser bound
+  # catches a sweep that waits. Each is the best of three runs, taken in turn, so one stall judges
+  # neither.
+  for _ in 1 2 3; do
+    timed baseline baseline
+    timed sweep run_bin -1 team-sweep
+    # Every task but the ten busy builders' finds something.
+    assert_equal "${#lines[@]}" 40
+  done
+  awk '{ cpu = $3 - $2; wall = $5 - $4
+      if (!($1 in c) || cpu < c[$1]) c[$1] = cpu
+      if (!($1 in w) || wall < w[$1]) w[$1] = wall }
+    END { printf "best of 3: sweep %.2f s CPU, %.2f s wall; baseline %.2f s CPU, %.2f s wall\n",
+        c["sweep"], w["sweep"], c["baseline"], w["baseline"]
+      exit !(c["sweep"] < 4 * c["baseline"] && w["sweep"] < 6 * w["baseline"]) }' "$BATS_TEST_TMPDIR/timed"
 }
 
 # The walk of <task> turned on at <time>, as team-ui logs it: walk_at <task> <time>
