@@ -723,6 +723,29 @@ launched T7-reviewer c0000001"
   assert_equal "$(bg_calls | wc -l)" 1
 }
 
+@test "one builder's PR of tickets it built with no DONE <NN> logs a ticket-done of each, carried by the PR, before the pr" {
+  # The task's one builder, on its own brief, built and ticked both tickets.
+  jq -c 'select(.event != "launch")' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  rm "$wt"/.scratch/task/tickets/*.md
+  ticket 01-first "Blocked by: None"
+  ticket 02-second "Blocked by: 01"
+  sed -i 's/- \[ \] it works/- [x] it works/' "$wt"/.scratch/task/tickets/*.md
+  launched b0000001 brief '["browser"]'
+  on_github 9 "$sha"
+  run_bin -0 --separate-stderr team-next T7 --checks "$(checks)" -- "T7 PR $url"
+  assert_equal "$output" "logged ticket-done ticket=01 commits=[\"$sha\"] pr=$url
+logged ticket-done ticket=02 commits=[\"$sha\"] pr=$url
+logged pr url=$url head=$sha
+brief $TEAM_HOME/tasks/T7/brief-review.md
+launched T7-reviewer c0000001"
+  run_bin -0 team-tickets T7
+  assert_equal "$output" "$(printf '%s\n' "01 done    first" "02 done    second")"
+  # A rerun finds the pr logged and handed off, and carries no ticket again.
+  run_bin -1 team-next T7 -- "T7 PR $url"
+  assert_contains "$output" "PR is already handed off"
+  assert_equal "$(jq -c 'select(.event == "ticket-done") | .ticket' "$TEAM_HOME/ledger.jsonl" | tr '\n' ' ')" '"01" "02" '
+}
+
 @test "a PR's hand-off takes a URL under either owner of a moved repo, with the registry under either, and logs it under the new" {
   # A moves table of the test's own: old-owner/proj moved to owner/proj, where gh answers.
   code_checkout
