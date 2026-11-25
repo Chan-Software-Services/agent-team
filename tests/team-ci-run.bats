@@ -555,3 +555,27 @@ EOF
   assert_equal "$status" 2
   assert_equal "$(gh_calls)" ""
 }
+
+# The macOS job is in a workflow of its own (bin/lib/advisory-checks), so branch_ci's run, which
+# team-ci-run alone waits on, passes with it red and fails with a job of its own red.
+@test "the team's own project's head whose only red check is the macOS job's passes on branch_ci's run alone, and a red job of that run fails it" {
+  sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
+  sed -i '0,/^required_checks = \[\]$/s//required_checks = ["lint"]/' "$TEAM_HOME/projects.toml"
+  # The head's macOS run, 7002, failed with its job: GitHub would answer a read of it, and
+  # team-ci-run makes none.
+  listed 0 "$(a_run 7001 pull_request completed success)"
+  green 0 pull_request
+  the_run 0 "$(a_run 7002 pull_request completed failure)"
+  run_jobs 0 7002 rust-macos:completed:failure:80
+  run_bin team-ci-run agent-team "$branch" "$head"
+  assert_equal "$status" 0
+  assert_contains "$output" "team-ci-wait: every check passed on a1b2c3d: lint passed"
+  [[ $(gh_calls) != *check-runs* && $(gh_calls) != *7002* ]]
+  assert_equal "$(dispatches)" ""
+  echo 0 >"$GH_DIR/look"
+  the_run 0 "$(a_run 7001 pull_request completed failure)"
+  run_jobs 0 7001 lint:completed:failure:70
+  run_bin team-ci-run agent-team "$branch" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the branch's: lint failed: https://github.com/owner/proj/actions/runs/7001/job/70"
+}

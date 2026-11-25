@@ -20,7 +20,8 @@
 # Each job has a time limit (timeout-minutes), about twice its longest recent run, so a hang ends
 # long before GitHub's 6-hour default; each that runs bats has one above tests/run's file limit
 # (TESTS_FILE_MINUTES), so tests/run names a hung file before the job is stopped.
-# Every job runs on Linux: CI runs no macOS job, so no PR waits on GitHub's macOS runners. The
+# Every job of this workflow runs on Linux, so no required check waits on GitHub's macOS runners;
+# the one macOS job a PR runs, rust-macos in rust-macos.yml, is required by nothing. The
 # toolkits job runs the toolkits' servers over stdio against a throwaway MongoDB in Docker, and the
 # rust toolkit's post-edit hook and eval cases on the pinned toolchain's cargo. The rust job checks
 # the Cargo workspace (tests/run rust) only when a change reaches a Rust path, on a pull request and

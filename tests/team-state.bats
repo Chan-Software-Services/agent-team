@@ -1440,3 +1440,41 @@ SH
   run_bin -0 team-state T14
   assert_equal "$output" "T14 proj feature building | T14-builder-02 busy on build-02, T14-builder-03 idle on build-03"
 }
+
+@test "the team's own project's check that no merge waits on is in none of the PR part's checks but listed under advisory, unless required" {
+  review_app_off
+  open_task
+  event T14 pr "{url: \"https://github.com/owner/proj/pull/5\", head: \"$head\", project: \"agent-team\"}"
+  sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
+  view='{"number": 5, "state": "OPEN", "baseRefName": "main", "headRefOid": "'"$head"'"}'
+  checks='[
+    {"name": "shellcheck", "bucket": "pass", "state": "SUCCESS"},
+    {"name": "test", "bucket": "pass", "state": "SUCCESS"},
+    {"name": "rust-macos", "bucket": "fail", "state": "FAILURE"}]'
+  required='[]'
+  compare=0
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.checks, .advisory, .required_missing]' <<<"$output")" \
+    '[{"passed":["shellcheck","test"],"failing":[],"pending":[]},[{"name":"rust-macos","bucket":"fail"}],[]]'
+  run_bin -0 team-state T14
+  assert_contains "$output" " checks 2/2 "
+  # A name the project's required_checks, the PR's server-required checks or the base's rules require
+  # is held as any check.
+  required='[{"name": "rust-macos", "bucket": "fail", "state": "FAILURE"}]'
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.checks.failing, .advisory]' <<<"$output")" '[["rust-macos"],null]'
+  required='[]'
+  rules='[{"type": "required_status_checks", "ruleset_id": 9, "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": [{"context": "rust-macos"}]}}]'
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.checks.failing, .advisory]' <<<"$output")" '[["rust-macos"],null]'
+  # Another project's check of the same name is one of its checks.
+  rules='[]'
+  sed -i 's/^\[agent-team/[proj/' "$TEAM_HOME/projects.toml"
+  sed -i 's/"project":"agent-team"/"project":"proj"/' "$TEAM_HOME/ledger.jsonl"
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.project, .checks.failing, .advisory]' <<<"$output")" '["proj",["rust-macos"],null]'
+}
