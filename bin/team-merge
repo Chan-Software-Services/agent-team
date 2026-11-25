@@ -72,8 +72,10 @@
 #   and every check every merge gets: the PR is open, not a draft, does not conflict, and targets
 #   the project's base; every required check (the base's rules, its protection's and its rulesets'
 #   required checks, gh pr checks --required and the project's required_checks; rules that cannot be
-#   read are refused as GitHub unreadable) is present on the head and passed (a skipped one passes);
-#   no check on the head is failing or pending; agent-review is success on the head: on the team's
+#   read are refused as GitHub unreadable) is present on the head and passed (a skipped one passes),
+#   a missing one but agent-review naming the step on a base with a merge queue when the head is
+#   behind its base (pr_part's behind_by): run team-catch-up T<n>, which merges the base into the PR
+#   so the check runs on it; no check on the head is failing or pending; agent-review is success on the head: on the team's
 #   own project with the reviewer App on, the App's latest agent-review check run whose head_sha is
 #   the head (review_check in pr_part, bin/lib/team.sh), a commit status or another App's check run
 #   of that name refused as not the App's check, on every word, else the check or status gh pr
@@ -362,10 +364,17 @@ else
     fi
     echo '{"required": []}' >"$scratch/rules"
   fi
-  while IFS= read -r line; do merge_reasons+=("$line"); done < <(jq -r --slurpfile rules "$scratch/rules" '
+  # A required check missing on a head behind a queued base is one the base newly requires, which
+  # runs only on a commit pushed since: team-catch-up merges the base for it (the queue needs no
+  # other catch-up), but for agent-review, which no merge's run brings.
+  while IFS= read -r line; do merge_reasons+=("$line"); done < <(jq -r --slurpfile rules "$scratch/rules" --arg task "$task" '
     ((.required + [$rules[0].required[].context]) | unique) as $required
     | (.checks.passed + .checks.failing + .checks.pending) as $present
-    | ($required[] | select(IN($present[]) | not) | "required check \(.) is missing on the head"),
+    | (if .queue != null and (.behind_by // 0) > 0 then
+        ", which is \(.behind_by) commit\(if .behind_by == 1 then "" else "s" end) behind \(.base): run team-catch-up \($task), which merges \(.base) into the PR so the check runs on it"
+       else "" end) as $catch_up
+    | ($required[] | select(IN($present[]) | not)
+       | "required check \(.) is missing on the head\(if . == "agent-review" then "" else $catch_up end)"),
       ([$required[] | select(IN($present[]))] - .checks.passed | .[] | "required check \(.) has not passed on the head"),
       (.checks.failing | select(length > 0) | "checks failing on the head: \(join(", "))"),
       (.checks.pending | select(length > 0) | "checks pending on the head: \(join(", "))"),

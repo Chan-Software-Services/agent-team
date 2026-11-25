@@ -107,9 +107,10 @@ checks() {
 
 # gh answers from the files under $GH_DIR (the second read of the PR from pr-again.json when a
 # test wrote one; the head's agent-review check runs from check-runs.json and its commit statuses
-# from status.json, which app_on writes; the base's classic protection, any base's, from
-# branch.json, its rulesets' rules from rules.json and ruleset <id> from ruleset-<id>.json, which
-# pinned and with_queue write; the GraphQL read of the PR's queue entry from entry.json, which
+# from status.json, which app_on writes; the commits of the base the head lacks, compare's
+# behind_by, from behind_by when a test wrote it, else that read fails as unplanned; the base's
+# classic protection, any base's, from branch.json, its rulesets' rules from rules.json and
+# ruleset <id> from ruleset-<id>.json, which pinned and with_queue write; the GraphQL read of the PR's queue entry from entry.json, which
 # with_queue and in_queue write, after running entry.sh when a test wrote one; a dequeue is kept
 # in $GH_DIR/dequeues, its last argument, and fails with dequeue.error's text when a test wrote
 # one). pr merge marks the PR merged (or runs merge.sh when a test wrote
@@ -128,6 +129,8 @@ case "$*" in
   "api repos/owner/proj/pulls/5/files --paginate") cat "$GH_DIR/files.json" ;;
   "api repos/owner/proj/commits/"*"/check-runs?check_name=agent-review&filter=latest&per_page=100") cat "$GH_DIR/check-runs.json" ;;
   "api repos/owner/proj/commits/"*"/status") cat "$GH_DIR/status.json" ;;
+  "api repos/owner/proj/compare/"*" --jq .behind_by")
+    if [[ -f $GH_DIR/behind_by ]]; then cat "$GH_DIR/behind_by"; else echo "unplanned gh call: $*" >&2; exit 1; fi ;;
   "api graphql "*dequeuePullRequest*)
     printf '%s\n' "${*: -1}" >>"$GH_DIR/dequeues"
     if [[ -f $GH_DIR/dequeue.error ]]; then echo "gh: $(<"$GH_DIR/dequeue.error")" >&2; exit 1; fi

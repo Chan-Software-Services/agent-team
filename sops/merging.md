@@ -54,6 +54,7 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
 - The words and the checks every merge gets are the same, with two more: the project's `merge_method` is `merge`, and the PR's queue entry can be read.
   A PR only behind its base needs no catch-up there: the queue merges it onto what is ahead of it, `team-next T<n> --ci` prints the merge line for it as for a PR up to date, and `team-catch-up` refuses it, naming `team-merge`; a PR that conflicts still takes the `builder-merge-base` round.
   A head that lacks a check the base newly requires is caught up there all the same, as "What the coordinator does" says, since `team-merge` queues no head lacking a required check.
+  Its refusal says so: on a head behind its base, each missing required check but `agent-review` ends with the step to run `team-catch-up T<n>`.
 - CodeQL on a trial commit: the code scanning roll-up `CodeQL`, which GitHub Advanced Security posts, appears only on a pull request, never on a trial commit, so a queued base where CodeQL runs requires its CodeQL workflow's own `Analyze (<language>)` checks in its place, which the workflow runs on `merge_group`, and holds a PR with a new alert out of the queue by its ruleset's `code_scanning` rule.
   That workflow is CodeQL's advanced setup, so the repository's default setup is off, since it runs nothing on a trial commit and refuses the workflow's uploads.
   agent-team runs no CodeQL, so its queue requires its CI's five checks and `agent-review` alone.
