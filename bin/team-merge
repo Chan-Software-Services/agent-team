@@ -123,23 +123,32 @@
 #   dequeued  the queue dropped it, or team-land took it out: dequeued is logged (url, head,
 #             reason, and failed, the failures on the trial commit, when there are any), unless
 #             another team-merge logged one meanwhile and team-land names no failures, and it is
-#             exit 1 naming the reason, each failure and the next step: with a rules failure (a
-#             check the base's rules or the project's required_checks require that never
-#             reported on the trial commit, each said as "<name> was not reported on the trial
-#             merge, which <base>'s rules require", or "which the project's required_checks
-#             require" for one they alone require), to run team-doctor (its merge queue line),
-#             fix the workflow's merge_group trigger or ask Daniel to change the repository's
-#             ruleset, then run team-merge again, the project's required_checks named among what
-#             requires it and what to fix for such a check, and team-doctor and the ruleset left
-#             out with no check the rules require (rules_step in bin/lib/ledger.jq), even beside a
-#             failure of the PR's own, since the trial merge cannot be judged until every
-#             required check runs there; a required check not reported while a workflow run of
-#             the trial commit was still open (team-ci-wait's infrastructure, as a roll-up whose
-#             shards waited for a runner) is said as "<name> was not reported on the trial merge
-#             while a workflow run there was still open, as infrastructure", with no rules step;
-#             else with a failure of the PR's own, the builder-merge-base brief, since the trial
-#             merge failed what the head passed; else to run team-merge again once what dropped
-#             it is fixed;
+#             exit 1 naming the reason, each failure and the next step: with a failure of the
+#             PR's own, the builder-merge-base brief, since the trial merge failed what the head
+#             passed, even beside a rules failure, since the queue cancels the rest of a trial
+#             commit it gives up, so a roll-up whose shards it cancelled reads as the rules' once
+#             no run is open, and a rules gap that is real shows alone on the round's new head;
+#             else with a rules failure (a check the base's rules or the project's
+#             required_checks require that never reported on the trial commit, each said as
+#             "<name> was not reported on the trial merge, which <base>'s rules require", or
+#             "which the project's required_checks require" for one they alone require), to run
+#             team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask
+#             Daniel to change the repository's ruleset, then run team-merge again, the project's
+#             required_checks named among what requires it and what to fix for such a check, and
+#             team-doctor and the ruleset left out with no check the rules require (rules_step in
+#             bin/lib/ledger.jq), since the trial merge cannot be judged until every required
+#             check runs there; a required check not reported while a workflow run of the trial
+#             commit was still open (team-ci-wait's infrastructure, as a roll-up whose shards
+#             waited for a runner) is said as "<name> was not reported on the trial merge while a
+#             workflow run there was still open, as infrastructure", with no rules step; else,
+#             when GitHub's reason is checks_timed_out (the queue's check timeout) or at least
+#             one failure is infrastructure of kind queued or missing and every other is one
+#             too or a roll-up, so the checks waited on runners and a plain run again meets the
+#             same wait, "the runners are behind, with nothing of the PR's to fix: tell Daniel,
+#             who may raise the check timeout of <repo>'s merge queue while the backlog stands,
+#             and run team-merge T<n> again once they say the runners are back", ending as
+#             team-next --ci's infrastructure end does; else to run team-merge again once what
+#             dropped it is fixed;
 #   waiting   team-land's deadline came, or the team holds offline: it is exit 75, saying to run
 #             team-merge again with run_in_background, and whether the PR, read again, is still
 #             in the queue, merged, or unread; nothing more is logged for those, and a PR in no
@@ -870,12 +879,19 @@ if [[ -n $landing ]]; then
             + (if .class == "pr" then "" else " as \(.class)" end)
             + (if (.step // "") == "" then "" else " (\(.step))" end)
             + (if (.link // "") == "" then "" else ": \(.link)" end) end' <<<"$landed_as"
-        # A rules drop comes first: the trial merge cannot be judged until every required check
-        # runs there, so even beside a failure of the PR's own it is no merge-base round.
-        if jq -e 'any(.failed // [] | .[]; .class == "rules")' <<<"$landed_as" >/dev/null; then
-          echo "  $(ledger_jq '.failed // [] | rules_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
-        elif jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
+        # A failure of the PR's own comes first, even beside a rules failure: the queue cancels the
+        # rest of a trial commit it gives up, so a roll-up whose shards it cancelled reads as the
+        # rules' once no run is open, and a rules gap that is real shows alone on the round's head.
+        if jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
           echo "  the trial merge failed what the head ${head:0:7} passed: render team-brief $task builder-merge-base for the builder, then a rereview"
+        elif jq -e 'any(.failed // [] | .[]; .class == "rules")' <<<"$landed_as" >/dev/null; then
+          echo "  $(ledger_jq '.failed // [] | rules_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
+        elif [[ ${reason%%;*} == checks_timed_out ]] || jq -e '(.failed // []) as $f
+          | any($f[]; .class == "infrastructure" and (.kind | IN("queued", "missing")))
+            and all($f[]; .class == "rollup" or (.class == "infrastructure" and (.kind | IN("queued", "missing"))))' <<<"$landed_as" >/dev/null; then
+          # Runners behind: the queue's check timeout, or checks that waited on a runner (team-land
+          # enqueued once more for those already), so a plain run again meets the same wait.
+          echo "  the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of $repo's merge queue while the backlog stands, and run team-merge $task again once they say the runners are back"
         else
           echo "  run team-merge $task again once what dropped it is fixed"
         fi

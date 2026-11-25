@@ -81,7 +81,7 @@ no_land_call() {
   assert_equal "$status" 0
 }
 
-@test "a PR the queue dropped for anything but a failure of its own says to run team-merge again once what dropped it is fixed" {
+@test "a PR the queue dropped for anything but a failure of its own or a runner backlog says to run team-merge again once what dropped it is fixed" {
   with_queue
   land dequeued "the queue was cleared"
   run_bin -1 --separate-stderr team-merge T14
@@ -89,32 +89,97 @@ no_land_call() {
     '{task: "T14", event: "dequeued", url: $url, head: $h, reason: "the queue was cleared"}')"
   assert_contains "$stderr" "team-merge: the merge queue dropped PR #5, which is not merged: the queue was cleared"
   assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
-  [[ $stderr != *builder-merge-base* ]]
-  # Infrastructure alone, which team-land enqueued once more for, is no failure of the PR's own.
+  [[ $stderr != *builder-merge-base* && $stderr != *"runners are"* ]]
+  # Infrastructure alone, which team-land enqueued once more for, is no failure of the PR's own,
+  # and a setup failure no runner backlog.
   merge_again
   queue_rule
-  land dequeued "the checks timed out" '[{"name": "test", "class": "infrastructure", "kind": "runner", "link": "", "step": ""}]'
+  land dequeued "failed_checks" '[{"name": "test", "class": "infrastructure", "kind": "setup", "link": "", "step": "Set up job"}]'
   run_bin -1 --separate-stderr team-merge T14
   assert_equal "$(queue_events | tail -n 1 | jq -c '[.event, .failed[0].class]')" '["dequeued","infrastructure"]'
-  assert_contains "$stderr" "  test failed on the trial merge as infrastructure"
+  assert_contains "$stderr" "  test failed on the trial merge as infrastructure (Set up job)"
   assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
-  [[ $stderr != *builder-merge-base* ]]
+  [[ $stderr != *builder-merge-base* && $stderr != *"runners are"* ]]
+  # A queued check beside a stuck or never-started one, with no check timeout, is no runner
+  # backlog alone: the general step.
+  local other
+  for other in stuck never-started; do
+    merge_again
+    queue_rule
+    land dequeued "failed_checks" \
+      '[{"name": "e2e", "class": "infrastructure", "kind": "queued", "link": null, "step": null},
+        {"name": "lint", "class": "infrastructure", "kind": "'"$other"'", "link": null, "step": null}]'
+    run_bin -1 --separate-stderr team-merge T14
+    assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
+    [[ $stderr != *"runners are"* ]]
+  done
+}
+
+@test "a PR the queue dropped while its checks waited on runners, or on its check timeout, says the runners are behind: tell Daniel and run team-merge again once they are back" {
+  local backlog="  the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of owner/proj's merge queue while the backlog stands, and run team-merge T14 again once they say the runners are back"
+  with_queue
   # A required roll-up not listed while its shards waited for runners is infrastructure too: no
-  # team-doctor, merge_group trigger or ruleset step.
-  merge_again
-  queue_rule
-  land dequeued "the checks timed out" \
+  # team-doctor, merge_group trigger or ruleset step, and nothing to fix.
+  land dequeued "failed_checks" \
     '[{"name": "e2e shard 1/2", "class": "infrastructure", "kind": "queued", "link": "https://github.com/owner/proj/actions/runs/1/job/3", "step": null},
       {"name": "e2e", "class": "infrastructure", "kind": "missing", "link": null, "step": null}]'
   run_bin -1 --separate-stderr team-merge T14
   assert_contains "$stderr" "  e2e shard 1/2 failed on the trial merge as infrastructure: https://github.com/owner/proj/actions/runs/1/job/3"
   assert_contains "$stderr" "  e2e was not reported on the trial merge while a workflow run there was still open, as infrastructure
 "
-  assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
+  assert_contains "$stderr" "$backlog"
   [[ $stderr != *team-doctor* && $stderr != *merge_group* && $stderr != *ruleset* && $stderr != *builder-merge-base* ]]
+  [[ $stderr != *"once what dropped it is fixed"* ]]
+  # A queued check beside a roll-up of its shards: still the runners'.
+  merge_again
+  queue_rule
+  land dequeued "failed_checks" \
+    '[{"name": "test-shard 1/3", "class": "infrastructure", "kind": "queued", "link": "https://github.com/owner/proj/actions/runs/1/job/4", "step": null},
+      {"name": "test", "class": "rollup", "kind": "rollup", "link": "https://github.com/owner/proj/actions/runs/1/job/5", "step": null}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "$backlog"
+  [[ $stderr != *"once what dropped it is fixed"* ]]
+  # The queue's own check timeout, with no failure read on the trial commit, and with what
+  # team-land adds to GitHub's reason.
+  local reason
+  for reason in "checks_timed_out" "checks_timed_out; agent-review was not posted on the trial commit a9e124d: GitHub refused it"; do
+    merge_again
+    queue_rule
+    land dequeued "$reason"
+    run_bin -1 --separate-stderr team-merge T14
+    assert_contains "$stderr" "team-merge: the merge queue dropped PR #5, which is not merged: $reason"
+    assert_contains "$stderr" "$backlog"
+    [[ $stderr != *"once what dropped it is fixed"* ]]
+  done
+  # A setup failure beside the timeout: the queue gave up on runners all the same.
+  merge_again
+  queue_rule
+  land dequeued "checks_timed_out" '[{"name": "lint", "class": "infrastructure", "kind": "setup", "link": "", "step": "Set up job"}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "$backlog"
+  # A failure of the PR's own beside the timeout is still the builder's round, and a rules failure
+  # the rules step.
+  merge_again
+  queue_rule
+  land dequeued "checks_timed_out" \
+    '[{"name": "test", "class": "pr", "kind": "failed", "link": "https://github.com/owner/proj/actions/runs/1/job/2", "step": "Run tests"},
+      {"name": "e2e", "class": "infrastructure", "kind": "queued", "link": null, "step": null}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  the trial merge failed what the head ${head:0:7} passed: render team-brief T14 builder-merge-base for the builder, then a rereview"
+  [[ $stderr != *"runners are"* ]]
+  merge_again
+  queue_rule
+  land dequeued "checks_timed_out; Analyze (python) never reported on the trial commit, which dev's rules require" \
+    '[{"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null},
+      {"name": "e2e", "class": "infrastructure", "kind": "queued", "link": null, "step": null}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  the base's rules require a check no workflow makes on a trial commit"
+  [[ $stderr != *"runners are"* ]]
+  TEAM_HOME=$TEAM_HOME run "$REPO_ROOT/bin/team-log" --check
+  assert_equal "$status" 0
 }
 
-@test "a PR the queue dropped for a check its base's rules require that never reported on the trial commit names the rules step, never the merge-base brief, even beside a failure of its own" {
+@test "a PR the queue dropped for a check its base's rules require that never reported on the trial commit names the rules step, and beside a failure of its own the merge-base brief" {
   rules_step="  the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T14 again"
   with_queue
   land dequeued "Analyze (python) never reported on the trial commit, which dev's rules require" \
@@ -130,20 +195,22 @@ no_land_call() {
   [[ $stderr != *"Analyze (python) failed"* ]]
   assert_contains "$stderr" "$rules_step"
   [[ $stderr != *builder-merge-base* && $stderr != *"once what dropped it is fixed"* ]]
-  # Beside a failure of the PR's own, the trial merge cannot be judged until every required check
-  # runs there, so the step is still the rules', never the builder's.
+  # Beside a failure of the PR's own, the builder's round leads: the queue cancels the rest of a
+  # trial commit it gives up, so a roll-up whose shards it cancelled reads as the rules' with no run
+  # open, as test did beside toolkits' failure, and a rules gap that is real shows alone on the
+  # round's new head.
   merge_again
   queue_rule
-  land dequeued "Analyze (python) never reported on the trial commit, which dev's rules require" \
-    '[{"name": "test", "class": "pr", "kind": "failed", "link": "https://github.com/owner/proj/actions/runs/1/job/2", "step": "Run tests"},
-      {"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null}]'
+  land dequeued "failed_checks; test never reported on the trial commit, which dev's rules require" \
+    '[{"name": "toolkits", "class": "pr", "kind": "failed", "link": "https://github.com/owner/proj/actions/runs/1/job/2", "step": "Run tests/run toolkits"},
+      {"name": "test", "class": "rules", "kind": "missing", "link": null, "step": null, "source": "rules"}]'
   run_bin -1 --separate-stderr team-merge T14
   assert_equal "$(queue_events | tail -n 1 | jq -c '[.event, [.failed[].class]]')" '["dequeued",["pr","rules"]]'
-  assert_contains "$stderr" "  test failed on the trial merge (Run tests): https://github.com/owner/proj/actions/runs/1/job/2"
-  assert_contains "$stderr" "  Analyze (python) was not reported on the trial merge, which dev's rules require
+  assert_contains "$stderr" "  toolkits failed on the trial merge (Run tests/run toolkits): https://github.com/owner/proj/actions/runs/1/job/2"
+  assert_contains "$stderr" "  test was not reported on the trial merge, which dev's rules require
 "
-  assert_contains "$stderr" "$rules_step"
-  [[ $stderr != *builder-merge-base* ]]
+  assert_contains "$stderr" "  the trial merge failed what the head ${head:0:7} passed: render team-brief T14 builder-merge-base for the builder, then a rereview"
+  [[ $stderr != *team-doctor* && $stderr != *ruleset* && $stderr != *"once what dropped it is fixed"* ]]
   # A check the project's required_checks alone require is said as theirs, and the step names them
   # in place of team-doctor and the ruleset; beside one the rules require, it names both.
   merge_again

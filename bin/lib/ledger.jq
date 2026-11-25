@@ -1382,15 +1382,17 @@ def bypass_text($on):
 # after it (a pr event of the URL, or any review of the task, whichever of its PRs it read, since a
 # fix after findings is reviewed at a head no pr event logs and a review names no PR), the PR left
 # the queue with no team-merge to log its dequeued, a push having dropped it, and it is null.
-# rules_due says the queue dropped the PR for a check the base's rules require and no workflow made
-# on the trial commit (a failed of class rules) with no pr event of the URL and no review of the
-# task since: the trial merge cannot be judged until every required check runs there, so the fix is
-# the base's rules or a workflow's merge_group trigger, then a team-merge, whose queued ends it.
 # round_due says the queue dropped the PR for a failure of its own on the trial merge (a failed of
-# class pr) with no pr event of the URL and no review of the task since, and no rules_due: the head
-# passed what the trial merge failed, so it is the builder's merge-base round, then a rereview,
-# never a second enqueue of the same head; beside a rules failure it is false, since the trial merge
-# was not judged in full.
+# class pr) with no pr event of the URL and no review of the task since: the head passed what the
+# trial merge failed, so it is the builder's merge-base round, then a rereview, never a second
+# enqueue of the same head; beside a rules failure too, since the queue cancels the rest of a trial
+# commit it gives up, so a roll-up whose shards it cancelled reads as the rules' once no run is
+# open, and a rules gap that is real shows alone on the round's new head.
+# rules_due says the queue dropped the PR for a check the base's rules require and no workflow made
+# on the trial commit (a failed of class rules), with no failure of the PR's own, no pr event of the
+# URL and no review of the task since: the trial merge cannot be judged until every required check
+# runs there, so the fix is the base's rules or a workflow's merge_group trigger, then a
+# team-merge, whose queued ends it.
 def queue_state($url):
   ($url | rtrimstr("/")) as $u
   | . as $events
@@ -1403,9 +1405,9 @@ def queue_state($url):
         if any($since[]; (.head | type) == "string" and (same_head(.head; $e.head) | not)) then null
         else {state: "queued", since: $e.ts, head: $e.head} end
       elif $e.event == "dequeued" then
-        ($since == [] and any($e.failed[]?; .class == "rules")) as $rules
+        ($since == [] and any($e.failed[]?; .class == "pr")) as $round
         | {state: "dequeued", since: $e.ts, reason: $e.reason, head: $e.head, failed: ($e.failed // []),
-           round_due: ($since == [] and ($rules | not) and any($e.failed[]?; .class == "pr")), rules_due: $rules}
+           round_due: $round, rules_due: ($since == [] and ($round | not) and any($e.failed[]?; .class == "rules"))}
       else null end
     end;
 # The task's PRs not merged that stand in the merge queue (queue_state is queued), from task_prs,

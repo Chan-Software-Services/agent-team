@@ -144,7 +144,7 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   assert_equal "$(outside_calls)" ""
 }
 
-@test "--ci on a PR the merge queue dropped for a failure of its own prints the builder-merge-base step, never the merge line, until it is reviewed again" {
+@test "--ci on a PR the merge queue dropped for a failure of its own prints the builder-merge-base step, never the merge line nor the rules step, until it is reviewed again" {
   # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
   export GH_QUEUE=1
   on_origin
@@ -153,14 +153,17 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   live b0000001 120000
   passed -- "T7 DONE pass $url $counts before=none guarded=none"
   assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7"
+  # Beside a rules failure too, the PR's own failures lead: a roll-up whose shards the queue
+  # cancelled once test failed reads as the rules' with no run open.
   jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
-    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed checks",
-      failed: [{name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"}, {name: "lint", class: "pr", kind: "failed", link: "", step: ""}]}' \
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed_checks; e2e never reported on the trial commit, which main'"'"'s rules require",
+      failed: [{name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"}, {name: "lint", class: "pr", kind: "failed", link: "", step: ""},
+        {name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}' \
     >>"$TEAM_HOME/ledger.jsonl"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_equal "$(tail -n 1 <<<"$output")" \
     "merge base: $url failed test and lint on the merge queue's trial merge, which dropped it at 2026-10-23T10:00:00Z, so the builder fixes it on the branch (step 6): render team-brief T7 builder-merge-base, send its path to T7-builder (b0000001, 120k) and log team-log T7 resumed brief=<its file name without .md>, which holds team-sweep's merge-due"
-  [[ $output != *"run team-merge"* ]]
+  [[ $output != *"run team-merge"* && $output != *"merge rules:"* ]]
 }
 
 @test "--ci on a PR the merge queue dropped for a check the base's rules require prints the rules step, never the merge line nor the merge-base step, until it is queued again" {
@@ -172,10 +175,10 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   live b0000001 120000
   passed -- "T7 DONE pass $url $counts before=none guarded=none"
   assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7"
-  # A rules failure beside one of the PR's own: the rules step alone, naming only the rules checks.
+  # Rules failures beside infrastructure: the rules step alone, naming only the rules checks.
   jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
     {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "Analyze (actions) and e2e never reported on the trial commit, which main'"'"'s rules require",
-      failed: [{name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}, {name: "test", class: "pr", kind: "failed", link: "", step: "Run tests"},
+      failed: [{name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}, {name: "lint", class: "infrastructure", kind: "setup", link: "", step: "Set up job"},
         {name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}' \
     >>"$TEAM_HOME/ledger.jsonl"
   local rules_step="merge rules: $url was dropped by the merge queue at 2026-10-23T10:00:00Z: Analyze (actions) and e2e never reported on its trial commit, which main's rules require; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T7 again"
