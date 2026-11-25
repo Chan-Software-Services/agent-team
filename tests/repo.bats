@@ -2541,6 +2541,69 @@ YAML
     "$(jq '[.tools[] | select(.from == "download")] | length' "$REPO_ROOT/bin/lib/tools.lock")"
 }
 
+# The rust job checks the Cargo workspace on Linux: on a pull request and a merge queue's trial
+# commit only what reaches a Rust path since the base the data job reads its range from, so it
+# reports on every PR and passes at once on any other, and by hand the whole workspace; its
+# cargo-nextest and cargo-deny are tools.lock's pins, each archive checked by the lock's SHA-256.
+@test "CI's rust job runs tests/run rust on what a change reaches, whole by hand, with tools.lock's cargo-nextest and cargo-deny and the pinned toolchain" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml block tool key version sha source
+  block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  rust:$/,/^  [a-z_-]*:$/p' | sed '1!{/^  [a-z_-]*:$/d}' | grep -v '^ *#')
+  [[ -n $block ]] || { echo "ci.yml has no rust job" >&2; return 1; }
+  grep -qx '    runs-on: ubuntu-24.04' <<<"$block"
+  grep -qx '    timeout-minutes: 5' <<<"$block"
+  # The checkout has the whole history, for the base, and keeps no credential.
+  grep -qx '      - uses: actions/checkout@[0-9a-f]\{40\} # v[0-9.]*' <<<"$block"
+  grep -qxF '          fetch-depth: 0' <<<"$block"
+  grep -qxF '          persist-credentials: false' <<<"$block"
+  # Each tool by its lock pin and the SHA-256 the lock checks its Linux archive by.
+  for tool in cargo-nextest cargo-deny; do
+    key=$(tr a-z- A-Z_ <<<"$tool")
+    version=$(sed -n "s/^      ${key}_VERSION: //p" <<<"$block")
+    sha=$(sed -n "s/^      ${key}_SHA256: //p" <<<"$block")
+    assert_equal "$tool $version" "$tool $(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")"
+    [[ $sha =~ ^[0-9a-f]{64}$ ]] || { echo "$tool: ${key}_SHA256 is no sha256" >&2; return 1; }
+    source=$(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .source.arch' "$REPO_ROOT/bin/lib/tools.lock")
+    [[ $source == *"echo \"$sha  "* && $source == *x86_64-unknown-linux-musl.tar.gz* ]] ||
+      { echo "$tool: ${key}_SHA256 is not the one tools.lock checks its Linux archive by" >&2; return 1; }
+    grep -qxF "      - name: Install $tool \${{ env.${key}_VERSION }}" <<<"$block"
+    grep -qF "echo \"\$${key}_SHA256  \$archive\" | sha256sum -c -" <<<"$block"
+  done
+  grep -qxF '          echo "$RUNNER_TEMP/rust-bin" >>"$GITHUB_PATH"' <<<"$block"
+  # The toolchain rust-toolchain.toml pins, then the base as the data job names its range, then
+  # the check: --changed on a pull request and a trial commit, whole by hand.
+  grep -qxF '          rustup toolchain install' <<<"$block"
+  grep -qxF '          BASE_SHA: ${{ github.event.pull_request.base.sha }}' <<<"$block"
+  grep -qxF '          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}' <<<"$block"
+  grep -qxF '          echo "RUST_BASE=${BASE_SHA:-$QUEUE_BASE_SHA}" >>"$GITHUB_ENV"' <<<"$block"
+  assert_equal "$(grep -E '^        if:|run: tests/run' <<<"$block")" \
+    "        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch'
+        run: tests/run rust --changed \"\$RUST_BASE\"
+        if: github.event_name == 'workflow_dispatch'
+        run: tests/run rust"
+  (($(grep -nxF '          rustup toolchain install' <<<"$block" | cut -d: -f1) < $(grep -n 'run: tests/run rust' <<<"$block" | head -n 1 | cut -d: -f1)))
+  # No cache action and no sccache: the skeleton builds in seconds.
+  if grep -nE 'actions/cache|sccache' <<<"$block"; then echo "the rust job caches" >&2; return 1; fi
+}
+
+# The toolkits job has the pinned toolchain, so the rust toolkit's real-cargo cases run there, and
+# a skip of them fails.
+@test "CI's toolkits job installs the pinned toolchain before the toolkit tests and requires the rust toolkit's real-cargo cases" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml block
+  block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  toolkits:$/,/^  [a-z_-]*:$/p' | sed '1!{/^  [a-z_-]*:$/d}' | grep -v '^ *#')
+  grep -qxF '      RUST_TOOLKIT_TESTS: require' <<<"$block"
+  (($(grep -nxF '          rustup toolchain install' <<<"$block" | cut -d: -f1) < $(grep -nxF '      - run: tests/run toolkits' <<<"$block" | cut -d: -f1)))
+}
+
+# Every job of ci.yml has a runner, and each is ubuntu-24.04, so CI runs no macOS job.
+@test "every CI job runs on Linux" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml ids runners
+  ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
+  runners=$(sed -n '/^jobs:$/,$s/^    runs-on: \(.*\)$/\1/p' "$ci")
+  assert_equal "$(wc -l <<<"$runners")" "$(wc -l <<<"$ids")"
+  assert_equal "$(sort -u <<<"$runners")" ubuntu-24.04
+}
+
 # A hung job ends long before GitHub's 6-hour default, and one that runs bats outlives tests/run's
 # file limit, so tests/run names the hung file before the job dies.
 @test "every CI job sets a whole-number timeout-minutes, above tests/run's file limit wherever it runs bats" {
@@ -3387,6 +3450,40 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   found=$(cd "$REPO_ROOT" && grep -nE '^[[:space:]]+wait([[:space:]]+-[nf])*([[:space:]]*($|[;&|)}])|[[:space:]]+[0-9]?>)' \
     tests/*.bats tests/helpers/*.bash) || (($? == 1))
   assert_equal "$found" ""
+}
+
+# The clock seams a script of bin/ reads, an instant's TEAM_<name>_NOW or a day's TEAM_<name>_TODAY,
+# one per line, each once: clock_seams <directory>
+clock_seams() {
+  grep -rhoE 'TEAM_[A-Z0-9_]+_(NOW|TODAY)' "$1" | LC_ALL=C sort -u
+}
+
+# The clock seams of <directory> that sandbox, as this test's setup ran it, does not export, one
+# per line: unpinned_seams <directory>
+unpinned_seams() {
+  local seam
+  while IFS= read -r seam; do
+    [[ -n $seam ]] || continue
+    [[ $(declare -p "$seam" 2>/dev/null) == 'declare -x '* ]] || echo "$seam"
+  done < <(clock_seams "$1")
+}
+
+# A fixture date that the code under test compares with today passes until its day comes, then
+# fails on the base branch and every branch caught up with it at once: sandbox pins each
+# TEAM_*_NOW and TEAM_*_TODAY seam.
+@test "sandbox exports every TEAM_*_NOW and TEAM_*_TODAY clock seam a script of bin/ reads, and a seam it does not is named" {
+  local seams
+  seams=$(clock_seams "$REPO_ROOT/bin")
+  [[ $seams == *TEAM_CURRENT_NOW* && $seams == *TEAM_SWEEP_NOW* && $seams == *TEAM_COMPACT_HOLD_NOW* ]]
+  [[ $seams == *TEAM_QUEUE_TODAY* ]]
+  assert_equal "$(unpinned_seams "$REPO_ROOT/bin")" ""
+  # A new seam that sandbox does not export, and one it no longer exports, are each named.
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cp "$REPO_ROOT/bin/team-current" "$BATS_TEST_TMPDIR/bin/"
+  echo 'now=${TEAM_LATER_NOW:-$(date +%s)}' >"$BATS_TEST_TMPDIR/bin/team-later"
+  echo 'day=${TEAM_LATER_TODAY:-$(date -u +%F)}' >>"$BATS_TEST_TMPDIR/bin/team-later"
+  unset TEAM_CURRENT_NOW
+  assert_equal "$(unpinned_seams "$BATS_TEST_TMPDIR/bin")" $'TEAM_CURRENT_NOW\nTEAM_LATER_NOW\nTEAM_LATER_TODAY'
 }
 
 # The shell code the library's EXIT trap holds: each script, sourced file (.sh) and doctor check
