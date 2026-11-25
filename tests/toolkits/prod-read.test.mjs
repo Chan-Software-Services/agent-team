@@ -48,11 +48,12 @@ beforeEach(async () => {
   home = tempDir("home");
 });
 
-// Start the server on `value` (by default the test user's connection string), initialize it,
-// run `body`, then close it and check what must hold after every run.
-async function withServer(body, { value = db.uri("ops-read", marker), env } = {}) {
+// Start the server on `value` (by default the test user's connection string), in a session of
+// `role` (ops by default), initialize it, run `body`, then close it and check what must hold
+// after every run.
+async function withServer(body, { value = db.uri("ops-read", marker), env, role } = {}) {
   const op = opStub({ value });
-  const server = startToolkitServer("prod-read", { home, opDir: op.dir, env });
+  const server = startToolkitServer("prod-read", { home, opDir: op.dir, env, role });
   try {
     await server.initialize();
     await body(server, op);
@@ -92,6 +93,13 @@ describe("the tools", () => {
         assert.deepEqual(evalMockTools(kit, "prod-read"), listed, `toolkits/${kit}/evals/mocks/prod-read/_tools.json`);
       }
     });
+  });
+
+  test("are the prod-read set in the assistant's read session too", async () => {
+    await withServer(async (server, op) => {
+      assert.deepEqual(names(await server.listTools()), readTools);
+      assert.deepEqual(op.calls().map((call) => call.split(" ")[0]), ["read", "signout"]);
+    }, { role: "assistant-read" });
   });
 
   test("stay the prod-read set when the environment says otherwise", async () => {
@@ -210,5 +218,5 @@ describe("the secret", () => {
 });
 
 describe("the launcher refuses before the server starts", () => {
-  launcherRefusalTests("prod-read", () => ({ value: db.uri("ops-read", marker), home, marker }));
+  launcherRefusalTests("prod-read", () => ({ value: db.uri("ops-read", marker), home, marker }), { roles: ["ops", "assistant-read"] });
 });

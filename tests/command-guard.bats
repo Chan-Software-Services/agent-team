@@ -640,20 +640,27 @@ passes() {
     'echo "$(env -i team-merge T7)"' 'env -i team-anything'
 }
 
-# The assistant's launcher, like the coordinator's, has no team- in its name, so the hook's quick
-# pass must send it on to the rule table too.
-@test "claude-assistant behind an emptied environment is refused as claude-coordinator is, by any path" {
+# The assistant's launchers, like the coordinator's, have no team- in their names, so the hook's
+# quick pass must send them on to the rule table too. claude-assistant-read lets a session with no
+# role end a read or read its answer, so a worker that empties its role away is refused it.
+@test "claude-assistant and claude-assistant-read behind an emptied environment are refused as claude-coordinator is, by any path" {
   local launcher
-  for launcher in claude-coordinator claude-assistant; do
+  for launcher in claude-coordinator claude-assistant claude-assistant-read; do
     # shellcheck disable=SC2088 # ~ is part of the command as an agent types it
     refuses "$EMPTIED" "env -i $launcher" "env -i ~/agent-team/bin/$launcher" "env --ignore-environment $launcher" \
       "env - $launcher" "env - A=1 $launcher" "exec -c $launcher" "exec -cl \"\$HOME/agent-team/bin/$launcher\"" \
       "env -iC /tmp $launcher" "env -i '$launcher'" "env -i nohup $launcher" "env -i bash ~/agent-team/bin/$launcher" \
       "bash -c 'env -i $launcher'" "env -i bash -c '$launcher'" "eval \"env -i $launcher\"" "git status; env -i $launcher" \
-      "env -i $launcher --load-check /tmp/x"
+      "env -i $launcher --load-check /tmp/x" "env -i PATH=/usr/bin HOME=/home/x ~/agent-team/bin/$launcher answer" \
+      "env - PATH=/usr/bin ~/agent-team/bin/$launcher end" "env --ignore-environment $launcher end" \
+      "exec -c ~/agent-team/bin/$launcher start --load-check --request x --toolkit prod-read --file y"
     passes "grep -rn 'env -i $launcher' tests/" "git log -S'env -i $launcher' --oneline"
     refuses "$LOGIN_EMPTIED" "env -i ./$launcher-notes"
   done
+  # Nor may a worker run it with its role assigned or unset away.
+  refuses "$SET" 'AGENT_TEAM_ROLE= ~/agent-team/bin/claude-assistant-read answer' \
+    'env AGENT_TEAM_ROLE=assistant claude-assistant-read end'
+  refuses "$UNSET" 'env -u AGENT_TEAM_ROLE claude-assistant-read end' 'unset AGENT_TEAM_ROLE; claude-assistant-read answer'
 }
 
 # An emptied environment drops GH_CONFIG_DIR, so gh and git under it, directly or through any

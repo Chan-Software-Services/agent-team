@@ -806,9 +806,9 @@ oplog_lines() {
   run_bin -2 team-load-check --role ops --worktree "$wt" --request load-check --toolkit prod-read
   assert_equal "$output" "team-load-check: --request must link Daniel's Discord message, https://discord.com/channels/<guild>/<channel>/<message>, got 'load-check'"
   run_bin -2 team-load-check --request "$(ops_request "$OPS_COORDINATOR")"
-  assert_equal "$output" "team-load-check: --request is for --role ops only"
+  assert_equal "$output" "team-load-check: --request is for --role ops and --role assistant-read only"
   run_bin -2 team-load-check --context --request "$(ops_request "$OPS_COORDINATOR")"
-  assert_equal "$output" "team-load-check: --request is for --role ops only"
+  assert_equal "$output" "team-load-check: --request is for --role ops and --role assistant-read only"
   [[ ! -e $BATS_TEST_TMPDIR/doctor-ran ]]
   assert_equal "$(stub_calls claude)" ""
   cp "$BATS_TEST_TMPDIR/doctor.pass" "$TEAM_DOCTOR"
@@ -1560,6 +1560,198 @@ SH
   [[ ! -e $BATS_TEST_TMPDIR/doctor-ran && ! -e $BATS_TEST_TMPDIR/treehouse-ran ]]
   assert_equal "$(stub_calls th-lease.sh)" ""
   assert_equal "$(stub_calls claude)" ""
+}
+
+# The assistant's read session form, --role assistant-read: its launcher is the claude-assistant-read
+# stub TEAM_ASSISTANT_READ names, which plays the session ops_setup's fixtures describe. Its start
+# --load-check copies its --file to $BATS_TEST_TMPDIR/read-prompt, refuses while
+# $STUB_FIXTURES/read-refuses exists or the read directory is there, else writes the answer file in
+# the read directory, appends the ops log lines to tasks/T0/ops-log.md, writes the transcript,
+# lists the session (claude agents, ops_setup's stub) and prints its id; its end --load-check takes
+# the session off the list and deletes its transcript and the read directory.
+
+# read_setup: ops_setup's session and claude stub, with claude-assistant-read stubbed
+read_setup() {
+  ops_setup
+  read_dir=$TEAM_HOME/.claude/worktrees/T0-assistant-read
+  stub_command claude-assistant-read
+  export TEAM_ASSISTANT_READ=$BATS_TEST_TMPDIR/stubs/claude-assistant-read
+  stub_script claude-assistant-read <<'SH'
+dir=$TEAM_HOME/.claude/worktrees/T0-assistant-read
+transcript=$HOME/.claude/projects/-wt/6f93fe38-4a6e-4b35-8f39-776a26bc624b.jsonl
+case "$1 ${2:-}" in
+  'start --load-check')
+    args=("$@")
+    for ((i = 0; i < ${#args[@]} - 1; i++)); do
+      [[ ${args[i]} != --file ]] || cp "${args[i + 1]}" "$BATS_TEST_TMPDIR/read-prompt"
+    done
+    [[ ! -e $STUB_FIXTURES/read-refuses ]] || { echo "claude-assistant-read: Discord message 1 asked for a launch already" >&2; exit 1; }
+    [[ ! -e $dir ]] || { echo "claude-assistant-read: a read session is still there (its directory $dir)" >&2; exit 1; }
+    mkdir -p "$dir/.scratch" "$TEAM_HOME/tasks/T0"
+    for f in "$STUB_FIXTURES"/session/*; do
+      [[ ! -f $f ]] || { echo "=== ${f##*/} ==="; cat "$f"; }
+    done >"$dir/.scratch/answer.md"
+    cat "$STUB_FIXTURES/ops-log" >>"$TEAM_HOME/tasks/T0/ops-log.md"
+    mkdir -p "$(dirname "$transcript")"
+    cat "$STUB_FIXTURES/transcript.jsonl" 2>/dev/null >"$transcript" || echo '{}' >"$transcript"
+    touch "$STUB_FIXTURES/launched"
+    echo 6f93fe38
+    echo "claude-assistant-read: T0-assistant-read 6f93fe38 started in $dir: Daniel approves one 1Password prompt per toolkit on the PC" >&2
+    ;;
+  'end --load-check')
+    [[ ! -e $STUB_FIXTURES/end-fails ]] || { echo "claude-assistant-read: claude rm 6f93fe38 failed" >&2; exit 1; }
+    touch "$STUB_FIXTURES/removed"
+    rm -rf "$dir" "$transcript"
+    echo "ended T0-assistant-read (6f93fe38)"
+    ;;
+  *) exit 64 ;;
+esac
+SH
+}
+
+# read_calls: the calls made to claude-assistant-read, but each --file's path, one JSON array each
+read_calls() {
+  stub_calls claude-assistant-read | jq -c '(index("--file") // null) as $i | if $i then .[$i + 1] = "<prompt>" else . end'
+}
+
+@test "the read session form launches through claude-assistant-read start --load-check on Daniel's message, runs the ops form's checks, keeps its inventory and ends it" {
+  read_setup
+  vercel_session prod-read
+  mkdir -p "$TEAM_HOME/tasks/T0"
+  printf '%s\n' '# Ops log of T0' '' '- 2026-10-22T00:00:00Z requested `prod-read` `find` `{}`' >"$TEAM_HOME/tasks/T0/ops-log.md"
+  local request prompt_file
+  request=$(ops_request "$OPS_COORDINATOR")
+  run_bin -0 team-load-check --role assistant-read --request "$request" --toolkit vercel-read --toolkit prod-read
+  assert_equal "$(read_calls)" "$(jq -cn --arg r "$request" '["start", "--load-check", "--request", $r, "--toolkit", "vercel-read",
+    "--toolkit", "prod-read", "--file", "<prompt>"]'; echo '["end","--load-check"]')"
+  # The prompt is the ops form's, of the read session's role, in a file of the run's own, removed.
+  prompt_file=$(stub_calls claude-assistant-read | jq -r 'select(.[0] == "start") | .[index("--file") + 1]')
+  [[ ! -e $prompt_file ]]
+  assert_contains "$(<"$BATS_TEST_TMPDIR/read-prompt")" "This is an automated load check of the assistant's read session on task T0, on Daniel's request $request. It stands in for a brief:"
+  assert_contains "$(<"$BATS_TEST_TMPDIR/read-prompt")" "You can write one file only, .scratch/answer.md:"
+  assert_contains "$(<"$BATS_TEST_TMPDIR/read-prompt")" "1. Wait for prod-read and vercel-read: "
+  # Within the 4,000 bytes claude-assistant-read takes a prompt file of.
+  (($(wc -c <"$BATS_TEST_TMPDIR/read-prompt") <= 4000))
+  assert_contains "$output" "load check: Daniel, two 1Password prompts are coming on the PC: approve them"
+  assert_contains "$output" "load check: T0-assistant-read session 6f93fe38 started"
+  assert_contains "$output" "load check: the assistant's read session has no autoMode lines to check"
+  assert_contains "$output" "load check: 16 MCP tools, 10 built-in tools"
+  assert_equal "${lines[-2]}" "load check: no drill is registered for the assistant's read session, so nothing is recorded"
+  assert_equal "${lines[-1]}" "PASS"
+  # No team-worker launch, no team-ops-end and no autoMode read.
+  assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg" or .[0] == "rm" or index("auto-mode") != null)')" ""
+  local inventory=$TEAM_HOME/tasks/T0/inventory-assistant-read-prod-read-vercel-read.txt
+  assert_equal "$(sed '/^---$/q' "$inventory" | grep -c '^mcp__')" 16
+  assert_contains "$(<"$inventory")" $'\nskill: vercel-read:reading-vercel-deployments'
+  [[ ! -e $TEAM_HOME/tasks/T0/inventory-prod-read-vercel-read.txt ]]
+  # The end removed the session, its transcript and its directory.
+  [[ ! -e $read_dir ]]
+  assert_equal "$(find "$HOME/.claude/projects" -name "$ops_uuid*")" ""
+  [[ ! -e $TEAM_HOME/tasks/T0/drills.jsonl && ! -e $TEAM_HOME/drills.jsonl ]]
+}
+
+@test "the read session form with prod-read alone names its inventory by the role and that toolkit" {
+  read_setup
+  run_bin -0 team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_contains "$output" "load check: Daniel, a 1Password prompt is coming on the PC: approve it"
+  assert_contains "$output" "load check: 11 MCP tools, 10 built-in tools"
+  assert_equal "${lines[-1]}" "PASS"
+  [[ -f $TEAM_HOME/tasks/T0/inventory-assistant-read-prod-read.txt ]]
+  [[ ! -e $TEAM_HOME/tasks/T0/inventory-prod-read.txt ]]
+  [[ $(<"$BATS_TEST_TMPDIR/read-prompt") != *vercel* ]]
+}
+
+@test "a read session with a shell, a stray tool or a wrong ops log fails, and is still ended" {
+  read_setup
+  local s=$STUB_FIXTURES/session
+  sed -i 's/^Bash: absent$/Bash: present/; s/^tools: Read,/tools: Read, Bash,/' "$s/tools.txt"
+  printf '%s\n' simplify >>"$s/skills.txt"
+  oplog_lines requested
+  run_bin -1 team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_contains "$output" "FAIL: built-in tools beyond the ops allowlist: Bash"
+  assert_contains "$output" "FAIL: Bash is not reported absent"
+  assert_contains "$output" "FAIL: skills beyond the toolkits': simplify"
+  assert_contains "$output" "FAIL: the ops log did not gain exactly a requested and a ran line for list-collections"
+  assert_equal "${lines[-1]}" "load check FAILED (inventory in tasks/T0/)"
+  assert_equal "$(read_calls | tail -n 1)" '["end","--load-check"]'
+  [[ ! -e $read_dir ]]
+}
+
+@test "a read session whose server did not connect fails on that alone, an end that fails says so, and a refused start ends nothing" {
+  read_setup
+  local s=$STUB_FIXTURES/session
+  printf '%s\n' 'prod-read: failed' 'notice: prod-read (CONNECTION_CLOSED): "Connection closed"' >"$s/connect.txt"
+  rm "$s/tools.txt" "$s/probes.txt" "$s/query.txt"
+  echo 'not connected' >"$s/done.txt"
+  : >"$STUB_FIXTURES/ops-log"
+  run_bin -1 team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_contains "$output" 'FAIL: a production server did not connect: prod-read (CONNECTION_CLOSED): "Connection closed"'
+  assert_equal "$(grep -c '^FAIL' <<<"$output")" 1
+  [[ ! -e $read_dir ]]
+
+  relaunch
+  touch "$STUB_FIXTURES/end-fails"
+  run_bin -1 team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_contains "$output" "FAIL: claude-assistant-read end --load-check failed; run it by hand"
+  rm -rf "${read_dir:?}"
+  rm -f "$STUB_FIXTURES/end-fails"
+
+  : >"$STUB_CALLS/claude-assistant-read.log"
+  relaunch
+  touch "$STUB_FIXTURES/read-refuses"
+  run_bin -1 team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_contains "$output" "claude-assistant-read: Discord message 1 asked for a launch already"
+  assert_equal "$(read_calls | jq -r '.[0]')" start
+}
+
+@test "the read session form takes prod-read, vercel-read or both, needs --request and takes no --worktree, each refused before the doctor runs" {
+  read_setup
+  printf '%s\n' '#!/usr/bin/env bash' 'touch "$BATS_TEST_TMPDIR/doctor-ran"' 'exit 1' >"$TEAM_DOCTOR"
+  local request sets="--role assistant-read checks --toolkit prod-read, --toolkit vercel-read or both, each once"
+  request=$(ops_request "$OPS_COORDINATOR")
+  local set kit args
+  for set in prod-write 'prod-read prod-write' prod-mongo 'prod-read prod-read' browser ''; do
+    args=()
+    for kit in $set; do args+=(--toolkit "$kit"); done
+    run_bin -2 team-load-check --role assistant-read --request "$request" "${args[@]}"
+    assert_equal "$set: $output" "$set: team-load-check: $sets"
+  done
+  run_bin -2 team-load-check --role assistant-read --toolkit prod-read
+  assert_equal "$output" "team-load-check: --role assistant-read needs --request <the link to Daniel's Discord message in #coordinator asking for this load check>"
+  run_bin -2 team-load-check --role assistant-read --request load-check --toolkit prod-read
+  assert_equal "$output" "team-load-check: --request must link Daniel's Discord message, https://discord.com/channels/<guild>/<channel>/<message>, got 'load-check'"
+  run_bin -2 team-load-check --role assistant-read --worktree "$wt" --request "$request" --toolkit prod-read
+  assert_equal "$output" "team-load-check: --role assistant-read takes no --worktree: its session runs in the team home's .claude/worktrees/T0-assistant-read"
+  run_bin -2 team-load-check --context --role assistant-read
+  assert_contains "$output" "unknown role 'assistant-read'"
+  run_bin -2 team-load-check --probe --role assistant-read
+  assert_contains "$output" "unknown role 'assistant-read'"
+  [[ ! -e $BATS_TEST_TMPDIR/doctor-ran ]]
+  assert_equal "$(stub_calls claude-assistant-read)" ""
+  assert_equal "$(stub_calls claude)" ""
+}
+
+@test "the read session form stops on any FAIL of the project that lists its toolkits, and goes on past another project's" {
+  read_setup
+  doctor_results FAIL 'branches proj'
+  run_bin -1 --separate-stderr team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_equal "$stderr" "$stopped"
+  assert_equal "$(stub_calls claude-assistant-read)" ""
+
+  doctor_results FAIL 'branches site'
+  run_bin -0 --separate-stderr team-load-check --role assistant-read --request "$(ops_request "$OPS_COORDINATOR")" --toolkit prod-read
+  assert_equal "${stderr%%$'\n'*}" "$(going_on 'branches site')"
+  assert_equal "${lines[-1]}" "PASS"
+}
+
+@test "the header documents the read session form, with Daniel at the PC" {
+  run_bin -0 team-load-check --help
+  assert_contains "$output" "team-load-check --role assistant-read --request <link> --toolkit <name>..."
+  assert_contains "$output" "claude-assistant-read start --load-check"
+  assert_contains "$output" "claude-assistant-read end --load-check"
+  assert_contains "$output" "inventory-assistant-read-"
+  assert_contains "$output" "The assistant-read form reads production too, so Daniel must be at the PC"
+  assert_contains "$output" "TEAM_ASSISTANT_READ"
 }
 
 # The context form. The claude stub plays one session per role, its id from the role
