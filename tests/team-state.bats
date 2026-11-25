@@ -617,6 +617,26 @@ TOML
     '["merged","1111111",true,"failure",false]'
 }
 
+@test "merge_approved stays true once a word is given, though a review that found something since asks for it again" {
+  # The assistant's walk re-checks a PR it collected from waiting.json by team-state; waiting.json
+  # asks for the word again here (word_stands in bin/lib/ledger.jq), so a re-check on merge_approved
+  # would drop a PR that still waits on Daniel, and so would one on merge_authority's word, whose
+  # per-head word holds on the head it names; the latest approval's ts dates the word instead.
+  open_task
+  event T14 pr '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}'
+  event T14 review '{verdict: "pass", head: "1111111"}'
+  ledger_line '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "merge-approved",
+    url: "https://github.com/owner/proj/pull/5", head: "1111111", discord_message: "1564"}'
+  event T14 review '{verdict: "findings", head: "1111111"}'
+  event T14 pr '{url: "https://github.com/owner/proj/pull/5", head: "'"${head:0:7}"'"}'
+  event T14 review '{verdict: "pass", head: "'"${head:0:7}"'"}'
+  stub_github '{"number": 5, "state": "OPEN", "baseRefName": "main", "headRefOid": "'"$head"'"}' '[]' '[]'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.state, .merge_approved, .merge_authority.word, .merge_authority.words[0].facts.approval.ts]' <<<"$output")" \
+    '["open",true,"head","2026-10-22T03:00:00Z"]'
+  assert_equal "$(jq -r .phase <<<"$output")" awaiting-merge
+}
+
 @test "the team's own project's PR part, with the reviewer App on, reads the App's check run on the head, and the line names it" {
   open_task
   event T14 pr "{url: \"https://github.com/owner/proj/pull/5\", head: \"$head\", project: \"proj\"}"

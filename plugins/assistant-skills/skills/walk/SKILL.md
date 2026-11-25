@@ -10,11 +10,12 @@ Its rules are `roles/assistant.md`'s, which this skill restates none of: "Daniel
 
 1. **Sync.** The ledger is the truth, and `waiting.md` lags it.
    Run `team-snapshot --json` and take its `pending_asks` ({task, id, text, ts}): the open tasks' asks that no later event settles, read from the ledger now.
-   Run `team-current reconcile`, so that an item of your list whose condition holds is closed.
-   Before each item of step 4, check it again: for a task's ask, `team-state T<n> --json`, the item standing while its `pending_asks` holds the ask's id; for a PR to merge, while its `pr.state` is `open` and `pr.merge_approved` is false; for an item of your list, `team-current list`.
+   Run `team-current reconcile`, which closes the items of both lists whose condition holds, the coordinator's and yours.
+   Before each item of step 4, check it again: for a task's ask, `team-state T<n> --json`, the item standing while its `pending_asks` holds the ask's id; for a PR to merge, while its `pr.state` is `open` and no word on it was logged since the walk began (`pr.merge_authority.words[0].facts.approval.ts`, the latest one's time, is null or earlier); for a QC walk, while its `walk` is not null; for an ask of either list, `team-current list` or `team-current list --list coordinator`.
    Drop an item that no longer stands, and say in the thread that it was answered meanwhile.
 2. **Collect.** Every item waiting on Daniel, in three groups.
    The coordinator's: each of `pending_asks`, and each `pr` item of the team home's `waiting.json` (a PR ready to merge) that `team-state` still shows open; an ask and a `pr` item of the same PR are one item.
+   Then each `interview` and `walk` item of `waiting.json` (an interview or a QC walk under way), presented as the thread to go to, with no answer to route; and each `ask` item of `team-current list --list coordinator`, the coordinator's own list.
    Yours: each `ask` item of `team-current list` but a walk's own (step 6); your `owe`, `next` and `watch` items wait on you, not on Daniel, and stay out.
    The due manual steps: each open step (`- [ ]`) of the team home's `manual-steps.md` whose day has come (a date today or earlier, UTC) or whose trigger the records show has happened (a PR merged, a task's plan approved), and each with neither; one whose day or trigger is still ahead waits.
 3. **Order.** The coordinator's items by the total of their `unblocks` in `waiting.json`, more first, ties oldest first, as `waiting.md` ranks them.
@@ -30,12 +31,13 @@ Its rules are `roles/assistant.md`'s, which this skill restates none of: "Daniel
    When Daniel says such a word in the walk's thread anyway, point them again at the thread where it counts.
    Hand on any other decision at once: write a body naming each item the message answers (the task and the ask's id, as `T586 q1`) and the answer's place in it.
    Then run `team-assistant send decision --task T<n> --file <body> --daniel <their message id> --channel <the walk's thread id>`, and send `coordinator` the line `ASSISTANT H<n> decision`.
-   Make one hand-off per message of Daniel's: a message answering items of two tasks is one hand-off, with `--task` of the first and the body naming both.
+   Make one hand-off per message of Daniel's: a message answering items of two tasks is one hand-off, with `--task` of the first and the body naming both; with no item of a task, leave `--task` out.
+   A hand-off's body leaves out every item whose answer is one of those words, and the item names again the thread where Daniel says it.
    When `team-assistant send` refuses, tell Daniel what it named and ask them to answer again, handing on no summary of your own.
    An answer to your own ask is acted on as that ask's work says, and its item done.
    A done manual step is removed from `manual-steps.md`.
-6. **Track.** At the walk's start, run `team-current add ask - Daniel: walk of <n> waiting items (<their short names>) --where <the walk's thread id> --review`.
-   For each hand-off, run `team-current add owe T<n> Tell Daniel what H<n> (<item>) became --where <the walk's thread id> --until handoff H<n> answered`.
+6. **Track.** At the walk's start, run `team-current add ask - "Daniel: walk of <n> waiting items (<their short names>)" --where <the walk's thread id> --review`.
+   For each hand-off, run `team-current add owe T<n> "Tell Daniel what H<n> (<item>) became" --where <the walk's thread id> --until "handoff H<n> answered"`.
    On `COORDINATOR ANSWER H<n>`, run `team-assistant show H<n>`, then tell Daniel in the walk's thread what it became; the owed item closes by its condition at the next `team-current reconcile`.
    When the last item is answered or skipped twice, post the summary (each item: decided and handed on as H<n>, said where it counts, skipped, or answered meanwhile), and run `team-current done <the walk's id>`.
    Once every owed report of the walk is told, close its topic with `team-assistant thread --close <thread id>`.

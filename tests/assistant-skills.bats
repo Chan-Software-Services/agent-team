@@ -65,16 +65,27 @@ code_spans() {
   local span spans missing=()
   spans=$(code_spans)
   for span in 'team-snapshot --json' 'team-state T<n> --json' 'team-current reconcile' 'team-current list' \
+    'team-current list --list coordinator' \
     "team-assistant thread \"Walk: <n> items waiting on you\" --from <Daniel's message id>" \
     'team-assistant send decision' '--daniel <their message id>' \
-    "--channel <the walk's thread id>" 'team-assistant show H<n>' 'team-current add ask' 'team-current add owe' \
-    '--until handoff H<n> answered' 'team-current done' 'team-assistant thread --close' 'ASSISTANT H<n> decision' \
-    pending_asks pr.state pr.merge_approved unblocks fetch_messages; do
+    "--channel <the walk's thread id>" 'team-assistant show H<n>' \
+    "team-current add ask - \"Daniel: walk of <n> waiting items (<their short names>)\" --where <the walk's thread id> --review" \
+    "team-current add owe T<n> \"Tell Daniel what H<n> (<item>) became\" --where <the walk's thread id> --until \"handoff H<n> answered\"" \
+    'team-current done' 'team-assistant thread --close' 'ASSISTANT H<n> decision' \
+    pending_asks pr.state pr.merge_authority.words[0].facts.approval.ts unblocks interview walk fetch_messages; do
     grep -qF -- "$span" <<<"$spans" || missing+=("$span")
   done
   assert_equal "$(printf '%s\n' "${missing[@]}")" ""
   grep -qxF "   With no readable \`waiting.json\`, the coordinator's items go oldest first." "$skill"
   grep -qF "one hand-off per message of Daniel's: a message answering items of two tasks is one hand-off" "$skill"
+  grep -qF "A hand-off's body leaves out every item whose answer is one of those words" "$skill"
+  grep -qF 'closes the items of both lists whose condition holds' "$skill"
+  # A PR is re-checked by when its latest word was given, never by merge_approved, which stays true
+  # once any word is given, though a review since asks for it again.
+  if grep -nF merge_approved "$skill"; then
+    echo "the skill re-checks a PR on merge_approved" >&2
+    return 1
+  fi
   grep -qx '## Starting again' "$skill"
   grep -qF 'over Remote Control gets the answer to say it in `#assistant`' "$skill"
   grep -qF 'With no item, reply where Daniel wrote that nothing waits on them' "$skill"
@@ -111,6 +122,15 @@ code_spans() {
   done < <(grep -oE '`team-[a-z]+(-[a-z]+)*( [^`]*)?`' "$skill" | tr -d '`')
   assert_equal "$(printf '%s\n' "${problems[@]}")" ""
   ((checked > 10))
+}
+
+@test "every team-* command in a code span, its placeholders filled in, is one command bash parses" {
+  local span filled problems=()
+  while IFS= read -r span; do
+    filled=$(sed -E 's/<[^>]*>/x/g' <<<"$span")
+    bash -n <<<"$filled" 2>/dev/null || problems+=("\`$span\` does not parse as $filled")
+  done < <(grep -oE '`team-[a-z]+(-[a-z]+)*( [^`]*)?`' "$skill" | tr -d '`')
+  assert_equal "$(printf '%s\n' "${problems[@]}")" ""
 }
 
 @test "it names none of the commands the assistant's guard refuses, and team-inbox only as team-inbox --item <n>" {

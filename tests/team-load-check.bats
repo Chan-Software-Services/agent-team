@@ -11,14 +11,14 @@
 # $STUB_FIXTURES/go does, writing where in $STUB_FIXTURES/blocked), reports its
 # MCP tools and skills, and the check fails on anything production, coordinator-only or
 # assistant-only. The session is a claude stub that writes the inventory from
-# $STUB_FIXTURES/inventory.txt, notes in $BATS_TEST_TMPDIR/launch where it started, and writes outside.txt where it started when
-# $STUB_FIXTURES/write-outside exists. It copies the markers planted in its worktree to
-# $BATS_TEST_TMPDIR/planted-claude.md and planted-claude/, and writes the isolation report from what
-# team-worker gave it (its fixtures are named beside it). It writes its transcript from
-# $STUB_FIXTURES/planner.jsonl (planner_transcript, from helpers/transcript; none when the file is
-# absent), which claude agents --json --all lists as done. Before it, each treehouse project's
-# lease is rehearsed on a fake pool (helpers/treehouse); the registry has no treehouse project
-# unless a test adds one.
+# $STUB_FIXTURES/inventory.txt, notes in $BATS_TEST_TMPDIR/launch where it started, and writes
+# outside.txt where it started when $STUB_FIXTURES/write-outside exists. It copies the markers
+# planted in its worktree to $BATS_TEST_TMPDIR/planted-claude.md and planted-claude/, and writes the
+# isolation report from what team-worker gave it (its fixtures are named beside it). It writes its
+# transcript from $STUB_FIXTURES/planner.jsonl (planner_transcript, from helpers/transcript; none
+# when the file is absent), which claude agents --json --all lists as done. Before it, each
+# treehouse project's lease is rehearsed on a fake pool (helpers/treehouse); the registry has no
+# treehouse project unless a test adds one.
 
 load helpers/common
 load helpers/load-check
