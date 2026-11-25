@@ -678,6 +678,14 @@
       "family": "push"
     },
     {
+      "id": "topic-git-option-push",
+      "roles": ["topic"],
+      "tool": "Bash",
+      "input": "git --no-pager push --dry-run origin load-check-probe-absent",
+      "expect": "rule",
+      "family": "push"
+    },
+    {
       "id": "github-post",
       "roles": ["assistant"],
       "tool": "Bash",
@@ -848,7 +856,7 @@
     },
     {
       "family": "commit",
-      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?commit( \\*|\\*)?\\)$"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-\\* )?commit( \\*|\\*)?\\)$"
     },
     {
       "family": "coordinator-scripts",
@@ -887,7 +895,7 @@
     },
     {
       "family": "git-writes",
-      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?(merge|rebase|checkout -[bB]|switch (-[cC]|--create)|branch \\*)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-\\* )?(merge|rebase|checkout -[bB]|switch (-[cC]|--create)|branch \\*)"
     },
     {
       "family": "github-writes",
@@ -940,7 +948,7 @@
     },
     {
       "family": "push",
-      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?push( |\\*|\\)$)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-\\* )?push( |\\*|\\)$)"
     },
     {
       "family": "refs-api",
@@ -948,7 +956,7 @@
     },
     {
       "family": "reset",
-      "rules": "^Bash\\((\\*/)?git (-C \\* |-c \\* |--git-dir\\* )?(reset|clean|branch -D)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-\\* )?(reset|clean|branch -D)"
     },
     {
       "family": "review-app-key",

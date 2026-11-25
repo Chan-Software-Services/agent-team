@@ -96,7 +96,7 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   assert_contains "$(cat "$STUB_FIXTURES/topic.jsonl")" "this role may edit files only under"
   local id
   for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl \
-    topic-git-config-push; do
+    topic-git-config-push topic-git-option-push; do
     assert_contains "$output" "PASS topic $id: rule refused it"
   done
   # Its GitHub writes: the real command-guard's topic row blocks a clone and gh by a path, and a

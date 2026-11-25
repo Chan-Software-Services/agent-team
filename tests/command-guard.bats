@@ -1252,7 +1252,7 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
 
 TOPIC_GITHUB="a GitHub write, which a topic session never makes"
 
-@test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes by -c and --git-dir are denied" {
+@test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes behind any of git's options are denied" {
   local command
   # The spellings the review found passing: a group or subcommand its settings never listed, gh
   # by a path or behind a wrapper.
@@ -1280,15 +1280,21 @@ TOPIC_GITHUB="a GitHub write, which a topic session never makes"
     AGENT_TEAM_ROLE=topic guard -0 "$command"
     assert_equal "$stderr" ""
   done
-  # git's writes by a configuration option or another git directory, which its deny rules hold
-  # beside git push, git -C <dir> push and */git push.
+  # git's writes behind any of git's own options before the verb, which its deny rules hold beside
+  # git push and */git push: -C, -c and --git-dir, and the others the review found passing.
   for command in 'git -c core.pager=cat push --dry-run origin load-check-probe-absent' 'git -c a=b commit -m x' \
     'git --git-dir=/w/.git commit -m x' 'git --git-dir /w/.git push' '/usr/bin/git -c a=b merge x' \
     'git -c a=b rebase main' 'git --git-dir=d reset HEAD' 'git -c a=b checkout -b x' 'git -c a=b switch -c x' \
-    'git --git-dir=d branch x' '/usr/bin/git --git-dir=d switch --create x'; do
+    'git --git-dir=d branch x' '/usr/bin/git --git-dir=d switch --create x' 'git -C d push' 'git -C d commit -m x' \
+    'git --no-pager push origin x' 'git -P commit -m x' 'git --work-tree=. commit -am x' 'git --no-optional-locks push' \
+    'git --config-env=a=B push' 'git --no-pager merge x' 'git -P rebase main' 'git --work-tree=. reset HEAD' \
+    'git --no-pager checkout -b x' 'git -P checkout -B x' 'git --no-pager switch -c x' 'git -P switch -C x' \
+    'git --no-pager switch --create x' 'git -P branch x' '/usr/bin/git --no-pager push origin x' \
+    'git --no-pager -c a=b push origin x'; do
     denied_in "$REPO_ROOT/settings/topic.json" "$command" || { echo "settings/topic.json lets through: $command" >&2; return 1; }
   done
-  for command in 'git -c core.pager=cat log' 'git --git-dir=d status' 'git -c a=b diff'; do
+  for command in 'git -c core.pager=cat log' 'git --git-dir=d status' 'git -c a=b diff' 'git --no-pager log' \
+    'git -P diff' 'git -C d status'; do
     if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
   done
 }
