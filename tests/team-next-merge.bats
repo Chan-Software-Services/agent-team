@@ -208,6 +208,64 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   assert_equal "$(tail -n 1 <<<"$output")" "merge rules: $url was dropped by the merge queue at 2026-10-23T12:00:00Z: data never reported on its trial commit, which the project's required_checks require; the project's required_checks require a check no workflow makes on a trial commit: fix the workflow's merge_group trigger or the project's required_checks in the registry, then run team-merge T7 again"
 }
 
+@test "--ci on a PR the merge queue dropped for a runner backlog says the runners are the wait and names team-merge once they are back, and after any other drop the merge line" {
+  # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
+  export GH_QUEUE=1
+  on_origin
+  reviewing "$sha"
+  pr_on_github "$sha" 0
+  live b0000001 120000
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  local merge_line="merge on the default word: run team-merge T7 for $url at $sha, agent-review success, checks green"
+  assert_equal "$(tail -n 1 <<<"$output")" "$merge_line"
+  # runners_line <time>: the line after a runner backlog drop at <time>.
+  runners_line() {
+    echo "merge runners: $url was dropped by the merge queue at $1: the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of owner/proj's merge queue while the backlog stands, and run team-merge T7 again once they say the runners are back"
+  }
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T09:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"},
+    {ts: "2026-10-23T10:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed_checks",
+      failed: [{name: "e2e shard 1/2", class: "infrastructure", kind: "queued", link: "", step: ""}, {name: "e2e", class: "infrastructure", kind: "missing", link: "", step: ""},
+        {name: "test", class: "rollup", kind: "rollup", link: "", step: ""}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$(runners_line 2026-10-23T10:00:00Z)"
+  [[ $output != *"merge on the default word:"* && $output != *"merge ask:"* && $output != *"merge base:"* ]]
+  # Behind its base on a base with a queue, which needs no catch-up: still the runners.
+  pr_on_github "$sha" 3
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$(runners_line 2026-10-23T10:00:00Z)"
+  [[ $output != *"merge base:"* && $output != *team-catch-up* ]]
+  # The queue's own check timeout, with no failure read on the trial commit.
+  pr_on_github "$sha" 0
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T11:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "checks_timed_out"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$(runners_line 2026-10-23T11:00:00Z)"
+  # Any other drop, as a setup failure's: the merge line as before.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T12:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed_checks",
+      failed: [{name: "lint", class: "infrastructure", kind: "setup", link: "", step: "Set up job"}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$merge_line"
+  [[ $output != *"runners"* ]]
+  # Queued again once the runners are back: the merge line.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T13:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "checks_timed_out"},
+    {ts: "2026-10-23T14:00:00Z", task: "T7", event: "queued", url: $url, head: $head, project: "proj"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "$merge_line"
+  # A conflict is still the holder's to merge first, since team-merge would refuse it.
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T15:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "checks_timed_out"}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  echo "dev's own text" >"${BATS_TEST_TMPDIR:?}/other/one.txt"
+  git -C "${BATS_TEST_TMPDIR:?}/other" add -A
+  git -C "${BATS_TEST_TMPDIR:?}/other" commit -q -m "feat: one more task"
+  git -C "${BATS_TEST_TMPDIR:?}/other" push -q origin main
+  pr_on_github "$sha" 3
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_contains "$(tail -n 1 <<<"$output")" "merge base: $url is 3 behind main and conflicts on one.txt"
+}
+
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {
   # The branch is not on origin, so the fetch fails.
   reviewing "$sha"
