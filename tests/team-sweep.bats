@@ -2086,8 +2086,8 @@ timed() {
   # A fixed number of seconds fails on a loaded runner, so the sweep is bounded by a baseline
   # measured beside it, which a slower or busier machine slows too. CPU time moves little with load,
   # so its bound is the tight one, on the sweep's work; wall time moves more, and its looser bound
-  # catches a sweep that waits. Each is the best of three runs, taken in turn, so one stall judges
-  # neither.
+  # catches a wait only once it takes the sweep's wall time to 6 times the baseline's. Each is the
+  # best of three runs, taken in turn, so one stall judges neither.
   for _ in 1 2 3; do
     timed baseline baseline
     timed sweep run_bin -1 team-sweep
