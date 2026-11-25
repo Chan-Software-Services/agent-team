@@ -100,6 +100,19 @@ no_land_call() {
   assert_contains "$stderr" "  test failed on the trial merge as infrastructure (Set up job)"
   assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
   [[ $stderr != *builder-merge-base* && $stderr != *"runners are"* ]]
+  # A queued check beside a stuck or never-started one, with no check timeout, is no runner
+  # backlog alone: the general step.
+  local other
+  for other in stuck never-started; do
+    merge_again
+    queue_rule
+    land dequeued "failed_checks" \
+      '[{"name": "e2e", "class": "infrastructure", "kind": "queued", "link": null, "step": null},
+        {"name": "lint", "class": "infrastructure", "kind": "'"$other"'", "link": null, "step": null}]'
+    run_bin -1 --separate-stderr team-merge T14
+    assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
+    [[ $stderr != *"runners are"* ]]
+  done
 }
 
 @test "a PR the queue dropped while its checks waited on runners, or on its check timeout, says the runners are behind: tell Daniel and run team-merge again once they are back" {
