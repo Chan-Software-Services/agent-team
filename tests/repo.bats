@@ -2228,15 +2228,17 @@ team-review-status https://github.com/me/shop/pull/5 a1b2c3d4e5f60718293a4b5c6d7
 COMMANDS
 }
 
-@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
+@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run and the macOS Rust job on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
   local workflow ci=$REPO_ROOT/.github/workflows/ci.yml
   # The top-level keys under on:, the branches its pull_request names, and merge_group's types.
   assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$ci")" \
     $'pull_request\nmerge_group\nworkflow_dispatch'
   assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    types: //p' "$ci")" "[checks_requested]"
-  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/zizmor-online.yml")" \
-    $'pull_request\nworkflow_dispatch'
-  for workflow in ci.yml zizmor-online.yml; do
+  for workflow in zizmor-online.yml rust-macos.yml; do
+    assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/$workflow")" \
+      $'pull_request\nworkflow_dispatch'
+  done
+  for workflow in ci.yml zizmor-online.yml rust-macos.yml; do
     assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    branches: //p' "$REPO_ROOT/.github/workflows/$workflow")" "[dev, main]"
   done
   # The data job reads a trial commit's range from the merge group, beside the pull request's.
@@ -2485,9 +2487,9 @@ YAML
 # its refs/pull/<n>/merge, or a branch's dispatched ones), only for a pull request or a dispatch,
 # never a merge queue's trial commit or a run of another event, since team-ci-run waits on a
 # dispatched run or the PR's.
-@test "CI and zizmor's online run cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
+@test "CI, zizmor's online run and the macOS Rust job cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
   local workflow
-  for workflow in ci.yml zizmor-online.yml; do
+  for workflow in ci.yml zizmor-online.yml rust-macos.yml; do
     assert_equal "$(sed -n '/^concurrency:$/,/^[^ ]/p' "$REPO_ROOT/.github/workflows/$workflow" | sed '$d')" \
       "concurrency:
   group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.ref }}
@@ -2582,13 +2584,87 @@ YAML
   (($(grep -nxF '          rustup toolchain install' <<<"$block" | cut -d: -f1) < $(grep -nxF '      - run: tests/run toolkits' <<<"$block" | cut -d: -f1)))
 }
 
-# Every job of ci.yml has a runner, and each is ubuntu-24.04, so CI runs no macOS job.
+# Every job of ci.yml has a runner, and each is ubuntu-24.04, so no required check waits on a
+# macOS runner.
 @test "every CI job runs on Linux" {
   local ci=$REPO_ROOT/.github/workflows/ci.yml ids runners
   ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
   runners=$(sed -n '/^jobs:$/,$s/^    runs-on: \(.*\)$/\1/p' "$ci")
   assert_equal "$(wc -l <<<"$runners")" "$(wc -l <<<"$ids")"
   assert_equal "$(sort -u <<<"$runners")" ubuntu-24.04
+}
+
+# The checks no merge waits on (bin/lib/advisory-checks) are every job of a workflow that no merge
+# queue's trial commit runs, each job's check named by its id, which no other workflow's job takes,
+# and none a required check of agent-team, so they hold no PR and no queue; and the macOS Rust job
+# is the one macOS job a pull request or a trial commit runs.
+@test "bin/lib/advisory-checks names every job of workflows no queue runs, none required, and the macOS Rust job is the one macOS job a PR runs" {
+  local workflow check jobs listed required macos='' file
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project agent-team required_checks
+  required=$output
+  listed=$(grep -v -E '^[[:space:]]*(#|$)' "$REPO_ROOT/bin/lib/advisory-checks")
+  assert_equal "$listed" "rust-macos.yml rust-macos"
+  run -0 bash -c 'source "$1/bin/lib/team.sh" && advisory_checks agent-team' _ "$REPO_ROOT"
+  assert_equal "$output" '[{"workflow":"rust-macos.yml","check":"rust-macos"}]'
+  while read -r workflow check; do
+    file=$REPO_ROOT/.github/workflows/$workflow
+    [[ -f $file ]] || { echo "$workflow is no workflow" >&2; return 1; }
+    # The workflow's jobs are the listed checks, each named by its id.
+    jobs=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$file")
+    assert_equal "$jobs" "$(awk -v w="$workflow" '$1 == w { print $2 }' <<<"$listed")"
+    if grep -nE '^    name:' "$file"; then echo "$workflow names a job, so its check is not named by its id" >&2; return 1; fi
+    if grep -nE '^\s*merge_group:' "$file"; then echo "$workflow runs on a merge queue's trial commit" >&2; return 1; fi
+    jq -e --arg check "$check" 'index($check) | not' <<<"$required" >/dev/null || { echo "$check is a required check" >&2; return 1; }
+    for file in "$REPO_ROOT"/.github/workflows/*.yml; do
+      [[ ${file##*/} != "$workflow" ]] || continue
+      if grep -nxF "  $check:" "$file"; then echo "${file##*/} has a job $check too" >&2; return 1; fi
+    done
+  done <<<"$listed"
+  for file in "$REPO_ROOT"/.github/workflows/*.yml; do
+    grep -qE '^  (pull_request|merge_group):' "$file" || continue
+    if grep -qE '^ +runs-on: .*macos' "$file"; then macos+=" ${file##*/}"; fi
+  done
+  assert_equal "$macos" " rust-macos.yml"
+  assert_equal "$(grep -cE '^ +runs-on:' "$REPO_ROOT/.github/workflows/rust-macos.yml")" 1
+  grep -qx '    runs-on: macos-15' "$REPO_ROOT/.github/workflows/rust-macos.yml"
+}
+
+# The macOS Rust job runs the rust job's check, on a pull request only what reaches a Rust path
+# since its base, and by hand the whole workspace, with tools.lock's macOS cargo-nextest and
+# cargo-deny, each archive checked by the lock's SHA-256, and Homebrew's Bash and GNU tools, which
+# the team's scripts run on there.
+@test "the macOS Rust job runs tests/run rust on what a change reaches, whole by hand, with tools.lock's macOS cargo-nextest and cargo-deny and the pinned toolchain" {
+  local file=$REPO_ROOT/.github/workflows/rust-macos.yml block tool key version sha source
+  [[ -f $file ]] || { echo "rust-macos.yml is missing" >&2; return 1; }
+  block=$(sed -n '/^jobs:$/,$p' "$file" | grep -v '^ *#')
+  grep -qx '    timeout-minutes: 15' <<<"$block"
+  grep -qx '      - uses: actions/checkout@[0-9a-f]\{40\} # v[0-9.]*' <<<"$block"
+  grep -qxF '          fetch-depth: 0' <<<"$block"
+  grep -qxF '          persist-credentials: false' <<<"$block"
+  grep -qxF '        run: brew install bash coreutils findutils gnu-sed grep flock jq' <<<"$block"
+  for tool in cargo-nextest cargo-deny; do
+    key=$(tr a-z- A-Z_ <<<"$tool")
+    version=$(sed -n "s/^      ${key}_VERSION: //p" <<<"$block")
+    sha=$(sed -n "s/^      ${key}_SHA256: //p" <<<"$block")
+    assert_equal "$tool $version" "$tool $(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")"
+    [[ $sha =~ ^[0-9a-f]{64}$ ]] || { echo "$tool: ${key}_SHA256 is no sha256" >&2; return 1; }
+    source=$(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .source.macos' "$REPO_ROOT/bin/lib/tools.lock")
+    [[ $source == *"echo \"$sha  "* && $source == *apple-darwin.tar.gz* ]] ||
+      { echo "$tool: ${key}_SHA256 is not the one tools.lock checks its macOS archive by" >&2; return 1; }
+    grep -qxF "      - name: Install $tool \${{ env.${key}_VERSION }}" <<<"$block"
+    grep -qF "echo \"\$${key}_SHA256  \$archive\" | shasum -a 256 -c -" <<<"$block"
+  done
+  grep -qxF '          echo "$RUNNER_TEMP/rust-bin" >>"$GITHUB_PATH"' <<<"$block"
+  grep -qxF '          rustup toolchain install' <<<"$block"
+  grep -qxF '          BASE_SHA: ${{ github.event.pull_request.base.sha }}' <<<"$block"
+  assert_equal "$(grep -E '^        if:|run: tests/run' <<<"$block")" \
+    "        if: github.event_name != 'workflow_dispatch'
+        run: tests/run rust --changed \"\$BASE_SHA\"
+        if: github.event_name == 'workflow_dispatch'
+        run: tests/run rust"
+  # No cache action and no sccache, as the Linux job.
+  if grep -nE 'actions/cache|sccache' <<<"$block"; then echo "the macOS Rust job caches" >&2; return 1; fi
 }
 
 # A hung job ends long before GitHub's 6-hour default, and one that runs bats outlives tests/run's
@@ -3711,7 +3787,7 @@ $planted:28: rm -rf \"\${x:-}\""
 
 # tests/shards update in a checkout of its own, on a gh stub whose CI run 4242 has two
 # test-shards jobs and two jobs of other names, the test job's log holding a bats line too, over
-# timings whose macOS seconds it keeps, since CI runs no macOS job; then with --to, and on a
+# timings whose macOS seconds it keeps, since CI runs no bats on macOS; then with --to, and on a
 # checkout with more files than the run timed.
 @test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty, to --to's file if given, and keeps the timings from a run that timed under half the files" {
   local copy=$BATS_TEST_TMPDIR/copy
@@ -3740,7 +3816,7 @@ SH
   run -0 --separate-stderr "$copy/tests/shards" update
   assert_equal "$output" "tests/shards: wrote tests/timings.tsv from CI run 4242"
   local header="# The seconds each bats file took on Linux in CI run 4242 (head abcdef1, 2026-10-31T12:00:00Z),
-# and on macOS as the timings before it had them, since CI runs no macOS job; tests/shards update rewrites it."
+# and on macOS as the timings before it had them, since CI runs no bats on macOS; tests/shards update rewrites it."
   assert_equal "$(cat "$copy/tests/timings.tsv")" "$header
 $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t15\ntests/c.bats\t3\t')"
   # Only the shard jobs' logs are read.
@@ -3812,8 +3888,8 @@ SH
 }
 
 # The timings are data tests/shards reads: each row names a bats file that exists, with whole
-# seconds on Linux and on macOS whole seconds or none (a file CI timed only since it ran no macOS
-# job, which tests/shards weighs there by its bytes), so a removed file takes its row with it.
+# seconds on Linux and on macOS whole seconds or none (a file CI timed only since it ran no bats
+# on macOS, which tests/shards weighs there by its bytes), so a removed file takes its row with it.
 @test "tests/timings.tsv names only bats files that exist, each with its Linux seconds and its macOS ones or none" {
   local file linux macos rows=0
   while IFS=$'\t' read -r file linux macos; do

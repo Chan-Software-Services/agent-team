@@ -101,6 +101,7 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 13. A link inbox: Daniel shares links into a `#inbox` channel, each starting a full research task; fetchers by kind, sandboxed, with no login anywhere; it runs on the team's host and moves with it; decided, not built, since it waits until the core is done (Daniel, 2026-11-23, H180).
   It lands as an input of the interface seam, its fetchers behind the platform seam where the tools differ (the assistant's sketch: faster-whisper on Linux, whisper.cpp on the Mac).
 14. One macOS job in CI for the Rust workspace, on GitHub's runners, so long as nothing requires it to merge: neither a required check nor a job a required check depends on; its findings are fixed without blocking a merge, and if it cannot be kept so, there is none (Daniel, 2026-11-23, H194).
+  It is `rust-macos` in `.github/workflows/rust-macos.yml`, which no required check names and `bin/lib/advisory-checks` keeps every merge from waiting on (`sops/merging.md`, "The checks no merge waits on").
 
 ## Open
 
@@ -216,6 +217,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 
 | Path | Crate | Seam | Note |
 | - | - | - | - |
+| `bin/lib/advisory-checks` | `team-model` | `vcs` | Config: the checks no merge waits on |
 | `bin/lib/capacity.jq` | `team-core` | `platform` | The admission rule and its readings |
 | `bin/lib/channel-access.sh` | `adapter-discord` | `interface` | |
 | `bin/lib/chrome.sh` | `team-platform` | `platform` | The trait here, each OS's path in its own crate |
