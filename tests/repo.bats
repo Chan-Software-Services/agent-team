@@ -2071,7 +2071,7 @@ COMMANDS
     if denied settings/worker.json "$command"; then echo "settings/worker.json denies: $command" >&2; return 1; fi
   done <<'COMMANDS'
 node --test tests/toolkits/proto-host.test.mjs
-git switch feat/T549-ux-proto-switch-targets
+git switch feat/T7-proto-host
 ls ~/.local/state/agent-team
 toolkits/frontend/scripts/proto --help
 COMMANDS

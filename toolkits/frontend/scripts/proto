@@ -20,10 +20,11 @@
 //            reopens the page there with the window's localhost cookies and localStorage and
 //            closes the old browser, and in a launched engine a new scale, mobile or touch flag
 //            or user agent reopens it in a fresh context of the same browser, carrying them the
-//            same way; the Agent Chrome takes no login along, is detached from rather than
-//            closed, and is emulated anew in its one tab. A new width and height alone resize
-//            the window in place, keeping the page as it is. A switch that fails
-//            leaves the window as it was. Refused with no window open: run `proto open`
+//            same way; a switch to the Agent Chrome writes no login into it, a switch away from
+//            it detaches rather than closing it, and a new size there is emulated anew in its
+//            one tab. A new width and height alone resize the window in place, keeping the page
+//            as it is. A switch that fails leaves the window as it was. Refused with no window
+//            open: run `proto open`
 //   capture  starts the host when none runs and takes the page at every target asked, each in a
 //            headless browser of its own, never in the window, which keeps its engine, size and
 //            page: one PNG per target and an index, matrix.md, in a new directory, by default

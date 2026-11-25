@@ -80,7 +80,7 @@ const tools = [
   },
   {
     name: "set_target",
-    description: `Switch Daniel's prototyping window to a target, as the toolbar in it does: this changes what Daniel sees on their screen. Another launched engine reopens the page there with the window's localhost login and closes the old browser (the Agent Chrome takes no login along, and is detached from, never closed); another width and height alone resize the window in place. With no window open it opens one, starting the host when none runs. Answers the window's engine, version, size and URL in one line; a switch that fails leaves the window as it was. ${localOnly}`,
+    description: `Switch Daniel's prototyping window to a target, as the toolbar in it does: this changes what Daniel sees on their screen. Another launched engine reopens the page there with the window's localhost login and closes the old browser (a switch to the Agent Chrome writes no login into it, and a switch away from it detaches rather than closing it); another width and height alone resize the window in place. With no window open it opens one, starting the host when none runs. Answers the window's engine, version, size and URL in one line; a switch that fails leaves the window as it was. ${localOnly}`,
     inputSchema: {
       type: "object",
       properties: {
