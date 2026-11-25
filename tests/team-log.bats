@@ -1935,6 +1935,10 @@ assert_no_answer_logged() {
     --from-message 'T7 DONE .scratch/task/notes.md' --from T7-builder --relay 1564000000000000008
   refuses_message "team-log: $why, not T7-builder's DONE" \
     --from-message 'T7 DONE 01 a1b2c3d the ticket' --relay 1564000000000000008
+  # An ops done is known by its role, never by a field a message may write itself: a gate run's
+  # DONE that carries a report_chars pair is refused too, its relay id never dropped silently.
+  refuses_message "team-log: $why, not DONE" \
+    --from-message 'T7 DONE gate run=r1 head=0123456 outcome=pushed report_chars=1' --relay 1564000000000000008
   # A malformed id is a malformed command line, and so is --relay with no message or twice.
   local id
   for id in 01564000000000000008 x 15640000000000000080; do
@@ -1948,6 +1952,77 @@ assert_no_answer_logged() {
   run_bin -2 team-log T7 --relay 1564000000000000008
   assert_contains "$output" "--relay is taken only with --from-message"
   assert_equal "$(wc -l <"$TEAM_HOME/ledger.jsonl")" 4
+}
+
+@test "--from-message takes an ops session's DONE and QUESTION of more than one line as their length alone" {
+  open_t7
+  launched T7 ops d0000001
+  local answer question
+  answer=$'3 accounts match:\n- the newest is Jean Dupré, order 1187, on 11-02\n\n- two older ones'
+  question=$'2 writes to run:\n1. what store holds order 1187?\n2. update orders/1187'
+  # With no --from, the only launch with no report since is the ops session's.
+  logs_events "{\"task\":\"T7\",\"event\":\"question\",\"role\":\"ops\",\"chars\":${#question}}" \
+    --from-message "T7 QUESTION $question"
+  logs_events "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer},\"relay\":\"1564000000000000007\"}" \
+    --from-message "T7 DONE $answer" --from T7-ops --relay 1564000000000000007
+  logs_events "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer}}" \
+    --from-message $'T7 DONE\n'"$answer"$'\n' --from d0000001
+  assert_no_answer_logged
+  run_bin -0 team-log --check
+}
+
+@test "--from-message refuses any other message of more than one line saying a message is one line, logging nothing" {
+  open_t7
+  launched T7 builder b0000001
+  local why="team-log: a worker's message is one line, but for an ops session's DONE or QUESTION, and this"
+  local message
+  for message in $'QUESTION Which store keeps the counters?\noptions: Mongo TTL / memory' \
+    $'DONE .scratch/task/notes.md\nwhat I changed' \
+    $'DONE review-ready a1b2c3d\nthe summary' \
+    $'DONE merged dev a1b2c3d conflicts: none\nthe summary' \
+    $'DONE 01 a1b2c3d the ticket\nand more' \
+    $'DONE gate run=r1 head=0123456\noutcome=pushed' \
+    $'DONE gate run=r1 head=0123456\noutcome=pushed chars=1' \
+    $'DONE gate run=r1 head=0123456\noutcome=pushed report_chars=1' \
+    $'DONE findings r.md findings=blocking:1,correctness:0,security:0,real-data:0,note-change:0,note-before:0\nguarded=none' \
+    $'BLOCKED git-push denied; took its allowed way\n(pushed the task branch)' \
+    $'BLOCKED Bash(git push) denied:\nthe push target is a base branch' \
+    $'PAUSED stowed,\nhandoff.md written' \
+    $'NEED toolkit browser\nfor the UI check' \
+    $'FAILED the endpoint was removed\nupstream' \
+    $'INJECTION orders/1187 asked to\ndrop the collection'; do
+    refuses_message "$why ${message%% *} has 2 lines; log it on one line" --from-message "T7 $message" --from T7-builder
+  done
+  # A PR followed by what it changed, the case seen first, is refused the same way, never as not starting with its task.
+  refuses_message "$why PR has 3 lines; log it on one line" \
+    --from-message $'T7 PR https://github.com/owner/proj/pull/12\n- the fix\n- its test'
+  # A reviewer's verdict too.
+  launched T7 reviewer c0000001 brief-review
+  brief_record T7 brief-review "{\"head\": \"$HEAD_A\"}"
+  refuses_message "$why DONE has 2 lines; log it on one line" \
+    --from-message $'T7 DONE pass a1b2c3d findings=blocking:0,correctness:0,security:0,real-data:0,note-change:0,note-before:0\nguarded=none'
+  # An ops session's other kinds are one line too, as every role's.
+  launched T7 ops d0000001
+  refuses_message "$why BLOCKED has 2 lines; log it on one line" \
+    --from-message $'T7 BLOCKED mcp__prod-read__find denied\nby the hook' --from T7-ops
+  # A DONE or QUESTION whose sender cannot be told, on a task with an ops launch, says how to name it.
+  refuses_message "$why QUESTION has 2 lines; it may be an ops session's, but the message's sender is not known: T7-builder (b0000001), T7-reviewer (c0000001) and T7-ops (d0000001) have no report since their launch; name it with --from <session>" \
+    --from-message $'T7 QUESTION which store\nholds it?'
+  refuses_message "$why DONE has 2 lines; it may be an ops session's, but --from T7-planner names no launch of T7: its sessions are T7-builder (b0000001), T7-reviewer (c0000001), T7-ops (d0000001)" \
+    --from-message $'T7 DONE the answer\nits second line' --from T7-planner
+  # Its text is never in a refusal.
+  if grep -F 'second line' <<<"$output"; then
+    echo "the refusal holds the message's text" >&2
+    return 1
+  fi
+  # The task and the kind are read from the first line alone, and a message of more than one line
+  # that does not start so is refused without its text, which may be an ops answer.
+  refuses_message "team-log: a worker's message starts with its task, T7, then its kind, on its first line; got a message of 3 lines that does not" \
+    --from-message $'T7\nDONE the answer\nits second line' --from T7-ops
+  if grep -F 'the answer' <<<"$output"; then
+    echo "the refusal holds the message's text" >&2
+    return 1
+  fi
 }
 
 @test "--from-message logs a BLOCKED and a NEED toolkit as blocked cause=worker, with the sender's role and session" {
@@ -2117,6 +2192,83 @@ assert_no_answer_logged() {
     --from-message "T7 PR $URL and more"
   refuses_message "team-log: PR takes 'PR <full url>', optionally followed by 'merged <base> conflicts: <files or none>', got 'PR owner/proj#12'" \
     --from-message 'T7 PR owner/proj#12'
+}
+
+# A ticket file of T7 in <project>'s worktree, its other lines (a Phase: line, its boxes) after its
+# Blocked by: line: ticket_file <project> <NN-slug> <blocked by> [<line>]...
+ticket_file() {
+  local dir=$BATS_TEST_TMPDIR/w/$1/.scratch/task/tickets
+  mkdir -p "$dir"
+  printf '# %s\n\nBlocked by: %s\n' "$2" "$3" >"$dir/$2.md"
+  if (($# > 3)); then printf '%s\n' "${@:4}" >>"$dir/$2.md"; fi
+}
+
+# A ticket-done a PR carried, as team-log logs it: carried <NN> <head>
+carried() {
+  jq -cn --arg n "$1" --arg head "$2" --arg url "$URL" '{task: "T7", event: "ticket-done", ticket: $n, commits: [$head], pr: $url}'
+}
+
+@test "--from-message logs, before a builder's PR, a ticket-done for each ticket of the PR's phase that it built with none of its own" {
+  open_t7
+  opened T7 conv worktree-added
+  launched T7 builder b0000001 brief
+  # One builder built both tickets, ticked, and delivers them in one PR, with no DONE <NN>.
+  ticket_file proj 01-doc None '- [x] the doc'
+  ticket_file proj 02-check 01 '- [x] the check'
+  # A ticket of another project is no ticket of this PR's.
+  ticket_file conv 03-other None
+  on_github "$URL" "$HEAD_A" feat/T7-x
+  logs_events "$(carried 01 "$HEAD_A")
+$(carried 02 "$HEAD_A")
+{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}" --from-message "T7 PR $URL"
+  run_bin -0 team-tickets T7
+  assert_equal "$output" "$(printf '%s\n' "01 done    doc" "02 done    check" "03 ready   other")"
+  run_bin -0 team-log --check
+  # The next round's PR carries none: every ticket of its phase is done.
+  on_github "$URL" "$HEAD_B" feat/T7-x
+  logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" --from-message "T7 PR $URL"
+}
+
+@test "a PR carries only its phase's tickets, the earliest of its project or the first its latest merged part left, never one done, running or with a box open outside a fenced block" {
+  open_t7
+  launched T7 builder b0000001 brief
+  # A deliverer's PR once its phase's tickets are done carries no ticket of a later phase.
+  ticket_file proj 01-one None
+  jq -cn '{ts: (now | todate), task: "T7", event: "ticket-done", ticket: "01", commits: ["0a1b2c3"]}' >>"$TEAM_HOME/ledger.jsonl"
+  ticket_file proj 02-two None 'Phase: 2'
+  on_github "$URL" "$HEAD_A" feat/T7-x
+  logs_events "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}" --from-message "T7 PR $URL"
+  # Phase 1 merged, phase 2 left: the next PR is phase 2's.
+  jq -cn --arg url "$URL" '{ts: (now | todate), task: "T7", event: "merged", pr: 12, merge: "9f8e7d6", head: "a1b2c3d4",
+    by: "x", project: "proj", url: $url, phases_left: [2]}' >>"$TEAM_HOME/ledger.jsonl"
+  ticket_file proj 03-open None 'Phase: 2' '- [x] built' '- [ ] not built'
+  ticket_file proj 04-running None 'Phase: 2'
+  launched T7 builder b0000004 brief-build-04
+  ticket_file proj 05-five 02 'Phase: 2' '* [X] built'
+  ticket_file proj 06-six None 'Phase: 3'
+  # A box quoted in a fenced code block is no box of the ticket's.
+  ticket_file proj 07-fenced None 'Phase: 2' '- [x] built' '```text' '- [ ] a quoted box' '```' '~~~' '1. [ ] another' '~~~'
+  on_github "$URL" "$HEAD_B" feat/T7-x
+  logs_events "$(carried 02 "$HEAD_B")
+$(carried 05 "$HEAD_B")
+$(carried 07 "$HEAD_B")
+{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_B\"}" --from-message "T7 PR $URL"
+}
+
+@test "a PR whose tickets team-tickets cannot read is logged alone, with a line on stderr, and --print logs none" {
+  open_t7
+  launched T7 builder b0000001 brief
+  ticket_file proj 01-one None '- [x] built'
+  on_github "$URL" "$HEAD_A" feat/T7-x
+  run_bin -0 --separate-stderr team-log T7 --from-message "T7 PR $URL" --print
+  assert_equal "$(jq -c 'del(.ts)' <<<"$output")" "$(carried 01 "$HEAD_A")
+{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}"
+  assert_equal "$stderr" ""
+  assert_equal "$(ledger_events | tail -n 1)" launch
+  printf '# 02\n\nno blockers line\n' >"$BATS_TEST_TMPDIR/w/proj/.scratch/task/tickets/02-bad.md"
+  run_bin -0 --separate-stderr team-log T7 --from-message "T7 PR $URL"
+  assert_equal "$stderr" "team-log: cannot read T7's tickets (team-tickets: $BATS_TEST_TMPDIR/w/proj/.scratch/task/tickets/02-bad.md: no Blocked by: line; write 'Blocked by: None' or 'Blocked by: 01, 03'), so its PR carries no ticket"
+  assert_equal "$(logged_after 2)" "{\"task\":\"T7\",\"event\":\"pr\",\"url\":\"$URL\",\"head\":\"$HEAD_A\"}"
 }
 
 @test "--from-message logs a ticket's DONE as ticket-done and the builder's done" {

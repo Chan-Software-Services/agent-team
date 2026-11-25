@@ -605,6 +605,27 @@ no hand-off for QUESTION"
   assert_equal "$(bg_calls)" ""
 }
 
+@test "an ops session's DONE of more than one line is logged with --relay as its length alone, and a PR of more than one line is refused saying a message is one line" {
+  launched d0000001 "" '["prod-read"]' ops
+  local count answer=$'42 orders match:\n- the newest is Jean Dupré, 1187\n- 41 older ones'
+  count=$(wc -l <"$TEAM_HOME/ledger.jsonl")
+  run_bin -0 team-next T7 --from T7-ops --relay 1564000000000000007 -- "T7 DONE $answer"
+  assert_equal "$output" "logged done role=ops session=d0000001 report_chars=${#answer} relay=1564000000000000007
+no hand-off for DONE"
+  run_bin -0 team-next T7 --from T7-ops --relay 1564000000000000007 -- "T7 DONE $answer"
+  assert_equal "$output" "already logged done role=ops session=d0000001 report_chars=${#answer} relay=1564000000000000007
+no hand-off for DONE"
+  assert_equal "$(logged_from $((count + 1)))" "{\"task\":\"T7\",\"event\":\"done\",\"role\":\"ops\",\"session\":\"d0000001\",\"report_chars\":${#answer},\"relay\":\"1564000000000000007\"}"
+  if grep -E 'Dupré|1187' "$TEAM_HOME/ledger.jsonl"; then
+    echo "the ledger holds the ops answer's text" >&2
+    return 1
+  fi
+  launched b0000001 brief
+  refused "team-log: a worker's message is one line, but for an ops session's DONE or QUESTION, and this PR has 2 lines; log it on one line" \
+    T7 -- $'T7 PR https://github.com/owner/proj/pull/12\nwith what it changed'
+  assert_equal "$(bg_calls)" ""
+}
+
 @test "--next with another message, and a malformed command line, are usage errors" {
   run_bin -2 team-next T7 --next 02 -- "T7 PAUSED stowed"
   assert_contains "$output" "--next is taken only with a builder's DONE <NN> message, not PAUSED"
@@ -696,6 +717,29 @@ launched T7-reviewer c0000001"
   grep -qxF "1. team-next launches the reviewer." "$TEAM_HOME/tasks/T7/brief-review.md"
   assert_equal "$(bg_calls | jq -r 'last')" "Read your brief at $TEAM_HOME/tasks/T7/brief-review.md"
   assert_equal "$(bg_calls | wc -l)" 1
+}
+
+@test "one builder's PR of tickets it built with no DONE <NN> logs a ticket-done of each, carried by the PR, before the pr" {
+  # The task's one builder, on its own brief, built and ticked both tickets.
+  jq -c 'select(.event != "launch")' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  rm "$wt"/.scratch/task/tickets/*.md
+  ticket 01-first "Blocked by: None"
+  ticket 02-second "Blocked by: 01"
+  sed -i 's/- \[ \] it works/- [x] it works/' "$wt"/.scratch/task/tickets/*.md
+  launched b0000001 brief '["browser"]'
+  on_github 9 "$sha"
+  run_bin -0 --separate-stderr team-next T7 --checks "$(checks)" -- "T7 PR $url"
+  assert_equal "$output" "logged ticket-done ticket=01 commits=[\"$sha\"] pr=$url
+logged ticket-done ticket=02 commits=[\"$sha\"] pr=$url
+logged pr url=$url head=$sha
+brief $TEAM_HOME/tasks/T7/brief-review.md
+launched T7-reviewer c0000001"
+  run_bin -0 team-tickets T7
+  assert_equal "$output" "$(printf '%s\n' "01 done    first" "02 done    second")"
+  # A rerun finds the pr logged and handed off, and carries no ticket again.
+  run_bin -1 team-next T7 -- "T7 PR $url"
+  assert_contains "$output" "PR is already handed off"
+  assert_equal "$(jq -c 'select(.event == "ticket-done") | .ticket' "$TEAM_HOME/ledger.jsonl" | tr '\n' ' ')" '"01" "02" '
 }
 
 @test "a PR's hand-off takes a URL under either owner of a moved repo, with the registry under either, and logs it under the new" {

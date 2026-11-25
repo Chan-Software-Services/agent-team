@@ -17,15 +17,15 @@
 # task_dir is .scratch/task, as the hook's own .scratch/ assumes. They count only while
 # the session's root is itself one of those worktrees, and each by its worktree's real path with
 # /.scratch/task after it, only when resolving that path changes nothing, so a link at .scratch or
-# .scratch/task leaves it out. An edit tool's refusal, and a shell refusal of a target outside,
-# then name its own .scratch/ and each such directory.
+# .scratch/task leaves it out. Every refusal of an edit tool's or a shell's write then names its
+# own .scratch/ and each such directory.
 #
 # It reads the team home only for that, the ledger, once, and only when a target lies outside the
-# session's own set, so it decides on a machine that names none, with no other task directories
-# there. When it cannot decide it refuses, saying so: input that is not a JSON object with a
-# tool_name string, a wrong argument on its command line (which so blocks every call), and any
-# command of its own that fails, which ends as an exit 2 naming the hook and the exit code
-# (team_guard in bin/lib/team.sh).
+# session's own set or a command is refused, so it decides on a machine that names none, with no
+# other task directories there. When it cannot decide it refuses, saying so: input that is not a
+# JSON object with a tool_name string, a wrong argument on its command line (which so blocks every
+# call), and any command of its own that fails, which ends as an exit 2 naming the hook and the
+# exit code (team_guard in bin/lib/team.sh).
 #
 # An Edit, Write, MultiEdit or NotebookEdit call is judged by its path, resolved with its symlinks:
 # it must lie under .scratch/ or a planner's other task directories (above), or, given <file>, be
@@ -302,7 +302,8 @@ under() {
 # tool call of the session changes, with no one file given: its task's open worktrees, as the
 # ledger names them now (open_worktrees in bin/lib/ledger.jq), but ticket worktrees, must hold the
 # session's root, and each other one's .scratch/task counts by its real path only when no link
-# lies at .scratch or .scratch/task. Read only when a target lies outside the session's own set.
+# lies at .scratch or .scratch/task. Read only when a target lies outside the session's own set or
+# a command is refused.
 task_dir=() where=$scratch dirs_read=''
 task_dirs() {
   [[ -z $dirs_read ]] || return 0
@@ -355,7 +356,8 @@ plain=${plain//[\'\"\\]/}
 
 # unread <form>: refuse the command unread, naming the form the hook does not read.
 unread() {
-  echo "Blocked: this command holds $1, which this hook does not read, so it cannot tell where the command writes; rewrite it without that, or write files under $scratch with the Write tool." >&2
+  task_dirs
+  echo "Blocked: this command holds $1, which this hook does not read, so it cannot tell where the command writes; rewrite it without that, or write files under $where with the Write tool." >&2
   exit 2
 }
 
@@ -4015,9 +4017,10 @@ for k in "${!isout[@]}"; do
 done
 
 ((${#unknown[@]} + ${#outside[@]})) || exit 0
+task_dirs
 if ((${#unknown[@]})); then
   list=$(printf '%s, ' "${unknown[@]}")
-  echo "Blocked: this hook cannot tell where these targets point: ${list%, }; spell each path out, or write files under $scratch with the Write tool." >&2
+  echo "Blocked: this hook cannot tell where these targets point: ${list%, }; spell each path out, or write files under $where with the Write tool." >&2
 fi
 if ((${#outside[@]})); then
   list=$(printf '%s, ' "${outside[@]}")

@@ -8,11 +8,13 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { symlinkSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { stubDir, tempDir } from "./helpers/mcp.mjs";
+import { repoRoot, stubDir, tempDir } from "./helpers/mcp.mjs";
 import { connectWhenReady, dataOnTmpfs, mongoImage, removeContainer, startMongo } from "./helpers/mongo.mjs";
 
+const { MongoClient } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).trim();
 const name = `toolkit-test-${randomBytes(4).toString("hex")}`;
 
@@ -107,6 +109,27 @@ test("the throwaway MongoDB and the container that only logs make no volume", as
   const db = await startMongo();
   try {
     assert.deepEqual(mounts(db.name), [], "the throwaway MongoDB");
+  } finally {
+    await db.stop();
+  }
+});
+
+// The image's entrypoint makes a root user on a first mongod, stops it with mongod --shutdown, which
+// returns once the lock file is emptied, before that mongod exits and lets go of port 27017, then
+// starts a second, whose bind a slow exit fails with "Address already in use" (exit 48). One start
+// leaves no first mongod to clash with.
+test("the throwaway MongoDB starts mongod once, with auth on, so no earlier mongod can hold its port", async () => {
+  const db = await startMongo();
+  try {
+    const starts = docker("logs", db.name).split("\n").filter((line) => line.includes('"id":4615611,')).length;
+    assert.equal(starts, 1, "mongod starts logged");
+    const anonymous = await new MongoClient(`mongodb://127.0.0.1:${db.port}/`).connect();
+    try {
+      await assert.rejects(anonymous.db("admin").command({ listDatabases: 1 }), /requires authentication/);
+    } finally {
+      await anonymous.close();
+    }
+    await db.client.db("admin").command({ listDatabases: 1 });
   } finally {
     await db.stop();
   }

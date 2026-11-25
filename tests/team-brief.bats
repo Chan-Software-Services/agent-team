@@ -261,6 +261,7 @@ Task directory: `.scratch/task/` in the worktree (excluded from git), for your s
    Fix each finding the coordinator sends you on the branch and push; once they are fixed, or the coordinator says the review passed, go on.
 4. Run `/no-mistakes` with the gate's ci step skipped for the run (`no-mistakes axi run --skip ci --intent "<the intent>"`), so the run ends with outcome `passed` once its pr step has opened or updated the PR, and CI is the coordinator's wait, as step 7 says; never wait for `checks-passed`, and never abort a run to end it.
    Give it an intent that says what this PR changes, in words a reader of the repository can follow, with no task, ticket, phase or retro number (the task's goal is "rate-limit the applicant sign-in endpoints (per address and per IP, Mongo TTL counters, 429 with Retry-After), so Conventioner cannot be used to flood addresses with sign-in codes or to guess codes.": on a phase, this phase's part of it alone), under a Disclosure section put in its terms, since the gate drafts the PR's title and body from it.
+   An intent about a test under load says what the test shows, never a load for the gate to add: every agent of the gate reads `@CODE@/bin/lib/gate-rules.md`, which holds any load it adds to at most 4 busy CPU cores with a timeout.
    A step that parks with no finding you approve yourself, with no QUESTION, only when the park is one of these kinds, named by its id:
    - `review-coverage`: the review step parks on "review coverage is incomplete" alone, and the team review read every file it names at a head this branch contains: a head you or the builder before you sent as `DONE review-ready`, or one the coordinator names as reviewed, that `git merge-base --is-ancestor <that head> HEAD` passes for and whose `git diff --name-only origin/dev...<that head>` lists the file.
    Approve it with `no-mistakes axi respond --action approve`, write a build note in `.scratch/task/build-notes/` naming the run, the step, the park's id and what the gate said, and put the ids of the parks the run approved in its `DONE gate` line as `approved=<ids, comma-separated>`.
@@ -360,9 +361,11 @@ EOF
   refute_grep -F '"T14: value of goal"' "$TEAM_HOME/tasks/T14/brief-builder-deliver.md"
   refute_grep no-mistakes "$TEAM_HOME/tasks/T14/brief-builder-fix.md"
   refute_grep 'gh pr create' "$TEAM_HOME/tasks/T12/brief-builder-deliver.md"
-  # So do the review partials: a gated project's first review comes before its PR.
+  # So do the review partials, but with the PR logged and open a gated project's review is that
+  # PR's too; its review before the gate, with no PR, is the gated review test's.
   assert_contains "$(<"$TEAM_HOME/tasks/T14/brief-reviewer.md")" 'team-review-comment https://github.com/Chan-Software-Services/agent-team/pull/9'
-  refute_grep -e team-review -e '/pull/9' "$TEAM_HOME/tasks/T12/brief-reviewer.md"
+  assert_contains "$(<"$TEAM_HOME/tasks/T12/brief-reviewer.md")" 'team-review-comment https://github.com/Chan-Software-Services/Conventioner/pull/9'
+  refute_grep -e 'no PR yet' -e 'no-mistakes gate' "$TEAM_HOME/tasks/T12/brief-reviewer.md"
   assert_contains "$(<"$TEAM_HOME/tasks/T12/brief-rereview.md")" "the gate's own commits"
   refute_grep 'gate' "$TEAM_HOME/tasks/T14/brief-rereview.md"
 }
@@ -641,6 +644,22 @@ EOF
   [[ $brief != *"no PR yet"* && $brief != *"no-mistakes gate"* && $brief != *"Post nothing"* && $brief != *'{{'* ]]
   # The brief's record names the PR it reviews.
   assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review-pr.json")" "$pr"
+}
+
+@test "a gated project's review made by hand while its PR is open, with no --set pr, is that PR's review" {
+  open_t12
+  branch_head T12 dev
+  local pr=https://github.com/Chan-Software-Services/Conventioner/pull/9 brief
+  event T12 pr "$(jq -cn --arg url "$pr" --arg h "$head" '{url: $url, head: $h}')"
+  run_bin -0 --separate-stderr team-brief T12 reviewer --name review --set head="$head" --set "checks=the checks"
+  brief=$(<"$output")
+  # The ledger's open PR is the one the brief reads, comments on and sets the status of.
+  assert_contains "$brief" "There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$head\`"
+  assert_contains "$brief" "The comment on PR $pr is that file, posted with this exact command, the only comment your settings allow: \`$REPO_ROOT/bin/team-review-comment $pr .scratch/task/review.md\`"
+  assert_contains "$brief" "\`$REPO_ROOT/bin/team-review-status $pr $head <success|failure> \"<one line, at most 140 characters>\"\`."
+  assert_contains "$brief" "- Send \`T12 DONE pass $pr findings="
+  [[ $brief != *"no PR yet"* && $brief != *"no-mistakes gate"* && $brief != *"Post nothing"* && $brief != *'{{'* ]]
+  assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review.json")" "$pr"
 }
 
 @test "a direct-PR project's review reads the PR, comments on it and sets its status" {
