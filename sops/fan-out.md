@@ -2,7 +2,7 @@
 
 How a planner splits a large read-only sweep (research, an audit, a triage of many files or questions) across forks of its own session, and puts their answers back together without losing or doubling an item.
 It is the team's map-reduce: the planner picks and shards the work, each fork maps its shard to fixed blocks, a script reduces them, and the planner checks what matters before the summary.
-The paths below are in the task directory, `.scratch/task/`, whose `work/` the task's archive keeps (the planner brief says its bounds).
+The paths below are in the task directory, `.scratch/task/`, whose `work/` the task's archive keeps within the bounds `archive_left_out` in `~/agent-team/bin/lib/team.sh` sets: no file over 1 MiB, and no directory holding over 200 files through its subdirectories, which `work/` takes as a whole.
 
 Use it when one session cannot read everything and still answer with paths and lines, as with 50 questions over 30,000 lines of code, or 173 queued files.
 A sweep a single session can hold needs none of it.
@@ -40,6 +40,8 @@ Every fork answers in the same blocks, each headed `### <input id>` and holding 
 - Answer: <the answer, a sentence or a short paragraph>
 - Evidence: <each claim's paths and lines, each marked (run), (read) or (inferred)>
 - Confidence: high | medium | low
+- Premise: <for a question, whether the premise it rests on holds; n/a for any other input>
+- Not verified: <what the fork could not check, and why, or none>
 ```
 
 The fork's reply ends with one line naming every input it was handed, whether it wrote a block for it or not:
@@ -56,7 +58,7 @@ Notes that belong to no item go under a `## Notes` heading before the first bloc
 ## 4. Run the forks
 
 - Launch the forks early, while the planner's context is still small: a fork inherits the session, so its prompt names only its shard file, its charge, the block format and the rules it keeps.
-- Those rules: return the findings as text in its final message, write only its own probe scripts and their outputs under `work/`, send nothing to `coordinator`, read or print no secret, and run no heavy run its charge does not give it.
+- Those rules: return the findings as text in its final message, write only its own probe scripts and their outputs under `work/`, send nothing to `coordinator`, post nothing anywhere else (no push, PR, comment, `team-post` or Discord message), read or print no secret, and run no heavy run its charge does not give it.
 - A fork never writes its report: the harness refuses a subagent's Write of a findings file ("Subagents should return findings as text"), and asking for one wastes a call per fork.
 - Save each fork's reply as it lands, from the output file the Agent call printed, never by reading that file, which is the fork's whole transcript:
 
@@ -71,6 +73,7 @@ It reads the manifest, every `work/result-<n>.md` and `work/overrides.tsv`, and:
 
 - refuses, naming each, a manifest id that no `Accounted for:` line names, one that two name, and one accounted for with no block;
 - refuses a block or an `Accounted for:` id that the manifest does not hold;
+- refuses a second block of one input id, and a block whose id its own reply's `Accounted for:` line does not name;
 - groups the blocks by key, so two blocks about the same thing from different forks, a duplicate or a conflict, print side by side for the planner's call;
 - applies `work/overrides.tsv`, one line per call of the planner's: the input id, the verdict, and a note saying why, tab-separated, and refuses a line whose id has no block.
 
