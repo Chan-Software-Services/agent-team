@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # The assistant's skills plugin (plugins/assistant-skills): its manifest, its one skill, walk, as
 # Claude Code is given them (frontmatter, steps in order, the commands each step runs, checked
-# against bin/'s --help), the role sections it points at and restates none of, the commands its
-# guard refuses and it never names, its prose rules, and team-load-check failing a worker that
-# sees the plugin.
+# against bin/'s --help), the role sections it points at and copies no line of, the coordinator's
+# commands it never names, its prose rules, and team-load-check failing a worker that sees the
+# plugin.
 load helpers/common
 
 setup() {

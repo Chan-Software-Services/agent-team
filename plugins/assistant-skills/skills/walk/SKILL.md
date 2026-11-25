@@ -6,7 +6,7 @@ description: Walk Daniel through every item waiting on them, one at a time, rout
 # Walk
 
 A walk takes Daniel through every item waiting on them, one message per item, and routes each answer as they give it; it is no manual QC walk of a task's UI (`team-ui --walk`).
-Its rules are `roles/assistant.md`'s, which this skill restates none of: "Daniel's words" for what never relays and how a decision is handed on, "Hand-offs" for the `decision` kind and `COORDINATOR ANSWER H<n>`, "Your list" for the walk's items, and "Discord" for its thread and where to answer.
+Its rules are `roles/assistant.md`'s, and it copies no line of them: "Daniel's words" for what never relays and how a decision is handed on, "Hand-offs" for the `decision` kind and `COORDINATOR ANSWER H<n>`, "Your list" for the walk's items, and "Discord" for its thread and where to answer.
 
 1. **Sync.** The ledger is the truth, and `waiting.md` lags it.
    Run `team-snapshot --json` and take its `pending_asks` ({task, id, text, ts}): the open tasks' asks that no later event settles, read from the ledger now.
