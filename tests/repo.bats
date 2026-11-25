@@ -1222,12 +1222,22 @@ pretooluse_problems() {
   done
 }
 
+# The assistant's read session runs with --restricted and no shell, as an ops session does, so
+# its hooks are in exec form, as a worker role's are (tests/team-worker.bats), which Claude Code
+# runs without a shell.
+@test "every hook of the assistant's read session's settings is in exec form" {
+  file=$REPO_ROOT/assistant-read.settings.json
+  assert_equal "$(jq -c '[.hooks | .[][] | .hooks[] | select((.args | type) != "array") | .command]' "$file")" "[]"
+  assert_equal "$(jq -c '[.hooks | .[][] | .hooks[] | select(.command | test("[ \"]")) | .command]' "$file")" "[]"
+  assert_equal "$(jq '[.hooks | .[][] | .hooks[]] | length' "$file")" 4
+}
+
 # A guard hook blocks the call on any failure only when its entry says so, and Claude Code waits
 # 600 seconds on one that hangs by default (T248, R1): every PreToolUse entry fails closed, soon.
 @test "every PreToolUse hook blocks on its failure and has a timeout, in every settings and toolkit hooks file" {
   local files=() file bad=$BATS_TEST_TMPDIR/bad.json
   for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/assistant.settings.json \
-    "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
+    "$REPO_ROOT"/assistant-read.settings.json "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
     "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
     files+=("${file#"$REPO_ROOT/"}")
   done
@@ -3836,6 +3846,17 @@ briefs_without_gotchas() {
   assert_equal "$output" "$(sed -n 's/^id=//p' "$file") $(sed -n 's/^slug=//p' "$file")"
   patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
   for path in bin/lib/review-app bin/team-review-check; do
+    grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
+  done
+}
+
+# The assistant's read session reads production, so its launcher, its settings and its role
+# prompt come back for Daniel's per-head word as the assistant's own do.
+@test "the assistant's read session's launcher, settings and role prompt are guardrails" {
+  local path patterns
+  patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
+  for path in bin/claude-assistant-read assistant-read.settings.json roles/assistant-read.md; do
+    [[ -e $REPO_ROOT/$path ]] || { echo "$path is missing" >&2; return 1; }
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
 }
