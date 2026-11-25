@@ -81,6 +81,15 @@ trial_checks() {
   answer "$look" "checks-${sha:0:7}" "$(jq -cs '{total_count: length, check_runs: .}' <<<"$*")"
 }
 
+# trial_runs <look> <trial sha> <id>:<name>:<status>...: that trial commit's workflow runs from
+# <look> on, as gh api lists them.
+trial_runs() {
+  local look=$1 sha=$2
+  shift 2
+  answer "$look" "runs-${sha:0:7}" "$(jq -cn '{total_count: ($ARGS.positional | length), workflow_runs: [$ARGS.positional[]
+    | split(":") | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: null, updated_at: "2026-11-24T10:00:00Z"}]}' --args "$@")"
+}
+
 # job <job id> <step>=<conclusion>...: the Actions job as gh api shows it, on a runner.
 job() {
   local id=$1
@@ -92,7 +101,8 @@ job() {
 
 # gh answers team-land's read of the PR and team-ci-wait's read of its entry (one answer, pr), an
 # enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables kept
-# in $GH_DIR/dequeues), a trial commit's check runs, no status and no workflow run of it, a job,
+# in $GH_DIR/dequeues), a trial commit's check runs, no status, its workflow runs (none, unless
+# trial_runs planned some), a job,
 # team-ci-wait's read of dev's rules (branch, rules and ruleset-<id>: setup's unprotected dev, else
 # planned by rules_require; with none planned the read fails, and team-ci-wait holds the registry's
 # checks alone), and a status POST, each from the latest answer at or before the current look;
@@ -140,7 +150,11 @@ case "$1 $2" in
     what=checks-${sha:0:7}
     ;;
   "api repos/owner/proj/commits/"*"/status?per_page=100") answer '{"state": "pending", "statuses": []}' ;;
-  "api repos/owner/proj/actions/runs?head_sha="*) answer '{"total_count": 0, "workflow_runs": []}' ;;
+  "api repos/owner/proj/actions/runs?head_sha="*)
+    sha=${2#*head_sha=} sha=${sha%%&*}
+    what=runs-${sha:0:7}
+    compgen -G "$GH_DIR/$what.*" >/dev/null || answer '{"total_count": 0, "workflow_runs": []}'
+    ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") answer '{"total_count": 0, "workflow_runs": []}' ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${2##*/} ;;
   "api repos/owner/proj/branches/dev") what=branch ;;
@@ -339,6 +353,28 @@ team-land: $url merged as 0e0e0e0
   assert_equal "$(ended_at)" 2
   assert_equal "$(jq -c '[.[0, 2], (.[3] | map(.name))]' <<<"$(end_json)")" \
     '["dequeued","failed checks; enqueuing a1b2c3d once more failed: Pull request is not mergeable",["test"]]'
+}
+
+# Conventioner's e2e on 2026-11-24: the roll-up job is listed nowhere while the shards it needs
+# wait for a runner, so the trial commit's checks end on infrastructure, never on the rules.
+@test "through the real team-ci-wait, a required roll-up not listed while its shards wait for runners is infrastructure: the PR stays in the queue and is enqueued once more" {
+  rules_require backend e2e
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  trial_checks 1 "$t1" "$(check_run backend completed success 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)"
+  trial_runs 1 "$t1" 7001:Test:queued
+  pr_at 12 OPEN '' RMQE_1 "failed checks"
+  pr_at 13 OPEN "$t2" RMQE_1 "failed checks"
+  trial_checks 13 "$t2" "$(check_run backend completed success 7003 97032)" "$(check_run e2e completed success 7003 97030)"
+  pr_at 20 MERGED '' RMQE_1 "failed checks"
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 run_bin team-land "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(end_json)" "[\"merged\",\"$merge\",null,[]]"
+  assert_contains "$output" "  infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there"
+  [[ $output != *"  rules: "* && $output != *"took $url out"* ]]
+  assert_equal "$(dequeues)" ""
+  assert_contains "$output" "team-land: only infrastructure failed on the trial commit: enqueued $url at a1b2c3d once more"
+  assert_equal "$(enqueues | wc -l)" 2
 }
 
 @test "a check dev's rules require that never reports on the trial commit takes the PR out of the queue at once, never enqueued again" {

@@ -29,11 +29,20 @@
 # tasks/current.md) and each turn's token totals. A turn that fails ends the drill with its error.
 # The sandbox and the session's state (claude purge) are removed either way.
 #
+# The session runs on the coordinator.compaction-drill line of the models.toml of the team home
+# it records into (below), which falls back to the coordinator's (bin/team-models,
+# sops/models.md), as claude-coordinator takes its own (launch_models in bin/lib/launch.sh): the
+# line's model and effort as --model and --effort on each turn, its subagent fields in the
+# session's settings' env, and an axis no line names on the settings' word; a file that does not
+# read is a warning on stderr, and the drill runs on the settings' word.
+#
 # Once its first turn has started, every way the drill ends records one compaction line in the
 # team home's drills.jsonl, through this checkout's bin/team-drill record compaction, with the
 # team home of the environment it was run in (the sandbox's is the session's alone): pass when it
 # exits 0, every check passed, else fail; the detail "<passed> of <checks> checks passed, <cost>
-# USD" once it reached its checks, "turn <n> (<name>) failed" when a turn failed. A record
+# USD" once it reached its checks, "turn <n> (<name>) failed" when a turn failed, each followed
+# by ", model=<m> effort=<e>", what the session ran on, the settings' word or Claude Code's
+# default for an axis no line names, so the record says what the drill proved. A record
 # team-drill refuses, or no team home named, prints "compaction-drill: not recorded: <team-drill's
 # first error line>" on stderr and leaves the drill's exit status as it was. Before its first turn
 # nothing is recorded.
@@ -54,11 +63,11 @@ base=${TMPDIR:-/tmp}
 [[ $base != */.claude/* && $base != */.claude ]] || base=/tmp
 sandbox=$(cd "$(mktemp -d "$base/compaction-drill.XXXXXX")" && pwd -P)
 team=$sandbox/team
-started='' outcome=''
+started='' outcome='' models=''
 # record <exit status>: the drill's compaction line, through team-drill, which fills in the
 # machine, the commit and Claude Code's version; a refusal is one line on stderr.
 record() {
-  local verdict=fail detail=${outcome:-"it stopped with exit $1 before its verdict"} err
+  local verdict=fail detail="${outcome:-"it stopped with exit $1 before its verdict"}, $models" err
   [[ $1 != 0 ]] || verdict=pass
   if ! err=$("$root/bin/team-drill" record compaction --verdict "$verdict" --detail "$detail" 2>&1 >&3 </dev/null); then
     echo "compaction-drill: not recorded: $(head -n 1 <<<"$err")" >&2
@@ -86,6 +95,14 @@ jq --arg code "$root" --arg team "$team" '
   | walk(if type == "string" then gsub("@TEAM_CODE@"; $code) else . end)' \
   "$root/coordinator.settings.json" >"$sandbox/settings.json"
 
+# The session's model and effort, from the coordinator.compaction-drill line of the models.toml
+# of the team home team-drill records into, as claude-coordinator takes its own: its flags, its
+# subagent fields in the settings' env, and the settings' word for an axis no line names.
+# shellcheck source=bin/lib/launch.sh
+source "$root/bin/lib/launch.sh"
+launch_models coordinator.compaction-drill "$sandbox/settings.json"
+models=$(jq -r '"model=\(.model) effort=\(.effort)"' <<<"$LAUNCH_CHOICE")
+
 id=$(python3 -I -c 'import uuid; print(uuid.uuid4())')
 names=("Daniel's message" "/compact" "the question")
 prompts=(
@@ -109,6 +126,7 @@ for turn in 1 2 3; do
     --strict-mcp-config \
     --permission-mode acceptEdits \
     --no-chrome \
+    ${LAUNCH_MODEL_ARGS[@]+"${LAUNCH_MODEL_ARGS[@]}"} \
     "${session[@]}" \
     --permission-prompts none \
     "${prompts[turn - 1]}") >"$sandbox/turn-$turn.jsonl" 2>"$sandbox/turn-$turn.err" </dev/null || status=$?

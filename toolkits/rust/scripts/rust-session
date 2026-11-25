@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# SessionStart hook of the rust toolkit: hold the session's own cargo calls to the team's CPU budget,
+# make sccache their compiler wrapper, and say so in one line.
+#
+# Usage: rust-session, with Claude Code's SessionStart event on stdin
+#
+# The directory is the event's cwd, else the hook's working directory. Unless it holds both a
+# Cargo.toml and a rust-toolchain.toml, the hook prints nothing and writes nothing. Where it holds
+# both:
+#   1. the jobs count is TEAM_JOBS when set, else what `team-capacity jobs` of the checkout this
+#      script lies in prints (bounded to 5 s), the rule tests/run rust follows; a count that is no
+#      whole number above 0, and a failure of team-capacity, give no count, which leaves cargo's
+#      default, the CPU count;
+#   2. when CLAUDE_ENV_FILE names a file, it appends to it `export CARGO_BUILD_JOBS=<n>` and
+#      `export NEXTEST_TEST_THREADS=<n>` when there is a count, and `export RUSTC_WRAPPER=sccache`
+#      when sccache is on PATH, so the session's Bash calls take them;
+#   3. it prints the banner
+#      `rust: toolchain <channel>; cargo jobs <n|default>; sccache <on|off>; end on tests/run rust (skill rust-core)`,
+#      the channel read from rust-toolchain.toml.
+# The count is read once per session: a level change after it reaches tests/run rust, which reads
+# it per run, and not the session's own cargo calls.
+# Always exits 0, so a session always starts.
+set -uo pipefail
+
+IFS= read -r -d '' event || true
+dir=
+if command -v jq >/dev/null; then dir=$(jq -r '.cwd // empty' <<<"$event" 2>/dev/null) || dir=; fi
+[[ -n $dir ]] || dir=$PWD
+[[ -f $dir/Cargo.toml && -f $dir/rust-toolchain.toml ]] || exit 0
+
+root=$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../../.." && pwd) || root=
+if [[ -n ${TEAM_JOBS:-} ]]; then
+  count=$TEAM_JOBS
+elif [[ -n $root && -x $root/bin/team-capacity ]]; then
+  bound=()
+  if command -v timeout >/dev/null; then bound=(timeout 5); fi
+  count=$("${bound[@]}" "$root/bin/team-capacity" jobs 2>/dev/null </dev/null) || count=
+else
+  count=
+fi
+[[ $count =~ ^[0-9]+$ ]] && ((10#$count > 0)) && count=$((10#$count)) || count=
+
+sccache=off
+if command -v sccache >/dev/null; then sccache=on; fi
+
+if [[ -n ${CLAUDE_ENV_FILE:-} ]]; then
+  {
+    if [[ -n $count ]]; then
+      echo "export CARGO_BUILD_JOBS=$count"
+      echo "export NEXTEST_TEST_THREADS=$count"
+    fi
+    if [[ $sccache == on ]]; then echo "export RUSTC_WRAPPER=sccache"; fi
+  } >>"$CLAUDE_ENV_FILE" 2>/dev/null || true
+fi
+
+channel=$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$dir/rust-toolchain.toml" 2>/dev/null | head -n 1)
+echo "rust: toolchain ${channel:-unknown}; cargo jobs ${count:-default}; sccache $sccache; end on tests/run rust (skill rust-core)"
+exit 0

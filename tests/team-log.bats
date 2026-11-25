@@ -204,7 +204,7 @@ TABLE
   )
   actual=$(jq -r '.kinds | to_entries[] | [.key, ([.value.writer] | flatten | join(",")), (.value.required | keys_unsorted[])] | join(" ")' "$CONTRACT")
   assert_equal "$actual" "$expected"
-  assert_equal "$(jq -c '.kinds.launch.optional' "$CONTRACT")" '{"project":"string","branch":"string","machine":"string","model":"string","model_from":["task","launch","registry","settings","default"],"request":"string","discord_message":"id","brief":"string","template":"string","admission":"string","past_ask":"array","ticket":"string"}'
+  assert_equal "$(jq -c '.kinds.launch.optional' "$CONTRACT")" '{"project":"string","branch":"string","machine":"string","category":"string","model":"string","model_from":["task","launch","config","registry","settings","default"],"effort":"string","effort_from":["config","settings","default"],"subagent_model":"string","subagent_effort":"string","request":"string","discord_message":"id","brief":"string","template":"string","admission":"string","past_ask":"array","ticket":"string"}'
   assert_equal "$(jq -c '.kinds.review.required.verdict' "$CONTRACT")" '["pass","findings"]'
   assert_equal "$(jq -c '.kinds.answered.optional' "$CONTRACT")" '{"discord_message":"id","item":"number"}'
   assert_equal "$(jq -c '.kinds.asked.optional' "$CONTRACT")" '{"discord_message":"id","script":"string","sha256":"string","tickets":"array"}'
@@ -274,7 +274,7 @@ TABLE
   grep -Eq '^  walk-note +team-thread, team-ui +-; optional discord_message \(id\)  \(a message of Daniel.s on the walk that is on.*never its words.*\)$' <<<"$output"
   grep -Eq '^  walk +team-ui +state \(on\|off\); optional thread \(interview\), reseeded \(id\), reseeded_port \(number\)  \(a manual QC walk of the task.*team-ui --walk.*\)$' <<<"$output"
   grep -Eq '^  merge-approved +team-log +url, discord_message \(id\); optional head; pushed at once  \(.*team-log requires head of every new line.*\)$' <<<"$output"
-  grep -Eq '^  launch +team-worker +role, session, worktree, toolkits \(list\); optional project, branch, machine, model, model_from \(task\|launch\|registry\|settings\|default\), request, discord_message \(id\), brief, template, admission, past_ask \(list\), ticket  \(request is the link to Daniel.s Discord message, on an ops launch, and discord_message its id, a message no other ops launch ran on \(team-worker refuses one that did\), which only an ops launch carries; model is the model the session was launched on, and model_from where it came from: .*; admission is the id of the capacity admission the launch was made on \(team-capacity admit.s first line\), absent on T0, ops and a launch from before 2026-11-11; past_ask is the ids of the open asks the launch went past \(team-worker --past-ask\), which then park nothing, absent when it names none; ticket is the two-digit number of the ticket whose ticket worktree a builder launched in .*\)$' <<<"$output"
+  grep -Eq '^  launch +team-worker +role, session, worktree, toolkits \(list\); optional project, branch, machine, category, model, model_from \(task\|launch\|config\|registry\|settings\|default\), effort, effort_from \(config\|settings\|default\), subagent_model, subagent_effort, request, discord_message \(id\), brief, template, admission, past_ask \(list\), ticket  \(request is the link to Daniel.s Discord message, on an ops launch, and discord_message its id, a message no other ops launch ran on \(team-worker refuses one that did\), which only an ops launch carries; category is the session.s category in the team home.s models.toml .*; model is the model the session was launched on, and model_from where it came from: .*config \(the line of models.toml for its category.*; effort is the effort the session was launched on, and effort_from where it came from: config .*; admission is the id of the capacity admission the launch was made on \(team-capacity admit.s first line\), absent on T0, ops and a launch from before 2026-11-11; past_ask is the ids of the open asks the launch went past \(team-worker --past-ask\), which then park nothing, absent when it names none; ticket is the two-digit number of the ticket whose ticket worktree a builder launched in .*\)$' <<<"$output"
   grep -Eq '^  answered +team-log, team-answer +id, answer; optional discord_message \(id\), item \(number\); pushed at once  \(Daniel.s answer to the asked of its id; .*never logged twice for one ask; item: .*team-answer --item alone\)$' <<<"$output"
   grep -Eq '^  asked +team-log, team-ask +id, text; optional discord_message \(id\), script, sha256, tickets \(list\)  \(a decision put to Daniel, which parks the task by itself until it is answered .*script and sha256: .*together.*team-run-approved.*tickets: .*team-ask --tickets.*\)$' <<<"$output"
   grep -Eq '^  ran +team-run-approved +id, exit \(number\); pushed at once  \(.*\)$' <<<"$output"
@@ -1935,6 +1935,10 @@ assert_no_answer_logged() {
     --from-message 'T7 DONE .scratch/task/notes.md' --from T7-builder --relay 1564000000000000008
   refuses_message "team-log: $why, not T7-builder's DONE" \
     --from-message 'T7 DONE 01 a1b2c3d the ticket' --relay 1564000000000000008
+  # An ops done is known by its role, never by a field a message may write itself: a gate run's
+  # DONE that carries a report_chars pair is refused too, its relay id never dropped silently.
+  refuses_message "team-log: $why, not DONE" \
+    --from-message 'T7 DONE gate run=r1 head=0123456 outcome=pushed report_chars=1' --relay 1564000000000000008
   # A malformed id is a malformed command line, and so is --relay with no message or twice.
   local id
   for id in 01564000000000000008 x 15640000000000000080; do
