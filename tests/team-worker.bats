@@ -3853,6 +3853,12 @@ bg_windows() {
   assert_equal "$(launches | jq -c '[.role, .autocompact]')" \
     $'["builder","250k"]\n["builder","250k"]\n["builder","250k"]\n["planner",null]\n["reviewer",null]\n["ops",null]'
   run_bin -0 team-log --check
+  # The ledger holds the field to a builder's launch.
+  local bad
+  bad=$(jq -c 'select(.event == "launch" and .role == "reviewer") | .autocompact = "250k"' "$TEAM_HOME/ledger.jsonl")
+  echo "$bad" >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -1 team-log --check
+  assert_contains "$output" "autocompact"
 }
 
 @test "another mark in bin/lib/context-mark is the window of a builder's launch" {
@@ -3868,21 +3874,26 @@ bg_windows() {
   code_checkout
   open_task T7
   local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
-  local reason="$mark is malformed: it needs one tokens=<n> line, a whole number of tokens that is a multiple of 1000 and at least 100000"
   # With no lease held, a launch the mark lets through is refused for the lease instead.
   run_bin -0 team-lease release
   for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=abc "tokens=250000 " window=250000 \
-    $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' missing; do
-    if [[ $bad == missing ]]; then rm -f "$mark"; else context_mark_is "$bad"; fi
-    refused_launch "$reason" T7 builder "$wt1" -- go
-    refused_launch "$reason" T0 builder "$wt1" -- go
+    $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' unreadable missing; do
+    case $bad in
+      missing) rm -f "$mark" ;;
+      unreadable) context_mark_is tokens=250000 && chmod 000 "$mark" ;;
+      *) context_mark_is "$bad" ;;
+    esac
+    refused_launch "$(context_mark_refusal)" T7 builder "$wt1" -- go
+    refused_launch "$(context_mark_refusal)" T0 builder "$wt1" -- go
   done
   [[ ! -e $(generated settings builder) ]]
   [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
   assert_equal "$(stub_calls claude)" ""
-  # No other role reads the mark: with the lease back, a reviewer and a planner launch.
+  # No other role reads the mark: with the lease back, a reviewer launches on a missing mark and a
+  # planner on a malformed one.
   hold_lease home-pc >/dev/null
   run_bin -0 team-worker T7 reviewer "$wt1" -- Review it
+  context_mark_is tokens=250
   run_bin -0 team-worker T7 planner "$wt1" -- go
   assert_equal "$(bg_windows)" $'[]\n[]'
 }

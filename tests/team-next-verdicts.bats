@@ -130,14 +130,14 @@ SH
   reviewing "$sha"
   pr_on_github "$sha"
   live b0000001 120000
-  local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
-  local reason="$mark is malformed: it needs one tokens=<n> line, a whole number of tokens that is a multiple of 1000 and at least 100000"
+  local bad reason
+  reason="team-next: $(context_mark_refusal)"
   for bad in tokens=250 missing; do
-    if [[ $bad == missing ]]; then rm -f "$mark"; else context_mark_is "$bad"; fi
-    refused "team-next: $reason" T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
-    refused "team-next: $reason" T7 -- "T7 PAUSED stowed"
-    refused "team-next: $reason" T7 --fill
-    refused "team-next: $reason" T7 --ci
+    if [[ $bad == missing ]]; then rm -f "$CODE_CHECKOUT/bin/lib/context-mark"; else context_mark_is "$bad"; fi
+    refused "$reason" T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+    refused "$reason" T7 -- "T7 PAUSED stowed"
+    refused "$reason" T7 --fill
+    refused "$reason" T7 --ci
   done
   assert_equal "$(outside_calls)" ""
 }

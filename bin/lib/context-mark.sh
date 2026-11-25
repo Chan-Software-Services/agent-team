@@ -2,14 +2,15 @@
 # team-next. Sourced after team.sh: source "$TEAM_LIB/context-mark.sh"
 #
 # context_mark: prints the mark in tokens from this checkout's bin/lib/context-mark, whose lines
-# but comments (#) and empty ones are one tokens=<n> line, <n> a whole number of tokens, a
-# multiple of 1000 and at least 100000. Fails, printing nothing and saying on stderr that the
-# file is malformed and the rule it breaks, on anything else, and on a missing file.
+# but comments (#) and empty ones are one tokens=<n> line, <n> a whole number of tokens of six to
+# nine digits, a multiple of 1000 (so at least 100000). Fails, printing nothing and saying on
+# stderr that the file is malformed and the rule it breaks, on anything else, and on a file that
+# is missing or cannot be read.
 
 # shellcheck shell=bash
 context_mark() {
   local file=$TEAM_LIB/context-mark line marks=()
-  if [[ -f $file ]]; then
+  if [[ -f $file && -r $file ]]; then
     while IFS= read -r line || [[ -n $line ]]; do
       [[ -z $line || $line == '#'* ]] || marks+=("$line")
     done <"$file"

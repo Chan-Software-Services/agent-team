@@ -368,12 +368,18 @@ review_app_off() {
 }
 
 # context_mark_is <line>...: the bin/lib/context-mark of CODE_CHECKOUT, the test's own copy of the
-# code (code_checkout or copy_bin first), holds those lines under a comment, so run_bin reads that
-# mark. The shared hard link is replaced, never written through.
+# code (made first, by code_checkout or by copy_bin into it), holds those lines under a comment, so
+# run_bin reads that mark. The shared hard link is replaced, never written through.
 context_mark_is() {
   local mark=${CODE_CHECKOUT:?}/bin/lib/context-mark
   rm -f "$mark"
   printf '%s\n' "# a mark of the test's own" "$@" >"$mark"
+}
+
+# context_mark_refusal: what a script says of CODE_CHECKOUT's bin/lib/context-mark when it does
+# not read, after its own name.
+context_mark_refusal() {
+  echo "${CODE_CHECKOUT:?}/bin/lib/context-mark is malformed: it needs one tokens=<n> line, a whole number of tokens that is a multiple of 1000 and at least 100000"
 }
 
 # worker_login_on [<login>]: the worker login on for the scripts run_bin runs: CODE_CHECKOUT (a
