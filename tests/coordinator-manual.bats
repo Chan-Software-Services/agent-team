@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29965
+manual_bytes=29962
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -730,7 +730,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   reviewer=$(section reviewer 'What you do')
   grep -qF 'and plain `note` whose scope is `change` (a line the PR adds or changes) goes back, all of a review'"'"'s in one round' "$manual"
   grep -qF 'the plain `before` notes'"'"', on code the PR did not change, which never go back, as its `before`' "$manual"
-  grep -qF '`verify` when all it sent back were plain notes or the round only edited the PR body, else with `rereview`' "$manual"
+  grep -qF '`verify` when all it sent back were plain notes (and the claims check'"'"'s doc fixes) or the round only edited the PR body, else with `rereview`' "$manual"
   grep -qF 'queue each plain `before` note as a follow-up' "$manual"
   grep -qF '`change` when it is on a line the PR adds or changes, `before` when it is on code the PR did not change' <<<"$reviewer"
   grep -qF 'a plain `note` goes back when its scope is `change`, and is queued as a follow-up, never sent back, when it is `before`' <<<"$reviewer"
