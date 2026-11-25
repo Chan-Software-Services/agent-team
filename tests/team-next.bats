@@ -147,8 +147,8 @@ ci_logged() {
 
 # red_checks <head>: --ci's wait ends failed on <head>, exit 1, with a roll-up, a failed shard of
 # the PR's own, a runner that never started, a check the base's rules require and one the registry
-# alone requires, not reported, and a lint step of the PR's own, in that order, as team-ci-wait
-# --json gives them.
+# alone requires, not reported, and a lint step of the PR's own, in that order, each in
+# team-ci-wait --json's form.
 red_checks() {
   local job=https://github.com/owner/proj/actions/runs/7/job
   ci_wait_ends failed "$1" 1 "team-ci-wait: the checks on ${1:0:7} did not pass" "$(jq -cn --arg j "$job" '[
