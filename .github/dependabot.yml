@@ -14,14 +14,15 @@ updates:
     # before CI runs it. Security updates are not delayed: GitHub applies no cooldown to them.
     cooldown:
       default-days: 7
-    # Titles are Conventional Commits: fix(deps): for what the sessions run, chore(deps-dev): for
-    # tooling.
+    # Titles are Conventional Commits: fix(deps): for what servers/package.json lists under
+    # dependencies, which today is every package, tooling included, and chore(deps-dev): for what
+    # it lists under devDependencies.
     commit-message:
       prefix: "fix"
       prefix-development: "chore"
       include: "scope"
-    # A week's minor and patch bumps arrive as one PR per dependency type, so CI runs once for each
-    # and a tooling bump never shares a fix(deps): title. A major bump comes on its own.
+    # A week's minor and patch bumps arrive as one PR per dependency type, so CI runs once for each;
+    # with no devDependencies today, that is the one fix(deps): PR. A major bump comes on its own.
     groups:
       production:
         dependency-type: "production"
