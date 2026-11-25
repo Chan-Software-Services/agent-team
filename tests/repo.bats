@@ -3329,6 +3329,37 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   assert_equal "$found" ""
 }
 
+# The clock seams a script of bin/ reads, one TEAM_<name>_NOW per line, each once: clock_seams
+# <directory>
+clock_seams() {
+  grep -rhoE 'TEAM_[A-Z0-9_]+_NOW' "$1" | LC_ALL=C sort -u
+}
+
+# The clock seams of <directory> that sandbox, as this test's setup ran it, does not export, one
+# per line: unpinned_seams <directory>
+unpinned_seams() {
+  local seam
+  while IFS= read -r seam; do
+    [[ -n $seam ]] || continue
+    [[ $(declare -p "$seam" 2>/dev/null) == 'declare -x '* ]] || echo "$seam"
+  done < <(clock_seams "$1")
+}
+
+# A fixture date that the code under test compares with today passes until its day comes, then
+# fails on the base branch and every branch caught up with it at once: sandbox pins each seam.
+@test "sandbox exports every TEAM_*_NOW clock seam a script of bin/ reads, and a seam it does not is named" {
+  local seams
+  seams=$(clock_seams "$REPO_ROOT/bin")
+  [[ $seams == *TEAM_CURRENT_NOW* && $seams == *TEAM_SWEEP_NOW* && $seams == *TEAM_COMPACT_HOLD_NOW* ]]
+  assert_equal "$(unpinned_seams "$REPO_ROOT/bin")" ""
+  # A new seam that sandbox does not export, and one it no longer exports, are each named.
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cp "$REPO_ROOT/bin/team-current" "$BATS_TEST_TMPDIR/bin/"
+  echo 'now=${TEAM_LATER_NOW:-$(date +%s)}' >"$BATS_TEST_TMPDIR/bin/team-later"
+  unset TEAM_CURRENT_NOW
+  assert_equal "$(unpinned_seams "$BATS_TEST_TMPDIR/bin")" $'TEAM_CURRENT_NOW\nTEAM_LATER_NOW'
+}
+
 # The shell code the library's EXIT trap holds: each script, sourced file (.sh) and doctor check
 # of bin/, and each tracked script or .sh file elsewhere with a line that sources the library
 # (team.sh or temp-files.sh), as tests/run, tests/shards and servers/install do; never the vendored

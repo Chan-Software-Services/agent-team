@@ -2829,7 +2829,7 @@ assistant-twin: assistant 6e6e6e6e (background, done, started at an unknown time
 }
 
 # Log a hand-off <id> of <kind> from <from> to <to>, sent <minutes> before the sweep's now
-# (TEAM_SWEEP_NOW when the test sets it, else the clock's), in assistant/handoffs.jsonl; with
+# (TEAM_SWEEP_NOW, which the sandbox pins, else the clock's), in assistant/handoffs.jsonl; with
 # answered, answered a minute later.
 handoff_sent() {
   mkdir -p "$TEAM_HOME/assistant"
@@ -2844,9 +2844,8 @@ handoff_sent() {
 
 @test "current-due and assistant-handoff: each due item of the coordinator's list and each hand-off to it waiting past 30 minutes, after current-stale" {
   local today past later legacy assistants
-  # One now for the sweep's count of a hand-off's wait and for team-current's due day, so 29 and
-  # 31 minutes and today hold however long the test takes and whatever the clock's day.
-  export TEAM_SWEEP_NOW=2026-11-15T12:00:00Z TEAM_CURRENT_NOW=2026-11-15T12:00:00Z
+  # The sandbox's one now for the sweep's count of a hand-off's wait and for team-current's due
+  # day, so 29 and 31 minutes and today hold however long the test takes and whatever the day.
   past="- ask - which login for the docs host | 1563000000000000046 | review 2026-11-13 | added 2026-11-10T12:00:00Z"
   later="- next - the spike report | 1563000000000000047 | review 2026-11-17 | added 2026-11-15T12:00:00Z"
   legacy="- watch T9 its checks | ledger 2026-11-01T07:08:11Z"
