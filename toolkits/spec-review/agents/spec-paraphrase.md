@@ -2,7 +2,7 @@
 name: spec-paraphrase
 description: A fresh reader of a task's spec.md and tickets alone, who says in its own words what they change and how the system works today by the spec's account. Dispatched by the spec-review skill; give it only the task directory's path.
 tools: [Read, Grep, Glob]
-model: inherit
+model: opus
 omitClaudeMd: true
 ---
 

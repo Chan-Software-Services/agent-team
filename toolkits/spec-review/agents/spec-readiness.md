@@ -2,7 +2,7 @@
 name: spec-readiness
 description: A fresh reader who reads a task's spec.md and tickets as the builder would, against the code, and finds each decision left open, missing name, contradiction and ticket too large. Dispatched by the spec-review skill; give it only the task directory and code root.
 tools: [Read, Grep, Glob]
-model: inherit
+model: opus
 omitClaudeMd: true
 ---
 
