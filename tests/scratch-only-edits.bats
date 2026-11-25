@@ -143,6 +143,14 @@ X"
   assert_equal "$stderr" "Blocked: this role may write files only under $wt/.scratch or $wt2/.scratch/task; write there with the Write tool, not a shell redirection or tee (tried $wt2/src/a)."
 }
 
+@test "a planner's refusal of a command the hook does not read, or of a target it cannot work out, names each directory it may write" {
+  two_worktrees
+  shell -2 'cmd | t{e,}e out'
+  assert_equal "$stderr" "Blocked: this command holds the command word t{e,}e, which this hook does not read, so it cannot tell where the command writes; rewrite it without that, or write files under $wt/.scratch or $wt2/.scratch/task with the Write tool."
+  shell -2 'cmd > "$out"'
+  assert_equal "$stderr" "Blocked: this hook cannot tell where these targets point: \"\$out\" ($expansion); spell each path out, or write files under $wt/.scratch or $wt2/.scratch/task with the Write tool."
+}
+
 @test "a planner is refused a ticket worktree's, another task's and a returned worktree's task directory" {
   two_worktrees
   local dir
