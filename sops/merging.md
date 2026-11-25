@@ -57,7 +57,7 @@ For agent-team, the team's own project (`own_project` in `bin/lib/team.sh`: by n
   `team-ci-wait` counts the project's `required_checks`, and the base's rules only with `--merge-group`, so a wait on a head passes over a name only the rules require, which `team-merge` still holds.
 - A red one is a finding fixed in the background: the coordinator opens a task of its own for it, and it never holds the PR that showed it, nor becomes a round of that PR's builder.
 - The coordinator reads it in `team-next T<n> --ci`'s merge line, as `team-ci-wait`'s passing or pending end names it too; for one that line said was still running, the coordinator reads its end later with `gh run list --repo <owner>/<name> --workflow rust-macos.yml`, which lists the job's runs.
-- Adding one, or making one a check a merge waits on, is a PR on this repository: the list is code, on the short list as a guardrail.
+- Changing the list is a PR on this repository: the list is code, on the short list as a guardrail.
 
 ## Through the merge queue
 
