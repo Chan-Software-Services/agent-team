@@ -110,7 +110,7 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 - How an event's Discord reference (a thread, Daniel's message) stays behind the interface seam: an adapter-opaque reference, its adapter's kind and its id, inside the event or the `Attestation`, is one shape.
 - Where a guard of one adapter's tools lives, as `bin/hooks/assistant-discord-guard` is of Discord's: in `team-guard` behind the same kind of reference, or with its adapter.
 - Which of the 16 interface proposals Daniel keeps.
-- Whether a ticket's identity includes its text, for step 5's ticket scheduling: today a ticket's state comes from its number alone (`bin/team-tickets`), and `plan-approved` records the sha256 of `plan.md`, `spec.md` and `scope.txt` but of no ticket file (`bin/lib/ledger-contract.json`).
+- Whether a ticket's identity includes its text, for step 5's ticket scheduling: today whether a ticket is running or done comes from its number alone (`bin/team-tickets`), and `plan-approved` records the sha256 of `plan.md`, `spec.md` and `scope.txt` but of no ticket file (`bin/lib/ledger-contract.json`).
   One proposal: record each ticket file's hash at approval, and have the engine name a done ticket whose file changed since then, and its dependents, instead of letting it stay done unseen.
   The idea comes from omo's DAG engine note, which keys a node by a fingerprint of its definition: https://github.com/code-yeongyu/oh-my-openagent/blob/9b85b90dc4e3e6593e35ca3830b0c2c92f1d1656/packages/senpi-task/src/dag/AGENTS.md.
 - Whether the engine bounds a ticket builder's relaunches, for step 5, where a relaunch becomes automatic: today `team-next` names them `resume-build-NN`, then `-2`, `-3` and so on, with no bound.
