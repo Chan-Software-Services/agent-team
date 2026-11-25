@@ -33,6 +33,17 @@
 //                         check(read) is true, and that read; an answer that is not 200 (the page
 //                         between documents in a switch) is read again; fails the test, naming
 //                         `why` and the last answer, after 20 s
+//   const bridge = await proto.bridge({ cwd, env })
+//                         the bridge, the MCP server `proto`, started exactly as the toolkit's
+//                         .mcp.json declares it (bridgeConfig()) in `cwd` (a session's checkout),
+//                         with the session's environment plus `env`, initialized; the server
+//                         process is handed to owned, and closed when `t` ends.
+//                         bridge.call(name, args, { timeoutMs }) is its tools/call result with
+//                         its text joined as `text` (helpers/mcp.mjs's callTool), after which a
+//                         host that answers is handed to ownedPid; bridge.server is the
+//                         connection (listTools, stderr, exited)
+//   bridgeConfig()        the `proto` entry of toolkits/frontend/.mcp.json, ${CLAUDE_PLUGIN_ROOT}
+//                         resolved to the toolkit as Claude Code resolves it for --plugin-dir
 //   pngSize(file)         a PNG's { width, height }, from its header
 //   pngPixel(file, x, y)  the [red, green, blue] of one pixel of a PNG of 8-bit RGB or RGBA, as
 //                         Playwright writes one, its image data inflated and unfiltered
@@ -48,10 +59,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { inflateSync } from "node:zlib";
-import { repoRoot, tempDir } from "./mcp.mjs";
+import { repoRoot, startServer, tempDir } from "./mcp.mjs";
 import { owned, ownedPid } from "./process.mjs";
 
 export const protoCli = join(repoRoot, "toolkits", "frontend", "scripts", "proto");
+const toolkit = join(repoRoot, "toolkits", "frontend");
+
+export function bridgeConfig() {
+  const text = readFileSync(join(toolkit, ".mcp.json"), "utf8");
+  return JSON.parse(text.replaceAll("${CLAUDE_PLUGIN_ROOT}", toolkit)).mcpServers.proto;
+}
 
 // The environment with no team session's role in it, as a builder running these tests has one,
 // which the CLI and the host would refuse.
@@ -137,6 +154,20 @@ export function protoSession(t, { env = {} } = {}) {
       const result = await runScript(t, process.execPath, [protoCli, ...args], { cwd, env: { ...sessionEnv, ...extra } });
       await adopt();
       return result;
+    },
+    async bridge({ cwd, env: extra = {} } = {}) {
+      const server = startServer(bridgeConfig(), { home: sessionEnv.HOME, env: { ...sessionEnv, ...extra }, path: sessionEnv.PATH, role: null, cwd });
+      owned(t, server.child);
+      t.after(() => server.close());
+      await server.initialize();
+      return {
+        server,
+        async call(name, args = {}, options = {}) {
+          const result = await server.callTool(name, args, { timeoutMs: 120_000, ...options });
+          await adopt();
+          return result;
+        },
+      };
     },
     async engines() {
       const started = await this.run(["targets"]);

@@ -84,15 +84,15 @@
 // PROTO_WEBKIT_LIBS_FILE (proto/webkit-libs.mjs's header), and PROTO_INSTALLER, the script
 // `install` runs with node in place of playwright-core's cli.js.
 // Exit 0 done; 1 refused or failed, with one line on stderr; 2 a malformed command line.
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { refuseTeamSession } from "../proto/guards.mjs";
 
 refuseTeamSession();
 
-const { catalogue, readProject, resolveTarget, sizeText } = await import("../proto/catalogue.mjs");
-const { connect } = await import("../proto/client.mjs");
+const { readProject, resolveTarget, targetsText, windowLine } = await import("../proto/catalogue.mjs");
+const { checkout, connect } = await import("../proto/client.mjs");
 const { defaultOutDir } = await import("../proto/capture.mjs");
 const { checkLocalUrl } = await import("../proto/guards.mjs");
 const { installerPath } = await import("../proto/playwright.mjs");
@@ -115,15 +115,6 @@ function help() {
   process.exit(0);
 }
 
-// The git checkout of the working directory, or null.
-function checkout() {
-  try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 const project = () => readProject(checkout());
 
 async function open(args) {
@@ -140,7 +131,7 @@ async function open(args) {
   if (target !== undefined) resolveTarget(target, settings);
   const host = await connect({ start: true });
   const window = await host.request("POST", "/v1/open", { url, ...(target === undefined ? {} : { target }), project: { file: settings.file, settings: settings.settings } }, { timeoutMs: 90_000 });
-  say(`${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`);
+  say(windowLine(window));
 }
 
 async function set(args) {
@@ -148,7 +139,7 @@ async function set(args) {
   const host = await connect();
   if (!host) fail("no window is open; run `proto open`");
   const window = await host.request("POST", "/v1/target", { target: args[0] }, { timeoutMs: 90_000 });
-  say(`${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`);
+  say(windowLine(window));
 }
 
 async function capture(args) {
@@ -194,22 +185,8 @@ async function targets() {
   const settings = project();
   const host = await connect({ start: true });
   const listing = await host.request("GET", "/v1/targets");
-  const lines = ["engines:"];
-  for (const engine of listing.engines) {
-    const capabilities = Object.entries(engine.capabilities).map(([name, value]) => `${name}=${value}`).join(" ");
-    const state = engine.available ? "available" : `unavailable: ${engine.reason}`;
-    lines.push(`  ${engine.name} ${engine.version ?? "(no version)"}: ${state}; ${capabilities}`);
-  }
   // The sizes of this checkout's project file, which may differ from the window's.
-  const { sizes, devices } = catalogue(settings);
-  lines.push("sizes:");
-  for (const size of sizes) {
-    const flags = [size.mobile && "mobile", size.touch && "touch"].filter(Boolean).join(", ");
-    lines.push(`  ${size.id}: ${size.width}x${size.height}@${size.scale}${flags ? `, ${flags}` : ""} (${size.source})`);
-  }
-  lines.push(`  any of Playwright's ${devices} devices by name, <width>x<height>[@<scale>], and window for agent-chrome`);
-  if (listing.current) lines.push(`window: ${listing.current}`);
-  process.stdout.write(`${lines.join("\n")}\n`);
+  process.stdout.write(`${targetsText(listing, settings)}\n`);
 }
 
 async function stop() {

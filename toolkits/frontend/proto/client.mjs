@@ -20,7 +20,10 @@
 //                                 one request, 30 s by default; resolves the answer's JSON, and
 //                                 throws its `error` line (error.status the HTTP status)
 //   await host.stopped(ms)        resolves once the host's process is gone, false after `ms`
-import { spawn } from "node:child_process";
+//   checkout(cwd)                 the root of the git checkout holding `cwd` (the process's own
+//                                 when left out), where a client reads .proto.json and puts a
+//                                 capture's .scratch/ui, or null outside one
+import { execFileSync, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { dirname, join } from "node:path";
@@ -211,5 +214,13 @@ async function startHost(paths, env) {
     return status;
   } finally {
     rmSync(paths.lock, { recursive: true, force: true });
+  }
+}
+
+export function checkout(cwd = process.cwd()) {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch {
+    return null;
   }
 }

@@ -61,13 +61,14 @@ A walk in an interview thread (`team-ui T<n> --walk start --in interview`, on Da
   Its path uses `${CLAUDE_PLUGIN_ROOT}`, which Claude Code fills in for `--plugin-dir` and not under `team-worker`'s `--mcp-config`.
   The toolkit is not for workers: every session with it shares Daniel's one Agent Chrome window, so `team-worker --toolkit frontend` is refused as a usage error, for every role and for the load check, and workers read captures instead, a walk's planner taking its own with `team-ui --capture`.
 - The skill `fixing-the-selected-element` (`skills/`): when Daniel's message is about the selected element, capture it, read the capture, fix the `.vue` file it names and capture again to check.
-- All of them speak to the pinned `chrome-devtools-mcp` in `servers/` (installed by `servers/install`, checked by `team-doctor`'s `servers` line).
+- The MCP server `proto` (`.mcp.json`), the bridge, `node ${CLAUDE_PLUGIN_ROOT}/proto/bridge.mjs`: the session's client of the prototyping host, with the tools `list_targets`, `set_target` and `capture_matrix` ("Prototype targets", below).
+- All of them but `proto` speak to the pinned `chrome-devtools-mcp` in `servers/` (installed by `servers/install`, checked by `team-doctor`'s `servers` line); `proto`, like `scripts/proto`, speaks to the prototyping host, which runs the pinned `playwright-core` there.
 
 ## Prototype targets
 
 The prototyping host opens Daniel's dev site in a window of Chromium, Firefox or WebKit (Playwright's pinned builds, from `playwright-core` in `servers/`), at a named size or any free size, so a layout is checked in each engine and at a phone's width without starting a browser by hand.
 It is one long-lived local process per user, started by the first `scripts/proto open` and kept until `proto stop`, which owns the browsers and Daniel's one prototyping window.
-It is for Daniel's own sessions alone: the CLI and the host refuse a team session (`AGENT_TEAM_ROLE` set) before they read anything.
+It is for Daniel's own sessions alone: the CLI, the bridge and the host refuse a team session (`AGENT_TEAM_ROLE` set) before they read anything.
 
 At the laptop, in the project's checkout, with its dev server running:
 
@@ -129,6 +130,15 @@ It is one `<proto-overlay>` element with its own shadow root and styles, so the 
 - A target fails alone, its error on its line: an engine that is unavailable ("unavailable: <reason>"), a page that does not load in 30 s, a navigation off localhost the guard blocked or a redirect that left localhost, no element matching the selector at that size.
   `proto capture` prints each target's file or error and the index's path, and exits 0 when one target was captured, else 1.
 - Two captures at once run one after the other, beside the window, whose switches never wait on one.
+
+Daniel's Claude Code session reaches the host through the toolkit's second MCP server, `proto`, the bridge (`proto/bridge.mjs`), which starts the host when none runs, so no `proto open` is needed first:
+
+- `list_targets`, read-only, answers what `proto targets` prints.
+- `set_target`, with `target` (`<engine>/<size>`, or an engine or a size alone, keeping the window's other) and an optional `url`, switches Daniel's window as `proto set` does, or opens it as `proto open` does when none is open, and answers the window's one line: so "show me this in WebKit at phone size" changes what Daniel sees.
+- `capture_matrix`, with `url`, `engines`, `sizes`, `selector` and `full_page`, all optional, is `proto capture` into a new `.scratch/ui/matrix-<UTC time>/` of the session's checkout (the git checkout of the server's working directory, where the session started), leaving the window as it is; it answers one line per target with its PNG's absolute path or its error, then the index's path.
+  It answers paths, never images, since a matrix of 15 would pass Claude Code's MCP output budget, and the session reads the PNGs it needs; outside a git checkout it is refused, naming `proto capture --out`.
+- A refusal or a failure is a tool error carrying the host's own line (a bad target, a URL off localhost, an unavailable engine), the client's (a host that cannot start, naming `host.log`) or the project file's; a capture with no target captured is one too, its lines and index still given.
+- It refuses to start in a team session, as the CLI and the host do, and `team-worker`'s refusal of the toolkit keeps it out of every worker.
 
 A target is `<engine>/<size>`:
 
@@ -199,6 +209,7 @@ The bats suite checks the coordinator's side with `ui-capture` stubbed: `tests/t
 `tests/toolkits/proto-overlay.test.mjs` drives the toolbar by role and accessible name through the host's test seam, as Daniel's clicks do: the overlay in before the page's first script in the top frame alone and drawn in no other page, its controls and an unavailable engine's option, a switch of engine, size and custom size from it, the controls while a switch runs and the status of one that fails, reload and the collapsed state across reloads and switches, a blocked navigation's status, a message of an unknown type, and a hostile page's CSS against the toolbar's, each way.
 `tests/toolkits/proto-capture.test.mjs` captures through `proto capture` and `POST /v1/capture`, against a fixture page whose body shows its width class by a media query and which reports what it saw by a request: each PNG's pixels and colour at the presets, a device and a free size in each engine, a full page and an element, the window's login carried and the window left as it was, the defaults and the output directory, an unavailable engine, each row that fails alone, the refusals with nothing written, `matrix.md`, and two captures at once.
 `tests/toolkits/proto-agent-chrome.test.mjs` runs the `agent-chrome` target against a throwaway headless Chrome standing in for the Agent Chrome (`PROTO_AGENT_CHROME_URL`, never Daniel's on 9222), holding a localhost tab of its own and an off-the-record one: the availability and its version, an address that never answers, the host's tab in front with every other tab left on its page with no toolbar, even reloaded, a download in another tab landing where the Chrome puts it, each size by emulation and `window` clearing it, a switch away and `proto stop` leaving the tab as it was, the tab reused, no cookie or storage written into the Agent Chrome, the Chrome quitting while attached, and the `frontend` server listing, snapshotting and evaluating the host's tab with the toolbar, the binding and the size holding.
+`tests/toolkits/proto-bridge.test.mjs` starts the bridge exactly as `.mcp.json` declares it, in a test git checkout, and speaks MCP to it as the session does: its declaration beside the `frontend` server, its `tools/list` against the eval mock, a first call starting the host and a host that cannot start, `set_target` opening the window and switching its size, page and engine, read back from the page, its refusals carrying the host's own line, `capture_matrix`'s files in the checkout and its lines with no image, a target that fails alone, the refusals outside a checkout and of `agent-chrome`, and the gate on a team session.
 Every other proto test sets `PROTO_AGENT_CHROME_URL` to port 1, where nothing answers, so none reaches Daniel's Agent Chrome.
 Each runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
 The host's seams, read only from the environment, are in `proto/host.mjs`'s header.
@@ -207,5 +218,5 @@ The host's seams, read only from the environment, are in `proto/host.mjs`'s head
 Its seams, `PROTO_LDD`, `PROTO_WEBKIT_LIBS_SOURCES` and `PROTO_WEBKIT_LIBS_FILE`, are in `proto/webkit-libs.mjs`'s header.
 
 `evals/` holds the skill's eval cases (`claude plugin eval ~/agent-team/toolkits/frontend`): it fires on a fix about the selected element and leaves a general front-end question alone.
-Every `frontend` call there is answered by an agent mock of a Conventioner page (`evals/mocks/frontend/_server.md`), whose `_tools.json` is the server's own `tools/list`, which the toolkit test keeps in step.
+Every `frontend` call there is answered by an agent mock of a Conventioner page (`evals/mocks/frontend/_server.md`), whose `_tools.json` is the server's own `tools/list`, which the toolkit test keeps in step; every `proto` call by an agent mock of the bridge on that page (`evals/mocks/proto/_server.md`), whose `_tools.json` `proto-bridge.test.mjs` keeps in step with the bridge's own.
 Results go to `evals/results/`, which is gitignored.

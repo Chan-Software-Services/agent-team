@@ -53,7 +53,7 @@
 //                      Daniel's window; a capture uses launched engines") is refused 400 and
 //                      writes nothing, and a row that fails fails alone, its error on it.
 //                      Captures run one at a time, on a queue of their own beside the window's
-////   POST /v1/stop      { stopped: true }, then it closes its windows, removes the socket and the
+//   POST /v1/stop      { stopped: true }, then it closes its windows, removes the socket and the
 //                      token, and exits 0; SIGTERM, SIGINT and SIGHUP do the same
 //   POST /v1/test/page { action, url? } (PROTO_TEST_SEAM=1 only; 404 without it):
 //                      "metrics" -> the window page's innerWidth, innerHeight, devicePixelRatio,

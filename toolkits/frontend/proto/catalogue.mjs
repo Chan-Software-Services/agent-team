@@ -26,6 +26,13 @@
 //   catalogue(project)         { engines, sizes, devices }: the engine names, each size the
 //                              toolbar lists (the presets, then the project's) with its metrics,
 //                              and the count of Playwright devices
+//   windowLine(window)         a window answer of the host's as one line, "<engine> <version> at
+//                              <size> (<width>x<height>@<scale>) on <url>", as the CLI and the
+//                              bridge print it
+//   targetsText(listing, project)   GET /v1/targets's answer as `proto targets` and the bridge's
+//                              list_targets print it: the engines, each with its version,
+//                              availability or reason, and capabilities, then the sizes of
+//                              `project` (the client's own) with their metrics, then the window's
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkLocalUrl } from "./guards.mjs";
@@ -210,4 +217,25 @@ export function catalogue(project) {
     sizes.push({ id, source: size.device ? `project, the device ${size.device}` : "project", width: size.width, height: size.height, scale: size.scale, mobile: size.mobile, touch: size.touch });
   }
   return { engines: [...engines], sizes, devices: Object.keys(devices()).length };
+}
+
+export const windowLine = (window) => `${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`;
+
+export function targetsText(listing, project) {
+  const lines = ["engines:"];
+  for (const engine of listing.engines) {
+    const capabilities = Object.entries(engine.capabilities).map(([name, value]) => `${name}=${value}`).join(" ");
+    const state = engine.available ? "available" : `unavailable: ${engine.reason}`;
+    lines.push(`  ${engine.name} ${engine.version ?? "(no version)"}: ${state}; ${capabilities}`);
+  }
+  // The sizes of the client's own project file, which may differ from the window's.
+  const { sizes, devices: count } = catalogue(project);
+  lines.push("sizes:");
+  for (const size of sizes) {
+    const flags = [size.mobile && "mobile", size.touch && "touch"].filter(Boolean).join(", ");
+    lines.push(`  ${size.id}: ${size.width}x${size.height}@${size.scale}${flags ? `, ${flags}` : ""} (${size.source})`);
+  }
+  lines.push(`  any of Playwright's ${count} devices by name, <width>x<height>[@<scale>], and window for agent-chrome`);
+  if (listing.current) lines.push(`window: ${listing.current}`);
+  return lines.join("\n");
 }
