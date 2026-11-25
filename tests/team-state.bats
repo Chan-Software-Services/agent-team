@@ -956,7 +956,7 @@ EOF
   ledger_line '{ts: "2026-10-22T02:10:00Z", task: "T14", event: "interview-thread", discord_thread: "1563000000000000001"}'
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -c '[.phase, .interview]' <<<"$output")" '["planning",{"since":"2026-10-22T02:10:00Z","thread":"1563000000000000001"}]'
-  event T14 done '{role: "planner"}'
+  event T14 "done" '{role: "planner"}'
   run_bin -0 team-state T14 --json
   assert_equal "$(jq -c '[.phase, .interview]' <<<"$output")" '["planning",null]'
   # B: an interview under way stands while a blocked park does, and ends at a plan-approved.
