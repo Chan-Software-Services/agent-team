@@ -63,6 +63,35 @@ A walk in an interview thread (`team-ui T<n> --walk start --in interview`, on Da
 - The skill `fixing-the-selected-element` (`skills/`): when Daniel's message is about the selected element, capture it, read the capture, fix the `.vue` file it names and capture again to check.
 - All of them speak to the pinned `chrome-devtools-mcp` in `servers/` (installed by `servers/install`, checked by `team-doctor`'s `servers` line).
 
+## Prototype targets
+
+The prototyping host opens Daniel's dev site in a window of Chromium, Firefox or WebKit (Playwright's pinned builds, from `playwright-core` in `servers/`), at a named size or any free size, so a layout is checked in each engine and at a phone's width without starting a browser by hand.
+It is one long-lived local process per user, started by the first `scripts/proto open` and kept until `proto stop`, which owns the browsers and Daniel's one prototyping window.
+It is for Daniel's own sessions alone: the CLI and the host refuse a team session (`AGENT_TEAM_ROLE` set) before they read anything.
+
+At the laptop, in the project's checkout, with its dev server running:
+
+1. Once per machine, and after each Playwright bump: `~/agent-team/toolkits/frontend/scripts/proto install`, which fetches the pinned browsers into Playwright's cache (`~/.cache/ms-playwright`) with `playwright-core`'s own installer, never with `--with-deps` and never under sudo.
+2. `proto open` opens the project's URL in Chromium at `laptop`; `proto open http://localhost:5173/login --target firefox/phone` opens that page in Firefox at 390x844, scale 3, mobile and touch.
+   With a window open, another `proto open` moves it: it opens the new URL and target, then closes the old window, which stays as it was when the new one fails.
+   An engine or a size alone keeps the other (`--target webkit`, `--target tablet`).
+3. `proto status` says whether the host runs, and which target and URL the window shows; `proto targets` lists the engines, each with its version, availability or the reason it is unavailable with its fix, and capabilities, then the sizes; `proto stop` closes the window and ends the host, leaving no socket or token.
+
+A target is `<engine>/<size>`:
+
+- the engines are `chromium`, `firefox`, `webkit` (launched) and `agent-chrome` (Daniel's Agent Chrome, attached);
+- a size is a preset, `phone-small` 360x800@3, `phone` 390x844@3, `tablet` 768x1024@2 (each mobile and touch), `laptop` 1440x900 and `desktop` 1920x1080 (`ui-check`'s two design widths); a Playwright device by its exact name (`chromium/iPhone 15`), with its viewport, scale, mobile and touch flags and user agent; a free size `<width>x<height>` or `<width>x<height>@<scale>`, whole pixels from 120 to 7680 and a scale from 0.5 to 4; or `window`, the Agent Chrome's own size, for `agent-chrome` alone.
+
+A project may set its dev site's URL and extra sizes in `.proto.json` at the root of its git checkout, JSON with only these keys: `url`, the start URL (default `http://localhost:5173/`); `sizes`, extra sizes by id, each `{ "width", "height", "scale", "mobile", "touch" }` (the last three optional) or `{ "device": "<Playwright device name>" }`, an id never a preset's, `window` or shaped like a free size; and `matrix`, `{ "engines": [...], "sizes": [...] }`, a capture's defaults.
+A mistake in it is refused with one line naming the file, the key and the reason.
+
+The guards:
+
+- Only `http` or `https` on `localhost` or `127.0.0.1`, any port, is opened; any other URL a command gives is refused before anything opens.
+- The host listens on a Unix socket in its runtime directory, `$XDG_RUNTIME_DIR/agent-team-proto`, else `~/.local/state/agent-team/proto`, which is mode 0700 and refused, naming it, when it is open to others; the socket and the token beside it are mode 0600, and every request carries that token, minted at each start, or is answered 401.
+- A host started from older code answers another protocol number, and every command names it with its fix (`proto stop`, then retry); a host that crashed leaves a stale socket, which the next `proto open` replaces with a new host, though its browser may outlive it until Daniel closes it.
+- `host.log` in the runtime directory holds the host's output, truncated at each start.
+
 ## Tests
 
 `tests/run toolkits` runs `tests/toolkits/frontend.test.mjs`: a headless Chrome stands in for the Agent Chrome, a local fixture page shaped like Conventioner's dev build stands in for the app, and the test opens DevTools and selects an element in the Elements panel exactly as a click there does (`tests/toolkits/helpers/chrome.mjs`).
@@ -72,6 +101,10 @@ It checks each capture (the element with its page's capture, on a tab in front a
 It also checks that a worker session running `ui-capture` directly meets the gate before anything reads a Chrome.
 
 The bats suite checks the coordinator's side with `ui-capture` stubbed: `tests/team-ui.bats` that each capture gets a directory of its own with its kind and Daniel's note, that a failed one leaves none, that a walk turns on and off in the ledger, and who may capture during one, `tests/team-brief.bats` that the briefs name each capture with a note or an element and count the others, and what the walk's brief says, and `tests/team-state.bats` that a walk that is on shows.
+
+`tests/toolkits/proto-host.test.mjs` runs the prototyping host through `scripts/proto` as Daniel does, headless (`PROTO_HEADLESS=1`), in a runtime directory of each test's own, against fixture pages on 127.0.0.1 (`tests/toolkits/helpers/proto.mjs`): a window in each engine at a preset, a device and a free size, read back from the page itself, moved by a second open in the same host, and every refusal and failure above.
+It runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
+The host's seams, read only from the environment, are in `proto/host.mjs`'s header.
 
 `evals/` holds the skill's eval cases (`claude plugin eval ~/agent-team/toolkits/frontend`): it fires on a fix about the selected element and leaves a general front-end question alone.
 Every `frontend` call there is answered by an agent mock of a Conventioner page (`evals/mocks/frontend/_server.md`), whose `_tools.json` is the server's own `tools/list`, which the toolkit test keeps in step.

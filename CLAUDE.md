@@ -93,6 +93,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `effect`: the Effect version whose exports the effect toolkit's test holds the `effect-v4` skill's trap table to.
     - `foldkit`: the Foldkit version that app pins, the framework of the effect toolkit's fixture app.
     - `mongodb`: the driver the prod-mongo server counts and checks its dumps with, at the version the pinned MongoDB MCP server installs.
+    - `playwright-core`: the engine API of the frontend toolkit's prototyping host, whose own installer fetches its pinned Chromium, Firefox and WebKit, never `servers/install`.
     - `typescript`: TypeScript 7, which `effect-tsgo diagnostics` needs installed beside it, though `@effect/tsgo` declares no peer.
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
   - `prod-mongo/`: the prod-mongo toolkit's server body: its start and tools, the backups root's rules, `childEnv` and `scrubbed`, a dump's counts, the throwaway MongoDB a drill or a rehearsal restores a dump into, the snapshots that say what changed, by ids, and the undo it prepares for Daniel.
@@ -143,6 +144,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `coordinator/`: the coordinator's MCP servers and the claude.ai connectors it keeps, no worker's, the only ones `claude-coordinator` lets it load (its README says how the others are denied and how one is added).
   - `effect/`: for an Effect project's planner, builder and reviewer, the `effect-v4` skill (the installed `effect`'s sources, the v3 and beta traps, the check), a hook giving Effect's findings on each TypeScript file edited, and, but for a planner, Foldkit's DevTools server, held to the worktree.
   - `frontend/`: for Daniel's own session and the coordinator's intake, a walk's planner by `team-ui --capture` alone, never a build worker: the pinned Chrome DevTools MCP server on the Agent Chrome's localhost pages, `ui-capture` of Daniel's page and its selected element, and a skill to fix it.
+    - `proto/`: the prototyping host's modules, which `scripts/proto` drives: Daniel's one localhost window in Chromium, Firefox or WebKit, Playwright's pinned builds, at a preset, a device's or any free size.
   - `prod-mongo/`: for the ops role only, backups of Conventioner's production database into `~/conventioner-backups`, their restore drills, rehearsals of a release's migrations on a dump and undos prepared for Daniel, on the read user's connection string from 1Password.
   - `prod-read/`: for the ops role only, read-only access to Conventioner's production database through the pinned MongoDB MCP server, on a read-only Atlas user whose connection string comes from 1Password at server start.
   - `prod-write/`: for the ops role only, beside `prod-read`, document writes and index changes in Conventioner's production database through the pinned MongoDB MCP server, on a user that cannot drop or rename collections, every tool behind an ask rule.

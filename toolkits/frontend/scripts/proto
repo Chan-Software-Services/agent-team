@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+// Open the project's dev site in a prototyping window, in Chromium, Firefox or WebKit
+// (Playwright's pinned builds), at a named size or any free size, through the prototyping host:
+// one long-lived local process per user that owns the browsers and Daniel's one window.
+//
+// Usage: proto open [<url>] [--target <engine>/<size>]
+//        proto status | proto targets | proto stop | proto install
+//   open     starts the host when none runs and opens the window, or moves the one open to the
+//            URL and target by opening the new one and then closing the old; prints
+//            "proto: <engine> <version> at <size> (<width>x<height>@<scale>) on <url>". The URL
+//            defaults to the project's url (http://localhost:5173/ without one), the target to
+//            the window's own, else chromium/laptop; an engine or a size alone keeps the other.
+//   status   the host's pid and the window's target and URL, or "proto: no host running"
+//   targets  starts the host when none runs; the engines, each with its version, availability
+//            or the reason it is unavailable, and capabilities, then the sizes with their metrics
+//   stop     closes the window, ends the host, and waits for it to exit: "proto: stopped", or
+//            "proto: no host running"
+//   install  fetches the pinned browsers into Playwright's cache with playwright-core's own
+//            installer (node servers/node_modules/playwright-core/cli.js install chromium
+//            firefox webkit), never with --with-deps and never under sudo, so no system package
+//            is installed: a browser's missing system library is named where it is used
+// Targets, <engine>/<size>:
+//   engines  chromium, firefox, webkit (launched), agent-chrome (Daniel's Agent Chrome)
+//   sizes    a preset: phone-small 360x800@3, phone 390x844@3, tablet 768x1024@2 (each mobile
+//            and touch), laptop 1440x900, desktop 1920x1080; a size of the project file; a
+//            Playwright device by name ("chromium/iPhone 15", its viewport, scale, mobile and
+//            touch flags and user agent); <width>x<height> or <width>x<height>@<scale> (whole
+//            pixels from 120 to 7680, a scale from 0.5 to 4); or window, agent-chrome's own size
+// The project file, optional: .proto.json at the root of the git checkout of the working
+// directory, JSON with only url (the dev site's start URL), sizes (extra sizes by id, each
+// { "width", "height", "scale", "mobile", "touch" }, the last three optional, or
+// { "device": "<Playwright device name>" }) and matrix ({ "engines": [...], "sizes": [...] }, a
+// capture's defaults); a mistake is refused naming the file, the key and the reason.
+// Guards: only http or https URLs on localhost or 127.0.0.1 are opened, any other refused
+// before anything opens; a team session (AGENT_TEAM_ROLE set) is refused before anything is
+// read; the host's runtime directory ($XDG_RUNTIME_DIR/agent-team-proto, else
+// ~/.local/state/agent-team/proto; PROTO_RUNTIME_DIR for tests) is mode 0700 and refused when
+// open to others, and every request to the host carries its token.
+// Seams, for tests (proto/host.mjs's header): PROTO_HEADLESS=1, PROTO_RUNTIME_DIR,
+// PROTO_BROWSERS_PATH, PROTO_TEST_SEAM=1, and PROTO_INSTALLER, the script `install` runs with
+// node in place of playwright-core's cli.js.
+// Exit 0 done; 1 refused or failed, with one line on stderr; 2 a malformed command line.
+import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { refuseTeamSession } from "../proto/guards.mjs";
+
+refuseTeamSession();
+
+const { catalogue, readProject, resolveTarget, sizeText } = await import("../proto/catalogue.mjs");
+const { connect } = await import("../proto/client.mjs");
+const { checkLocalUrl } = await import("../proto/guards.mjs");
+const { installerPath } = await import("../proto/playwright.mjs");
+
+const usage = "usage: proto open [<url>] [--target <engine>/<size>] | status | targets | stop | install";
+const fail = (reason, status = 1) => {
+  process.stderr.write(`proto: ${reason}\n`);
+  process.exit(status);
+};
+const say = (line) => process.stdout.write(`proto: ${line}\n`);
+
+// The header above, without the comment marks, is the --help.
+function help() {
+  const header = [];
+  for (const line of readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1)) {
+    if (!line.startsWith("//")) break;
+    header.push(line.replace(/^\/\/ ?/, ""));
+  }
+  process.stdout.write(`${header.join("\n")}\n`);
+  process.exit(0);
+}
+
+// The git checkout of the working directory, or null.
+function checkout() {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const project = () => readProject(checkout());
+
+async function open(args) {
+  let url;
+  let target;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--target" && i + 1 < args.length) target = args[++i];
+    else if (!args[i].startsWith("-") && url === undefined) url = args[i];
+    else fail(usage, 2);
+  }
+  const settings = project();
+  url = checkLocalUrl(url ?? settings.url);
+  // Checked here too, so a bad target is refused before a host starts.
+  if (target !== undefined) resolveTarget(target, settings);
+  const host = await connect({ start: true });
+  const window = await host.request("POST", "/v1/open", { url, ...(target === undefined ? {} : { target }), project: { file: settings.file, settings: settings.settings } }, { timeoutMs: 90_000 });
+  say(`${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`);
+}
+
+async function status() {
+  const host = await connect();
+  if (!host) return say("no host running");
+  const { window } = host.status;
+  say(`host ${host.pid}; ${window ? `window ${window.target} on ${window.url}` : "no window"}`);
+}
+
+async function targets() {
+  const settings = project();
+  const host = await connect({ start: true });
+  const listing = await host.request("GET", "/v1/targets");
+  const lines = ["engines:"];
+  for (const engine of listing.engines) {
+    const capabilities = Object.entries(engine.capabilities).map(([name, value]) => `${name}=${value}`).join(" ");
+    const state = engine.available ? "available" : `unavailable: ${engine.reason}`;
+    lines.push(`  ${engine.name} ${engine.version ?? "(no version)"}: ${state}; ${capabilities}`);
+  }
+  // The sizes of this checkout's project file, which may differ from the window's.
+  const { sizes, devices } = catalogue(settings);
+  lines.push("sizes:");
+  for (const size of sizes) {
+    const flags = [size.mobile && "mobile", size.touch && "touch"].filter(Boolean).join(", ");
+    lines.push(`  ${size.id}: ${size.width}x${size.height}@${size.scale}${flags ? `, ${flags}` : ""} (${size.source})`);
+  }
+  lines.push(`  any of Playwright's ${devices} devices by name, <width>x<height>[@<scale>], and window for agent-chrome`);
+  if (listing.current) lines.push(`window: ${listing.current}`);
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+async function stop() {
+  const host = await connect();
+  if (!host) return say("no host running");
+  await host.request("POST", "/v1/stop");
+  if (!(await host.stopped(30_000))) fail(`the host ${host.pid} did not exit in 30 s`);
+  say("stopped");
+}
+
+function install(args) {
+  if (args.length) fail(usage, 2);
+  if (process.getuid?.() === 0) fail("proto install never runs as root or under sudo; run it as yourself");
+  const env = { ...process.env };
+  if (env.PROTO_BROWSERS_PATH) env.PLAYWRIGHT_BROWSERS_PATH = env.PROTO_BROWSERS_PATH;
+  const installer = env.PROTO_INSTALLER || installerPath;
+  const run = spawnSync(process.execPath, [installer, "install", "chromium", "firefox", "webkit"], { stdio: "inherit", env });
+  if (run.error) fail(`the installer did not run: ${run.error.message}`);
+  if (run.status !== 0) fail(`playwright-core's installer exited ${run.status ?? run.signal}`);
+  say("the pinned browsers are installed");
+}
+
+const [command, ...args] = process.argv.slice(2);
+if (command === "--help" || command === "-h") help();
+const commands = { open, status, targets, stop, install };
+const simple = new Set(["status", "targets", "stop"]);
+if (!Object.hasOwn(commands, command)) fail(usage, 2);
+if (simple.has(command) && args.length) fail(usage, 2);
+try {
+  await commands[command](args);
+} catch (error) {
+  fail(error.message);
+}
