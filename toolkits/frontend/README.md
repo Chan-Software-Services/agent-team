@@ -106,7 +106,7 @@ Sharing the Agent Chrome with the `frontend` MCP server and `ui-capture` was che
 - `ui-capture`'s `page.png` and `page-snapshot.txt` of the host's tab show the toolbar, since its controls are in the page's accessibility tree; "Hide toolbar" keeps it to a small "proto" button in the corner.
 
 The probe was headless, so a headed window's real focus was not exercised; the toolbar reads no focus state.
-`tests/toolkits/proto-agent-chrome.test.mjs` holds the first two checks as a test, on the host itself, with a snapshot and an evaluation in place of a screenshot; the `ui-capture` check is not in it.
+`tests/toolkits/proto-agent-chrome.test.mjs` holds the first two checks as a test, on the host itself, with a snapshot and an evaluation in place of a screenshot and with no reload while the server is attached; the `ui-capture` check is not in it.
 
 The toolbar, "Prototype targets", sits at the bottom right of every page of the window, so the switch is made from the page itself:
 
@@ -154,7 +154,7 @@ The guards:
 - In a launched window, a link or a script that would take the page off localhost is blocked and the page stays where it was, the host noting "Blocked <url>: off localhost" for the toolbar's status line: the route answers that navigation 204, since an abort leaves Chromium on its own error page.
   Only the page's own navigations are blocked: a frame, a font or a script off localhost still loads, and a localhost page that redirects off localhost is not caught, since Playwright routes no redirect.
 - The host listens on a Unix socket in its runtime directory, `$XDG_RUNTIME_DIR/agent-team-proto`, else `~/.local/state/agent-team/proto`, which is mode 0700 and refused, naming it, when it is open to others; the socket and the token beside it are mode 0600, and every request carries that token, minted at each start, or is answered 401.
-- A host started from older code answers another protocol number, and every command names it with its fix (`proto stop`, then retry); a host that crashed leaves a stale socket, which the next `proto open` replaces with a new host, though its browser may outlive it until Daniel closes it.
+- A host started from older code answers another protocol number, and every command that reaches the host names it with its fix (`proto stop`, then retry); a host that crashed leaves a stale socket, which the next `proto open` replaces with a new host, though its browser may outlive it until Daniel closes it.
 - `host.log` in the runtime directory holds the host's output, truncated at each start.
 
 ## WebKit on Linux
@@ -190,7 +190,7 @@ The upgrade's steps, on Daniel's machine, in a worktree of this repository:
 
 1. Bump `playwright-core` in `servers/package.json` and `servers/package-lock.json`, then run `servers/install`.
 2. Run `toolkits/frontend/scripts/proto install --refresh-pins` from that worktree: it installs the browsers, reads `dists/<series>-updates/main/binary-amd64/Packages.gz` (else the release pocket's) for each pinned package's current version, file and SHA-256, takes a file only when `archive.ubuntu.com` and Launchpad both serve it with that SHA-256, places it, and, only once the check finds nothing missing, writes that worktree's `proto/webkit-libs.json` with the new versions, the installed `checkedFor` and today's `checked`.
-   When the check still names a soname, it writes nothing and names it: find its package (Playwright's dependency table for the build, or `packages.ubuntu.com`) and rerun with `--add <package>`; `--series <codename>` reads another Ubuntu release, when Playwright's fallback build moves.
+   When the check still names a soname, it leaves the pin file unchanged, though the libraries it placed stay in `sys/lib`, and names it: find its package (Playwright's dependency table for the build, or `packages.ubuntu.com`) and rerun with `--add <package>`; `--series <codename>` reads another Ubuntu release, when Playwright's fallback build moves.
 3. `proto targets` shows WebKit available, and a headed `proto open --target webkit/phone` renders the dev site.
 4. Commit both, the bump and the pins, in one PR, whose review reads the diff of versions and SHA-256s.
 

@@ -57,8 +57,9 @@
 //                         Playwright writes one, its image data inflated and unfiltered
 //   browsersWithout(name) a browsers directory for PROTO_BROWSERS_PATH holding a link to every
 //                         entry of Playwright's browsers path (PROTO_BROWSERS_PATH when the test
-//                         runs with one, else Playwright's default cache) but engine `name`'s, so
-//                         that one engine is unavailable while the others run
+//                         runs with one, else PLAYWRIGHT_BROWSERS_PATH, else Playwright's default
+//                         cache) but engine `name`'s, so that one engine is unavailable while the
+//                         others run
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, symlinkSync } from "node:fs";
