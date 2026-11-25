@@ -114,7 +114,7 @@ no_land_call() {
   [[ $stderr != *team-doctor* && $stderr != *merge_group* && $stderr != *ruleset* && $stderr != *builder-merge-base* ]]
 }
 
-@test "a PR the queue dropped for a check its base's rules require that never reported on the trial commit names the rules step, never the merge-base brief, even beside a failure of its own" {
+@test "a PR the queue dropped for a check its base's rules require that never reported on the trial commit names the rules step, and beside a failure of its own the merge-base brief" {
   rules_step="  the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T14 again"
   with_queue
   land dequeued "Analyze (python) never reported on the trial commit, which dev's rules require" \
@@ -130,20 +130,22 @@ no_land_call() {
   [[ $stderr != *"Analyze (python) failed"* ]]
   assert_contains "$stderr" "$rules_step"
   [[ $stderr != *builder-merge-base* && $stderr != *"once what dropped it is fixed"* ]]
-  # Beside a failure of the PR's own, the trial merge cannot be judged until every required check
-  # runs there, so the step is still the rules', never the builder's.
+  # Beside a failure of the PR's own, the builder's round leads: the queue cancels the rest of a
+  # trial commit it gives up, so a roll-up whose shards it cancelled reads as the rules' with no run
+  # open, as test did beside toolkits' failure, and a rules gap that is real shows alone on the
+  # round's new head.
   merge_again
   queue_rule
-  land dequeued "Analyze (python) never reported on the trial commit, which dev's rules require" \
-    '[{"name": "test", "class": "pr", "kind": "failed", "link": "https://github.com/owner/proj/actions/runs/1/job/2", "step": "Run tests"},
-      {"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null}]'
+  land dequeued "failed_checks; test never reported on the trial commit, which dev's rules require" \
+    '[{"name": "toolkits", "class": "pr", "kind": "failed", "link": "https://github.com/owner/proj/actions/runs/1/job/2", "step": "Run tests/run toolkits"},
+      {"name": "test", "class": "rules", "kind": "missing", "link": null, "step": null, "source": "rules"}]'
   run_bin -1 --separate-stderr team-merge T14
   assert_equal "$(queue_events | tail -n 1 | jq -c '[.event, [.failed[].class]]')" '["dequeued",["pr","rules"]]'
-  assert_contains "$stderr" "  test failed on the trial merge (Run tests): https://github.com/owner/proj/actions/runs/1/job/2"
-  assert_contains "$stderr" "  Analyze (python) was not reported on the trial merge, which dev's rules require
+  assert_contains "$stderr" "  toolkits failed on the trial merge (Run tests/run toolkits): https://github.com/owner/proj/actions/runs/1/job/2"
+  assert_contains "$stderr" "  test was not reported on the trial merge, which dev's rules require
 "
-  assert_contains "$stderr" "$rules_step"
-  [[ $stderr != *builder-merge-base* ]]
+  assert_contains "$stderr" "  the trial merge failed what the head ${head:0:7} passed: render team-brief T14 builder-merge-base for the builder, then a rereview"
+  [[ $stderr != *team-doctor* && $stderr != *ruleset* && $stderr != *"once what dropped it is fixed"* ]]
   # A check the project's required_checks alone require is said as theirs, and the step names them
   # in place of team-doctor and the ruleset; beside one the rules require, it names both.
   merge_again
