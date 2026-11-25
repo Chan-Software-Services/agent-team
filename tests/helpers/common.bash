@@ -228,8 +228,9 @@ sandbox() {
   unset TEAM_COORDINATOR_CHANNEL TEAM_INTERVIEW_CHANNEL TEAM_ASSISTANT_CHANNEL CLAUDE_PROJECT_DIR NVM_DIR TEAM_HEAVY_HELD TEAM_HEAVY_WAIT_MINUTES
   unset AGENT_TEAM_ROLE AGENT_TEAM_TASK TEAM_JOBS TEAM_DOCKER_SECONDS TEAM_HEARTBEAT_JOB CLAUDE_CODE_SESSION_ID TESTS_TIMINGS
   # The state and cache directories and Claude Code's config directory are HOME's, as the
-  # sandbox's HOME is.
-  unset XDG_STATE_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR
+  # sandbox's HOME is, and so is Go's build cache (GOCACHE, or one an env file GOENV names sets),
+  # which every heartbeat run's team-janitor disk trims.
+  unset XDG_STATE_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR GOCACHE GOENV
   guard_sandbox
 }
 

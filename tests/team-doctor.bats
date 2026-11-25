@@ -695,11 +695,11 @@ ruleset_pin() {
   printf '%s\n' '# early         A check dropped in between the first two.' '# shellcheck shell=bash' '' \
     'report early PASS "after os"' >"$checks_dir/015-early.sh"
   printf '%s\n' '# late          A check dropped in after the last,' '#               on two lines.' '# shellcheck shell=bash' '' \
-    'report late WARN "after offline" "nothing"' >"$checks_dir/999-late.sh"
+    'report late WARN "after disk" "nothing"' >"$checks_dir/999-late.sh"
   run_bin -0 team-doctor
   assert_equal "$(checks | head -n 2)" $'os\nearly'
-  assert_equal "$(checks | tail -n 2)" $'offline\nlate'
-  assert_equal "$(line_of late)" "WARN late: after offline; fix: nothing"
+  assert_equal "$(checks | tail -n 2)" $'disk\nlate'
+  assert_equal "$(line_of late)" "WARN late: after disk; fix: nothing"
   local order
   order=$(checks)
   run_bin -0 --separate-stderr team-doctor --json
