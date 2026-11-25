@@ -1038,16 +1038,29 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   done
 }
 
-# servers/ takes @hono/node-server 2.1.3 or later (GHSA-rmxm-3fg6-px4f), which
-# @modelcontextprotocol/sdk and @modelcontextprotocol/node (under mongodb-mcp-server) both allow;
-# tests/toolkits/servers-hono.test.mjs checks both still load with it.
-@test "servers/package-lock.json holds no @hono/node-server before 2.1.3" {
+# servers/ takes @hono/node-server 2.1.6 or later (GHSA-rmxm-3fg6-px4f, GHSA-jpvv-r467-5p4w,
+# GHSA-qv5m-9pm6-hqp3), which @modelcontextprotocol/sdk and @modelcontextprotocol/node (under
+# mongodb-mcp-server) both allow; tests/toolkits/servers-hono.test.mjs checks both still serve with it.
+@test "servers/package-lock.json holds no @hono/node-server before 2.1.6" {
   local versions version
   versions=$(jq -r '.packages | to_entries[] | select(.key | test("(^|/)node_modules/@hono/node-server$")) | .value.version' "$REPO_ROOT/servers/package-lock.json")
   [[ -n $versions ]]
   for version in $versions; do
     echo "@hono/node-server $version" >&2
-    assert_equal "$(printf '%s\n' 2.1.3 "$version" | sort -V | head -n 1)" 2.1.3
+    assert_equal "$(printf '%s\n' 2.1.6 "$version" | sort -V | head -n 1)" 2.1.6
+  done
+}
+
+# servers/ takes hono 4.13.16 or later (GHSA-4h7h-rv7c-7m2v, GHSA-h7mg-cq63-vhpq,
+# GHSA-3gg2-335m-rxc6, GHSA-4m76-xfj5-7975, GHSA-46wx-v44x-9hh2), which the same two parents allow;
+# tests/toolkits/servers-hono.test.mjs checks both still serve with it.
+@test "servers/package-lock.json holds no hono before 4.13.16" {
+  local versions version
+  versions=$(jq -r '.packages | to_entries[] | select(.key | test("(^|/)node_modules/hono$")) | .value.version' "$REPO_ROOT/servers/package-lock.json")
+  [[ -n $versions ]]
+  for version in $versions; do
+    echo "hono $version" >&2
+    assert_equal "$(printf '%s\n' 4.13.16 "$version" | sort -V | head -n 1)" 4.13.16
   done
 }
 

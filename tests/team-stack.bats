@@ -936,9 +936,22 @@ free"
   capacity_room $((100 * MIB))
   stack_settings '{"wait_minutes": 0}'
   local dir=$BATS_TEST_TMPDIR a b
-  "$REPO_ROOT/bin/team-stack" up --worktree "$first" --no-seed >"$dir/a.out" 2>"$dir/a.err" &
+  # b starts while a is inside its up --no-start, holding the admission lock, so b's admission
+  # always comes second. Both run as under a heavy run (TEAM_HEAVY_HELD), so neither takes the
+  # heavy-run lock for its network: with wait_minutes 0, b would else stop at the lock a holds for
+  # its own network, before its admission, and the race this test is about would never be run.
+  mv "$first/scripts/compose.sh" "$first/scripts/compose-real.sh"
+  cat >"$first/scripts/compose.sh" <<SH
+#!/usr/bin/env bash
+if [[ \${1:-} == up && \${2:-} == --no-start ]]; then touch "$dir/in-up"; sleep 1; fi
+exec "\$(dirname "\$0")/compose-real.sh" "\$@"
+SH
+  chmod +x "$first/scripts/compose.sh"
+  TEAM_HEAVY_HELD=1 "$REPO_ROOT/bin/team-stack" up --worktree "$first" --no-seed >"$dir/a.out" 2>"$dir/a.err" &
   a=$!
-  "$REPO_ROOT/bin/team-stack" up --worktree "$STACK_WORKTREE" --no-seed >"$dir/b.out" 2>"$dir/b.err" &
+  while [[ ! -e $dir/in-up ]] && kill -0 "$a" 2>/dev/null; do sleep 0.1; done
+  [[ -e $dir/in-up ]]
+  TEAM_HEAVY_HELD=1 "$REPO_ROOT/bin/team-stack" up --worktree "$STACK_WORKTREE" --no-seed >"$dir/b.out" 2>"$dir/b.err" &
   b=$!
   local status_a=0 status_b=0
   wait "$a" || status_a=$?
