@@ -637,7 +637,7 @@ SH
   no_land_call
 }
 
-@test "on a base with a queue, a required check missing on a head behind its base names team-catch-up, but for agent-review or a head up to date" {
+@test "on a base with a queue, a required check missing on a head behind its base names team-catch-up, but not with agent-review missing or a head up to date" {
   with_queue
   step="run team-catch-up T14, which merges dev into the PR so the check runs on it"
   checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}, {"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'
@@ -649,6 +649,10 @@ SH
   # agent-review no merge's run brings, so team-catch-up refuses a head lacking it: no step there.
   checks '[{"name": "test", "bucket": "pass", "state": "SUCCESS"}, {"name": "lint", "bucket": "pass", "state": "SUCCESS"}]'
   refused "required check agent-review is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
+  # Nor beside it: with agent-review missing too, team-catch-up refuses the head all the same.
+  checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}]'
+  refused "required check test is missing on the head" "required check agent-review is missing on the head"
   [[ $stderr != *team-catch-up* ]]
   # A head that holds its base, or whose compare cannot be read, gets no step.
   checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}, {"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'

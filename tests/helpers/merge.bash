@@ -110,11 +110,11 @@ checks() {
 # from status.json, which app_on writes; the commits of the base the head lacks, compare's
 # behind_by, from behind_by when a test wrote it, else that read fails as unplanned; the base's
 # classic protection, any base's, from branch.json, its rulesets' rules from rules.json and
-# ruleset <id> from ruleset-<id>.json, which pinned and with_queue write; the GraphQL read of the PR's queue entry from entry.json, which
-# with_queue and in_queue write, after running entry.sh when a test wrote one; a dequeue is kept
-# in $GH_DIR/dequeues, its last argument, and fails with dequeue.error's text when a test wrote
-# one). pr merge marks the PR merged (or runs merge.sh when a test wrote
-# one); anything unplanned fails.
+# ruleset <id> from ruleset-<id>.json, which pinned and with_queue write; the GraphQL read of the
+# PR's queue entry from entry.json, which with_queue and in_queue write, after running entry.sh
+# when a test wrote one; a dequeue is kept in $GH_DIR/dequeues, its last argument, and fails with
+# dequeue.error's text when a test wrote one). pr merge marks the PR merged (or runs merge.sh when
+# a test wrote one); anything unplanned fails.
 stub_gh() {
   stub_script gh <<'EOF'
 case "$*" in
