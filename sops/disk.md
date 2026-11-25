@@ -85,6 +85,14 @@ Why a size cap on every run, over a weekly trim or a doctor warning alone: a wee
 - A run that fails, or runs past its 180 s and is killed 10 s later, logs `disk: failed: <reason>`, the command's first line on stderr or `timed out after 180 s`; the later steps still run, the heartbeat run exits 1, and 12 failing runs in a row are the `step-disk` alert.
 - Why no setting, unlike the Docker janitor: like the `tmp` step it removes only what its rules prove nothing reads again, from this user's home, and Daniel asked for it.
 
+## The doctor's line
+
+- `team-doctor`'s `disk` line reads `team-janitor disk status --json`: PASS with the status' line, the home directory as `~`, as `Go build cache 3.2 GiB of its 10.0 GiB cap at ~/.cache/go-build; 4 job tmps cleared today (2.1 GiB)`.
+- It is WARN while the cache is over its cap, the status' line with `, over its cap` after the Go part, with the fix `team-janitor disk trims it; team-janitor disk status names it`, and WARN when the status does not answer, naming its first error.
+- It never fails, since the heartbeat's `disk` step trims the cache on its next run.
+- So a cache past its cap shows on a machine with no heartbeat.
+- Its tests (`tests/team-doctor-disk.bats`) take the fixture Go build cache `doctor_machine` names, the sandbox's `~/.cache/go-build` (`TEAM_GO_CACHE`), never what the doctor's stub `go` would answer.
+
 ## Test seams
 
 A test runs the real `team-janitor disk` in the bats sandbox, against a fixture jobs tree under the sandbox's `HOME`, never the machine's `~/.claude/jobs`, and a fixture Go build cache, never the machine's:
