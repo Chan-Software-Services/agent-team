@@ -35,6 +35,10 @@
 //                        viewport resized in place, the page not loaded again.
 //                      When the new window fails (an engine unavailable, a launch or a load
 //                      failing), what it opened is closed and the old window stays as it was.
+//                      While a switch runs, the toolbar's status says "Opening <engine> at
+//                      <size>..." and its controls are disabled; a failed one leaves its error
+//                      there, which the window's next navigation clears.
+//   POST /v1/reload    { target, url } once the window's page has reloaded; 400 with no window
 //   POST /v1/stop      { stopped: true }, then it closes its windows, removes the socket and the
 //                      token, and exits 0; SIGTERM, SIGINT and SIGHUP do the same
 //   POST /v1/test/page { action, url? } (PROTO_TEST_SEAM=1 only; 404 without it):
@@ -43,7 +47,23 @@
 //                      as a user would (launched.mjs's follow), then the metrics and `status`,
 //                      the host's status line ("Blocked <url>: off localhost", which the next
 //                      main-frame navigation clears) or null; "close-browser" -> closes the
-//                      window's browser as Daniel quits it, then { closed: true }
+//                      window's browser as Daniel quits it, then { closed: true }; "popup" with
+//                      `url` -> a second page of the window's context opened there, as another
+//                      tab sharing it, read and closed: { overlay, shown, drawn }
+//                      (overlay-page.mjs); "send" with `message` -> the binding's answer to
+//                      `message`, sent from the window page's own script
+//   POST /v1/test/toolbar { action, name, value } (PROTO_TEST_SEAM=1 only): an act on the
+//                      window's toolbar by role and accessible name, as a click there does:
+//                      "select" an option of the combobox `name`, "fill" the spinbutton `name`,
+//                      "click" the button `name`, -> { done }; "read" -> the toolbar's visible
+//                      state, { drawn, collapsed, status, controls, aria } (overlay-page.mjs)
+// The overlay (overlay.js), an init script on the window's context, asks the host by its binding,
+// one message at a time, each dispatched on its `type` (overlay.js's header lists them, and an
+// unknown one is answered { error } and changes nothing): hello is answered { show: false } for
+// any page that is not the window's, else the state, { show, engines, sizes, current,
+// switching, status, collapsed }; set_target begins a switch as POST /v1/target does, reload
+// reloads the page, and collapse sets the collapsed flag the host keeps across reloads and
+// switches. Each change of the state is pushed to the window's page.
 // A window whose page or browser Daniel closes is dropped (status's window null, "no window")
 // while the host runs on; `proto open` opens a new one.
 // An error answers { error: "<one line>" }: 400 a bad body, target or URL (one off localhost is
@@ -60,7 +80,7 @@
 //                           so a test points an engine at an empty directory
 //   PROTO_LDD               the program WebKit's library check runs in place of ldd
 //                           (webkit-libs.mjs), so a test names a soname missing
-//   PROTO_TEST_SEAM=1       serve POST /v1/test/page
+//   PROTO_TEST_SEAM=1       serve POST /v1/test/page and POST /v1/test/toolbar
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -110,9 +130,13 @@ class Refusal extends Error {
 let current = null;
 const defaultProject = readProject(null);
 let stopping = false;
-// The open and target operations queued or running, and the status line the toolbar shows.
+// The open and target operations queued or running, the status line the toolbar shows, whether
+// the toolbar is collapsed, and the window record being opened by a switch, whose page the
+// overlay may already ask.
 let switching = 0;
 let statusLine = null;
+let collapsed = false;
+let placing = null;
 
 // One window operation at a time, in the order they came.
 let queue = Promise.resolve();
@@ -139,6 +163,29 @@ function engineState(driver) {
   const { available, reason = null } = driver.available();
   return { name: driver.name, available, reason, version: driver.version(), capabilities: driver.capabilities };
 }
+
+// The engines' availability as the toolbar last read it: read again at each hello and at each
+// switch's end, not at every push (WebKit's check runs ldd).
+let toolbarEngines = null;
+const readToolbarEngines = () => (toolbarEngines = [...drivers.values()].map((driver) => {
+  const { available, reason = null } = driver.available();
+  return { name: driver.name, available, reason };
+}));
+
+// The state of the window `record`, the host's window or the one a switch is opening.
+const overlayState = (record = current) => ({
+  show: true,
+  engines: toolbarEngines ?? readToolbarEngines(),
+  sizes: catalogue(record.project).sizes.map(({ id, width, height, scale }) => ({ id, width, height, scale })),
+  current: { engine: record.target.engine, size: record.target.size, width: record.target.width, height: record.target.height, scale: record.target.scale },
+  switching: switching > 0,
+  status: statusLine,
+  collapsed,
+});
+
+const pushState = () => {
+  if (current) current.handle.push(overlayState());
+};
 
 function checkBody(body, fields) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) throw new Refusal(400, "the body must be a JSON object");
@@ -168,13 +215,64 @@ function windowHooks() {
       statusLine = null;
     },
     onBlocked: (url) => {
-      if (mine()) statusLine = `Blocked ${url}: off localhost`;
+      if (!mine()) return;
+      statusLine = `Blocked ${url}: off localhost`;
+      pushState();
     },
     onNavigated: () => {
-      if (mine()) statusLine = null;
+      if (mine() && switching === 0) statusLine = null;
     },
+    onMessage: (message, { own }) => overlayMessage(message, own && (mine() || placing === record) ? record : null),
   };
   return record;
+}
+
+// The overlay's messages, by type; each answers the binding.
+const messages = {
+  hello: (message, record) => {
+    readToolbarEngines();
+    return overlayState(record);
+  },
+  set_target: (message) => {
+    checkMessage(message, ["target"]);
+    // Begun, not awaited: an engine switch closes the page that asked; the state is pushed.
+    beginSwitch({ target: message.target }).catch(() => {});
+    return overlayState();
+  },
+  reload: (message) => {
+    checkMessage(message, []);
+    reload().catch(() => {});
+    return { reloading: true };
+  },
+  collapse: (message) => {
+    checkMessage(message, ["collapsed"]);
+    if (typeof message.collapsed !== "boolean") throw new Refusal(400, "collapse takes collapsed, true or false");
+    collapsed = message.collapsed;
+    pushState();
+    return overlayState();
+  },
+};
+
+function checkMessage(message, fields) {
+  for (const key of Object.keys(message)) {
+    if (key !== "type" && !fields.includes(key)) throw new Refusal(400, `unknown field "${key}" in ${message.type}; it takes ${fields.join(", ") || "none"}`);
+  }
+}
+
+// `record` is the window whose page sent it, or null for any other page.
+async function overlayMessage(message, record) {
+  if (message === null || typeof message !== "object" || Array.isArray(message) || typeof message.type !== "string") {
+    return { error: "a message is an object with a type" };
+  }
+  if (!Object.hasOwn(messages, message.type)) {
+    return { error: `unknown message type ${JSON.stringify(message.type)}; the types are ${Object.keys(messages).join(", ")}` };
+  }
+  if (!record) return message.type === "hello" ? { show: false } : { error: "this page is not the prototyping window's" };
+  try {
+    return await messages[message.type](message, record);
+  } catch (error) {
+    return { error: error instanceof Refusal ? error.message : firstLine(error) };
+  }
 }
 
 const sameContext = (a, b) => a.scale === b.scale && a.mobile === b.mobile && a.touch === b.touch && (a.userAgent ?? null) === (b.userAgent ?? null);
@@ -196,24 +294,42 @@ async function place(url, target, project) {
     if (!state.available) throw new Refusal(503, state.reason);
   }
   const record = windowHooks();
+  Object.assign(record, { driver, target, project });
+  placing = record;
   try {
     const storage = old ? await old.handle.storageState() : undefined;
     record.handle = sameEngine ? await old.handle.reopen(url, target, storage, record.hooks) : await driver.open(url, target, storage, record.hooks);
   } catch (error) {
     throw new Refusal(503, `${target.engine} could not open ${url}: ${firstLine(error)}`);
+  } finally {
+    placing = null;
   }
-  Object.assign(record, { driver, target, project });
   current = record;
-  statusLine = null;
   if (old) await old.handle.close().catch(() => {});
   return windowAnswer(record);
 }
 
-// A window operation that switches: queued, and counted while it waits and runs.
-const switched = (operation) => {
+// A window operation that switches to `target`: queued, and counted while it waits and runs; the
+// toolbar shows it running, then its error, or nothing.
+function switched(target, operation) {
   switching++;
-  return queued(operation).finally(() => switching--);
-};
+  statusLine = `Opening ${target.engine} at ${target.size}...`;
+  pushState();
+  const done = (error) => {
+    switching--;
+    if (error) statusLine = error instanceof Refusal ? error.message : firstLine(error);
+    else if (switching === 0) statusLine = null;
+    readToolbarEngines();
+    pushState();
+  };
+  return queued(operation).then((answer) => {
+    done(null);
+    return answer;
+  }, (error) => {
+    done(error);
+    throw error;
+  });
+}
 
 async function open(body) {
   checkBody(body, ["url", "target", "project"]);
@@ -231,12 +347,14 @@ async function open(body) {
   } catch (error) {
     throw new Refusal(400, error.message);
   }
-  return switched(() => place(url, target, project));
+  return switched(target, () => place(url, target, project));
 }
 
 const noWindow = "no window is open; run `proto open`";
 
-async function switchTarget(body) {
+// Checks a switch at once, so a refusal is thrown before anything is queued, and answers the
+// promise of the switch.
+function beginSwitch(body) {
   checkBody(body, ["target", "url"]);
   if (switching > 0) throw new Refusal(409, "a switch is already running");
   if (!current) throw new Refusal(400, noWindow);
@@ -248,7 +366,7 @@ async function switchTarget(body) {
   } catch (error) {
     throw new Refusal(400, error.message);
   }
-  return switched(async () => {
+  return switched(target, async () => {
     if (!current) throw new Refusal(400, noWindow);
     let here = url;
     if (here === undefined) {
@@ -262,10 +380,18 @@ async function switchTarget(body) {
   });
 }
 
-const testActions = ["metrics", "navigate", "close-browser"];
+const switchTarget = async (body) => beginSwitch(body);
+
+const reload = () => queued(async () => {
+  if (!current) throw new Refusal(400, noWindow);
+  await current.handle.reload();
+  return { target: targetText(current.target), url: current.handle.url() };
+});
+
+const testActions = ["metrics", "navigate", "close-browser", "popup", "send"];
 
 async function testPage(body) {
-  checkBody(body, ["action", "url"]);
+  checkBody(body, ["action", "url", "message"]);
   if (!testActions.includes(body.action)) throw new Refusal(400, `unknown action ${JSON.stringify(body.action)}; the actions are ${testActions.join(", ")}`);
   if (!current) throw new Refusal(400, noWindow);
   const window = current;
@@ -274,9 +400,25 @@ async function testPage(body) {
     await window.handle.closeBrowser();
     return { closed: true };
   }
+  if (body.action === "send") return { answer: await window.handle.send(body.message) };
   if (typeof body.url !== "string" || !URL.canParse(body.url)) throw new Refusal(400, "navigate takes url, the link's address");
+  if (body.action === "popup") return window.handle.popup(body.url);
   await window.handle.follow(body.url);
   return { ...(await window.handle.metrics()), status: statusLine };
+}
+
+const toolbarActions = ["select", "fill", "click", "read"];
+
+async function testToolbar(body) {
+  checkBody(body, ["action", "name", "value"]);
+  if (!toolbarActions.includes(body.action)) throw new Refusal(400, `unknown action ${JSON.stringify(body.action)}; the actions are ${toolbarActions.join(", ")}`);
+  if (body.action !== "read" && typeof body.name !== "string") throw new Refusal(400, `${body.action} takes name, the control's accessible name`);
+  if (!current) throw new Refusal(400, noWindow);
+  try {
+    return await current.handle.toolbar(body);
+  } catch (error) {
+    throw new Refusal(400, `${body.action} ${JSON.stringify(body.name ?? "")}: ${firstLine(error)}`);
+  }
 }
 
 async function stop() {
@@ -301,11 +443,15 @@ const routes = {
   },
   "POST /v1/open": open,
   "POST /v1/target": switchTarget,
+  "POST /v1/reload": async (body) => {
+    checkBody(body, []);
+    return reload();
+  },
   "POST /v1/stop": async () => {
     setImmediate(stop);
     return { stopped: true };
   },
-  ...(env.PROTO_TEST_SEAM === "1" ? { "POST /v1/test/page": testPage } : {}),
+  ...(env.PROTO_TEST_SEAM === "1" ? { "POST /v1/test/page": testPage, "POST /v1/test/toolbar": testToolbar } : {}),
 };
 
 const token = randomBytes(32).toString("hex");

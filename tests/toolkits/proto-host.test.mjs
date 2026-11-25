@@ -247,7 +247,6 @@ describe("the host's life", () => {
       }
     }
     assert.equal((await proto.request("GET", "/v1/nowhere")).status, 404);
-    assert.equal((await proto.request("POST", "/v1/test/toolbar", {})).status, 404);
 
     const open = protoSession(t);
     mkdirSync(open.dir, { mode: 0o755 });
@@ -263,6 +262,7 @@ describe("the host's life", () => {
     const proto = protoSession(t, { env: { PROTO_TEST_SEAM: "" } });
     assert.equal((await proto.run(["targets"])).status, 0);
     assert.equal((await proto.request("POST", "/v1/test/page", { action: "metrics" })).status, 404);
+    assert.equal((await proto.request("POST", "/v1/test/toolbar", { action: "read" })).status, 404);
   });
 
   test("a bad body or target sent to the host is answered 400, and an unavailable engine 503", async (t) => {

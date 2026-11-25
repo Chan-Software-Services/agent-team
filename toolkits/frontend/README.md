@@ -85,6 +85,17 @@ At the laptop, in the project's checkout, with its dev server running:
    `proto set` with no window open is refused, naming `proto open`, and when Daniel closes the window or quits its browser the host drops it and runs on, so `proto status` says "no window" until the next `proto open`.
 4. `proto status` says whether the host runs, and which target and URL the window shows; `proto targets` lists the engines, each with its version, availability or the reason it is unavailable with its fix, and capabilities, then the sizes; `proto stop` closes the window and ends the host, leaving no socket or token.
 
+The toolbar, "Prototype targets", sits at the bottom right of every page of the window, so the switch is made from the page itself:
+
+- "Engine" switches to another engine and "Size" to another size, as `proto set` does; an engine that is unavailable is listed but disabled, "<engine> (unavailable)", and its tooltip says why and how to fix it.
+- "Size" lists the presets, the project's sizes and the window's own size when it is none of them (a device, a free size), and "Custom...", which shows "Width", "Height" and "Scale" and an "Apply" button for any free size.
+- The reload button (its name "Reload") reloads the page, and the hide button ("Hide toolbar") collapses the toolbar to a small "proto" button, which shows it again; the host keeps it collapsed across reloads and switches until then.
+- Its status line says what is happening: "Opening webkit at phone..." while a switch runs, whoever started it (the toolbar, `proto set` or `proto open`), with every control but "Hide toolbar" disabled meanwhile; a failed switch's error, the window left as it was; and "Blocked <url>: off localhost" when a link or a script tried to leave localhost.
+  An error or a block stays until the page next navigates.
+
+The toolbar is drawn only in the window's own page, never in a frame or in another tab sharing its browser, and is in before the page's own scripts run.
+It is one `<proto-overlay>` element with its own shadow root and styles, so the app's CSS does not reach it and its CSS does not reach the app; `proto/overlay.js`'s header describes its sections and the messages it sends the host, which phase 2's selection builds on.
+
 A target is `<engine>/<size>`:
 
 - the engines are `chromium`, `firefox`, `webkit` (launched) and `agent-chrome` (Daniel's Agent Chrome, attached);
@@ -151,6 +162,7 @@ The bats suite checks the coordinator's side with `ui-capture` stubbed: `tests/t
 
 `tests/toolkits/proto-host.test.mjs` runs the prototyping host through `scripts/proto` as Daniel does, headless (`PROTO_HEADLESS=1`), in a runtime directory of each test's own, against fixture pages on 127.0.0.1 (`tests/toolkits/helpers/proto.mjs`): a window in each engine at a preset, a device and a free size, read back from the page itself, moved by a second open in the same host, and every refusal and failure above.
 `tests/toolkits/proto-switch.test.mjs` switches the window the same way, against a fixture site that records each request it is sent, on 127.0.0.1, on `[::1]` (off localhost by the guard's rule) and on `localhost`: an engine switch round every engine the machine has, carrying the localhost login and not `[::1]`'s; a resize in place against a fresh context in the same browser; a failed switch, two at once, a link off localhost and a closed browser.
+`tests/toolkits/proto-overlay.test.mjs` drives the toolbar by role and accessible name through the host's test seam, as Daniel's clicks do: the overlay in before the page's first script in the top frame alone and drawn in no other page, its controls and an unavailable engine's option, a switch of engine, size and custom size from it, the controls while a switch runs and the status of one that fails, reload and the collapsed state across reloads and switches, a blocked navigation's status, a message of an unknown type, and a hostile page's CSS against the toolbar's, each way.
 Each runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
 The host's seams, read only from the environment, are in `proto/host.mjs`'s header.
 

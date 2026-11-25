@@ -21,7 +21,15 @@
 //                         true when the host reports the engine available; else, under CI=true,
 //                         fails the test with the reason, and elsewhere skips it with the reason
 //   await proto.page(action, fields)   POST /v1/test/page's answer body for `action` ("metrics",
-//                         "navigate" with `url`, "close-browser"), failing the test unless 200
+//                         "navigate" with `url`, "close-browser", "popup" with `url`, "send" with
+//                         `message`), failing the test unless 200
+//   await proto.toolbar(action, fields)   POST /v1/test/toolbar's answer body for `action`
+//                         ("select" or "fill" with `name` and `value`, "click" with `name`,
+//                         "read"), failing the test unless 200
+//   await proto.toolbarUntil(check, why)   the toolbar's "read" again every 50 ms until
+//                         check(read) is true, and that read; an answer that is not 200 (the page
+//                         between documents in a switch) is read again; fails the test, naming
+//                         `why` and the last answer, after 20 s
 //   pngSize(file)         a PNG's { width, height }, from its header
 //   browsersWithout(name) a browsers directory for PROTO_BROWSERS_PATH holding a link to every
 //                         entry of Playwright's browsers path (PROTO_BROWSERS_PATH when the test
@@ -33,6 +41,7 @@ import { existsSync, readFileSync, readdirSync, symlinkSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { repoRoot, tempDir } from "./mcp.mjs";
 import { owned, ownedPid } from "./process.mjs";
 
@@ -130,6 +139,19 @@ export function protoSession(t, { env = {} } = {}) {
       const answer = await request("POST", "/v1/test/page", { action, ...fields });
       assert.equal(answer.status, 200, `${action}: ${JSON.stringify(answer.body)}`);
       return answer.body;
+    },
+    async toolbar(action, fields = {}) {
+      const answer = await request("POST", "/v1/test/toolbar", { action, ...fields });
+      assert.equal(answer.status, 200, `${action}: ${JSON.stringify(answer.body)}`);
+      return answer.body;
+    },
+    async toolbarUntil(check, why, { timeoutMs = 20_000 } = {}) {
+      let last;
+      for (const started = Date.now(); Date.now() - started < timeoutMs; await sleep(50)) {
+        last = await request("POST", "/v1/test/toolbar", { action: "read" });
+        if (last.status === 200 && check(last.body)) return last.body;
+      }
+      return assert.fail(`${why}: the toolbar never got there; last read ${JSON.stringify(last)}`);
     },
     async engine(test, name) {
       const engine = (await this.engines()).find((each) => each.name === name);

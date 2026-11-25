@@ -15,15 +15,25 @@
 //                              a browser launched headed (headless with `headless`) with one
 //                              window in it, as window.reopen makes one; on any failure the
 //                              browser is closed and the error thrown
-//   hooks                      { onGone(), onBlocked(url), onNavigated(url) }, each optional:
-//                              the window's page or browser was closed by someone else (Daniel,
-//                              or the test seam), never by window.close(); a main-frame
-//                              navigation off localhost was blocked; the main frame navigated
+//   hooks                      { onGone(), onBlocked(url), onNavigated(url), onMessage(message,
+//                              { own }) }, each optional: the window's page or browser was closed
+//                              by someone else (Daniel, or the test seam), never by
+//                              window.close(); a main-frame navigation off localhost was blocked;
+//                              the main frame navigated; a page of the window's context sent the
+//                              overlay's binding a message, `own` when it is the window's page,
+//                              whose answer onMessage returns (overlay-page.mjs)
 //   window.url()               the page's URL now
 //   window.metrics()           what the page reports: innerWidth, innerHeight, devicePixelRatio,
 //                              userAgent, cookie and url
 //   window.resize(target)      the viewport set to the target's width and height, in place: the
 //                              page is not loaded again
+//   await window.reload()      the page reloaded, resolving once it has loaded
+//   window.push(state)         the overlay's state pushed to the page (overlay-page.mjs)
+//   await window.toolbar(body), await window.popup(url), await window.send(message)
+//                              the test seam's: an act on the page's toolbar (overlay-page.mjs's
+//                              toolbarAction), a second page of the window's context opened at
+//                              `url` and read (popupReport), and `message` sent to the binding
+//                              from the page's own script, answering the host's answer
 //   await window.reopen(url, target, storageState, hooks)
 //                              a new window in the same browser: a fresh context at the target
 //                              (its viewport, scale, mobile and touch, and a device's user agent)
@@ -51,6 +61,7 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { isLocalUrl, localStorageState } from "./guards.mjs";
+import { installOverlay, popupReport, pushState, toolbarAction } from "./overlay-page.mjs";
 import { pinnedBrowsers, playwright } from "./playwright.mjs";
 import { checkWebkitLibs, lacksLine } from "./webkit-libs.mjs";
 
@@ -106,7 +117,9 @@ async function openWindow(browser, url, target, storageState, hooks = {}) {
     ...(storageState ? { storageState } : {}),
   });
   const blockedWaiters = new Set();
+  let page = null;
   try {
+    await installOverlay(context, () => page, hooks.onMessage);
     await context.route((address) => !isLocalUrl(address.href), async (route) => {
       const request = route.request();
       let mainFrame = false;
@@ -120,7 +133,7 @@ async function openWindow(browser, url, target, storageState, hooks = {}) {
       for (const resolve of blockedWaiters) resolve(request.url());
       return route.fulfill({ status: 204 });
     });
-    const page = await context.newPage();
+    page = await context.newPage();
     await page.goto(url, { waitUntil: "load", timeout: loadTimeoutMs });
     return makeWindow(browser, context, page, hooks, blockedWaiters);
   } catch (error) {
@@ -164,6 +177,11 @@ function makeWindow(browser, context, page, hooks, blockedWaiters) {
       url: location.href,
     })),
     resize: (target) => page.setViewportSize({ width: target.width, height: target.height }),
+    reload: () => page.reload({ waitUntil: "load", timeout: loadTimeoutMs }),
+    push: (state) => pushState(page, state),
+    toolbar: (body) => toolbarAction(page, body),
+    popup: (url) => popupReport(context, url),
+    send: (message) => page.evaluate((sent) => window.__protoHost(sent), message),
     reopen: (url, target, storageState, newHooks) => openWindow(browser, url, target, storageState, newHooks),
     storageState: async () => localStorageState(await context.storageState()),
     async follow(url) {
