@@ -31,9 +31,9 @@ import { kept } from "../../servers/prod-mongo/list.mjs";
 import { checkoutRefusal, rehearsalAnswer, resolveRef } from "../../servers/prod-mongo/rehearse.mjs";
 import { restoreLimit } from "../../servers/prod-mongo/restore.mjs";
 import { destinationRefusal, dumpByStamp } from "../../servers/prod-mongo/root.mjs";
-import { perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
+import { createRoot as throwawayRoot, oneMongod as throwawayMongod, perThreadCaches as throwawayCaches, removeThrowaway, startThrowaway, teamLabel, throwawayImage, throwawayName } from "../../servers/prod-mongo/throwaway.mjs";
 import { opStub, repoRoot, startToolkitServer, stubDir, tempDir, testPath } from "./helpers/mcp.mjs";
-import { mongoImage, perThreadCaches, startMongo } from "./helpers/mongo.mjs";
+import { createRoot, mongoImage, oneMongod, perThreadCaches, startMongo } from "./helpers/mongo.mjs";
 import { owned } from "./helpers/process.mjs";
 import { assertNoLeak, evalMockTools, launcherRefusalTests } from "./helpers/toolkit.mjs";
 
@@ -660,9 +660,9 @@ const { MongoClient } = createRequire(join(repoRoot, "servers", "package.json"))
 const environOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/environ" : "ps -E -ww -o command= -p $$";
 const cmdlineOf = process.platform === "linux" ? "tr '\\0' '\\n' </proc/$$/cmdline" : "ps -ww -o command= -p $$";
 
-// The spy docker: each call's arguments, one per line and ended by "--- end", in `calls`, and
-// the environment `docker run` starts with, in `run-environ` and in `run-environ-<its --name>`;
-// then the real docker, but for
+// The spy docker: each call's arguments, one per line and ended by "--- end", in `calls`, the
+// environment `docker run` starts with, in `run-environ` and in `run-environ-<its --name>`, and
+// the one `docker exec` starts with, in `exec-environ`; then the real docker, but for
 // `docker port`, which fails while `fail-port` exists. While `hold-run` exists, `docker run`
 // first writes its pid to `run-held` and to `held-<its --name>`, waits up to 20 seconds for
 // `go-run`, as a first pull of the image does, and then writes `went-on-<its --name>`. While
@@ -679,6 +679,7 @@ if [ "$1" = run ]; then
   ${environOf} >"$dir/run-environ"
   cp "$dir/run-environ" "$dir/run-environ-$name"
 fi
+if [ "$1" = exec ]; then ${environOf} >"$dir/exec-environ"; fi
 if [ "$1" = run ] && [ -f "$dir/hold-run" ]; then
   echo $$ >"$dir/held-$name"
   echo $$ >"$dir/run-held"
@@ -757,9 +758,11 @@ const timed = (text) => text.replace(/: (PASS|FAIL) in \d+( min \d+)? s, /, ": $
 const drillsOf = (stamp) => (existsSync(join(root, stamp, "drills")) ? readdirSync(join(root, stamp, "drills")) : []);
 
 describe("restore-drill", () => {
-  test("the throwaway's image and its environment are the test helpers' own", () => {
+  test("the throwaway's image, its environment, its one mongod and its root user's script are the test helpers' own", () => {
     assert.equal(throwawayImage, mongoImage);
     assert.deepEqual(throwawayCaches, perThreadCaches);
+    assert.deepEqual(throwawayMongod, oneMongod);
+    assert.deepEqual(throwawayRoot, createRoot);
   });
 
   // The rehearsal's form: the throwaway on the default bridge and on the caller's network too.
@@ -780,10 +783,14 @@ describe("restore-drill", () => {
       assert.deepEqual(Object.keys(host.Tmpfs).sort(), ["/data/configdb", "/data/db"]);
       assert.deepEqual(inspected.Mounts.filter(({ Type }) => Type === "volume"), [], "it has a volume");
       assert.deepEqual(config.Entrypoint, ["timeout"]);
-      assert.deepEqual(config.Cmd, ["3600", "docker-entrypoint.sh", "mongod"]);
+      assert.deepEqual(config.Cmd, ["3600", "docker-entrypoint.sh", "mongod", "--auth"]);
+      assert.deepEqual(config.Env.filter((pair) => pair.startsWith("MONGO_INITDB_")), [], "the entrypoint makes the root user on a mongod of its own");
       assert.equal(config.Labels[teamLabel("toolkit")], "prod-mongo");
       assert.equal(config.Labels[teamLabel("expires")], throwaway.expires);
-      await throwaway.client.db("admin").command({ ping: 1 });
+      // One mongod start, so no earlier mongod can still hold port 27017 (helpers/mongo.mjs).
+      const logs = execFileSync(realDocker, ["logs", name], { encoding: "utf8" });
+      assert.equal(logs.split("\n").filter((line) => line.includes('"id":4615611,')).length, 1, "mongod starts logged");
+      await throwaway.client.db("admin").command({ listDatabases: 1 });
       assert.deepEqual(await throwaway.stop(), { gone: true });
       assert.ok(gone(name));
     } finally {
@@ -889,21 +896,26 @@ describe("restore-drill", () => {
     assert.match(name, /^prod-mongo-drill-[0-9a-f]{12}$/);
     assert.ok(gone(name), `${name} is still there`);
     for (const part of ["--rm", "--detach"]) assert.ok(run.includes(part), part);
-    const pairs = run.slice(0, -4).flatMap((arg, n) => (arg.startsWith("--") ? [`${arg} ${run[n + 1]}`] : []));
+    const pairs = run.slice(0, -5).flatMap((arg, n) => (arg.startsWith("--") ? [`${arg} ${run[n + 1]}`] : []));
+    assert.deepEqual(pairs.filter((pair) => pair.startsWith("--env ")), ["--env GLIBC_TUNABLES=glibc.pthread.rseq=1"]);
     for (const pair of [
       "--memory 2g", "--memory-swap 2g", "--publish 127.0.0.1::27017", "--tmpfs /data/db", "--tmpfs /data/configdb",
-      "--env GLIBC_TUNABLES=glibc.pthread.rseq=1", "--env MONGO_INITDB_ROOT_USERNAME=root", "--env MONGO_INITDB_ROOT_PASSWORD", "--entrypoint timeout",
+      "--entrypoint timeout",
       `--label ${teamLabel("owner")}=agent-team`, `--label ${teamLabel("kind")}=drill`, `--label ${teamLabel("toolkit")}=prod-mongo`,
     ]) {
       assert.ok(pairs.includes(pair), `docker run has no ${pair}`);
     }
-    assert.deepEqual(run.slice(-4), [mongoImage, "3600", "docker-entrypoint.sh", "mongod"]);
+    assert.deepEqual(run.slice(-5), [mongoImage, "3600", "docker-entrypoint.sh", "mongod", "--auth"]);
     const expires = Date.parse(pairs.find((pair) => pair.startsWith(`--label ${teamLabel("expires")}=`)).split("=")[1]);
     assert.ok(Math.abs(expires - (Date.parse(record.started) + 3600_000)) < 60_000, "expires is not its start plus an hour");
 
-    // The password: in docker run's own environment, and nowhere else.
-    const password = /^MONGO_INITDB_ROOT_PASSWORD=([0-9a-f]{48})$/m.exec(docker.read("run-environ"))?.[1];
-    assert.ok(password, "docker run's environment holds no password");
+    // The root user: made once, by docker exec in the throwaway, its password a name-only --env.
+    const execs = docker.calls().filter(([command]) => command === "exec");
+    assert.deepEqual(execs, [["exec", "--env", "MONGO_ROOT_PASSWORD", name, ...createRoot]]);
+    // The password: in docker exec's own environment, and nowhere else, docker run's included.
+    const password = /^MONGO_ROOT_PASSWORD=([0-9a-f]{48})$/m.exec(docker.read("exec-environ"))?.[1];
+    assert.ok(password, "docker exec's environment holds no password");
+    assert.ok(!docker.read("run-environ").includes(password), "the password is in docker run's environment");
     for (const call of docker.calls()) assert.ok(!call.join(" ").includes(password), `the password is in docker ${call[0]}'s argument list`);
     for (const what of ["cmdline", "environ"]) assert.ok(!restorer.read(what).includes(password), `the password is in mongorestore's ${what}`);
     assert.doesNotMatch(restorer.read("cmdline"), /mongodb:\/\//);

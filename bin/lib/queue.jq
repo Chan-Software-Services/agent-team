@@ -5,9 +5,9 @@
 # findings, each waits: line's age and team-queue waits' count. Used by team-queue over the
 # ledger's lines (jq -nR), with the items' cards (team-queue's one awk pass: {file, title, keys,
 # problems}), the registry's project names, the items that left the queue, the queued files the
-# tasks' plans cite, today's UTC date, the time now, for list team-capacity's plan and costs, and
-# for list and waits when each waits: line last changed; team-queue's header documents the keys,
-# the states and the words.
+# tasks' plans cite, today's UTC date, the time now, for list team-capacity's plan and costs and
+# the worktree pools team-queue read with no free tree, and for list and waits when each waits:
+# line last changed; team-queue's header documents the keys, the states and the words.
 include "ledger";
 
 # The front matter keys, in the order team-queue writes them.
@@ -445,12 +445,16 @@ def queue_waits_text: [.says, (.waits[] | "- \(.file): \(.days | queue_age): \(.
 def queue_list_item: {file, title, summary, project, priority, size, after, waits, waited, from, opened, takes, alone, guarded, unblocks, rank};
 
 # team-sweep's queue findings, each with task, session and name null, from the room
-# (queue_room's), queue_view's object, the problems (queue_problems') and the events by task:
-# queue-ready while the room fits and an item is ready, naming the top one and the command that
-# opens it, and for an item that runs alone the project's other open tasks to hold first; queue
-# while there are problems, their count and the first two.
-def queue_findings($room; $view; $problems; $tasks):
-  (select($room.fits and $view.ready != []) | $view.ready[0]
+# (queue_room's, its line naming the pools below), queue_view's object, the problems
+# (queue_problems'), the events by task and the pools team-queue list names ([{project, full,
+# says}], full for each project whose worktree pool has no free tree, and not for one that could
+# not be read): queue-ready while the room fits and an item of a project with no full pool is
+# ready, naming the top one and the command that opens it, and for an item that runs alone the
+# project's other open tasks to hold first; queue while there are problems, their count and the
+# first two.
+def queue_findings($room; $view; $problems; $tasks; $full):
+  ([$full[] | select(.full) | .project] as $no_tree | first($view.ready[] | select(IN(.project; $no_tree[]) | not)) // null) as $open
+  | (select($room.fits and $open != null) | $open
    | . as $top
    | (queue_what | if length > 80 then .[:77] + "..." else . end) as $what
    | ([select($top.alone) | $tasks | to_entries[] | .key as $t | .value
@@ -464,12 +468,18 @@ def queue_findings($room; $view; $problems; $tasks):
    | {task: null, kind: "queue", session: null, name: null, next: $next,
       text: "queue: \($problems | length | queue_count("problem")) in tasks/queued/: \($problems[:2] | map(queue_problem_line) | join("; ")); next: \($next)"});
 
+# The ready items' projects, each once, in the order its first ready item ranks, from queue_view's
+# object: the pools team-queue list reads, while the room fits, until one has a free tree.
+def queue_pool_order: reduce .ready[].project as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
+
 # team-queue list's object, team-queue/1, from the items and the inputs queue_room and
-# queue_findings take: {schema, room, ready, waiting, opened, unranked, problems, findings}.
-def queue_list($plan; $costs; $events; $registry_error; $today):
+# queue_findings take, the pools it names ([{project, full, says}]) after the room's line while it
+# fits: {schema, room, ready, waiting, opened, unranked, problems, findings}.
+def queue_list($plan; $costs; $events; $registry_error; $today; $full):
   ($events | by_task) as $tasks
   | queue_view as $view
-  | queue_room($plan; $costs; $tasks; $today) as $room
+  | (queue_room($plan; $costs; $tasks; $today)
+     | if .fits and $full != [] then .says += "; " + ([$full[].says] | join("; ")) else . end) as $room
   | queue_problems($registry_error) as $problems
   | {schema: "team-queue/1", room: $room,
      ready: [$view.ready[] | queue_list_item],
@@ -477,7 +487,7 @@ def queue_list($plan; $costs; $events; $registry_error; $today):
      opened: [$view.opened[] | queue_list_item],
      unranked: [$view.unranked[] | {file, problems}],
      problems: $problems,
-     findings: [queue_findings($room; $view; $problems; $tasks)]};
+     findings: [queue_findings($room; $view; $problems; $tasks; $full)]};
 
 # team-queue list's text from its object and queue_view's: the room's line, then the index's
 # sections, ending in a newline.
