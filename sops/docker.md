@@ -345,6 +345,7 @@ The heartbeat (`team-timers run`, every 5 minutes on the lease holder) can run t
 Builders, planners and reviewers carry these rules in a short `## Docker stacks` section of their role:
 
 - Start the worktree's stack only with `~/agent-team/bin/team-stack up`, never `docker compose up`, the wrapper's `up` or `docker run`, and reach it with `eval "$(~/agent-team/bin/team-stack env)"`.
+  `command-guard`'s `docker-run` row holds the `docker run` part for a planner, builder or reviewer: it refuses `docker run` and `docker create` (and `docker container run` and `create`), past docker's global options, and names the allowed way, `team-stack up` for the worktree's stack or the project's own script for a one-off server (Conventioner's `scripts/real-mongo-test.sh`).
 - On `up`'s exit 75 (no room, or a heavy run still holding the machine before a new stack's network is made), send `T<n> PAUSED <its reason line>` and wait, rather than fighting for room.
 - Seed only with `~/agent-team/bin/team-stack seed` (or let `up` seed a new stack), never the project's seed script, and run nothing after an `up` that may exit 75 in the same call.
 - `~/agent-team/bin/team-stack stop` a stack no longer needed, and `~/agent-team/bin/team-stack down` it when done.
