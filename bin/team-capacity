@@ -232,8 +232,9 @@
 #                             its holder line's label).
 # costs    Each kind of work's estimate, one line each ("session:builder: 0.6 GiB, learned from 7
 #          samples, 0.4 GiB to 0.6 GiB"): a session by role (each role in roles/ but the
-#          coordinator's), a stack by registered project with a stack block, the gate, then every
-#          other kind costs.jsonl has (heavy:<kind>, which team-heavy writes). Its samples are the
+#          coordinator's, the assistant's and its read session's, which no admission counts), a
+#          stack by registered project with a stack block, the gate, then every other kind
+#          costs.jsonl has (heavy:<kind>, which team-heavy writes). Its samples are the
 #          lines in their kind's measure: a stack's "docker" (or none, a line from before, since
 #          docker stats never counted page cache), every other kind's "working_set". From 5
 #          samples the estimate is the 90th percentile (nearest rank) of the peaks of the last 20,
@@ -1178,7 +1179,8 @@ release_stopped_admissions() {
   mapfile -t -O "${#freed[@]}" freed < <(jq -r '.[].session' <<<"$stopped")
 }
 
-# The worker roles, those in roles/ but the coordinator's and the assistant's, into roles, and
+# The worker roles, those in roles/ but the coordinator's, the assistant's and its read
+# session's (claude-assistant-read), which no admission counts, into roles, and
 # with <read> true the registry (read_registry, whose failure leaves out what it could not read)
 # into registry, else [].
 costs_inputs() {
@@ -1187,7 +1189,7 @@ costs_inputs() {
   for file in "${TEAM_LIB%/*}"/../roles/*.md; do
     [[ -f $file ]] || continue
     file=${file##*/}
-    [[ $file == coordinator.md || $file == assistant.md ]] || roles+=("${file%.md}")
+    [[ $file == coordinator.md || $file == assistant.md || $file == assistant-read.md ]] || roles+=("${file%.md}")
   done
   registry='[]'
   [[ $1 == false ]] || read_registry || true

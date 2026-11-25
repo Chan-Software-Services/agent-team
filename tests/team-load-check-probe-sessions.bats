@@ -89,7 +89,7 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   run_bin -2 team-load-check --probe --worktree "$HOME"
   assert_contains "$output" "--worktree is for --role ops only"
   run_bin -2 team-load-check --probe --request https://discord.com/channels/1/2/3
-  assert_contains "$output" "--request is for --role ops only"
+  assert_contains "$output" "--request is for --role ops and --role assistant-read only"
   run_bin -2 team-load-check --probe --role ops
   assert_contains "$output" "--probe tries the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel"
   run_bin -2 team-load-check --probe --role coordinator

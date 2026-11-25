@@ -19,6 +19,7 @@ SETUP.md
 LICENSE
 coordinator.settings.json
 assistant.settings.json
+assistant-read.settings.json
 .gitignore
 .shellcheckrc
 rust-toolchain.toml

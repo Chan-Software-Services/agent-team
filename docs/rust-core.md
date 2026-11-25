@@ -129,6 +129,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | Script | Crate | Seam | Note |
 | - | - | - | - |
 | `bin/claude-assistant` | `team-core` | `platform` | Starts the assistant's session |
+| `bin/claude-assistant-read` | `team-core` | `platform` | Starts and ends the assistant's read session, one production question each |
 | `bin/claude-coordinator` | `team-core` | `platform` | Starts the coordinator's session |
 | `bin/team-answer` | `team-core` | `interface` | `answer_ask`, with Daniel's `Attestation` |
 | `bin/team-ask` | `team-core` | `interface` | Requests (step 4), shown through `AskPresenter` |
@@ -262,6 +263,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/review-app` | `team-platform` or a `Vcs` crate (open) | `vcs` | Config: the reviewer App |
 | `bin/lib/review_facts.py` | `team-core` | `vcs` | |
 | `bin/lib/session-activity` | `team-core` | `platform` | |
+| `bin/lib/session-purge.sh` | `team-core` | `platform` | Deletes what an ended session left, for `team-ops-end` and `claude-assistant-read` |
 | `bin/lib/session_records.py` | `team-guard` | `platform` | |
 | `bin/lib/stack.jq` | `team-core` | `platform` | |
 | `bin/lib/stow.sh` | `team-core` | `platform`, `vcs` | |
@@ -375,7 +377,7 @@ The config in `bin/lib/` is in the library's table above; the rest, with the tea
 | `~/.config/agent-team/confine/` | the machine | `team-platform-linux` | `platform` | Each confined session's roots |
 | `~/.local/state/agent-team/` | the machine | `team-platform` (paths), `teamd` | `platform` | The machine's state: the lease, health, notices, the inbox, quota and uptime readings, locks and logs |
 | `settings/*.json` | the code | stays | `platform` | Workers' Claude Code settings, with `team-guard`'s hooks |
-| `coordinator.settings.json`, `assistant.settings.json` | the code | stays | `platform` | |
+| `coordinator.settings.json`, `assistant.settings.json`, `assistant-read.settings.json` | the code | stays | `platform` | |
 | `rust-toolchain.toml` | the code | the workspace | `none` | |
 | `Cargo.toml` | the code | the workspace | `none` | The virtual workspace: its members under `crates/`, its shared package keys and lints |
 | `Cargo.lock` | the code | the workspace | `none` | Committed; `tests/run rust` builds with `--locked` |

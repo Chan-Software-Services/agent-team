@@ -1,10 +1,13 @@
 // Checks every toolkit server test makes, whichever toolkit it starts.
 //
 //   assertNoLeak(server, { marker, home })     after every run: the secret never got out
-//   launcherRefusalTests(toolkit, context, { reads, notTheSecret, path })
+//   launcherRefusalTests(toolkit, context, { reads, roles, notTheSecret, path })
 //                                              inside a describe(): one test per launcher refusal;
 //                                              context() gives { value, home, marker } at run time;
 //                                              `reads`, the op reads a launch makes (1),
+//                                              `roles`, the session roles the toolkit reads in
+//                                              (["ops"], or ["ops", "assistant-read"] for the
+//                                              kits the assistant's read session takes),
 //                                              `notTheSecret`, { what, reason } of the value that
 //                                              is not the toolkit's secret (a MongoDB connection
 //                                              string's by default), and `path`, the server's
@@ -29,15 +32,22 @@ export function assertNoLeak(server, { marker, home }) {
 // Each case exits 1 before the server starts, with nothing on stdout and one line on stderr.
 // `calls`: the op commands the case runs; every value read is signed out, even a bad one, and the
 // first read that fails ends the reads. `role`: the session's role in place of ops, or null for
-// none; outside an ops launch op is never called.
+// none; outside a launch of one of the toolkit's roles op is never called. A kit of ops alone
+// also refuses the assistant's read session, with the ops wording.
 const notAConnectionString = { what: "when the value is not a connection string", reason: /is not a MongoDB connection string$/ };
 const notAnOpsLaunch = /^not an ops launch \(AGENT_TEAM_ROLE is not ops\), so no secret is read$/;
+const notAnOpsOrReadLaunch = /^not an ops or assistant read launch \(AGENT_TEAM_ROLE is neither ops nor assistant-read\), so no secret is read$/;
 
-export function launcherRefusalTests(toolkit, context, { reads = 1, notTheSecret = notAConnectionString, path: serverPath = testPath } = {}) {
+export function launcherRefusalTests(toolkit, context, { reads = 1, roles = ["ops"], notTheSecret = notAConnectionString, path: serverPath = testPath } = {}) {
   const read = Array(reads).fill("read");
+  const wording = { ops: notAnOpsLaunch, "ops assistant-read": notAnOpsOrReadLaunch }[roles.join(" ")];
+  assert.ok(wording, `no refusal wording for the roles ${roles.join(", ")}`);
   const cases = [
-    { what: "outside an ops launch", role: null, calls: [], reason: notAnOpsLaunch },
-    { what: "in another role's session", role: "builder", calls: [], reason: notAnOpsLaunch },
+    { what: "outside a launch of its roles", role: null, calls: [], reason: wording },
+    { what: "in another role's session", role: "builder", calls: [], reason: wording },
+    ...(roles.includes("assistant-read") ? [] : [
+      { what: "in the assistant's read session", role: "assistant-read", calls: [], reason: notAnOpsLaunch },
+    ]),
     { what: "when op is not on PATH", path: () => serverPath({ withOp: false }), calls: [], reason: /^op is not on PATH$/ },
     { what: "when op read fails", mode: "fail", calls: ["read"], reason: /^op read failed: .*authorization prompt dismissed/ },
     { what: "when op read returns nothing", value: () => "", calls: [...read, "signout"], reason: /^op read returned an empty value$/ },
