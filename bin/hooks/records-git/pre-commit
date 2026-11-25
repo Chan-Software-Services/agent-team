@@ -1,14 +1,41 @@
 #!/usr/bin/env bash
 # Git's pre-commit hook for the records repository (the team home), with its core.hooksPath set to
-# this directory by absolute path, since the records hold no code: it refuses a commit that adds an
-# email address at a public provider, in a file's added lines, or any image, naming each path and
-# never the address (bin/lib/data-check records). The address git commits as (user.email) is not
-# refused. team-doctor's records hooks line checks the setting.
+# this directory by absolute path, since the records hold no code. It refuses a commit that:
+#   - stages a models.toml (added or changed) that does not read, naming each of its problems as
+#     `team-models --check --file` does on the staged blob, a project= read against the registry of
+#     this repository, the hook's own team home, so a broken file never reaches another machine; a
+#     commit that stages no models.toml reads none
+#   - adds an email address at a public provider, in a file's added lines, or any image, naming
+#     each path and never the address (bin/lib/data-check records); the address git commits as
+#     (user.email) is not refused
+# Both checks run, so one commit names every problem. team-doctor's records hooks line checks the
+# setting.
 # Exit 0 the commit may go ahead, 1 refused with the reason on stderr.
 set -euo pipefail
-# The team home is never read here: the hook runs in it.
+# The team home is never looked up here: the hook runs in it.
 # shellcheck disable=SC2034 # read by bin/lib/team.sh
 team_home_report=1
 source "$(dirname "${BASH_SOURCE[0]}")/../../lib/team.sh" "$@"
+# Its pathspec is its own (":(literal)models.toml"), as data-check's are: a hook inherits git's
+# environment, and commit_records commits with GIT_LITERAL_PATHSPECS, under which that pathspec
+# matches nothing and a broken file would go unread.
+unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
 
-exec "$(dirname "${BASH_SOURCE[0]}")/../../lib/data-check" records
+refused=0
+# The index git commits, GIT_INDEX_FILE's for a commit of named paths only (--only).
+if [[ -n $(git diff --cached --name-only --no-renames --diff-filter=AMT -- ':(literal)models.toml') ]]; then
+  staged=$(team_mktemp)
+  git cat-file blob :models.toml >"$staged"
+  problems=$(team_mktemp)
+  if ! TEAM_HOME=$(git rev-parse --show-toplevel) "$TEAM_LIB/../team-models" --check --file "$staged" \
+    2>"$problems" </dev/null; then
+    {
+      echo "pre-commit: refused: the staged models.toml does not read, so every worker launch from it would be refused; fix each line team-models --check names, then commit again:"
+      sed 's/^/  /' "$problems"
+    } >&2
+    refused=1
+  fi
+fi
+
+"$TEAM_LIB/data-check" records || refused=1
+exit "$refused"
