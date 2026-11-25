@@ -15,20 +15,41 @@
 //                      devices, current }: the catalogue for the window's project
 //   POST /v1/open      { url?, target?, project? } -> the window's { target, url, engine,
 //                      version, width, height, scale, mobile, touch }: opens one when none is
-//                      open, else opens the new target and URL and then closes the old window,
-//                      which stays as it was when the new one fails. The URL defaults to the
-//                      project's url, the target to the window's own, else chromium/laptop; an
-//                      engine or a size alone keeps the other. `project` is the client's
-//                      reading of .proto.json, { file, settings }, checked again here and kept
-//                      for the window.
+//                      open, else moves the one open to the URL and target as a switch does.
+//                      The URL defaults to the project's url, the target to the window's own,
+//                      else chromium/laptop; an engine or a size alone keeps the other.
+//                      `project` is the client's reading of .proto.json, { file, settings },
+//                      checked again here and kept for the window.
+//   POST /v1/target    { target, url? } -> the window's answer, as open's, after the switch:
+//                      the URL defaults to the page's own now, wherever it navigated; refused
+//                      400 with no window open ("run `proto open`") and 409 while another open
+//                      or switch is queued or running ("a switch is already running").
+//                      A switch, by open or target:
+//                      - another engine: the window's storage state, localhost's cookies and
+//                        origins alone, is read, the new engine opened at the URL with it, and
+//                        once its page has loaded the old browser is closed;
+//                      - the same engine at another scale, mobile or touch flag or user agent,
+//                        or at another URL: a fresh context in the same browser, carrying the
+//                        storage state the same way, and then the old context is closed;
+//                      - the same engine and URL at another width and height alone: the
+//                        viewport resized in place, the page not loaded again.
+//                      When the new window fails (an engine unavailable, a launch or a load
+//                      failing), what it opened is closed and the old window stays as it was.
 //   POST /v1/stop      { stopped: true }, then it closes its windows, removes the socket and the
 //                      token, and exits 0; SIGTERM, SIGINT and SIGHUP do the same
-//   POST /v1/test/page { action: "metrics" } -> the window page's innerWidth, innerHeight,
-//                      devicePixelRatio, userAgent, cookie and url (PROTO_TEST_SEAM=1 only;
-//                      404 without it)
+//   POST /v1/test/page { action, url? } (PROTO_TEST_SEAM=1 only; 404 without it):
+//                      "metrics" -> the window page's innerWidth, innerHeight, devicePixelRatio,
+//                      userAgent, cookie and url; "navigate" with `url` -> follows a link there
+//                      as a user would (launched.mjs's follow), then the metrics and `status`,
+//                      the host's status line ("Blocked <url>: off localhost", which the next
+//                      main-frame navigation clears) or null; "close-browser" -> closes the
+//                      window's browser as Daniel quits it, then { closed: true }
+// A window whose page or browser Daniel closes is dropped (status's window null, "no window")
+// while the host runs on; `proto open` opens a new one.
 // An error answers { error: "<one line>" }: 400 a bad body, target or URL (one off localhost is
 // refused before anything opens), 401, 404, 503 an engine unavailable or failing to start or
-// load, with its reason. Window operations run one at a time, in the order they came.
+// load, with its reason; 409 a switch while another runs. Window operations run one at a time,
+// in the order they came.
 // `protocol` is 1; a client refuses a host that answers another.
 //
 // It refuses to run in a team session (AGENT_TEAM_ROLE set), before anything is read.
@@ -84,10 +105,14 @@ class Refusal extends Error {
   }
 }
 
-// The window: { driver, handle, target, project }, or null.
+// The window: { driver, handle, target, project }, or null. A switch changes its target and
+// project in place, or puts a new one here.
 let current = null;
 const defaultProject = readProject(null);
 let stopping = false;
+// The open and target operations queued or running, and the status line the toolbar shows.
+let switching = 0;
+let statusLine = null;
 
 // One window operation at a time, in the order they came.
 let queue = Promise.resolve();
@@ -132,6 +157,64 @@ function readRequestProject(project) {
   }
 }
 
+// The hooks of a window record not yet made: each acts only while it is the host's window.
+function windowHooks() {
+  const record = {};
+  const mine = () => current !== null && current === record;
+  record.hooks = {
+    onGone: () => {
+      if (!mine()) return;
+      current = null;
+      statusLine = null;
+    },
+    onBlocked: (url) => {
+      if (mine()) statusLine = `Blocked ${url}: off localhost`;
+    },
+    onNavigated: () => {
+      if (mine()) statusLine = null;
+    },
+  };
+  return record;
+}
+
+const sameContext = (a, b) => a.scale === b.scale && a.mobile === b.mobile && a.touch === b.touch && (a.userAgent ?? null) === (b.userAgent ?? null);
+
+// Opens the window, or moves the one open to `url` and `target` (the header's "A switch"); in the
+// queue, so `current` holds still.
+async function place(url, target, project) {
+  const old = current;
+  const driver = drivers.get(target.engine);
+  const sameEngine = old !== null && old.target.engine === target.engine;
+  if (sameEngine && sameContext(old.target, target) && url === old.handle.url()) {
+    if (old.target.width !== target.width || old.target.height !== target.height) await old.handle.resize(target);
+    old.target = target;
+    old.project = project;
+    return windowAnswer(old);
+  }
+  if (!sameEngine) {
+    const state = driver.available();
+    if (!state.available) throw new Refusal(503, state.reason);
+  }
+  const record = windowHooks();
+  try {
+    const storage = old ? await old.handle.storageState() : undefined;
+    record.handle = sameEngine ? await old.handle.reopen(url, target, storage, record.hooks) : await driver.open(url, target, storage, record.hooks);
+  } catch (error) {
+    throw new Refusal(503, `${target.engine} could not open ${url}: ${firstLine(error)}`);
+  }
+  Object.assign(record, { driver, target, project });
+  current = record;
+  statusLine = null;
+  if (old) await old.handle.close().catch(() => {});
+  return windowAnswer(record);
+}
+
+// A window operation that switches: queued, and counted while it waits and runs.
+const switched = (operation) => {
+  switching++;
+  return queued(operation).finally(() => switching--);
+};
+
 async function open(body) {
   checkBody(body, ["url", "target", "project"]);
   const project = readRequestProject(body.project);
@@ -148,28 +231,52 @@ async function open(body) {
   } catch (error) {
     throw new Refusal(400, error.message);
   }
-  return queued(async () => {
-    const driver = drivers.get(target.engine);
-    const state = driver.available();
-    if (!state.available) throw new Refusal(503, state.reason);
-    let handle;
-    try {
-      handle = await driver.open(url, target);
-    } catch (error) {
-      throw new Refusal(503, `${target.engine} could not open ${url}: ${firstLine(error)}`);
+  return switched(() => place(url, target, project));
+}
+
+const noWindow = "no window is open; run `proto open`";
+
+async function switchTarget(body) {
+  checkBody(body, ["target", "url"]);
+  if (switching > 0) throw new Refusal(409, "a switch is already running");
+  if (!current) throw new Refusal(400, noWindow);
+  let url;
+  let target;
+  try {
+    if (body.url !== undefined) url = checkLocalUrl(body.url);
+    target = resolveTarget(body.target, current.project, targetText(current.target));
+  } catch (error) {
+    throw new Refusal(400, error.message);
+  }
+  return switched(async () => {
+    if (!current) throw new Refusal(400, noWindow);
+    let here = url;
+    if (here === undefined) {
+      try {
+        here = checkLocalUrl(current.handle.url());
+      } catch (error) {
+        throw new Refusal(400, `the window's page is not one proto opens: ${error.message}`);
+      }
     }
-    const old = current;
-    current = { driver, handle, target, project };
-    if (old) await old.handle.close().catch(() => {});
-    return windowAnswer(current);
+    return place(here, target, current.project);
   });
 }
 
+const testActions = ["metrics", "navigate", "close-browser"];
+
 async function testPage(body) {
   checkBody(body, ["action", "url"]);
-  if (body.action !== "metrics") throw new Refusal(400, `unknown action ${JSON.stringify(body.action)}; the actions are metrics`);
-  if (!current) throw new Refusal(400, "no window is open; run `proto open`");
-  return current.handle.metrics();
+  if (!testActions.includes(body.action)) throw new Refusal(400, `unknown action ${JSON.stringify(body.action)}; the actions are ${testActions.join(", ")}`);
+  if (!current) throw new Refusal(400, noWindow);
+  const window = current;
+  if (body.action === "metrics") return window.handle.metrics();
+  if (body.action === "close-browser") {
+    await window.handle.closeBrowser();
+    return { closed: true };
+  }
+  if (typeof body.url !== "string" || !URL.canParse(body.url)) throw new Refusal(400, "navigate takes url, the link's address");
+  await window.handle.follow(body.url);
+  return { ...(await window.handle.metrics()), status: statusLine };
 }
 
 async function stop() {
@@ -193,6 +300,7 @@ const routes = {
     return { ...listing, engines: listing.engines.map((name) => engineState(drivers.get(name))), current: current ? targetText(current.target) : null };
   },
   "POST /v1/open": open,
+  "POST /v1/target": switchTarget,
   "POST /v1/stop": async () => {
     setImmediate(stop);
     return { stopped: true };

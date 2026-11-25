@@ -4,6 +4,7 @@
 // one long-lived local process per user that owns the browsers and Daniel's one window.
 //
 // Usage: proto open [<url>] [--target <engine>/<size>]
+//        proto set <engine>/<size> | proto set <engine> | proto set <size>
 //        proto status | proto targets | proto stop
 //        proto install [--refresh-pins [--series <codename>] [--add <package>]...]
 //   open     starts the host when none runs and opens the window, or moves the one open to the
@@ -11,6 +12,13 @@
 //            "proto: <engine> <version> at <size> (<width>x<height>@<scale>) on <url>". The URL
 //            defaults to the project's url (http://localhost:5173/ without one), the target to
 //            the window's own, else chromium/laptop; an engine or a size alone keeps the other.
+//   set      switches the open window to the target, on the page it shows now, and prints the
+//            same line; an engine or a size alone keeps the other. Another engine reopens the
+//            page there with the window's localhost cookies and localStorage and closes the old
+//            browser; a new scale, mobile or touch flag or user agent reopens it in a fresh
+//            context of the same browser, carrying them the same way; a new width and height
+//            alone resize the window in place, keeping the page as it is. A switch that fails
+//            leaves the window as it was. Refused with no window open: run `proto open`
 //   status   the host's pid and the window's target and URL, or "proto: no host running"
 //   targets  starts the host when none runs; the engines, each with its version, availability
 //            or the reason it is unavailable, and capabilities, then the sizes with their metrics
@@ -44,7 +52,9 @@
 // { "device": "<Playwright device name>" }) and matrix ({ "engines": [...], "sizes": [...] }, a
 // capture's defaults); a mistake is refused naming the file, the key and the reason.
 // Guards: only http or https URLs on localhost or 127.0.0.1 are opened, any other refused
-// before anything opens; a team session (AGENT_TEAM_ROLE set) is refused before anything is
+// before anything opens, and a link or a script in a window that navigates its page off
+// localhost is blocked, the page left where it was (a frame, a font or a script off localhost
+// still loads); a team session (AGENT_TEAM_ROLE set) is refused before anything is
 // read; the host's runtime directory ($XDG_RUNTIME_DIR/agent-team-proto, else
 // ~/.local/state/agent-team/proto; PROTO_RUNTIME_DIR for tests) is mode 0700 and refused when
 // open to others, and every request to the host carries its token.
@@ -65,7 +75,7 @@ const { connect } = await import("../proto/client.mjs");
 const { checkLocalUrl } = await import("../proto/guards.mjs");
 const { installerPath } = await import("../proto/playwright.mjs");
 
-const usage = "usage: proto open [<url>] [--target <engine>/<size>] | status | targets | stop | install [--refresh-pins [--series <codename>] [--add <package>]...]";
+const usage = "usage: proto open [<url>] [--target <engine>/<size>] | set <engine>/<size> | status | targets | stop | install [--refresh-pins [--series <codename>] [--add <package>]...]";
 const fail = (reason, status = 1) => {
   process.stderr.write(`proto: ${reason}\n`);
   process.exit(status);
@@ -108,6 +118,14 @@ async function open(args) {
   if (target !== undefined) resolveTarget(target, settings);
   const host = await connect({ start: true });
   const window = await host.request("POST", "/v1/open", { url, ...(target === undefined ? {} : { target }), project: { file: settings.file, settings: settings.settings } }, { timeoutMs: 90_000 });
+  say(`${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`);
+}
+
+async function set(args) {
+  if (args.length !== 1 || args[0].startsWith("-")) fail(usage, 2);
+  const host = await connect();
+  if (!host) fail("no window is open; run `proto open`");
+  const window = await host.request("POST", "/v1/target", { target: args[0] }, { timeoutMs: 90_000 });
   say(`${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`);
 }
 
@@ -177,7 +195,7 @@ async function install(args) {
 
 const [command, ...args] = process.argv.slice(2);
 if (command === "--help" || command === "-h") help();
-const commands = { open, status, targets, stop, install };
+const commands = { open, set, status, targets, stop, install };
 const simple = new Set(["status", "targets", "stop"]);
 if (!Object.hasOwn(commands, command)) fail(usage, 2);
 if (simple.has(command) && args.length) fail(usage, 2);

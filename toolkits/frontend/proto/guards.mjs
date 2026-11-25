@@ -8,6 +8,9 @@
 //                                each entry point calls it first
 //   checkLocalUrl(text)          the URL as its href when its scheme is http or https and its host
 //                                localhost or 127.0.0.1 (any port), else throws a one-line reason
+//   isLocalUrl(text)             whether checkLocalUrl takes it
+//   localStorageState(state)     a Playwright storage state with only the cookies and origins of
+//                                localhost and 127.0.0.1, what a switch carries to a new window
 //   runtimeDir(env)              PROTO_RUNTIME_DIR when set, else $XDG_RUNTIME_DIR/agent-team-proto
 //                                when XDG_RUNTIME_DIR is set, else ~/.local/state/agent-team/proto
 //   checkRuntimeDir(dir, { create })   makes the directory mode 0700 when `create` and it is
@@ -52,6 +55,22 @@ export function checkLocalUrl(text) {
     throw new Error(`${text} is off localhost; proto opens only http or https on localhost or 127.0.0.1`);
   }
   return url.href;
+}
+
+export function isLocalUrl(text) {
+  try {
+    checkLocalUrl(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function localStorageState(state) {
+  return {
+    cookies: state.cookies.filter((cookie) => localHosts.has(cookie.domain.replace(/^\./, ""))),
+    origins: state.origins.filter((origin) => isLocalUrl(origin.origin)),
+  };
 }
 
 export function runtimeDir(env = process.env) {

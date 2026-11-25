@@ -20,11 +20,18 @@
 //   await proto.engine(t, name)
 //                         true when the host reports the engine available; else, under CI=true,
 //                         fails the test with the reason, and elsewhere skips it with the reason
+//   await proto.page(action, fields)   POST /v1/test/page's answer body for `action` ("metrics",
+//                         "navigate" with `url`, "close-browser"), failing the test unless 200
 //   pngSize(file)         a PNG's { width, height }, from its header
+//   browsersWithout(name) a browsers directory for PROTO_BROWSERS_PATH holding a link to every
+//                         entry of Playwright's browsers path (PROTO_BROWSERS_PATH when the test
+//                         runs with one, else Playwright's default cache) but engine `name`'s, so
+//                         that one engine is unavailable while the others run
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, symlinkSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { repoRoot, tempDir } from "./mcp.mjs";
 import { owned, ownedPid } from "./process.mjs";
@@ -119,6 +126,11 @@ export function protoSession(t, { env = {} } = {}) {
       const { body } = await request("GET", "/v1/targets");
       return body.engines.filter((engine) => engine.name !== "agent-chrome");
     },
+    async page(action, fields = {}) {
+      const answer = await request("POST", "/v1/test/page", { action, ...fields });
+      assert.equal(answer.status, 200, `${action}: ${JSON.stringify(answer.body)}`);
+      return answer.body;
+    },
     async engine(test, name) {
       const engine = (await this.engines()).find((each) => each.name === name);
       if (engine.available) return true;
@@ -133,4 +145,21 @@ export function pngSize(file) {
   const bytes = readFileSync(file);
   assert.equal(bytes.subarray(1, 4).toString("latin1"), "PNG", `${file} is not a PNG`);
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+// Playwright's browsers path, as playwright-core's registry finds it.
+function browsersPath() {
+  if (process.env.PROTO_BROWSERS_PATH) return process.env.PROTO_BROWSERS_PATH;
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) return process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (process.platform === "darwin") return join(homedir(), "Library", "Caches", "ms-playwright");
+  return join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "ms-playwright");
+}
+
+export function browsersWithout(name) {
+  const dir = tempDir(`browsers-without-${name}`);
+  const from = browsersPath();
+  for (const entry of existsSync(from) ? readdirSync(from) : []) {
+    if (!entry.startsWith(`${name}-`)) symlinkSync(join(from, entry), join(dir, entry));
+  }
+  return dir;
 }

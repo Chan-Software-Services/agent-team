@@ -74,9 +74,16 @@ At the laptop, in the project's checkout, with its dev server running:
 1. Once per machine, and after each Playwright bump: `~/agent-team/toolkits/frontend/scripts/proto install`, which fetches the pinned browsers into Playwright's cache (`~/.cache/ms-playwright`) with `playwright-core`'s own installer, never with `--with-deps` and never under sudo.
    On Linux it then places the libraries WebKit's build lacks ("WebKit on Linux", below).
 2. `proto open` opens the project's URL in Chromium at `laptop`; `proto open http://localhost:5173/login --target firefox/phone` opens that page in Firefox at 390x844, scale 3, mobile and touch.
-   With a window open, another `proto open` moves it: it opens the new URL and target, then closes the old window, which stays as it was when the new one fails.
+   With a window open, another `proto open` moves it to the new URL and target as a switch does.
    An engine or a size alone keeps the other (`--target webkit`, `--target tablet`).
-3. `proto status` says whether the host runs, and which target and URL the window shows; `proto targets` lists the engines, each with its version, availability or the reason it is unavailable with its fix, and capabilities, then the sizes; `proto stop` closes the window and ends the host, leaving no socket or token.
+3. `proto set webkit`, `proto set phone` or `proto set firefox/1024x768` switches the open window on the page it shows now, wherever Daniel navigated it:
+   - another engine reopens that page there with the window's login, its `localhost` and `127.0.0.1` cookies and `localStorage` and nobody else's, and once the new page has loaded closes the old browser;
+   - the same engine at another scale, mobile or touch flag or user agent (`phone` from `laptop`, a device) reopens the page in a fresh context of the same browser, carrying the login the same way, and closes the old context;
+   - another width and height alone (`1024x768` from `laptop`) resize the window in place, so the page keeps its state and is not loaded again.
+
+   A switch that fails (an engine unavailable, a page that does not load) leaves the window as it was, on its page and at its size, and says why; a second switch sent while one runs is refused, "a switch is already running".
+   `proto set` with no window open is refused, naming `proto open`, and when Daniel closes the window or quits its browser the host drops it and runs on, so `proto status` says "no window" until the next `proto open`.
+4. `proto status` says whether the host runs, and which target and URL the window shows; `proto targets` lists the engines, each with its version, availability or the reason it is unavailable with its fix, and capabilities, then the sizes; `proto stop` closes the window and ends the host, leaving no socket or token.
 
 A target is `<engine>/<size>`:
 
@@ -89,6 +96,8 @@ A mistake in it is refused with one line naming the file, the key and the reason
 The guards:
 
 - Only `http` or `https` on `localhost` or `127.0.0.1`, any port, is opened; any other URL a command gives is refused before anything opens.
+- In a launched window, a link or a script that would take the page off localhost is blocked and the page stays where it was, the host noting "Blocked <url>: off localhost" for the toolbar's status line: the route answers that navigation 204, since an abort leaves Chromium on its own error page.
+  Only the page's own navigations are blocked: a frame, a font or a script off localhost still loads, and a localhost page that redirects off localhost is not caught, since Playwright routes no redirect.
 - The host listens on a Unix socket in its runtime directory, `$XDG_RUNTIME_DIR/agent-team-proto`, else `~/.local/state/agent-team/proto`, which is mode 0700 and refused, naming it, when it is open to others; the socket and the token beside it are mode 0600, and every request carries that token, minted at each start, or is answered 401.
 - A host started from older code answers another protocol number, and every command names it with its fix (`proto stop`, then retry); a host that crashed leaves a stale socket, which the next `proto open` replaces with a new host, though its browser may outlive it until Daniel closes it.
 - `host.log` in the runtime directory holds the host's output, truncated at each start.
@@ -141,7 +150,8 @@ It also checks that a worker session running `ui-capture` directly meets the gat
 The bats suite checks the coordinator's side with `ui-capture` stubbed: `tests/team-ui.bats` that each capture gets a directory of its own with its kind and Daniel's note, that a failed one leaves none, that a walk turns on and off in the ledger, and who may capture during one, `tests/team-brief.bats` that the briefs name each capture with a note or an element and count the others, and what the walk's brief says, and `tests/team-state.bats` that a walk that is on shows.
 
 `tests/toolkits/proto-host.test.mjs` runs the prototyping host through `scripts/proto` as Daniel does, headless (`PROTO_HEADLESS=1`), in a runtime directory of each test's own, against fixture pages on 127.0.0.1 (`tests/toolkits/helpers/proto.mjs`): a window in each engine at a preset, a device and a free size, read back from the page itself, moved by a second open in the same host, and every refusal and failure above.
-It runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
+`tests/toolkits/proto-switch.test.mjs` switches the window the same way, against a fixture site that records each request it is sent, on 127.0.0.1, on `[::1]` (off localhost by the guard's rule) and on `localhost`: an engine switch round every engine the machine has, carrying the localhost login and not `[::1]`'s; a resize in place against a fresh context in the same browser; a failed switch, two at once, a link off localhost and a closed browser.
+Each runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
 The host's seams, read only from the environment, are in `proto/host.mjs`'s header.
 
 `tests/toolkits/proto-webkit-libs.test.mjs` checks "WebKit on Linux": the pins and their layout, the offline pin test against `servers/package.json` and `playwright-core`'s `browsers.json`, the runner's pin test (the sonames `ldd` resolves to a file `dpkg -S` names as a pinned package's are exactly the pins' `links`, which runs where `dpkg` is, CI's runner, and fails there rather than skips), WebKit's availability through `proto targets` and `proto open`, and `proto install`'s placing and `--refresh-pins`, from fixture `.deb`s and indexes served on 127.0.0.1, with a stub `ldd`; no test fetches from Ubuntu or Launchpad.
