@@ -3,7 +3,12 @@
 # turn open once with what it found, in this order:
 #   - each item of its list whose review date has come (team-current due --list assistant);
 #   - each hand-off to it still open (team-assistant list --open --to assistant);
-#   - each other session named assistant on this machine (claude agents --json), a twin.
+#   - each other session named assistant on this machine (claude agents --json), a twin;
+#   - each session named assistant-read that list shows in any state but working, or, with none
+#     listed, the read directory claude-assistant-read makes (the team home's
+#     .claude/worktrees/assistant-read/): "A read session is still there (<id> <state>, or its
+#     directory <path>): relay its answer and run claude-assistant-read end", since a read left
+#     behind holds production's answer and its session's files until it is ended.
 # When a command of those fails, it keeps the turn open once with "supervision is off: <why>", as
 # stop-sweep does for the coordinator, so supervision is never silently off. The session list is
 # stopped after 30 s (TEAM_ASSISTANT_STOP_LIST_SECONDS, killed 5 s later), a failure like any
@@ -55,6 +60,15 @@ if ((listed)) || ! sessions=$(jq -ce 'select(type == "array")' 2>/dev/null <<<"$
 fi
 twins=$(ledger_jq 'assistant_twin_lines($self)' -r --arg self "$own" <<<"$sessions") ||
   off "cannot read the session list's assistants"
+# The read session's directory, as bin/claude-assistant-read makes it.
+read_dir=$TEAM_HOME/.claude/worktrees/assistant-read
+reads=$(ledger_jq '[.[] | select(.name == "assistant-read")]
+  | if length == 0 then "none" else .[] | select(.state != "working") | "\(twin_short) \(.state // .status // "no state")" end' \
+  -r <<<"$sessions") || off "cannot read the session list's read sessions"
+if [[ $reads == none ]]; then
+  reads=''
+  if [[ -d $read_dir ]]; then reads="its directory $read_dir"; fi
+fi
 
 reason=''
 if [[ -n $due ]]; then
@@ -72,6 +86,10 @@ if [[ -n $twins ]]; then
 $twins
 "
 fi
+while IFS= read -r read; do
+  [[ -z $read ]] || reason+="A read session is still there ($read): relay its answer and run claude-assistant-read end
+"
+done <<<"$reads"
 [[ -n $reason ]] || exit 0
 block "Before this turn ends, attend to what is left:
 ${reason}Act on each, then end the turn."

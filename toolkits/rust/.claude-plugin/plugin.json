@@ -1,0 +1,25 @@
+{
+  "name": "rust",
+  "version": "0.1.0",
+  "description": "For the planner, builder and reviewer of a task that writes Rust in agent-team's Cargo workspace: the rust-core skill, which gives the core's rules (every case of the workspace's own enums handled, no panic outside a test, no unsafe, no dependency a ticket does not name), names the choices not made yet, sends the session to a dependency's real interface at the version Cargo.lock pins, and gives the one check to end on, tests/run rust; rust-analyzer as a language server for navigation only, its pushed diagnostics off and its cargo calls held to two jobs; a session-start hook that holds the session's own cargo calls to the team's CPU budget with sccache as their compiler wrapper; and a post-edit hook that gives the session cargo clippy's findings on each Rust file it edits. No MCP server.",
+  "author": {
+    "name": "Daniel Chan"
+  },
+  "lspServers": {
+    "rust-analyzer": {
+      "command": "rust-analyzer",
+      "extensionToLanguage": {
+        ".rs": "rust"
+      },
+      "diagnostics": false,
+      "startupTimeout": 60000,
+      "env": {
+        "CARGO_BUILD_JOBS": "2",
+        "RUSTC_WRAPPER": "sccache"
+      },
+      "initializationOptions": {
+        "checkOnSave": false
+      }
+    }
+  }
+}

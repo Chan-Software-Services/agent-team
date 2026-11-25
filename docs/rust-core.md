@@ -117,7 +117,6 @@ The open plans' Rust core lines, taken from their plans; each moves into the map
 
 | Plan | What | Crate | Seam |
 | - | - | - | - |
-| T513 | The model and effort config, one entry per session category, the most specific match winning, read by every launch and logged | `team-model` (its type), `team-core` (sessions) | `none` |
 | T514 | The topic role and its script (`team-topic open`) | `team-core` (sessions) | `platform`, `interface` |
 | T514 | The digest's schedule and its config line (an IANA zone and three local times) | `teamd` (a timer), `team-model` (its type) | `interface` (`Notifier`) |
 
@@ -130,6 +129,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | Script | Crate | Seam | Note |
 | - | - | - | - |
 | `bin/claude-assistant` | `team-core` | `platform` | Starts the assistant's session |
+| `bin/claude-assistant-read` | `team-core` | `platform` | Starts and ends the assistant's read session, one production question each |
 | `bin/claude-coordinator` | `team-core` | `platform` | Starts the coordinator's session |
 | `bin/team-answer` | `team-core` | `interface` | `answer_ask`, with Daniel's `Attestation` |
 | `bin/team-ask` | `team-core` | `interface` | Requests (step 4), shown through `AskPresenter` |
@@ -158,6 +158,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/team-load-check` | `team-cli` | `platform` | Probes what a worker reaches |
 | `bin/team-log` | `team-core` | `interface` | The append; reports become claims (step 3) |
 | `bin/team-merge` | `team-core` | `vcs`, `interface` | `give_merge_word`, the verifier |
+| `bin/team-models` | `team-model` | `none` | The model and effort config's reader (`sops/models.md`): its categories, each falling back through its parent to `default`, the most specific line winning; stays the reader until the port replaces it |
 | `bin/team-next` | `team-core` | `interface` | Lifecycle actions (step 5) |
 | `bin/team-open` | `team-core` | `vcs`, `interface` | |
 | `bin/team-ops-end` | `team-core` | `platform` | |
@@ -244,7 +245,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/ledger-contract.json` | `team-model` | `none` | Config: becomes the event enum and its schema |
 | `bin/lib/ledger.jq` | `team-model` | `none` | The read model (step 2) |
 | `bin/lib/lifecycle.json` | `team-model` | `none` | Config: the lifecycle table |
-| `bin/lib/messages.jq` | `team-model` | `none` | Retires once reports are claims (step 3) |
+| `bin/lib/messages.jq` | `team-model` | `none` | Retires once reports are claims (step 3); its `message_carried`, the tickets a PR carried, moves to the PR claim's handling |
 | `bin/lib/notice.jq` | `team-model` | `none` | |
 | `bin/lib/notices.sh` | `team-core` | `interface` | `Notifier` |
 | `bin/lib/opencode-gate` | stays | `none` | The gate's opencode wrapper |
@@ -262,6 +263,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/review-app` | `team-platform` or a `Vcs` crate (open) | `vcs` | Config: the reviewer App |
 | `bin/lib/review_facts.py` | `team-core` | `vcs` | |
 | `bin/lib/session-activity` | `team-core` | `platform` | |
+| `bin/lib/session-purge.sh` | `team-core` | `platform` | Deletes what an ended session left, for `team-ops-end` and `claude-assistant-read` |
 | `bin/lib/session_records.py` | `team-guard` | `platform` | |
 | `bin/lib/stack.jq` | `team-core` | `platform` | |
 | `bin/lib/stow.sh` | `team-core` | `platform`, `vcs` | |
@@ -331,7 +333,7 @@ Every kind is a variant of `team-model`'s event enum; the column says which comm
 | `stowed` | `team-stow` | `team-core` | `platform` |
 | `stowing` | `team-stow` | `team-core` | `platform` |
 | `thread` | `team-thread` | `adapter-discord` through `team-api` | `interface` |
-| `ticket-done` | `team-log` | a worker's claim, the first kind (step 3) | `none` |
+| `ticket-done` | `team-log` | a worker's claim, the first kind (step 3), and one for each ticket a builder's PR claim carried, built with no claim of its own (`message_carried`) | `none` |
 | `waiting` | `team-log` | `team-core` | `none` |
 | `walk` | `team-ui` | `team-core` | `interface` |
 | `walk-note` | `team-thread`, `team-ui` | `adapter-discord` through `team-api` | `interface` |
@@ -347,7 +349,9 @@ The config in `bin/lib/` is in the library's table above; the rest, with the tea
 | - | - | - | - | - |
 | `ledger.jsonl` | the team home | `team-model` (events), `team-core` (the append) | `none` | The log the read model folds |
 | `projects.toml` | the team home | `team-model` | `none` | The registry, read through `team-project` today |
+| `models.toml` | the team home | `team-model` | `none` | The model and effort of every session category, read through `team-models` today; its format is the contract |
 | `level.jsonl` | the team home | `team-core` | `platform` | The resource level |
+| `sessions.jsonl` | the team home | `team-core` (sessions) | `none` | The coordinator's and the assistant's launches, each with what it runs on |
 | `drills.jsonl` | the team home | `team-model` | `none` | |
 | `waiting.json`, `waiting.md` | the team home | `team-core` | `interface` | The one inbox (step 4) |
 | `tasks/current.md`, `assistant/current.md` | the team home | `team-core` | `none` | Step 4 moves their requests into the inbox |
@@ -373,8 +377,12 @@ The config in `bin/lib/` is in the library's table above; the rest, with the tea
 | `~/.config/agent-team/confine/` | the machine | `team-platform-linux` | `platform` | Each confined session's roots |
 | `~/.local/state/agent-team/` | the machine | `team-platform` (paths), `teamd` | `platform` | The machine's state: the lease, health, notices, the inbox, quota and uptime readings, locks and logs |
 | `settings/*.json` | the code | stays | `platform` | Workers' Claude Code settings, with `team-guard`'s hooks |
-| `coordinator.settings.json`, `assistant.settings.json` | the code | stays | `platform` | |
+| `coordinator.settings.json`, `assistant.settings.json`, `assistant-read.settings.json` | the code | stays | `platform` | |
 | `rust-toolchain.toml` | the code | the workspace | `none` | |
+| `Cargo.toml` | the code | the workspace | `none` | The virtual workspace: its members under `crates/`, its shared package keys and lints |
+| `Cargo.lock` | the code | the workspace | `none` | Committed; `tests/run rust` builds with `--locked` |
+| `clippy.toml` | the code | the workspace | `none` | Where a test may unwrap, expect and panic |
+| `deny.toml` | the code | the workspace | `none` | The dependency policy `tests/run rust` holds the workspace to with `cargo-deny` |
 | `.github/workflows/*.yml` | the code | stays | `vcs` | |
 | `toolkits/*/.mcp.json`, `mcp-roles.json`, `hooks/hooks.json` | the code | stays | `platform` | |
 | `~/.no-mistakes/` config | the machine | `team-cli` | `none` | The gate's, read and set by `gate-config.awk` |

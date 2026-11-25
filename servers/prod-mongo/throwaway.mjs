@@ -5,6 +5,8 @@
 //                            it equal to tests/toolkits/helpers/mongo.mjs's
 //   perThreadCaches          the image's environment that lets MongoDB 8.0 start on the kernels
 //                            whose rseq change breaks tcmalloc's per-CPU caches, as the helper's
+//   oneMongod, createRoot    the command after the image, one mongod with auth on, and the script
+//                            docker exec runs in it to make the root user, as the helper's
 //   teamLabel(key)           a team label's full key, io.github.chanjdaniel.team.<key>
 //   toolkitLabels({ kind, expires })   the --label arguments of every container, network and
 //                            image the toolkit makes: owner=agent-team, kind, toolkit=prod-mongo,
@@ -24,25 +26,30 @@
 //   throwawayName(kind)      a new container name, prod-mongo-<kind>-<12 hex>, which the caller
 //                            holds before the start, so a signal during it can still remove it
 //   await startThrowaway({ name, kind, join, MongoClient })
-//                            starts one and waits until its root user can ping it; resolves
+//                            starts one, waits until it answers a ping, makes its root user and
+//                            connects as it; resolves
 //                            { name, port, expires, uri, password, client, stop() }; on any failure
 //                            it removes the container first, then rejects
-//   removeThrowaway(name)    kills the docker run still starting `name`, if any, never another's,
-//                            removes the container (docker rm --force), then checks it is gone:
-//                            { gone: true } or { gone: false, error }; synchronous, for a signal
+//   removeThrowaway(name)    kills the docker run or exec still running for `name`, if any, never
+//                            another's, removes the container (docker rm --force), then checks it
+//                            is gone: { gone: true } or { gone: false, error }; synchronous, for a
+//                            signal
 //   throwaway.stop()         closes the client, then removeThrowaway
 //
 // The container: the pinned image with its data and config on tmpfs, so restored personal data
 // never touches a Docker volume or the disk; a 2 GiB memory cap with no swap; --rm; published on a
-// random loopback port only (127.0.0.1::27017); a root user whose random password reaches the
-// container as a name-only `-e MONGO_INITDB_ROOT_PASSWORD`, its value in the docker CLI child's own
-// environment, never an argument list; and the image's own entrypoint under `timeout 3600`, so
-// even a run killed with SIGKILL leaves no MongoDB running past the hour, and --rm removes it then.
+// random loopback port only (127.0.0.1::27017); one mongod with auth on, the image's own entrypoint
+// under `timeout 3600`, so even a run killed with SIGKILL leaves no MongoDB running past the hour,
+// and --rm removes it then; and a root user that `docker exec` makes in it on the localhost
+// exception, whose random password reaches the container as a name-only
+// `--env MONGO_ROOT_PASSWORD`, its value in the docker CLI child's own environment, never an
+// argument list or the container's own environment.
 // `join`, { network, alias }, connects it to a network of the caller's under that alias too (the
 // rehearsal's internal network, as `mongodb`).
-// Every docker call gets childEnv() alone (children.mjs), the password added only to `docker run`'s.
-// Every call but `docker run` is synchronous and short; `docker run`, which may pull the image, runs
-// without blocking, so a signal is handled while it waits.
+// Every docker call gets childEnv() alone (children.mjs), the password added only to `docker exec`'s.
+// Every call but `docker run` and `docker exec` is synchronous and short; those two, which may pull
+// the image or start mongosh on a busy machine, run without blocking, so a signal is handled while
+// they wait.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { childEnv, lastLine, run } from "./children.mjs";
@@ -53,6 +60,15 @@ export const throwawayImage = "mongo:8.0.34@sha256:4a4ab5d4834207389e0d7270fac98
 // tcmalloc on per-thread caches, which mongod's startup check lets start on every kernel (see
 // tests/toolkits/helpers/mongo.mjs, SERVER-121912).
 export const perThreadCaches = ["--env", "GLIBC_TUNABLES=glibc.pthread.rseq=1"];
+
+// One mongod, never the entrypoint's root-user start, whose first mongod can still listen on
+// 27017 when the second one binds it, which then exits 48 (see tests/toolkits/helpers/mongo.mjs);
+// createRoot makes the root user on the localhost exception, which closes once a user exists.
+export const oneMongod = ["mongod", "--auth"];
+export const createRoot = [
+  "mongosh", "--quiet", "--norc", "--eval",
+  'db.getSiblingDB("admin").createUser({ user: "root", pwd: process.env.MONGO_ROOT_PASSWORD, roles: ["root"] })',
+];
 
 const lifeSeconds = 3600;
 const readyMs = 180_000;
@@ -131,9 +147,9 @@ export function expiredLines(removed = []) {
 
 export const throwawayName = (kind) => `${toolkit}-${kind}-${randomBytes(6).toString("hex")}`;
 
-// The docker run children still running, by the container each starts, which removeThrowaway
-// kills first, so a run a signal interrupts never goes on to start a container after its maker is
-// gone.
+// The docker run and exec children still running, by the container each is for, which
+// removeThrowaway kills first, so a run a signal interrupts never goes on to start a container after
+// its maker is gone.
 const starting = new Map();
 
 export function removeThrowaway(name) {
@@ -148,7 +164,7 @@ export async function startThrowaway({ name, kind, join, MongoClient }) {
   const password = randomBytes(24).toString("hex");
   const expires = isoSecond(Date.now() + lifeSeconds * 1000);
   const remove = () => removeThrowaway(name);
-  const started = await dockerRun(
+  const started = await dockerAsync(
     name,
     [
       "run", "--detach", "--rm", "--name", name,
@@ -157,11 +173,10 @@ export async function startThrowaway({ name, kind, join, MongoClient }) {
       "--publish", "127.0.0.1::27017",
       "--tmpfs", "/data/db", "--tmpfs", "/data/configdb",
       ...perThreadCaches,
-      "--env", "MONGO_INITDB_ROOT_USERNAME=root", "--env", "MONGO_INITDB_ROOT_PASSWORD",
       "--entrypoint", "timeout",
-      throwawayImage, String(lifeSeconds), "docker-entrypoint.sh", "mongod",
+      throwawayImage, String(lifeSeconds), "docker-entrypoint.sh", ...oneMongod,
     ],
-    childEnv({ MONGO_INITDB_ROOT_PASSWORD: password }),
+    childEnv(),
   );
   if (!started.ok) {
     remove();
@@ -176,8 +191,12 @@ export async function startThrowaway({ name, kind, join, MongoClient }) {
     const published = docker(["port", name, "27017/tcp"]);
     const port = Number(/127\.0\.0\.1:(\d+)/.exec(published.stdout)?.[1]);
     if (!published.ok || !port) throw new Error(`docker gave no loopback port for the throwaway MongoDB: ${published.why}`);
+    await (await whenReady(`mongodb://127.0.0.1:${port}/`, name, MongoClient)).close();
+    const made = await dockerAsync(name, ["exec", "--env", "MONGO_ROOT_PASSWORD", name, ...createRoot], childEnv({ MONGO_ROOT_PASSWORD: password }), 2 * 60_000);
+    if (!made.ok) throw new Error(`docker could not make the throwaway MongoDB's root user: ${made.why}`);
     const uri = `mongodb://root:${password}@127.0.0.1:${port}/?authSource=admin`;
-    client = await whenReady(uri, name, MongoClient);
+    client = await new MongoClient(uri, { serverSelectionTimeoutMS: 10_000 }).connect();
+    await client.db("admin").command({ ping: 1 });
     return {
       name,
       port,
@@ -197,14 +216,14 @@ export async function startThrowaway({ name, kind, join, MongoClient }) {
   }
 }
 
-// docker run, as docker() answers, but without blocking: pulling the image the first time can take
-// minutes, and a signal meanwhile must be handled at once.
-async function dockerRun(name, args, env) {
+// docker run or exec for container `name`, as docker() answers, but without blocking: pulling the
+// image the first time can take minutes, and a signal meanwhile must be handled at once.
+async function dockerAsync(name, args, env, timeoutMs = 10 * 60_000) {
   let result;
   try {
     result = await run("docker", args, {
       env,
-      timeoutMs: 10 * 60_000,
+      timeoutMs,
       onSpawn: (child) => {
         starting.set(name, child);
         child.on("exit", () => starting.delete(name));
@@ -213,12 +232,12 @@ async function dockerRun(name, args, env) {
   } catch (error) {
     return { ok: false, stdout: "", why: error.code === "ENOENT" ? "docker is not installed" : error.message };
   }
-  if (result.timedOut) return { ok: false, stdout: "", why: "docker run did not finish in 10 min" };
-  return { ok: result.code === 0, stdout: result.stdout.trim(), why: lastLine(result.stderr) || `docker run exited ${result.code ?? result.signal}` };
+  if (result.timedOut) return { ok: false, stdout: "", why: `docker ${args[0]} did not finish in ${timeoutMs / 60_000} min` };
+  return { ok: result.code === 0, stdout: result.stdout.trim(), why: lastLine(result.stderr) || `docker ${args[0]} exited ${result.code ?? result.signal}` };
 }
 
-// The image's entrypoint restarts mongod once after creating the root user, so wait for a ping
-// that holds, up to 3 minutes; a container that ends first (--rm removes it) fails the wait at once.
+// Wait for a ping, which mongod answers before any login, up to 3 minutes; a container that ends
+// first (--rm removes it) fails the wait at once.
 async function whenReady(uri, name, MongoClient) {
   const start = Date.now();
   for (;;) {

@@ -61,10 +61,11 @@ The rows, in order:
     or not bin/lib/worker-login names one.
   login-unset: any of them, or an element, in every form role-unset reads, by the same reader.
     The same reason.
-  environment-emptied: a command named team-<anything>, claude-coordinator or claude-assistant
-    behind env -i (alone or among env's short options), env --ignore-environment (or a prefix GNU
-    takes), env - or exec -c, past any wrappers between or in a string a shell runs there: it
-    would run with no AGENT_TEAM_ROLE, so its own worker_refusal would not see the worker.
+  environment-emptied: a command named team-<anything>, claude-coordinator, claude-assistant or
+    claude-assistant-read behind env -i (alone or among env's short options), env
+    --ignore-environment (or a prefix GNU takes), env - or exec -c, past any wrappers between or
+    in a string a shell runs there: it would run with no AGENT_TEAM_ROLE, so its own role check
+    would not see the worker.
   lease-steal: team-lease or team-resume with --steal among its words before its --. Reason: a
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
@@ -235,7 +236,7 @@ DECLARERS = frozenset("export declare typeset local readonly let read mapfile re
 INTERPRETERS = frozenset(("node", "deno", "bun", "npx", "source", "."))
 COORDINATOR = frozenset(("team-ask", "team-answer", "team-inbox", "team-run-approved"))
 # The launchers, the team scripts whose names do not begin team-.
-LAUNCHERS = frozenset(("claude-coordinator", "claude-assistant"))
+LAUNCHERS = frozenset(("claude-coordinator", "claude-assistant", "claude-assistant-read"))
 TASK_ID = re.compile(r"T[0-9]+")
 # env's -u, alone or ending a short cluster, with its value joined (-uAGENT_TEAM_ROLE) or next.
 ENV_UNSET = re.compile(r"-[A-Za-z0-9]*u")

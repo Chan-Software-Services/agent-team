@@ -46,11 +46,11 @@ The scripts depend on the team home holding:
 
 ## Tests
 
-`tests/run` runs shellcheck on every shell script, the bats suite (bats-core is vendored) and the toolkit tests.
-`tests/run shellcheck`, `tests/run bats` and `tests/run toolkits` run one part each.
+`tests/run` runs shellcheck on every shell script, the bats suite (bats-core is vendored), the toolkit tests and the Rust check of the Cargo workspace.
+`tests/run shellcheck`, `tests/run bats`, `tests/run toolkits` and `tests/run rust` run one part each.
 `tests/run bats --changed` runs only the bats files reached by the changes since `origin/dev`, committed or not, and `--list` after it prints them and runs none.
 `tests/run shellcheck --changed` checks only the shell scripts those changes touch and the scripts that source them, and `--list` after it prints them and checks none.
-All but `tests/run shellcheck` and a `--list` wait their turn for the machine's heavy-run lock (`bin/team-heavy`), so two suites never overlap.
+All but `tests/run shellcheck`, `tests/run rust` and a `--list` wait their turn for the machine's heavy-run lock (`bin/team-heavy`), so two suites never overlap.
 The suite runs the real scripts in a sandbox with a temporary home, stubs for every outside service and a team home of fixtures, so it needs no records and reaches no real service.
 
 ## License
