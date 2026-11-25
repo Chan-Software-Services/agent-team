@@ -134,17 +134,23 @@ describe("the rust toolkit", () => {
     assert.ok(tests.includes("`claude plugin eval --no-publish --scaffold --trust-plugin toolkits/rust`"), "the README names no eval command");
   });
 
-  test("its README marks each unmeasured cost and holds the build cache's and the confinement roots' rules", () => {
+  test("its README gives each cost its live measure and holds the build cache's and the confinement roots' rules", () => {
     const section = (name) => readme.split(`## ${name}\n`)[1].split("\n## ")[0];
-    assert.match(section("What it costs"), /not measured/);
+    assert.doesNotMatch(readme, /not measured|not yet proven|not yet checked/i);
+    const costs = section("What it costs");
+    for (const part of ["`LSP`", "rust-analyzer", "MB", "sccache server", "cold", "warm"]) {
+      assert.ok(costs.includes(part), `"What it costs" does not name ${part}`);
+    }
     const cache = section("The build cache");
+    assert.match(cache, /hits/);
     assert.match(cache, /~\/\.cache\/sccache/);
     assert.match(cache, /`target\/`/);
     assert.match(cache, /5 minutes/);
     assert.match(cache, /4 GiB/);
     assert.match(cache, /team-heavy/);
     const roots = section("Confinement roots");
-    for (const path of ["`~/.cargo`", "`~/.cache/sccache`", "`~/.rustup`", "`RUSTUP_AUTO_INSTALL=0`"]) {
+    for (const path of ["`~/.cargo`", "`~/.cargo/advisory-dbs/`", "`~/.cache/sccache`", "`~/.local/state/agent-team`",
+      "`~/.rustup`", "`RUSTUP_AUTO_INSTALL=0`", "`bin/lib/confine-roots`"]) {
       assert.ok(roots.includes(path), `"Confinement roots" does not name ${path}`);
     }
   });
@@ -910,7 +916,7 @@ describe("the rust toolkit's post-edit hook, on stub cargo binaries", () => {
 
 // The real cargo, as the session's PATH gives it: these cases run only where it is the pinned
 // toolchain's, and fail instead of skipping with RUST_TOOLKIT_TESTS=require, which CI's toolkits job
-// does not set yet.
+// sets.
 const realCargo = (() => {
   const run = spawnSync("cargo", ["--version"], { cwd: repoRoot, encoding: "utf8", env: { ...process.env, RUSTUP_AUTO_INSTALL: "0" } });
   if (run.error) return { skip: `no cargo on PATH (${run.error.code}), so the pinned toolchain ${channel} is not here` };

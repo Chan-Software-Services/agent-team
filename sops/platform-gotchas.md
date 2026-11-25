@@ -15,7 +15,7 @@ Seen: T16 ticket 04's load check, whose sessions in `.claude/load-check/wt` bloc
 
 Why: with no terminal each `sudo` attempt counts as a failed login, enough of them lock Daniel's account, and installer flags and system package steps call it unasked; after the machine's packages are upgraded, a daemon keeps running its old binaries until that restart, so check that it answers (`docker info`) before a heavy run.
 
-Seen: T18, whose test script's Playwright `--with-deps` locked Daniel's account (ledger 2026-10-22T12:16:15Z, `tasks/T18/plan.md`); T5, T12 and T15, which waited on Daniel's Docker restart (ledger 2026-10-22T00:09:49Z to 2026-10-22T11:08:03Z); T49, which asked Daniel to upgrade Chrome (ledger 2026-10-25T14:30:56Z).
+Seen: T18, whose test script's Playwright `--with-deps` locked Daniel's account (ledger 2026-10-22T12:16:15Z, `tasks/T18/plan.md`); T5, T12 and T15, which waited on Daniel's Docker restart (ledger 2026-10-22T00:09:49Z to 2026-10-22T11:08:03Z).
 
 ## Treat any commit that lands on a PR after its review as unreviewed
 
@@ -34,13 +34,14 @@ Seen: T17 ticket 08, whose builder stuck on that prompt and was relaunched (ledg
 
 Why: a reset throws away local commits and auto mode refuses it, a force-push throws away what the tool pushed, and a forced delete of the stale local branch (`git branch -D`) is refused too, so leave it for the task's close.
 
-Seen: T12 and T22 (twice), whose gate rebased and force-pushed their branches (ledger 2026-10-22T12:05:30Z, 2026-10-23T13:57:02Z; T22 builder `b782adf4` at 2026-10-23T23:27Z); T115, whose builder went on under `-r2` once `git branch -D` was refused (2026-10-30T06:38:26Z).
+Seen: T12 and T22 (twice), whose gate rebased and force-pushed their branches (ledger 2026-10-22T12:05:30Z, 2026-10-23T13:57:02Z); T115, whose builder went on under `-r2` once `git branch -D` was refused (2026-10-30T06:38:26Z).
 
 ## Permission rules match a Bash call's whole text: pin a rule's fixed parts on both sides of each `*`, and make each call one action with no prose in it
 
 Why: `*` matches any text, spaces and other arguments included, a rule whose one `*` ends it after a space also matches the command with nothing there (two, as `**`, keep the space required), and a deny rule or auto mode judges the whole call, so a rule matches more commands than it looks, and one matching part (a word in a commit message, a grep pattern or a heredoc, or one guarded step of a chain) refuses the whole call; write messages and file contents with the Write or Edit tool and pass the file (`git commit -F <file>`, `gh pr edit --body-file <file>`), and run each commit, push and edit as its own call.
+A call that sets git's config, a token or the role for one run (`git -c`, `GIT_CONFIG_*`, `GH_TOKEN`, `AGENT_TEAM_ROLE`) is refused too: a check that needs one sets it in the test's own code, and a plan asks for it there.
 
-Seen: T172's planner's heredoc of ticket files, refused whole for prose naming `team-worker` (ledger 2026-11-01T05:44:17Z; `tasks/queued/deny-rule-prose-match.md`); T94's and T113's read of `git config core.hooksPath`, which the write rule `git config core.hooksPath *` matched with nothing after the key (2026-10-29T09:24:23Z, 23:45:43Z), until T134 ended the write rules in `**`; T191's `rm` chained with `team-stack down`, refused whole (2026-11-03T13:03:53Z), and T215's chained read, whose planner could not tell which part was refused (2026-11-04T13:59:40Z).
+Seen: T172's planner's heredoc of ticket files, refused whole for prose naming `team-worker` (2026-11-01T05:44:17Z); T94's and T113's read of `git config core.hooksPath`, which the write rule `git config core.hooksPath *` matched with nothing after the key (2026-10-29T09:24:23Z, 23:45:43Z), until T134 ended the write rules in `**`; T449's and T486's planned git config runs (2026-11-16T23:40:31Z, 2026-11-18T02:35:29Z), the second parking T486 on Daniel's ruling.
 
 ## To know what a CI or deploy run built, read the commit its checkout fetched, never the run's branch and commit label
 
