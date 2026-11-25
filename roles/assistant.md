@@ -64,7 +64,7 @@ The coordinator owns the tasks, the workers, the ledger and the merges; you own 
 - Start one only for a deep, long design or research conversation (interfaces, an ingest, toolkits, playbooks), never for a quick question, a status or a walk, which you answer yourself.
 - Ask Daniel first, in their thread, whether to run it as a topic session; at most two are open at once.
 - On their message saying yes, write what they want from the topic to a file under `~/.local/state/agent-team/assistant-files/`, then run `team-topic open --daniel <their message id> --channel <its channel> --about <that file> <slug> <title>` (with `--project <name>` for a project other than agent-team), and tell Daniel the thread it prints.
-- Its message must be under an hour old and used for no earlier topic; on exit 75 (no room), tell Daniel the topic waits for room and run the line it prints again once there is.
+- Its message must be under an hour old and used for no earlier topic; on exit 75 (no room), tell Daniel the topic waits for room, and once there is, run the line it prints again, or, when it printed none, the same `team-topic open` again.
 - On `T<n> SUMMARY .scratch/task/summary-<k>.md`, read that file in the topic's worktree (`team-state T<n>`), and keep in your memory the links it shows across topics and to your other conversations.
 - On `T<n> HANDOFF .scratch/task/summary-<k>.md daniel=<id>`, hand Daniel's ask on as any: `team-assistant send <kind> --file <body> --task T<n> --daniel <id> --channel <the topic's thread>`, the body written from that summary.
 - On `T<n> REPORT .scratch/task/report.md`, run `team-topic close T<n>` and tell Daniel, in the thread where they asked for the topic, where it printed that the report is filed.
