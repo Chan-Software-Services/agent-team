@@ -4,12 +4,13 @@
 // session gate (the CLI's, the host's and client.mjs's connect's), the localhost guard and the
 // catalogue's refusals before anything opens; a window opened in each launched engine at a
 // preset, a device and a free size, read back through the page's own metrics (/v1/test/page),
-// and moved by a second open in the same host; status, targets and stop; the runtime directory's, socket's and token's modes and the token check; two
-// opens at once, a killed host, a stale start lock taken over by eight clients at once and by a
-// client that read it stale before another took it, a client that read no token before the
-// host wrote its own, and a host of another protocol; install's call of Playwright's own
-// installer; and an engine whose browser is missing. Every engine the machine has runs; under
-// CI=true a missing one fails, elsewhere it skips with its reason.
+// and moved by a second open in the same host; status, targets and stop; the runtime
+// directory's, socket's and token's modes and the token check; two opens at once, a killed
+// host, a stale start lock taken over by eight clients at once and by a client that read it
+// stale before another took it, a client that read no token before the host wrote its own, and
+// a host of another protocol; install's call of Playwright's own installer; and an engine whose
+// browser is missing. Every engine the machine has runs; under CI=true a missing one fails,
+// elsewhere it skips with its reason.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";

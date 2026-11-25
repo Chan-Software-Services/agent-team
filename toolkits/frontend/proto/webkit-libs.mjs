@@ -27,8 +27,9 @@
 //   await refreshPins(revisionDir, { file, env, series, add, say })
 //                          `proto install --refresh-pins`: the pins moved to the series' current
 //                          packages, placed, checked, and only then written to `file`
-//                          Both read the pins from `file`, by default PROTO_WEBKIT_LIBS_FILE, else
-//                          this directory's webkit-libs.json.
+//
+// placeWebkitLibs and refreshPins read the pins from `file`, by default PROTO_WEBKIT_LIBS_FILE,
+// else this directory's webkit-libs.json.
 //
 // Fetching: each .deb over HTTPS from archive.ubuntu.com's pool, then, on any failure (an HTTP
 // error, 60 s without its whole answer, a wrong SHA-256), from Launchpad's librarian by its file
