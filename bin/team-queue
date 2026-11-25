@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Keep the queue of approved work, the team home's tasks/queued/, and its ranked index,
 # tasks/queued/index.md, from the files' front matter and the ledger (bin/lib/queue.jq), and say
-# what is ready to open and whether the level has room for it.
+# what is ready to open, whether the level has room for it, and which waits have gone on longest.
 #
 # Usage: team-queue index [--check]
 #        team-queue set <table>
 #        team-queue take T<n> <file>... [--part]
 #        team-queue tidy
 #        team-queue list [--json] [--plan <file>]
+#        team-queue waits [--older <days>] [--json]
 # An item is work Daniel approved: one Markdown file in tasks/queued/ but index.md, its first "# "
 # line its title. It opens with front matter, a "---" line, then "<key>: <value>" lines, each key
 # at most once, then a "---" line. Required keys:
@@ -23,11 +24,23 @@
 #             with no phases_left that a builder launch, a PR or a merged part followed is none
 #             while T<n> is open; once T<n> closed, a merged with phases_left [] or none is,
 #             whatever followed it), "T<n> phase <k> merged" (a merged of T<n> whose phases_left
-#             does not hold k, or T<n> merged whole), "T<n> closed", a YYYY-MM-DD date (today's
-#             UTC date is that day or later; TEAM_QUEUE_TODAY stands for today), or "<name>.md"
-#             (that item left the queue: it is in some tasks/T<m>/queued/, not here)
+#             does not hold k and that leaves no PR of T<n> open, or T<n> merged whole: a phase is
+#             task-wide, as team-merge's phases_left and the lifecycle's merged-part read it, so in
+#             a task of two repositories it is merged only at a merge that leaves no PR of T<n> open
+#             in either repository, whatever phase that PR is of, and one repository's merge while
+#             the other's PR is open is none), "T<n> closed", a YYYY-MM-DD date (today's UTC date
+#             is that day or later; TEAM_QUEUE_TODAY stands for today), or "<name>.md" (that item
+#             left the queue: it is in some tasks/T<m>/queued/, not here)
 #   waits     one line naming what outside the ledger and the calendar it waits on; removed by
-#             hand when the wait ends
+#             hand when the wait ends. Its age is when the line last changed: the author date of
+#             the team home's newest commit whose diff adds or removes a "waits: " line of the
+#             file (a rename reads as a removal and an add), else, for a file git has no such
+#             commit of or whose waits: line differs from the committed one, the file's own
+#             modification time; when the history cannot be read (git log or diff fails), every
+#             file's, and list and waits say so on stderr, "team-queue: cannot read the team
+#             home's history of tasks/queued/ (<git's first fatal: line, else its last, else "git
+#             <log or diff> exited <n> with no reason given">), so each wait's age is its file's
+#             own time"
 #   from      the tasks it came from, T<n> joined by ", "
 #   opened    the one task that builds it, T<n>
 #   takes     other queued items it carries, <name>.md joined by ", ", which leave with it
@@ -118,8 +131,12 @@
 # lists hold no entry with a null hold (stowed and refused work comes first, but for work
 # something holds, which the plan will not relaunch), the budget less what is reserved is at
 # least the session:builder estimate (every task soon launches a builder, the largest worker a
-# task starts), and no open task has an opened with no launch after it (a task just opened gets
-# its first worker before the next is named). Its line, the first that holds: "no room: the plan
+# task starts), and no open task has an opened with no launch after it and no standing park on
+# Daniel or outside the team (a task just opened gets its first worker before the next is named,
+# but one parked whole on an open ask, a waiting of cause daniel or outside, or Daniel's hold
+# waits on them and holds back no open, where an ask naming tickets, which holds only their
+# builders, frees it only once none of the task's work is unfinished, as it then parks the
+# task). Its line, the first that holds: "no room: the plan
 # cannot be read: <why>" (team-capacity's last line on stderr, ~ for the home directory, "no plan
 # at <file>", or "<file> is no team-capacity-plan/1 object"), "no room: the level is none", "no
 # room: no reading of the machine's load, so no budget", "no room: over budget", "no room: T171
@@ -138,12 +155,15 @@
 # wrong. The room's line then names each treehouse pool read with none, "; conventioner's pool is
 # full (20 of 20 trees, none free)", and one that did not answer, "; conventioner's pool cannot be
 # read (treehouse status --json did not answer)", in that order. The text is that line, then the
-# index's sections as index writes them. --json prints one line, {schema: "team-queue/1", room:
+# index's sections as index writes them but for each waits line's age after it, in parentheses
+# ("waits for Daniel's word (12 days), T7 merged"; "1 day", "under a day"), which the index never
+# shows, so it changes only with the queue. --json prints one line, {schema: "team-queue/1", room:
 # {fits, says}, ready, waiting, opened (each [item], in the index's order), unranked: [{file,
 # problems}], problems: [{file (null for the registry's), problem}] (every line --check names but
 # the stale index's), findings}, an item being {file, title, summary, project, priority, size,
-# after: [{condition, met}], waits, from, opened, takes, alone, guarded, unblocks (how many queued
-# items' after names it), rank (null but for a ready one)}. findings are team-sweep's, each {task:
+# after: [{condition, met}], waits, waited ({since (UTC), days (whole days since), source (git or
+# file)}, the waits line's age, null with no waits), from, opened, takes, alone, guarded, unblocks
+# (how many queued items' after names it), rank (null but for a ready one)}. findings are team-sweep's, each {task:
 # null, kind, session: null, name: null, next, text}: queue-ready while the room fits and an item
 # of a project with a free tree is ready, the first such by rank (none while every ready item's
 # pool is full), "queue: <the room's line>: open <file> (<project>, priority <p>, <size>): <summary,
@@ -152,12 +172,21 @@
 # while any is open; and queue while there are problems, "queue: <n> problem(s) in tasks/queued/:
 # <the first two, as --check prints them, joined by "; ">; next: fix each file team-queue index
 # --check names". A plan or costs that cannot be read is no room, never a failure: list exits 0.
+# waits writes nothing. It counts the waits older than <days> days (--older, default 7) of each
+# queued item with a waits line that no task opened (an item with only after: never counts), by
+# the line's age as above, and prints "<n> waits older than <days> days" ("1 wait", "1 day"),
+# with " (each age its file's own time: the team home's history cannot be read)" after it when
+# the history cannot be read, then "- <file>: <age>: <the waits line>" for each, oldest first,
+# then by file. --json prints one line, {schema: "team-queue-waits/1", days, count, says (that
+# first line), history_error (git's reason, as on stderr, else null), waits: [{file, waits,
+# since, days, source}]}. It exits 0 whatever it counts.
 # A push that fails keeps the commit for the next checkpoint to push, saying so on stderr, and
 # exits 0; a commit that fails (the team home's hooks refuse it) leaves the change written for the
 # next checkpoint to commit, saying so on stderr, and exits 1.
-# It refuses in a worker session (worker_refusal in bin/lib/team.sh), list too, which only the
-# coordinator, the sweep, the snapshot and the assistant read: an assistant session runs list and
-# index --check, which write nothing, as the coordinator does, and is refused every other form.
+# It refuses in a worker session (worker_refusal in bin/lib/team.sh), list and waits too, which
+# only the coordinator, the sweep, the snapshot and the assistant read: an assistant session runs
+# list, waits and index --check, which write nothing, as the coordinator does, and is refused
+# every other form.
 # Exit codes: 0 done, 1 refused or a check failed, 2 a malformed command line (or a
 # TEAM_QUEUE_TODAY that is no YYYY-MM-DD).
 set -euo pipefail
@@ -165,7 +194,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/error-view.sh
 source "$TEAM_LIB/error-view.sh"
 
-usage="usage: team-queue index [--check] | set <table> | take T<n> <file>... [--part] | tidy | list [--json] [--plan <file>]"
+usage="usage: team-queue index [--check] | set <table> | take T<n> <file>... [--part] | tidy | list [--json] [--plan <file>] | waits [--older <days>] [--json]"
 queued=$TEAM_HOME/tasks/queued
 index_rel=tasks/queued/index.md
 index=$TEAM_HOME/$index_rel
@@ -228,6 +257,49 @@ cards() {
 # The queued files but the index, by name, one name a line: files
 files() {
   find "$queued" -mindepth 1 -maxdepth 1 -type f -name '*.md' ! -name index.md -printf '%f\n' 2>/dev/null | LC_ALL=C sort
+}
+
+# When each queued file's waits: line last changed, one "<file>\t<seconds>\t<source>" line a file:
+# git, the author date of the team home's newest commit whose diff adds or removes a "waits: "
+# line of that file, in one git log pass, renames read as a removal and an add; file, the file's
+# own modification time, for a file git has no such commit of (untracked) or whose waits: line
+# differs from the committed one. A git log or diff that fails (no history to read) leaves every
+# file its own time, and writes why into <dir>/history: git's first "fatal: " line on stderr, else
+# its last line (~ for the home directory), else "git <log or diff> exited <n> with no reason
+# given"; <dir> holds the git output:
+# waits_ages <dir>
+waits_ages() {
+  local -A committed=() dirty=()
+  local name seconds rc=0 step=log why
+  git -C "$TEAM_HOME" log --no-renames -G'^waits: ' --format='@%at' --name-only -- tasks/queued/ >"$1/log" 2>"$1/err" || rc=$?
+  if ((rc == 0)); then
+    step="diff"
+    git -C "$TEAM_HOME" diff --no-renames -G'^waits: ' --name-only HEAD -- tasks/queued/ >"$1/diff" 2>"$1/err" || rc=$?
+  fi
+  if ((rc)); then
+    why=$(grep -m 1 '^fatal: ' "$1/err") || why=$(grep . "$1/err" | tail -n 1) || why="git $step exited $rc with no reason given"
+    printf '%s\n' "${why//"$HOME/"/"~/"}" >"$1/history"
+    : >"$1/log"
+    : >"$1/diff"
+  fi
+  while IFS=$'\t' read -r name seconds; do committed[$name]=$seconds; done < <(
+    awk '/^@/ { at = substr($0, 2); next }
+      /^tasks\/queued\/[^\/]+\.md$/ { name = substr($0, 14); if (!(name in seen)) { seen[name] = 1; print name "\t" at } }' "$1/log")
+  while IFS= read -r name; do dirty[${name#tasks/queued/}]=1; done <"$1/diff"
+  while IFS= read -r name; do
+    if [[ -n ${committed[$name]:-} && -z ${dirty[$name]:-} ]]; then
+      printf '%s\t%s\tgit\n' "$name" "${committed[$name]}"
+    elif seconds=$(stat -c %Y -- "$queued/$name" 2>/dev/null); then
+      printf '%s\t%s\tfile\n' "$name" "$seconds"
+    fi
+  done < <(files)
+}
+
+# Say on stderr that the history could not be read, when waits_ages wrote why into <file>:
+# history_said <file>
+history_said() {
+  [[ -s $1 ]] || return 0
+  echo "${0##*/}: cannot read the team home's history of tasks/queued/ ($(<"$1")), so each wait's age is its file's own time" >&2
 }
 
 # Run one queue.jq program over every item, the ledger and what the items need: the registry's
@@ -453,10 +525,10 @@ full_pools() {
   jq -cn '[$ARGS.positional[] | fromjson]' --args ${no_tree[@]+"${no_tree[@]}"}
 }
 
-# list and index --check read alone, so the assistant runs them as the coordinator does.
+# list, waits and index --check read alone, so the assistant runs them as the coordinator does.
 read_form=()
-[[ ${1:-} != list && "$*" != "index --check" ]] || read_form=(--read)
-why=$(worker_refusal "" "$(if [[ ${1:-} == list ]]; then echo "reads no queue"; else echo "edits no records"; fi)" "${read_form[@]}") && die "$why"
+[[ ${1:-} != @(list|waits) && "$*" != "index --check" ]] || read_form=(--read)
+why=$(worker_refusal "" "$(if [[ ${1:-} == @(list|waits) ]]; then echo "reads no queue"; else echo "edits no records"; fi)" "${read_form[@]}") && die "$why"
 (($#)) || usage_error "$usage"
 today=${TEAM_QUEUE_TODAY:-$(date -u +%F)}
 [[ $today =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage_error "TEAM_QUEUE_TODAY \"$today\" is not a YYYY-MM-DD date"
@@ -579,6 +651,9 @@ case $command in
     work=$(team_mktemp -d)
     capacity_json costs "$work/costs" &
     costs_pid=$!
+    mkdir "$work/git"
+    waits_ages "$work/git" >"$work/ages" &
+    ages_pid=$!
     if [[ -z $plan_given ]]; then
       capacity_json plan "$work/plan" &
       plan_pid=$!
@@ -592,13 +667,16 @@ case $command in
       plan_name=$plan_file
     fi
     wait "$costs_pid" || true
+    wait "$ages_pid" || true
+    history_said "$work/git/history"
     # The object first, with no pool read and the projects whose pools to read, then again with the
     # pools full_pools names, unless it names none and the object is what was asked for.
     list_view() {
-      queue_jq -j --rawfile plan "$work/plan" --rawfile costs "$work/costs" --arg plan_name "$plan_name" \
+      queue_jq -j --rawfile plan "$work/plan" --rawfile costs "$work/costs" --rawfile ages "$work/ages" --arg plan_name "$plan_name" \
         --argjson json "$1" --argjson full "$2" \
         '($plan | queue_capacity($plan_name; "team-capacity-plan/1")) as $plan
         | ($costs | queue_capacity("team-capacity costs --json'"'"'s output"; "team-capacity-costs/1")) as $costs
+        | ($items | queue_waited($ages; now)) as $items
         | ($items | queue_view) as $view
         | $items | queue_list($plan; $costs; $events; $registry_error; $today; $full)
         | if $json == null then . + {view_pools: ($view | queue_pool_order)} | tojson + "\n"
@@ -611,6 +689,23 @@ case $command in
     else
       list_view "$json" "$full_json"
     fi
+    ;;
+  waits)
+    json=false days=''
+    while (($#)); do
+      case $1 in
+        --json) [[ $json == false ]] || usage_error "$usage"; json=true; shift ;;
+        --older) [[ -z $days && $# -ge 2 && $2 =~ ^(0|[1-9][0-9]*)$ ]] || usage_error "$usage"; days=$2; shift 2 ;;
+        *) usage_error "$usage" ;;
+      esac
+    done
+    work=$(team_mktemp -d)
+    waits_ages "$work" >"$work/ages"
+    history_said "$work/history"
+    queue_jq -j --rawfile ages "$work/ages" --rawfile history <(cat "$work/history" 2>/dev/null || true) --argjson days "${days:-7}" \
+      --argjson json "$json" \
+      '$items | queue_waited($ages; now) | queue_waits($days; now; $history | rtrimstr("\n") | if . == "" then null else . end)
+      | if $json then tojson + "\n" else queue_waits_text end'
     ;;
   *) usage_error "$usage" ;;
 esac

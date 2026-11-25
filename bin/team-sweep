@@ -113,6 +113,18 @@
 #                  in the merge queue since <the queued's time> with no team-merge waiting on it;
 #                  next: run team-merge T<n> with Bash run_in_background, which goes on waiting and
 #                  logs how it ends", beside the task's other findings
+#   trial-unmarked an open task's PR that stands in the merge queue, whose latest trial-unmarked
+#                  since its latest queued (team-land's: a trial commit it could not post agent-review
+#                  on for 10 minutes of looks) says the trial commit passed every other check, with
+#                  no trial-marked of the PR after it (unmarked_trial_prs in bin/lib/ledger.jq),
+#                  whatever parks the task and whether or not a team-merge waits on it, with session
+#                  null: "PR <url> has passed every other check on its merge queue trial commit
+#                  <short>, but has had no agent-review there since <since>: <reason>; next: fix what
+#                  that reason names (team-merge T<n> --pr <url> --holds <head> says it again, and
+#                  team-land logs each look in ~/.local/state/agent-team/merge/land/<owner>/<name>/
+#                  <n>.log), after which team-land posts agent-review at its next look; tell Daniel
+#                  if it is not yours to fix", beside the task's other findings; none while those
+#                  checks still run, which team-land logs as pending
 #   trial-failed   an open task in awaiting-merge, with no ask open and nothing parking it and no
 #                  merge-base round in flight, whose PR the merge queue dropped for a failure of
 #                  its own on the trial merge (its latest queued, dequeued or merged is a dequeued

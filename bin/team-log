@@ -126,7 +126,7 @@
 # --from-message reads a worker's message whole (bin/lib/messages.jq) into the events the
 # coordinator's message table gives it, checks each as above, and logs them all, or with --print
 # prints them as JSON lines and logs nothing; any refusal logs none. The message starts with the
-# task. QUESTION <text> is a question; BLOCKED <text> and NEED toolkit <name> a blocked of cause
+# task and its kind on its first line. QUESTION <text> is a question; BLOCKED <text> and NEED toolkit <name> a blocked of cause
 # worker; PAUSED <why> a paused, its cause its first word's (stowed stow, held coordinator-hold,
 # offline offline, any other worker), its reason the whole why; each park carrying the sender's
 # role and session when the sender is known (--from's launch, else the only latest launch of a role
@@ -145,7 +145,10 @@
 # any other DONE the sender's done, report the rest. An ops session's DONE, whatever its first word
 # when --from names that session, and its QUESTION, whose text may hold production data, log its
 # length in characters and never its text: the done report_chars=<n>, the question chars=<n>; its
-# BLOCKED, PAUSED, FAILED and INJECTION are logged as every role's. --relay <id>, the Discord id of
+# BLOCKED, PAUSED, FAILED and INJECTION are logged as every role's. A message is one line, but for
+# an ops session's DONE or QUESTION, which may run to several: any other of more than one line is
+# refused saying so, never logged in part, and a DONE or QUESTION of more than one line whose sender
+# cannot be told, on a task with an ops launch, is refused naming how to name it. --relay <id>, the Discord id of
 # the coordinator's message that relayed an ops answer, is logged as that done's relay, and refused
 # with any other message; an id that is not one is a malformed command line. A review's head is the head of the brief record
 # (tasks/T<n>/<brief>.json) that the reviewer's latest launch read, else a pass's own head, else

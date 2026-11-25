@@ -46,9 +46,8 @@ update() {
   fi
   jobs=$(cd "$root" && gh run view "$run" --json jobs,headSha,createdAt) || die "cannot read CI run $run"
   sha=$(jq -r .headSha <<<"$jobs") created=$(jq -r .createdAt <<<"$jobs")
-  # An EXIT trap, so a die, which exits, removes it too; a RETURN trap runs only on a return.
-  scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' EXIT
+  # Removed when the script exits, so a die, which exits, removes it too.
+  scratch=$(team_mktemp -d)
   while IFS=$'\t' read -r id name; do
     [[ $name == test-shards* ]] || continue
     (cd "$root" && gh run view "$run" --job "$id" --log) |
