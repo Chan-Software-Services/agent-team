@@ -151,21 +151,37 @@ jobs:
     timeout-minutes: 120
     env:
       JQ_VERSION: 1.8.1
-      JQ_SHA256: 020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d
+      JQ_SOURCE_SHA256: 2be64e7129cecb11d5906290eba10af694fb9e3e7f9fc208a311dc33ca837eb0
+      ONIG_VERSION: 6.9.10
+      ONIG_SOURCE_SHA256: 2a5cfc5ae259e4e97f86b68dfffc152cdaffe94e2060b770cb827238d769fc05
       CLOCK_TESTS: require
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      # The jq test-shards installs, a static binary, so the shim does not move its now.
+      # The jq the other jobs install is a static binary, which the shim never loads, so its now
+      # would read the real clock beside date's moved one. This job builds the same jq from its
+      # release source instead, with Oniguruma (its regular expressions) from its own, each tarball
+      # checked against the sha256 its release publishes: both linked into one binary that loads
+      # the C library, and the shim with it, dynamically.
       - name: Install jq ${{ env.JQ_VERSION }}
         run: |
-          mkdir jq-bin
-          curl --retry 5 --retry-all-errors -fsSLo jq-bin/jq "https://github.com/jqlang/jq/releases/download/jq-$JQ_VERSION/jq-linux-amd64"
-          echo "$JQ_SHA256  jq-bin/jq" | sha256sum -c -
-          chmod +x jq-bin/jq
-          echo "$PWD/jq-bin" >>"$GITHUB_PATH"
+          src=$RUNNER_TEMP/jq-src
+          mkdir -p "$src"
+          cd "$src"
+          onig=onig-$ONIG_VERSION.tar.gz
+          curl --retry 5 --retry-all-errors -fsSLO "https://github.com/kkos/oniguruma/releases/download/v$ONIG_VERSION/$onig"
+          echo "$ONIG_SOURCE_SHA256  $onig" | sha256sum -c -
+          jq=jq-$JQ_VERSION.tar.gz
+          curl --retry 5 --retry-all-errors -fsSLO "https://github.com/jqlang/jq/releases/download/jq-$JQ_VERSION/$jq"
+          echo "$JQ_SOURCE_SHA256  $jq" | sha256sum -c -
+          tar -xzf "$onig"
+          tar -xzf "$jq"
+          (cd "onig-$ONIG_VERSION" && ./configure --prefix="$src/onig" --disable-shared --with-pic && make -j"$(nproc)" && make install)
+          (cd "jq-$JQ_VERSION" && ./configure --prefix="$RUNNER_TEMP/jq" --with-oniguruma="$src/onig" --disable-shared --disable-docs --disable-valgrind && make -j"$(nproc)" && make install)
+          file "$RUNNER_TEMP/jq/bin/jq"
+          echo "$RUNNER_TEMP/jq/bin" >>"$GITHUB_PATH"
       - run: jq --version
       - name: Name the base
         env:

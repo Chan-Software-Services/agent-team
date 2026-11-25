@@ -2286,7 +2286,9 @@ zizmor_problems() {
 }
 
 # The Ubuntu runner's own jq (1.7.1) is older than any machine's, so every Linux job that runs the
-# repository's jq programs installs the jq bin/lib/tools.lock takes as its floor, before it runs them.
+# repository's jq programs installs the jq bin/lib/tools.lock takes as its floor, before it runs them:
+# the release binary by one pin, or, in future-clock, which needs one the clock shim loads into, the
+# same version built from its release tarball by that tarball's pin.
 @test "every Linux job that runs the bats or toolkit tests installs the jq tools.lock's floor names, by one pin" {
   run -0 ci_jq_problems "$REPO_ROOT/.github/workflows/ci.yml" "$REPO_ROOT/bin/lib/tools.lock"
   assert_equal "$output" "checked test-shards future-clock toolkits"
@@ -2306,7 +2308,11 @@ ci_jq_problems() {
     grep -qE 'tests/run (bats|toolkits)' <<<"$block" || continue
     checked+=("$id")
     [[ $(sed -n 's/^      JQ_VERSION: //p' <<<"$block") == "$floor" ]] || echo "$id: JQ_VERSION is not tools.lock's jq floor $floor"
-    if [[ -z $sha ]]; then
+    # A job that builds jq from its release source (future-clock, for the clock shim) pins the
+    # tarball instead of the binary.
+    if grep -q '^      JQ_SOURCE_SHA256: ' <<<"$block"; then
+      [[ $(sed -n 's/^      JQ_SOURCE_SHA256: //p' <<<"$block") =~ ^[0-9a-f]{64}$ ]] || echo "$id: JQ_SOURCE_SHA256 is no sha256"
+    elif [[ -z $sha ]]; then
       sha=$(sed -n 's/^      JQ_SHA256: //p' <<<"$block")
       [[ $sha =~ ^[0-9a-f]{64}$ ]] || echo "$id: JQ_SHA256 is no sha256"
     elif [[ $(sed -n 's/^      JQ_SHA256: //p' <<<"$block") != "$sha" ]]; then
@@ -2320,7 +2326,7 @@ ci_jq_problems() {
   echo "checked ${checked[*]}"
 }
 
-@test "a Linux test job with no jq, a jq off the floor or another sha256 is named, whatever its id and however it runs the tests" {
+@test "a Linux test job with no jq, a jq off the floor, another sha256 or a source pin that is no sha256 is named, whatever its id and however it runs the tests" {
   local ci=$BATS_TEST_TMPDIR/ci.yml lock=$BATS_TEST_TMPDIR/tools.lock
   echo '{"tools": [{"name": "jq", "min": "1.8.1"}]}' >"$lock"
   cat >"$ci" <<'YAML'
@@ -2369,9 +2375,27 @@ jobs:
       - run: |
           tests/run bats --shard 1/2
           tests/run bats --shard 2/2
+  seven:
+    runs-on: ubuntu-24.04
+    env:
+      JQ_VERSION: 1.8.1
+      JQ_SOURCE_SHA256: 2be64e7129cecb11d5906290eba10af694fb9e3e7f9fc208a311dc33ca837eb0
+    steps:
+      - name: Install jq ${{ env.JQ_VERSION }}
+      - run: jq --version
+      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"
+  eight:
+    runs-on: ubuntu-24.04
+    env:
+      JQ_VERSION: 1.8.1
+      JQ_SOURCE_SHA256: 2be64e71
+    steps:
+      - name: Install jq ${{ env.JQ_VERSION }}
+      - run: jq --version
+      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"
 YAML
   run -0 ci_jq_problems "$ci" "$lock"
-  assert_equal "$output" $'two: JQ_VERSION is not tools.lock\'s jq floor 1.8.1\ntwo: JQ_SHA256 differs from the first job\'s\ntwo: does not install jq and print its version before its tests\nFive5: JQ_VERSION is not tools.lock\'s jq floor 1.8.1\nFive5: JQ_SHA256 differs from the first job\'s\nFive5: does not install jq and print its version before its tests\nchecked one two Five5 six'
+  assert_equal "$output" $'two: JQ_VERSION is not tools.lock\'s jq floor 1.8.1\ntwo: JQ_SHA256 differs from the first job\'s\ntwo: does not install jq and print its version before its tests\nFive5: JQ_VERSION is not tools.lock\'s jq floor 1.8.1\nFive5: JQ_SHA256 differs from the first job\'s\nFive5: does not install jq and print its version before its tests\neight: JQ_SOURCE_SHA256 is no sha256\nchecked one two Five5 six seven eight'
 }
 
 @test "a zizmor ignore without an audit or a reason, or a zizmor config, is named" {
@@ -2446,7 +2470,8 @@ ci_needed() {
 
 # future-clock, which test waits for as for its shards, runs the bats files a change touches a
 # year ahead from the PR's base, the merge queue's, else the clock-base input or origin/dev's merge
-# base, with the full history the merge base needs, and requires its own tests to build the shim.
+# base, with the full history the merge base needs, requires its own tests to build the shim, and
+# builds the jq the shim loads into.
 @test "future-clock runs the touched bats files a year ahead from the PR's, the queue's or the input's base, and test waits for it" {
   local ci=$REPO_ROOT/.github/workflows/ci.yml block
   block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  future-clock:$/,/^  [a-z_-]*:$/p' | sed '$d' | grep -v '^ *#')
@@ -2459,6 +2484,13 @@ ci_needed() {
   grep -qxF '          base=${BASE_SHA:-${QUEUE_BASE_SHA:-$INPUT_BASE}}' <<<"$block"
   grep -qxF '          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)' <<<"$block"
   grep -qxF '      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"' <<<"$block"
+  # Its jq is built from the release source, Oniguruma's too, each tarball checked by its pin, so
+  # the shim loads into it.
+  [[ $(sed -n 's/^      JQ_SOURCE_SHA256: //p' <<<"$block") =~ ^[0-9a-f]{64}$ ]]
+  [[ $(sed -n 's/^      ONIG_SOURCE_SHA256: //p' <<<"$block") =~ ^[0-9a-f]{64}$ ]]
+  grep -qxF '          echo "$JQ_SOURCE_SHA256  $jq" | sha256sum -c -' <<<"$block"
+  grep -qxF '          echo "$ONIG_SOURCE_SHA256  $onig" | sha256sum -c -' <<<"$block"
+  if grep -n 'jq-linux-amd64' <<<"$block"; then echo "future-clock installs the static jq binary" >&2; return 1; fi
   # The input is the dispatch's one, optional and empty by default.
   assert_equal "$(sed -n '/^  workflow_dispatch:$/,/^[^ ]/p' "$ci" | grep -E '^      (clock-base|  required|  default):')" \
     $'      clock-base:\n        required: false\n        default: ""'

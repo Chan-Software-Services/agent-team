@@ -11,8 +11,8 @@
 // - the times the kernel writes on files (a file's mtime is the real clock's, so a test comparing
 //   a file's age with now reads the file a year old), which is what a test tagged
 //   "# bats test_tags=wall-clock" rests on;
-// - a statically linked binary, which never loads it: the jq release binary CI installs is one,
-//   so on CI jq's now reads the real clock;
+// - a statically linked binary, which never loads it: the jq release binary is one, so CI's
+//   future-clock job builds its jq from source, and tests/run checks jq's now moves;
 // - a process started with an emptied environment (env -i), which drops LD_PRELOAD;
 // - the clocks that measure durations (CLOCK_MONOTONIC, CLOCK_BOOTTIME), so timeouts and sleeps
 //   run as they would.

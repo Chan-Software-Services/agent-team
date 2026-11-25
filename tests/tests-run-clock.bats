@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # tests/run bats --clock-ahead <days> --touched <base>, the run CI's future-clock job makes: a
 # fixture test comparing a date 30 days ahead with date +%s passes today and fails a year ahead, a
-# test tagged wall-clock is not run there and is named, a change touching no bats file says so and
-# passes, a changed fixture selects the bats files naming it (directly, by a directory, through a
+# test tagged wall-clock is not run there and is named, a jq whose now the shim does not move is
+# refused, a change touching no bats file says so and passes, a changed fixture selects the bats files naming it (directly, by a directory, through a
 # helper), the empty tree selects every file, and macOS, a missing cc and a malformed command line
 # are refused. Each runs in a checkout of its own, with this checkout's bin/, tests/run,
 # tests/shards and shim, and the vendored bats. The cases that build the shim need Linux and cc,
@@ -108,6 +108,25 @@ clock_usage="run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bat
   assert_contains "$output" "bats: 1 tests passed; 0 of 1 files failed"
   assert_equal "$(grep -F '# not run' <<<"$output")" \
     $'tests/other.bats: a file written now is new # not run: tagged wall-clock\ntests/other.bats: a tag among others # not run: tagged wall-clock'
+}
+
+# A static jq, as the jq release binary is, never loads the shim, so its now reads the real clock
+# beside date's moved one, and every test mixing the two would fail on that alone.
+@test "a jq whose now the shim does not move is refused, naming it, before any file runs" {
+  needs_shim
+  local copy=$BATS_TEST_TMPDIR/copy real_jq
+  clock_checkout "$copy"
+  echo '# touched' >>"$copy/tests/later.bats"
+  real_jq=$(command -v jq)
+  stub_command jq
+  stub_script jq <<SH
+if [[ \$* == "-n now | floor" ]]; then echo 1000; exit; fi
+exec "$real_jq" "\$@"
+SH
+  run -1 --separate-stderr "$copy/tests/run" bats --clock-ahead 365 --touched base
+  assert_contains "$output" "clock-ahead: jq's now read 1000 under tests/helpers/clockshift.c, not 365 days past "
+  assert_contains "$output" ": $BATS_TEST_TMPDIR/stubs/jq is a static binary or loads no shim, so a test reading its now beside date's would fail on the two clocks alone; put a dynamically linked jq first on PATH"
+  [[ $output != *"tests passed"* ]]
 }
 
 @test "a change touching no bats file says so and passes, and --list prints nothing" {

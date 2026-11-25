@@ -81,13 +81,15 @@
 # runs only on Linux, refusing macOS, which has no LD_PRELOAD, and any other system, and refuses
 # when cc is not on PATH, naming it, before it takes the heavy-run lock; it builds
 # tests/helpers/clockshift.c with cc -shared -fPIC -O2 -ldl into its temporary directory, fails
-# naming the shim when date +%s under it does not read the clock moved ahead, and runs each file
+# naming the shim when date +%s or jq's now under it does not read the clock moved ahead (a static
+# jq, as the jq release binary is, never loads it, so a dynamically linked one must be first on
+# PATH, as CI's future-clock job builds it), and runs each file
 # with LD_PRELOAD the shim (before any LD_PRELOAD already set) and CLOCKSHIFT_SECONDS the days'
 # seconds, and with bats' --filter-tags '!wall-clock', so a test tagged "# bats
 # test_tags=wall-clock" (one whose result rests on a clock the shim does not move, such as the
 # times the kernel writes on files) is not run; it names each such test of the files it runs, as
 # "tests/<name>.bats: <test> # not run: tagged wall-clock", after the file lines. What the shim
-# moves and what it does not, a static binary such as CI's jq among the latter, its header says.
+# moves and what it does not, its header says.
 # The rust part checks the Cargo workspace at the root in six steps, each printed first as
 # "rust: <step>", stopping at the first that fails with "rust: <step> failed": cargo fmt --all
 # --check; cargo clippy --workspace --all-targets --locked -- -D warnings; cargo nextest run
@@ -567,7 +569,8 @@ slow_files() {
 }
 
 # The clock shim, tests/helpers/clockshift.c, built into <dir>/clockshift.so, and checked to move
-# date's clock the run's days past the unshifted clock (see the header); fails naming why.
+# date's clock and jq's now the run's days past the unshifted clock (see the header); fails naming
+# why.
 clock_shim() {
   local so=$1/clockshift.so seconds=$((clock * 86400)) now ahead
   if ! cc -shared -fPIC -O2 -o "$so" "$root/tests/helpers/clockshift.c" -ldl; then
@@ -579,6 +582,15 @@ clock_shim() {
   ahead=$(LD_PRELOAD=$so CLOCKSHIFT_SECONDS=$seconds date +%s)
   if ((ahead - now < seconds - 60)); then
     echo "clock-ahead: date +%s read $ahead under tests/helpers/clockshift.c, not $clock days past $now, so the shim moves no clock here"
+    return 1
+  fi
+  # jq's now, which the team's programs read beside date's: a static jq never loads the shim.
+  ahead=$(LD_PRELOAD=$so CLOCKSHIFT_SECONDS=$seconds jq -n 'now | floor') || {
+    echo "clock-ahead: jq -n now failed under tests/helpers/clockshift.c"
+    return 1
+  }
+  if ! [[ $ahead =~ ^[0-9]+$ ]] || ((ahead - now < seconds - 60)); then
+    echo "clock-ahead: jq's now read $ahead under tests/helpers/clockshift.c, not $clock days past $now: $(command -v jq) is a static binary or loads no shim, so a test reading its now beside date's would fail on the two clocks alone; put a dynamically linked jq first on PATH"
     return 1
   fi
 }
