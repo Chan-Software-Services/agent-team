@@ -1,0 +1,60 @@
+2026-11-19T12:10:56.1685029Z Current runner version: '2.338.2'
+2026-11-19T12:10:56.9372334Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+2026-11-19T12:10:56.9385461Z   DISABLE_EMAIL: true
+2026-11-19T12:11:05.9851374Z ##[group]Run ./.github/actions/e2e-stack
+2026-11-19T12:11:05.9851620Z with:
+2026-11-19T12:11:05.9851793Z   save-caches: false
+2026-11-19T12:11:05.9854213Z ##[endgroup]
+2026-11-19T12:11:05.9863033Z ##[start-action display=Playwright's version;id=__self_2.playwright]
+2026-11-19T12:11:05.9950119Z ##[group]Run echo "version=$(npx playwright --version | awk '{ print $2 }')" >>"$GITHUB_OUTPUT"
+2026-11-19T12:11:06.0004220Z ##[endgroup]
+2026-11-19T12:11:06.7271540Z ##[end-action id=__self_2.playwright;outcome=success;conclusion=success;duration_ms=740]
+2026-11-19T12:11:06.7274067Z ##[start-action display=Restore Playwright's browsers;id=__self_2.browsers]
+2026-11-19T12:11:09.2869599Z ##[end-action id=__self_2.browsers;outcome=success;conclusion=success;duration_ms=2559]
+2026-11-19T12:11:09.2873313Z ##[start-action display=Install Playwright's Chromium;id=__self_2.__run]
+2026-11-19T12:11:09.2879374Z ##[end-action id=__self_2.__run;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-19T12:11:09.2882401Z ##[start-action display=Install Chromium's system libraries;id=__self_2.__run_2]
+2026-11-19T12:11:09.3330815Z ##[group]Run npx playwright install-deps chromium
+2026-11-19T12:11:09.3331204Z [36;1mnpx playwright install-deps chromium[0m
+2026-11-19T12:11:09.3378646Z   RECORD_TEST_MAP: false
+2026-11-19T12:11:09.3378832Z ##[endgroup]
+2026-11-19T12:11:09.9588962Z Installing dependencies...
+2026-11-19T12:11:40.4510734Z Ign:5 http://azure.archive.ubuntu.com/ubuntu resolute-backports InRelease
+2026-11-19T12:11:40.4511212Z Ign:6 http://azure.archive.ubuntu.com/ubuntu resolute-security InRelease
+2026-11-19T12:11:41.4520010Z Ign:6 http://azure.archive.ubuntu.com/ubuntu resolute-security InRelease
+2026-11-19T12:11:41.4557958Z Ign:5 http://azure.archive.ubuntu.com/ubuntu resolute-backports InRelease
+2026-11-19T12:11:41.4558766Z Ign:3 http://azure.archive.ubuntu.com/ubuntu resolute-updates InRelease
+2026-11-19T12:11:41.4559439Z Ign:2 http://azure.archive.ubuntu.com/ubuntu resolute InRelease
+2026-11-19T12:11:56.8421324Z Ign:6 https://archive.ubuntu.com/ubuntu resolute-security InRelease
+2026-11-19T12:13:03.5224354Z Fetched 320 kB in 1min 47s (2979 B/s)
+2026-11-19T12:13:04.1500775Z Reading package lists...
+2026-11-19T12:13:04.1597069Z W: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/dists/resolute/InRelease  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:13:04.1598889Z W: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/dists/resolute-updates/InRelease  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:13:04.1600933Z W: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/dists/resolute-backports/InRelease  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:13:04.1602833Z W: Failed to fetch mirror+file:/etc/apt/apt-mirrors.txt/dists/resolute-security/InRelease  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:13:04.1604114Z W: Some index files failed to download. They have been ignored, or old ones used instead.
+2026-11-19T12:13:04.1725707Z Reading package lists...
+2026-11-19T12:16:14.3088678Z Err:2 https://security.ubuntu.com/ubuntu resolute/universe amd64v3 fonts-ipafont-gothic all 00303-23ubuntu1
+2026-11-19T12:16:14.3089446Z   Could not connect to azure.archive.ubuntu.com:80, connection timed out
+2026-11-19T12:16:14.3090175Z   Unable to connect to azure.archive.ubuntu.com:http:
+2026-11-19T12:16:14.3090685Z   Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3091240Z   Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3136214Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/universe/f/fonts-ipafont/fonts-ipafont-gothic_00303-23ubuntu1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3137735Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/main/f/fonts-freefont/fonts-freefont-ttf_20211204%2bsvn4273-4build1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3139091Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/universe/f/fonts-tlwg/fonts-tlwg-loma-otf_0.7.3-1build1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3140495Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/universe/u/unifont/fonts-unifont_16.0.04-1build1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3141742Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/universe/f/fonts-wqy-zenhei/fonts-wqy-zenhei_0.9.45-8build1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3143366Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/main/x/xfonts-encodings/xfonts-encodings_1.0.5-0ubuntu3_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3144761Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/main/x/xfonts-utils/xfonts-utils_7.7%2b7build1_amd64v3.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3146010Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/universe/x/xfonts-cyrillic/xfonts-cyrillic_1.0.5%2bnmu1build1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3147269Z E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/universe/x/xfonts-scalable/xfonts-scalable_1.0.3-1.3build1_all.deb  Could not wait for server fd - select (11: Resource temporarily unavailable)
+2026-11-19T12:16:14.3148112Z E: Unable to fetch some archives, maybe run apt update or try with --fix-missing?
+2026-11-19T12:16:14.3162817Z Failed to install browser dependencies
+2026-11-19T12:16:14.3163311Z Error: Installation process exited with code: 100
+2026-11-19T12:16:14.3348406Z ##[error]Process completed with exit code 1.
+2026-11-19T12:16:14.3354910Z ##[end-action id=__self_2.__run_2;outcome=failure;conclusion=failure;duration_ms=305047]
+2026-11-19T12:16:14.3358041Z ##[start-action display=Save Playwright's browsers;id=__self_2.__actions_cache]
+2026-11-19T12:16:14.3361461Z ##[end-action id=__self_2.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-11-19T12:16:14.3435562Z ##[group]Run if [ -f test-results/results.json ]; then
+2026-11-19T12:16:15.3256994Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-19T12:16:15.3643858Z Cleaning up orphan processes
