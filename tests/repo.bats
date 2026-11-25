@@ -2289,7 +2289,7 @@ zizmor_problems() {
 # repository's jq programs installs the jq bin/lib/tools.lock takes as its floor, before it runs them.
 @test "every Linux job that runs the bats or toolkit tests installs the jq tools.lock's floor names, by one pin" {
   run -0 ci_jq_problems "$REPO_ROOT/.github/workflows/ci.yml" "$REPO_ROOT/bin/lib/tools.lock"
-  assert_equal "$output" "checked test-shards toolkits"
+  assert_equal "$output" "checked test-shards future-clock toolkits"
 }
 
 # What breaks the jq rule in the CI workflow <ci>, one per line, then "checked" and the ids of the
@@ -2400,7 +2400,7 @@ YAML
 @test "tests/run, the team-heavy lock it runs under, and servers/install, which its toolkit tests run, need no team home" {
   unset TEAM_HOME
   run -2 --separate-stderr "$REPO_ROOT/tests/run" nothing
-  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
+  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -0 --separate-stderr "$REPO_ROOT/bin/team-heavy" run -- echo ran
   assert_equal "$output" ran
   run -2 --separate-stderr "$REPO_ROOT/servers/install" nothing
@@ -2408,18 +2408,26 @@ YAML
 }
 
 # The registry fixture is shaped like the team home's, whose required checks for agent-team are
-# the ones dev's protection requires: CI's job ids, each a check name on GitHub, but the shard
-# jobs, the plan the shards split by (shard-plan) and the shards themselves (test-shards).
-@test "CI's jobs but the shard jobs are exactly agent-team's required checks, and agent-team has no local checks" {
+# the ones dev's protection requires: CI's job ids, each a check name on GitHub, but the jobs
+# another job waits for: the plan the shards split by (shard-plan), the shards themselves
+# (test-shards) and future-clock, which test waits for.
+@test "CI's jobs but those another job waits for are exactly agent-team's required checks, and agent-team has no local checks" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml
   cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
   run_bin -0 team-project agent-team
+  assert_equal "$(ci_needed "$ci")" $'future-clock\nshard-plan\ntest-shards'
   assert_equal "$(jq -c '[.required_checks, .local_checks]' <<<"$output")" \
-    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$REPO_ROOT/.github/workflows/ci.yml" | grep -vE -- '^shard-|-shards$' | jq -R . | jq -cs .),[]]"
+    "[$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci" | grep -vxF -f <(ci_needed "$ci") | jq -R . | jq -cs .),[]]"
 }
 
-# A shard job is never a required check itself: the job of the required id waits for every shard,
-# runs even when one failed, and passes only when all did.
-@test "each shard job is needed by the job its name begins with, which always runs and passes only on the shards' success" {
+# The jobs some job of the workflow <ci> needs, one per line, sorted: ci_needed <ci>
+ci_needed() {
+  sed -n '/^jobs:$/,$s/^    needs: //p' "$1" | tr -d '[]' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | LC_ALL=C sort -u
+}
+
+# A shard job is never a required check itself: the job of the required id waits for every shard
+# and for future-clock, runs even when one failed, and passes only when all did.
+@test "each shard job is needed by the job its name begins with, beside future-clock, which always runs and passes only on their success" {
   local ci=$REPO_ROOT/.github/workflows/ci.yml id shards
   # Each job's block, from its "  <id>:" line to the next job's.
   job_block() { sed -n "/^jobs:\$/,\$p" "$ci" | sed -n "/^  $1:\$/,/^  [a-z_-]*:\$/p" | sed '$d'; }
@@ -2428,11 +2436,32 @@ YAML
   for id in $shards; do
     job_block "$id-shards" | grep -qx '      matrix: {shard: \[1, 2, 3\]}' || { echo "$id-shards has no three-shard matrix" >&2; return 1; }
     job_block "$id-shards" | grep -qxF '      - run: tests/run bats --shard "$SHARD/3"' || { echo "$id-shards runs no shard" >&2; return 1; }
-    job_block "$id" | grep -qx "    needs: $id-shards" || { echo "$id does not need $id-shards" >&2; return 1; }
+    job_block "$id" | grep -qx "    needs: \[$id-shards, future-clock\]" || { echo "$id does not need $id-shards and future-clock" >&2; return 1; }
     job_block "$id" | grep -qx '    if: always()' || { echo "$id does not always run" >&2; return 1; }
     job_block "$id" | grep -qxF "          RESULT: \${{ needs.$id-shards.result }}" || { echo "$id reads no result of $id-shards" >&2; return 1; }
-    job_block "$id" | grep -qxF "        run: '[[ \$RESULT == success ]]'" || { echo "$id does not pass only on success" >&2; return 1; }
+    job_block "$id" | grep -qxF "          CLOCK_RESULT: \${{ needs.future-clock.result }}" || { echo "$id reads no result of future-clock" >&2; return 1; }
+    job_block "$id" | grep -qxF "        run: '[[ \$RESULT == success && \$CLOCK_RESULT == success ]]'" || { echo "$id does not pass only on both's success" >&2; return 1; }
   done
+}
+
+# future-clock, which test waits for as for its shards, runs the bats files a change touches a
+# year ahead from the PR's base, the merge queue's, else the clock-base input or origin/dev's merge
+# base, with the full history the merge base needs, and requires its own tests to build the shim.
+@test "future-clock runs the touched bats files a year ahead from the PR's, the queue's or the input's base, and test waits for it" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml block
+  block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  future-clock:$/,/^  [a-z_-]*:$/p' | sed '$d' | grep -v '^ *#')
+  grep -qx '    runs-on: ubuntu-.*' <<<"$block"
+  grep -qxF '          fetch-depth: 0' <<<"$block"
+  grep -qxF '      CLOCK_TESTS: require' <<<"$block"
+  grep -qxF '          BASE_SHA: ${{ github.event.pull_request.base.sha }}' <<<"$block"
+  grep -qxF '          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}' <<<"$block"
+  grep -qxF '          INPUT_BASE: ${{ inputs.clock-base }}' <<<"$block"
+  grep -qxF '          base=${BASE_SHA:-${QUEUE_BASE_SHA:-$INPUT_BASE}}' <<<"$block"
+  grep -qxF '          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)' <<<"$block"
+  grep -qxF '      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"' <<<"$block"
+  # The input is the dispatch's one, optional and empty by default.
+  assert_equal "$(sed -n '/^  workflow_dispatch:$/,/^[^ ]/p' "$ci" | grep -E '^      (clock-base|  required|  default):')" \
+    $'      clock-base:\n        required: false\n        default: ""'
 }
 
 # Every shard splits by one timings file, which shard-plan writes from the latest successful CI
@@ -2569,7 +2598,7 @@ YAML
   for k in '--shard 0/3' '--shard 4/3' '--shard 1/0' '--shard 1/3x' '--list' '--shard' '--shard 1/3 --list x'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/run" bats $k
-    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
+    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   done
   run -2 --separate-stderr "$REPO_ROOT/tests/run" toolkits --shard 1/3
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
@@ -2835,7 +2864,7 @@ changed_rebase() {
     run -2 --separate-stderr "$copy/tests/run" bats --changed $k
   done
   run -2 --separate-stderr "$copy/tests/run" bats --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -2 --separate-stderr "$copy/tests/run" bats --shard 1/3 --changed
   run -1 --separate-stderr "$copy/tests/run" bats --changed --list
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run bats --changed <base>)"
@@ -2985,7 +3014,7 @@ shellcheck_checkout() {
     run -2 --separate-stderr "$copy/tests/run" shellcheck $k
   done
   run -2 --separate-stderr "$copy/tests/run" shellcheck --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -1 --separate-stderr "$copy/tests/run" shellcheck --changed
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run shellcheck --changed <base>)"
   [[ ! -e $STUB_CALLS/shellcheck.log ]]

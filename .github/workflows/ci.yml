@@ -3,8 +3,13 @@
 # to dev: its protection and projects.toml's required_checks for agent-team require each job by its
 # id (shellcheck, test, toolkits, data, zizmor), so renaming a job changes a required check, and
 # team-merge merges only with every one passed on the PR's head, as the queue lands a trial commit
-# only with every one passed on it; test passes only when every shard of test-shards did, so a
-# shard job is never a required check itself, nor is shard-plan, whose timings every shard splits by.
+# only with every one passed on it; test passes only when every shard of test-shards and
+# future-clock did, so a shard job is never a required check itself, nor is shard-plan, whose
+# timings every shard splits by, nor future-clock.
+# future-clock runs the bats files a change touches with the wall clock a year ahead
+# (tests/run bats --clock-ahead 365 --touched <base>), so a test that will fail on a later date
+# fails in the PR that writes it; by hand, its clock-base input names the base, the empty tree's
+# 4b825dc642cb6eb9a060e54bf8d69288fbee4904 for every bats file.
 # The shards split the bats files by each file's seconds in the latest successful CI run, which
 # shard-plan reads through the Actions API (tests/shards update --to) and hands every shard as the
 # timings artifact, which each names by TESTS_TIMINGS beside the committed tests/timings.tsv, so
@@ -34,6 +39,11 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      clock-base:
+        description: "future-clock's base, the files touched since it run a year ahead (empty: origin/dev's merge base; 4b825dc642cb6eb9a060e54bf8d69288fbee4904: every file)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -132,16 +142,53 @@ jobs:
           head -n 1 "$RUNNER_TEMP/timings/timings.tsv"
       - run: tests/run bats --shard "$SHARD/3"
 
+  # The bats files a change adds or changes, and those naming a fixture it changes, with the wall
+  # clock a year ahead (tests/helpers/clockshift.c), the tests tagged wall-clock not run. The base
+  # is the PR's base, the merge queue's, else the clock-base input or origin/dev's merge base. Its
+  # limit covers a run of every file by hand, one runner's whole suite.
+  future-clock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      JQ_VERSION: 1.8.1
+      JQ_SHA256: 020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d
+      CLOCK_TESTS: require
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The jq test-shards installs, a static binary, so the shim does not move its now.
+      - name: Install jq ${{ env.JQ_VERSION }}
+        run: |
+          mkdir jq-bin
+          curl --retry 5 --retry-all-errors -fsSLo jq-bin/jq "https://github.com/jqlang/jq/releases/download/jq-$JQ_VERSION/jq-linux-amd64"
+          echo "$JQ_SHA256  jq-bin/jq" | sha256sum -c -
+          chmod +x jq-bin/jq
+          echo "$PWD/jq-bin" >>"$GITHUB_PATH"
+      - run: jq --version
+      - name: Name the base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          INPUT_BASE: ${{ inputs.clock-base }}
+        run: |
+          base=${BASE_SHA:-${QUEUE_BASE_SHA:-$INPUT_BASE}}
+          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)
+          echo "CLOCK_BASE=$base" >>"$GITHUB_ENV"
+      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"
+
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: test-shards
+    needs: [test-shards, future-clock]
     if: always()
     steps:
-      - name: Every shard passed
+      - name: Every shard and the future clock passed
         env:
           RESULT: ${{ needs.test-shards.result }}
-        run: '[[ $RESULT == success ]]'
+          CLOCK_RESULT: ${{ needs.future-clock.result }}
+        run: '[[ $RESULT == success && $CLOCK_RESULT == success ]]'
 
   # The toolkits' servers over stdio, against a throwaway MongoDB in Docker.
   toolkits:
