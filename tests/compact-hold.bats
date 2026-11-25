@@ -48,19 +48,16 @@ stowed_now() {
   CLAUDE_CODE_SESSION_ID=$session run_bin -0 team-stowed
 }
 
-# age <jq assignment>...: rewrite the record, $now being the time in epoch seconds, which it
-# keeps as aged_at.
+# age <jq assignment>...: rewrite the record, $now being the hook's clock in epoch seconds (the
+# sandbox's TEAM_COMPACT_HOLD_NOW), which it keeps as aged_at, so a case one second short of a
+# limit stays short of it.
 age() {
   local program
   program=$(IFS='|'; echo "$*")
-  aged_at=$(date +%s)
+  aged_at=$TEAM_COMPACT_HOLD_NOW
   jq -c --argjson now "$aged_at" "$program" "$record" >"$record.aged"
   mv "$record.aged" "$record"
 }
-
-# at_aged <command>...: run it with the hook's clock at the last age's time, for a case one
-# second short of a limit, which a second passing between the two would carry over it.
-at_aged() { TEAM_COMPACT_HOLD_NOW=$aged_at "$@"; }
 
 # The log's events, one "<event>" or "<event> <why>" per line.
 logged() {
@@ -144,7 +141,7 @@ broken() {
   stowed_now
   assert_equal "$output" "stowed at $(clock "$(jq .stowed_at "$record")") UTC; no auto-compaction is held"
   age '.stowed_at = $now - 599'
-  at_aged auto -0
+  auto -0
   assert_equal "$output" "$(stowed_text)"
   assert_equal "$(jq -c '[.held_at, .blocks]' "$record")" '[null,0]'
   assert_equal "$(logged)" stowed
@@ -165,7 +162,7 @@ broken() {
   auto -2
   tool
   age '.told_at = $now - 899'
-  at_aged auto -2
+  auto -2
   assert_equal "$(jq .blocks "$record")" 3
   age '.told_at = $now - 900'
   auto -0
@@ -457,7 +454,7 @@ STUB
   auto -2
   stowed_now
   age '.held_at = $now - 650' '.stowed_at = $now - 599'
-  at_aged auto -0
+  auto -0
   assert_equal "$output" "$(stowed_text)"
   age '.stowed_at = $now - 700'
   auto -2

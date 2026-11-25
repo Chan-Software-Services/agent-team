@@ -1,157 +1,171 @@
-# The seconds each bats file took on Linux in CI run 45256626668 (head ae58bc5, 2026-11-23T20:10:41Z),
+# The seconds each bats file took on Linux in CI run 45589961652 (head 66ecd5b, 2026-11-25T09:55:08Z),
 # and on macOS as the timings before it had them, since CI runs no macOS job; tests/shards update rewrites it.
 file	linux	macos
-tests/assistant-acts.bats	7	
-tests/assistant-digest.bats	2	
+tests/assistant-acts.bats	10	
+tests/assistant-digest.bats	4	
 tests/assistant-discord-guard.bats	4	
-tests/assistant-stop.bats	4	
-tests/axi-banner.bats	2	3
+tests/assistant-stop.bats	8	
+tests/axi-banner.bats	1	3
 tests/bootstrap-drill.bats	1	
 tests/chrome.bats	0	
-tests/claude-assistant.bats	26	
+tests/claude-assistant-read.bats	24	
+tests/claude-assistant.bats	42	
 tests/claude-coordinator.bats	29	40
-tests/command-guard-delete.bats	157	
+tests/command-guard-delete.bats	137	
 tests/command-guard-kill.bats	58	
-tests/command-guard.bats	260	
-tests/command-text.bats	23	
-tests/compact-hold.bats	11	
-tests/compaction-drill.bats	111	51
-tests/confine.bats	17	
-tests/coordinator-manual.bats	13	18
-tests/data-check.bats	3	6
-tests/denial-log.bats	12	8
-tests/drill.bats	135	100
+tests/command-guard.bats	308	
+tests/command-text.bats	25	
+tests/compact-hold.bats	9	
+tests/compaction-drill.bats	146	51
+tests/confine.bats	19	
+tests/coordinator-manual.bats	12	18
+tests/data-check.bats	2	6
+tests/denial-log.bats	11	8
+tests/drill.bats	170	100
 tests/gate-config.bats	1	4
-tests/github-api.bats	8	
+tests/gate-rules.bats	0	
+tests/github-api.bats	11	
 tests/github-login.bats	3	
-tests/guard-corpus.bats	315	
+tests/guard-corpus.bats	318	
 tests/harness.bats	1	3
-tests/lease-fence.bats	85	55
-tests/ledger.bats	29	9
-tests/lifecycle.bats	37	
+tests/lease-fence.bats	87	55
+tests/ledger.bats	37	9
+tests/lifecycle.bats	38	
 tests/machine.bats	5	7
-tests/merge-authority.bats	304	
-tests/merge-queue-drill.bats	17	
-tests/opencode-gate.bats	14	1
-tests/ops-log.bats	5	5
-tests/outbound.bats	22	
+tests/merge-authority.bats	264	
+tests/merge-queue-drill.bats	12	
+tests/opencode-gate.bats	16	1
+tests/ops-log.bats	3	5
+tests/outbound.bats	25	
 tests/platform.bats	2	10
-tests/pre-commit.bats	3	9
-tests/pre-push.bats	3	9
-tests/records-pre-commit.bats	2	2
+tests/pre-commit.bats	2	9
+tests/pre-push.bats	4	9
+tests/records-pre-commit.bats	4	2
 tests/repo-moves.bats	9	
-tests/repo.bats	186	137
+tests/repo.bats	180	137
 tests/scratch-only-edits-follow.bats	30	74
-tests/scratch-only-edits-grammar.bats	51	116
-tests/scratch-only-edits.bats	17	29
+tests/scratch-only-edits-grammar.bats	52	116
+tests/scratch-only-edits.bats	20	29
 tests/servers-install.bats	1	1
-tests/session-digest.bats	40	18
-tests/session-records-guard-bash.bats	21	
-tests/session-records-guard.bats	112	
-tests/stop-sweep.bats	7	5
-tests/task-life.bats	140	98
-tests/team-answer.bats	92	25
-tests/team-ask.bats	19	12
-tests/team-assistant-topics.bats	1	
-tests/team-assistant.bats	11	
-tests/team-bootstrap-daniel.bats	152	190
-tests/team-bootstrap-stages.bats	372	220
-tests/team-bootstrap.bats	151	172
+tests/session-digest.bats	39	18
+tests/session-records-guard-bash.bats	25	
+tests/session-records-guard.bats	136	
+tests/stop-sweep.bats	9	5
+tests/task-life.bats	213	98
+tests/team-answer.bats	117	25
+tests/team-ask.bats	25	12
+tests/team-assistant-topics.bats	3	
+tests/team-assistant.bats	15	
+tests/team-bootstrap-daniel.bats	175	190
+tests/team-bootstrap-stages.bats	376	220
+tests/team-bootstrap.bats	118	172
 tests/team-brief-review-facts.bats	37	
-tests/team-brief.bats	259	118
-tests/team-capacity-quota.bats	4	
-tests/team-capacity.bats	129	73
-tests/team-catch-up.bats	71	34
-tests/team-checkpoint.bats	150	93
-tests/team-checks.bats	22	15
-tests/team-ci-run.bats	50	
-tests/team-ci-wait.bats	795	98
-tests/team-clean-messages.bats	39	28
-tests/team-close.bats	409	167
+tests/team-brief.bats	373	118
+tests/team-capacity-quota.bats	3	
+tests/team-capacity.bats	143	73
+tests/team-catch-up.bats	88	34
+tests/team-checkpoint.bats	200	93
+tests/team-checks.bats	21	15
+tests/team-ci-run.bats	47	
+tests/team-ci-wait.bats	827	98
+tests/team-clean-messages.bats	28	28
+tests/team-close.bats	436	167
 tests/team-config-memory.bats	14	32
-tests/team-config.bats	6	22
-tests/team-current.bats	34	20
-tests/team-doctor-confine.bats	13	
+tests/team-config.bats	5	22
+tests/team-current.bats	28	20
+tests/team-doctor-confine.bats	18	
 tests/team-doctor-drills.bats	9	
-tests/team-doctor-home-login.bats	7	
-tests/team-doctor-lease.bats	50	48
-tests/team-doctor-memory-index.bats	13	
-tests/team-doctor-projects.bats	192	197
-tests/team-doctor-quota.bats	8	
+tests/team-doctor-home-login.bats	8	
+tests/team-doctor-lease.bats	55	48
+tests/team-doctor-memory-index.bats	14	
+tests/team-doctor-models.bats	8	
+tests/team-doctor-projects.bats	196	197
+tests/team-doctor-quota.bats	10	
 tests/team-doctor-resources.bats	36	86
-tests/team-doctor-services.bats	106	130
-tests/team-doctor-tmp.bats	10	
-tests/team-doctor-tools.bats	116	134
-tests/team-doctor-worker-login.bats	41	
-tests/team-doctor.bats	140	227
-tests/team-drill.bats	14	
-tests/team-handoff.bats	164	175
-tests/team-heavy.bats	54	63
-tests/team-inbox.bats	99	37
-tests/team-janitor-tmp.bats	16	
-tests/team-janitor.bats	32	92
-tests/team-land.bats	76	
-tests/team-lease.bats	22	51
-tests/team-level.bats	68	123
-tests/team-load-check-probe-assistant.bats	216	
-tests/team-load-check-probe-drill.bats	185	
-tests/team-load-check-probe-github.bats	285	
-tests/team-load-check-probe-kernel.bats	209	
-tests/team-load-check-probe-layers.bats	307	
-tests/team-load-check-probe-login.bats	148	
-tests/team-load-check-probe-matching.bats	172	
-tests/team-load-check-probe-sessions.bats	265	
-tests/team-load-check.bats	230	91
-tests/team-log.bats	395	104
-tests/team-merge-default.bats	298	145
-tests/team-merge-queue.bats	167	
-tests/team-merge.bats	320	416
-tests/team-next.bats	2140	342
+tests/team-doctor-services.bats	112	130
+tests/team-doctor-tmp.bats	8	
+tests/team-doctor-tools.bats	155	134
+tests/team-doctor-worker-login.bats	54	
+tests/team-doctor.bats	134	227
+tests/team-drill.bats	10	
+tests/team-handoff.bats	193	175
+tests/team-heavy.bats	50	63
+tests/team-inbox.bats	124	37
+tests/team-janitor-tmp.bats	21	
+tests/team-janitor.bats	25	92
+tests/team-land.bats	113	
+tests/team-lease.bats	29	51
+tests/team-level.bats	72	123
+tests/team-load-check-probe-assistant.bats	260	
+tests/team-load-check-probe-drill.bats	188	
+tests/team-load-check-probe-github.bats	337	
+tests/team-load-check-probe-kernel.bats	205	
+tests/team-load-check-probe-layers.bats	375	
+tests/team-load-check-probe-login.bats	207	
+tests/team-load-check-probe-matching.bats	175	
+tests/team-load-check-probe-sessions.bats	274	
+tests/team-load-check.bats	201	91
+tests/team-log.bats	662	104
+tests/team-merge-default.bats	420	145
+tests/team-merge-queue.bats	189	
+tests/team-merge.bats	304	416
+tests/team-models.bats	7	
+tests/team-next-ci.bats	172	
+tests/team-next-integrate.bats	226	
+tests/team-next-merge.bats	343	
+tests/team-next-repos.bats	364	
+tests/team-next-review.bats	225	
+tests/team-next-tickets.bats	374	
+tests/team-next-verdicts.bats	248	
+tests/team-next.bats	210	
 tests/team-open-add.bats	39	41
-tests/team-open-resume.bats	119	108
-tests/team-open-ticket.bats	30	
-tests/team-open-treehouse.bats	26	47
-tests/team-open.bats	138	61
-tests/team-ops-end.bats	3	4
-tests/team-post-capture.bats	66	
-tests/team-post.bats	27	11
+tests/team-open-resume.bats	159	108
+tests/team-open-ticket.bats	37	
+tests/team-open-treehouse.bats	35	47
+tests/team-open.bats	136	61
+tests/team-ops-end.bats	2	4
+tests/team-post-capture.bats	64	
+tests/team-post.bats	38	11
 tests/team-proc.bats	3	
-tests/team-project.bats	15	17
-tests/team-queue-list.bats	9	
-tests/team-queue-tidy.bats	21	
-tests/team-queue.bats	14	
-tests/team-quota.bats	22	
-tests/team-records-rewrite.bats	7	27
-tests/team-resume.bats	202	233
-tests/team-retro.bats	28	19
-tests/team-review-check.bats	44	
-tests/team-review-comment.bats	10	5
-tests/team-review-status.bats	17	6
-tests/team-run-approved.bats	71	28
-tests/team-secrets.bats	3	9
+tests/team-project.bats	14	17
+tests/team-queue-list.bats	34	
+tests/team-queue-tidy.bats	27	
+tests/team-queue-waits.bats	10	
+tests/team-queue.bats	12	
+tests/team-quota.bats	20	
+tests/team-records-rewrite.bats	6	27
+tests/team-resume.bats	221	233
+tests/team-retro.bats	26	19
+tests/team-review-check.bats	42	
+tests/team-review-comment.bats	9	5
+tests/team-review-status.bats	23	6
+tests/team-run-approved.bats	98	28
+tests/team-secrets.bats	5	9
 tests/team-snapshot.bats	156	60
-tests/team-stack-live.bats	0	1
-tests/team-stack.bats	338	468
-tests/team-state.bats	273	111
-tests/team-stow.bats	166	183
+tests/team-stack-live.bats	1	1
+tests/team-stack-network.bats	70	
+tests/team-stack.bats	352	468
+tests/team-state.bats	315	111
+tests/team-stow.bats	230	183
 tests/team-stowed.bats	1	
-tests/team-sweep-health.bats	20	
-tests/team-sweep.bats	406	166
-tests/team-thread-archive.bats	7	
+tests/team-sweep-health.bats	22	
+tests/team-sweep.bats	422	166
+tests/team-thread-archive.bats	6	
 tests/team-thread-interview.bats	28	15
 tests/team-thread.bats	3	3
-tests/team-tickets-graph.bats	29	
-tests/team-tickets.bats	33	14
-tests/team-time.bats	62	29
-tests/team-timers-github.bats	101	
-tests/team-timers-health.bats	530	
-tests/team-timers-quota.bats	189	
-tests/team-timers-threads.bats	19	
-tests/team-timers-tmp.bats	30	
-tests/team-timers.bats	727	368
+tests/team-tickets-graph.bats	44	
+tests/team-tickets.bats	70	14
+tests/team-time.bats	64	29
+tests/team-timers-github.bats	123	
+tests/team-timers-health.bats	656	
+tests/team-timers-quota.bats	182	
+tests/team-timers-threads.bats	18	
+tests/team-timers-tmp.bats	34	
+tests/team-timers.bats	729	368
 tests/team-tokens-quota.bats	3	
-tests/team-tokens.bats	23	26
-tests/team-ui.bats	90	5
-tests/team-uptime.bats	62	
-tests/team-worker.bats	419	193
+tests/team-tokens.bats	22	26
+tests/team-ui.bats	93	5
+tests/team-uptime.bats	55	
+tests/team-worker.bats	586	193
 tests/temp-files.bats	1	
+tests/tests-run-rust.bats	14	
