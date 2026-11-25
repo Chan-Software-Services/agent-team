@@ -510,7 +510,7 @@ INBOX_TIMEOUT=120
 # 300, the pack 300 and the janitor 1200. That is 3770 s in all, 3970 s with the kills (10 s each
 # for the other steps' nineteen commands and the finished step's last stop), about 66 minutes. The
 # lease step leaves a lease unrenewed only under 14 minutes old, so a run that hits every limit ends
-# with it about 77 minutes old, past the lease's hour (team-lease's TTL_MINUTES), and the next run
+# with it about 80 minutes old, past the lease's hour (team-lease's TTL_MINUTES), and the next run
 # starts at the next mark, up to INTERVAL minutes and SLACK_SECONDS later, and renews behind its
 # read of origin. A lease past its ttl is stale, which changes only what team-lease take says on
 # another machine (stale, not fresh): the holder still holds it, and the renewal makes it fresh

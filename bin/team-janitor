@@ -164,9 +164,9 @@
 #   cleared the job tmp of T422's builder 0f178ea8 (9.5 GiB; done and idle 26 h)
 # and the same line, as "- HH:MM <line>" in local time, is appended to the day's file,
 # ~/.local/state/agent-team/janitor/disk-<local date>.md, made with the title "# Disk cleared on
-# <machine>, <date>" at the day's first line. A run that clears nothing prints nothing. A clearing
-# that fails is said on stderr ("team-janitor: could not clear <path>: <rm's last line>"), and the
-# other jobs go on.
+# <machine>, <date>" at the day's first line. A job part that clears nothing prints nothing. A
+# clearing that fails is said on stderr ("team-janitor: could not clear <path>: <rm's last line>"),
+# and the other jobs go on.
 # Its Go part holds Go's build cache to a cap. The cache is TEAM_GO_CACHE when set, else what go
 # env GOCACHE prints (given 20 s) when go is on the PATH and answers, else Go's own default:
 # GOCACHE from the environment, else ~/Library/Caches/go-build on macOS and

@@ -37,7 +37,7 @@ DISK_GO_PATH='' DISK_GO_KB='' DISK_TRIMMED=0 DISK_TRIMMED_KB=0 DISK_GO_SAID=''
 # The first line of Go's README, by which a directory is known as its build cache.
 DISK_GO_README='This directory holds cached build artifacts from the Go build system.'
 
-# The state directory, the day's file and the record of the last run.
+# The state directory, the janitor directory the day's file goes in, and the record of the last run.
 disk_paths() {
   disk_state=$HOME/.local/state/agent-team
   disk_dir=$disk_state/janitor

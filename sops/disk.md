@@ -28,7 +28,7 @@ Why 24 hours: open tasks run from hours to days, a session settled for a day tha
 
 Each entry directly inside the tmp is removed by its own path, a directory made writable first (`chmod -R`) and removed with `rm -rf --one-file-system`, a file with `rm -f`, after the job directory and its tmp are checked again to be real directories of this user's.
 The tmp directory itself is kept, with its mode, so a woken session still finds the directory its prompt names.
-A run stopped midway leaves whole entries, and the next run clears the rest.
+A run stopped midway leaves the rest of the tmp, an entry perhaps half removed, and the next run clears it.
 `disk_clear_job_tmp` is that one clearing, which `team-close`'s fallback calls too.
 
 ### `team-close`'s fallback
@@ -68,9 +68,9 @@ Why a size cap on every run, over a weekly trim or a doctor warning alone: a wee
 - Each trim is one line, the newest removed entry's mtime in UTC as its "since": `trimmed the Go build cache /home/d/.cache/go-build from 14.2 GiB to 8.0 GiB: 31204 entries unused since 2026-11-20T03:12Z`.
   The over-cap line is `the Go build cache <path> holds 12.1 GiB, over its 10.0 GiB cap, the rest used in the last 2 h; kept`.
 - The job part runs first and the Go part after it, each whatever the other did, so a session list that cannot be read still lets the trim run, and a Go part that fails still lets the job tmps be cleared.
-- Each line is also appended, as `- HH:MM <line>` in local time, to `~/.local/state/agent-team/janitor/disk-<local date>.md`, titled `# Disk cleared on <machine>, <date>`; a day with no clearing has no file.
+- Each line is also appended, as `- HH:MM <line>` in local time, to `~/.local/state/agent-team/janitor/disk-<local date>.md`, titled `# Disk cleared on <machine>, <date>`; a day with no clearing, trim or over-cap line has no file.
 - A clearing that fails is said on stderr (`team-janitor: could not clear <path>: <rm's last line>`), the other jobs go on, and the run exits 1.
-- A run that clears and trims nothing prints nothing.
+- A run that clears and trims nothing prints nothing, but for the over-cap line once a local day.
 - One run at a time, by a lock on `~/.local/state/agent-team/disk.lock`: a second run says `another team-janitor disk is running; skipped` and exits 0.
 - After each run but a dry run, `~/.local/state/agent-team/janitor/disk.json` (`team-disk/1`) records the run and the day's totals, written whole through a temporary file and a rename, so a stopped run leaves the last whole record; the totals start again on a new local date.
 - The record's `go` holds the cache's path and size after the run, its cap, the day's trims (`trimmed_today`, entries and kilobytes) and the local date the over-cap line was last said (`over_cap_said`).
