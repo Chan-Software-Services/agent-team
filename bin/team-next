@@ -309,8 +309,10 @@
 # its exit code, else 1.
 # The merge line: "merge ask: <full PR URL> at <head>, agent-review <state>, checks green" (or
 # the failing, pending and missing checks; the state the reviewer App's check's, review_check in
-# bin/lib/team.sh's pr_part, on the team's own project with the App on), <head> the PR's, or after
-# a team-catch-up the reviewed head it was made from, as team-catch-up's next line names it, or
+# bin/lib/team.sh's pr_part, on the team's own project with the App on; then, for each check no
+# merge waits on, pr_part's advisory, that has not passed, "; no merge waits on <name>, which
+# failed (or was cancelled), so fix it in a task of its own", or "which is still running"), <head>
+# the PR's, or after a team-catch-up the reviewed head it was made from, as team-catch-up's next line names it, or
 # "merge on the default word: run team-merge T<n> for ..." instead while the default word, the
 # approved plan, holds on the ledger for the PR at the reviewed head, read once the ci is logged
 # (merge_authority in bin/lib/ledger.jq, the derivation team-merge, team-state and team-sweep
@@ -659,7 +661,11 @@ merge_line() {
         + ([(.checks.failing | select(. != []) | "failing: \(join(", "))"),
             (.checks.pending | select(. != []) | "pending: \(join(", "))"),
             (.required_missing | select(. != []) | "missing: \(join(", "))")]
-          | if . == [] then "checks green" else "checks \(join("; "))" end) end) as $facts
+          | if . == [] then "checks green" else "checks \(join("; "))" end)
+        + ([(.advisory // [])[] | select(.bucket != "pass" and .bucket != "skipping")
+            | "; no merge waits on \(.name), which " + if .bucket == "pending" then "is still running"
+              else "\(if .bucket == "cancel" then "was cancelled" else "failed" end), so fix it in a task of its own" end]
+          | add // "") end) as $facts
     | ($default != null and $default.applies and ($default.own == false or $default.own.app != null)) as $applies
     | (if $applies then ", so the default word does not hold" else "" end) as $held
     | [($review.guarded // [])[] | select(IN(guarded_areas[]))] as $guarded

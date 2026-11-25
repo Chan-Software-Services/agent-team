@@ -86,6 +86,13 @@
 # through team-project (with --merge-group, beside the base's rules, below), and one still not
 # listed when that reading has stood is a failure.
 # agent-review is never among them here, since a reviewer sets it at its verdict, apart from CI.
+# On the team's own project, the checks bin/lib/advisory-checks names are no merge's to wait on,
+# in a PR's head's looks and a trial commit's: neither such a check, whatever it shows, nor its
+# workflow's open run holds the wait, the settle or a queued clock, none is ever a failure, and
+# every text of a passed, none or pending end names each the look has, with its state (passed,
+# skipped, failed, cancelled or pending) and link: "; no merge waits on these, so none counted:
+# <name> <state> (<link>), ...". A name required_checks or, with --merge-group, the base's rules
+# require is never passed over. --run passes over none, since its caller named the one run.
 # Before each look, while the team holds offline (offline_hold), it ends at once with exit 75 and
 # the hold's text.
 # Then, while GitHub's rate limit stands for a resource the look reads (core, and graphql too with
@@ -137,8 +144,9 @@
 # its Actions run is not completed, at every readable look from the first that saw it, for 20
 # minutes of the looks at which nothing else of the repository runs: no runner took it, and neither
 # it nor its run holds the wait any more. Something else runs at a look when GitHub lists more
-# workflow runs of the repository in progress than the look's own open runs that are, or a check of
-# the look is in_progress in an Actions run not completed (a stuck one's job runs nowhere, and a
+# workflow runs of the repository in progress than the look's own open runs that are (those of the
+# checks no merge waits on among them), or a check of the look is in_progress in an Actions run not
+# completed (a stuck one's job runs nowhere, and a
 # check from outside Actions takes no runner): such a look
 # holds every queued clock at its count, since a job may wait well past 20 minutes for one of the
 # plan's runners while the team's other runs hold them, and only one queued while nothing runs is
@@ -367,6 +375,10 @@ required=$(team_project "$project" required_checks)
 base=$(team_project "$project" base)
 # The workflow whose run carries the required checks, when the project names one.
 branch_ci=$(team_project "$project" branch_ci)
+# The checks of a PR's head that no merge waits on (bin/lib/advisory-checks), none with --run,
+# whose caller named the one run to wait on.
+advisory='[]'
+[[ -n $run_id ]] || advisory=$(advisory_checks "$project")
 # Whom the reader logs each request for.
 if [[ -n $run_id ]]; then GH_FOR="$repo run $run_id"; else GH_FOR="$repo#$number"; fi
 
@@ -437,7 +449,7 @@ read_look() {
   if [[ -n $run_id ]]; then read_run; else read_pr; fi || return
   gh_read "$dir" running "repos/$repo/actions/runs?status=in_progress&per_page=1" || return
   jq --slurpfile running "$dir/running" '
-    .busy = (($running[0].total_count // 0) > ([.open_runs[] | select(.status == "in_progress")] | length)
+    .busy = (($running[0].total_count // 0) > ([.open_runs[] | select(.status == "in_progress")] | length) + (.aside_running // 0)
       or any(.checks[]; .state == "in_progress" and .run != null and .run.status != "completed"))' "$dir/reading" >"$dir/look.new"
   mv "$dir/look.new" "$dir/look"
 }
@@ -491,15 +503,23 @@ read_pr() {
     | [.[] | select(.bucket == "pending") | .link // "" | capture("/actions/runs/(?<id>[0-9]+)/job/[0-9]+").id]
     | unique[] | select(IN($listed[]) | not)' "$dir/checks")
   jq -n --slurpfile view "$dir/view" --slurpfile checks "$dir/checks" --slurpfile head_runs "$dir/head-runs" --argjson without_review "$without_review" \
+    --argjson advisory "$advisory" --argjson required "$required" \
     --argjson runs "$(jq -s 'map({key: (.id | tostring), value: {id, status, conclusion, updated_at}}) | from_entries' \
       /dev/null "${files[@]}")" '
     ($head_runs[0].workflow_runs | map({key: (.id | tostring), value: {id, status, conclusion, updated_at}}) | from_entries)
       + $runs as $runs
-    | {state: $view[0].state, head: $view[0].headRefOid, entry: $view[0].entry,
-     checks: [$checks[0][] | select($without_review and .name == "agent-review" | not) | {name, state: (.state | ascii_downcase), bucket, link: (.link // ""),
+    # The checks no merge waits on, a required name never among them, and their workflows files.
+    | [$advisory[] | select(.check as $c | $required | index([$c]) | not)] as $aside
+    | [$aside[].check] as $names | [$aside[] | ".github/workflows/\(.workflow)"] as $paths
+    | [$head_runs[0].workflow_runs[] | select(.status != "completed")] as $open
+    | [$checks[0][] | select($without_review and .name == "agent-review" | not) | {name, state: (.state | ascii_downcase), bucket, link: (.link // ""),
        run: (if .bucket == "pending" then $runs[(.link // "") | capture("/actions/runs/(?<id>[0-9]+)/job/[0-9]+").id // ""]
-         else null end)}],
-     open_runs: [$head_runs[0].workflow_runs[] | select(.status != "completed") | {id, name, status}]}' >"$dir/reading"
+         else null end)}] as $all
+    | {state: $view[0].state, head: $view[0].headRefOid, entry: $view[0].entry,
+     checks: [$all[] | select(.name | IN($names[]) | not)],
+     advisory: [$all[] | select(.name | IN($names[])) | {name, bucket, link}],
+     open_runs: [$open[] | select((.path // "") | IN($paths[]) | not) | {id, name, status}],
+     aside_running: ([$open[] | select(((.path // "") | IN($paths[])) and .status == "in_progress")] | length)}' >"$dir/reading"
 }
 
 # The text naming each pending check of the last readable look, with its run's id and status, and
@@ -735,10 +755,18 @@ report() {
   text="team-ci-wait: the checks on ${head:0:7} did not pass:"$'\n'$(jq -r '.[] | "  " + .line' "$dir/classed")
 }
 
+# The clause of a passing or pending end for the last readable look's checks that no merge waits
+# on, naming each with its state and link; nothing when the look has none.
+aside_text() {
+  jq -r '(.advisory // []) | if . == [] then "" else "; no merge waits on these, so none counted: "
+    + (map("\(.name) \({pass: "passed", skipping: "skipped", fail: "failed", cancel: "cancelled"}[.bucket] // "pending")"
+      + (if .link == "" then "" else " (\(.link))" end)) | join(", ")) end' "$dir/look"
+}
+
 # The text of a look whose every check passed or was skipped, naming each.
 passed_text() {
-  jq -r --arg short "${head:0:7}" '"team-ci-wait: every check passed on \($short): "
-    + ([.checks[] | "\(.name) " + (if .bucket == "pass" then "passed" else "skipped" end)] | join(", "))' "$dir/look"
+  jq -r --arg short "${head:0:7}" --arg aside "$(aside_text)" '"team-ci-wait: every check passed on \($short): "
+    + ([.checks[] | "\(.name) " + (if .bucket == "pass" then "passed" else "skipped" end)] | join(", ")) + $aside' "$dir/look"
 }
 
 # With --run, the text of a completed run that passed with no job.
@@ -758,10 +786,10 @@ look_end() {
     [[ -z $pending ]] || text+=$'\n'"  still pending: $pending"
     finish failed 1 "$text"
   elif [[ -n $pending ]]; then
-    finish pending 0 "team-ci-wait: no check has failed on ${head:0:7} so far; still pending: $pending"
+    finish pending 0 "team-ci-wait: no check has failed on ${head:0:7} so far; still pending: $pending$(aside_text)"
   elif jq -e '.checks == []' "$dir/look" >/dev/null; then
     [[ -z $run_id ]] || finish none 0 "$(no_job_text)"
-    finish none 0 "team-ci-wait: ${head:0:7} has no GitHub checks reported so far"
+    finish none 0 "team-ci-wait: ${head:0:7} has no GitHub checks reported so far$(aside_text)"
   fi
   finish passed 0 "$(passed_text)"
 }
@@ -986,7 +1014,7 @@ while :; do
         if [[ $names == '[]' && -n $run_id ]]; then
           finish none 0 "$(no_job_text)"
         elif [[ $names == '[]' ]]; then
-          finish none 0 "team-ci-wait: ${head:0:7} has no GitHub checks: none reported for $((SETTLE_SECONDS / 60)) minutes"
+          finish none 0 "team-ci-wait: ${head:0:7} has no GitHub checks: none reported for $((SETTLE_SECONDS / 60)) minutes$(aside_text)"
         fi
         finish passed 0 "$(passed_text)"
       fi

@@ -346,3 +346,21 @@ merge on the default word: run team-merge T7 for $url at $sha, agent-review succ
     "merge ask: $url at $sha, agent-review success, checks green; the review found guarded areas: guardrails"
   [[ $output != *"default word"* ]]
 }
+
+@test "--ci's merge line names a check that no merge waits on when it failed or still runs, and none when it passed" {
+  local macos='{"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}, {"name": "rust-macos", "bucket": "BUCKET", "state": "S"}'
+  code_checkout
+  git -C "${CODE_CHECKOUT:?}" remote set-url origin git@github.com:owner/proj.git
+  reviewing "$sha"
+  pr_on_github "$sha" 0 "[${macos/BUCKET/fail}]"
+  passed -- "T7 DONE pass $url $counts before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge ask: $url at $sha, agent-review success, checks green; no merge waits on rust-macos, which failed, so fix it in a task of its own"
+  pr_on_github "$sha" 0 "[${macos/BUCKET/pending}]"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge ask: $url at $sha, agent-review success, checks green; no merge waits on rust-macos, which is still running"
+  pr_on_github "$sha" 0 "[${macos/BUCKET/pass}]"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" "merge ask: $url at $sha, agent-review success, checks green"
+}
