@@ -567,14 +567,15 @@ slow_files() {
 }
 
 # The clock shim, tests/helpers/clockshift.c, built into <dir>/clockshift.so, and checked to move
-# date's clock ahead by the run's days (see the header); fails naming why.
+# date's clock the run's days past the unshifted clock (see the header); fails naming why.
 clock_shim() {
   local so=$1/clockshift.so seconds=$((clock * 86400)) now ahead
   if ! cc -shared -fPIC -O2 -o "$so" "$root/tests/helpers/clockshift.c" -ldl; then
     echo "clock-ahead: cc could not build tests/helpers/clockshift.c"
     return 1
   fi
-  now=$(date +%s)
+  # The clock with no shift, as a shim this run is already under reads it with CLOCKSHIFT_SECONDS 0.
+  now=$(CLOCKSHIFT_SECONDS=0 date +%s)
   ahead=$(LD_PRELOAD=$so CLOCKSHIFT_SECONDS=$seconds date +%s)
   if ((ahead - now < seconds - 60)); then
     echo "clock-ahead: date +%s read $ahead under tests/helpers/clockshift.c, not $clock days past $now, so the shim moves no clock here"
