@@ -26,7 +26,7 @@ A word that does not hold falls to the next only for its own reasons, never for 
 
 ## What each word holds the PR to
 
-Every merge, on either word, needs the checks every merge gets: the PR open, not a draft, not conflicting and on the project's base; every required check present and passed on the head, none failing or pending; `agent-review` success on the head, which on agent-team with the reviewer App on is the App's own check run (see "agent-team behind the reviewer App"); no agent attribution line in its commits; and the project's local checks passing on the head through `team-checks`.
+Every merge, on either word, needs the checks every merge gets: the PR open, not a draft, not conflicting and on the project's base; every required check present and passed on the head, none failing or pending (a check no merge waits on aside, see "The checks no merge waits on"); `agent-review` success on the head, which on agent-team with the reviewer App on is the App's own check run (see "agent-team behind the reviewer App"); no agent attribution line in its commits; and the project's local checks passing on the head through `team-checks`.
 
 GitHub holds one more thing once `bin/lib/worker-login` names the worker login and a base's protection restricts who can push to the owner alone (`sops/machine-setup.md`, "The worker login"): that restriction refuses a merge into the base by a session's login, the worker login, so a PR merges only through `team-merge`, which runs on the owner login whatever session runs it.
 
@@ -46,6 +46,18 @@ The default word, the unattended one, needs:
 A legacy approval, a `plan-approved` logged before T276 with no `plan`, has no hash to compare and no scope, and reads as the coordinator's whatever its `by` says.
 
 For agent-team, the team's own project (`own_project` in `bin/lib/team.sh`: by name, by its path being the code checkout, or by its repo being the code checkout's origin), the default word needs more, as "agent-team behind the reviewer App" says; while the App is off it has one reason, "the team's own project merges unattended only behind the reviewer App's check, which is not set up", and `team-merge` reads nothing more for it, so its PRs merge on the per-head word alone.
+
+## The checks no merge waits on
+
+`bin/lib/advisory-checks` names the checks of the team's own project that block nothing: today `rust-macos`, the job of `.github/workflows/rust-macos.yml`, which runs the Rust check on macOS on every PR to `dev` and to `main` and by hand.
+
+- No merge waits on one, red or pending: `team-merge`, `team-catch-up` and, through `team-merge --holds`, `team-land` leave it out of the checks they hold a head to, and `team-ci-wait` neither waits on it nor fails on it, on a head or on a trial commit.
+  The workflow never runs on a merge queue's trial commit.
+- A name the project's `required_checks`, the PR's server-required checks or the base's rules require is never left out of a merge's checks, and no other project's check of the name is.
+  `team-ci-wait` counts the project's `required_checks`, and the base's rules only with `--merge-group`, so a wait on a head passes over a name only the rules require, which `team-merge` still holds.
+- A red one is a finding fixed in the background: the coordinator opens a task of its own for it, and it never holds the PR that showed it, nor becomes a round of that PR's builder.
+- The coordinator reads it in `team-next T<n> --ci`'s merge line, as `team-ci-wait`'s passing or pending end names it too; for one that line said was still running, the coordinator reads its end later with `gh run list --repo <owner>/<name> --workflow rust-macos.yml`, which lists the job's runs.
+- Changing the list is a PR on this repository: the list is code, on the short list as a guardrail.
 
 ## Through the merge queue
 
@@ -146,7 +158,7 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
 
 - A release to `main`: it stays Daniel's own, outside `team-merge`.
 - A merge by a session's own login, with the worker login on, into a base whose protection restricts pushes to the owner: GitHub refuses it, and only `team-merge`, on the owner login, merges.
-- A PR with a required check missing or not passed, any check failing or pending, or any other check every merge gets unmet.
+- A PR with a required check missing or not passed, any check failing or pending (a check no merge waits on aside), or any other check every merge gets unmet.
 - On the default word, a PR of agent-team, the team's own project, until the reviewer App is set up and `dev`'s protection pins its check, or on a plan the coordinator approved, or one approved before T276: it merges on the per-head word.
 - On any word, a PR of agent-team with the reviewer App on whose head lacks the App's own `agent-review` check run passed.
 - On the default word, a PR that touches the short list for its project, or whose reviewer named one of its six areas (CI, migrations, the deploy, permissions, secrets, or the team's own guardrails), or whose task ever counted a security or real-data finding, or that changes a path outside the approval's scope: these come back to Daniel for the per-head word.
@@ -159,7 +171,7 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
   A round that reruns the failed check green on the same head ends with the builder's `DONE`, after which the checks wait waits on that head again, so arm `team-next T<n> --ci` once more.
   After each `team-catch-up`, the first or a later one, the wait is on the merge that catch-up made.
 - A check the base newly requires strands no reviewed PR behind its base: GitHub runs a check only on a commit pushed since the base required it, so a head lacks it until a merge of the base, and `team-merge` refuses a head lacking a required check on any base.
-  `team-catch-up T<n>` makes that merge when the merge is clean, every check the head has passed and none is failing or pending, on a base with a merge queue too, and names each required check the head lacked; only a missing `agent-review`, when the base or the project requires it, still refuses it, since no run of the merge makes that one.
+  `team-catch-up T<n>` makes that merge when the merge is clean, every check the head has passed and none is failing or pending (a check no merge waits on aside), on a base with a merge queue too, and names each required check the head lacked; only a missing `agent-review`, when the base or the project requires it, still refuses it, since no run of the merge makes that one.
   The checks wait then waits on the merge's checks, a red one going back as a round as any failure does, and `team-merge` refuses the merge while a required check is still missing on it.
   So once a repository requires a new check, the coordinator catches up each open, reviewed PR behind its base that `team-merge` refuses as missing it.
 - With the review passed and every check green, it queues each plain `before` note as a follow-up, then:

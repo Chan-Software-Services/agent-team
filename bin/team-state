@@ -58,8 +58,10 @@
 # made the live head from the ledger head, team-catch-up's clean merge of the base, else false; the
 # text says "(caught up cleanly with <base>)" for it where it says "(head moved)" for any other
 # moved head), checks passed, failing and pending by name (a skipped check counts as passed, a
-# cancelled one as failing), required (server-required plus the project's required_checks) and
-# required_missing, agent_review (the agent-review check's state on the head, or missing),
+# cancelled one as failing; a check no merge waits on, bin/lib/advisory-checks, is in none of the
+# three but in advisory, {name, bucket} each, a key only a head with one has), required
+# (server-required plus the project's required_checks) and required_missing, agent_review (the
+# agent-review check's state on the head, or missing),
 # review_app, review_check, review_check_run and review_check_by (the reviewer App's id and its
 # agent-review check run on the head, read from GitHub's check runs and commit status of the head
 # for the team's own project with the App on, else null: pr_part in bin/lib/team.sh; the text then
