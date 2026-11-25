@@ -10,7 +10,8 @@
 //        proto status | proto targets | proto stop
 //        proto install [--refresh-pins [--series <codename>] [--add <package>]...]
 //   open     starts the host when none runs and opens the window, or moves the one open to the
-//            URL and target by opening the new one and then closing the old; prints
+//            URL and target as set does (the new one opened and then the old closed, or a resize
+//            in place when only the width and height change on the same page); prints
 //            "proto: <engine> <version> at <size> (<width>x<height>@<scale>) on <url>". The URL
 //            defaults to the project's url (http://localhost:5173/ without one), the target to
 //            the window's own, else chromium/laptop; an engine or a size alone keeps the other.
