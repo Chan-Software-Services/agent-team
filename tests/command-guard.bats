@@ -1252,7 +1252,7 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
 
 TOPIC_GITHUB="a GitHub write, which a topic session never makes"
 
-@test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes behind any of git's options are denied" {
+@test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes, behind any of git's options too, are denied" {
   local command
   # The spellings the review found passing: a group or subcommand its settings never listed, gh
   # by a path or behind a wrapper.
@@ -1290,11 +1290,14 @@ TOPIC_GITHUB="a GitHub write, which a topic session never makes"
     'git --config-env=a=B push' 'git --no-pager merge x' 'git -P rebase main' 'git --work-tree=. reset HEAD' \
     'git --no-pager checkout -b x' 'git -P checkout -B x' 'git --no-pager switch -c x' 'git -P switch -C x' \
     'git --no-pager switch --create x' 'git -P branch x' '/usr/bin/git --no-pager push origin x' \
-    'git --no-pager -c a=b push origin x'; do
+    'git --no-pager -c a=b push origin x' 'git pull' 'git -C d pull' 'git cherry-pick x' 'git revert HEAD' \
+    'git am x.patch' 'git tag x' 'git update-ref refs/heads/x HEAD' 'git worktree add ../x' '/usr/bin/git pull' \
+    'git -P cherry-pick x' 'git --no-pager revert HEAD' 'git -C d am x.patch' 'git -c a=b tag x' \
+    'git -C d update-ref refs/heads/x HEAD' 'git -C d worktree add ../x'; do
     denied_in "$REPO_ROOT/settings/topic.json" "$command" || { echo "settings/topic.json lets through: $command" >&2; return 1; }
   done
   for command in 'git -c core.pager=cat log' 'git --git-dir=d status' 'git -c a=b diff' 'git --no-pager log' \
-    'git -P diff' 'git -C d status'; do
+    'git -P diff' 'git -C d status' 'git worktree list' 'git -C d worktree list'; do
     if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
   done
 }

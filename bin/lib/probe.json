@@ -686,6 +686,14 @@
       "family": "push"
     },
     {
+      "id": "topic-git-pull",
+      "roles": ["topic"],
+      "tool": "Bash",
+      "input": "git pull --help",
+      "expect": "rule",
+      "family": "git-writes"
+    },
+    {
       "id": "github-post",
       "roles": ["assistant"],
       "tool": "Bash",
@@ -895,7 +903,7 @@
     },
     {
       "family": "git-writes",
-      "rules": "^Bash\\((\\*/)?git (-C \\* |-\\* )?(merge|rebase|checkout -[bB]|switch (-[cC]|--create)|branch \\*)"
+      "rules": "^Bash\\((\\*/)?git (-C \\* |-\\* )?(merge|rebase|checkout -[bB]|switch (-[cC]|--create)|branch \\*|pull\\*|cherry-pick\\*|revert\\*|am \\*|tag \\*|update-ref\\*|worktree add\\*)"
     },
     {
       "family": "github-writes",
