@@ -70,7 +70,7 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { isLocalUrl, localStorageState } from "./guards.mjs";
-import { installOverlay, popupReport, pushState, toolbarAction } from "./overlay-page.mjs";
+import { installOverlay, pageMetrics, popupReport, pushState, testLink, toolbarAction } from "./overlay-page.mjs";
 import { pinnedBrowsers, playwright } from "./playwright.mjs";
 import { checkWebkitLibs, lacksLine } from "./webkit-libs.mjs";
 
@@ -185,15 +185,7 @@ function makeWindow(browser, context, page, hooks, blockedWaiters) {
   });
   return {
     url: () => page.url(),
-    metrics: () => page.evaluate(() => ({
-      innerWidth,
-      innerHeight,
-      devicePixelRatio,
-      maxTouchPoints: navigator.maxTouchPoints,
-      userAgent: navigator.userAgent,
-      cookie: document.cookie,
-      url: location.href,
-    })),
+    metrics: () => pageMetrics(page),
     resize: (target) => page.setViewportSize({ width: target.width, height: target.height }),
     reload: () => page.reload({ waitUntil: "load", timeout: loadTimeoutMs }),
     push: (state) => pushState(page, state),
@@ -213,14 +205,7 @@ function makeWindow(browser, context, page, hooks, blockedWaiters) {
         };
         blockedWaiters.add(onBlocked);
       });
-      const link = await page.evaluateHandle((to) => {
-        const anchor = document.createElement("a");
-        anchor.href = to;
-        anchor.textContent = "proto test link";
-        anchor.style.cssText = "position: fixed; left: 0; top: 0; z-index: 2147483647; background: white; padding: 4px";
-        document.body.append(anchor);
-        return anchor;
-      }, href);
+      const link = await testLink(page, href);
       try {
         const loaded = page.waitForURL((address) => address.href === href, { waitUntil: "load", timeout: followTimeoutMs });
         // Still waiting when the guard blocks it, so its later timeout is nobody's error.

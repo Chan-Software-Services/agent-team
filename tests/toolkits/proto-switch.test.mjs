@@ -104,14 +104,6 @@ async function streamsSettle(site, count) {
   assert.equal(site.streams(), count, "open event streams");
 }
 
-async function available(t, proto, least) {
-  const names = (await proto.engines()).filter((engine) => engine.available).map((engine) => engine.name);
-  if (names.length >= least) return names;
-  if (process.env.CI === "true") assert.fail(`in CI every engine runs, but only ${names.join(", ") || "none"} did`);
-  t.skip(`${least} engines are needed; only ${names.join(", ") || "none"} runs here`);
-  return null;
-}
-
 const set = (proto, target, url) => proto.request("POST", "/v1/target", { target, ...(url ? { url } : {}) });
 
 describe("proto set's refusals", () => {
@@ -135,7 +127,7 @@ describe("an engine switch", () => {
   test("goes round every engine the machine has, each reopening the page's own URL with the localhost login and closing the old browser", async (t) => {
     const proto = protoSession(t);
     const site = await fixture(t);
-    const names = await available(t, proto, 2);
+    const names = await proto.available(t, 2);
     if (!names) return;
     const opened = await proto.run(["open", `${site.url}login`, "--target", `${names[0]}/laptop`]);
     assert.equal(opened.status, 0, opened.stderr);
@@ -222,7 +214,7 @@ describe("a switch that fails", () => {
   test("to an unavailable engine answers 503 with its reason, and one whose page fails to load answers its error; the old window stays as it was", async (t) => {
     const site = await fixture(t);
     const probe = protoSession(t);
-    const [first] = (await available(t, probe, 1)) ?? [];
+    const [first] = (await probe.available(t, 1)) ?? [];
     if (!first) return;
     const missing = engines.find((engine) => engine !== first);
     const proto = protoSession(t, { env: { PROTO_BROWSERS_PATH: browsersWithout(missing) } });

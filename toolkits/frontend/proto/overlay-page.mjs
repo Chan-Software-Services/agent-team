@@ -1,6 +1,6 @@
 // The overlay's Playwright side, one for every engine's driver: the init script and the binding
-// on a context, the state pushed to a page, and the test seam's acts on a page's toolbar, by role
-// and accessible name as Daniel's clicks are.
+// on a context, the state pushed to a page, the test seam's acts on a page's toolbar, by role and
+// accessible name as Daniel's clicks are, and its reading of a page and its link to follow.
 //
 //   await installOverlay(context, ownPage, onMessage)
 //                              adds the binding window.__protoHost and then overlay.js as an init
@@ -23,6 +23,11 @@
 //                              accessible name, { role, value, disabled } and a combobox's
 //                              options [{ value, text, disabled, title }], from Playwright's aria
 //                              snapshot of the element, which `aria` holds
+//   await pageMetrics(page)    the test seam's "metrics": the page's own innerWidth, innerHeight,
+//                              devicePixelRatio, maxTouchPoints, userAgent, cookie and url
+//   await testLink(page, href) the test seam's link for "navigate": an <a> to `href` added in
+//                              front of the page, its element handle, which a driver clicks as a
+//                              user would and then disposes
 //   await popupReport(context, url)
 //                              a second page of the window's context opened at `url`, as another
 //                              tab sharing it is: { overlay, shown, drawn }, the type of its
@@ -31,7 +36,7 @@
 import { fileURLToPath } from "node:url";
 import { isLocalUrl } from "./guards.mjs";
 
-export const overlayScript = fileURLToPath(new URL("./overlay.js", import.meta.url));
+const overlayScript = fileURLToPath(new URL("./overlay.js", import.meta.url));
 
 const actionTimeoutMs = 5_000;
 const roles = ["combobox", "spinbutton", "button"];
@@ -103,6 +108,25 @@ export async function toolbarAction(page, { action, name, value }) {
   }
   return { done: action };
 }
+
+export const pageMetrics = (page) => page.evaluate(() => ({
+  innerWidth,
+  innerHeight,
+  devicePixelRatio,
+  maxTouchPoints: navigator.maxTouchPoints,
+  userAgent: navigator.userAgent,
+  cookie: document.cookie,
+  url: location.href,
+}));
+
+export const testLink = (page, href) => page.evaluateHandle((to) => {
+  const anchor = document.createElement("a");
+  anchor.href = to;
+  anchor.textContent = "proto test link";
+  anchor.style.cssText = "position: fixed; left: 0; top: 0; z-index: 2147483647; background: white; padding: 4px";
+  document.body.append(anchor);
+  return anchor;
+}, href);
 
 export async function popupReport(context, url) {
   const page = await context.newPage();

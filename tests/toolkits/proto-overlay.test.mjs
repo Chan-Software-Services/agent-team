@@ -146,14 +146,6 @@ async function fixture(t) {
   });
 }
 
-async function available(t, proto, least) {
-  const names = (await proto.engines()).filter((engine) => engine.available).map((engine) => engine.name);
-  if (names.length >= least) return names;
-  if (process.env.CI === "true") assert.fail(`in CI every engine runs, but only ${names.join(", ") || "none"} did`);
-  t.skip(`${least} engines are needed; only ${names.join(", ") || "none"} runs here`);
-  return null;
-}
-
 const open = async (proto, url, target) => {
   const opened = await proto.run(["open", url, "--target", target]);
   assert.equal(opened.status, 0, opened.stderr);
@@ -190,7 +182,7 @@ describe("the toolbar's controls", () => {
   test("have their roles and names; an unavailable engine's option is disabled, says so and holds the reason", async (t) => {
     const site = await fixture(t);
     const probe = protoSession(t);
-    const [first] = (await available(t, probe, 1)) ?? [];
+    const [first] = (await probe.available(t, 1)) ?? [];
     if (!first) return;
     const missing = engines.find((engine) => engine !== first);
     const proto = protoSession(t, { env: { PROTO_BROWSERS_PATH: browsersWithout(missing) } });
@@ -234,7 +226,7 @@ describe("a switch from the toolbar", () => {
   test("choosing a size, applying a custom size and choosing each engine switch the window as proto set does", async (t) => {
     const proto = protoSession(t);
     const site = await fixture(t);
-    const names = await available(t, proto, 1);
+    const names = await proto.available(t, 1);
     if (!names) return;
     await open(proto, `${site.url}other`, `${names[0]}/laptop`);
     await drawnIdle(proto, "the toolbar");
@@ -276,7 +268,7 @@ describe("a switch from the toolbar", () => {
   test("while it runs every control but Hide toolbar is disabled and the status names it; one that fails shows its error and the old window keeps its toolbar", async (t) => {
     const proto = protoSession(t);
     const site = await fixture(t);
-    const [engine] = (await available(t, proto, 1)) ?? [];
+    const [engine] = (await proto.available(t, 1)) ?? [];
     if (!engine) return;
     await open(proto, `${site.url}slow`, `${engine}/laptop`);
     await drawnIdle(proto, "the toolbar");
@@ -311,7 +303,7 @@ describe("Reload and Hide toolbar", () => {
   test("Reload reloads the page; the collapsed toolbar stays collapsed across a reload, a size switch and an engine switch", async (t) => {
     const proto = protoSession(t);
     const site = await fixture(t);
-    const names = await available(t, proto, 1);
+    const names = await proto.available(t, 1);
     if (!names) return;
     await open(proto, `${site.url}other`, `${names[0]}/laptop`);
     await drawnIdle(proto, "the toolbar");
@@ -372,7 +364,7 @@ describe("the binding", () => {
   test("answers a message of an unknown type, or a malformed one, with an error and changes nothing; overlay.js's header names its sections and types", async (t) => {
     const proto = protoSession(t);
     const site = await fixture(t);
-    const [engine] = (await available(t, proto, 1)) ?? [];
+    const [engine] = (await proto.available(t, 1)) ?? [];
     if (!engine) return;
     await open(proto, `${site.url}other`, `${engine}/laptop`);
     const before = await drawnIdle(proto, "the toolbar");

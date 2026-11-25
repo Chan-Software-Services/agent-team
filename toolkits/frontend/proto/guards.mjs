@@ -17,10 +17,10 @@
 //                                missing; throws a one-line reason naming it when it is not a
 //                                directory, is owned by another user, or is open to others (any
 //                                group or other mode bit), or when its socket's path would pass
-//                                socketPathLimit bytes; answers whether it exists
+//                                100 bytes (macOS refuses a Unix socket path past 104); answers
+//                                whether it exists
 //   runtimePaths(dir)            { socket, token, log, lock }: host.sock, token, host.log and
 //                                start.lock in the directory
-//   socketPathLimit              100: macOS refuses a Unix socket path past 104 bytes
 //
 // The gate guards these scripts and the client module alone, as ui-capture's does: any local
 // process of Daniel's user that reads the token file can still reach the socket without them,
@@ -79,7 +79,7 @@ export function runtimeDir(env = process.env) {
   return join(env.HOME || homedir(), ".local", "state", "agent-team", "proto");
 }
 
-export const socketPathLimit = 100;
+const socketPathLimit = 100;
 
 export const runtimePaths = (dir) => ({
   socket: join(dir, "host.sock"),

@@ -2,10 +2,6 @@
 // browsers launched for it alone, never in Daniel's window, as one PNG per target and an index,
 // matrix.md, in a new or empty directory.
 //
-//   agentChromeRefusal          the line an engines list naming agent-chrome is refused with
-//   fileName(engine, size)      "<engine>-<size>.png", the size id lowered with every run of
-//                               characters other than letters, digits, "@" and "." turned into
-//                               "-" (webkit-phone.png, chromium-iphone-15.png, firefox-1024x768@2.png)
 //   defaultOutDir(checkout, now)   <checkout>/.scratch/ui/matrix-<UTC YYYYMMDD-HHMMSS>, the CLI's
 //                               and the bridge's default
 //   planCapture(body, project)  the capture `body` asks ({ outDir, url?, engines?, sizes?,
@@ -51,11 +47,14 @@ import { launchedEngines, presets, resolveTarget, sizeText, targetText } from ".
 import { checkLocalUrl, isLocalUrl } from "./guards.mjs";
 import { contextOptions, firstLine, guardContext } from "./launched.mjs";
 
-export const agentChromeRefusal = "the Agent Chrome is Daniel's window; a capture uses launched engines";
+const agentChromeRefusal = "the Agent Chrome is Daniel's window; a capture uses launched engines";
 const loadTimeoutMs = 30_000;
 const selectorTimeoutMs = 10_000;
 
-export const fileName = (engine, size) => `${engine}-${size.toLowerCase().replace(/[^a-z0-9@.]+/g, "-")}.png`;
+// "<engine>-<size>.png", the size id lowered with every run of characters other than letters,
+// digits, "@" and "." turned into "-" (webkit-phone.png, chromium-iphone-15.png,
+// firefox-1024x768@2.png).
+const fileName = (engine, size) => `${engine}-${size.toLowerCase().replace(/[^a-z0-9@.]+/g, "-")}.png`;
 
 // 2026-11-25T09:08:07.123Z -> 20261125-090807
 const stamp = (now) => now.toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");

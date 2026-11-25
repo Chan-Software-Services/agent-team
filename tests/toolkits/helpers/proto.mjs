@@ -23,6 +23,10 @@
 //   await proto.engine(t, name)
 //                         true when the host reports the engine available; else, under CI=true,
 //                         fails the test with the reason, and elsewhere skips it with the reason
+//   await proto.available(t, least)
+//                         the names of the launched engines the host reports available when
+//                         there are at least `least`; else null, the test failed under CI=true
+//                         and skipped elsewhere, as engine() does
 //   await proto.page(action, fields)   POST /v1/test/page's answer body for `action` ("metrics",
 //                         "navigate" with `url`, "close-browser", "popup" with `url`, "send" with
 //                         `message`), failing the test unless 200
@@ -42,6 +46,10 @@
 //                         its text joined as `text` (helpers/mcp.mjs's callTool), after which a
 //                         host that answers is handed to ownedPid; bridge.server is the
 //                         connection (listTools, stderr, exited)
+//   await runScript(t, command, args, { cwd, env, timeoutMs })
+//                         runs `command` with `args`, handed to owned, killed after `timeoutMs`
+//                         (180 s by default): its { status, stdout, stderr }, status the exit
+//                         code or the signal that ended it
 //   bridgeConfig()        the `proto` entry of toolkits/frontend/.mcp.json, ${CLAUDE_PLUGIN_ROOT}
 //                         resolved to the toolkit as Claude Code resolves it for --plugin-dir
 //   pngSize(file)         a PNG's { width, height }, from its header
@@ -95,6 +103,13 @@ export function runScript(t, command, args, { cwd, env, timeoutMs = 180_000 } = 
 
 // An address no Agent Chrome answers on: nothing listens on port 1, so a connection is refused.
 export const noAgentChrome = "http://127.0.0.1:1";
+
+// The one rule for an engine the machine lacks: in CI every engine runs, so the test fails;
+// elsewhere it is skipped, with the reason.
+function lacking(test, reason) {
+  if (process.env.CI === "true") assert.fail(`in CI every engine runs, but ${reason}`);
+  test.skip(reason);
+}
 
 export function protoSession(t, { env = {} } = {}) {
   const dir = join(tempDir("proto"), "rt");
@@ -196,9 +211,14 @@ export function protoSession(t, { env = {} } = {}) {
     async engine(test, name) {
       const engine = (await this.engines()).find((each) => each.name === name);
       if (engine.available) return true;
-      if (process.env.CI === "true") assert.fail(`in CI every engine runs, but ${name} is unavailable: ${engine.reason}`);
-      test.skip(`${name} is unavailable here: ${engine.reason}`);
+      lacking(test, `${name} is unavailable: ${engine.reason}`);
       return false;
+    },
+    async available(test, least) {
+      const names = (await this.engines()).filter((engine) => engine.available).map((engine) => engine.name);
+      if (names.length >= least) return names;
+      lacking(test, `${least} engines are needed, and only ${names.join(", ") || "none"} runs`);
+      return null;
     },
   };
 }

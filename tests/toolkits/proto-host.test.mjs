@@ -288,6 +288,9 @@ describe("the host's life", () => {
     const unavailable = await open({ url: "http://127.0.0.1:1/", target: "chromium/phone" });
     assert.equal(unavailable.status, 503);
     assert.match(unavailable.body.error, /^chromium \S+ is not installed \(no .+\); run `proto install`$/);
+    // A body past 1 MiB is answered 400 once the limit is passed, and the rest is never read.
+    assert.deepEqual(await open({ url: "http://127.0.0.1:1/", pad: "x".repeat(8 << 20) }), { status: 400, body: { error: "the body is over 1 MiB" } });
+    assert.equal((await proto.request("GET", "/v1/status")).status, 200);
   });
 
   test("two opens at once leave one host and one window", async (t) => {

@@ -73,11 +73,12 @@
 //                      state, { drawn, collapsed, status, controls, aria } (overlay-page.mjs)
 // The overlay (overlay.js), an init script on the window's context, asks the host by its binding,
 // one message at a time, each dispatched on its `type` (overlay.js's header lists them, and an
-// unknown one is answered { error } and changes nothing): hello is answered { show: false } for
-// any page that is not the window's, the window's page off localhost included, else the state, { show, engines, sizes, current,
-// switching, status, collapsed }; set_target begins a switch as POST /v1/target does, reload
-// reloads the page, and collapse sets the collapsed flag the host keeps across reloads and
-// switches. Each change of the state is pushed to the window's page while it is on localhost.
+// unknown one is answered { error } and changes nothing, as every message is while the host
+// stops): hello is answered { show: false } for any page that is not the window's, the window's
+// page off localhost included, else the state, { show, engines, sizes, current, switching,
+// status, collapsed }; set_target begins a switch as POST /v1/target does, reload reloads the
+// page, and collapse sets the collapsed flag the host keeps across reloads and switches. Each
+// change of the state is pushed to the window's page while it is on localhost.
 // A window whose page or browser Daniel closes is dropped (status's window null, "no window")
 // while the host runs on; `proto open` opens a new one.
 // An error answers { error: "<one line>" }: 400 a bad body, target or URL (one off localhost is
@@ -281,8 +282,10 @@ function checkMessage(message, fields) {
   }
 }
 
-// `record` is the window whose page sent it, or null for any other page.
+// `record` is the window whose page sent it, or null for any other page. Once the host is
+// stopping every message is refused, as every route is, so none begins a switch as it exits.
 async function overlayMessage(message, record) {
+  if (stopping) return { error: "the host is stopping" };
   if (message === null || typeof message !== "object" || Array.isArray(message) || typeof message.type !== "string") {
     return { error: "a message is an object with a type" };
   }
@@ -402,8 +405,6 @@ function beginSwitch(body) {
   });
 }
 
-const switchTarget = async (body) => beginSwitch(body);
-
 const reload = () => queued(async () => {
   if (!current) throw new Refusal(400, noWindow);
   await current.handle.reload();
@@ -501,7 +502,7 @@ const routes = {
     return { ...listing, engines: await Promise.all(listing.engines.map((name) => engineState(drivers.get(name)))), current: current ? targetText(current.target) : null };
   },
   "POST /v1/open": open,
-  "POST /v1/target": switchTarget,
+  "POST /v1/target": beginSwitch,
   "POST /v1/capture": capture,
   "POST /v1/reload": async (body) => {
     checkBody(body, []);
@@ -530,14 +531,21 @@ const answer = (response, status, value) => {
 };
 
 const bodyLimit = 1 << 20;
-function readBody(request) {
+// A body past the limit is refused at once: the request stops being read, and its connection is
+// closed once the refusal is written, so the rest is never buffered.
+function readBody(request, response) {
   return new Promise((resolve, reject) => {
     let text = "";
     request.setEncoding("utf8");
-    request.on("data", (chunk) => {
+    const onData = (chunk) => {
       text += chunk;
-      if (text.length > bodyLimit) reject(new Refusal(400, "the body is over 1 MiB"));
-    });
+      if (text.length <= bodyLimit) return;
+      request.off("data", onData);
+      request.pause();
+      response.once("finish", () => request.destroy());
+      reject(new Refusal(400, "the body is over 1 MiB"));
+    };
+    request.on("data", onData);
     request.on("end", () => {
       if (text === "") return resolve({});
       try {
@@ -557,7 +565,7 @@ const server = createServer(async (request, response) => {
   if (!route) return answer(response, 404, { error: `no route ${request.method} ${request.url}` });
   if (stopping) return answer(response, 503, { error: "the host is stopping" });
   try {
-    const body = request.method === "POST" ? await readBody(request) : {};
+    const body = request.method === "POST" ? await readBody(request, response) : {};
     answer(response, 200, await route(body));
   } catch (error) {
     if (error instanceof Refusal) return answer(response, error.status, { error: error.message });

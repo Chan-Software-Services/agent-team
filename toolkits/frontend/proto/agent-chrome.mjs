@@ -48,7 +48,7 @@
 // applied. No other tab is navigated, sized or closed: the binding and the init script reach the
 // context's other tabs, where the overlay asks the host and is told not to show itself.
 import { localStorageState, isLocalUrl } from "./guards.mjs";
-import { installOverlay, popupReport, pushState, toolbarAction } from "./overlay-page.mjs";
+import { installOverlay, pageMetrics, popupReport, pushState, testLink, toolbarAction } from "./overlay-page.mjs";
 import { playwright } from "./playwright.mjs";
 
 export const defaultAgentChromeUrl = "http://127.0.0.1:9222";
@@ -176,15 +176,7 @@ function makeWindow(tab, hooks, target) {
       handle.close();
     },
     url: () => page.url(),
-    metrics: () => page.evaluate(() => ({
-      innerWidth,
-      innerHeight,
-      devicePixelRatio,
-      maxTouchPoints: navigator.maxTouchPoints,
-      userAgent: navigator.userAgent,
-      cookie: document.cookie,
-      url: location.href,
-    })),
+    metrics: () => pageMetrics(page),
     async resize(next) {
       await emulate(session, next);
       handle.target = next;
@@ -220,16 +212,11 @@ function makeWindow(tab, hooks, target) {
     },
     async follow(url) {
       const href = new URL(url).href;
-      const link = await page.evaluateHandle((to) => {
-        const anchor = document.createElement("a");
-        anchor.href = to;
-        anchor.textContent = "proto test link";
-        anchor.style.cssText = "position: fixed; left: 0; top: 0; z-index: 2147483647; background: white; padding: 4px";
-        document.body.append(anchor);
-        return anchor;
-      }, href);
+      const link = await testLink(page, href);
       try {
         const loaded = page.waitForURL((address) => address.href === href, { waitUntil: "load", timeout: followTimeoutMs });
+        // When the click throws, nobody awaits this wait, whose later rejection would end the host.
+        loaded.catch(() => {});
         await link.asElement().click();
         await loaded;
       } finally {

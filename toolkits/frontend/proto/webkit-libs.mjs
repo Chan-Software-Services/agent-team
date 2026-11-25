@@ -11,8 +11,6 @@
 //
 //   webkitDirectories      the eight directories checked, as Playwright 1.65.1's own host check
 //                          (its registry's webkitLinuxLddDirectories) lists them
-//   pinsFile(env)          the pin file: PROTO_WEBKIT_LIBS_FILE, else this directory's
-//                          webkit-libs.json
 //   readPins(file)         its pins, checked: { checkedFor, series, checked, packages }
 //   formatPins(pins)       the pins as the file holds them, byte for byte
 //   webkitBuild()          the installed WebKit: { revision, version, dir }, from playwright-core's
@@ -29,6 +27,8 @@
 //   await refreshPins(revisionDir, { file, env, series, add, say })
 //                          `proto install --refresh-pins`: the pins moved to the series' current
 //                          packages, placed, checked, and only then written to `file`
+//                          Both read the pins from `file`, by default PROTO_WEBKIT_LIBS_FILE, else
+//                          this directory's webkit-libs.json.
 //
 // Fetching: each .deb over HTTPS from archive.ubuntu.com's pool, then, on any failure (an HTTP
 // error, 60 s without its whole answer, a wrong SHA-256), from Launchpad's librarian by its file
@@ -61,7 +61,8 @@ const defaultSources = ["https://archive.ubuntu.com/ubuntu/", "https://launchpad
 const defaultHosts = ["archive.ubuntu.com", "launchpad.net", "launchpadlibrarian.net"];
 const readme = 'see the README\'s "WebKit on Linux"';
 
-export const pinsFile = (env = process.env) => env.PROTO_WEBKIT_LIBS_FILE || join(dirname(fileURLToPath(import.meta.url)), "webkit-libs.json");
+// The pin file: PROTO_WEBKIT_LIBS_FILE, else this directory's webkit-libs.json.
+const pinsFile = (env = process.env) => env.PROTO_WEBKIT_LIBS_FILE || join(dirname(fileURLToPath(import.meta.url)), "webkit-libs.json");
 
 const plainName = (name) => typeof name === "string" && /^[A-Za-z0-9._+-]+$/.test(name) && name !== "." && name !== "..";
 

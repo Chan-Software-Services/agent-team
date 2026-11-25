@@ -11,7 +11,7 @@
 //   engines, launchedEngines   ["chromium", "firefox", "webkit", "agent-chrome"], and the first
 //                              three, Playwright's builds the host launches
 //   presets                    the five preset sizes by id
-//   defaultUrl, defaultTarget  http://localhost:5173/ and chromium/laptop
+//   defaultTarget              chromium/laptop
 //   readProject(dir)           .proto.json at `dir` (a git checkout's root; null for none)
 //                              checked, as { file, url, sizes, matrix }, the defaults when it is
 //                              missing, and `settings`, the file's JSON as written, which a
@@ -50,7 +50,8 @@ export const presets = {
   desktop: preset(1920, 1080, 1, false),
 };
 
-export const defaultUrl = "http://localhost:5173/";
+// A project's url when its .proto.json names none.
+const defaultUrl = "http://localhost:5173/";
 export const defaultTarget = "chromium/laptop";
 const projectName = ".proto.json";
 

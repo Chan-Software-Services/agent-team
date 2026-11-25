@@ -15,6 +15,8 @@
 //                                                     as .mcp.json declares it, on that Chrome:
 //                                                     server.call(name, args) answers text,
 //                                                     server.client is the MCP client
+//   declared()                                        that server's entry in .mcp.json, with
+//                                                     ${CLAUDE_PLUGIN_ROOT} resolved to the toolkit
 //   await bringToFront(chrome.browserUrl, url);       Daniel's click on the tab at that URL: it is
 //                                                     its window's front tab, the most recent
 //   await chrome.close(); await site.close();

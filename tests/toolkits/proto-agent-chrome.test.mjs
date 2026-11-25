@@ -119,14 +119,6 @@ async function inTab(chrome, targetId, { reload = false } = {}) {
 const hostEnv = (chrome) => ({ PROTO_AGENT_CHROME_URL: chrome.browserUrl });
 const versionOf = async (chrome) => (await fetch(`${chrome.browserUrl}/json/version`).then((r) => r.json())).Browser.split("/")[1];
 
-async function launched(t, proto, name) {
-  const engine = (await proto.engines()).find((each) => each.name === name);
-  if (engine.available) return true;
-  if (process.env.CI === "true") assert.fail(`in CI every engine runs, but ${name} is unavailable: ${engine.reason}`);
-  t.skip(`${name} is unavailable here: ${engine.reason}`);
-  return false;
-}
-
 // The host's own tab: the one tab at `url` that was not there before.
 async function hostTab(chrome, before, url) {
   const known = new Set(before.map((tab) => tab.id));
@@ -271,7 +263,7 @@ describe("a window on the Agent Chrome", () => {
     const before = await tabs(chrome);
     const own = await inTab(chrome, before.find((tab) => tab.url === `${site.url}tab`).id);
     const proto = protoSession(t, { env: hostEnv(chrome) });
-    if (!(await launched(t, proto, "chromium"))) return;
+    if (!(await proto.engine(t, "chromium"))) return;
     assert.equal((await proto.run(["open", `${site.url}login`, "--target", "agent-chrome/phone"])).status, 0);
     const tab = await hostTab(chrome, before, `${site.url}login`);
     const home = `${site.url}home?carried`;
@@ -316,7 +308,7 @@ describe("a window on the Agent Chrome", () => {
     const chrome = await agentChrome(t, site);
     const before = await tabs(chrome);
     const proto = protoSession(t, { env: hostEnv(chrome) });
-    if (!(await launched(t, proto, "chromium"))) return;
+    if (!(await proto.engine(t, "chromium"))) return;
     assert.equal((await proto.run(["open", `${site.url}login`, "--target", "chromium/laptop"])).status, 0);
     assert.equal((await proto.page("metrics")).cookie, "login=yes", "the launched window is logged in");
     const other = `${site.url}other`;

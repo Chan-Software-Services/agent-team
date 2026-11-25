@@ -176,7 +176,7 @@ describe("the bridge", () => {
     const served = await site(t);
     const checkout = checkoutDir();
     const bridge = await proto.bridge({ cwd: checkout });
-    const result = await bridge.call("capture_matrix", { url: served.url, engines: ["chromium"], sizes: ["phone", "laptop"] }, { timeoutMs: 300_000 });
+    const result = await bridge.call("capture_matrix", { url: served.url, engines: ["chromium"], sizes: ["phone", "laptop"] }, { timeoutMs: 240_000 });
     assert.ok(!result.isError, result.text);
     assert.deepEqual(result.content.map((part) => part.type), ["text"]);
     const lines = result.text.split("\n");
@@ -197,7 +197,7 @@ describe("the bridge", () => {
     const served = await site(t);
     const checkout = checkoutDir();
     const bridge = await proto.bridge({ cwd: checkout });
-    const some = await bridge.call("capture_matrix", { url: served.url, engines: ["chromium", "firefox"], sizes: ["phone"] }, { timeoutMs: 300_000 });
+    const some = await bridge.call("capture_matrix", { url: served.url, engines: ["chromium", "firefox"], sizes: ["phone"] }, { timeoutMs: 240_000 });
     assert.ok(!some.isError, some.text);
     const [chromium, firefox, index] = some.text.split("\n");
     assert.match(chromium, /^chromium\/phone: \/.+\/chromium-phone\.png$/);
@@ -205,7 +205,7 @@ describe("the bridge", () => {
     assert.match(index, /^index: \/.+\/matrix\.md$/);
     // A second capture in the same second would share its directory name.
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    const none = await bridge.call("capture_matrix", { url: served.url, engines: ["firefox"], sizes: ["phone"] }, { timeoutMs: 300_000 });
+    const none = await bridge.call("capture_matrix", { url: served.url, engines: ["firefox"], sizes: ["phone"] }, { timeoutMs: 240_000 });
     assert.equal(none.isError, true);
     assert.match(none.text, /^firefox\/phone: unavailable: .+\nindex: \/.+\/matrix\.md$/);
   });
