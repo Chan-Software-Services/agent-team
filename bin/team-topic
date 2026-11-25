@@ -62,7 +62,8 @@
 #      refuses as team-close refuses, exit 1, the report filed already, and any failure of
 #      team-close is passed on, a rerun of team-topic close finishing it.
 #   4. Prints "T<n> closed; report at <path>" (or "T<n> closed with no report"), nothing else on
-#      stdout. It commits nothing: the next checkpoint commits the report.
+#      stdout. It commits no report of its own: team-close commits and pushes the ledger, and the next
+#      checkpoint commits the report.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # The assistant runs it; every other worker is refused as worker_refusal refuses the coordinator's
