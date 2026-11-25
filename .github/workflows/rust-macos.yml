@@ -4,8 +4,8 @@
 # pass over, and it never runs on a merge queue's trial commit. It runs on every pull request to dev
 # and to main, where it checks only a change that reaches a Rust path since the base (tests/run rust
 # --changed) and passes at once on any other, and by hand (workflow_dispatch) on the whole
-# workspace. A red one is a finding fixed in a task of its own: team-ci-wait and team-next name it,
-# and gh run list --workflow rust-macos.yml lists its runs.
+# workspace. A red one is a finding fixed in a task of its own: team-ci-wait's passing or pending
+# end and team-next's merge line name it, and gh run list --workflow rust-macos.yml lists its runs.
 # It installs what the check needs: Homebrew's Bash 5 and GNU tools, which every team script runs
 # on there (bin/lib/platform.sh), cargo-nextest and cargo-deny at tools.lock's macOS pins, each
 # archive checked by its SHA-256, and the toolchain rust-toolchain.toml pins.
