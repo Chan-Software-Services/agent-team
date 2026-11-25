@@ -72,8 +72,8 @@
 #     server a given toolkit's .mcp.json declares brought at least one of them (FAIL: toolkit
 #     <name> brought no tools from its MCP server <server>), but one the toolkit's mcp-roles.json
 #     names for other roles only, which is neither expected of a planner nor allowed it;
-#   - no production or coordinator-only server, tool or plugin (mongodb-atlas, the prod-*
-#     toolkits, discord, coordinator-skills) reaches it;
+#   - no production, coordinator-only or assistant-only server, tool or plugin (mongodb-atlas,
+#     the prod-* toolkits, discord, coordinator-skills, assistant-skills) reaches it;
 #   - the planner's edit hook blocked its write outside .scratch/, as its transcript shows (found
 #     by the session's sessionId in claude agents --json --all, before the session is removed):
 #     there is at least one Write of a file named outside.txt, and each one's result is a hook's
@@ -898,8 +898,8 @@ planner_check() {
     while IFS= read -r tool; do echo "  $tool"; done <<<"$stray"
     fail=1
   fi
-  if grep -Eiq 'atlas|mongodb-atlas|prod-|discord|coordinator-skills|vercel|resend|claude_ai' <<<"$tools$skills"; then
-    check_failed "a production or coordinator-only server or plugin reached the worker"
+  if grep -Eiq 'atlas|mongodb-atlas|prod-|discord|coordinator-skills|assistant-skills|vercel|resend|claude_ai' <<<"$tools$skills"; then
+    check_failed "a production, coordinator-only or assistant-only server or plugin reached the worker"
   fi
   if [[ -e $wt/outside.txt ]]; then check_failed "the planner wrote outside .scratch/"; fi
   hook_check
