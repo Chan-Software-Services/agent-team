@@ -84,7 +84,7 @@ class Refusal extends Error {
 
 // The window: { driver, handle, target, project }, or null.
 let current = null;
-let defaultProject = readProject(null);
+const defaultProject = readProject(null);
 let stopping = false;
 
 // One window operation at a time, in the order they came.
