@@ -2300,6 +2300,88 @@ level_record() {
   done
 }
 
+# park_over <kind> <on> <minutes>: the ledger afresh, T7 open with its builder launched, then
+# parked by a <kind> (waiting or blocked) on <on>, and T5 opened, then closed <minutes> ago.
+park_over() {
+  rm -f "$TEAM_HOME/ledger.jsonl"
+  opened T5
+  opened T7
+  launch T7 builder 7a7a7a7a
+  event T7 "$1" "{on: \"$2\", reason: \"T5's fix lands first: merge dev then\"}"
+  ledger_line --arg ts "$(date -u -d "$3 minutes ago" +%FT%TZ)" \
+    '{ts: $ts, task: "T5", event: "closed", archive: [], returned: [], kept: []}'
+}
+
+# The sweep's text <text> with each "(<n>m ago)" or "(<h>h<mm>m ago)" read as "(<ago>)", since
+# the minute it is counted in may turn during the run: sweep_text <text>
+sweep_text() {
+  sed -E 's/\(([0-9]+h)?[0-9]+m ago\)/(<ago>)/' <<<"$1"
+}
+
+@test "park-over: a waiting or blocked on a task closed 15 minutes or more ago is named with its reason and id" {
+  park_over waiting T5 20
+  local closed
+  closed=$(jq -r 'select(.event == "closed") | .ts' "$TEAM_HOME/ledger.jsonl")
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  [[ $output == *"(20m ago)"* || $output == *"(21m ago)"* ]]
+  assert_equal "$(sweep_text "$output")" "T7 park-over: waits on T5, closed at $closed (<ago>): T5's fix lands first: merge dev then; next: do what it says (tell its holder, or launch its builder), then team-log T7 resumed id=waiting-1"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c '.[] | [.task, .kind, .session, .name, .next]' <<<"$output")" \
+    '["T7","park-over",null,null,"do what it says (tell its holder, or launch its builder), then team-log T7 resumed id=waiting-1"]'
+
+  # A blocked on the task is named as a waiting is, its hours counted.
+  park_over blocked T5 90
+  closed=$(jq -r 'select(.event == "closed") | .ts' "$TEAM_HOME/ledger.jsonl")
+  run_bin -1 team-sweep
+  [[ $output == *"(1h30m ago)"* || $output == *"(1h31m ago)"* ]]
+  assert_equal "$(sweep_text "$output")" "T7 park-over: waits on T5, closed at $closed (<ago>): T5's fix lands first: merge dev then; next: do what it says (tell its holder, or launch its builder), then team-log T7 resumed id=blocked-1"
+
+  run_bin -0 team-sweep --help
+  [[ $output == *"park-over      after the task's other findings"* ]]
+}
+
+@test "park-over: none before 15 minutes, while the task is open, on CI or Daniel, held, asked, or once resumed" {
+  # Closed 10 minutes ago: not yet.
+  park_over waiting T5 10
+  run_bin -0 --separate-stderr team-sweep
+  assert_equal "$output$stderr" ""
+
+  # T5 still open (on Daniel's hold, so it raises nothing of its own).
+  park_over waiting T5 20
+  jq -c 'select(.event != "closed")' "$TEAM_HOME/ledger.jsonl" >"$BATS_TEST_TMPDIR/ledger.next"
+  mv "$BATS_TEST_TMPDIR/ledger.next" "$TEAM_HOME/ledger.jsonl"
+  event T5 held '{reason: "OS update"}'
+  run_bin -0 --separate-stderr team-sweep
+  assert_equal "$output$stderr" ""
+
+  # A park on CI or on Daniel names no task.
+  for on in CI Daniel; do
+    park_over waiting "$on" 20
+    run_bin -0 --separate-stderr team-sweep
+    assert_equal "$output$stderr" ""
+  done
+
+  # Daniel's hold, or an ask nothing settled, standing beside the park.
+  park_over waiting T5 20
+  event T7 held '{reason: "OS update"}'
+  run_bin -0 --separate-stderr team-sweep
+  assert_equal "$output$stderr" ""
+  park_over waiting T5 20
+  event T7 asked '{id: "q1", text: "Which bot?"}'
+  run_bin -0 --separate-stderr team-sweep
+  assert_equal "$output$stderr" ""
+
+  # A resumed of the park after the close ends it.
+  park_over waiting T5 20
+  ledger_line --arg ts "$(date -u -d '5 minutes ago' +%FT%TZ)" '{ts: $ts, task: "T7", event: "resumed", id: "waiting-1"}'
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  # With the park gone, T7's builder is a worker the sweep watches again.
+  [[ $output == "T7 no-worker: "* ]]
+  [[ $output != *park-over* ]]
+}
+
 # held_pair [<T3 event>...] -- [<T3 event>...]: the ledger afresh, T3 stowed for the level at 04:00
 # with its planner and T4 at 05:00 with its builder, each paused stowed, with each T3 event
 # (<kind>:<jq object of more fields>) logged before T3's stow, or after it when it follows the --.
@@ -2869,6 +2951,38 @@ handoff_sent() {
     jq -cn --arg id "$1" --argjson m "$5" --arg at "${TEAM_SWEEP_NOW:-}" \
       '{ts: (($at | if . == "" then now else fromdate end) - ($m - 1) * 60 | floor | todate), id: $id, event: "answered", by: "coordinator"}' \
       >>"$TEAM_HOME/assistant/handoffs.jsonl"
+}
+
+@test "current-stale: an until item on a task merged that closed with no merge is named by that task" {
+  opened T8
+  ledger_line '{ts: "2026-11-03T04:00:00Z", task: "T8", event: "closed", archive: [], returned: [], kept: []}'
+  opened T9
+  event T9 held '{reason: "OS update"}'
+  local item='next T9 tell its builder to merge dev | ledger 2026-11-01T07:08:11Z | until task T8 merged | added 2026-11-01T07:08:11Z'
+  mkdir -p "$TEAM_HOME/tasks"
+  printf '%s\n' '# Current items' "- $item" >"$TEAM_HOME/tasks/current.md"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "current: 1 item names a closed task: $(printf '%s' "$item" | sha256sum | cut -c1-6) (T8, closed 2026-11-03); next: team-current done <id> for each that is done, or add it again under an open task"
+  # Once T8 has a merged, the until item holds, and reconcile's to close.
+  ledger_line '{ts: "2026-11-03T03:00:00Z", task: "T8", event: "merged", url: "https://github.com/owner/proj/pull/8"}'
+  run_bin -0 --separate-stderr team-sweep
+  assert_equal "$output$stderr" ""
+}
+
+@test "current-stale: an item whose own task closed and whose until task closed unmerged is one item, its id listed once per task" {
+  opened T8
+  ledger_line '{ts: "2026-11-03T04:00:00Z", task: "T8", event: "closed", archive: [], returned: [], kept: []}'
+  opened T9
+  ledger_line '{ts: "2026-11-04T04:00:00Z", task: "T9", event: "closed", archive: [], returned: [], kept: []}'
+  local item='next T9 tell its builder to merge dev | ledger 2026-11-01T07:08:11Z | until task T8 merged | added 2026-11-01T07:08:11Z'
+  local id
+  id=$(printf '%s' "$item" | sha256sum | cut -c1-6)
+  mkdir -p "$TEAM_HOME/tasks"
+  printf '%s\n' '# Current items' "- $item" >"$TEAM_HOME/tasks/current.md"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "current: 1 item names a closed task: $id (T9, closed 2026-11-04), $id (T8, closed 2026-11-03); next: team-current done <id> for each that is done, or add it again under an open task"
 }
 
 @test "current-due and assistant-handoff: each due item of the coordinator's list and each hand-off to it waiting past 30 minutes, after current-stale" {

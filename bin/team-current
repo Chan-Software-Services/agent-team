@@ -58,11 +58,16 @@
 # end that is neither form, a condition that does not parse, and a review date more than 7 days
 # after its added are among its reasons. It also names each item whose task (T<n>) is closed in the
 # ledger, as "<file>:<n>: T<n> closed at <its last closed's ts>; done it (team-current done <id>)
-# or add it again under an open task", after that line's reasons, if any. It exits 1 when it names
-# any line, and never writes. With --json it prints instead {schema: "team-current-check/1",
-# problems: [{line, id, item, reasons}], closed: [{line, id, item, task, closed_at}]}, exiting the
-# same: line is the line's number, id its item id (null for a line that is not an item), item the
-# line without "- ", reasons each reason as a string, and closed_at the task's last closed's ts.
+# or add it again under an open task", after that line's reasons, if any. It also names each until
+# item whose condition is task T<m> merged while T<m> is closed with no merged, as "<file>:<n>:
+# T<m> closed at <ts> with no merge, so 'task T<m> merged' never holds; done it (team-current done
+# <id>), or add it again on what carried its change (pr <url> merged)", in place of the closed
+# task's line when the item's own task is T<m>. It exits 1 when it names any line, and never
+# writes. With --json it prints instead {schema: "team-current-check/1", problems: [{line, id,
+# item, reasons}], closed: [{line, id, item, task, closed_at, unmet}]}, exiting the same: line is
+# the line's number, id its item id (null for a line that is not an item), item the line without
+# "- ", reasons each reason as a string, closed_at the task's last closed's ts, and unmet true on
+# an until item's entry, whose task is T<m>, and absent on a closed task's item's.
 # add refuses: a kind other than ask, owe, next or watch (queued work is a file in tasks/queued/,
 # with front matter, which team-queue index lists, and a queued line is refused saying so); a task
 # that is not T<n> or -; text holding " | " or a newline; a line over 300 characters, counted up to
@@ -788,11 +793,12 @@ case $command in
       usage_error "$usage"
     fi
     read_lines
-    # One JSON row per line that has reasons or names a task: {line, id, item, task, reasons}.
+    # One JSON row per line that has reasons, names a task or ends until task T<m> merged: {line,
+    # id, item, task, merged_task, reasons}.
     rows=''
     for i in "${!lines[@]}"; do
       item=${lines[i]}
-      reasons=() id=''
+      reasons=() id='' merged_task=''
       if [[ -z $item || $item == "$title" ]]; then
         continue
       elif [[ $item != '- '* ]]; then
@@ -817,28 +823,39 @@ case $command in
         fi
       fi
       [[ ${task:-} =~ ^T[1-9][0-9]*$ ]] || task=''
-      ((${#reasons[@]})) || [[ -n $task ]] || continue
+      [[ -z $id || ! ${end:-} =~ ^until\ task\ (T[1-9][0-9]*)\ merged$ ]] || merged_task=${BASH_REMATCH[1]}
+      ((${#reasons[@]})) || [[ -n $task || -n $merged_task ]] || continue
       rows+=$(jq -cn --argjson line "$((i + 1))" --arg id "$id" --arg item "${item#- }" --arg task "$task" \
-        '{line: $line, id: (if $id == "" then null else $id end), item: $item, task: $task, reasons: $ARGS.positional}' \
+        --arg merged_task "$merged_task" \
+        '{line: $line, id: (if $id == "" then null else $id end), item: $item, task: $task,
+          merged_task: $merged_task, reasons: $ARGS.positional}' \
         --args ${reasons[@]+"${reasons[@]}"})$'\n'
     done
-    # The rows, with each closed task's last closed from the ledger (none when there is no ledger).
+    # The rows, with each closed task's last closed from the ledger (none when there is no ledger):
+    # an item's own task closed, and an until task T<m> merged whose T<m> closed with no merged
+    # (unmet), one entry when they are the same task and it closed unmerged, the unmet one.
     report=$(jq -nR -L "$TEAM_LIB" --arg rows "$rows" '
       include "ledger";
       (ledger_events | by_task) as $tasks
-      | [$rows | split("\n")[] | select(. != "") | fromjson] as $rows
+      | def closed_at($t): ($tasks[$t] // null) | select(. != null and task_status == "closed")
+          | last(.[] | select(.event == "closed")) | .ts;
+      def unmerged($t): ($tasks[$t] // null) | . != null and all(.[]; .event != "merged");
+      [$rows | split("\n")[] | select(. != "") | fromjson] as $rows
       | {schema: "team-current-check/1",
          problems: [$rows[] | select(.reasons != []) | {line, id, item, reasons}],
-         closed: [$rows[] | select(.task != "") | ($tasks[.task] // null) as $te
-                  | select($te != null and ($te | task_status) == "closed")
-                  | {line, id, item, task, closed_at: (last($te[] | select(.event == "closed")) | .ts)}]}' \
+         closed: [$rows[]
+                  | (select(.task != "" and (.task != .merged_task or (unmerged(.task) | not))) | {line, id, item, task, closed_at: closed_at(.task)}),
+                    (select(.merged_task != "" and unmerged(.merged_task))
+                     | {line, id, item, task: .merged_task, closed_at: closed_at(.merged_task), unmet: true})]}' \
       < <(cat "$TEAM_HOME/ledger.jsonl" 2>/dev/null || true))
     if [[ -n $json ]]; then
       printf '%s\n' "$report"
     else
       jq -r --arg rel "$rel" '
         [(.problems[] | {line, text: (.reasons | join("; "))}),
-         (.closed[] | {line, text: "\(.task) closed at \(.closed_at); done it (team-current done \(.id)) or add it again under an open task"})]
+         (.closed[] | {line, text: (if .unmet then
+            "\(.task) closed at \(.closed_at) with no merge, so '\''task \(.task) merged'\'' never holds; done it (team-current done \(.id)), or add it again on what carried its change (pr <url> merged)"
+            else "\(.task) closed at \(.closed_at); done it (team-current done \(.id)) or add it again under an open task" end)})]
         | sort_by(.line)[] | "\($rel):\(.line): \(.text)"' <<<"$report"
     fi
     jq -e '.problems == [] and .closed == []' <<<"$report" >/dev/null || exit 1
