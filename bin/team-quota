@@ -113,7 +113,10 @@
 # null unless model_problem is set.
 # status reads only, and like line and usage it needs no team home: with none it reads this
 # machine's state files alone.
-# Exit 0 done, 1 refused (usage: the read failed), 2 usage error, 75 another usage read is running.
+# An assistant session is refused usage, the heartbeat's act (assistant_refusal in bin/lib/team.sh,
+# beside command-guard's assistant-acts row); its status, line and --help still answer.
+# Exit 0 done, 1 refused (the assistant's usage) or failed (usage: the read failed), 2 usage error,
+# 75 another usage read is running.
 set -euo pipefail
 
 # Whatever happens, the status line exits 0 and prints what it can: Claude Code shows the line of
@@ -136,6 +139,7 @@ elif [[ ${1:-} == usage || ${1:-} == status ]]; then
   team_home_report=1
 fi
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+if [[ ${1:-} == usage ]] && why=$(assistant_refusal "runs no team-quota usage"); then die "$why"; fi
 
 USAGE="usage: team-quota line | status [--json] | usage [--if-due]"
 

@@ -51,7 +51,10 @@ def queue_seconds: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 # phases_left (a task with no tickets, or a merge from before team-merge logged them) that a builder
 # launch, a later PR or a merged part follows is none, or, once the task closed, any merged that
 # names no phase left (phases_left [] or absent, as team-merge logs a task with no tickets),
-# whatever followed it; each merged's phases_left where it names them; and the events that end it,
+# whatever followed it; the phases_left of each merged that names them and leaves no PR of the task
+# open, where the lifecycle moves the task to merged-part (phases_left is task-wide, every ticket of
+# the task in every repository, so a sibling repository's merge while this one's PR is open ends no
+# phase); and the events that end it,
 # its last merged when it is merged whole and its closed, the earliest first; and unmerged, its last
 # closed's {ts} when a feature, bug or small task (its latest opened's path) closed not merged
 # whole, which leaves its work unbuilt, else null (a research or retro task finishes by closing, and
@@ -61,15 +64,16 @@ def queue_task_facts:
    or (any(.[]; .event == "closed") and any(.[]; .event == "merged" and (.phases_left // []) == []))) as $whole
   | (last(.[] | select(.event == "opened") | .path) // null) as $path
   | {whole: $whole,
-     merges: [.[] | select(.event == "merged") | .phases_left | arrays],
+     merges: [foreach .[] as $e (lifecycle_start; lifecycle_step($e);
+       select($e.event == "merged" and lifecycle_open_prs == []) | $e.phases_left | arrays)],
      ends: ([(select($whole) | last(.[] | select(.event == "merged")) | {event, ts}),
              (.[] | select(.event == "closed") | {event, ts})] | sort_by(.ts)),
      unmerged: (if $whole or (IN($path; "feature", "bug", "small") | not) then null
                 else last(.[] | select(.event == "closed") | {ts}) // null end)};
 
 # Whether a parsed condition is met, given the tasks' facts, today's date, the queued files and
-# the files that left the queue: a phase is merged once a merged names phases left without it, or
-# the task is merged whole.
+# the files that left the queue: a phase is merged once a merged that leaves no PR of the task open
+# names phases left without it, or the task is merged whole.
 def queue_met($facts; $today; $queued; $left):
   if .kind == "merged" then $facts[.task].whole // false
   elif .kind == "phase" then . as $c | $facts[.task] // {} | .whole or any(.merges[]?; IN(.[]; $c.phase) | not)
@@ -346,13 +350,27 @@ def queue_capacity($name; $schema):
     elif type == "object" and .schema == $schema then .
     else {error: "\($name) is no \($schema) object"} end;
 
-# The open tasks whose latest opened no launch follows, [{task, ts}] by task number, from the
-# events by task (by_task's object).
+# The park causes of a task that waits on Daniel or on something outside the team, not on the
+# team itself: an open ask, a waiting on Daniel or outside, Daniel's hold. They are every cause
+# lifecycle.json's causes table gives the class wait:daniel, and outside, which
+# tests/team-queue-list.bats holds, so a cause the table adds as a wait on Daniel fails that test
+# until it is listed here.
+def queue_parked_off_team: ["ask", "daniel", "daniel-hold", "outside"];
+
+# The open tasks the team itself is about to launch: those whose latest opened no launch follows
+# and with no standing park of a queue_parked_off_team cause that parks the whole task, as
+# parked reads it (one parked on Daniel or outside waits on them, and holds back no open; a
+# ticket's park frees nothing, since it holds only that ticket's builder, and an ask naming
+# tickets frees the room only once none of the task's work is unfinished, when it parks the
+# whole task), [{task, ts}] by task number, from the events by task (by_task's object).
 def queue_unstaffed($tasks):
   [$tasks | to_entries[] | .key as $t | .value
    | (last(to_entries[] | select(.value.event == "opened")) // null) as $o
    | select($o != null and (any(.[$o.key + 1:][]; .event == "launch") | not))
    | select(is_open)
+   | (unfinished_roles == []) as $idle
+   | select(any(lifecycle.parks[]; (.passed | not) and .ticket == null and (.tickets == null or $idle)
+       and IN(.cause; queue_parked_off_team[])) | not)
    | {task: $t, ts: $o.value.ts}]
   | sort_by(.task[1:] | tonumber);
 
@@ -362,9 +380,10 @@ def queue_unstaffed($tasks):
 # and is not over it, no task waits to resume or to launch (stowed and refused work comes first,
 # but for work something holds, a hold the plan gives, which it will not relaunch),
 # the budget less what is reserved is at least a builder's estimate (every task soon launches
-# one, the largest worker a task starts), and no open task has an opened with no launch since (a
-# task just opened gets its first worker before the next is named), the first that fails saying
-# why.
+# one, the largest worker a task starts), and no open task has an opened with no launch since
+# and no park on Daniel or outside the team (queue_unstaffed's: a task just opened gets its first
+# worker before the next is named, but one waiting on Daniel holds nothing back), the first that
+# fails saying why.
 def queue_room($plan; $costs; $tasks; $today):
   def no($why): {fits: false, says: "no room: \($why)"};
   if $plan.error != null then no("the plan cannot be read: \($plan.error)")

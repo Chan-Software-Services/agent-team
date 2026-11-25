@@ -24,9 +24,13 @@
 #             with no phases_left that a builder launch, a PR or a merged part followed is none
 #             while T<n> is open; once T<n> closed, a merged with phases_left [] or none is,
 #             whatever followed it), "T<n> phase <k> merged" (a merged of T<n> whose phases_left
-#             does not hold k, or T<n> merged whole), "T<n> closed", a YYYY-MM-DD date (today's
-#             UTC date is that day or later; TEAM_QUEUE_TODAY stands for today), or "<name>.md"
-#             (that item left the queue: it is in some tasks/T<m>/queued/, not here)
+#             does not hold k and that leaves no PR of T<n> open, or T<n> merged whole: a phase is
+#             task-wide, as team-merge's phases_left and the lifecycle's merged-part read it, so in
+#             a task of two repositories it is merged only at a merge that leaves no PR of T<n> open
+#             in either repository, whatever phase that PR is of, and one repository's merge while
+#             the other's PR is open is none), "T<n> closed", a YYYY-MM-DD date (today's UTC date
+#             is that day or later; TEAM_QUEUE_TODAY stands for today), or "<name>.md" (that item
+#             left the queue: it is in some tasks/T<m>/queued/, not here)
 #   waits     one line naming what outside the ledger and the calendar it waits on; removed by
 #             hand when the wait ends. Its age is when the line last changed: the author date of
 #             the team home's newest commit whose diff adds or removes a "waits: " line of the
@@ -127,8 +131,12 @@
 # lists hold no entry with a null hold (stowed and refused work comes first, but for work
 # something holds, which the plan will not relaunch), the budget less what is reserved is at
 # least the session:builder estimate (every task soon launches a builder, the largest worker a
-# task starts), and no open task has an opened with no launch after it (a task just opened gets
-# its first worker before the next is named). Its line, the first that holds: "no room: the plan
+# task starts), and no open task has an opened with no launch after it and no standing park on
+# Daniel or outside the team (a task just opened gets its first worker before the next is named,
+# but one parked whole on an open ask, a waiting of cause daniel or outside, or Daniel's hold
+# waits on them and holds back no open, where an ask naming tickets, which holds only their
+# builders, frees it only once none of the task's work is unfinished, as it then parks the
+# task). Its line, the first that holds: "no room: the plan
 # cannot be read: <why>" (team-capacity's last line on stderr, ~ for the home directory, "no plan
 # at <file>", or "<file> is no team-capacity-plan/1 object"), "no room: the level is none", "no
 # room: no reading of the machine's load, so no budget", "no room: over budget", "no room: T171

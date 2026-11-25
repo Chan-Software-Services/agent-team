@@ -53,6 +53,7 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
 
 - The words and the checks every merge gets are the same, with two more: the project's `merge_method` is `merge`, and the PR's queue entry can be read.
   A PR only behind its base needs no catch-up there: the queue merges it onto what is ahead of it, `team-next T<n> --ci` prints the merge line for it as for a PR up to date, and `team-catch-up` refuses it, naming `team-merge`; a PR that conflicts still takes the `builder-merge-base` round.
+  A head that lacks a check the base newly requires is caught up there all the same, as "What the coordinator does" says, since `team-merge` queues no head lacking a required check.
 - CodeQL on a trial commit: the code scanning roll-up `CodeQL`, which GitHub Advanced Security posts, appears only on a pull request, never on a trial commit, so a queued base where CodeQL runs requires its CodeQL workflow's own `Analyze (<language>)` checks in its place, which the workflow runs on `merge_group`, and holds a PR with a new alert out of the queue by its ruleset's `code_scanning` rule.
   That workflow is CodeQL's advanced setup, so the repository's default setup is off, since it runs nothing on a trial commit and refuses the workflow's uploads.
   agent-team runs no CodeQL, so its queue requires its CI's five checks and `agent-review` alone.
@@ -154,6 +155,10 @@ On a base whose rules have a merge queue (`queue` in `base_rules` of `bin/lib/te
 - A failure of the PR's own goes back to the builder from that wait as a fix round, and an infrastructure failure is rerun once (a check with no runner for 20 minutes never), then named in a `blocked:` line.
   A round that reruns the failed check green on the same head ends with the builder's `DONE`, after which the checks wait waits on that head again, so arm `team-next T<n> --ci` once more.
   After each `team-catch-up`, the first or a later one, the wait is on the merge that catch-up made.
+- A check the base newly requires strands no reviewed PR behind its base: GitHub runs a check only on a commit pushed since the base required it, so a head lacks it until a merge of the base, and `team-merge` refuses a head lacking a required check on any base.
+  `team-catch-up T<n>` makes that merge when the merge is clean, every check the head has passed and none is failing or pending, on a base with a merge queue too, and names each required check the head lacked; only a missing `agent-review`, when the base or the project requires it, still refuses it, since no run of the merge makes that one.
+  The checks wait then waits on the merge's checks, a red one going back as a round as any failure does, and `team-merge` refuses the merge while a required check is still missing on it.
+  So once a repository requires a new check, the coordinator catches up each open, reviewed PR behind its base that `team-merge` refuses as missing it.
 - With the review passed and every check green, it queues each plain `before` note as a follow-up, then:
   - when `team-next` says to merge on the default word, or `team-state T<n>` says `default word covers it`, runs `team-merge T<n>` with no ask and tells Daniel where each note went;
   - otherwise asks Daniel in the task's thread to merge, with the full PR URL and where each note went, and on their "merge it" logs `team-log T<n> merge-approved url=<PR url> discord_message=<id> head=<the full sha it asked on>` and runs `team-merge T<n>`.
