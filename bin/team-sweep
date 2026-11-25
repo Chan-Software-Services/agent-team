@@ -176,11 +176,11 @@
 #                  ends (team-next's lock)
 #   park-over      after the task's other findings, an open task with a standing waiting or
 #                  blocked whose on names another task (T<m>) that has a closed logged after that
-#                  park, 15 minutes or more ago, and no held or ask nothing settled standing, with
-#                  session null, one for each such park: "waits on T<m>, closed at <its closed's
-#                  ts> (<h>h<mm>m ago, or <m>m under an hour): <the park's reason>; next: do what
-#                  it says (tell its holder, or launch its builder), then team-log T<n> resumed
-#                  id=<the park's id>"
+#                  park, 15 minutes or more ago, and no held, and no ask nothing settled that no
+#                  launch went past, standing, with session null, one for each such park: "waits
+#                  on T<m>, closed at <its closed's ts> (<h>h<mm>m ago, or <m>m under an hour):
+#                  <the park's reason>; next: do what it says (tell its holder, or launch its
+#                  builder), then team-log T<n> resumed id=<the park's id>"
 #   stray          a live session named like a team worker (T<n>-<role>, or T<n>-<role>-<NN> for
 #                  a ticket's builder) whose task is closed or not in the ledger; never one of T0,
 #                  the load check's task
