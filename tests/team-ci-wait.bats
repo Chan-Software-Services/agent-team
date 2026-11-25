@@ -2107,6 +2107,8 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 1
   assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind, .run])]' <<<"$output")" \
     '["failed",["e2e shard 1/2","infrastructure","queued",7001],["e2e shard 2/2","infrastructure","queued",7001],["e2e","infrastructure","missing",null]]'
+  # It waits on runners, not on what requires it, so it carries no source, as no rules failure is.
+  assert_equal "$(jq -c '[.failures[] | has("source")]' <<<"$output")" '[false,false,false]'
   assert_contains "$text_output" "
   infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
   [[ $text_output != *rules:* && $text_output != *"no workflow makes it"* ]]
