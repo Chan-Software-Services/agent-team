@@ -210,7 +210,7 @@ most_at_once() {
   rm -f "$BATS_TEST_TMPDIR/at-once"
   for jobs in 0 three -1; do
     TEAM_JOBS=$jobs run -1 --separate-stderr "$root/tests/run" bats
-    assert_equal "$stderr" "run: TEAM_JOBS is the count of bats files to run at once, a whole number above 0, not '$jobs'"
+    assert_equal "$stderr" "run: TEAM_JOBS is the count of bats files or cargo jobs to run at once, a whole number above 0, not '$jobs'"
   done
   [[ ! -e $BATS_TEST_TMPDIR/at-once ]]
 }

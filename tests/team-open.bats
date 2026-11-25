@@ -69,7 +69,7 @@ advance_origin() {
   assert_equal "$(events opened | jq -c 'del(.ts)')" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" '{
     task: "T1", event: "opened", project: "proj", path: "feature", type: "feat",
     title: "The team'"'"'s own tooling", branch: "feat/T1-team-tooling", base: "main",
-    base_sha: $sha, worktree: $wt, builder_model: "default"}')"
+    base_sha: $sha, worktree: $wt}')"
   run_bin -0 team-log --check
 }
 
@@ -167,27 +167,53 @@ $(cat "$REPO_ROOT/templates/plan-rust-core.md")
   assert_equal "$(events opened | jq -c 'has("story")' | paste -sd ' ')" "true false"
 }
 
-@test "--builder-model logs the task's builder model on opened, else the registry's builder line at the open, else default; one is refused where it does not fit" {
+@test "--builder-model logs the task's builder model on opened; with none, opened names none and the config's builder line prints; one is refused where it does not fit" {
   run_bin -0 --separate-stderr team-open --builder-model sonnet proj small fix one "One"
   assert_equal "$(jq -r .builder_model <<<"$output")" sonnet
   assert_equal "$(events opened | jq -r .builder_model)" sonnet
-  # With none named, the registry's builder line at the open is the task's, so a later edit of
-  # the table changes no open task's builders.
-  sed -i 's/^toolkits = \[\]$/toolkits = []\nmodels = { builder = "claude-sonnet-5-5", reviewer = "opus" }/' "$TEAM_HOME/projects.toml"
+  # With none named and no models.toml, opened names no builder model, and the printed facts the
+  # settings' word.
   run_bin -0 --separate-stderr team-open proj small fix two "Two"
-  assert_equal "$(jq -r .builder_model <<<"$output")" claude-sonnet-5-5
-  # Named, it is the task's over the registry's; with --task and --queued's forms too.
-  run_bin -0 --separate-stderr team-open --task T9 --builder-model opus proj small fix three "Three"
-  sed -i '/^models = /d' "$TEAM_HOME/projects.toml"
-  run_bin -0 --separate-stderr team-open proj small fix four "Four"
   assert_equal "$(jq -r .builder_model <<<"$output")" default
+  [[ $stderr != *models.toml* ]]
+  # With none named, the config's builder line for the project and path prints, the most specific
+  # one, but opened names none, so the task's builders follow the config at each launch.
+  cat >"$TEAM_HOME/models.toml" <<'TOML'
+"default" = { model = "opus", effort = "high" }
+"builder path=small" = { model = "claude-sonnet-5-5" }
+"builder project=proj path=feature" = { model = "haiku" }
+"reviewer" = { model = "sonnet" }
+TOML
+  run_bin -0 --separate-stderr team-open proj small fix three "Three"
+  assert_equal "$(jq -r .builder_model <<<"$output")" claude-sonnet-5-5
+  run_bin -0 --separate-stderr team-open proj feature feat four "Four"
+  assert_equal "$(jq -r .builder_model <<<"$output")" haiku
+  run_bin -0 --separate-stderr team-open proj bug fix five "Five"
+  assert_equal "$(jq -r .builder_model <<<"$output")" opus
+  # A line of default names none, so the settings' word prints.
+  echo '"builder path=research" = { model = "default" }' >>"$TEAM_HOME/models.toml"
+  run_bin -0 --separate-stderr team-open proj research research six "Six"
+  assert_equal "$(jq -r .builder_model <<<"$output")" default
+  # Named, it is the task's over the config's; with --task too.
+  run_bin -0 --separate-stderr team-open --task T9 --builder-model opus proj small fix seven "Seven"
+  assert_equal "$(jq -r .builder_model <<<"$output")" opus
   assert_equal "$(events opened | jq -c '[.task, .builder_model]')" \
-    $'["T1","sonnet"]\n["T2","claude-sonnet-5-5"]\n["T9","opus"]\n["T10","default"]'
+    $'["T1","sonnet"]\n["T2",null]\n["T3",null]\n["T4",null]\n["T5",null]\n["T6",null]\n["T9","opus"]'
   TEAM_HOME=$TEAM_HOME run -0 "$REPO_ROOT/bin/team-log" --check
+
+  # A models.toml that does not read opens the task all the same, saying so, and prints the
+  # settings' word.
+  echo '"builder" = { model = "gpt" }' >>"$TEAM_HOME/models.toml"
+  run_bin -0 --separate-stderr team-open proj small fix eight "Eight"
+  assert_equal "$(jq -r .builder_model <<<"$output")" default
+  assert_contains "$stderr" "team-open: models.toml does not read: models.toml: "
+  assert_contains "$stderr" "; the task opens, but its builders launch only once team-models --check passes"
+  assert_equal "$(events opened | jq -c 'select(.task == "T10") | has("builder_model")')" false
+  rm "$TEAM_HOME/models.toml"
 
   local opened
   opened=$(events opened | wc -l)
-  run_bin -2 team-open --builder-model 'so net' proj small fix five "Five"
+  run_bin -2 team-open --builder-model 'so net' proj small fix nine "Nine"
   assert_contains "$output" "--builder-model needs a model alias or name, got 'so net'"
   run_bin -2 team-open --builder-model
   run_bin -2 team-open --task T1 --builder-model sonnet --add proj feat more

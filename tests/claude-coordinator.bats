@@ -754,3 +754,124 @@ login_refusal() {
   run_bin -0 claude-coordinator --help
   assert_contains "$(tr -s ' \n' '  ' <<<"$output")" "Its session runs on the worker login when bin/lib/worker-login names one"
 }
+
+# The model config, the team home's models.toml (bin/team-models, sops/models.md): the session
+# launches on the coordinator line's model and effort, its subagents on the line's subagent
+# fields, and each launch is one line of the team home's sessions.jsonl (launch_log in
+# bin/lib/launch.sh).
+
+# models <toml line>...: the team home's models.toml, as those lines.
+models() {
+  printf '%s\n' "$@" >"$TEAM_HOME/models.toml"
+}
+
+# The launch command line with the model flags given after --name: argv_with <flag>...
+argv_with() {
+  launch_argv | jq -c '.[0:3] + $ARGS.positional + .[3:]' --args -- "$@"
+}
+
+# sessions.jsonl's lines, each but its ts, which every test reads.
+session_lines() {
+  jq -c 'del(.ts)' "$TEAM_HOME/sessions.jsonl"
+}
+
+# The user settings' model and effort, which a launch with nothing named runs on: user_settings <json>
+user_settings() {
+  mkdir -p "$HOME/.claude"
+  echo "$1" >"$HOME/.claude/settings.json"
+}
+
+@test "with no models.toml it launches as before, logging the settings' word as Claude Code reads it" {
+  user_settings '{"model": "opus", "effortLevel": "high", "modelSettings": {"opus": {"effortLevel": "xhigh"}}}'
+  run_bin -0 claude-coordinator
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(launch_argv)"
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"coordinator","category":"coordinator","model":"opus","model_from":"settings","effort":"xhigh","effort_from":"settings","id":"7c3e9a10"}'
+  [[ $(jq -r .ts "$TEAM_HOME/sessions.jsonl") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+  # Its settings' env carries no subagent choice.
+  assert_equal "$(jq -c '.env | [has("CLAUDE_CODE_SUBAGENT_MODEL"), has("CLAUDE_CODE_SUBAGENT_EFFORT")]' "$HOME/.local/state/agent-team/coordinator.settings.json")" '[false,false]'
+}
+
+@test "with no model in any settings it logs Claude Code's default" {
+  run_bin -0 claude-coordinator
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"coordinator","category":"coordinator","model":"default","model_from":"default","effort":"default","effort_from":"default","id":"7c3e9a10"}'
+}
+
+@test "the coordinator line's model and effort are its flags, its subagent fields its settings' env, all logged" {
+  models '"default" = { model = "opus", effort = "high" }' \
+    '"coordinator" = { model = "sonnet", subagent_model = "haiku", subagent_effort = "low" }' \
+    '"assistant" = { model = "fable", effort = "max" }'
+  run_bin -0 claude-coordinator
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(argv_with --model sonnet --effort high)"
+  assert_equal "$(jq -c '.env | {CLAUDE_CODE_SUBAGENT_MODEL, CLAUDE_CODE_SUBAGENT_EFFORT}' "$HOME/.local/state/agent-team/coordinator.settings.json")" \
+    '{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_EFFORT":"low"}'
+  # The template's env stays as it is beside them.
+  assert_equal "$(jq -c '.env | del(.CLAUDE_CODE_SUBAGENT_MODEL, .CLAUDE_CODE_SUBAGENT_EFFORT)' "$HOME/.local/state/agent-team/coordinator.settings.json")" \
+    "$(jq -c --arg code "$REPO_ROOT" '.env | map_values(gsub("@TEAM_CODE@"; $code))' "$REPO_ROOT/coordinator.settings.json")"
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"coordinator","category":"coordinator","model":"sonnet","model_from":"config","effort":"high","effort_from":"config","id":"7c3e9a10","subagent_model":"haiku","subagent_effort":"low"}'
+}
+
+@test "a line of default passes nothing for its axis, so the settings' word stands" {
+  user_settings '{"model": "opus", "effortLevel": "medium"}'
+  models '"default" = { model = "sonnet", effort = "high" }' '"coordinator" = { model = "default", subagent_model = "default" }'
+  run_bin -0 claude-coordinator
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(argv_with --effort high)"
+  assert_equal "$(jq -c '.env | has("CLAUDE_CODE_SUBAGENT_MODEL")' "$HOME/.local/state/agent-team/coordinator.settings.json")" false
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"coordinator","category":"coordinator","model":"opus","model_from":"settings","effort":"high","effort_from":"config","id":"7c3e9a10"}'
+}
+
+@test "changing the coordinator's line between two launches changes the second, and each is logged" {
+  models '"default" = { model = "opus", effort = "high" }'
+  run_bin -0 claude-coordinator
+  models '"default" = { model = "opus", effort = "high" }' '"coordinator" = { model = "fable", effort = "medium" }'
+  run_bin -0 claude-coordinator
+  assert_equal "$(stub_calls claude | grep -F '"--bg"')" "$(argv_with --model opus --effort high)
+$(argv_with --model fable --effort medium)"
+  assert_equal "$(jq -c '[.model, .effort]' "$TEAM_HOME/sessions.jsonl")" '["opus","high"]
+["fable","medium"]'
+}
+
+@test "a models.toml that does not read warns and launches on the settings' word, logged settings" {
+  user_settings '{"model": "opus"}'
+  models '"default" = { model = "opus", effort = "high" }' '"coordinatr" = { model = "sonet" }'
+  local first
+  first=$("$REPO_ROOT/bin/team-models" --check 2>&1 | head -n 1)
+  [[ -n $first ]]
+  run_bin -0 --separate-stderr claude-coordinator
+  assert_equal "$stderr" "claude-coordinator: models.toml does not read: $first; launching on the settings' model"
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(launch_argv)"
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"coordinator","category":"coordinator","model":"opus","model_from":"settings","effort":"default","effort_from":"default","id":"7c3e9a10"}'
+}
+
+@test "a sessions.jsonl that cannot be written is a warning, and the launch stands" {
+  mkdir "$TEAM_HOME/sessions.jsonl"
+  run_bin -0 --separate-stderr claude-coordinator
+  assert_equal "$output" "Started background session 7c3e9a10 (coordinator). Attach with: claude attach 7c3e9a10"
+  assert_contains "$stderr" "claude-coordinator: could not record the launch in $TEAM_HOME/sessions.jsonl:"
+  assert_contains "$stderr" "; the session runs on"
+}
+
+@test "a failed launch logs no session, and one whose output names no id is logged without one" {
+  echo 3 >"$BATS_TEST_TMPDIR/launch.status"
+  run_bin -3 claude-coordinator
+  [[ ! -e $TEAM_HOME/sessions.jsonl ]]
+  stub_script claude <<'SH'
+[[ $1 == agents ]] && { echo '[]'; exit 0; }
+[[ $1 == mcp ]] && exit 0
+echo "Started a background session"
+SH
+  run_bin -0 claude-coordinator
+  assert_equal "$(jq -c 'has("id")' "$TEAM_HOME/sessions.jsonl")" false
+}
+
+@test "its header says where its model and effort come from and that it logs its launch" {
+  run_bin -0 claude-coordinator --help
+  local text
+  text=$(tr -s ' \n' '  ' <<<"$output")
+  assert_contains "$text" "the coordinator line of the team home's models.toml"
+  assert_contains "$text" "sessions.jsonl"
+}

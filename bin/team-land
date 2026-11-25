@@ -61,7 +61,9 @@
 #   once posted, it waits on the trial commit's checks with team-ci-wait --merge-group <trial sha>
 #   --json <pr url>, once per sha, which classes a failure as the PR's own or infrastructure as
 #   on a head, or as rules: a check the base's rules or the registry require that never reported
-#   on the trial commit; it ends when the entry leaves that commit; team-ci-wait's deadline is
+#   on the trial commit, with no workflow run of it still open (one not reported while a run is
+#   open, as a roll-up whose shards wait for a runner, is infrastructure, so the PR stays in the
+#   queue); it ends when the entry leaves that commit; team-ci-wait's deadline is
 #   what is left of this script's, at most its own 90 minutes;
 #   a wait that ends with any rules failure, whatever else failed, has the PR taken out of the
 #   queue at once, rather than left to the check's timeout, since no trial commit will make that

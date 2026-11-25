@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # hooks/assistant-stop: the assistant's Stop hook keeps a turn open once with what it leaves
 # unattended (its list's due items, the hand-offs open to it, a second session named assistant on
-# this machine), or with "supervision is off" when a command of those fails, and passes with none
-# or once the turn was kept open.
+# this machine, a read session no longer working or its directory left behind), or with
+# "supervision is off" when a command of those fails, and passes with none or once the turn was
+# kept open.
 
 load helpers/common
 
@@ -47,9 +48,18 @@ session() {
     '{kind: $kind, id: $id, sessionId: $sid, name: "assistant", status: "idle", state: $state, startedAt: $started, pid: 4242}'
 }
 
+# read_session <short id> <full id> <state>: the read session, named assistant-read, as claude
+# agents --json lists it.
+read_session() {
+  jq -cn --arg id "$1" --arg sid "$2" --arg state "$3" \
+    '{kind: "background", id: $id, sessionId: $sid, name: "assistant-read", status: "idle", state: $state, startedAt: 1762596000000, pid: 4343}'
+}
+
 reason() {
   jq -r .reason <<<"$output"
 }
+
+READ_END="relay its answer and run claude-assistant-read end"
 
 @test "--help prints the header" {
   run_bin -0 hooks/assistant-stop --help
@@ -140,6 +150,56 @@ Act on each, then end the turn."
   assert_equal "$output" ""
 }
 
+@test "a read session left idle, blocked or done keeps the turn open once with its finding, after the twin's" {
+  local state
+  for state in idle blocked 'done'; do
+    stub_reply claude "[$(session a5515700 "$SELF" background working 1762596000000),
+      $(read_session 7ead0001 7ead0001-1111 "$state")]"
+    stop -0
+    assert_equal "$(jq -r .decision <<<"$output")" block
+    assert_equal "$(reason)" "Before this turn ends, attend to what is left:
+A read session is still there (7ead0001 $state): $READ_END
+Act on each, then end the turn."
+  done
+  # With a twin, the read session comes after it; its directory beside a listed session adds nothing.
+  mkdir -p "$TEAM_HOME/.claude/worktrees/assistant-read"
+  stub_reply claude "[$(session a5515700 "$SELF" background working 1762596000000),
+    $(read_session 7ead0001 7ead0001-1111 idle),
+    $(session 5e7b1c04 5e7b1c04-1111 background blocked 1762682400000)]"
+  stop -0
+  assert_equal "$(reason)" "Before this turn ends, attend to what is left:
+Another session named assistant, a twin that hears #assistant beside you: tell Daniel in #assistant where it runs, and stop nothing yourself:
+assistant 5e7b1c04 (background, blocked, started 2025-11-09T10:00:00Z) is a second session named assistant on this machine
+A read session is still there (7ead0001 idle): $READ_END
+Act on each, then end the turn."
+}
+
+@test "a read session still working is no finding, its directory there or not" {
+  stub_reply claude "[$(session a5515700 "$SELF" background working 1762596000000),
+    $(read_session 7ead0001 7ead0001-1111 working)]"
+  stop -0
+  assert_equal "$output$stderr" ""
+  mkdir -p "$TEAM_HOME/.claude/worktrees/assistant-read"
+  stop -0
+  assert_equal "$output$stderr" ""
+}
+
+@test "a read directory left with no read session listed keeps the turn open once with its finding" {
+  mkdir -p "$TEAM_HOME/.claude/worktrees/assistant-read/.scratch"
+  stub_reply claude "[$(session a5515700 "$SELF" background working 1762596000000)]"
+  stop -0
+  assert_equal "$(jq -r .decision <<<"$output")" block
+  assert_equal "$(reason)" "Before this turn ends, attend to what is left:
+A read session is still there (its directory $TEAM_HOME/.claude/worktrees/assistant-read): $READ_END
+Act on each, then end the turn."
+  # A file of that name is no read directory, and nothing else of the team home's worktrees is one.
+  rm -r "${TEAM_HOME:?}/.claude/worktrees/assistant-read"
+  mkdir -p "$TEAM_HOME/.claude/worktrees/assistant"
+  touch "$TEAM_HOME/.claude/worktrees/assistant-read"
+  stop -0
+  assert_equal "$output$stderr" ""
+}
+
 @test "with stop_hook_active it passes at once, reading nothing" {
   mkdir -p "$TEAM_HOME/assistant"
   printf '%s\n' "# Assistant items" "- owe - due | 1563000000000000047 | review 2026-11-15 | added 2026-11-12T10:00:00Z" \
@@ -150,6 +210,8 @@ Act on each, then end the turn."
 }
 
 @test "a command that fails blocks once with supervision is off and why" {
+  # A read directory left behind is no finding while the session list cannot be read.
+  mkdir -p "$TEAM_HOME/.claude/worktrees/assistant-read"
   local tail="Find out why and fix it, or tell Daniel in #assistant; meanwhile check your list (team-current list),
 your hand-offs (team-assistant list --open) and ListAgents by hand, then end the turn."
   TEAM_CURRENT_NOW=yesterday stop -0
@@ -192,7 +254,21 @@ $tail"
 
 @test "the assistant's role prompt says to act on each Stop finding, naming each kind and the supervision-off case" {
   local role=$REPO_ROOT/roles/assistant.md
-  grep -qxF -- "- A Stop hook keeps your turn open once when it ends with something unattended: an item of your list that is due, a hand-off to you still open, or a twin, a second session named assistant on this machine." "$role"
-  grep -qxF -- "- Act on each finding before you end the turn: \`done\` or renew the item, run the hand-off with Daniel in its thread and answer it, and tell Daniel of the twin in \`#assistant\`, stopping nothing yourself." "$role"
+  grep -qxF -- "- A Stop hook keeps your turn open once when it ends with something unattended: an item of your list that is due, a hand-off to you still open, a twin, a second session named assistant on this machine, or a read session no longer working or its directory left behind." "$role"
+  grep -qxF -- "- Act on each finding before you end the turn: \`done\` or renew the item, run the hand-off with Daniel in its thread and answer it, tell Daniel of the twin in \`#assistant\`, stopping nothing yourself, and relay the read's answer and run \`claude-assistant-read end\`." "$role"
   grep -qxF -- "- When the Stop hook says supervision is off, find out why from what it names, and tell Daniel in \`#assistant\` when you cannot fix it." "$role"
+}
+
+@test "the assistant's role says when and how it reads production, and its reads line names that section" {
+  local role=$REPO_ROOT/roles/assistant.md body
+  grep -qxF -- "- Run quick research spikes yourself, read-only: the web, the code, the records, and production only as Production below says." "$role"
+  body=$(awk '/^## /{on = ($0 == "## Production")} on' "$role")
+  grep -qF "only on a message of Daniel's own in \`#assistant\` or a thread of it" <<<"$body"
+  grep -qF "a 1Password prompt is coming on the PC for each toolkit" <<<"$body"
+  grep -qF "\`claude-assistant-read start --request <the link to their message> --toolkit <kit> --file <question>\`" <<<"$body"
+  grep -qF "Wait for the read session's \`READ DONE\`, \`READ BLOCKED\` or \`READ FAILED\`" <<<"$body"
+  grep -qF "Relay the answer verbatim in the topic's thread alone, never in \`#coordinator\`" <<<"$body"
+  grep -qF "Then run \`claude-assistant-read end\` at once" <<<"$body"
+  grep -qF "A follow-up question needs a new message of Daniel's and a new read" <<<"$body"
+  grep -qF "On \`ASSISTANT STOW\`, end a read still there with \`claude-assistant-read end\` before you write your stow note" <<<"$body"
 }
