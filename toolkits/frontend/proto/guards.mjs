@@ -5,7 +5,7 @@
 //   teamSessionRefusal(env)      the gate's one line when AGENT_TEAM_ROLE is set and not empty, a
 //                                team session (a worker or the coordinator), else null
 //   refuseTeamSession(env)       writes that line to stderr and exits 1, before anything is read;
-//                                each entry point calls it first
+//                                each entry point calls it first, and client.mjs's connect too
 //   checkLocalUrl(text)          the URL as its href when its scheme is http or https and its host
 //                                localhost or 127.0.0.1 (any port), else throws a one-line reason
 //   isLocalUrl(text)             whether checkLocalUrl takes it
@@ -22,9 +22,9 @@
 //                                start.lock in the directory
 //   socketPathLimit              100: macOS refuses a Unix socket path past 104 bytes
 //
-// The gate guards these scripts alone, as ui-capture's does: any local process of Daniel's user
-// can reach the socket, and team-worker's refusal of the frontend toolkit keeps the bridge out of
-// every worker.
+// The gate guards these scripts and the client module alone, as ui-capture's does: any local
+// process of Daniel's user that reads the token file can still reach the socket without them,
+// and team-worker's refusal of the frontend toolkit keeps the bridge out of every worker.
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

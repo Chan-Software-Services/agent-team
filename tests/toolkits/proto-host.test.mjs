@@ -1,9 +1,10 @@
 // The prototyping host's tracer bullet (toolkits/frontend/scripts/proto and proto/), driven
 // through the CLI as Daniel runs it, headless, in a runtime directory of each test's own, against
 // fixture pages on 127.0.0.1 (helpers/proto.mjs, helpers/chrome.mjs's serveFixture): the team
-// session gate, the localhost guard and the catalogue's refusals before anything opens; a window
-// opened in each launched engine at a preset, a device and a free size, read back through the
-// page's own metrics (/v1/test/page), and moved by a second open in the same host; status,
+// session gate (the CLI's, the host's and client.mjs's connect's), the localhost guard and the
+// catalogue's refusals before anything opens; a window opened in each launched engine at a
+// preset, a device and a free size, read back through the page's own metrics (/v1/test/page),
+// and moved by a second open in the same host; status,
 // targets and stop; the runtime directory's, socket's and token's modes and the token check; two
 // opens at once, a killed host, a stale start lock and a host of another protocol; install's
 // call of Playwright's own installer; and an engine whose browser is missing. Every engine the
@@ -20,6 +21,7 @@ import { children, ownedPid, startingEnvironment } from "./helpers/process.mjs";
 import { protoSession, runScript } from "./helpers/proto.mjs";
 
 const hostScript = join(repoRoot, "toolkits", "frontend", "proto", "host.mjs");
+const clientModule = join(repoRoot, "toolkits", "frontend", "proto", "client.mjs");
 const engines = ["chromium", "firefox", "webkit"];
 const page = (title) => `<!doctype html><meta name="viewport" content="width=device-width"><title>${title}</title><p>${title}</p>`;
 const devices = JSON.parse(execFileSync(process.execPath, ["-e", `process.stdout.write(JSON.stringify(require(${JSON.stringify(join(repoRoot, "servers", "node_modules", "playwright-core"))}).devices["iPhone 15"]))`], { encoding: "utf8" }));
@@ -76,8 +78,14 @@ describe("proto's refusals before anything opens", () => {
     assert.equal(existsSync(proto.dir), false);
   });
 
-  test("a team session is refused by the CLI and the host before any directory is read or made", async (t) => {
+  test("a team session is refused by the CLI, the host and the client module before any directory is read or made", async (t) => {
     const proto = protoSession(t);
+    // A script of the session's own that imports the client, as a worker's `node -e` could, and
+    // hands connect an environment with no role in it.
+    const direct = `const { connect } = await import(${JSON.stringify(clientModule)});
+const { AGENT_TEAM_ROLE: _role, ...env } = process.env;
+await connect({ start: true, env });
+process.stdout.write("connected\\n");`;
     for (const role of ["builder", "coordinator"]) {
       for (const args of [["open", "http://127.0.0.1:1/"], ["status"], ["stop"], ["install"]]) {
         const result = await proto.run(args, { env: { AGENT_TEAM_ROLE: role } });
@@ -85,6 +93,8 @@ describe("proto's refusals before anything opens", () => {
       }
       const host = await runScript(t, process.execPath, [hostScript], { env: { ...proto.env, AGENT_TEAM_ROLE: role } });
       assert.deepEqual([host.status, host.stderr], [1, gate(role)]);
+      const client = await runScript(t, process.execPath, ["--input-type=module", "-e", direct], { env: { ...proto.env, AGENT_TEAM_ROLE: role } });
+      assert.deepEqual([client.status, client.stderr, client.stdout], [1, gate(role), ""], "client.mjs's connect");
     }
     assert.equal(existsSync(proto.dir), false);
   });

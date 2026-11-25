@@ -3,7 +3,9 @@
 //
 //   protocol                      1, the host API's number, which each connection checks
 //   const host = await connect({ start, env })
-//                                 the running host, or null when none runs and `start` is false;
+//                                 first, in a team session (AGENT_TEAM_ROLE set in the process's
+//                                 own environment), the gate's line on stderr and exit 1;
+//                                 then the running host, or null when none runs and `start` is false;
 //                                 with `start`, a host it starts when none answers: it takes
 //                                 the start lock (start.lock, a directory made atomically; one
 //                                 older than 30 s is taken over as a crashed start's), checks
@@ -29,7 +31,7 @@ import { request as httpRequest } from "node:http";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { checkRuntimeDir, runtimeDir, runtimePaths } from "./guards.mjs";
+import { checkRuntimeDir, refuseTeamSession, runtimeDir, runtimePaths } from "./guards.mjs";
 
 export const protocol = 1;
 const hostScript = join(dirname(fileURLToPath(import.meta.url)), "host.mjs");
@@ -130,6 +132,8 @@ function handle(paths, status) {
 }
 
 export async function connect({ start = false, env = process.env } = {}) {
+  // The gate reads the process's own environment, never `env`, which a caller may have emptied.
+  refuseTeamSession(process.env);
   const dir = runtimeDir(env);
   if (!checkRuntimeDir(dir, { create: start })) return null;
   const paths = runtimePaths(dir);
