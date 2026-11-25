@@ -146,8 +146,9 @@ ci_logged() {
 }
 
 # red_checks <head>: --ci's wait ends failed on <head>, exit 1, with a roll-up, a failed shard of
-# the PR's own, a runner that never started, a required check not reported and a lint step of the
-# PR's own, in that order, as team-ci-wait --json gives them.
+# the PR's own, a runner that never started, a check the base's rules require and one the registry
+# alone requires, not reported, and a lint step of the PR's own, in that order, as team-ci-wait
+# --json gives them.
 red_checks() {
   local job=https://github.com/owner/proj/actions/runs/7/job
   ci_wait_ends failed "$1" 1 "team-ci-wait: the checks on ${1:0:7} did not pass" "$(jq -cn --arg j "$job" '[
@@ -156,7 +157,10 @@ red_checks() {
      step: "Run the tests", rerun: null},
     {name: "smoke-shards (1)", class: "infrastructure", kind: "never-started", state: "CANCELLED", link: "\($j)/10", run: 7,
      job: 10, step: null, rerun: "gh run rerun 7 --job 10 --repo owner/proj"},
-    {name: "build", class: "pr", kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null},
+    {name: "build", class: "pr", kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null,
+     source: "rules"},
+    {name: "data", class: "pr", kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null,
+     source: "required_checks"},
     {name: "lint", class: "pr", kind: "failed", state: "FAILURE", link: "\($j)/11", run: 7, job: 11, step: "Lint", rerun: null}]')"
 }
 
@@ -186,7 +190,7 @@ red_logged() {
 
 # ci_fix <who> <head>: the fix message --ci prints to the holder <who> for red_checks on <head>.
 ci_fix() {
-  echo "send to $1: T7 fix the failed checks test-shards (2), build and lint of ${2:0:8} in $TEAM_HOME/tasks/T7/ci-${2:0:8}.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+  echo "send to $1: T7 fix the failed checks test-shards (2), build, data and lint of ${2:0:8} in $TEAM_HOME/tasks/T7/ci-${2:0:8}.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
 }
 
 # infra <name> <kind> <run> <job> [<step>]: one infrastructure failure of PR 9's checks, as
@@ -1611,20 +1615,22 @@ $(ci_fix "T7-builder (b0000001, 120k)" "$sha")"
   # One ci, holding every failure, the infrastructure one and the roll-up among them.
   assert_equal "$(logged_from $((count + 1)) | jq -c 'del(.task)')" \
     "$(jq -cn --arg url "$url" --arg h "$sha" --argjson f "$(red_logged)" '{event: "ci", url: $url, head: $h, outcome: "failed", failed: $f}')"
-  assert_equal "$(red_logged | jq -r 'map(.name) | join(",")')" "test,test-shards (2),smoke-shards (1),build,lint"
+  assert_equal "$(red_logged | jq -r 'map(.name) | join(",")')" "test,test-shards (2),smoke-shards (1),build,data,lint"
   # The report: the PR's failures first, then infrastructure, then the roll-up, each with its
-  # class, name, kind, step, link and rerun, and the closing line.
+  # class, name, kind (a missing one with what requires it), step, link and rerun, and the closing
+  # line.
   assert_equal "$(<"$TEAM_HOME/tasks/T7/ci-$short.md")" "# The failed checks of $url at $sha
 
 The checks wait after the pass ended on these failures, one a line, the PR's first: each one's class, check, kind, failing step, link and rerun command.
 
 - the PR's: \`test-shards (2)\`, failed, at the step \"Run the tests\", $job/8, no rerun
-- the PR's: \`build\`, missing, at no step, no link, no rerun
+- the PR's: \`build\`, missing (the base's rules require it), at no step, no link, no rerun
+- the PR's: \`data\`, missing (the project's required_checks require it), at no step, no link, no rerun
 - the PR's: \`lint\`, failed, at the step \"Lint\", $job/11, no rerun
 - infrastructure: \`smoke-shards (1)\`, never-started, at no step, $job/10, rerun with \`gh run rerun 7 --job 10 --repo owner/proj\`
 - roll-up: \`test\`, rollup, at no step, $job/9, no rerun
 
-The PR's failures, \`test-shards (2)\`, \`build\` and \`lint\`, are this round's \`blocking\` findings; the others are not, since an infrastructure failure or a roll-up is no defect of the PR, and the round's new head runs every check again."
+The PR's failures, \`test-shards (2)\`, \`build\`, \`data\` and \`lint\`, are this round's \`blocking\` findings; the others are not, since an infrastructure failure or a roll-up is no defect of the PR, and the round's new head runs every check again."
   # Nothing was rerun, posted or launched.
   assert_equal "$(outside_calls)" ""
   assert_equal "$(bg_calls)" ""
