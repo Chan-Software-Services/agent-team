@@ -139,8 +139,14 @@
 #             check runs there; a required check not reported while a workflow run of the trial
 #             commit was still open (team-ci-wait's infrastructure, as a roll-up whose shards
 #             waited for a runner) is said as "<name> was not reported on the trial merge while a
-#             workflow run there was still open, as infrastructure", with no rules step; else to
-#             run team-merge again once what dropped it is fixed;
+#             workflow run there was still open, as infrastructure", with no rules step; else,
+#             when GitHub's reason is checks_timed_out (the queue's check timeout) or every
+#             failure is infrastructure of kind queued or missing, beside roll-ups, so the
+#             checks waited on runners and a plain run again meets the same wait, "the runners
+#             are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check
+#             timeout of <repo>'s merge queue while the backlog stands, and run team-merge T<n>
+#             again once they say the runners are back", as team-next --ci's infrastructure end
+#             says; else to run team-merge again once what dropped it is fixed;
 #   waiting   team-land's deadline came, or the team holds offline: it is exit 75, saying to run
 #             team-merge again with run_in_background, and whether the PR, read again, is still
 #             in the queue, merged, or unread; nothing more is logged for those, and a PR in no
@@ -878,6 +884,12 @@ if [[ -n $landing ]]; then
           echo "  the trial merge failed what the head ${head:0:7} passed: render team-brief $task builder-merge-base for the builder, then a rereview"
         elif jq -e 'any(.failed // [] | .[]; .class == "rules")' <<<"$landed_as" >/dev/null; then
           echo "  $(ledger_jq '.failed // [] | rules_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
+        elif [[ ${reason%%;*} == checks_timed_out ]] || jq -e '(.failed // []) as $f
+          | any($f[]; .class == "infrastructure" and (.kind | IN("queued", "missing")))
+            and all($f[]; .class == "rollup" or (.class == "infrastructure" and (.kind | IN("queued", "missing"))))' <<<"$landed_as" >/dev/null; then
+          # Runners behind: the queue's check timeout, or checks that waited on a runner (team-land
+          # enqueued once more for those already), so a plain run again meets the same wait.
+          echo "  the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of $repo's merge queue while the backlog stands, and run team-merge $task again once they say the runners are back"
         else
           echo "  run team-merge $task again once what dropped it is fixed"
         fi
