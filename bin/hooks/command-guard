@@ -19,11 +19,11 @@
 # GITHUB_TOKEN, --steal, team-ask, team-answer, team-inbox, team-thread, team-run-approved, curl,
 # wget, kill (pkill, killall and tmux's kill-server among it), fuser, -delete, push with an f after
 # a dash or a +, .config/agent-team, .claude/channels, discord, and rm and docker as words of their
-# own (git rm among them), nor env or exec before an option, nor, for the assistant alone (AGENT_TEAM_ROLE
-# assistant), the coordinator's acts' names (team-checkpoint, team-handoff, team-ops-end,
-# team-records-rewrite, team-resume, team-review-comment, team-stow, claude-coordinator,
-# team-capacity, team-config, team-heavy, team-lease, team-quota, team-secrets, team-stack and
-# team-timers), gh or gh-axi as a word, and assistant-threads, ASSISTANT_THREADS or
+# own (git rm among them), nor env or exec before an option, nor, for the assistant alone
+# (AGENT_TEAM_ROLE assistant), the coordinator's acts' names (team-checkpoint, team-handoff,
+# team-ops-end, team-records-rewrite, team-resume, team-review-comment, team-stow,
+# claude-coordinator, team-capacity, team-config, team-heavy, team-lease, team-quota, team-secrets,
+# team-stack and team-timers), gh or gh-axi as a word, and assistant-threads, ASSISTANT_THREADS or
 # assistant_thread_keep, as written or with its quotes and backslashes removed (pk''ill, r\m), and
 # holding no $', no brace list or range ({,} or {..}), and no printf or echo with a > or tee, by
 # which a name may be spelled otherwise, at once, with no Python run. Any other is decided by one
@@ -45,7 +45,8 @@
 # an upload of a file or body to a host outside the team's own (as bin/lib/outbound.py reads it), a
 # worker's or the assistant's force push or cd into the team's keys' or the Discord bot's
 # directories, a planner's, builder's or reviewer's docker run or docker create past docker's global
-# options (a container started by hand, which outlives the session), a kill that reaches what is not the session's own (by name or pattern, tmux's kill-*,
+# options (a container started by hand, which outlives the session), a kill that reaches what is not
+# the session's own (by name or pattern, tmux's kill-*,
 # of PIDs read from input, of a PID it cannot read, of a process group, of a literal PID whose
 # process is not proven its own; bin/lib/kill_rules.py), and a recursive delete that reaches what is
 # not the worker's own (outside the worktree and the job's tmp, either of them or its .scratch/task,

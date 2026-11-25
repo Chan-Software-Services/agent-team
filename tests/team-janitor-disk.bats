@@ -397,6 +397,30 @@ cleared the job tmp of T9's builder aaaa0004 (2 MB; failed and idle 26 h)"
   assert_equal "$output" "cleared the job tmp of T9's builder aeae0001 (2 MB; not listed by Claude Code)"
 }
 
+@test "a process claude agents leaves running never holds the lock, so the next run still sweeps" {
+  launch T9 builder afaf0001
+  launch T9 builder afaf0002
+  job afaf0001
+  # The stub's agents call starts a process that outlives it with the descriptors it inherited,
+  # as a background service Claude Code starts would.
+  stub_script claude <<'EOF'
+if [[ $* == 'agents --json --all' ]]; then
+  sleep 300 >/dev/null 2>&1 3>&- &
+  echo "$!" >>"$BATS_TEST_TMPDIR/background"
+  echo '[]'
+  exit 0
+fi
+exit 3
+EOF
+
+  run_bin -0 team-janitor disk
+  assert_equal "$output" "cleared the job tmp of T9's builder afaf0001 (2 MB; not listed by Claude Code)"
+
+  job afaf0002
+  run_bin -0 team-janitor disk
+  assert_equal "$output" "cleared the job tmp of T9's builder afaf0002 (2 MB; not listed by Claude Code)"
+}
+
 @test "the record adds up the day's clearings, starts again on a new day, and status reads it back, changing nothing" {
   run_bin -0 team-janitor disk status
   assert_equal "$output" "no Go build cache at $GC; 0 job tmps cleared today (0 MB)"

@@ -135,11 +135,19 @@ disk_read_ledger() {
 
 # The sessions Claude Code keeps, from claude agents --json --all: DISK_LISTED[<id>] its state,
 # DISK_PIDS[<id>] its pid when it has one. Fails, saying why on stderr, when the list cannot be
-# read.
+# read. The call runs with disk_main's lock closed, so a process it leaves running (a background
+# service it starts) never holds the lock and skips every later run.
 declare -gA DISK_LISTED=() DISK_PIDS=()
+disk_agents() {
+  if [[ -n ${disk_lock:-} ]]; then
+    bounded 30 claude agents --json --all {disk_lock}>&-
+  else
+    bounded 30 claude agents --json --all
+  fi
+}
 disk_read_sessions() {
   local disk_json disk_lines disk_id disk_state disk_pid
-  if ! disk_json=$(bounded 30 claude agents --json --all 2>"$TMP_WORK/agents.err"); then
+  if ! disk_json=$(disk_agents 2>"$TMP_WORK/agents.err"); then
     echo "claude agents --json --all failed: $(tmp_last_line "$TMP_WORK/agents.err")" >&2
     return 1
   fi
