@@ -246,9 +246,9 @@
 # cancelled and pending checks of that look left out, since the queue cancels the rest of a commit
 # it gives up, and each required check no check of the look lists (a cancelled or pending one counts
 # as listed) named in its class (infrastructure while a workflow run of that look is still open,
-# else the rules'), that reading first held for 2 minutes of looks as above; else exit
-# 1 (other-head), naming where the entry is. A <sha> after the URL is refused with it. With --look
-# it takes one readable look at the trial commit, as for a PR, with no grace, for team-land to say
+# else the rules'), that reading first held for 2 minutes of looks as above; else exit 1
+# (other-head), naming where the entry is. A <sha> after the URL is refused with it. With --look it
+# takes one readable look at the trial commit, as for a PR, with no grace, for team-land to say
 # whether a trial commit it cannot mark is green on its other checks: a required check no check of
 # the look lists is named pending, "<name> (not reported)", and an entry no longer on the trial
 # commit ends the look at once, with no settle.
