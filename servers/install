@@ -34,9 +34,10 @@ if [[ $force == 0 && -f $stamp && $(cat "$stamp") == "$want" ]]; then
   exit 0
 fi
 
-staging=$(mktemp -d "$dir/.staging.XXXXXX")
+# Both go when the script exits, however it ends.
+staging=$(team_mktemp -d "$dir/.staging.XXXXXX")
 old=$dir/.old.$$
-trap 'rm -rf "$staging" "$old"' EXIT
+team_tmp_add "$old"
 cp "$dir/package.json" "$dir/package-lock.json" "$staging/"
 (cd "$staging" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error) ||
   die "npm ci failed; the previous install, if any, is unchanged"

@@ -22,18 +22,19 @@
 # among it), nor env or exec before an option, nor, for the assistant alone (AGENT_TEAM_ROLE
 # assistant), the coordinator's acts' names (team-checkpoint, team-handoff, team-ops-end,
 # team-records-rewrite, team-resume, team-review-comment, team-stow, claude-coordinator,
-# team-capacity, team-config, team-heavy, team-lease, team-secrets, team-stack and team-timers), gh
-# or gh-axi as a word (for a topic session too), and assistant-threads, ASSISTANT_THREADS or
-# assistant_thread_keep, as written or with its quotes and backslashes removed (pk''ill, r\m),
-# and holding no $', no brace list or range ({,} or {..}), and no printf or echo with a > or tee,
-# by which a name may be spelled otherwise, at once, with no Python run. Any other is decided by one rule table,
-# bin/lib/command_rules.py, run once on the hook's input: it walks each simple command the call
-# runs (past its wrappers, into the strings its shells, eval, su, script, env -S, flock -c, watch,
-# parallel and find -exec run, and a shell's script or a sourced file by its name), and prints the
-# first row that refuses one, in its table's order: an ops launch, the frontend toolkit's capture
-# script, an assignment or an unset of AGENT_TEAM_ROLE or AGENT_TEAM_TASK, an assignment or an
-# unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN (the session's GitHub login), a team script run
-# with its environment emptied, a lease steal, the coordinator's commands (but the assistant's
+# team-capacity, team-config, team-heavy, team-lease, team-quota, team-secrets, team-stack and
+# team-timers), gh or gh-axi as a word (for a topic session too), and assistant-threads,
+# ASSISTANT_THREADS or assistant_thread_keep, as written or with its quotes and backslashes removed
+# (pk''ill, r\m), and holding no $', no brace list or range ({,} or {..}), and no printf or echo
+# with a > or tee, by which a name may be spelled otherwise, at once, with no Python run. Any other
+# is decided by one rule table, bin/lib/command_rules.py, run once on the hook's input: it walks
+# each simple command the call runs (past its wrappers, into the strings its shells, eval, su,
+# script, env -S, flock -c, watch, parallel and find -exec run, and a shell's script or a sourced
+# file by its name), and
+# prints the first row that refuses one, in its table's order: an ops launch, the frontend toolkit's
+# capture script, an assignment or an unset of AGENT_TEAM_ROLE or AGENT_TEAM_TASK, an assignment or
+# an unset of GH_CONFIG_DIR, GH_TOKEN or GITHUB_TOKEN (the session's GitHub login), a team script
+# run with its environment emptied, a lease steal, the coordinator's commands (but the assistant's
 # first --help or -h of each and its team-inbox --item <n>), the assistant's run of one of the
 # coordinator's acts (any but a first --help or -h), the assistant's GitHub write by gh or gh-axi
 # (gh api with a writing method, a body, a field with no GET or HEAD, or a GraphQL call that is no
@@ -109,7 +110,7 @@ text=$command$'\n'${stripped//[\'\"\\]/}
 assistant_words=
 [[ ${AGENT_TEAM_ROLE:-} != topic ]] || assistant_words='(^|[^[:alnum:]_.-])gh(-axi)?([^[:alnum:]_.-]|$)'
 [[ ${AGENT_TEAM_ROLE:-} != assistant ]] ||
-  assistant_words='team-(checkpoint|handoff|ops-end|records-rewrite|resume|review-comment|stow|capacity|config|heavy|lease|secrets|stack|timers)|claude-coordinator|(^|[^[:alnum:]_.-])gh(-axi)?([^[:alnum:]_.-]|$)|assistant-threads|ASSISTANT_THREADS|assistant_thread_keep'
+  assistant_words='team-(checkpoint|handoff|ops-end|records-rewrite|resume|review-comment|stow|capacity|config|heavy|lease|quota|secrets|stack|timers)|claude-coordinator|(^|[^[:alnum:]_.-])gh(-axi)?([^[:alnum:]_.-]|$)|assistant-threads|ASSISTANT_THREADS|assistant_thread_keep'
 [[ $text == *team-worker* || $text == *team-load-check* || $text == *ui-capture* ||
   $text == *AGENT_TEAM_* || $text == *GH_CONFIG_DIR* || $text == *GH_TOKEN* || $text == *GITHUB_TOKEN* ||
   $text == *--steal* || $text == *team-ask* || $text == *team-answer* ||
