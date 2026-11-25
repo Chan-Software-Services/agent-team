@@ -25,6 +25,9 @@
 // The gate guards these scripts and the client module alone, as ui-capture's does: any local
 // process of Daniel's user that reads the token file can still reach the socket without them,
 // and team-worker's refusal of the frontend toolkit keeps the bridge out of every worker.
+// settings/worker.json also denies a worker's Bash call naming the runtime directory or the
+// socket (agent-team-proto, agent-team/proto, host.sock) and its Read in either directory, a
+// speed bump that another spelling gets past.
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
