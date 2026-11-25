@@ -2035,6 +2035,32 @@ def ci_due_finding:
   | finding($task; "ci-due"; null; null; "the checks of \(.url) at \(.head[:8]) have had no wait end for \($age | duration)";
       "arm team-next \($task) --ci with Bash run_in_background unless it is running");
 
+# How long after the closed of the task a park waits on team-sweep calls the park park-over: 15
+# minutes, room for the coordinator's own relay to the parks the close frees.
+def park_over_seconds: 900;
+
+# team-sweep's park-over findings, over a task's events with every task's events by id ($tasks,
+# by_task's), or nothing: one for each standing waiting or blocked whose on names another task
+# (T<m>) that has a closed logged after the park, park_over_seconds or more ago, while no held and
+# no ask nothing settled (none a launch went past) stands, with session null. Its next step names
+# the park's id, which a resumed ends it by.
+def park_over_findings($tasks):
+  .[0].task as $task
+  | lifecycle as $state
+  | select(any($state.parks[]; .kind == "held") or any($state.asks[]; .passed | not) | not)
+  | $state.parks[]
+  | select(IN(.kind; "waiting", "blocked") and (.on | type) == "string" and (.on | test("^T[1-9][0-9]*$")) and .on != $task)
+  | . as $park
+  | ($tasks[$park.on] // null) as $other
+  | select($other != null and ($other | task_status) == "closed")
+  | ([$other[] | select(.event == "closed" and (.ts | tostring) > ($park.ts | tostring))] | last) as $closed
+  | select($closed != null)
+  | (now - ($closed.ts | fromdate)) as $ago
+  | select($ago >= park_over_seconds)
+  | finding($task; "park-over"; null; null;
+      "waits on \($park.on), closed at \($closed.ts) (\($ago | duration) ago): \($park.reason // "no reason logged")";
+      "do what it says (tell its holder, or launch its builder), then team-log \($task) resumed id=\($park.id)");
+
 # The stall limits, in seconds: how long a busy session's transcripts may go unwritten before
 # team-sweep calls it stalled. default, 50 minutes, so with the sweep watch's three-minute stand
 # the coordinator is woken within the hour (a full Playwright run or tests/run, up to about 33
@@ -2392,7 +2418,8 @@ def assistant_twin_lines($self):
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
 # every task's withdrawals), else its findings unless it is parked, then its queue-wait,
 # trial-unmarked, trial-failed and trial-rules findings, then its walk-stale, parked or not, since a parked task's
-# walk still needs asking about, then its ci-due, then the stray sessions (named like a team worker
+# walk still needs asking about, then its ci-due, then its park-over, parked or not, since the park
+# is what it names, then the stray sessions (named like a team worker
 # whose task is closed or not in the ledger, never the load check's T0, whose session the
 # coordinator waits on for up to 30 minutes), in task number order; then the coordinator-twin,
 # assistant-twin, activity, level, retro-due and health findings. $own is the registered projects
@@ -2412,7 +2439,8 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
         trial_failed_findings($sessions),
         trial_rules_findings($landing),
         walk_stale_finding,
-        ci_due_finding),
+        ci_due_finding,
+        park_over_findings($tasks)),
       (team_sessions($tasks; $sessions)[] | select(.task_state | IN("closed", "unknown"))
         | finding(.task; "stray"; .session; .name;
             "\(.name) \(.session) is live but \(stray_reason)";
@@ -2428,7 +2456,8 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
 # The findings team-sweep adds after sweep's, from the views it reads beside the ledger: team-queue
 # list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
 # team-current check --json's ($current), one current-stale finding naming each item whose task
-# closed, then team-current due --json's for the coordinator's list ($due), one current-due finding
+# closed, and each until item on a task T<m> merged that closed with no merge (its closed entry's
+# task being T<m>), then team-current due --json's for the coordinator's list ($due), one current-due finding
 # for each item whose review date has come, then team-assistant list --open --to coordinator
 # --json's list ($handoffs), one assistant-handoff finding for each sent more than 30 minutes
 # before $now (seconds); each view null when there is nothing to read, and {error} when its
