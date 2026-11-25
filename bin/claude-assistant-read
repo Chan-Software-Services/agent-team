@@ -68,10 +68,10 @@
 # there is committed or handed off, and Claude Code protects no write under .claude/worktrees/.
 # start fetches the project's base in its primary checkout (git fetch origin <base>, 30 seconds
 # at most); a fetch that fails is one stderr line, "could not fetch origin/<base> (<git's
-# line>); the read's docs are as last fetched", and the start goes on. It exports docs/,
-# CLAUDE.md and AGENTS.md, those of them origin/<base> holds, with git archive into the read
-# directory, so no git hook runs and the checkout gains no worktree, then makes its .scratch/,
-# where the session writes .scratch/answer.md, its one file.
+# line, a credential in a URL cut out (origin_reason)>); the read's docs are as last fetched",
+# and the start goes on. It exports docs/, CLAUDE.md and AGENTS.md, those of them origin/<base>
+# holds, with git archive into the read directory, so no git hook runs and the checkout gains no
+# worktree, then makes its .scratch/, where the session writes .scratch/answer.md, its one file.
 #
 # The files it writes:
 #   ~/.local/state/agent-team/assistant-read.settings.json
@@ -325,8 +325,10 @@ primary=$(team_project "$project" path) || die "cannot read $project's primary c
 base=$(team_project "$project" base) || die "cannot read $project's base from the registry"
 
 NET_ERR=$scratch/fetch NET_TIMEOUT=30
-if ! origin_git -C "$primary" fetch -q origin "$base"; then
-  echo "claude-assistant-read: could not fetch origin/$base ($(grep -m1 . "$NET_ERR" || echo "no reason given")); the read's docs are as last fetched" >&2
+# git's line comes through origin_reason, which cuts a credential out of a URL in it.
+if origin_git -C "$primary" fetch -q origin "$base"; then :; else
+  fetch_status=$?
+  echo "claude-assistant-read: could not fetch origin/$base ($(origin_reason "$fetch_status")); the read's docs are as last fetched" >&2
 fi
 git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base^{commit}" >/dev/null ||
   die "$project's base origin/$base cannot be read in its primary checkout $primary, so the read has no docs"

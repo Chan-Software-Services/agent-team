@@ -269,11 +269,13 @@ How many stalls are booked for the next convention?"
 
 @test "a fetch that fails warns and exports the base as last fetched; a base never fetched refuses" {
   push_to_dev "$origin" docs/new.md >/dev/null
-  git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/gone.git"
+  # An origin whose URL holds a credential, which git's line names and the warning must not.
+  git -C "${primary:?}" remote set-url origin "$BATS_TEST_TMPDIR/gone//x-access-token:t0ken@host/repo.git"
   says "$ASSISTANT"
   start -0 -- --request "$link" --toolkit prod-read --file "$question"
   assert_contains "$stderr" "claude-assistant-read: could not fetch origin/dev ("
-  assert_contains "$stderr" "); the read's docs are as last fetched"
+  assert_contains "$stderr" "does not appear to be a git repository); the read's docs are as last fetched"
+  [[ $stderr != *t0ken* && $stderr != *x-access-token* ]] || { echo "the warning names the credential: $stderr" >&2; return 1; }
   assert_equal "${lines[0]}" 4f2a9c1e
   [[ -f $dir/docs/OPERATIONS.md && ! -e $dir/docs/new.md ]]
   # A base the checkout never fetched.
