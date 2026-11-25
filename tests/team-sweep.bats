@@ -1088,6 +1088,51 @@ due() {
   no_github
 }
 
+# T526: a trial commit green on every other check, with no agent-review, held the queue 100
+# minutes while nothing said so.
+@test "trial-unmarked: a PR in the queue whose trial commit passed every other check with no agent-review, not while they run, nor once marked or out of the queue" {
+  local url=https://github.com/owner/proj/pull/5 pid t1=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e t2=6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+  local reason="GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  pid=$(hold_merge_lock T3)
+  unmarked() {
+    ledger_line --arg url "$url" --arg ts "$1" --arg trial "$2" --arg checks "$3" --arg reason "$reason" \
+      '{ts: $ts, task: "T3", event: "trial-unmarked", url: $url, head: "a1b2c3d4e5", trial: $trial, reason: $reason,
+        since: "2026-10-22T03:05:00Z", checks: $checks}'
+  }
+  # Its other checks still running: nothing yet.
+  unmarked 2026-10-22T03:15:00Z "$t1" pending
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # Green on every other check: named, beside a team-merge still waiting on it.
+  unmarked 2026-10-22T03:25:00Z "$t1" passed
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 trial-unmarked: PR $url has passed every other check on its merge queue trial commit 5e5e5e5, but has had no agent-review there since 2026-10-22T03:05:00Z: $reason; next: fix what that reason names (team-merge T3 --pr $url --holds a1b2c3d4e5 says it again, and team-land logs each look in ~/.local/state/agent-team/merge/land/owner/proj/5.log), after which team-land posts agent-review at its next look; tell Daniel if it is not yours to fix"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .session, .name])' <<<"$output")" '[["T3","trial-unmarked",null,null]]'
+  # Marked, on that trial commit or the next one: nothing.
+  ledger_line --arg url "$url" --arg trial "$t2" '{ts: "2026-10-22T03:40:00Z", task: "T3", event: "trial-marked", url: $url, head: "a1b2c3d4e5", trial: $trial}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # A later trial commit unmarked and green is named again, until the queue drops the PR.
+  unmarked 2026-10-22T04:00:00Z "$t2" passed
+  run_bin -1 team-sweep
+  assert_contains "$output" "T3 trial-unmarked: PR $url has passed every other check on its merge queue trial commit 6f6f6f6"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "GitHub gives no reason"}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  # Queued again, the earlier run's trial-unmarked is not this queued's.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  release_merge_lock "$pid"
+  no_github
+}
+
 @test "a queued of a head the task has since moved past stands for no PR in the queue: merge-due again, and no queue-wait" {
   local url=https://github.com/owner/proj/pull/5
   opened T3
@@ -2671,6 +2716,32 @@ $ready"
   queue_room '.level = "none" | .share = 0 | .budget = 0'
   run_bin -1 team-sweep
   assert_equal "$output" "$no_worker"
+  no_github
+}
+
+@test "queue-ready: an item whose project's treehouse pool has no free tree is passed over, and none is named when every ready item's pool is full" {
+  queue_room
+  # th, beside proj, on a treehouse pool whose treehouse.toml caps it at one tree, held.
+  printf '%s\n' '[th]' 'repo = "owner/th"' 'path = "projects/th"' 'base = "main"' 'delivery = "direct-pr"' \
+    'merge_method = "merge"' 'required_checks = []' 'task_dir = ".scratch/task"' 'docs = []' 'toolkits = []' \
+    '[th.pool]' 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' 'return = "scripts/th-return.sh"' \
+    'slots = ["pools/th/1/th"]' >>"$TEAM_HOME/projects.toml"
+  mkdir -p "$HOME/projects/th"
+  printf 'max_trees = 1\n' >"$HOME/projects/th/treehouse.toml"
+  stub_command treehouse
+  jq -cn --arg path "$HOME/pools/th/1/th" '[{name: "1", path: $path, status: "leased", branch: "", lease_holder: "T9"}]' \
+    >"$STUB_FIXTURES/treehouse.out"
+  queued top.md "summary: the work on th" "project: th" "priority: 1" "size: S"
+  queued_ready next.md 2 "the work on proj"
+  local full="th's pool is full (1 of 1 tree, none free)"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "queue: $ROOM; $full: open next.md (proj, priority 2, S): the work on proj; next: team-open --queued next.md"
+  assert_equal "$(stub_calls treehouse)" '["status","--json"]'
+  # With proj's item gone, every ready item's pool is full: no finding.
+  rm "$TEAM_HOME/tasks/queued/next.md"
+  run_bin -0 team-sweep --json
+  assert_equal "$output" "[]"
   no_github
 }
 

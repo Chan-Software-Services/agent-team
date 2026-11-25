@@ -9,9 +9,11 @@
 //   await db.seed(database, { collection: [documents] })   beforeEach(): drop, then insert
 //   db.client                                a driver client as root, for checking the data
 //   await db.stop();                         after()
-// startMongo waits for the server with connectWhenReady, and stop() removes the container with
-// removeContainer; both are exported for their own tests. mongoImage and perThreadCaches are the
-// pin and the environment the prod-mongo toolkit's throwaway is held to.
+// startMongo runs one mongod with auth on (oneMongod), waits for it with connectWhenReady, makes the
+// root user in the container (createRoot), and stop() removes the container with removeContainer;
+// connectWhenReady and removeContainer are exported for their own tests. mongoImage,
+// perThreadCaches, oneMongod and createRoot are the pin, the environment, the command and the root
+// user's script the prod-mongo toolkit's throwaway is held to.
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
@@ -36,6 +38,22 @@ export const perThreadCaches = ["--env", "GLIBC_TUNABLES=glibc.pthread.rseq=1"];
 // the run leaves at most a container. Every container of the image takes these.
 export const dataOnTmpfs = ["--tmpfs", "/data/db", "--tmpfs", "/data/configdb"];
 
+// The image's entrypoint, given MONGO_INITDB_ROOT_USERNAME and _PASSWORD, makes the root user on a
+// first mongod on 127.0.0.1:27017, stops it with mongod --shutdown and starts a second on
+// 0.0.0.0:27017. But mongod --shutdown returns once the first one has emptied its mongod.lock,
+// before it exits, and mongod's listener shutdown only cancels its accept, so the first one listens
+// until it is gone: on a busy machine the second one's bind fails with "Address already in use" and
+// it exits 48. So the container runs one mongod, with auth on and no MONGO_INITDB_* variables, as
+// the command after the image (the entrypoint adds --bind_ip_all), and createRoot, run in it by
+// docker exec once mongod answers a ping, makes the root user on the localhost exception, which
+// closes once a user exists; its password comes as MONGO_ROOT_PASSWORD, a name-only docker exec
+// --env, never in an argument list.
+export const oneMongod = ["mongod", "--auth"];
+export const createRoot = [
+  "mongosh", "--quiet", "--norc", "--eval",
+  'db.getSiblingDB("admin").createUser({ user: "root", pwd: process.env.MONGO_ROOT_PASSWORD, roles: ["root"] })',
+];
+
 // The driver from the pinned server's own install (servers/install), so the tests add no
 // dependency of their own.
 const { MongoClient } = createRequire(join(repoRoot, "servers", "package.json"))("mongodb");
@@ -54,15 +72,19 @@ export async function startMongo() {
   docker(
     "run", "--detach", "--name", name, "--label", "agent-team-test=toolkits",
     "--publish", "127.0.0.1::27017",
-    "--env", "MONGO_INITDB_ROOT_USERNAME=root", "--env", `MONGO_INITDB_ROOT_PASSWORD=${rootPassword}`,
     ...perThreadCaches, ...dataOnTmpfs,
-    mongoImage,
+    mongoImage, ...oneMongod,
   );
   try {
     const port = Number(docker("port", name, "27017/tcp").split("\n")[0].split(":").at(-1));
     const uri = (user, password, options = "") =>
       `mongodb://${user}:${password}@127.0.0.1:${port}/?authSource=admin${options}`;
-    const client = await connectWhenReady(uri("root", rootPassword), name);
+    await (await connectWhenReady(`mongodb://127.0.0.1:${port}/`, name)).close();
+    execFileSync("docker", ["exec", "--env", "MONGO_ROOT_PASSWORD", name, ...createRoot], {
+      env: { ...process.env, MONGO_ROOT_PASSWORD: rootPassword },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const client = await new MongoClient(uri("root", rootPassword)).connect();
     return {
       name,
       port,
@@ -88,11 +110,10 @@ export async function startMongo() {
   }
 }
 
-// The image's entrypoint restarts mongod once after creating the root user, so wait for a ping
-// that holds: up to <waitMs> (180 s, since a Docker busy starting other stacks can take minutes),
-// then fail with the time waited and container <name>'s last log lines. A container that exits
-// first fails the wait at once with its exit code: startMongo runs it without --rm, so it is still
-// there to read.
+// Wait for a ping, which mongod answers before any login: up to <waitMs> (180 s, since a Docker
+// busy starting other stacks can take minutes), then fail with the time waited and container
+// <name>'s last log lines. A container that exits first fails the wait at once with its exit code:
+// startMongo runs it without --rm, so it is still there to read.
 export async function connectWhenReady(uri, name, waitMs = 180_000) {
   const start = Date.now();
   for (;;) {

@@ -3,16 +3,19 @@
 // scripts/start-server.mjs.
 //
 //   await startVercelMcp({ name, teamIdReference,
-//     projects: { <key>: { name, idReference, tokenReference, domains } } })
+//     projects: { <key>: { name, idReference, tokenReference, domains } }, roles })
 //
 // Each reference is a 1Password secret reference: the team id, and each project's id and token,
 // live in 1Password, never in the launcher. Before it serves, it refuses an argument, and a
 // VERCEL_READ_API (the tests' fake Vercel API) that is not an http://127.0.0.1:<port> or
 // http://[::1]:<port> origin, so no setting can send a token off the machine; then it reads the
 // team id and each project's id and token in turn and signs out of op once (op-secret.mjs), so
-// 1Password asks once, refuses a team id that is not team_<letters and digits>, a project id
-// that is not prj_<letters and digits> or is another project's too, and a token that is not one
-// line of 20 or more of [A-Za-z0-9_], and refuses every child process. Then it checks each token
+// 1Password asks once, only in a launch of one of `roles`, readSecrets' list: an ops launch by
+// default, and for vercel-read's launcher an ops launch or the assistant's read session
+// (bin/claude-assistant-read), though bin/team-worker gives the kit to the ops role alone. It
+// refuses a team id that is not team_<letters and digits>, a project id that is not
+// prj_<letters and digits> or is another project's too, and a token that is not one line of 20
+// or more of [A-Za-z0-9_], and refuses every child process. Then it checks each token
 // reaches its own project and is refused (403) every other one, which only a project-scoped
 // token is.
 // On any failure it exits 1 with one `<name>: <reason>` line on stderr, never holding a token.
@@ -93,7 +96,7 @@ class VercelError extends Error {
 // A tool's refusal of its input, or of a request it would send.
 class Refusal extends Error {}
 
-export async function startVercelMcp({ name, teamIdReference, projects: config }) {
+export async function startVercelMcp({ name, teamIdReference, projects: config, roles }) {
   const keys = Object.keys(config);
   const tokens = {};
   const redact = (text) => {
@@ -127,7 +130,7 @@ export async function startVercelMcp({ name, teamIdReference, projects: config }
     const { what, key } = readOf.get(reference);
     const pattern = { "team id": teamIdPattern, "project id": projectIdPattern, token: tokenPattern }[what];
     if (!pattern.test(value)) return `op read returned something that is not a Vercel ${what}${key ? ` (${key})` : ""}`;
-  });
+  }, roles);
   const teamId = values[0];
   const projects = {};
   keys.forEach((key, index) => {

@@ -119,6 +119,9 @@ CACHES=(.cache/claude-cli-nodejs Library/Caches/claude-cli-nodejs)
   others 'cat "$CLAUDE_JOB_DIR/../'"$OTHER_JOB"'/state.json"' '$CLAUDE_JOB_DIR/../'"$OTHER_JOB"'/state.json' "$name" "$owns"
   unset CLAUDE_JOB_DIR
   whole 'p=.claude/history.jsonl; cat ~/$p' '~/$p' "~/.claude/history.jsonl"
+  # A variable named in another's value is read wherever it is assigned, in a group and a subshell too.
+  whole '{ d=~; p=$d/.claude/history.jsonl; cat "$p"; }' 'p=$d/.claude/history.jsonl' "~/.claude/history.jsonl"
+  whole '(d=~; p=$d/.claude/history.jsonl; cat "$p")' 'p=$d/.claude/history.jsonl' "~/.claude/history.jsonl"
   others "cat ../$OTHER_JOB/state.json" "../$OTHER_JOB/state.json" "$name" "$owns" "$jobs/$JOB"
   whole "cat ../../transcripts/x.jsonl" "../../transcripts/x.jsonl" "~/.claude/transcripts" "$jobs/$JOB"
   others "cat $jobs/$JOB/../$OTHER_JOB/tmp/x" "$jobs/$JOB/../$OTHER_JOB/tmp/x" "$name" "$owns"

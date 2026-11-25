@@ -910,7 +910,7 @@ lease_refusal() {
 # assistant's; Daniel's own shell and the heartbeat set none) may not, except a planner on its own task (its settings' AGENT_TEAM_TASK)
 # when the caller passes --interview, for the interview thread's post and wait, and the assistant
 # when the caller passes --read, for a read-only form of a coordinator's script (team-inbox --item,
-# team-queue list and index --check, team-log --check and --check-lifecycle), which reads what the
+# team-queue list, waits and index --check, team-log --check and --check-lifecycle), which reads what the
 # coordinator reads and writes nothing; a call passes one or the other. Worker settings
 # deny most of the same commands by their bare name, and command-guard refuses team-ask,
 # team-answer, team-inbox, team-thread T<n>, team-thread archive and team-run-approved by any path where a command

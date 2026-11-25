@@ -2,10 +2,10 @@
 # Run the code's checks: shellcheck on every shell script in bin/, tests/ (not the
 # vendored bats), servers/ and toolkits/, then the whole bats suite on the vendored bats-core,
 # then the toolkit tests (node --test on tests/toolkits/, after servers/install), which need
-# Docker for their throwaway MongoDB. Each toolkit test and hook has a 5-minute limit (node
-# --test's --test-timeout), so a stuck one fails with its name long before CI's job limit, and
-# each file's process ends once its tests have (--test-force-exit), whatever a failed test left
-# running, so node --test never waits on it.
+# Docker for their throwaway MongoDB, then the Rust check (below). Each toolkit test and hook
+# has a 5-minute limit (node --test's --test-timeout), so a stuck one fails with its name long
+# before CI's job limit, and each file's process ends once its tests have (--test-force-exit),
+# whatever a failed test left running, so node --test never waits on it.
 # The bats files run as many at once as the team's CPU budget allows, each in a bats of its own
 # (every test is sandboxed, so files share nothing), the slowest first by tests/shards' weights:
 # one line per file as it ends, then the whole output of each file that failed, each skipped
@@ -19,13 +19,13 @@
 # How many at once is TEAM_JOBS when set (a whole number above 0, else refused), else, when a
 # team home is found, team-capacity jobs (the floor of the level's CPU budget, at
 # least 1: 3 at minor on 12 cores), else nproc (CI, a fresh clone).
-# Every part but shellcheck alone and a --list (a shard's or --changed's) runs under the
+# Every part but shellcheck alone, rust alone and a --list (a shard's or --changed's) runs under the
 # machine's heavy-run lock (team-heavy run, whose cost sample is heavy:tests-run), so a suite
 # waits for another suite or a gate's end-to-end run instead of overlapping it; under a heavy run
 # already (TEAM_HEAVY_HELD set, as a local check team-checks runs), it runs at once.
 #
-# Usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]
-#        (default: all three)
+# Usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]
+#        (default: all four)
 # With --changed, shellcheck checks only the shell scripts a change touches, in seconds, as a
 # builder does on its machine while CI checks every script: each shell script among the paths
 # changed since <base> and in the working tree (the paths bats --changed starts from, below), and
@@ -66,11 +66,33 @@
 # caller or user of a changed file, or most of bin/lib would reach the whole suite; a file the
 # library reads or runs is, like any other. A named base that is no commit is a usage error; a
 # missing origin/dev is refused.
+# The rust part checks the Cargo workspace at the root in six steps, each printed first as
+# "rust: <step>", stopping at the first that fails with "rust: <step> failed": cargo fmt --all
+# --check; cargo clippy --workspace --all-targets --locked -- -D warnings; cargo nextest run
+# --workspace --locked --no-tests=pass; cargo test --doc --workspace --locked (nextest runs no doc
+# test); cargo-deny --locked --config deny.toml check, which fetches the advisory database; and the
+# policy's refusal, cargo-deny --offline on tests/fixtures/rust-deny with the root's deny.toml,
+# which passes only when it fails naming refused-license and GPL-3.0-only. It first names each of
+# cargo, cargo-nextest and cargo-deny missing from PATH, and team-doctor, and fails. It sets
+# CARGO_BUILD_JOBS and NEXTEST_TEST_THREADS to TEAM_JOBS, else team-capacity jobs when a team home is
+# found, else neither (cargo's default, the CPU count: CI, a fresh clone), and RUSTC_WRAPPER to
+# sccache when it is unset and sccache is on PATH. Alone, it takes no heavy-run lock: the skeleton
+# builds in seconds; once it passes 5 minutes or 4 GiB of peak memory on home-pc, the task that sees
+# it puts it under team-heavy. With --changed, it runs only when a Rust path changed since <base>
+# (the paths bats --changed starts from): Cargo.toml, Cargo.lock, clippy.toml, deny.toml,
+# rust-toolchain.toml, tests/run, .github/workflows/ci.yml, or anything under crates/,
+# tests/fixtures/rust-deny/, toolkits/rust/ or tests/toolkits/fixtures/rust-crate/, printing them
+# first, and otherwise prints "rust: no Rust path changed, nothing to check" and passes; --list
+# prints those paths, one per line, and runs nothing.
 # After the bats, it names each file that took over 1.5 times and 60 seconds more than its seconds
-# in tests/timings.tsv for this platform, as a warning annotation under GitHub Actions.
-# TESTS_TIMINGS names the timings file it and tests/shards read (default tests/timings.tsv), and
-# TESTS_SLOWER_BY the margin in seconds (a whole number, default 60, else refused); neither changes
-# the exit code.
+# in the timings for this platform, as a warning annotation under GitHub Actions, advising to find
+# what slowed it. TESTS_TIMINGS names the timings file it and tests/shards read (default
+# tests/timings.tsv), and TESTS_SLOWER_BY the margin in seconds (a whole number, default 60, else
+# refused); neither changes the exit code. On CI, TESTS_TIMINGS names shard-plan's timings, the
+# latest successful run's seconds (a copy of the committed tests/timings.tsv only when that job
+# cannot read a run, which it warns of), so refreshing the committed file changes only that there; a
+# run without TESTS_TIMINGS, a local one, reads the committed file, which goes stale, so only then
+# does the advice add refreshing it with tests/shards update if its seconds are stale.
 # Exit 0 when every check passes; CI runs each part as its own job. The last line is the wall
 # time, so a slower suite shows, and when the bats ran, how many files at once.
 set -euo pipefail
@@ -82,9 +104,9 @@ team_home_report=1
 # shellcheck source=bin/lib/team.sh
 source "$root/bin/lib/team.sh" "$@"
 
-usage="usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+usage="usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
 what=${1:-all} shard='' changed='' base='' list=''
-if [[ ($what == bats || $what == shellcheck) && $# -gt 1 && $2 == --changed ]]; then
+if [[ ($what == bats || $what == shellcheck || $what == rust) && $# -gt 1 && $2 == --changed ]]; then
   changed=1 base=origin/dev
   rest=("${@:3}")
   if [[ ${#rest[@]} -gt 0 && ${rest[0]} != -* ]]; then base=${rest[0]} rest=("${rest[@]:1}"); fi
@@ -104,11 +126,11 @@ elif [[ $what == bats && $# -gt 1 ]]; then
   shard=$3
   if [[ $# -eq 4 ]]; then [[ $4 == --list ]] || usage_error "$usage"; list=1; fi
 else
-  [[ $# -le 1 && $what =~ ^(all|shellcheck|bats|toolkits)$ ]] || usage_error "$usage"
+  [[ $# -le 1 && $what =~ ^(all|shellcheck|bats|toolkits|rust)$ ]] || usage_error "$usage"
 fi
 
 if [[ -n ${TEAM_JOBS:-} && ! $TEAM_JOBS =~ ^[1-9][0-9]*$ ]]; then
-  die "TEAM_JOBS is the count of bats files to run at once, a whole number above 0, not '$TEAM_JOBS'"
+  die "TEAM_JOBS is the count of bats files or cargo jobs to run at once, a whole number above 0, not '$TEAM_JOBS'"
 fi
 if [[ -n ${TESTS_SLOWER_BY+set} && ! $TESTS_SLOWER_BY =~ ^[0-9]+$ ]]; then
   die "TESTS_SLOWER_BY is the seconds a bats file may take over its timing, a whole number, not '$TESTS_SLOWER_BY'"
@@ -121,9 +143,9 @@ if [[ -n ${TESTS_FILE_MINUTES+set} && ! $TESTS_FILE_MINUTES =~ ^[1-9][0-9]*$ ]];
 fi
 test_seconds=${TESTS_TEST_SECONDS:-600} file_minutes=${TESTS_FILE_MINUTES:-40}
 
-# Every part but shellcheck alone and a --list runs under the machine's heavy-run lock
-# (bin/team-heavy).
-if [[ $what != shellcheck && -z $list && -z ${TEAM_HEAVY_HELD:-} ]]; then
+# Every part but shellcheck alone, rust alone and a --list runs under the machine's heavy-run
+# lock (bin/team-heavy).
+if [[ $what != shellcheck && $what != rust && -z $list && -z ${TEAM_HEAVY_HELD:-} ]]; then
   exec "$root/bin/team-heavy" run --label "tests/run ${*:-all} in ${root/#"$HOME"/\~}" --kind tests-run -- "$0" "$@"
 fi
 
@@ -362,23 +384,86 @@ changed_selection() {
   done
 }
 
-# How many bats files run at once (see the header), read once the heavy-run lock is held.
-parallelism() {
+# The team's count of jobs at once (see the header): TEAM_JOBS when set, else team-capacity jobs
+# when a team home is found, else nothing.
+budget_jobs() {
   if [[ -n ${TEAM_JOBS:-} ]]; then
     echo "$TEAM_JOBS"
   elif [[ -z $TEAM_HOME_PROBLEM && -n $TEAM_HOME && -d $TEAM_HOME ]]; then
     TEAM_HOME=$TEAM_HOME "$root/bin/team-capacity" jobs
-  else
-    nproc
+  fi
+}
+
+# How many bats files run at once (see the header), read once the heavy-run lock is held: the
+# team's count, else nproc.
+parallelism() {
+  local count
+  count=$(budget_jobs)
+  if [[ -n $count ]]; then echo "$count"; else nproc; fi
+}
+
+# The Rust paths (see the header), as an extended regular expression on a path from the root.
+rust_paths='^(Cargo\.toml|Cargo\.lock|clippy\.toml|deny\.toml|rust-toolchain\.toml|tests/run|\.github/workflows/ci\.yml|(crates|tests/fixtures/rust-deny|toolkits/rust|tests/toolkits/fixtures/rust-crate)/.+)$'
+
+# The changed Rust paths, one per line, sorted (see the header).
+changed_rust_paths() {
+  local paths
+  paths=$(changed_paths | LC_ALL=C sort -u) || return 1
+  grep -E -- "$rust_paths" <<<"$paths" || (($? == 1))
+}
+
+# The Rust check's six steps in the root, each named on a line of its own first, stopping at the
+# first that fails, naming it (see the header).
+run_rust() {
+  local tool missing=() count step deny_out deny_rc
+  for tool in cargo cargo-nextest cargo-deny; do
+    command -v "$tool" >/dev/null || missing+=("$tool")
+  done
+  if ((${#missing[@]} == 1)); then
+    echo "rust: ${missing[0]} is not on PATH: run team-doctor, whose tool lines name each fix"
+    return 1
+  elif ((${#missing[@]} > 1)); then
+    local names=${missing[0]} i
+    for ((i = 1; i < ${#missing[@]} - 1; i++)); do names+=", ${missing[i]}"; done
+    echo "rust: $names and ${missing[-1]} are not on PATH: run team-doctor, whose tool lines name each fix"
+    return 1
+  fi
+  count=$(budget_jobs)
+  [[ -z $count ]] || export CARGO_BUILD_JOBS=$count NEXTEST_TEST_THREADS=$count
+  if [[ -z ${RUSTC_WRAPPER+set} ]] && command -v sccache >/dev/null; then export RUSTC_WRAPPER=sccache; fi
+  cd "$root"
+  for step in 'cargo fmt --all --check' \
+    'cargo clippy --workspace --all-targets --locked -- -D warnings' \
+    'cargo nextest run --workspace --locked --no-tests=pass' \
+    'cargo test --doc --workspace --locked' \
+    'cargo-deny --locked --config deny.toml check'; do
+    echo "rust: $step"
+    # Each step is a fixed command of words with no quoting, split on its blanks.
+    # shellcheck disable=SC2086
+    $step || { echo "rust: $step failed"; return 1; }
+  done
+  step="the policy refuses tests/fixtures/rust-deny's refused-license (GPL-3.0-only)"
+  echo "rust: $step"
+  deny_rc=0
+  deny_out=$(cargo-deny --offline --manifest-path tests/fixtures/rust-deny/Cargo.toml --config deny.toml check licenses 2>&1) ||
+    deny_rc=$?
+  if ((deny_rc == 0)) || [[ $deny_out != *refused-license* || $deny_out != *GPL-3.0-only* ]]; then
+    printf 'rust: %s failed: cargo-deny exited %d, naming refused-license: %s, GPL-3.0-only: %s; its output:\n%s\n' "$step" "$deny_rc" \
+      "$([[ $deny_out == *refused-license* ]] && echo yes || echo no)" "$([[ $deny_out == *GPL-3.0-only* ]] && echo yes || echo no)" \
+      "$deny_out"
+    return 1
   fi
 }
 
 # One line for each bats file whose seconds in <dir>/<name>.seconds exceed both 1.5 times and
-# TESTS_SLOWER_BY more than its seconds in the timings (see the header) for this platform, and
-# under GitHub Actions the same text as a warning annotation; a file the timings lack, or lack for
-# this platform, is never named.
+# TESTS_SLOWER_BY more than its seconds in the timings (see the header) for this platform, with its
+# advice (see the header), and under GitHub Actions the same text as a warning annotation; a file
+# the timings lack, or lack for this platform, is never named.
 slow_files() {
   local dir=$1 file column=linux label=${TESTS_TIMINGS:-tests/timings.tsv} timings
+  local advice='find what slowed it'
+  [[ -n ${TESTS_TIMINGS:-} ]] ||
+    advice+=', or refresh tests/timings.tsv with tests/shards update if its seconds are stale'
   timings=${TESTS_TIMINGS:-$root/tests/timings.tsv}
   [[ $(uname -s) != Darwin ]] || column=macos
   [[ -f $timings ]] || return 0
@@ -386,7 +471,7 @@ slow_files() {
     [[ -e $file ]] || continue
     printf 'tests/%s\t%s\n' "$(basename "$file" .seconds)" "$(<"$file")"
   done | awk -F'\t' -v column="$column" -v margin="${TESTS_SLOWER_BY:-60}" -v label="$label" \
-    -v annotate="$([[ ${GITHUB_ACTIONS:-} == true ]] && echo 1)" '
+    -v advice="$advice" -v annotate="$([[ ${GITHUB_ACTIONS:-} == true ]] && echo 1)" '
     FILENAME != "-" {
       if (/^#/) next
       if ($1 == "file") { for (i = 2; i <= NF; i++) if ($i == column) c = i; next }
@@ -394,7 +479,7 @@ slow_files() {
       next
     }
     ($1 in seconds) && $2 > seconds[$1] * 1.5 && $2 > seconds[$1] + margin {
-      text = sprintf("tests/run: %s took %ds, %ds in %s; refresh the timings with tests/shards update, or find what slowed it", $1, $2, seconds[$1], label)
+      text = sprintf("tests/run: %s took %ds, %ds in %s; %s", $1, $2, seconds[$1], label, advice)
       print text
       if (annotate) print "::warning title=bats file slower::" text
     }' "$timings" -
@@ -405,8 +490,7 @@ slow_files() {
 run_bats() {
   local file failed=0 names minutes="$file_minutes minutes"
   ((file_minutes != 1)) || minutes='1 minute'
-  out=$(mktemp -d)
-  trap 'rm -rf "$out"' EXIT
+  out=$(team_mktemp -d)
   # Each file's output goes to $out/<file>, with $out/<file>.failed beside it when it fails,
   # $out/<file>.stopped when its time limit stopped it, and $out/<file>.seconds its seconds.
   bats_files >"$out/files" || { echo "bats: tests/shards could not split the files"; return 1; }
@@ -464,6 +548,8 @@ run_bats() {
 selected=''
 if [[ -n $changed && $what == shellcheck ]]; then
   selected=$(changed_scripts) || die "could not read the paths changed since $base"
+elif [[ -n $changed && $what == rust ]]; then
+  selected=$(changed_rust_paths) || die "could not read the paths changed since $base"
 elif [[ -n $changed ]]; then
   selected=$(changed_selection | LC_ALL=C sort -u) || die "could not read the paths changed since $base"
 fi
@@ -499,6 +585,16 @@ if [[ $what == all || $what == toolkits ]]; then
   else
     fail=1
   fi
+fi
+if [[ -n $changed && $what == rust && -z $selected ]]; then
+  echo "rust: no Rust path changed, nothing to check"
+elif [[ $what == all || $what == rust ]]; then
+  if [[ -n $changed ]]; then
+    mapfile -t names <<<"$selected"
+    echo "rust --changed $base: ${#names[@]} Rust path$( ((${#names[@]} == 1)) || echo s) changed"
+    printf '  %s\n' "${names[@]}"
+  fi
+  (run_rust) || fail=1
 fi
 printf 'tests/run %s: %dm %02ds%s\n' "$what" $((SECONDS / 60)) $((SECONDS % 60)) \
   "${jobs:+, up to $jobs bats file$( ((jobs == 1)) || echo s) at once}"

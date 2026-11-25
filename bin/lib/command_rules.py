@@ -61,10 +61,11 @@ The rows, in order:
     or not bin/lib/worker-login names one.
   login-unset: any of them, or an element, in every form role-unset reads, by the same reader.
     The same reason.
-  environment-emptied: a command named team-<anything>, claude-coordinator or claude-assistant
-    behind env -i (alone or among env's short options), env --ignore-environment (or a prefix GNU
-    takes), env - or exec -c, past any wrappers between or in a string a shell runs there: it
-    would run with no AGENT_TEAM_ROLE, so its own worker_refusal would not see the worker.
+  environment-emptied: a command named team-<anything>, claude-coordinator, claude-assistant or
+    claude-assistant-read behind env -i (alone or among env's short options), env
+    --ignore-environment (or a prefix GNU takes), env - or exec -c, past any wrappers between or
+    in a string a shell runs there: it would run with no AGENT_TEAM_ROLE, so its own role check
+    would not see the worker.
   lease-steal: team-lease or team-resume with --steal among its words before its --. Reason: a
     lease steal is Daniel's word, through the coordinator.
   coordinator-commands: team-ask, team-answer, team-inbox or team-run-approved with any words or
@@ -73,17 +74,18 @@ The rows, in order:
     (AGENT_TEAM_ROLE assistant), the coordinator's read forms pass: any of the four with a first
     word --help or -h, which the library answers before the script does anything, and team-inbox
     --item <n> with no other word, which reads waiting.json alone.
-  assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts,
-    which its deny rules held by any call naming the script until this row: team-checkpoint,
-    team-handoff, team-load-check, team-ops-end, team-records-rewrite, team-resume,
-    team-review-comment, team-stow and claude-coordinator with any words; team-capacity install
-    or place, team-config apply or capture, team-heavy run, team-lease take, renew or release,
-    team-secrets restore or save, team-stack down, seed, stop or up and team-timers disable,
-    enable or run, any of those among the words before a --; either kind passing with a first
-    word --help or -h, which the library answers before the script does anything. Reason: the
-    coordinator's acts, which an assistant session never runs (<the act and its subcommand>); its
-    --help and a read of its file pass. Each act but team-heavy run also refuses the assistant
-    itself (assistant_refusal in bin/lib/team.sh), where the walk cannot read a call.
+  assistant-acts, for the assistant alone (AGENT_TEAM_ROLE assistant): the coordinator's acts, which
+    its deny rules held by any call naming the script until this row (but team-quota usage, the
+    heartbeat's usage reading, which no deny rule held): team-checkpoint, team-handoff,
+    team-load-check, team-ops-end, team-records-rewrite, team-resume, team-review-comment, team-stow
+    and claude-coordinator with any words; team-capacity install or place, team-config apply or
+    capture, team-heavy run, team-lease take, renew or release, team-quota usage, team-secrets
+    restore or save, team-stack down, seed, stop or up and team-timers disable, enable or run, any
+    of those among the words before a --; either kind passing with a first word --help or -h, which
+    the library answers before the script does anything. Reason: the coordinator's acts, which an
+    assistant session never runs (<the act and its subcommand>); its --help and a read of its file
+    pass. Each act but team-heavy run also refuses the assistant itself (assistant_refusal in
+    bin/lib/team.sh), where the walk cannot read a call.
   assistant-github-write, for the assistant alone: a GitHub write by gh or gh-axi, which its deny
     rules held by any gh api call with a field and any release, secret or variable call until this
     row, and the other groups' writes, many of which (gh gist create, gh workflow run) no deny
@@ -234,7 +236,7 @@ DECLARERS = frozenset("export declare typeset local readonly let read mapfile re
 INTERPRETERS = frozenset(("node", "deno", "bun", "npx", "source", "."))
 COORDINATOR = frozenset(("team-ask", "team-answer", "team-inbox", "team-run-approved"))
 # The launchers, the team scripts whose names do not begin team-.
-LAUNCHERS = frozenset(("claude-coordinator", "claude-assistant"))
+LAUNCHERS = frozenset(("claude-coordinator", "claude-assistant", "claude-assistant-read"))
 TASK_ID = re.compile(r"T[0-9]+")
 # env's -u, alone or ending a short cluster, with its value joined (-uAGENT_TEAM_ROLE) or next.
 ENV_UNSET = re.compile(r"-[A-Za-z0-9]*u")
@@ -540,6 +542,7 @@ ASSISTANT_SUBCOMMAND_ACTS = {
     "team-config": ("apply", "capture"),
     "team-heavy": ("run",),
     "team-lease": ("take", "renew", "release"),
+    "team-quota": ("usage",),
     "team-secrets": ("restore", "save"),
     "team-stack": ("down", "seed", "stop", "up"),
     "team-timers": ("disable", "enable", "run"),

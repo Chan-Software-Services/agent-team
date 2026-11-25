@@ -35,6 +35,7 @@ Two repositories hold the team, each checked out on every machine:
 | Claude user config (instructions, settings, skills, plugins) | `machine/claude/` | `team-config capture` (in a handoff), `team-config apply` (in a resume) |
 | Auto memory | `memory/<project>/`, which every worktree of the project uses through `autoMemoryDirectory`, and `memory/coordinator/`, the team home's own once it is no project's primary checkout | `team-checkpoint`, `team-handoff` |
 | Each machine's Claude usage (token counts, never content), and where each launched worker session's time went (durations and tool or command names only) | `usage/<machine>/`, the time rows in `usage/<machine>/time/` | `team-tokens export`, in `team-checkpoint` and `team-handoff` |
+| Each session category's model and effort, and the coordinator's and the assistant's launches | `models.toml` (`sops/models.md`), `sessions.jsonl` | edited by hand and checked by `team-models --check`; `claude-coordinator` and `claude-assistant` append to `sessions.jsonl`; `team-checkpoint`, `team-handoff` |
 | Each drill's runs (what ran, the machine, the code commit, the Claude Code version and the verdict) | `drills.jsonl` | `team-drill` and the drills that record themselves; `team-checkpoint`, `team-handoff` |
 | Tool versions | `bin/lib/tools.lock` | read by `team-doctor` and `team-bootstrap` |
 | Which secrets a machine needs (never a value) | `machine/secrets.json`, described in `machine/secrets.md` | read by `team-secrets` |
@@ -75,7 +76,7 @@ What a dead machine can lose:
 
 What `team-checkpoint` does:
 
-- first, before any worktree, `ledger.jsonl` and `level.jsonl` alone are committed as `chore: checkpoint ledger` and pushed, so no worktree, however slow or broken, keeps the ledger from origin;
+- first, before any worktree, `ledger.jsonl`, `level.jsonl` and `sessions.jsonl` alone are committed as `chore: checkpoint ledger` and pushed, so no worktree, however slow or broken, keeps the ledger from origin;
 - each open task's task directory is mirrored into its archive in the team home, less what `archive_left_out` (`bin/lib/team.sh`) leaves out, each named on a line of the checkpoint's output, which is no failure: its stderr holds problems only, and the heartbeat logs each of them.
   `team-close` archives the same way, and `team-open --resume` leaves those paths in the worktree as they are;
 - each worktree's work is kept on the team home's origin as `wip/<project>/T<n>` (a ticket worktree's, made by `team-open --ticket`, as `wip/<project>/T<n>--NN`), pushed with the worktree's objects to that origin's URL, from a temporary repository that reads none of the worktree's repository config (so no URL rewrite there can send it elsewhere), and never to the project's origin, which may be public (Conventioner's is): the branch head, or, with uncommitted changes, a snapshot commit on it built from a temporary index (untracked files included), never touching the worktree's files, index or stash, and running no command the repository's config names (no `core.fsmonitor`, no filter's clean command, so a file Git LFS would clean is kept as it is on disk);

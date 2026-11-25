@@ -121,6 +121,8 @@ changed_in() {
   before=$(worktree_state "$wt")
   # Daniel's level, which holds across restarts and handoffs.
   echo '{"ts":"2026-11-01T14:05:00Z","mode":"manual","level":"minor","by":"Daniel","machine":"home-pc"}' >"$TEAM_HOME/level.jsonl"
+  # The coordinator's launch, which claude-coordinator logs, a session of no task.
+  echo '{"ts":"2026-11-01T14:06:00Z","machine":"home-pc","name":"coordinator","category":"coordinator","model":"opus","model_from":"config","effort":"high","effort_from":"config","id":"7c3e9a10"}' >"$TEAM_HOME/sessions.jsonl"
 
   run_bin -0 --separate-stderr team-checkpoint
   local snap
@@ -154,13 +156,15 @@ refs/heads/lease
 refs/heads/wip/home/T1"
   assert_equal "$(git -C "${home_origin:?}" for-each-ref --format='%(refname)')" "refs/heads/main"
 
-  # The team home: the ledger files alone, then the rest of the records, the plan team-open wrote
+  # The team home: the ledger files alone, the sessions' log among them, then the rest of the
+  # records, the plan team-open wrote
   # among them, both pushed.
   assert_equal "$(team_tip)" "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)"
   assert_equal "$(git -C "${team_origin:?}" log -2 --format=%s dev)" "chore: checkpoint
 chore: checkpoint ledger"
   assert_equal "$(changed_in dev^)" "ledger.jsonl
-level.jsonl"
+level.jsonl
+sessions.jsonl"
   assert_equal "$(changed_in dev)" "tasks/T1/plan.md
 tasks/T1/scratch/spec.md"
   assert_equal "$(git -C "${TEAM_HOME:?}" status --porcelain)" ""

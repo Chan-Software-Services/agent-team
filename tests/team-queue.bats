@@ -208,6 +208,29 @@ tasks/queued/index.md"
   assert_equal "$stderr" "team-queue: TEAM_QUEUE_TODAY \"soon\" is not a YYYY-MM-DD date"
 }
 
+@test "a phase of a two-repository task is merged only once no PR of the task is left open, as the ledger's lifecycle reads it" {
+  rm "$queued/node-pin.md" "$queued/bootstrap-drill.md"
+  opened_task T5
+  local other=https://github.com/owner/other/pull/2 own=https://github.com/owner/proj/pull/3
+  jq -cn --arg o "$other" --arg p "$own" \
+    '{ts: "2026-01-01T00:00:00Z", task: "T5", event: "pr", url: $o, head: "aaa1111"},
+     {ts: "2026-01-01T00:00:00Z", task: "T5", event: "pr", url: $p, head: "bbb2222"}' >>"$TEAM_HOME/ledger.jsonl"
+  ready a-phase.md 2 S "a" "after: T5 phase 1 merged"
+  # The sibling repository's phase 1 merged, with phase 2 left task-wide; this repository's PR is
+  # still open, so phase 1 is not merged.
+  jq -cn --arg u "$other" '{ts: "2026-01-01T00:00:00Z", task: "T5", event: "merged", project: "other", url: $u, phases_left: [2]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-queue index
+  [[ $(sections) == *"- a-phase.md (proj, priority 2, S): a; waits for T5 phase 1 merged"* ]]
+  # This repository's merge leaves no PR of the task open: phase 1 is merged.
+  jq -cn --arg u "$own" '{ts: "2026-01-01T00:00:00Z", task: "T5", event: "merged", project: "proj", url: $u, phases_left: [2]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-queue index
+  assert_equal "$(sections)" "## Ready, ranked
+
+1. a-phase.md (proj, priority 2, S): a"
+}
+
 @test "a task merged whole is one the ledger's lifecycle leaves merged, so a merge logged with no phases_left that a builder launch or a merged part follows is none" {
   rm "$queued/node-pin.md" "$queued/bootstrap-drill.md"
   local t

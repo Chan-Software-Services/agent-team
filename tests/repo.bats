@@ -174,6 +174,15 @@ profile = "minimal"
 components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
 }
 
+# The dependency policy's sources rule, which needs a fetch to show live, so it is held here:
+# crates come from crates.io alone, no other registry and no git source.
+@test "deny.toml's [sources] refuses every registry but crates.io and every git source" {
+  assert_equal "$(sed -n '/^\[sources\]$/,/^\[/p' "$REPO_ROOT/deny.toml" | grep -v -e '^#' -e '^$' -e '^\[')" 'unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]'
+  run -1 grep -E '^(allow-git|\[sources\.)' "$REPO_ROOT/deny.toml"
+}
+
 # Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
 # read on home-pc from the pinned releases, rustup's from its source, since its install there was
 # refused (its commit and date are placeholders). Each pattern reads the pin from its line.
@@ -324,8 +333,9 @@ probe_rules() {
       or ((.expect | IN("hook", "script", "allowed")) and (.marker | type) != "string")
       or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel", "allowed") | not)))
       or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
-      or ((.expect == "rule") != (.family | type == "string"))
-      or (.family != null and (.family | IN($families[]) | not)))
+      or (.expect == "rule" and (.family | type) != "string")
+      or (.family != null and ((.family | type) != "string" or (.family | IN($families[]) | not)
+        or (.expect != "rule" and (.expect != "refused" or .roles != ["assistant"])))))
     | .id'
   out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
@@ -339,6 +349,23 @@ probe_rules() {
   assert_equal "$out" "no-marker
 number-marker
 login-hook"
+  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's refused
+  # one's, whose deny rule and hook both refuse it in bypass mode; never a worker's refused one,
+  # auto mode's stand-in, nor a hook's.
+  out=$(jq -r "$malformed" <<<'{"families": [{"family": "f"}], "attempts": [
+    {"id": "rule-bare", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule"},
+    {"id": "rule", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule", "family": "f"},
+    {"id": "refused-assistant", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-assistant-bare", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused"},
+    {"id": "refused-worker", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-both", "roles": ["builder", "assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "m", "family": "f"},
+    {"id": "unknown", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "g"}]}')
+  assert_equal "$out" "rule-bare
+refused-worker
+refused-both
+hook
+unknown"
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
 }
@@ -423,10 +450,10 @@ probe_denies() {
   return 1
 }
 
-@test "every rule attempt of the refusal probe is denied by a rule of its family in each of its roles' settings" {
+@test "every attempt of the refusal probe that names a family is denied by a rule of it in each of its roles' settings" {
   local role id tool input family rules list probe=$REPO_ROOT/bin/lib/probe.json missing=() n=0
   for role in "${PROBE_ROLES[@]}"; do
-    list=$(jq -r --arg role "$role" '.attempts[] | select(.expect == "rule" and any(.roles[]; . == $role))
+    list=$(jq -r --arg role "$role" '.attempts[] | select(.family != null and any(.roles[]; . == $role))
       | [.id, .tool, .input, .family] | @tsv' "$probe")
     while IFS=$'\t' read -r id tool input family; do
       rules=$(jq -r --arg family "$family" --argjson rules "$(probe_rules "$role")" \
@@ -437,6 +464,23 @@ probe_denies() {
   done
   assert_equal "${missing[*]}" ""
   ((n > 3))
+}
+
+# In bypass mode no auto mode judges the assistant's calls, so its refused attempt is one its deny
+# rules and its command guard both refuse, as team-load-check --help says: the live session shows
+# whichever answers first, so each is held here.
+@test "every refused attempt of the assistant is denied by one of its deny rules and refused by its command guard" {
+  local id input denied=() unguarded=() n=0 probe=$REPO_ROOT/bin/lib/probe.json
+  while IFS=$'\t' read -r id input; do
+    n=$((n + 1))
+    probe_denies "$(probe_rules assistant | jq -r '.[]')" Bash "$input" || denied+=("$id")
+    AGENT_TEAM_ROLE=assistant run_bin --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$input" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    [[ $status == 2 && $stderr == *"Blocked by command-guard: "* ]] || unguarded+=("$id")
+  done < <(jq -r '.attempts[] | select(.expect == "refused" and .roles == ["assistant"]) | [.id, .input] | @tsv' "$probe")
+  assert_equal "${denied[*]}" ""
+  assert_equal "${unguarded[*]}" ""
+  ((n >= 3))
 }
 
 # A hook attempt stands for the hook under bin/hooks/ whose file holds its marker.
@@ -1060,6 +1104,34 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   grep -qF '`review.md` with its kind and scope' <<<"$line"
 }
 
+# Only the rust toolkit's sessions list rust-core, so the planner, builder and reviewer roles name
+# it, once each under "What you do", for a session that lists it, each with its duty: a session on
+# a task with no Rust code reads the line and does nothing. The skill is named as `rust-core`, so
+# a line naming the design doc docs/rust-core.md is no second one.
+@test "the planner, builder and reviewer roles name the rust toolkit's rust-core, each with its duty, for a session that lists it" {
+  local role body line
+  assert_equal "$(sed -n 's/^name: //p' "$REPO_ROOT/toolkits/rust/skills/rust-core/SKILL.md")" rust-core
+  for role in planner builder reviewer; do
+    echo "role: $role" >&2
+    assert_equal "$(grep -cF '`rust-core`' "$REPO_ROOT/roles/$role.md")" 1
+    body=$(awk '$0 == "## What you do" { on = 1; next } /^## / { on = 0 } on' "$REPO_ROOT/roles/$role.md")
+    line=$(grep -F '`rust-core`' <<<"$body")
+    grep -qF 'when your session lists `rust-core`' <<<"$line"
+  done
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/planner.md")
+  grep -qF 'On a project with Rust code' <<<"$line"
+  grep -qF 'before you spec Rust code' <<<"$line"
+  grep -qF "toolchain's version and the check command" <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/builder.md")
+  grep -qF 'before you write Rust code' <<<"$line"
+  grep -qF 'run its check before you report DONE or PR' <<<"$line"
+  grep -qF '"Rust check" line in the PR body' <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/reviewer.md")
+  grep -qF 'on the head under review' <<<"$line"
+  grep -qF 'judge the diff against its rules' <<<"$line"
+  grep -qF '`review.md` with its kind and scope' <<<"$line"
+}
+
 # A reviewer proves nothing with a test of its own (its edit hook keeps it to the task directory):
 # it writes a suspected bug up with a test plan, and the builder writes and runs that test first.
 @test "a reviewer hands a suspected bug's test plan to the builder, who runs it before the fix" {
@@ -1150,12 +1222,22 @@ pretooluse_problems() {
   done
 }
 
+# The assistant's read session runs with --restricted and no shell, as an ops session does, so
+# its hooks are in exec form, as a worker role's are (tests/team-worker.bats), which Claude Code
+# runs without a shell.
+@test "every hook of the assistant's read session's settings is in exec form" {
+  file=$REPO_ROOT/assistant-read.settings.json
+  assert_equal "$(jq -c '[.hooks | .[][] | .hooks[] | select((.args | type) != "array") | .command]' "$file")" "[]"
+  assert_equal "$(jq -c '[.hooks | .[][] | .hooks[] | select(.command | test("[ \"]")) | .command]' "$file")" "[]"
+  assert_equal "$(jq '[.hooks | .[][] | .hooks[]] | length' "$file")" 4
+}
+
 # A guard hook blocks the call on any failure only when its entry says so, and Claude Code waits
 # 600 seconds on one that hangs by default (T248, R1): every PreToolUse entry fails closed, soon.
 @test "every PreToolUse hook blocks on its failure and has a timeout, in every settings and toolkit hooks file" {
   local files=() file bad=$BATS_TEST_TMPDIR/bad.json
   for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/assistant.settings.json \
-    "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
+    "$REPO_ROOT"/assistant-read.settings.json "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
     "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
     files+=("${file#"$REPO_ROOT/"}")
   done
@@ -2318,7 +2400,7 @@ YAML
 @test "tests/run, the team-heavy lock it runs under, and servers/install, which its toolkit tests run, need no team home" {
   unset TEAM_HOME
   run -2 --separate-stderr "$REPO_ROOT/tests/run" nothing
-  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -0 --separate-stderr "$REPO_ROOT/bin/team-heavy" run -- echo ran
   assert_equal "$output" ran
   run -2 --separate-stderr "$REPO_ROOT/servers/install" nothing
@@ -2487,7 +2569,7 @@ YAML
   for k in '--shard 0/3' '--shard 4/3' '--shard 1/0' '--shard 1/3x' '--list' '--shard' '--shard 1/3 --list x'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/run" bats $k
-    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   done
   run -2 --separate-stderr "$REPO_ROOT/tests/run" toolkits --shard 1/3
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
@@ -2576,6 +2658,8 @@ SH
   assert_contains "$output" "ok tests/repo.bats ("
   assert_contains "$output" "bats: 1 tests passed; 0 of 1 files failed"
   assert_equal "$(cat "$STUB_CALLS/bats-ran")" repo.bats
+  # Its directory of the files' output is gone once it exits.
+  assert_equal "$(ls -A "$TMPDIR")" ""
 }
 
 # A skipped test counts as passed, and its line is named after the file lines, since a file's ok
@@ -2751,7 +2835,7 @@ changed_rebase() {
     run -2 --separate-stderr "$copy/tests/run" bats --changed $k
   done
   run -2 --separate-stderr "$copy/tests/run" bats --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -2 --separate-stderr "$copy/tests/run" bats --shard 1/3 --changed
   run -1 --separate-stderr "$copy/tests/run" bats --changed --list
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run bats --changed <base>)"
@@ -2901,7 +2985,7 @@ shellcheck_checkout() {
     run -2 --separate-stderr "$copy/tests/run" shellcheck $k
   done
   run -2 --separate-stderr "$copy/tests/run" shellcheck --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -1 --separate-stderr "$copy/tests/run" shellcheck --changed
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run shellcheck --changed <base>)"
   [[ ! -e $STUB_CALLS/shellcheck.log ]]
@@ -2910,7 +2994,7 @@ shellcheck_checkout() {
 # tests/run in a checkout of its own, whose bats files are quick.bats, timed above what it takes,
 # and three that sleep 3 s: slow.bats, timed at 1 s, other.bats, timed only on the other platform,
 # and untimed.bats, which the timings lack.
-@test "tests/run names each bats file over 1.5 times and TESTS_SLOWER_BY seconds more than its timing on this platform, annotated under GitHub Actions, and never fails for it" {
+@test "tests/run names each bats file over 1.5 times and TESTS_SLOWER_BY seconds more than its timing on this platform, advising a refresh only of the committed timings, annotated under GitHub Actions, and never fails for it" {
   local copy=$BATS_TEST_TMPDIR/copy name timings slow
   unset TEAM_HOME GITHUB_ACTIONS TESTS_TIMINGS TESTS_SLOWER_BY
   mkdir -p "$copy/tests/vendor"
@@ -2923,7 +3007,7 @@ shellcheck_checkout() {
   timings=$'# timings\nfile\tlinux\tmacos\ntests/quick.bats\t2\t2\ntests/slow.bats\t1\t1\n'
   if [[ $(uname -s) == Darwin ]]; then timings+=$'tests/other.bats\t1\t\n'; else timings+=$'tests/other.bats\t\t1\n'; fi
   printf '%s' "$timings" >"$copy/tests/timings.tsv"
-  slow='tests/run: tests/slow\.bats took [3-9]s, 1s in tests/timings\.tsv; refresh the timings with tests/shards update, or find what slowed it'
+  slow='tests/run: tests/slow\.bats took [3-9]s, 1s in tests/timings\.tsv; find what slowed it, or refresh tests/timings\.tsv with tests/shards update if its seconds are stale'
 
   # Each line comes after the summary and before the wall time, and only under GitHub Actions as
   # an annotation too.
@@ -2932,13 +3016,14 @@ shellcheck_checkout() {
   [[ $(sed -n '/^bats: /,$p' <<<"$output" | sed '1d;$d') =~ ^${slow}$ ]] || { echo "not only slow.bats named after the summary" >&2; return 1; }
   [[ $output != *::warning* ]]
 
-  # A failing file fails the run, the warning beside it; TESTS_TIMINGS names the timings file.
+  # A failing file fails the run, the warning beside it; TESTS_TIMINGS names the timings file,
+  # as CI's shard-plan hands on the latest successful run's, which no refresh changes.
   mv "$copy/tests/timings.tsv" "$BATS_TEST_TMPDIR/timings.tsv"
   echo '@test "fails" { false; }' >"$copy/tests/fail.bats"
   GITHUB_ACTIONS=true TESTS_TIMINGS=$BATS_TEST_TMPDIR/timings.tsv TEAM_JOBS=5 TESTS_SLOWER_BY=1 \
     run -1 --separate-stderr "$copy/tests/run" bats --shard 1/1
   assert_contains "$output" "bats: 4 tests passed; 1 of 5 files failed"
-  slow=${slow//tests\/timings\\.tsv/${BATS_TEST_TMPDIR//./\\.}/timings\\.tsv}
+  slow="tests/run: tests/slow\\.bats took [3-9]s, 1s in ${BATS_TEST_TMPDIR//./\\.}/timings\\.tsv; find what slowed it"
   [[ $(sed -n '/^bats: /,$p' <<<"$output" | sed '1d;$d') =~ ^${slow}$'\n'::warning\ title=bats\ file\ slower::${slow}$ ]] ||
     { echo "not only slow.bats named and annotated after the summary" >&2; return 1; }
 
@@ -2978,6 +3063,8 @@ limits_checkout() {
 ok 2 after it"
   [[ $(grep '^not ok tests/hangs.bats' <<<"$output") =~ ^"not ok tests/hangs.bats ("[0-9]+"s)"$ ]]
   assert_contains "$output" "bats: 2 tests passed; 1 of 2 files failed"
+  # A failed run removes its directory of the files' output too.
+  assert_equal "$(ls -A "$TMPDIR")" ""
 }
 
 @test "tests/run stops a bats file still running after TESTS_FILE_MINUTES, printing its output so far and what held it" {
@@ -3289,14 +3376,18 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   assert_equal "$found" ""
 }
 
-# The shell code of bin/: each script, each sourced file (.sh) and each doctor check, but the
-# vendored code.
-bin_shell_files() {
-  local file
+# The shell code the library's EXIT trap holds: each script, sourced file (.sh) and doctor check
+# of bin/, and each tracked script or .sh file elsewhere with a line that sources the library
+# (team.sh or temp-files.sh), as tests/run, tests/shards and servers/install do; never the vendored
+# code, nor a bats file or helper, which run under bats' own EXIT trap.
+library_shell_files() {
+  local file line
   while IFS= read -r file; do
-    [[ $file != bin/lib/vendor/* ]] || continue
-    if [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; }; then echo "$file"; fi
-  done < <(git -C "${REPO_ROOT:?}" ls-files bin)
+    [[ $file != bin/lib/vendor/* && $file != tests/vendor/* && -f $file ]] || continue
+    [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; } || continue
+    [[ $file == bin/* ]] || grep -qE '^[^#]*source .*/(team|temp-files)\.sh"' "$file" || continue
+    echo "$file"
+  done < <(git -C "${REPO_ROOT:?}" ls-files)
 }
 
 # Each line of <file>... that runs a bare mktemp, as <file>:<line>: a bare mktemp: <text>: mktemp
@@ -3317,8 +3408,8 @@ bare_mktemps() {
 # bin/lib/temp-files.sh owns the one EXIT trap of every shell that sources it, which removes the
 # files team_mktemp made, so a file made with a bare mktemp, or an EXIT trap set after the
 # library (or temp-files.sh) is sourced, would leave a file when a signal ends the script.
-@test "every script under bin/ makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
-  local file upto found
+@test "every script under bin/ and every one that sources the library makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
+  local file upto found files
   cd "$REPO_ROOT"
   # An EXIT trap before the line that sources the library is the one it takes as the exit action.
   found=$(while IFS= read -r file; do
@@ -3329,11 +3420,16 @@ bare_mktemps() {
       /^[[:space:]]*#/ { next }
       FNR > upto && /(^|[;&|({[:space:]])trap( [^#]*)? (EXIT|0)([;)[:space:]]|$)/ { print file ":" FNR ": an EXIT trap: " $0 }
     ' "$file"
-  done < <(bin_shell_files))
+  done < <(library_shell_files))
   assert_equal "$found" ""
-  # The walk reads the scripts it holds to.
-  bin_shell_files | grep -qx bin/team-merge
-  bin_shell_files | grep -qx bin/lib/threads.sh
+  # The walk reads the scripts it holds to, and none that never sources the library outside bin/.
+  files=$(library_shell_files)
+  grep -qx bin/team-merge <<<"$files"
+  grep -qx bin/lib/threads.sh <<<"$files"
+  grep -qx tests/run <<<"$files"
+  grep -qx tests/shards <<<"$files"
+  grep -qx servers/install <<<"$files"
+  assert_equal "$(grep -E '^tests/merge-queue-drill$|\.(bats|bash)$' <<<"$files")" ""
 }
 
 @test "the bare-mktemp check finds mktemp as a command word in each form a script may run it, and leaves a name, a text and a case pattern" {
@@ -3750,6 +3846,17 @@ briefs_without_gotchas() {
   assert_equal "$output" "$(sed -n 's/^id=//p' "$file") $(sed -n 's/^slug=//p' "$file")"
   patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
   for path in bin/lib/review-app bin/team-review-check; do
+    grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
+  done
+}
+
+# The assistant's read session reads production, so its launcher, its settings and its role
+# prompt come back for Daniel's per-head word as the assistant's own do.
+@test "the assistant's read session's launcher, settings and role prompt are guardrails" {
+  local path patterns
+  patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
+  for path in bin/claude-assistant-read assistant-read.settings.json roles/assistant-read.md; do
+    [[ -e $REPO_ROOT/$path ]] || { echo "$path is missing" >&2; return 1; }
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
 }

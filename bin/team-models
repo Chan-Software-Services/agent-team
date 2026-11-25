@@ -1,0 +1,510 @@
+#!/usr/bin/env -S python3 -I
+# Read the model config, models.toml in the team home: which model and effort each session category launches on.
+#
+# Usage: team-models --check [--file <path>]
+#                                     check the file and name every problem; exit 0 and no output
+#                                     for a good file, else exit 1 with one line per problem on
+#                                     stderr, "models.toml: <key or line>: <problem>"; a missing
+#                                     file is exit 1, "no models.toml in <team home>"
+#        team-models resolve (--category <c> | --role <r> [--template <t>] [--load-check])
+#                            [--project <p>] [--path <p>] [--file <path>]
+#                                     one JSON object: category; present, whether the file exists;
+#                                     and for each axis its value and the key of the line that
+#                                     chose it, model and model_line, effort and effort_line,
+#                                     subagent_model and subagent_line, subagent_effort and
+#                                     subagent_effort_line, each null when no line names it; a
+#                                     missing file gives present false and every axis null (exit
+#                                     0), an invalid one exit 1 with --check's lines, and an
+#                                     unknown category, role, template, project form or path
+#                                     exit 2
+#        team-models list [--json] [--project <p>] [--path <p>] [--file <path>]
+#                                     every category in the table's order, resolved for the
+#                                     project and path given (none by default): a table of its
+#                                     model and effort and the line each came from, with its
+#                                     subagent fields where a line sets them; --json the array of
+#                                     resolve's objects
+#        team-models templates        each brief template of templates/briefs/ the table maps,
+#                                     with its category, "<template> <category>" one per line
+#
+# The file is TOML: top-level keys only, each a quoted string naming a line, each value an inline
+# table, one line per choice (sops/models.md):
+#   "default" = { model = "opus", effort = "high" }
+#   "reviewer.rereview" = { model = "sonnet" }
+#   "builder path=small" = { model = "sonnet", effort = "high" }
+#   "planner" = { subagent_model = "haiku" }
+# A key is a category, then optionally " project=<registry name>" and " path=<path>", in that
+# order, single spaces between; a path is team-open's: feature, bug, small, research or retro. A
+# bare dotted key (reviewer.rereview = ...) is TOML's nested table, refused: quote the key.
+# A value's fields, each optional, at least one:
+#   model, subagent_model     an alias opus, sonnet, haiku or fable, or a name claude-<lowercase
+#                             letters, digits, dots and dashes>, either optionally followed by
+#                             [1m]; or default, meaning pass nothing, so the settings' word stands
+#   effort, subagent_effort   low, medium, high, xhigh or max, or default, as above
+# A session launches with --model and --effort from model and effort, and with subagent_model and
+# subagent_effort as CLAUDE_CODE_SUBAGENT_MODEL and CLAUDE_CODE_SUBAGENT_EFFORT in its settings'
+# env.
+#
+# The categories, each falling back through its parent (the part before its last dot) to default:
+#   coordinator                  claude-coordinator
+#     coordinator.compaction-drill   tests/compaction-drill's session
+#   assistant                    claude-assistant
+#     assistant.load-check       claude-assistant --load-check
+#   planner                      a planner whose brief has no template
+#     planner.feature            planner-feature
+#     planner.research           planner-research
+#     planner.interview          planner-interview
+#     planner.walk               planner-walk
+#     planner.retro              retro
+#     planner.load-check         a planner of T0, the load check
+#   builder                      a builder whose brief has no template
+#     builder.ticket             builder-ticket
+#     builder.deliver            builder-deliver
+#     builder.fix                builder-fix
+#     builder.round              builder-round
+#     builder.merge-base         builder-merge-base
+#     builder.load-check         a builder of T0
+#   reviewer                     a reviewer whose brief has no template
+#     reviewer.review            reviewer
+#     reviewer.rereview          rereview
+#     reviewer.verify            verify
+#     reviewer.load-check        a reviewer of T0
+#   ops                          ops, and a brief of no template
+#     ops.load-check             ops of T0
+# The templates resume and resume-crash take the category of the brief they resume, which
+# team-worker reads, so resolve refuses them; --role alone gives the role's own category, and
+# --load-check <role>.load-check, whatever template of that role is given. The coordinator, the
+# assistant and the load-check categories launch with no project and no path, so a line naming
+# either for them is refused, since it would never match.
+#
+# Precedence: each axis (model, effort, subagent model, subagent effort) is resolved on its own,
+# to the most specific matching line that names it. A line matches a launch when its category is
+# the launch's or an ancestor of it (default included) and each qualifier it has equals the
+# launch's project or path; a launch with no project or path matches only lines without that
+# qualifier. Specificity is compared in order: the category's depth (default is 0), then having
+# project=, then having path=, so no two lines tie.
+#
+# The file is $TEAM_HOME/models.toml, or the file --file names; a project= is checked against
+# team-project --list of the team home's registry. Exit 0 done, 1 refused or a check failed, 2 a
+# malformed command line. Python standard library only (tomllib, Python 3.11 or later).
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+# tomllib is Python 3.11's; macOS's own python3 is older. This file must parse on it to say so.
+if sys.version_info < (3, 11):
+    print(
+        f"{os.path.basename(sys.argv[0])}: needs Python 3.11 or later (tomllib), but runs under"
+        f" Python {sys.version.split()[0]} ({sys.executable}); on macOS run `brew install python@3.12`,"
+        " whose python3 the team's scripts put first on PATH",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+import tomllib
+
+NAME = os.path.basename(sys.argv[0])
+USAGE = (
+    "usage: team-models --check [--file <path>]"
+    " | resolve (--category <c> | --role <r> [--template <t>] [--load-check]) [--project <p>] [--path <p>] [--file <path>]"
+    " | list [--json] [--project <p>] [--path <p>] [--file <path>]"
+    " | templates"
+)
+FILE = "models.toml"
+BIN = os.path.dirname(os.path.realpath(__file__))
+
+# The categories in the table's order; a category's parent is the part before its last dot, and
+# default is every root's parent.
+CATEGORIES = (
+    "default",
+    "coordinator",
+    "coordinator.compaction-drill",
+    "assistant",
+    "assistant.load-check",
+    "planner",
+    "planner.feature",
+    "planner.research",
+    "planner.interview",
+    "planner.walk",
+    "planner.retro",
+    "planner.load-check",
+    "builder",
+    "builder.ticket",
+    "builder.deliver",
+    "builder.fix",
+    "builder.round",
+    "builder.merge-base",
+    "builder.load-check",
+    "reviewer",
+    "reviewer.review",
+    "reviewer.rereview",
+    "reviewer.verify",
+    "reviewer.load-check",
+    "ops",
+    "ops.load-check",
+)
+# The roles, a launch's root category, which --role takes.
+ROLES = tuple(category for category in CATEGORIES if category != "default" and "." not in category)
+# Each brief template of templates/briefs/ to its category; tests/team-models.bats holds every
+# template but the two resumes to a row here.
+TEMPLATES = {
+    "planner-feature": "planner.feature",
+    "planner-research": "planner.research",
+    "planner-interview": "planner.interview",
+    "planner-walk": "planner.walk",
+    "retro": "planner.retro",
+    "builder-ticket": "builder.ticket",
+    "builder-deliver": "builder.deliver",
+    "builder-fix": "builder.fix",
+    "builder-round": "builder.round",
+    "builder-merge-base": "builder.merge-base",
+    "reviewer": "reviewer.review",
+    "rereview": "reviewer.rereview",
+    "verify": "reviewer.verify",
+    "ops": "ops",
+}
+# The templates whose category is the brief's they resume, which team-worker reads.
+RESUMES = ("resume", "resume-crash")
+# The roots whose launches have no project and no path, and so the load check's categories too.
+UNQUALIFIED_ROOTS = ("coordinator", "assistant")
+# The qualifiers a key may have, in their order.
+QUALIFIERS = ("project", "path")
+# team-open's paths.
+PATHS = ("feature", "bug", "small", "research", "retro")
+# The fields of a line, each an axis, in their order, with the key resolve names its line by.
+FIELDS = {"model": "model_line", "effort": "effort_line", "subagent_model": "subagent_line", "subagent_effort": "subagent_effort_line"}
+MODEL = re.compile(r"(?:opus|sonnet|haiku|fable|claude-[a-z0-9.-]+)(?:\[1m\])?|default")
+MODEL_FORM = "opus, sonnet, haiku, fable or claude-<name>, each optionally with [1m], or default"
+EFFORTS = ("low", "medium", "high", "xhigh", "max", "default")
+# A registry name, as team-project holds one.
+PROJECT = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def fail(message, status=1):
+    print(f"{NAME}: {message}", file=sys.stderr)
+    sys.exit(status)
+
+
+def usage_error(message):
+    fail(f"{message}\n{USAGE}", 2)
+
+
+# Print this script's header: the comment block under its shebang, as bin/lib/team.sh does.
+def print_help():
+    with open(__file__, encoding="utf-8") as script:
+        next(script)
+        for line in script:
+            if not line.startswith("#"):
+                break
+            print(re.sub(r"^# ?", "", line), end="")
+
+
+# The team home, found as the library finds it: TEAM_HOME when set; else the first line of
+# ~/.config/agent-team/home, a path relative to HOME unless it is absolute; refused with neither.
+def team_home():
+    home = os.environ.get("TEAM_HOME")
+    setting = os.path.join(os.environ.get("HOME", ""), ".config", "agent-team", "home")
+    fix = (
+        "name its checkout there, relative to your home directory:"
+        " echo agent-team-records > ~/.config/agent-team/home"
+    )
+    if not home and os.path.isfile(setting):
+        with open(setting, encoding="utf-8") as file:
+            home = file.readline().rstrip("\n")
+        if not home:
+            fail(f"the setting ~/.config/agent-team/home names no team home; {fix}")
+        home = os.path.join(os.environ["HOME"], home)
+        if not os.path.isdir(home):
+            fail(f"the team home {home}, named by ~/.config/agent-team/home, is not a directory; {fix}")
+    if not home:
+        fail(f"neither TEAM_HOME nor ~/.config/agent-team/home names the team home; {fix}")
+    if not os.path.isdir(home):
+        fail(f"team home {home} is not a directory")
+    return home
+
+
+def parent(category):
+    return "default" if "." not in category else category.rsplit(".", 1)[0]
+
+
+# A category and its ancestors, itself first, default last.
+def chain(category):
+    found = [category]
+    while found[-1] != "default":
+        found.append(parent(found[-1]))
+    return found
+
+
+def depth(category):
+    return len(chain(category)) - 1
+
+
+def unqualified(category):
+    return category.split(".")[0] in UNQUALIFIED_ROOTS or category.endswith(".load-check")
+
+
+# The registry's project names, read once through team-project --list, or the problem reading it.
+class Registry:
+    def __init__(self):
+        self.names, self.problem = None, None
+
+    def read(self):
+        if self.names is None and self.problem is None:
+            try:
+                env = dict(os.environ, TEAM_HOME=team_home())
+                listed = subprocess.run(
+                    [os.path.join(BIN, "team-project"), "--list"], env=env, capture_output=True, text=True, timeout=60
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                self.problem = f"team-project --list did not run: {error}"
+            else:
+                if listed.returncode == 0:
+                    self.names = listed.stdout.split()
+                else:
+                    lines = listed.stderr.strip().splitlines()
+                    self.problem = f"team-project --list failed: {lines[-1] if lines else f'exit {listed.returncode}'}"
+        return self.names, self.problem
+
+
+# One key's category and qualifiers, as {category, project, path}, or its problem.
+def parse_key(key, registry):
+    words = key.split(" ")
+    if key != key.strip() or "" in words:
+        return None, "single spaces between the category and each qualifier, none around them"
+    category, qualifiers = words[0], {}
+    if category not in CATEGORIES:
+        return None, f"unknown category '{category}'; known: {', '.join(CATEGORIES)}"
+    order = []
+    for word in words[1:]:
+        name, equals, value = word.partition("=")
+        if not equals:
+            return None, f"'{word}' is not a qualifier, project=<name> or path=<path>"
+        if name not in QUALIFIERS:
+            return None, f"unknown qualifier '{name}'; one of {', '.join(QUALIFIERS)}"
+        order.append(name)
+        qualifiers[name] = value
+    if order != [name for name in QUALIFIERS if name in order]:
+        return None, "the qualifiers go project= first, then path=, each at most once"
+    if qualifiers and unqualified(category):
+        return None, f"a {category} launch has no project and no path, so this line would never match"
+    if "project" in qualifiers:
+        project = qualifiers["project"]
+        names, problem = registry.read()
+        if problem:
+            return None, f"cannot check project '{project}': {problem}"
+        if project not in names:
+            return None, f"project '{project}' is not in the registry; known: {', '.join(names)}"
+    if "path" in qualifiers and qualifiers["path"] not in PATHS:
+        return None, f"unknown path '{qualifiers['path']}'; one of {', '.join(PATHS)}"
+    return {"category": category, "project": qualifiers.get("project"), "path": qualifiers.get("path")}, None
+
+
+# One value's problems; none means it is a table of known fields, each of its form.
+def value_problems(value):
+    if not isinstance(value, dict):
+        return ['must be an inline table, such as { model = "opus", effort = "high" }']
+    problems = []
+    for field, held in value.items():
+        if field not in FIELDS:
+            problems.append(f"unknown field '{field}'; one of {', '.join(FIELDS)}")
+        elif not isinstance(held, str):
+            problems.append(f"{field}: must be a string")
+        elif field.endswith("model") and not MODEL.fullmatch(held):
+            problems.append(f"{field}: '{held}' is not {MODEL_FORM}")
+        elif field.endswith("effort") and held not in EFFORTS:
+            problems.append(f"{field}: '{held}' is not one of {', '.join(EFFORTS)}")
+    if not value:
+        problems.append(f"names no field; one of {', '.join(FIELDS)}")
+    return problems
+
+
+# The file at path parsed and checked, as (present, lines, problems): lines are
+# {key, category, project, path, fields}, problems "<key or line>: <problem>" each.
+def read(path):
+    try:
+        with open(path, "rb") as file:
+            table = tomllib.load(file)
+    except FileNotFoundError:
+        return False, [], []
+    except tomllib.TOMLDecodeError as error:
+        text = str(error)
+        at = re.search(r"\s*\(at line (\d+), column (\d+)\)$", text)
+        if at:
+            return True, [], [f"line {at[1]}, column {at[2]}: not valid TOML: {text[: at.start()]}"]
+        return True, [], [f"not valid TOML: {text}"]
+    except OSError as error:
+        return True, [], [f"cannot be read: {error.strerror}"]
+    registry, lines, problems = Registry(), [], []
+    for key, value in table.items():
+        nested = isinstance(value, dict) and [field for field, held in value.items() if isinstance(held, dict)]
+        if nested:
+            problems.extend(f'{key}.{field}: quote the key: "{key}.{field}"' for field in nested)
+            continue
+        line, problem = parse_key(key, registry)
+        where = json.dumps(key)
+        if problem:
+            problems.append(f"{where}: {problem}")
+        problems.extend(f"{where}: {problem}" for problem in value_problems(value))
+        if line and not value_problems(value):
+            lines.append(dict(line, key=key, fields=value))
+    return True, lines, problems
+
+
+# The file to read: --file's, else the team home's.
+def config_path(file):
+    return file if file is not None else os.path.join(team_home(), FILE)
+
+
+# The file read and checked; with problems, exit 1 with each on stderr.
+def load(file):
+    path = config_path(file)
+    present, lines, problems = read(path)
+    if problems:
+        print("\n".join(f"{FILE}: {problem}" for problem in problems), file=sys.stderr)
+        sys.exit(1)
+    return present, lines
+
+
+# The choice of each axis for a launch of category, with project and path or None.
+def resolve(lines, present, category, project, path):
+    found = {"category": category, "present": present}
+    ancestors = chain(category)
+    matching = [
+        line
+        for line in lines
+        if line["category"] in ancestors
+        and line["project"] in (None, project)
+        and line["path"] in (None, path)
+    ]
+    matching.sort(key=lambda line: (depth(line["category"]), line["project"] is not None, line["path"] is not None), reverse=True)
+    for field, line_key in FIELDS.items():
+        winner = next((line for line in matching if field in line["fields"]), None)
+        found[field] = winner["fields"][field] if winner else None
+        found[line_key] = winner["key"] if winner else None
+    return found
+
+
+# The options of resolve and list: --file, --project and --path, and, as allowed, --category,
+# --role, --template, --load-check and --json.
+def options(args, allowed):
+    known = {"--file": True, "--project": True, "--path": True} | allowed
+    given = {}
+    index = 0
+    while index < len(args):
+        option = args[index]
+        if option not in known:
+            usage_error(f"unknown option '{option}'")
+        if option in given:
+            usage_error(f"{option} given twice")
+        if known[option]:
+            if index + 1 >= len(args) or args[index + 1] == "":
+                usage_error(f"{option} needs a value")
+            given[option] = args[index + 1]
+            index += 2
+        else:
+            given[option] = True
+            index += 1
+    if "--project" in given and not PROJECT.fullmatch(given["--project"]):
+        usage_error(f"--project '{given['--project']}' is not a registry name")
+    if "--path" in given and given["--path"] not in PATHS:
+        usage_error(f"--path '{given['--path']}' is not one of {', '.join(PATHS)}")
+    return given
+
+
+# The category resolve names: --category's, or the one --role, --template and --load-check give.
+def launch_category(given):
+    if ("--category" in given) == ("--role" in given):
+        usage_error("give --category or --role, not both")
+    if "--category" in given:
+        if "--template" in given or "--load-check" in given:
+            usage_error("--template and --load-check go with --role, not --category")
+        if given["--category"] not in CATEGORIES:
+            usage_error(f"unknown category '{given['--category']}'; known: {', '.join(CATEGORIES)}")
+        return given["--category"]
+    role = given["--role"]
+    if role not in ROLES:
+        usage_error(f"unknown role '{role}'; one of {', '.join(ROLES)}")
+    category = role
+    template = given.get("--template")
+    if template in RESUMES:
+        usage_error(f"the template {template} takes the category of the brief it resumes: give that brief's template")
+    if template is not None:
+        if template not in TEMPLATES:
+            usage_error(f"unknown template '{template}'; known: {', '.join(TEMPLATES)}")
+        if TEMPLATES[template].split(".")[0] != role:
+            usage_error(f"the template {template} is a {TEMPLATES[template].split('.')[0]}'s, not a {role}'s")
+        category = TEMPLATES[template]
+    if "--load-check" in given:
+        category = f"{role}.load-check"
+        if category not in CATEGORIES:
+            usage_error(f"the role {role} has no load-check category")
+    return category
+
+
+# The list's table: one row per category, its model and effort with their lines, then its
+# subagent fields where set.
+def table(rows):
+    shown = lambda value: "-" if value is None else value
+    cells = [("category", "model", "from", "effort", "from")] + [
+        (row["category"], shown(row["model"]), shown(row["model_line"]), shown(row["effort"]), shown(row["effort_line"]))
+        for row in rows
+    ]
+    widths = [max(len(cell[column]) for cell in cells) for column in range(5)]
+    out = []
+    for index, cell in enumerate(cells):
+        text = "  ".join(value.ljust(width) for value, width in zip(cell, widths))
+        if index:
+            row = rows[index - 1]
+            extra = [
+                f"{field} {row[field]} from {row[line_key]}"
+                for field, line_key in FIELDS.items()
+                if field.startswith("subagent") and row[field] is not None
+            ]
+            if extra:
+                text += "  " + ", ".join(extra)
+        out.append(text.rstrip())
+    return "\n".join(out)
+
+
+def main(args):
+    if args[:1] in (["--help"], ["-h"]):
+        print_help()
+        return
+    if not args:
+        usage_error("no command")
+    command, rest = args[0], args[1:]
+    if command == "--check":
+        given = options(rest, {})
+        if "--project" in given or "--path" in given:
+            usage_error("--check takes only --file")
+        path = config_path(given.get("--file"))
+        present, _, problems = read(path)
+        if not present:
+            fail(f"no file {path}" if "--file" in given else f"no {FILE} in {team_home()}")
+        if problems:
+            print("\n".join(f"{FILE}: {problem}" for problem in problems), file=sys.stderr)
+            sys.exit(1)
+    elif command == "resolve":
+        given = options(rest, {"--category": True, "--role": True, "--template": True, "--load-check": False})
+        category = launch_category(given)
+        present, lines = load(given.get("--file"))
+        print(json.dumps(resolve(lines, present, category, given.get("--project"), given.get("--path"))))
+    elif command == "list":
+        given = options(rest, {"--json": False})
+        present, lines = load(given.get("--file"))
+        rows = [resolve(lines, present, category, given.get("--project"), given.get("--path")) for category in CATEGORIES]
+        if not present:
+            print(f"{NAME}: no {FILE} at {config_path(given.get('--file'))}: every category on the user settings' model and effort", file=sys.stderr)
+        print(json.dumps(rows) if "--json" in given else table(rows))
+    elif command == "templates":
+        if rest:
+            usage_error("templates takes no options")
+        print("\n".join(f"{template} {category}" for template, category in TEMPLATES.items()))
+    else:
+        usage_error(f"unknown command '{command}'")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

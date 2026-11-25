@@ -145,6 +145,73 @@ says() {
   assert_equal "$(says)" "no room: T313, opened at 15:00, has no worker yet"
 }
 
+@test "a task opened with no worker holds the room only while the team itself is about to launch it" {
+  room="room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  event T40 opened 2026-11-13T17:26:00Z '{project: "proj"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # Parked on Daniel's open ask, it waits on them, not on the team: the next open goes ahead.
+  event T40 asked 2026-11-13T17:27:30Z '{id: "p1", text: "approve the plan?"}'
+  assert_equal "$(says)" "$room"
+  # Answered, it is the team's to launch again.
+  event T40 answered 2026-11-13T18:00:00Z '{id: "p1", text: "yes"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # A wait on Daniel or outside the team, typed or as an old line reads it, and Daniel's hold,
+  # each let it go until a resumed ends it.
+  event T40 waiting 2026-11-13T18:05:00Z '{on: "Daniel", reason: "their call on the scope", cause: "daniel"}'
+  assert_equal "$(says)" "$room"
+  event T40 resumed 2026-11-13T18:10:00Z '{id: "waiting-1"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 waiting 2026-11-13T18:15:00Z '{on: "GitHub", reason: "the outage"}'
+  assert_equal "$(says)" "$room"
+  event T40 resumed 2026-11-13T18:20:00Z '{id: "waiting-2"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 held 2026-11-13T18:25:00Z '{reason: "Daniel holds it", cause: "daniel-hold", discord_message: "1000000000000000001"}'
+  assert_equal "$(says)" "$room"
+  event T40 resumed 2026-11-13T18:30:00Z '{id: "held-1", discord_message: "1000000000000000002"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # A park of the team's own still holds it, the team launching it once it can: a room
+  # refusal, a block on another task, a stow, and a stowed.
+  event T40 paused 2026-11-13T18:35:00Z '{reason: "no room for session:planner at full", cause: "room"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 resumed 2026-11-13T18:36:00Z '{id: "paused-1"}'
+  event T40 blocked 2026-11-13T18:37:00Z '{on: "T39", reason: "T39 merges first", cause: "task"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 resumed 2026-11-13T18:38:00Z '{id: "blocked-1"}'
+  event T40 paused 2026-11-13T18:39:00Z '{reason: "stowed", cause: "stow"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  event T40 resumed 2026-11-13T18:39:30Z '{id: "paused-2"}'
+  event T40 stowed 2026-11-13T18:39:40Z '{machine: "home-pc", worktrees: [], roles: [], cause: "level"}'
+  assert_equal "$(says)" "no room: T40, opened at 17:26, has no worker yet"
+  # A parked task lets the next unstaffed one name itself.
+  event T41 opened 2026-11-13T18:40:00Z '{project: "proj"}'
+  event T40 asked 2026-11-13T18:45:00Z '{id: "p2", text: "which project?"}'
+  assert_equal "$(says)" "no room: T41, opened at 18:40, has no worker yet"
+}
+
+@test "a ticket's park frees no room: a task opened again, its ask holding only a ticket's builder, still holds it" {
+  event T50 opened 2026-11-13T17:00:00Z '{project: "proj"}'
+  event T50 launch 2026-11-13T17:01:00Z '{role: "builder", session: "aaaa0050", ticket: "01"}'
+  event T50 asked 2026-11-13T17:02:00Z '{id: "t2", text: "ticket 02 takes which table?", tickets: ["02"]}'
+  event T50 opened 2026-11-13T17:05:00Z '{project: "proj"}'
+  assert_equal "$(says)" "no room: T50, opened at 17:05, has no worker yet"
+}
+
+@test "an ask naming tickets frees the room once none of the task's work is unfinished, as it then parks the task" {
+  event T50 opened 2026-11-13T17:00:00Z '{project: "proj"}'
+  event T50 launch 2026-11-13T17:01:00Z '{role: "builder", session: "aaaa0050", ticket: "01"}'
+  event T50 ticket-done 2026-11-13T17:02:00Z '{ticket: "01", commits: ["abc1234"]}'
+  event T50 asked 2026-11-13T17:03:00Z '{id: "t2", text: "ticket 02 takes which table?", tickets: ["02"]}'
+  event T50 opened 2026-11-13T17:05:00Z '{project: "proj"}'
+  event T51 opened 2026-11-13T17:06:00Z '{project: "proj"}'
+  assert_equal "$(says)" "no room: T51, opened at 17:06, has no worker yet"
+}
+
+@test "the causes that free the room are every cause the lifecycle table counts as a wait on Daniel, and outside" {
+  assert_equal "$(jq -c -L "$REPO_ROOT/bin/lib" -n 'include "queue"; include "ledger"; queue_parked_off_team | sort')" \
+    "$(jq -c '[.causes | to_entries[] | select(.value.class == "wait:daniel" or .key == "outside") | .key] | sort' \
+      "$REPO_ROOT/bin/lib/lifecycle.json")"
+}
+
 @test "a plan or costs that cannot be read is no room, naming why, never a failure" {
   ready a.md 1 S "the first"
   printf 'team-capacity: %s/.config/agent-team/capacity.json: "minor_share" is not above 0 and at most 1\n' "$HOME" \
@@ -235,15 +302,18 @@ says() {
   ready e-wait.md 1 S "a later one" "after: T7 merged, b-one.md" "waits: Daniel's word" "alone: yes"
   ready f-opened.md 2 S "in the building" "opened: T5"
   ready g-bad.md 5 XL "a bad one"
+  # git knows no queued file yet, so a wait's age is its file's own (tests/team-queue-waits.bats).
+  touch -d 2026-11-01T00:00:00Z "$queued/e-wait.md"
+  local days=$((($(date +%s) - $(date -d 2026-11-01T00:00:00Z +%s)) / 86400))
   # The index was never written, so index --check names it stale; list leaves that line out.
   run_bin -0 --separate-stderr team-queue list --json
   assert_equal "$stderr" ""
   assert_equal "$(jq -r '.schema, (keys_unsorted | join(" "))' <<<"$output")" "team-queue/1
 schema room ready waiting opened unranked problems findings"
   assert_equal "$(jq -c .ready <<<"$output")" \
-    '[{"file":"b-one.md","title":"b-one","summary":"the first","project":"proj","priority":1,"size":"M","after":[],"waits":null,"from":["T5"],"opened":null,"takes":["c-taken.md"],"alone":false,"guarded":"ci","unblocks":1,"rank":1}]'
+    '[{"file":"b-one.md","title":"b-one","summary":"the first","project":"proj","priority":1,"size":"M","after":[],"waits":null,"waited":null,"from":["T5"],"opened":null,"takes":["c-taken.md"],"alone":false,"guarded":"ci","unblocks":1,"rank":1}]'
   assert_equal "$(jq -c .waiting <<<"$output")" \
-    '[{"file":"e-wait.md","title":"e-wait","summary":"a later one","project":"proj","priority":1,"size":"S","after":[{"condition":"T7 merged","met":false},{"condition":"b-one.md","met":false}],"waits":"Daniel'"'"'s word","from":[],"opened":null,"takes":[],"alone":true,"guarded":null,"unblocks":0,"rank":null}]'
+    '[{"file":"e-wait.md","title":"e-wait","summary":"a later one","project":"proj","priority":1,"size":"S","after":[{"condition":"T7 merged","met":false},{"condition":"b-one.md","met":false}],"waits":"Daniel'"'"'s word","waited":{"since":"2026-11-01T00:00:00Z","days":'"$days"',"source":"file"},"from":[],"opened":null,"takes":[],"alone":true,"guarded":null,"unblocks":0,"rank":null}]'
   assert_equal "$(jq -c '[.opened[] | {file, opened, rank}]' <<<"$output")" '[{"file":"f-opened.md","opened":"T5","rank":null}]'
   assert_equal "$(jq -c .unranked <<<"$output")" \
     '[{"file":"g-bad.md","problems":["priority \"5\" is not 1, 2, 3 or 4","size \"XL\" is not S, M or L"]}]'
@@ -304,6 +374,141 @@ findings() {
   event T7 closed 2026-01-01T00:02:00Z
   assert_equal "$(findings | jq -r .text)" \
     "queue: room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB: open split.md (proj, priority 1, L): split the hot files; next: team-open --queued split.md"
+}
+
+# Register <project> on a treehouse pool at ~/projects/<project>, beside proj, its
+# treehouse.toml setting max_trees to <max> when given ("" writes none):
+# treehouse_project <project> [<max>]
+treehouse_project() {
+  printf '%s\n' "[$1]" "repo = \"owner/$1\"" "path = \"projects/$1\"" 'base = "main"' 'delivery = "direct-pr"' \
+    'merge_method = "merge"' 'required_checks = []' 'task_dir = ".scratch/task"' 'docs = []' 'toolkits = []' \
+    "[$1.pool]" 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' 'return = "scripts/th-return.sh"' \
+    "slots = [\"pools/$1/1/$1\"]" >>"$TEAM_HOME/projects.toml"
+  mkdir -p "$HOME/projects/$1"
+  [[ -z ${2-} ]] || printf '# the pool\nmax_trees = %s # its cap\nroot = ""\n' "$2" >"$HOME/projects/$1/treehouse.toml"
+  if [[ ! -e $STUB_FIXTURES/treehouse.sh ]]; then
+    stub_command treehouse
+    # Each call's directory is logged, and its pool is that directory's fixture, pool-<dir>.json.
+    stub_script treehouse <<'SH'
+[[ $* == 'status --json' ]] || { echo "treehouse stub: unplanned call: $*" >&2; exit 64; }
+echo "${PWD##*/}" >>"$STUB_CALLS/treehouse.pwd"
+[[ -f $STUB_FIXTURES/pool-${PWD##*/}.json ]] || { echo "treehouse: no pool" >&2; exit 1; }
+print_file "$STUB_FIXTURES/pool-${PWD##*/}.json"
+SH
+  fi
+}
+
+# Set <project>'s pool, as treehouse status --json reports it, one slot per status given:
+# pool <project> <status>...
+pool() {
+  local project=$1 n=0 status
+  shift
+  for status; do
+    n=$((n + 1))
+    jq -cn --arg path "$HOME/pools/$project/$n/$project" --arg status "$status" --arg n "$n" \
+      '{name: $n, path: $path, status: $status, branch: "", lease_holder: (if $status == "leased" then "T\($n)" else "" end)}'
+  done | jq -cs . >"$STUB_FIXTURES/pool-$project.json"
+}
+
+# The pools treehouse was asked about since the last call, one directory a line, then forgotten.
+pools_read() {
+  cat "$STUB_CALLS/treehouse.pwd" 2>/dev/null || true
+  rm -f "$STUB_CALLS/treehouse.pwd"
+}
+
+@test "queue-ready skips a ready item whose treehouse pool has no free tree, the room's line naming the full pool" {
+  treehouse_project th 2
+  ready a-proj.md 2 S "work on proj"
+  item b-th.md "summary: work on th" "project: th" "priority: 1" "size: S"
+  local room="room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  # Both trees leased, at max_trees 2: th's item waits, and proj's is named.
+  pool th leased leased
+  assert_equal "$(listed | jq -c '.room, [.findings[] | .next]')" \
+    "{\"fits\":true,\"says\":\"$room; th's pool is full (2 of 2 trees, none free)\"}
+[\"team-open --queued a-proj.md\"]"
+  assert_equal "$(pools_read)" th
+  assert_equal "$(findings | jq -r .text)" \
+    "queue: $room; th's pool is full (2 of 2 trees, none free): open a-proj.md (proj, priority 2, S): work on proj; next: team-open --queued a-proj.md"
+  pools_read >/dev/null
+  # The text's first line is the same room's line.
+  run_bin -0 team-queue list
+  assert_equal "${lines[0]}" "$room; th's pool is full (2 of 2 trees, none free)"
+  pools_read >/dev/null
+  # A tree free to lease, or room for a new one under max_trees, is a free tree.
+  pool th leased available
+  assert_equal "$(listed | jq -c '.room.says, [.findings[] | .next]')" "\"$room\"
+[\"team-open --queued b-th.md\"]"
+  pool th leased
+  assert_equal "$(listed | jq -c '.room.says, [.findings[] | .next]')" "\"$room\"
+[\"team-open --queued b-th.md\"]"
+  # A dirty or in-use tree is not free.
+  pool th dirty in-use leased
+  assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued a-proj.md"
+  # A pool treehouse cannot report stops the walk, as a free tree does, its item named with the
+  # room's line saying why, so team-open names what is wrong; alone in the queue, it is named too.
+  rm "$STUB_FIXTURES/pool-th.json"
+  assert_equal "$(listed | jq -r '.room.says, (.findings[] | .next)')" \
+    "$room; th's pool cannot be read (treehouse status --json did not answer)
+team-open --queued b-th.md"
+  mv "$queued/a-proj.md" "$BATS_TEST_TMPDIR/a-proj.md"
+  assert_equal "$(findings | jq -r .text)" \
+    "queue: $room; th's pool cannot be read (treehouse status --json did not answer): open b-th.md (th, priority 1, S): work on th; next: team-open --queued b-th.md"
+  mv "$BATS_TEST_TMPDIR/a-proj.md" "$queued/a-proj.md"
+  pools_read >/dev/null
+  # A git pool is never full and never read; with no room, no pool is read.
+  ready a-proj.md 1 S "work on proj"
+  pool th leased leased
+  assert_equal "$(listed | jq -r '.room.says, (.findings[] | .next)')" "$room
+team-open --queued a-proj.md"
+  ready a-proj.md 2 S "work on proj"
+  plan '.over = true'
+  assert_equal "$(listed | jq -c '.room.says, .findings')" '"no room: over budget"
+[]'
+  assert_equal "$(pools_read)" ""
+}
+
+@test "max_trees is read as treehouse reads it: the checkout's treehouse.toml, else the user's config, else 16" {
+  treehouse_project th
+  item b-th.md "summary: work on th" "project: th" "priority: 1" "size: S"
+  pool th leased leased
+  # No config anywhere: max_trees is 16, so 2 trees leave room for a new one.
+  assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued b-th.md"
+  mkdir -p "$HOME/.config/treehouse"
+  printf 'max_trees = 2\n' >"$HOME/.config/treehouse/config.toml"
+  assert_equal "$(listed | jq -r '.room.says')" \
+    "room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB; th's pool is full (2 of 2 trees, none free)"
+  # The checkout's treehouse.toml wins whole, its max_trees 16 when it gives none; a key in a
+  # table is not the top-level max_trees.
+  printf 'root = ""\n[hooks]\nmax_trees = 2\n' >"$HOME/projects/th/treehouse.toml"
+  assert_equal "$(listed | jq -r '.findings[] | .next')" "team-open --queued b-th.md"
+  printf 'max_trees=3\n' >"$HOME/projects/th/treehouse.toml"
+  pool th leased leased leased
+  assert_equal "$(listed | jq -r '.room.says')" \
+    "room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB; th's pool is full (3 of 3 trees, none free)"
+}
+
+@test "with every ready item's pool full, no queue-ready, and the room's line names each full pool in rank order" {
+  treehouse_project th 2
+  treehouse_project tw 1
+  item a-th.md "summary: work on th" "project: th" "priority: 1" "size: S"
+  item b-tw.md "summary: work on tw" "project: tw" "priority: 2" "size: S"
+  item c-th.md "summary: more on th" "project: th" "priority: 3" "size: S"
+  pool th leased leased
+  pool tw leased
+  local room="room for one more task at full (90%): 11.7 GiB of 16.9 GiB free, a builder needs 1.7 GiB"
+  assert_equal "$(listed | jq -c '.room, .findings')" \
+    "{\"fits\":true,\"says\":\"$room; th's pool is full (2 of 2 trees, none free); tw's pool is full (1 of 1 tree, none free)\"}
+[]"
+  # Each pool is read once, in the order its first ready item ranks.
+  assert_equal "$(pools_read)" "th
+tw"
+  # The queue's problems are still named.
+  ready d-bad.md 5 S "a bad one"
+  assert_equal "$(findings | jq -r .kind)" queue
+  # Once tw has a free tree, its item is named.
+  pool tw available
+  assert_equal "$(findings | jq -r .next)" "team-open --queued b-tw.md
+fix each file team-queue index --check names"
 }
 
 @test "queue names the problems' count and the first two, with room or not" {

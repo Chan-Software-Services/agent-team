@@ -1,11 +1,13 @@
 # The queue of approved work, the team home's tasks/queued/: what each item's state is, when an
 # after: condition is met, how the items rank, the problems team-queue index --check names, the text
 # of the index, the judging of team-queue set's table, of team-queue take and of team-queue tidy's
-# links and moves, whether the level has room for one more task and team-queue list's object and
-# findings. Used by team-queue over the ledger's lines (jq -nR), with the items' cards (team-queue's
-# one awk pass: {file, title, keys, problems}), the registry's project names, the items that left
-# the queue, the queued files the tasks' plans cite, today's UTC date, the time now, and for list
-# team-capacity's plan and costs; team-queue's header documents the keys, the states and the words.
+# links and moves, whether the level has room for one more task, team-queue list's object and
+# findings, each waits: line's age and team-queue waits' count. Used by team-queue over the
+# ledger's lines (jq -nR), with the items' cards (team-queue's one awk pass: {file, title, keys,
+# problems}), the registry's project names, the items that left the queue, the queued files the
+# tasks' plans cite, today's UTC date, the time now, for list team-capacity's plan and costs and
+# the worktree pools team-queue read with no free tree, and for list and waits when each waits:
+# line last changed; team-queue's header documents the keys, the states and the words.
 include "ledger";
 
 # The front matter keys, in the order team-queue writes them.
@@ -49,7 +51,10 @@ def queue_seconds: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 # phases_left (a task with no tickets, or a merge from before team-merge logged them) that a builder
 # launch, a later PR or a merged part follows is none, or, once the task closed, any merged that
 # names no phase left (phases_left [] or absent, as team-merge logs a task with no tickets),
-# whatever followed it; each merged's phases_left where it names them; and the events that end it,
+# whatever followed it; the phases_left of each merged that names them and leaves no PR of the task
+# open, where the lifecycle moves the task to merged-part (phases_left is task-wide, every ticket of
+# the task in every repository, so a sibling repository's merge while this one's PR is open ends no
+# phase); and the events that end it,
 # its last merged when it is merged whole and its closed, the earliest first; and unmerged, its last
 # closed's {ts} when a feature, bug or small task (its latest opened's path) closed not merged
 # whole, which leaves its work unbuilt, else null (a research or retro task finishes by closing, and
@@ -59,15 +64,16 @@ def queue_task_facts:
    or (any(.[]; .event == "closed") and any(.[]; .event == "merged" and (.phases_left // []) == []))) as $whole
   | (last(.[] | select(.event == "opened") | .path) // null) as $path
   | {whole: $whole,
-     merges: [.[] | select(.event == "merged") | .phases_left | arrays],
+     merges: [foreach .[] as $e (lifecycle_start; lifecycle_step($e);
+       select($e.event == "merged" and lifecycle_open_prs == []) | $e.phases_left | arrays)],
      ends: ([(select($whole) | last(.[] | select(.event == "merged")) | {event, ts}),
              (.[] | select(.event == "closed") | {event, ts})] | sort_by(.ts)),
      unmerged: (if $whole or (IN($path; "feature", "bug", "small") | not) then null
                 else last(.[] | select(.event == "closed") | {ts}) // null end)};
 
 # Whether a parsed condition is met, given the tasks' facts, today's date, the queued files and
-# the files that left the queue: a phase is merged once a merged names phases left without it, or
-# the task is merged whole.
+# the files that left the queue: a phase is merged once a merged that leaves no PR of the task open
+# names phases left without it, or the task is merged whole.
 def queue_met($facts; $today; $queued; $left):
   if .kind == "merged" then $facts[.task].whole // false
   elif .kind == "phase" then . as $c | $facts[.task] // {} | .whole or any(.merges[]?; IN(.[]; $c.phase) | not)
@@ -218,6 +224,14 @@ def queue_label: "(\(.project), priority \(.priority), \(.size)\(if .guarded != 
 # The lines under an item for each queued item it takes.
 def queue_taken_lines($items): .takes[] | $items[.] // empty | "   - takes \(.file): \(queue_what)";
 
+# A wait's age in days as the list says it: "under a day", "1 day", "12 days".
+def queue_age: if . == 0 then "under a day" elif . == 1 then "1 day" else "\(.) days" end;
+
+# Why a waiting item waits, as the index and the list say it: its waits: line, with its age in
+# parentheses when it has one (the list's), then each after: condition not met, joined by ", ".
+def queue_reasons_text:
+  (if .waited != null then .reasons[0] += " (\(.waited.days | queue_age))" else . end) | .reasons | join(", ");
+
 # The index's sections as lines, each section opening with a blank line, from queue_view's object:
 # Ready, ranked; Waiting; Opened; Unranked; a section with no item left out.
 def queue_section_lines:
@@ -225,7 +239,7 @@ def queue_section_lines:
   | (select($v.ready != []) | "", "## Ready, ranked", "",
      ($v.ready[] | "\(.rank). \(.file) \(queue_label): \(queue_what)", queue_taken_lines($v.items))),
     (select($v.waiting != []) | "", "## Waiting", "",
-     ($v.waiting[] | "- \(.file) \(queue_label): \(queue_what); waits for \(.reasons | join(", "))", queue_taken_lines($v.items))),
+     ($v.waiting[] | "- \(.file) \(queue_label): \(queue_what); waits for \(queue_reasons_text)", queue_taken_lines($v.items))),
     (select($v.opened != []) | "", "## Opened", "",
      ($v.opened[] | "- \(.file) (\(.project), \(.opened)): \(queue_what)", queue_taken_lines($v.items))),
     (select($v.unranked != []) | "", "## Unranked", "",
@@ -336,13 +350,27 @@ def queue_capacity($name; $schema):
     elif type == "object" and .schema == $schema then .
     else {error: "\($name) is no \($schema) object"} end;
 
-# The open tasks whose latest opened no launch follows, [{task, ts}] by task number, from the
-# events by task (by_task's object).
+# The park causes of a task that waits on Daniel or on something outside the team, not on the
+# team itself: an open ask, a waiting on Daniel or outside, Daniel's hold. They are every cause
+# lifecycle.json's causes table gives the class wait:daniel, and outside, which
+# tests/team-queue-list.bats holds, so a cause the table adds as a wait on Daniel fails that test
+# until it is listed here.
+def queue_parked_off_team: ["ask", "daniel", "daniel-hold", "outside"];
+
+# The open tasks the team itself is about to launch: those whose latest opened no launch follows
+# and with no standing park of a queue_parked_off_team cause that parks the whole task, as
+# parked reads it (one parked on Daniel or outside waits on them, and holds back no open; a
+# ticket's park frees nothing, since it holds only that ticket's builder, and an ask naming
+# tickets frees the room only once none of the task's work is unfinished, when it parks the
+# whole task), [{task, ts}] by task number, from the events by task (by_task's object).
 def queue_unstaffed($tasks):
   [$tasks | to_entries[] | .key as $t | .value
    | (last(to_entries[] | select(.value.event == "opened")) // null) as $o
    | select($o != null and (any(.[$o.key + 1:][]; .event == "launch") | not))
    | select(is_open)
+   | (unfinished_roles == []) as $idle
+   | select(any(lifecycle.parks[]; (.passed | not) and .ticket == null and (.tickets == null or $idle)
+       and IN(.cause; queue_parked_off_team[])) | not)
    | {task: $t, ts: $o.value.ts}]
   | sort_by(.task[1:] | tonumber);
 
@@ -352,9 +380,10 @@ def queue_unstaffed($tasks):
 # and is not over it, no task waits to resume or to launch (stowed and refused work comes first,
 # but for work something holds, a hold the plan gives, which it will not relaunch),
 # the budget less what is reserved is at least a builder's estimate (every task soon launches
-# one, the largest worker a task starts), and no open task has an opened with no launch since (a
-# task just opened gets its first worker before the next is named), the first that fails saying
-# why.
+# one, the largest worker a task starts), and no open task has an opened with no launch since
+# and no park on Daniel or outside the team (queue_unstaffed's: a task just opened gets its first
+# worker before the next is named, but one waiting on Daniel holds nothing back), the first that
+# fails saying why.
 def queue_room($plan; $costs; $tasks; $today):
   def no($why): {fits: false, says: "no room: \($why)"};
   if $plan.error != null then no("the plan cannot be read: \($plan.error)")
@@ -380,16 +409,52 @@ def queue_room($plan; $costs; $tasks; $today):
       end
   end;
 
+# The items, each given waited, the age of its waits: line, from team-queue's reading of when
+# each queued file's waits: line last changed ($ages, "<file>\t<seconds>\t<source>" lines, source
+# git or file) and now (seconds): {since (UTC), days (whole days since, never below 0), source},
+# or null for an item with no waits: or no reading.
+def queue_waited($ages; $now):
+  ($ages | split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: {seconds: (.[1] | tonumber), source: .[2]}})
+   | from_entries) as $read
+  | map(. as $i
+    | .waited = (if $i.waits == null then null else $read[$i.file] // null end
+        | if . == null then null
+          else {since: (.seconds | todate), days: ([($now - .seconds) / 86400 | floor, 0] | max), source} end));
+
+# team-queue waits' object, team-queue-waits/1, from the items (each with waited), $days and
+# $history (why the team home's history could not be read, else null): the waits older than $days
+# days, of each queued item with a waits: line that no task opened (an item with only after:
+# never), oldest first, then by file: {schema, days, count, says: "<n> waits older than <days>
+# days", with " (each age its file's own time: the team home's history cannot be read)" after it
+# when $history is not null, history_error: $history, waits: [{file, waits, since, days, source}]}.
+def queue_waits($days; $now; $history):
+  [.[] | select(.waits != null and .opened == null and .waited != null)
+   | select($now - (.waited.since | fromdate) > $days * 86400)
+   | {file, waits, since: .waited.since, days: .waited.days, source: .waited.source}]
+  | sort_by([.since, .file])
+  | {schema: "team-queue-waits/1", days: $days, count: length,
+     says: ("\(length | queue_count("wait")) older than \($days | queue_count("day"))"
+            + if $history != null then " (each age its file's own time: the team home's history cannot be read)" else "" end),
+     history_error: $history, waits: .};
+
+# team-queue waits' text from its object: its says line, then "- <file>: <age>: <waits>" for
+# each wait (queue_age's "under a day", "1 day", "12 days"), ending in a newline.
+def queue_waits_text: [.says, (.waits[] | "- \(.file): \(.days | queue_age): \(.waits)")] | join("\n") + "\n";
+
 # An item as team-queue list --json gives it, its internal fields left out.
-def queue_list_item: {file, title, summary, project, priority, size, after, waits, from, opened, takes, alone, guarded, unblocks, rank};
+def queue_list_item: {file, title, summary, project, priority, size, after, waits, waited, from, opened, takes, alone, guarded, unblocks, rank};
 
 # team-sweep's queue findings, each with task, session and name null, from the room
-# (queue_room's), queue_view's object, the problems (queue_problems') and the events by task:
-# queue-ready while the room fits and an item is ready, naming the top one and the command that
-# opens it, and for an item that runs alone the project's other open tasks to hold first; queue
-# while there are problems, their count and the first two.
-def queue_findings($room; $view; $problems; $tasks):
-  (select($room.fits and $view.ready != []) | $view.ready[0]
+# (queue_room's, its line naming the pools below), queue_view's object, the problems
+# (queue_problems'), the events by task and the pools team-queue list names ([{project, full,
+# says}], full for each project whose worktree pool has no free tree, and not for one that could
+# not be read): queue-ready while the room fits and an item of a project with no full pool is
+# ready, naming the top one and the command that opens it, and for an item that runs alone the
+# project's other open tasks to hold first; queue while there are problems, their count and the
+# first two.
+def queue_findings($room; $view; $problems; $tasks; $full):
+  ([$full[] | select(.full) | .project] as $no_tree | first($view.ready[] | select(IN(.project; $no_tree[]) | not)) // null) as $open
+  | (select($room.fits and $open != null) | $open
    | . as $top
    | (queue_what | if length > 80 then .[:77] + "..." else . end) as $what
    | ([select($top.alone) | $tasks | to_entries[] | .key as $t | .value
@@ -403,12 +468,18 @@ def queue_findings($room; $view; $problems; $tasks):
    | {task: null, kind: "queue", session: null, name: null, next: $next,
       text: "queue: \($problems | length | queue_count("problem")) in tasks/queued/: \($problems[:2] | map(queue_problem_line) | join("; ")); next: \($next)"});
 
+# The ready items' projects, each once, in the order its first ready item ranks, from queue_view's
+# object: the pools team-queue list reads, while the room fits, until one has a free tree.
+def queue_pool_order: reduce .ready[].project as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
+
 # team-queue list's object, team-queue/1, from the items and the inputs queue_room and
-# queue_findings take: {schema, room, ready, waiting, opened, unranked, problems, findings}.
-def queue_list($plan; $costs; $events; $registry_error; $today):
+# queue_findings take, the pools it names ([{project, full, says}]) after the room's line while it
+# fits: {schema, room, ready, waiting, opened, unranked, problems, findings}.
+def queue_list($plan; $costs; $events; $registry_error; $today; $full):
   ($events | by_task) as $tasks
   | queue_view as $view
-  | queue_room($plan; $costs; $tasks; $today) as $room
+  | (queue_room($plan; $costs; $tasks; $today)
+     | if .fits and $full != [] then .says += "; " + ([$full[].says] | join("; ")) else . end) as $room
   | queue_problems($registry_error) as $problems
   | {schema: "team-queue/1", room: $room,
      ready: [$view.ready[] | queue_list_item],
@@ -416,7 +487,7 @@ def queue_list($plan; $costs; $events; $registry_error; $today):
      opened: [$view.opened[] | queue_list_item],
      unranked: [$view.unranked[] | {file, problems}],
      problems: $problems,
-     findings: [queue_findings($room; $view; $problems; $tasks)]};
+     findings: [queue_findings($room; $view; $problems; $tasks; $full)]};
 
 # team-queue list's text from its object and queue_view's: the room's line, then the index's
 # sections, ending in a newline.

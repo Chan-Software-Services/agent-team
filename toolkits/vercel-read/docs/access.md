@@ -30,7 +30,8 @@ Two Vercel access tokens, each scoped to one project (Vercel's "Project" scope),
 The same 1Password item holds the Vercel team id (`team-id`) and the two project ids (`front-end-project-id`, `back-end-project-id`), which are not secret but stay out of this public repository.
 The toolkit holds only the references.
 `scripts/start-server.mjs` reads all five with `op read` when the session starts its MCP server, which raises one 1Password approval prompt on the PC; it then signs `op` out and serves from the same process, so the tokens exist only in that process's memory, never in an environment, a file, a transcript or a log, and any error text it writes or answers has each token replaced by `[redacted]`.
-It reads only in an ops launch: started in any other session, it exits 1 before it runs `op` (`servers/op-secret.mjs`).
+It reads only in an ops launch or in the assistant's read session (`bin/claude-assistant-read`): started in any other session, it exits 1 before it runs `op` (`servers/op-secret.mjs`).
+`team-worker` still gives the toolkit to the ops role alone; the read session is the assistant's own launch, one per production question of Daniel's.
 Before it serves, it checks that each token reaches its own project and is refused the other, and exits when either check fails.
 These are separate from GitHub's `VERCEL_TOKEN`, the Deploy workflow's, which is scoped to the team.
 
@@ -42,7 +43,7 @@ It could not reach the other project, the team's other resources or Daniel's acc
 
 What limits that here:
 
-- The token never reaches the agent: it lives only in the server process, which the ops session talks to over stdio, and an ops session has no shell, no web and no file access outside its worktree.
+- The token never reaches the agent: it lives only in the server process, which the ops session or the assistant's read session talks to over stdio, and neither has a shell, the web or file access outside its own directory.
 - The server's only outbound requests are the `GET`s above; no tool can name another path, method, project or host.
 - Every answer is built from allowed fields, never passed through.
 - Each token is scoped to one project, so one leak reaches one project; the launcher refuses a token that reaches the other project, as a team-scoped or full-account token would.

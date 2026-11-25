@@ -261,6 +261,7 @@ Task directory: `.scratch/task/` in the worktree (excluded from git), for your s
    Fix each finding the coordinator sends you on the branch and push; once they are fixed, or the coordinator says the review passed, go on.
 4. Run `/no-mistakes` with the gate's ci step skipped for the run (`no-mistakes axi run --skip ci --intent "<the intent>"`), so the run ends with outcome `passed` once its pr step has opened or updated the PR, and CI is the coordinator's wait, as step 7 says; never wait for `checks-passed`, and never abort a run to end it.
    Give it an intent that says what this PR changes, in words a reader of the repository can follow, with no task, ticket, phase or retro number (the task's goal is "rate-limit the applicant sign-in endpoints (per address and per IP, Mongo TTL counters, 429 with Retry-After), so Conventioner cannot be used to flood addresses with sign-in codes or to guess codes.": on a phase, this phase's part of it alone), under a Disclosure section put in its terms, since the gate drafts the PR's title and body from it.
+   An intent about a test under load says what the test shows, never a load for the gate to add: every agent of the gate reads `@CODE@/bin/lib/gate-rules.md`, which holds any load it adds to at most 4 busy CPU cores with a timeout.
    A step that parks with no finding you approve yourself, with no QUESTION, only when the park is one of these kinds, named by its id:
    - `review-coverage`: the review step parks on "review coverage is incomplete" alone, and the team review read every file it names at a head this branch contains: a head you or the builder before you sent as `DONE review-ready`, or one the coordinator names as reviewed, that `git merge-base --is-ancestor <that head> HEAD` passes for and whose `git diff --name-only origin/dev...<that head>` lists the file.
    Approve it with `no-mistakes axi respond --action approve`, write a build note in `.scratch/task/build-notes/` naming the run, the step, the park's id and what the gate said, and put the ids of the parks the run approved in its `DONE gate` line as `approved=<ids, comma-separated>`.
@@ -360,9 +361,11 @@ EOF
   refute_grep -F '"T14: value of goal"' "$TEAM_HOME/tasks/T14/brief-builder-deliver.md"
   refute_grep no-mistakes "$TEAM_HOME/tasks/T14/brief-builder-fix.md"
   refute_grep 'gh pr create' "$TEAM_HOME/tasks/T12/brief-builder-deliver.md"
-  # So do the review partials: a gated project's first review comes before its PR.
+  # So do the review partials, but with the PR logged and open a gated project's review is that
+  # PR's too; its review before the gate, with no PR, is the gated review test's.
   assert_contains "$(<"$TEAM_HOME/tasks/T14/brief-reviewer.md")" 'team-review-comment https://github.com/Chan-Software-Services/agent-team/pull/9'
-  refute_grep -e team-review -e '/pull/9' "$TEAM_HOME/tasks/T12/brief-reviewer.md"
+  assert_contains "$(<"$TEAM_HOME/tasks/T12/brief-reviewer.md")" 'team-review-comment https://github.com/Chan-Software-Services/Conventioner/pull/9'
+  refute_grep -e 'no PR yet' -e 'no-mistakes gate' "$TEAM_HOME/tasks/T12/brief-reviewer.md"
   assert_contains "$(<"$TEAM_HOME/tasks/T12/brief-rereview.md")" "the gate's own commits"
   refute_grep 'gate' "$TEAM_HOME/tasks/T14/brief-rereview.md"
 }
@@ -481,7 +484,7 @@ walk_brief() {
   walk_brief
   local brief=$TEAM_HOME/tasks/T12/brief.md
   grep -qF "\`$REPO_ROOT/bin/team-stack up\`, run with Bash \`run_in_background\` as a call of its own" "$brief"
-  grep -qF 'When `up` exits 75, the team has no room: send `T12 PAUSED <its reason line>`' "$brief"
+  grep -qF 'When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack'"'"'s network is made: send `T12 PAUSED <its reason line>`' "$brief"
   grep -qF '/toolkits/frontend/scripts/agent-chrome http://localhost:<port>/' "$brief"
   grep -qF 'a fixture account' "$brief"
   grep -qF '`127.0.0.1:5173`' "$brief"
@@ -531,7 +534,7 @@ walk_brief() {
   # The stack: its own, started and stopped by team-stack, and what a refusal means.
   grep -qF "\`$REPO_ROOT/bin/team-stack up\`, run with Bash \`run_in_background\` as a call of its own" "$brief"
   grep -qF 'never the primary stack' "$brief"
-  grep -qF 'When `up` exits 75, the team has no room: send `T12 PAUSED <its reason line>`' "$brief"
+  grep -qF 'When `up` exits 75, the team has no room, or a heavy run still holds the machine before a new stack'"'"'s network is made: send `T12 PAUSED <its reason line>`' "$brief"
   grep -qF "\`$REPO_ROOT/bin/team-stack stop\` once the tiles are taken" "$brief"
   # The tiles: where, numbered and captioned, fixture values only, posted by the allowed form.
   grep -qF 'Take the tiles into `.scratch/task/shots/`, numbered' "$brief"
@@ -641,6 +644,22 @@ EOF
   [[ $brief != *"no PR yet"* && $brief != *"no-mistakes gate"* && $brief != *"Post nothing"* && $brief != *'{{'* ]]
   # The brief's record names the PR it reviews.
   assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review-pr.json")" "$pr"
+}
+
+@test "a gated project's review made by hand while its PR is open, with no --set pr, is that PR's review" {
+  open_t12
+  branch_head T12 dev
+  local pr=https://github.com/Chan-Software-Services/Conventioner/pull/9 brief
+  event T12 pr "$(jq -cn --arg url "$pr" --arg h "$head" '{url: $url, head: $h}')"
+  run_bin -0 --separate-stderr team-brief T12 reviewer --name review --set head="$head" --set "checks=the checks"
+  brief=$(<"$output")
+  # The ledger's open PR is the one the brief reads, comments on and sets the status of.
+  assert_contains "$brief" "There is no wait on the PR's GitHub checks in a review: read, and deliver on \`$head\`"
+  assert_contains "$brief" "The comment on PR $pr is that file, posted with this exact command, the only comment your settings allow: \`$REPO_ROOT/bin/team-review-comment $pr .scratch/task/review.md\`"
+  assert_contains "$brief" "\`$REPO_ROOT/bin/team-review-status $pr $head <success|failure> \"<one line, at most 140 characters>\"\`."
+  assert_contains "$brief" "- Send \`T12 DONE pass $pr findings="
+  [[ $brief != *"no PR yet"* && $brief != *"no-mistakes gate"* && $brief != *"Post nothing"* && $brief != *'{{'* ]]
+  assert_equal "$(jq -r '.values.pr' "$TEAM_HOME/tasks/T12/brief-review.json")" "$pr"
 }
 
 @test "a direct-PR project's review reads the PR, comments on it and sets its status" {
@@ -1164,7 +1183,10 @@ EOF
   brief=$(<"$output")
   assert_contains "$brief" "No PR yet: reviewed at \`$r\`, now at the local head \`$h\`."
   assert_contains "$brief" "Sent back: the notes numbered 5 in \`.scratch/task/review.md\`"
-  assert_contains "$brief" "3. Every note sent back (5) is fixed at \`$h\`, and the diff holds nothing but those fixes and their tests."
+  assert_contains "$brief" "3. Every note sent back (5) is fixed at \`$h\`, and the diff holds nothing but those fixes, their tests and the claims check's sentence fixes."
+  assert_contains "$brief" "   A sentence fix changes a sentence in the PR body or the file the \`pr body:\` line of \`.scratch/task/claims-check.md\` names (the body as the builder wrote it, or the intent it is drafted from), or in a Markdown doc no session takes as its instructions (never a template, role prompt, skill, SOP, \`CLAUDE.md\` or \`AGENTS.md\`), that a finding of that report names and its \`## Answers\` line marks \`fixed\` or \`cut\`, in this round's report, whose \`head:\` is \`$h\` or a commit of \`git rev-list $r..$h\`: the report is the builder's list of them and the claims check's own evidence."
+  assert_contains "$brief" "   Read each against the code at \`$h\`: one that does not say what the code does is a new finding on its line."
+  assert_contains "$brief" "   When it changes more than that, a code file above all, its comments, docstrings and header included, this brief does not fit: send \`T12 BLOCKED not a notes-only fix: <what else changed>\` to \`coordinator\`."
   refute_grep -e team-review -e team-ci-wait -e '/pull/' -e '{{' "$output"
   # Once the PR exists, the re-review is the PR's.
   run_bin -0 --separate-stderr team-brief T12 verify --name verify-pr --set pr=https://github.com/Chan-Software-Services/Conventioner/pull/9 --set head="$head"
@@ -1215,7 +1237,7 @@ EOF
   assert_contains "$brief" "   If the gate rebased the branch, so \`$r\` is not an ancestor of \`$h\`, compare with \`git range-diff $r...$h\` instead."
 }
 
-@test "the verify brief re-reviews a notes-only fix from its diff alone, starting no wait on the checks" {
+@test "the verify brief re-reviews a notes fix from its diff alone, with the claims check's sentence fixes beside it, starting no wait on the checks" {
   reviewer_app off
   open_task T14 home feature feat/T14-team-tooling agent-team/.claude/worktrees/2 "the team's tooling"
   local pr=https://github.com/Chan-Software-Services/agent-team/pull/9
@@ -1269,9 +1291,11 @@ Name each listed dependency in `review.md` with its version; one `spec.md` does 
    Start no wait on the PR's GitHub checks: deliver on `def5678`, the head you read, since the coordinator's script waits on the checks of a pass, and the merge needs every one green.
 2. Review what changed since the last review, `git diff abc1234 def5678`, and the commit messages of `origin/main..def5678`.
    Read nothing else: not the rest of the PR, the spec's or the story's acceptance list, or the knowledge graph; run the UI check only when that diff touches a UI file and your session lists `ui-check`, on the states it touched and their siblings.
-   A round with no new commit (`abc1234` is `def5678`) edited only the PR body: read the body against the notes.
-3. Every note sent back (3 and 5) is fixed at `def5678`, and the builder's commits in that diff hold nothing but those fixes and their tests.
-   When they change more than the notes asked, this brief does not fit: send `T14 BLOCKED not a notes-only fix: <what else changed>` to `coordinator`, and write nothing to GitHub.
+   A round with no new commit (`abc1234` is `def5678`) edited only the PR body: read the body against the notes and step 3's sentence fixes.
+3. Every note sent back (3 and 5) is fixed at `def5678`, and the builder's commits in that diff hold nothing but those fixes, their tests and the claims check's sentence fixes.
+   A sentence fix changes a sentence in the PR body or the file the `pr body:` line of `.work/task/claims-check.md` names (the body as the builder wrote it, or the intent it is drafted from), or in a Markdown doc no session takes as its instructions (never a template, role prompt, skill, SOP, `CLAUDE.md` or `AGENTS.md`), that a finding of that report names and its `## Answers` line marks `fixed` or `cut`, in this round's report, whose `head:` is `def5678` or a commit of `git rev-list abc1234..def5678`: the report is the builder's list of them and the claims check's own evidence.
+   Read each against the code at `def5678`: one that does not say what the code does is a new finding on its line.
+   When they change more than that, a code file above all, its comments, docstrings and header included, this brief does not fit: send `T14 BLOCKED not a notes-only fix: <what else changed>` to `coordinator`, and write nothing to GitHub.
    Raise a new finding only on a line this diff adds or changes, so each new one's scope is `change`.
 
 ## Deliver

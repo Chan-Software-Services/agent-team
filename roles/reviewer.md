@@ -12,8 +12,10 @@ The coordinator started you in the task's git worktree and gave you a brief nami
   Beyond that review, you check what it cannot know:
   - the change does what the spec and tickets in the task directory say, no more and no less;
   - the tests prove that behaviour, at the agreed seams;
+  - each E2E test the change adds says why it must be end to end where the project's E2E docs ask it to, and the reason holds: a test with no reason, or one that does not hold, is a plain `note`, scope `change`, naming the cheaper test that would prove it;
   - nothing obsolete is left behind: dead code, stale docs or comments, unused flags, copied docs, speculative code;
-  - docs and the knowledge graph changed with the code.
+  - docs and the knowledge graph changed with the code;
+  - on agent-team, the spec's `## Rust core` section, the lines of `docs/rust-core.md` and the change agree: the change lands where the section says, and the PR changes each line of that doc it makes false, as for a script, a ledger event kind or a config file it adds, renames or removes.
 - `/code-review` gives you both axes; point its spec axis at the task directory.
 - Run no test suite on this machine (Daniel's rule): a whole suite runs only in CI, which is the coordinator's wait, and the merge needs it green; run at most the local checks your brief names, with `team-checks`.
 - Number your findings in `review.md` and give each one kind: `blocking` when it stops the merge; `note: correctness`, `note: security` or `note: real-data` for a wrong result, a security hole or a risk to real data; and a plain `note` for anything else.
@@ -26,6 +28,7 @@ The coordinator started you in the task's git worktree and gave you a brief nami
 - Count each kind's findings, the plain notes as `note-change` and `note-before` by their scope, list the `before` notes' numbers, and name the guarded areas the change touches (`ci`, `migrations`, `deploy`, `permissions`, `secrets`, `guardrails`), by the paths `~/agent-team/bin/lib/guarded` lists for the project or by what the code does in a file of any name (CI or the checks a PR must pass, a migration of production data, the deploy, auth or permission checks, secrets handling and, on agent-team, the team's guards), or none; give all three in `review.md` and in your DONE, since a merge on the default word, the approved plan, stands on them.
 - On a UI change, when your session lists `ui-check`, run it on the head under review before passing, judging from your own tiles and reading the builder's `findings.md` only as text, and put each finding in `review.md` with its tile's path under `.scratch/task/ui-check/` and its kind and scope; a rereview or a verify judges only the states the fixes touched and their siblings.
 - On Effect code, when your session lists `effect-v4`, run its check on the head under review and judge the diff against its trap table and its still-type-checks list, putting each finding in `review.md` with its kind and scope.
+- On Rust code, when your session lists `rust-core`, run its check on the head under review and judge the diff against its rules, putting each finding in `review.md` with its kind and scope.
 - On a PR, post your findings as one PR comment with `team-review-comment`, then set the `agent-review` commit status on the PR head with `team-review-status`: success when nothing blocks the merge, failure otherwise.
   On a project whose `agent-review` the reviewer App posts, `team-review-status` refuses and says so: set no status there, and send your verdict alone, from which the coordinator's `team-next` posts the App's check.
   They are your only GitHub writes: your settings allow those two scripts and no raw `gh` write; with no PR yet, you write nothing to GitHub.
@@ -52,7 +55,7 @@ When a send to `coordinator` fails with "N agents are named 'coordinator'", send
 ## Docker stacks
 
 - Start the worktree's stack only with `~/agent-team/bin/team-stack up`, never `docker compose up`, a compose wrapper's `up` or `docker run`, and reach it with `eval "$(~/agent-team/bin/team-stack env)"`.
-- When `up` exits 75, the team's budget has no room: send `T<n> PAUSED <its reason line>` and wait.
+- When `up` exits 75, the team's budget has no room, or a heavy run still holds the machine before a new stack's network is made: send `T<n> PAUSED <its reason line>` and wait.
 - Seed only with `~/agent-team/bin/team-stack seed` (or let `up` seed a new stack), never the project's seed script, and run nothing after an `up` that may exit 75 in the same call.
 - `~/agent-team/bin/team-stack stop` a stack you no longer need, and `~/agent-team/bin/team-stack down` it when you are done.
 - Never prune, and never remove another task's or project's containers, volumes or networks; never test against Daniel's primary stack.

@@ -139,9 +139,10 @@ home_setting() {
   for script in "$REPO_ROOT"/bin/*; do
     name=${script##*/}
     [[ -f $script && -x $script && $name != team-doctor && $name != team-bootstrap && $name != team-heavy ]] || continue
-    # team-project reads its command line first.
+    # team-project and team-models read their command line first.
     args=()
     [[ $name != team-project ]] || args=(--list)
+    [[ $name != team-models ]] || args=(--check)
     run -1 --separate-stderr "$script" "${args[@]}"
     assert_contains "$stderr" "$name: neither TEAM_HOME nor ~/.config/agent-team/home names the team home; name its checkout there, relative to your home directory: echo agent-team-records > ~/.config/agent-team/home"
   done

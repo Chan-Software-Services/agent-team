@@ -2,6 +2,7 @@
 # directories. tests/repo.bats checks that every tracked path matches it and none matches the
 # records (bin/lib/records), so a new path is listed in its PR.
 bin/**
+docs/**
 tests/**
 roles/**
 settings/**
@@ -18,6 +19,7 @@ SETUP.md
 LICENSE
 coordinator.settings.json
 assistant.settings.json
+assistant-read.settings.json
 .gitignore
 .shellcheckrc
 rust-toolchain.toml
@@ -25,3 +27,4 @@ Cargo.toml
 Cargo.lock
 clippy.toml
 deny.toml
+crates/**
