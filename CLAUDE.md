@@ -26,6 +26,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `confine-session`: writes a confined session's directory, `~/.config/agent-team/confine/<task>/<stem>/`, at its launch: `session.json`, its roots, and the program `bash`, its shell and shell prefix, and records its job tmp once it has an id.
     - `confine-shell`: what a session's program `bash` runs, as its shell (`-c ...`, Claude Code's `CLAUDE_CODE_SHELL`) and as its prefix (one line, `CLAUDE_CODE_SHELL_PREFIX`): both hand the session's file to `confine.py`, so no shell runs before the domain.
     - `confine.py`: the kernel layer, which enters a Landlock domain and runs its command there, so a remove or a rename of a directory entry succeeds only under its roots (`--root`, and those of `--session <file>`, read from that file alone), and runs it unconfined, saying so, with no Landlock.
+    - `context-mark`: the builders' context mark, a committed constant: the auto-compaction window every builder launches with, and the context at or past which a fix round goes to a fresh builder.
+    - `context-mark.sh`: the one Bash reader of `context-mark`, which `team-worker` and `team-next` take.
     - `data-check`: the one scan the CI's `data` job and the records' hook refuse with.
     - `delete_rules.py`: `command_rules.py`'s delete rows, refusing a recursive delete (`rm -r`, `find -delete`, `find -exec rm`) outside the worktree and the job's tmp, of either, its `.scratch/task` or what holds one, of a `.git`, an empty variable or no `find` start path, or of an unread path.
     - `doctor.d/`: `team-doctor`'s checks, one file each, which it sources in the order of their names (a new check is a new file, its number between its neighbours').

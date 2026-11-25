@@ -367,6 +367,15 @@ review_app_off() {
   rm -f "$CODE_CHECKOUT/bin/lib/review-app"
 }
 
+# context_mark_is <line>...: the bin/lib/context-mark of CODE_CHECKOUT, the test's own copy of the
+# code (code_checkout or copy_bin first), holds those lines under a comment, so run_bin reads that
+# mark. The shared hard link is replaced, never written through.
+context_mark_is() {
+  local mark=${CODE_CHECKOUT:?}/bin/lib/context-mark
+  rm -f "$mark"
+  printf '%s\n' "# a mark of the test's own" "$@" >"$mark"
+}
+
 # worker_login_on [<login>]: the worker login on for the scripts run_bin runs: CODE_CHECKOUT (a
 # copy of bin/ made here when the test made none) gets bin/lib/worker-login naming <login>
 # (default team-worker-bot), and the sandbox's HOME gets the login's file,

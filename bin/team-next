@@ -219,8 +219,9 @@
 # team-review-check command, the review staying logged, and a rerun posts it again, but one whose
 # check run was posted and whose token alone was not revoked is said as posted, with why. Once
 # the review and its done are logged, the last line is what is left for the coordinator, the
-# holder being the task's latest builder launch, under 250k while team-state reads its context
-# under 250,000 tokens or none, and gone when its session is not live. For a pass on a PR,
+# holder being the task's latest builder launch, under the context mark (`bin/lib/context-mark`,
+# 250,000 tokens today) while team-state reads its context under it or none, and gone when its
+# session is not live. For a pass on a PR,
 # whatever its checks show, the last line arms the checks wait and no
 # merge line is printed: "checks: arm team-next T<n> --ci with Bash run_in_background unless it
 # is already running: it waits on the checks of <url> at <short>, then prints the merge ask or
@@ -228,7 +229,7 @@
 # For a pass with no PR (a review-ready, a gated or Disclosure task's, or a later phase's whose
 # earlier PR GitHub says is merged), the message telling the holder to go on with its delivery.
 # For findings, or a pass that sent some back (which team-log logs as findings): the message for
-# the holder under 250k (its name, the findings sent back and the findings file the message names,
+# the holder under the mark (its name, the findings sent back and the findings file the message names,
 # for a pass the newest of review.md and rereview*.md in the holder's task directory, as
 # team-brief derives a round's, and that each is fixed as narrowly as it asks, a fix reaching
 # shapes it does not name a T<n> QUESTION first), else the T<n> STOW to send it (after recovering
@@ -278,7 +279,7 @@
 #                    others not), logs ci outcome=failed failed=<every failure's name, class,
 #                    kind, link and step>, reruns nothing, and prints the round's hand-off as a
 #                    findings round's: the message to fix "the failed checks <the PR's names> of
-#                    <short> in <the report>" for the holder under 250k, else its STOW, after
+#                    <short> in <the report>" for the holder under the mark, else its STOW, after
 #                    recovering it when gone, exit 0
 #                    with infrastructure and roll-up failures alone: reruns each never-started,
 #                    setup or stuck check (never a queued one, a roll-up or one of the PR's own)
@@ -328,7 +329,7 @@
 # merge: " and the merge line above for the reviewed head with no checks (its guarded areas, risky
 # reviews and before notes as they are), or, on a base with a merge queue (the pr part's queue),
 # which needs no catch-up, the merge line above alone, as for a PR up to date; else the
-# builder-merge-base brief for the holder under 250k, else a fresh builder, after the holder's STOW
+# builder-merge-base brief for the holder under the mark, else a fresh builder, after the holder's STOW
 # when it is live, with "conflicts on <files>" after the behind count for a conflict, or "(whether
 # the merge is clean is not known: <why>)" when the fetch or git fails. A PR the merge queue dropped
 # for a failure of its own on the trial merge that no pr event of its URL and no review of the task
@@ -389,11 +390,15 @@
 # It never posts to Discord, sends a message, merges, approves a plan or answers a question; its
 # writes to GitHub are the reviewer App's check at a verdict and --ci's reruns.
 # Refused, exit 1, before it reads or changes anything: a worker session (an AGENT_TEAM_ROLE but
-# coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers.
+# coordinator; worker_refusal in bin/lib/team.sh), in every form; --help still answers. Refused
+# the same way, before any message is read or any event logged: a context mark that is missing or
+# malformed (bin/lib/context-mark.sh's line), which every run reads once at its start.
 # Exit codes: 0 done, 1 refused, 2 a malformed command line; when a script it runs fails, that
 # script's own code, 75 (try again later) among them; --ci's ends as its table says.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/context-mark.sh
+source "$TEAM_LIB/context-mark.sh"
 why=$(worker_refusal "" "runs no team-next") && die "$why"
 
 bin=$(dirname "$TEAM_LIB")
@@ -464,6 +469,10 @@ else
   [[ -n ${message//[[:space:]]/} ]] || usage_error "missing the worker's message; $usage"
 fi
 
+# The context mark the fix round routes by (read_state), read before any message is read or any
+# event logged, so a rerun after a fix to the file logs nothing twice.
+mark=$(context_mark) || exit 1
+
 # A sibling script of this checkout, with the team home passed explicitly.
 sibling() {
   TEAM_HOME=$TEAM_HOME "$bin/$1" "${@:2}"
@@ -516,7 +525,7 @@ read_state() {
     + (map(select(.role == "builder")) | map(select(.session != $s)) + map(select(.session == $s)))) end' <<<"$state") || exit
   # In one jq run over the task's state: its PR (null when none); the builder who holds the
   # worktree's context, the task's latest builder launch (holder, false when none), its session,
-  # whether it holds it (live and under 250k: holds, else full or gone) and its context as
+  # whether it holds it (live and under the mark: holds, else full or gone) and its context as
   # "<context>k"; whether GitHub could not be read for the PR, its url, error and head; whether
   # that head is the reviewed one; the fix round's findings (sent), the reviewed head's first 8
   # characters, and the PR's facts for a merge base.
@@ -525,7 +534,7 @@ read_state() {
   json_vars --ledger pr='.pr | if (.state? // "") == "merged" then null else . end | tojson' holder='[.workers[] | select(.role == "builder")] | last | . != null' \
     session='[.workers[] | select(.role == "builder")] | last | .session | tostring' \
     holds='[.workers[] | select(.role == "builder")] | last
-      | if .live | not then "gone" elif (.context | type) == "number" and .context >= 250000 then "full" else "holds" end' \
+      | if .live | not then "gone" elif (.context | type) == "number" and .context >= $mark then "full" else "holds" end' \
     context='[.workers[] | select(.role == "builder")] | last
       | if .live | not then "gone" elif (.context | type) == "number" then "\(.context / 1000 | round)k" else "context unknown" end' \
     pr_error='.pr | objects | has("error")' pr_url='.pr | objects | .url | tostring' pr_reason='.pr | objects | .error | tostring' \
@@ -537,14 +546,14 @@ read_state() {
     queue='.pr | objects | .queue != null' \
     before='$review.before // [] | map(tostring)
       | if length < 2 then join("") else "\(.[:-1] | join(", ")) and \(.[-1])" end' \
-    -- --argjson review "$review" <<<"$state"
+    -- --argjson review "$review" --argjson mark "$mark" <<<"$state"
   [[ $holder == true ]] || die "$task has no builder launch, so no builder holds the review's work"
   who="$task-builder ($session, $context)"
   gone="$task-builder $session is gone: recover it (the recover-worker skill), then send it"
 }
 
 # round_line <what>: a fix round's hand-off, from read_state's variables, for findings sent back
-# or for the failed checks of a pass: the message to fix <what> for the holder under 250k, else
+# or for the failed checks of a pass: the message to fix <what> for the holder under the mark, else
 # the STOW to send it, after recovering it when gone.
 round_line() {
   local stow="$task STOW; its PAUSED stowed goes to team-next, which launches the round"

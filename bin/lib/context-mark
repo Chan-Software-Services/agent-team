@@ -1,0 +1,8 @@
+# The builders' context mark, in tokens: the auto-compaction window every builder launches with
+# (team-worker's --autocompact, as <tokens/1000>k) and the context at or past which team-next
+# gives a fix round to a fresh builder instead of the holder.
+# Claude Code compacts a builder about 32k under the window.
+# A whole number of tokens, a multiple of 1000 and at least 100000, on the one line below that is
+# neither empty nor a comment.
+# Read by bin/lib/context-mark.sh, for team-worker and team-next.
+tokens=250000

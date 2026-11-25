@@ -227,6 +227,8 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/lib/confine-session` | `team-platform-linux` | `platform` | |
 | `bin/lib/confine-shell` | `team-platform-linux` | `platform` | |
 | `bin/lib/confine.py` | `team-platform-linux` | `platform` | Landlock |
+| `bin/lib/context-mark` | `team-model` | `none` | Config: the builders' context mark, their auto-compaction window and the fix round's mark |
+| `bin/lib/context-mark.sh` | `team-model` | `none` | Its reader; retires with the bash |
 | `bin/lib/data-check` | `team-guard` | `none` | |
 | `bin/lib/delete_rules.py` | `team-guard` | `platform` | |
 | `bin/lib/doctor.d/` | `team-cli` | `platform`, `vcs` | One check per file |
