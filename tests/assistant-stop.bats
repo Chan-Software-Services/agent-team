@@ -10,7 +10,6 @@ load helpers/common
 setup() {
   sandbox
   export AGENT_TEAM_ROLE=assistant
-  export TEAM_CURRENT_NOW=2026-11-15T12:00:00Z
   stub_reply claude '[]'
 }
 
