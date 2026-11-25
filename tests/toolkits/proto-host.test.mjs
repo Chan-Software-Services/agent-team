@@ -381,7 +381,9 @@ describe("proto install", () => {
     const browsers = tempDir("browsers");
     const proto = protoSession(t, { env: { PROTO_INSTALLER: installer, PROTO_BROWSERS_PATH: browsers } });
     const installed = await proto.run(["install"]);
-    assert.deepEqual(installed, { status: 0, stdout: "proto: the pinned browsers are installed\n", stderr: "" });
+    // On Linux, WebKit's library step follows (proto-webkit-libs.test.mjs); with no WebKit here it has nothing to check.
+    const libraries = process.platform === "linux" ? "proto: WebKit's libraries resolve; nothing to place\n" : "";
+    assert.deepEqual(installed, { status: 0, stdout: `proto: the pinned browsers are installed\n${libraries}`, stderr: "" });
     assert.deepEqual(JSON.parse(readFileSync(join(dir, "call.json"), "utf8")), { args: ["install", "chromium", "firefox", "webkit"], browsers });
     const failed = await proto.run(["install"], { env: { INSTALLER_EXIT: "3" } });
     assert.deepEqual([failed.status, failed.stderr], [1, "proto: playwright-core's installer exited 3\n"]);

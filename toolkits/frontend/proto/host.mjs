@@ -37,6 +37,8 @@
 //   PROTO_RUNTIME_DIR       the runtime directory (guards.mjs)
 //   PROTO_BROWSERS_PATH     Playwright's browsers path, passed on as PLAYWRIGHT_BROWSERS_PATH,
 //                           so a test points an engine at an empty directory
+//   PROTO_LDD               the program WebKit's library check runs in place of ldd
+//                           (webkit-libs.mjs), so a test names a soname missing
 //   PROTO_TEST_SEAM=1       serve POST /v1/test/page
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, renameSync, rmSync, writeFileSync } from "node:fs";

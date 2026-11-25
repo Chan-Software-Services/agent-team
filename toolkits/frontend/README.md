@@ -72,6 +72,7 @@ It is for Daniel's own sessions alone: the CLI and the host refuse a team sessio
 At the laptop, in the project's checkout, with its dev server running:
 
 1. Once per machine, and after each Playwright bump: `~/agent-team/toolkits/frontend/scripts/proto install`, which fetches the pinned browsers into Playwright's cache (`~/.cache/ms-playwright`) with `playwright-core`'s own installer, never with `--with-deps` and never under sudo.
+   On Linux it then places the libraries WebKit's build lacks ("WebKit on Linux", below).
 2. `proto open` opens the project's URL in Chromium at `laptop`; `proto open http://localhost:5173/login --target firefox/phone` opens that page in Firefox at 390x844, scale 3, mobile and touch.
    With a window open, another `proto open` moves it: it opens the new URL and target, then closes the old window, which stays as it was when the new one fails.
    An engine or a size alone keeps the other (`--target webkit`, `--target tablet`).
@@ -92,6 +93,43 @@ The guards:
 - A host started from older code answers another protocol number, and every command names it with its fix (`proto stop`, then retry); a host that crashed leaves a stale socket, which the next `proto open` replaces with a new host, though its browser may outlive it until Daniel closes it.
 - `host.log` in the runtime directory holds the host's output, truncated at each start.
 
+## WebKit on Linux
+
+Playwright gives every Linux it does not know, Arch and EndeavourOS among them, its `ubuntu24.04-x64` WebKit build, which links four sonames such a machine may lack: `libicudata.so.74`, `libicui18n.so.74` and `libicuuc.so.74` (Ubuntu's `libicu74`) and `libxml2.so.2` (Ubuntu's `libxml2`).
+daniel-pc has ICU 78 and libxml2's `.so.16` instead, so that build will not start there (read on 2026-11-24).
+The fix needs no sudo: `proto install` places those libraries, taken from Ubuntu's own packages, in WebKit's own bundle and nowhere else.
+They go into each bundle's `sys/lib` (`minibrowser-gtk` for a headed window, `minibrowser-wpe` for a headless one, in Playwright's `webkit-<revision>` directory), since each bundle's `MiniBrowser` wrapper sets `LD_LIBRARY_PATH` to its own `lib` and `sys/lib`, dropping any a launch passes.
+
+What `proto install` does on Linux, after Playwright's installer (`proto/webkit-libs.mjs`):
+
+1. It runs the check, `ldd` over every executable and library in Playwright's eight WebKit directories, each with its bundle's `lib` and `sys/lib` on its library path, as the wrapper sets them; with nothing missing it says "WebKit's libraries resolve; nothing to place" and stops, as on Ubuntu 24.04.
+2. It takes the pinned packages of `proto/webkit-libs.json` that provide a missing soname, and fetches each `.deb` over HTTPS from `archive.ubuntu.com`'s pool, then, on any failure, from Launchpad's librarian, which keeps the superseded files the pool drops; a redirect is followed only to those hosts, and every file is held to its pinned SHA-256, whatever its source.
+3. It reads each package in Node alone, takes only the files the pins' `links` name (each soname and its real file), refuses a package with an entry path leaving its root or a soname link pointing out of `sys/lib`, and writes each real file, then its link, into both bundles' `sys/lib`, each as a temporary file renamed into place, so an install stopped half way or two at once leave every file whole.
+4. It runs the check again, and exits 1 naming any soname still missing, which no pin provides.
+
+WebKit's availability is that check, at every reading of it (`proto targets`, a switch or `proto open` to WebKit): when a library goes missing, WebKit is unavailable, "WebKit <version> lacks <sonames> on this machine; run `proto install`".
+It runs each time because Playwright's own check runs once per revision and never again.
+On macOS none of this runs: Playwright's Mac WebKit links the system's own frameworks.
+The placed libraries take Ubuntu's later security updates only at a refresh, which a Playwright bump brings; they load only in a browser the host keeps on localhost.
+
+What moves, what catches it and what fixes it:
+
+| What moves | What catches it | What fixes it |
+| - | - | - |
+| Playwright is upgraded (a new WebKit revision is a new directory, holding none of the placed files) | the launch check, naming the sonames and `proto install` | `proto install` |
+| `playwright-core`'s pin is bumped in a PR without new pins | the offline pin test in `tests/toolkits/proto-webkit-libs.test.mjs` fails CI | `proto install --refresh-pins` on daniel-pc, in that PR |
+| Playwright moves its fallback build to `ubuntu26.04` | the launch check names the new sonames; `proto install` says no pin provides them | `proto install --refresh-pins --series <codename>`, or nothing when Arch has them natively |
+| Ubuntu ships an update, so the pinned file leaves `archive.ubuntu.com`'s pool | nothing needs to: the Launchpad fallback serves it, by the same SHA-256 | none; the next refresh takes the update |
+| Arch drops a library WebKit uses, or Playwright reinstalls the revision over the placed files | the launch check, which runs every time | `proto install`, or a refresh with `--add <package>` |
+
+The upgrade's steps, on daniel-pc, in a worktree of this repository:
+
+1. Bump `playwright-core` in `servers/package.json` and `servers/package-lock.json`, then run `servers/install`.
+2. Run `toolkits/frontend/scripts/proto install --refresh-pins` from that worktree: it installs the browsers, reads `dists/<series>-updates/main/binary-amd64/Packages.gz` (else the release pocket's) for each pinned package's current version, file and SHA-256, takes a file only when `archive.ubuntu.com` and Launchpad both serve it with that SHA-256, places it, and, only once the check finds nothing missing, writes that worktree's `proto/webkit-libs.json` with the new versions, the installed `checkedFor` and today's `checked`.
+   When the check still names a soname, it writes nothing and names it: find its package (Playwright's dependency table for the build, or `packages.ubuntu.com`) and rerun with `--add <package>`; `--series <codename>` reads another Ubuntu release, when Playwright's fallback build moves.
+3. `proto targets` shows WebKit available, and a headed `proto open --target webkit/phone` renders the dev site.
+4. Commit both, the bump and the pins, in one PR, whose review reads the diff of versions and SHA-256s.
+
 ## Tests
 
 `tests/run toolkits` runs `tests/toolkits/frontend.test.mjs`: a headless Chrome stands in for the Agent Chrome, a local fixture page shaped like Conventioner's dev build stands in for the app, and the test opens DevTools and selects an element in the Elements panel exactly as a click there does (`tests/toolkits/helpers/chrome.mjs`).
@@ -105,6 +143,9 @@ The bats suite checks the coordinator's side with `ui-capture` stubbed: `tests/t
 `tests/toolkits/proto-host.test.mjs` runs the prototyping host through `scripts/proto` as Daniel does, headless (`PROTO_HEADLESS=1`), in a runtime directory of each test's own, against fixture pages on 127.0.0.1 (`tests/toolkits/helpers/proto.mjs`): a window in each engine at a preset, a device and a free size, read back from the page itself, moved by a second open in the same host, and every refusal and failure above.
 It runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
 The host's seams, read only from the environment, are in `proto/host.mjs`'s header.
+
+`tests/toolkits/proto-webkit-libs.test.mjs` checks "WebKit on Linux": the pins and their layout, the offline pin test against `servers/package.json` and `playwright-core`'s `browsers.json`, the runner's pin test (the sonames `ldd` resolves to a file `dpkg -S` names as a pinned package's are exactly the pins' `links`, which runs where `dpkg` is, CI's runner, and fails there rather than skips), WebKit's availability through `proto targets` and `proto open`, and `proto install`'s placing and `--refresh-pins`, from fixture `.deb`s and indexes served on 127.0.0.1, with a stub `ldd`; no test fetches from Ubuntu or Launchpad.
+Its seams, `PROTO_LDD`, `PROTO_WEBKIT_LIBS_SOURCES` and `PROTO_WEBKIT_LIBS_FILE`, are in `proto/webkit-libs.mjs`'s header.
 
 `evals/` holds the skill's eval cases (`claude plugin eval ~/agent-team/toolkits/frontend`): it fires on a fix about the selected element and leaves a general front-end question alone.
 Every `frontend` call there is answered by an agent mock of a Conventioner page (`evals/mocks/frontend/_server.md`), whose `_tools.json` is the server's own `tools/list`, which the toolkit test keeps in step.

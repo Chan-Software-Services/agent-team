@@ -8,7 +8,9 @@
 //                              "stylesheet-walk" (firefox, webkit), navigationGuard true
 //   driver.version()           the pinned build's version (playwright-core's browsers.json)
 //   driver.available()         { available: true }, or { available: false, reason } when the
-//                              pinned build's executable is missing, naming `proto install`
+//                              pinned build's executable is missing, or, for WebKit on Linux, when
+//                              webkit-libs.mjs's check names a soname it lacks (run at every
+//                              reading), each naming `proto install`
 //   const window = await driver.open(url, target, storageState)
 //                              a browser launched headed (headless with `headless`) with one
 //                              context at the target (its viewport, scale, mobile and touch, and
@@ -22,7 +24,9 @@
 // Chromium runs Playwright's "chromium" channel, the full browser headed or headless, so one
 // executable serves both and its availability is that file's.
 import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import { pinnedBrowsers, playwright } from "./playwright.mjs";
+import { checkWebkitLibs, lacksLine } from "./webkit-libs.mjs";
 
 const loadTimeoutMs = 30_000;
 
@@ -42,8 +46,16 @@ export function launchedDriver(name, { headless = false } = {}) {
     version,
     available() {
       const path = type().executablePath();
-      if (existsSync(path)) return { available: true };
-      return { available: false, reason: `${name} ${version()} is not installed (no ${path}); run \`proto install\`` };
+      if (!existsSync(path)) return { available: false, reason: `${name} ${version()} is not installed (no ${path}); run \`proto install\`` };
+      if (name !== "webkit") return { available: true };
+      // Every time: Playwright checks the libraries once per revision, so one lost later would show
+      // only as a loader error at launch.
+      try {
+        const missing = checkWebkitLibs(dirname(path));
+        return missing.length ? { available: false, reason: lacksLine(version(), missing) } : { available: true };
+      } catch (error) {
+        return { available: false, reason: error.message };
+      }
     },
     async open(url, target, storageState) {
       const browser = await type().launch({ headless, timeout: loadTimeoutMs, ...(name === "chromium" ? { channel: "chromium" } : {}) });
