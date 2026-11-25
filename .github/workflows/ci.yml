@@ -22,13 +22,13 @@
 # (TESTS_FILE_MINUTES), so tests/run names a hung file before the job is stopped.
 # Every job runs on Linux: CI runs no macOS job, so no PR waits on GitHub's macOS runners. The
 # toolkits job runs the toolkits' servers over stdio against a throwaway MongoDB in Docker, and the
-# rust toolkit's hooks on the pinned toolchain's cargo. The rust job checks the Cargo workspace
-# (tests/run rust) only when a change reaches a Rust path, on a pull request and a trial commit,
-# passing at once otherwise, and whole by hand. The data job refuses what the PR adds that the
-# public repository never takes: a secret (gitleaks, over its commits) and a real email address or
-# an image (bin/lib/data-check code, over what it adds), naming paths and kinds, never a value. The
-# zizmor job audits the workflows offline and fails on any finding, each accepted one ignored on
-# its own line with its audit and reason.
+# rust toolkit's post-edit hook and eval cases on the pinned toolchain's cargo. The rust job checks
+# the Cargo workspace (tests/run rust) only when a change reaches a Rust path, on a pull request and
+# a trial commit, passing at once otherwise, and whole by hand. The data job refuses what the PR
+# adds that the public repository never takes: a secret (gitleaks, over its commits) and a real
+# email address or an image (bin/lib/data-check code, over what it adds), naming paths and kinds,
+# never a value. The zizmor job audits the workflows offline and fails on any finding, each accepted
+# one ignored on its own line with its audit and reason.
 name: CI
 
 on:

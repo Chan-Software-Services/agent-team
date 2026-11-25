@@ -68,7 +68,7 @@ No MCP server: none of the read-only crate-docs servers is worth a pin (each bui
 
 What a Rust build renames or removes outside the worktree, which `bin/lib/confine-roots` holds as roots of every confined session (this toolkit changes no confinement file):
 
-- `~/.cargo`: `cargo` renames and removes entries under `registry/` and `git/` when it fetches or unpacks a crate, and takes `~/.cargo/.package-cache` as its lock; and `cargo-deny`, the check's last step, fetches the RustSec advisory database, a git repository, into `~/.cargo/advisory-dbs/` on every run, under its `db.lock`.
+- `~/.cargo`: `cargo` renames and removes entries under `registry/` and `git/` when it fetches or unpacks a crate, and takes `~/.cargo/.package-cache` as its lock; and `cargo-deny check`, the check's fifth step, fetches the RustSec advisory database, a git repository, into `~/.cargo/advisory-dbs/` on every run, under its `db.lock`.
 - `~/.cache/sccache`: the sccache server, which the first compile of any session starts, writes and evicts cache entries by rename and removal; a build of registry crates writes there, and the workspace's own crates, which it does not cache, never do.
 - `~/.local/state/agent-team`: `team-capacity jobs`, which `tests/run rust` runs for its job count.
 - Not `~/.rustup`: a worker never installs a toolchain, and a confined launch sets `RUSTUP_AUTO_INSTALL=0`, so a missing toolchain fails instead of downloading.
