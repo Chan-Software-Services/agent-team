@@ -31,7 +31,7 @@ No MCP server: none of the read-only crate-docs servers is worth a pin (each bui
   It appends to the file `CLAUDE_ENV_FILE` names `export CARGO_BUILD_JOBS=<n>` and `export NEXTEST_TEST_THREADS=<n>`, `<n>` being `TEAM_JOBS` when set, else what `team-capacity jobs` of the toolkit's own checkout prints, and no such line when neither gives a whole number above 0, a failure of `team-capacity` included, which leaves `cargo`'s default, the CPU count; and `export RUSTC_WRAPPER=sccache` when `sccache` is on `PATH`.
   It prints one banner line, `rust: toolchain <channel>; cargo jobs <n|default>; sccache <on|off>; end on tests/run rust (skill rust-core)`, and always exits 0.
   The count is read once per session: a level change after it reaches `tests/run rust`, which reads it per run, and not the session's own `cargo` calls.
-  Not yet proven live: that Claude Code gives a plugin's `SessionStart` hook `CLAUDE_ENV_FILE` in a worker session; where it does not, the banner and `tests/run rust` still hold the budget for the check.
+  Claude Code gives a plugin's `SessionStart` hook `CLAUDE_ENV_FILE` in a worker session: a builder launched with the toolkit on home-pc (2026-11-25) had the banner in its start and `CARGO_BUILD_JOBS=10`, `NEXTEST_TEST_THREADS=10` and `RUSTC_WRAPPER=sccache` in its Bash, though `CLAUDE_ENV_FILE` itself is not set there.
 - The post-edit hook `scripts/rust-diagnostics.mjs` (`PostToolUse` on `Edit|Write|MultiEdit`, run with Node, timeout 25 s), whose header is its full contract.
   It acts on a file whose name ends in `.rs`, whose real path lies under the session's directory (`CLAUDE_PROJECT_DIR`, else the event's `cwd`, which a `cd` moves) and outside any `target` directory, and that has a `Cargo.toml` with a `[package]` table in some directory from its own up to the session's; for any other file it starts nothing and prints nothing.
   It runs `cargo clippy --message-format=json --all-targets --offline` in that package's directory, in a process group of its own, with `RUSTC_WRAPPER=sccache` when unset and `sccache` is on `PATH`, and `RUSTUP_AUTO_INSTALL=0` when unset, so it never reaches the network for a crate or a toolchain; it takes no `--locked`, since a builder may be changing a manifest.
@@ -44,33 +44,39 @@ No MCP server: none of the read-only crate-docs servers is worth a pin (each bui
 
 - The skill's description, about 50 tokens, in the starting context of every session that lists the toolkit.
 - When invoked, its body: 4.5 kB, about 1.1k tokens.
-- The `LSP` tool's definition in the starting context: not measured; `team-load-check --context --toolkit rust` measures what each role starts with.
-- Each `LSP` call costs what it returns: not measured.
-- rust-analyzer's memory per session and its first index's time on the workspace: not measured.
+- The `LSP` tool is deferred in a worker session: its name alone is in the starting context, and its definition, about 2 kB (about 500 tokens), only once the session loads it with `ToolSearch`; `team-load-check --context --toolkit rust` measures what each role starts with.
+- Each `LSP` call costs what it returns: on the skeleton crate, a `documentSymbol` of `crates/team-core/src/lib.rs` returned its three symbols in 150 characters, and a `goToDefinition` one line of 42.
+- rust-analyzer starts on the session's first `LSP` call, never before, and that call's answer came within 4 s of its start on the skeleton workspace.
+  Its resident memory after the call was 566 MB, steady over the next three minutes, with two `rust-analyzer-proc-macro-srv` processes of about 26 MB each: about 620 MB per session that calls `LSP`, so three builders at once hold about 1.9 GB for it.
+- The sccache server: one per machine, about 15 MB resident after a build of six registry crates.
 - The session-start hook's banner, one line of about 30 tokens, in every session that lists the toolkit.
-- The post-edit hook's context: at most 4,000 characters per edit of a Rust file, nothing for a clean package; its time per edit on the workspace: not measured (a warm `cargo clippy` after an edit took 1.6 s on a 40-crate tree).
+- The post-edit hook's context: at most 4,000 characters per edit of a Rust file, nothing for a clean package; its time per edit on the skeleton crate, by hand on the event an `Edit` gives: 89 to 103 ms cold (a fresh target directory) and 66 to 73 ms warm, and an in-session `Edit` adding an `unwrap()` brought its `unwrap_used` finding back with the edit.
 
 ## The build cache
 
 - The shared cache is sccache's, in its default directory `~/.cache/sccache` with its default 10 GiB limit: one per machine, outside every worktree and task directory, shared with Daniel's own builds, and needing no setting anywhere.
 - What it shares: the dependencies from the registry, whose source paths under `~/.cargo` are the same in every worktree.
   What it does not: the workspace's own crates (their paths differ per worktree, and Cargo compiles them incrementally, which sccache does not cache) and anything linked (binaries, proc macros).
-  Its hit rate across two worktrees is not measured.
+  Measured with a probe crate of six registry dependencies (`bitflags`, `either`, `itoa`, `memchr`, `regex-syntax`, `smallvec`), built in two directories at different paths, each with its own target directory: the first build took 1.0 s with 6 cache misses, the second 0.2 s with 6 hits of its 6 compiles (100 %), its 6 other calls (the probe crate itself, compiled incrementally, and cargo's queries of `rustc`) being ones sccache does not cache.
+- The one sccache server runs in the systemd scope of whichever session compiles first, a `cargo` call of its rust-analyzer included, so stopping that task's sessions ends the server every session on the machine shares; no build was seen to fail on it.
 - Each worktree keeps its own `target/` directory, never a shared one: with one shared target directory, a second `cargo` waits on "Blocking waiting for file lock on build directory", so builders would run one at a time.
   Nothing cleans a `target/` directory: a worktree's is under 1 GiB for the skeleton, and step 2 decides a cleanup once sizes are real.
 - `cargo`'s jobs are held to the team's CPU budget by one rule in three places: `tests/run rust` per run (`TEAM_JOBS`, else `team-capacity jobs` with a team home, else `cargo`'s default), a session's own `cargo` calls, and rust-analyzer's, fixed at `CARGO_BUILD_JOBS=2` in its `env`.
-- A build takes no heavy-run lock: a cold build of a 40-crate dependency tree took 6.7 s at 3 jobs and 95 MB of disk.
+- A build takes no heavy-run lock: a cold build of a 40-crate dependency tree took 6.7 s at 3 jobs and 95 MB of disk, and `tests/run rust` on the skeleton workspace takes 1.8 s of wall time, its six steps passing.
   The rule for later steps: when `tests/run rust` passes 5 minutes of wall time or 4 GiB of peak memory on home-pc, the task that sees it puts it under `team-heavy`.
 
 ## Confinement roots
 
-What a Rust build writes outside the worktree, for T302's confinement roots (`bin/lib/confine-roots`), which this toolkit does not change:
+What a Rust build renames or removes outside the worktree, which `bin/lib/confine-roots` holds as roots of every confined session (this toolkit changes no confinement file):
 
-- `~/.cargo`: `cargo` renames and removes entries under `registry/` and `git/` when it fetches or unpacks a crate, and takes `~/.cargo/.package-cache` as its lock.
-- `~/.cache/sccache`: the sccache server, which the first compile of any session starts, writes and evicts cache entries by rename and removal.
-- Not `~/.rustup`: a worker never installs a toolchain, and `RUSTUP_AUTO_INSTALL=0` is what T302 would set for a confined worker, so a missing toolchain fails instead of downloading.
+- `~/.cargo`: `cargo` renames and removes entries under `registry/` and `git/` when it fetches or unpacks a crate, and takes `~/.cargo/.package-cache` as its lock; and `cargo-deny check`, the check's fifth step, fetches the RustSec advisory database, a git repository, into `~/.cargo/advisory-dbs/` on every run, under its `db.lock`.
+- `~/.cache/sccache`: the sccache server, which the first compile of any session starts, writes and evicts cache entries by rename and removal; a build of registry crates writes there, and the workspace's own crates, which it does not cache, never do.
+- `~/.local/state/agent-team`: `team-capacity jobs`, which `tests/run rust` runs for its job count.
+- Not `~/.rustup`: a worker never installs a toolchain, and a confined launch sets `RUSTUP_AUTO_INSTALL=0`, so a missing toolchain fails instead of downloading.
 
-Not yet checked against a live build's renames and removals.
+Checked against a live build on home-pc (2026-11-25), with no `strace` installed, by the directories whose entries changed (`find -newer` on a stamp file) under `~/.cargo`, `~/.cache`, `~/.rustup`, `~/.config` and `~/.local` across one `tests/run rust` of the skeleton: `~/.cargo/advisory-dbs/` (its objects and refs) and `~/.local/state/agent-team/capacity`, nothing in `~/.rustup` or `~/.cache/sccache`.
+A probe crate's `cargo fetch` and build of six registry crates then changed `~/.cargo/registry/` and 13 directories of `~/.cache/sccache`.
+`/tmp` and the rest of the home directory were not searched, since a recursive read of either reaches the session records; `find -newer` sees an entry made, renamed or removed alike, so it shows where a build writes, not which of those it does.
 
 ## Tests
 

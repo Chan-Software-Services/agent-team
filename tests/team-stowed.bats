@@ -15,6 +15,8 @@ setup() {
 
 @test "it records the stow, logs it and says no auto-compaction is held" {
   local before after
+  # The real clock, which the stow is recorded at outside the tests.
+  unset TEAM_COMPACT_HOLD_NOW
   before=$(date +%s)
   CLAUDE_CODE_SESSION_ID=$session run_bin -0 --separate-stderr team-stowed
   after=$(date +%s)
