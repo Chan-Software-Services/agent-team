@@ -18,7 +18,7 @@
 # ticket worktree, else null, live when claude agents --json lists its session, with that
 # session's status, state and context, the tokens its latest main-conversation reply read, from
 # its transcript, or null, and the brief its launch logged, or null), last_event, pending_asks,
-# waiting, parks, stowing, walk, rehome_failures, checks_wait, pr, and progress;
+# waiting, parks, stowing, walk, interview, rehome_failures, checks_wait, pr, and progress;
 # pending_asks are the asks no later event settles, an answered or a
 # merge-preapproved with the ask's id or a merge-approved whose url its text names.
 # progress is where the task is: tickets (done, the ticket numbers with a ticket-done, each once,
@@ -109,6 +109,10 @@
 # on that port was just reseeded (team-ui --reseeded), and null while it is off or the task is
 # closed; the text form says "walk on since <ts>" while it is on, then " in its interview thread"
 # for such a walk, before the parks, and nothing of it while it is off.
+# interview is the task's interview under way (team-thread T<n> --interview), {since, thread}, the
+# ts and thread of its latest interview-thread, while no planner's done and no plan-approved is
+# logged after it, whatever the phase, else null (qc_interview in bin/lib/ledger.jq, the rule
+# team-inbox lists an interview by); the text form says nothing of it.
 # rehome_failures are the worktrees team-resume could not re-home and nothing has made since: the
 # latest rehome-failed of each project and ticket, as {project, branch, machine, reason, since},
 # with ticket for a ticket worktree's, until a later opened, worktree-added, worktree-moved,

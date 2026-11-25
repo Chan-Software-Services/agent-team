@@ -171,7 +171,7 @@ review_facts() {
     thread: "1563",
     last_event: {ts: "2026-10-22T02:00:00Z", task: "T14", event: "answered", id: "q1", answer: "team-state"},
     pending_asks: [{id: "q2", text: "Ship it?", ts: "2026-10-22T02:00:00Z"}],
-    waiting: null, parks: [], stowing: null, walk: null, rehome_failures: [], checks_wait: null, pr: null,
+    waiting: null, parks: [], stowing: null, walk: null, interview: null, rehome_failures: [], checks_wait: null, pr: null,
     progress: {tickets: {done: [], total: 0, graph: null}, on: [],
       reviews: {count: 0, verdict: null, head: null, sent_back: null}}}')"
   assert_equal "$(stub_calls gh)" ""
@@ -945,6 +945,34 @@ EOF
       parks: [{id: "waiting-2", kind: "waiting", cause: "ask", on: "Daniel", reason: "ask naming", since: "2026-10-22T02:15:00Z", passed: true}]}
     | state_line'
   assert_equal "$output" "T14 proj feature building | no live worker | parks: waiting-2 ask since 2026-10-22T02:15:00Z: ask naming (passed by a launch)"
+}
+
+@test "interview is the task's interview under way, by interview_under_way's rule, whatever the phase" {
+  # The assistant's walk re-checks an interview item by it, where phase reads planning after a
+  # planner's done, blocked or held while a park stands, and building on a small task.
+  # A: a feature task's interview ends at the planner's done, while the phase stays planning.
+  ledger_line '{ts: "2026-10-22T02:00:00Z", task: "T14", event: "opened", project: "proj", path: "feature",
+    type: "feat", title: "The tooling", branch: "feat/T14-tooling", base: "main", worktree: "/w/1"}'
+  ledger_line '{ts: "2026-10-22T02:10:00Z", task: "T14", event: "interview-thread", discord_thread: "1563000000000000001"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '[.phase, .interview]' <<<"$output")" '["planning",{"since":"2026-10-22T02:10:00Z","thread":"1563000000000000001"}]'
+  event T14 done '{role: "planner"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '[.phase, .interview]' <<<"$output")" '["planning",null]'
+  # B: an interview under way stands while a blocked park does, and ends at a plan-approved.
+  ledger_line '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "interview-thread", discord_thread: "1563000000000000002"}'
+  event T14 blocked '{reason: "a denied push"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '[.phase, .interview.thread]' <<<"$output")" '["blocked","1563000000000000002"]'
+  event T14 plan-approved '{by: "Daniel"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .interview <<<"$output")" null
+  # C: a small task opens in building, and its interview stands there.
+  ledger_line '{ts: "2026-10-22T04:00:00Z", task: "T15", event: "opened", project: "proj", path: "small",
+    type: "fix", title: "A fix", branch: "fix/T15-fix", base: "main", worktree: "/w/2"}'
+  ledger_line '{ts: "2026-10-22T04:10:00Z", task: "T15", event: "interview-thread", discord_thread: "1563000000000000003"}'
+  run_bin -0 team-state T15 --json
+  assert_equal "$(jq -c '[.phase, .interview.thread]' <<<"$output")" '["building","1563000000000000003"]'
 }
 
 @test "a walk that is on shows with its start, before any waiting part, until it is off or the task closes" {

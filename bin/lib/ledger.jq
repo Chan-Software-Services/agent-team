@@ -926,6 +926,14 @@ def rehome_failures:
 # The index of the task's latest event of $kind, or -1 when it has none.
 def latest_index($kind): [to_entries[] | select(.value.event == $kind) | .key] | last // -1;
 
+# The task's interview under way: {since, thread}, the ts and discord_thread of its latest
+# interview-thread, while no planner's done and no plan-approved is logged after it, else null,
+# whatever the task's phase. Read by task_state and interview_under_way.
+def qc_interview:
+  latest_index("interview-thread") as $i
+  | if $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not)
+    then .[$i] | {since: .ts, thread: (.discord_thread | tostring)} else null end;
+
 # The index of the task's latest stowed, or -1 when it has none.
 def latest_stowed: latest_index("stowed");
 
@@ -1750,7 +1758,7 @@ def task_state($sessions; $home):
      thread: (map(select(.event == "thread") | .discord_thread) | last),
      workers: $workers, last_event: last, pending_asks: ($state | lifecycle_pending_asks),
      waiting: ($state | lifecycle_waiting), parks: ($state | lifecycle_parks), stowing: ($state | lifecycle_stowing), walk: qc_walk,
-     rehome_failures: rehome_failures, checks_wait: checks_wait, pr: null,
+     interview: qc_interview, rehome_failures: rehome_failures, checks_wait: checks_wait, pr: null,
      progress: progress($workers)};
 
 # A task's state (team-state's JSON) as one line of text, each live worker's context in thousands
@@ -2666,10 +2674,8 @@ def default_may_hold: by_task | any(.[]; is_open and phase == "awaiting-merge" a
 # The following defs serve team-inbox, a task's events as an array, then every ledger event as one.
 
 # Whether the task's latest interview thread still holds an interview: no planner's done and no
-# plan-approved logged after its interview-thread.
-def interview_under_way:
-  latest_index("interview-thread") as $i
-  | $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not);
+# plan-approved logged after its interview-thread (qc_interview).
+def interview_under_way: qc_interview != null;
 
 # Whether the event is a merge-approved naming the PR $pr (one of task_prs) at its head: its url is
 # the PR's, a trailing slash aside, and its head the PR's, or none, as a legacy line.

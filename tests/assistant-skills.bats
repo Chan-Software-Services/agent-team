@@ -80,7 +80,13 @@ code_spans() {
   grep -qF "one hand-off per message of Daniel's: a message answering items of two tasks is one hand-off" "$skill"
   grep -qF "A hand-off's body leaves out every item whose answer is one of those words" "$skill"
   grep -qF 'closes the items of both lists whose condition holds' "$skill"
-  grep -qF "for an interview, while its \`phase\` is still \`planning\`, with no plan approved since" "$skill"
+  # An interview is re-checked by team-state's interview, interview_under_way's rule, never by its
+  # phase, which stays planning after a planner's done and reads blocked or held under a park.
+  grep -qF 'for an interview, while its `interview` is not null' "$skill"
+  if grep -nF '`planning`' "$skill"; then
+    echo "the skill re-checks an interview by its phase" >&2
+    return 1
+  fi
   # A PR is re-checked by when its latest word was given, never by merge_approved, which stays true
   # once any word is given, though a review since asks for it again.
   if grep -nF merge_approved "$skill"; then
