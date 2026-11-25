@@ -375,6 +375,10 @@ The config in `bin/lib/` is in the library's table above; the rest, with the tea
 | `settings/*.json` | the code | stays | `platform` | Workers' Claude Code settings, with `team-guard`'s hooks |
 | `coordinator.settings.json`, `assistant.settings.json` | the code | stays | `platform` | |
 | `rust-toolchain.toml` | the code | the workspace | `none` | |
+| `Cargo.toml` | the code | the workspace | `none` | The virtual workspace: its members under `crates/`, its shared package keys and lints |
+| `Cargo.lock` | the code | the workspace | `none` | Committed; `tests/run rust` builds with `--locked` |
+| `clippy.toml` | the code | the workspace | `none` | Where a test may unwrap, expect and panic |
+| `deny.toml` | the code | the workspace | `none` | The dependency policy `tests/run rust` holds the workspace to with `cargo-deny` |
 | `.github/workflows/*.yml` | the code | stays | `vcs` | |
 | `toolkits/*/.mcp.json`, `mcp-roles.json`, `hooks/hooks.json` | the code | stays | `platform` | |
 | `~/.no-mistakes/` config | the machine | `team-cli` | `none` | The gate's, read and set by `gate-config.awk` |
