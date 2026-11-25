@@ -203,6 +203,14 @@ sandbox() {
   printf 'MemTotal:       %s kB\nMemFree:         1048576 kB\nMemAvailable:   %s kB\n' $((32 * 1024 * 1024)) \
     $((24 * 1024 * 1024)) >"$TEAM_MEMINFO"
 
+  # The scripts' clock seams stand at one instant, 2026-11-15T12:00:00Z, so no fixture date (a
+  # review date, an until, an age, a queue item's after:) falls due on the real clock:
+  # team-current's, team-sweep's, the compact hold's, in epoch seconds as compact-hold.sh reads it,
+  # and team-queue's day. A test of the real clock unsets one; tests/repo.bats holds that every
+  # TEAM_*_NOW and TEAM_*_TODAY seam of bin/ is here.
+  export TEAM_CURRENT_NOW=2026-11-15T12:00:00Z TEAM_SWEEP_NOW=2026-11-15T12:00:00Z
+  export TEAM_COMPACT_HOLD_NOW=1794744000 TEAM_QUEUE_TODAY=2026-11-15
+
   # git reads only the sandbox's config: user.name "Team Test", user.email
   # team-test@example.invalid, init.defaultBranch main and advice.detachedHead false, written as
   # the file four `git config --global` calls would write.
