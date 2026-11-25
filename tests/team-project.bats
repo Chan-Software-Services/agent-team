@@ -704,59 +704,27 @@ TOML
   assert_equal "$(jq length <<<"$output")" 4
 }
 
-@test "models is optional, defaults to none, and maps a worker role to a model alias" {
-  run_bin -0 team-project alpha models
-  assert_equal "$(jq -c . <<<"$output")" '{}'
-  run_bin -0 team-project alpha
-  assert_equal "$(jq -c .models <<<"$output")" '{}'
-  sed -i 's|^toolkits = \[\]$|toolkits = []\nmodels = { reviewer = "sonnet", builder = "claude-sonnet-5-5" }|' "$TEAM_HOME/projects.toml"
-  run_bin -0 team-project --check
-  run_bin -0 team-project beta models
-  assert_equal "$(jq -c . <<<"$output")" '{"reviewer":"sonnet","builder":"claude-sonnet-5-5"}'
-  run_bin -0 team-project beta models.reviewer
-  assert_equal "$output" "sonnet"
-  run_bin -0 team-project --find models.reviewer sonnet
-  assert_equal "$output" $'alpha\nbeta'
-
-  registry <<'TOML'
-[alpha]
-repo = "owner/alpha"
-path = "alpha"
-base = "main"
-delivery = "direct-pr"
-merge_method = "merge"
-required_checks = []
-models = "sonnet"
-task_dir = ".scratch/task"
-docs = []
-toolkits = []
-pool = { provider = "git", slots = ["alpha/1"] }
-
-[beta]
-repo = "owner/beta"
-path = "beta"
-base = "main"
-delivery = "direct-pr"
-merge_method = "merge"
-required_checks = []
-models = { ops = "sonnet", coordinator = "sonnet", tester = "sonnet", planner = 5, builder = "", reviewer = "--sonnet x" }
-task_dir = ".scratch/task"
-docs = []
-toolkits = []
-pool = { provider = "git", slots = ["beta/1"] }
-TOML
+@test "--check refuses models as moved to the team home's models.toml, and every command with it" {
+  sed -i 's|^toolkits = \[\]$|toolkits = []\nmodels = { reviewer = "sonnet" }|' "$TEAM_HOME/projects.toml"
   run_bin -1 --separate-stderr team-project --check
-  local expected
-  for expected in \
-    "alpha.models: must be a table of role to model" \
-    "beta.models: 'ops' always runs on the default model" \
-    "beta.models: 'coordinator' is not a worker role; one of planner, builder, reviewer" \
-    "beta.models: 'tester' is not a worker role; one of planner, builder, reviewer" \
-    "beta.models.planner: must be a string" \
-    "beta.models.builder: '' is not a model alias or name" \
-    "beta.models.reviewer: '--sonnet x' is not a model alias or name"; do
-    assert_contains "$stderr" "$expected"
-  done
+  assert_contains "$stderr" "alpha.models: moved to the team home's models.toml (sops/models.md)"
+  assert_contains "$stderr" "beta.models: moved to the team home's models.toml (sops/models.md)"
+  [[ $stderr != *"unknown key"* ]]
+  run_bin -1 --separate-stderr team-project alpha
+  assert_contains "$stderr" "alpha.models: moved to the team home's models.toml (sops/models.md)"
+  run_bin -1 --separate-stderr team-project --find models.reviewer sonnet
+  assert_contains "$stderr" "beta.models: moved to the team home's models.toml (sops/models.md)"
+  # An empty table is refused as much: the key itself is retired.
+  sed -i 's|^models = .*$|models = {}|' "$TEAM_HOME/projects.toml"
+  run_bin -1 --separate-stderr team-project --check
+  assert_contains "$stderr" "alpha.models: moved to the team home's models.toml (sops/models.md)"
+  sed -i '/^models = /d' "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project --check
+  run_bin -0 team-project alpha
+  assert_equal "$(jq 'has("models")' <<<"$output")" false
+  run_bin -1 --separate-stderr team-project alpha models
+  assert_contains "$stderr" "alpha has no key 'models'; alpha has: "
+  [[ $stderr != *models,* && $stderr != *", models"* ]]
 }
 
 @test "visibility is optional, public by default, and public or private" {

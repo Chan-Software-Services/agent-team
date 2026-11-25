@@ -5,11 +5,13 @@
 ledger.jsonl
 level.jsonl
 drills.jsonl
+sessions.jsonl
 waiting.md
 waiting.json
 manual-steps.md
 assistant/**
 projects.toml
+models.toml
 tasks/**
 projects/**
 memory/**

@@ -99,6 +99,19 @@ no_land_call() {
   assert_contains "$stderr" "  test failed on the trial merge as infrastructure"
   assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
   [[ $stderr != *builder-merge-base* ]]
+  # A required roll-up not listed while its shards waited for runners is infrastructure too: no
+  # team-doctor, merge_group trigger or ruleset step.
+  merge_again
+  queue_rule
+  land dequeued "the checks timed out" \
+    '[{"name": "e2e shard 1/2", "class": "infrastructure", "kind": "queued", "link": "https://github.com/owner/proj/actions/runs/1/job/3", "step": null},
+      {"name": "e2e", "class": "infrastructure", "kind": "missing", "link": null, "step": null}]'
+  run_bin -1 --separate-stderr team-merge T14
+  assert_contains "$stderr" "  e2e shard 1/2 failed on the trial merge as infrastructure: https://github.com/owner/proj/actions/runs/1/job/3"
+  assert_contains "$stderr" "  e2e was not reported on the trial merge while a workflow run there was still open, as infrastructure
+"
+  assert_contains "$stderr" "  run team-merge T14 again once what dropped it is fixed"
+  [[ $stderr != *team-doctor* && $stderr != *merge_group* && $stderr != *ruleset* && $stderr != *builder-merge-base* ]]
 }
 
 @test "a PR the queue dropped for a check its base's rules require that never reported on the trial commit names the rules step, never the merge-base brief, even beside a failure of its own" {
@@ -635,6 +648,33 @@ SH
   sed -i 's/^merge_method = "merge"$/merge_method = "squash"/' "$TEAM_HOME/projects.toml"
   refused "dev merges through its merge queue, which the team lands only with merge_method merge, not proj's squash"
   no_land_call
+}
+
+@test "on a base with a queue, a required check missing on a head behind its base names team-catch-up, but not with agent-review missing or a head up to date" {
+  with_queue
+  step="run team-catch-up T14, which merges dev into the PR so the check runs on it"
+  checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}, {"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'
+  echo 3 >"$gh_dir/behind_by"
+  refused "required check test is missing on the head, which is 3 commits behind dev: $step"
+  no_land_call
+  echo 1 >"$gh_dir/behind_by"
+  refused "required check test is missing on the head, which is 1 commit behind dev: $step"
+  # agent-review no merge's run brings, so team-catch-up refuses a head lacking it: no step there.
+  checks '[{"name": "test", "bucket": "pass", "state": "SUCCESS"}, {"name": "lint", "bucket": "pass", "state": "SUCCESS"}]'
+  refused "required check agent-review is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
+  # Nor beside it: with agent-review missing too, team-catch-up refuses the head all the same.
+  checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}]'
+  refused "required check test is missing on the head" "required check agent-review is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
+  # A head that holds its base, or whose compare cannot be read, gets no step.
+  checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"}, {"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'
+  echo 0 >"$gh_dir/behind_by"
+  refused "required check test is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
+  rm "$gh_dir/behind_by"
+  refused "required check test is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
 }
 
 @test "a queue GitHub cannot be asked about is refused, nothing logged" {

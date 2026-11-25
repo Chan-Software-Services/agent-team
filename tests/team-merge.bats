@@ -594,6 +594,10 @@ proj_moved() {
   checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"},
     {"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'
   refused "required check test is missing on the head"
+  # On a base with no queue, a head behind its base gets no catch-up step: that is the queue's alone.
+  echo 3 >"$gh_dir/behind_by"
+  refused "required check test is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
   # agent-review is required by the branch's protection, which gh pr checks --required cannot
   # show before it reports.
   checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"},

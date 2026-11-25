@@ -28,11 +28,14 @@
 # session that quotes the uuid is kept. Refuses, deleting nothing, when no <task>-ops session is listed, when one has
 # no full uuid, or when claude rm fails. Prints each path it deleted as "deleted <path>", then
 # "ended <task>-ops (<id>)". An MCP log it cannot read is named on stderr and kept, and it fails
-# once it has deleted the rest.
+# once it has deleted the rest. The stop, the removal and the deletion are purge_sessions's, in
+# bin/lib/session-purge.sh.
 # An assistant session is refused it, one of the coordinator's acts (assistant_refusal in
 # bin/lib/team.sh, beside command-guard's assistant-acts row); its --help still answers.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+# shellcheck source=bin/lib/session-purge.sh
+source "$TEAM_LIB/session-purge.sh"
 why=$(assistant_refusal "runs no team-ops-end") && die "$why"
 
 [[ $# -eq 1 ]] || usage_error "usage: team-ops-end <task>"
@@ -40,76 +43,14 @@ task=$1
 [[ $task =~ ^T[0-9]+$ ]] || usage_error "task must look like T<n>, got '$task'"
 name=$task-ops
 
-sessions=$(claude agents --json --all | jq -ce 'select(type == "array")' 2>/dev/null) ||
-  die "cannot read the session list (claude agents --json --all)"
-# One line per session: its id, full uuid and working directory, split by the unit separator.
-mapfile -t found < <(jq -r --arg name "$name" '.[] | select(.name == $name)
-  | [.id, .sessionId // "", .cwd // ""] | join("\u001f")' <<<"$sessions")
-[[ ${#found[@]} -gt 0 ]] || die "no session named $name is listed"
-
-# Every session must resolve to its full uuid before anything is stopped or deleted.
-uuid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-for entry in "${found[@]}"; do
-  IFS=$'\x1f' read -r id uuid cwd <<<"$entry"
-  [[ $uuid =~ $uuid_re && $uuid == "$id"* ]] || die "cannot resolve the full session uuid of $name ($id); nothing deleted"
-done
-
-config=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
-cache=$(claude_cache_dir)
-
-# own_mcp_logs <uuid>: sets session_logs to the files of every project's mcp-logs-*/ directory under the
-# cache with a JSON line whose sessionId is the uuid. grep finds the files that hold the uuid at
-# all, and jq keeps those whose own lines name it. A file either cannot read is named on stderr and
-# kept, and the end fails once everything else is deleted, since the session is removed by then.
-unread_logs=0
-own_mcp_logs() {
-  local dir log_dirs=() file found_logs status=0
-  session_logs=()
-  for dir in "$cache"/*/mcp-logs-*/; do
-    [[ -d $dir && ! -L ${dir%/} ]] && log_dirs+=("${dir%/}")
-  done
-  ((${#log_dirs[@]})) || return 0
-  found_logs=$(team_mktemp)
-  grep -rlZF -- "$1" "${log_dirs[@]}" >"$found_logs" || status=$?
-  ((status < 2)) || unread_logs=1
-  while IFS= read -r -d '' file; do
-    [[ -f $file && ! -L $file ]] || continue
-    status=0
-    jq -nRe --arg u "$1" 'any(inputs | fromjson? | objects | .sessionId; . == $u)' "$file" >/dev/null || status=$?
-    if ((status == 0)); then
-      session_logs+=("$file")
-    elif ((status != 1)); then
-      unread_logs=1
-    fi
-  done <"$found_logs"
-  team_tmp_rm "$found_logs"
-}
-
-for entry in "${found[@]}"; do
-  IFS=$'\x1f' read -r id uuid cwd <<<"$entry"
-  # A session that already finished has nothing to stop.
-  claude stop "$id" >/dev/null 2>&1 || true
-  claude rm "$id" >/dev/null || die "claude rm $id failed; its transcript is kept"
-  while IFS= read -r -d '' path; do
-    rm -rf -- "$path"
-    echo "deleted $path"
-  done < <(find "$config/projects" -mindepth 2 -maxdepth 2 \( -name "$uuid.jsonl" -o -name "$uuid" \) -print0 2>/dev/null)
-  own_mcp_logs "$uuid"
-  for path in "${session_logs[@]}"; do
-    rm -f -- "$path"
-    echo "deleted $path"
-  done
-  for path in "$config/session-env/$uuid" "$config/file-history/$uuid"; do
-    if [[ -e $path || -L $path ]]; then
-      rm -rf -- "$path"
-      echo "deleted $path"
-    fi
-  done
+purge_sessions "$name"
+for i in "${!PURGED_IDS[@]}"; do
+  cwd=${PURGED_CWDS[i]}
   answer=$cwd/.scratch/answer.md
   if [[ $cwd == /* && -f $answer ]]; then
     rm -f -- "$answer"
     echo "deleted $answer"
   fi
-  echo "ended $name ($id)"
+  echo "ended $name (${PURGED_IDS[i]})"
 done
-((unread_logs == 0)) || die "an MCP log above could not be read and is kept; delete it by hand if it is the session's"
+((PURGED_UNREAD_LOGS == 0)) || die "an MCP log above could not be read and is kept; delete it by hand if it is the session's"
