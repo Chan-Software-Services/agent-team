@@ -39,7 +39,21 @@
 //                      <size>..." and its controls are disabled; a failed one leaves its error
 //                      there, which the window's next navigation clears.
 //   POST /v1/reload    { target, url } once the window's page has reloaded; 400 with no window
-//   POST /v1/stop      { stopped: true }, then it closes its windows, removes the socket and the
+//   POST /v1/capture   { outDir, url?, engines?, sizes?, selector?, fullPage?, project? } ->
+//                      { rows: [{ target, file } or { target, error }], index }: the page taken
+//                      at every target asked in headless browsers of its own (capture.mjs),
+//                      never in the window, which keeps its engine, size and page meanwhile.
+//                      The URL defaults to the window's page now, else the project's url; the
+//                      engines and sizes to the project's matrix (`project` as open takes it,
+//                      else the window's), else every launched engine at the five presets; each
+//                      row carries the window's localhost cookies and localStorage, read in the
+//                      window's queue as the capture's turn comes, or none with no window.
+//                      `outDir` must be absolute and new or empty, and is made at once; a body
+//                      that is bad (agent-chrome among the engines: "the Agent Chrome is
+//                      Daniel's window; a capture uses launched engines") is refused 400 and
+//                      writes nothing, and a row that fails fails alone, its error on it.
+//                      Captures run one at a time, on a queue of their own beside the window's
+////   POST /v1/stop      { stopped: true }, then it closes its windows, removes the socket and the
 //                      token, and exits 0; SIGTERM, SIGINT and SIGHUP do the same
 //   POST /v1/test/page { action, url? } (PROTO_TEST_SEAM=1 only; 404 without it):
 //                      "metrics" -> the window page's innerWidth, innerHeight, devicePixelRatio,
@@ -68,8 +82,8 @@
 // while the host runs on; `proto open` opens a new one.
 // An error answers { error: "<one line>" }: 400 a bad body, target or URL (one off localhost is
 // refused before anything opens), 401, 404, 503 an engine unavailable or failing to start or
-// load, with its reason; 409 a switch while another runs. Window operations run one at a time,
-// in the order they came.
+// load, with its reason; 409 a switch while another runs, or a capture into a directory another
+// capture is writing. Window operations run one at a time, in the order they came.
 // `protocol` is 1; a client refuses a host that answers another.
 //
 // It refuses to run in a team session (AGENT_TEAM_ROLE set), before anything is read.
@@ -90,6 +104,7 @@ import { catalogue, checkProject, defaultTarget, launchedEngines, readProject, r
 import { protocol } from "./client.mjs";
 import { checkLocalUrl, checkRuntimeDir, refuseTeamSession, runtimeDir, runtimePaths } from "./guards.mjs";
 import { agentChromeDriver, defaultAgentChromeUrl } from "./agent-chrome.mjs";
+import { planCapture, prepareOutDir, runCapture } from "./capture.mjs";
 import { firstLine, launchedDriver } from "./launched.mjs";
 
 refuseTeamSession();
@@ -140,6 +155,17 @@ const queued = (operation) => {
   const run = queue.then(operation);
   queue = run.catch(() => {});
   return run;
+};
+
+// Captures, one at a time on a queue of their own beside the window's, the output directories
+// of those queued or running, and the browser of the one running, which stop closes.
+let captureQueue = Promise.resolve();
+const capturing = new Set();
+let captureBrowser = null;
+const track = (browser) => {
+  captureBrowser = browser;
+  // Launched as the host stops: closed at once, so the capture's rows left fail and it ends.
+  if (browser && stopping) browser.close().catch(() => {});
 };
 
 const windowAnswer = (window) => ({
@@ -384,6 +410,40 @@ const reload = () => queued(async () => {
   return { target: targetText(current.target), url: current.handle.url() };
 });
 
+// A capture (capture.mjs): checked at once, its directory made, then run in its turn with the
+// window's login read in the window's queue, so a switch under way ends first.
+async function capture(body) {
+  checkBody(body, ["outDir", "url", "engines", "sizes", "selector", "fullPage", "project"]);
+  const project = readRequestProject(body.project);
+  let plan;
+  try {
+    plan = planCapture(body, project);
+  } catch (error) {
+    throw new Refusal(400, error.message);
+  }
+  let url = plan.url;
+  if (url === undefined) {
+    try {
+      url = checkLocalUrl(current ? current.handle.url() : project.url);
+    } catch (error) {
+      throw new Refusal(400, `the window's page is not one proto captures: ${error.message}`);
+    }
+  }
+  if (capturing.has(plan.outDir)) throw new Refusal(409, `another capture is writing ${plan.outDir}`);
+  try {
+    prepareOutDir(plan.outDir);
+  } catch (error) {
+    throw new Refusal(400, error.message);
+  }
+  capturing.add(plan.outDir);
+  const run = captureQueue.then(async () => {
+    const storageState = await queued(async () => (current ? current.handle.storageState().catch(() => undefined) : undefined));
+    return runCapture(plan, { url, storageState, drivers, track });
+  });
+  captureQueue = run.catch(() => {});
+  return run.finally(() => capturing.delete(plan.outDir));
+}
+
 const testActions = ["metrics", "navigate", "close-browser", "popup", "send"];
 
 async function testPage(body) {
@@ -420,8 +480,11 @@ async function testToolbar(body) {
 async function stop() {
   if (stopping) return;
   stopping = true;
-  // The queue first, so an open under way ends before its window is closed.
+  // The queue first, so an open under way ends before its window is closed; a capture's browser
+  // is closed, so its rows left fail and it ends.
+  await captureBrowser?.close().catch(() => {});
   await queue;
+  await captureQueue;
   if (current) await current.handle.close().catch(() => {});
   current = null;
   server.close();
@@ -439,6 +502,7 @@ const routes = {
   },
   "POST /v1/open": open,
   "POST /v1/target": switchTarget,
+  "POST /v1/capture": capture,
   "POST /v1/reload": async (body) => {
     checkBody(body, []);
     return reload();

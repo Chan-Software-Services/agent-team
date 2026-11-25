@@ -5,6 +5,8 @@
 //
 // Usage: proto open [<url>] [--target <engine>/<size>]
 //        proto set <engine>/<size> | proto set <engine> | proto set <size>
+//        proto capture [--url <url>] [--engine <engine>]... [--size <size>]... [--selector <css>]
+//                      [--full-page] [--out <dir>]
 //        proto status | proto targets | proto stop
 //        proto install [--refresh-pins [--series <codename>] [--add <package>]...]
 //   open     starts the host when none runs and opens the window, or moves the one open to the
@@ -19,6 +21,22 @@
 //            context of the same browser, carrying them the same way; a new width and height
 //            alone resize the window in place, keeping the page as it is. A switch that fails
 //            leaves the window as it was. Refused with no window open: run `proto open`
+//   capture  starts the host when none runs and takes the page at every target asked, each in a
+//            headless browser of its own, never in the window, which keeps its engine, size and
+//            page: one PNG per target and an index, matrix.md, in a new directory, by default
+//            <checkout>/.scratch/ui/matrix-<UTC YYYYMMDD-HHMMSS>/ of the working directory's git
+//            checkout (outside one, --out is required; --out must be absolute and new or empty).
+//            The URL defaults to the window's page, else the project's url; the engines (each
+//            --engine, chromium, firefox or webkit, never agent-chrome) and the sizes (each
+//            --size) to the project's matrix, else every launched engine at the five presets.
+//            Each page carries the window's localhost cookies and localStorage (none with no
+//            window), loads (30 s), and is taken as its viewport, its full page (--full-page) or
+//            the first element matching --selector once visible (10 s). The files are
+//            <engine>-<size>.png, the size lowered with any other run than letters, digits, "@"
+//            and "." as "-" (webkit-phone.png, chromium-iphone-15.png, firefox-1024x768@2.png).
+//            Prints "proto: <target>: <file>" or "proto: <target>: <error>" per target (an
+//            unavailable engine's "unavailable: <reason>"), each failing alone, then
+//            "proto: index: <matrix.md>"; exits 0 when one target was captured, else 1
 //   status   the host's pid and the window's target and URL, or "proto: no host running"
 //   targets  starts the host when none runs; the engines, each with its version, availability
 //            or the reason it is unavailable, and capabilities, then the sizes with their metrics
@@ -75,10 +93,11 @@ refuseTeamSession();
 
 const { catalogue, readProject, resolveTarget, sizeText } = await import("../proto/catalogue.mjs");
 const { connect } = await import("../proto/client.mjs");
+const { defaultOutDir } = await import("../proto/capture.mjs");
 const { checkLocalUrl } = await import("../proto/guards.mjs");
 const { installerPath } = await import("../proto/playwright.mjs");
 
-const usage = "usage: proto open [<url>] [--target <engine>/<size>] | set <engine>/<size> | status | targets | stop | install [--refresh-pins [--series <codename>] [--add <package>]...]";
+const usage = "usage: proto open [<url>] [--target <engine>/<size>] | set <engine>/<size> | capture [--url <url>] [--engine <engine>]... [--size <size>]... [--selector <css>] [--full-page] [--out <dir>] | status | targets | stop | install [--refresh-pins [--series <codename>] [--add <package>]...]";
 const fail = (reason, status = 1) => {
   process.stderr.write(`proto: ${reason}\n`);
   process.exit(status);
@@ -130,6 +149,38 @@ async function set(args) {
   if (!host) fail("no window is open; run `proto open`");
   const window = await host.request("POST", "/v1/target", { target: args[0] }, { timeoutMs: 90_000 });
   say(`${window.engine} ${window.version} at ${window.size} (${sizeText(window)}) on ${window.url}`);
+}
+
+async function capture(args) {
+  const body = {};
+  const engines = [];
+  const sizes = [];
+  for (let i = 0; i < args.length; i++) {
+    const value = i + 1 < args.length ? args[i + 1] : undefined;
+    if (args[i] === "--full-page") body.fullPage = true;
+    else if (value === undefined) fail(usage, 2);
+    else if (args[i] === "--url" && body.url === undefined) body.url = args[++i];
+    else if (args[i] === "--engine") engines.push(args[++i]);
+    else if (args[i] === "--size") sizes.push(args[++i]);
+    else if (args[i] === "--selector" && body.selector === undefined) body.selector = args[++i];
+    else if (args[i] === "--out" && body.outDir === undefined) body.outDir = args[++i];
+    else fail(usage, 2);
+  }
+  if (engines.length) body.engines = engines;
+  if (sizes.length) body.sizes = sizes;
+  const root = checkout();
+  if (body.outDir === undefined) {
+    if (root === null) fail("outside a git checkout, proto capture needs --out <an absolute directory>");
+    body.outDir = defaultOutDir(root);
+  }
+  // Checked here too, so a URL off localhost is refused before a host starts.
+  if (body.url !== undefined) body.url = checkLocalUrl(body.url);
+  const settings = readProject(root);
+  const host = await connect({ start: true });
+  const { rows, index } = await host.request("POST", "/v1/capture", { ...body, project: { file: settings.file, settings: settings.settings } }, { timeoutMs: 600_000 });
+  for (const row of rows) say(`${row.target}: ${row.file ?? row.error}`);
+  say(`index: ${index}`);
+  if (!rows.some((row) => row.file)) fail(`no target was captured; see ${index}`);
 }
 
 async function status() {
@@ -198,7 +249,7 @@ async function install(args) {
 
 const [command, ...args] = process.argv.slice(2);
 if (command === "--help" || command === "-h") help();
-const commands = { open, set, status, targets, stop, install };
+const commands = { open, set, capture, status, targets, stop, install };
 const simple = new Set(["status", "targets", "stop"]);
 if (!Object.hasOwn(commands, command)) fail(usage, 2);
 if (simple.has(command) && args.length) fail(usage, 2);

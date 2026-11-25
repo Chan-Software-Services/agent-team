@@ -34,6 +34,8 @@
 //                         between documents in a switch) is read again; fails the test, naming
 //                         `why` and the last answer, after 20 s
 //   pngSize(file)         a PNG's { width, height }, from its header
+//   pngPixel(file, x, y)  the [red, green, blue] of one pixel of a PNG of 8-bit RGB or RGBA, as
+//                         Playwright writes one, its image data inflated and unfiltered
 //   browsersWithout(name) a browsers directory for PROTO_BROWSERS_PATH holding a link to every
 //                         entry of Playwright's browsers path (PROTO_BROWSERS_PATH when the test
 //                         runs with one, else Playwright's default cache) but engine `name`'s, so
@@ -45,6 +47,7 @@ import { request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { inflateSync } from "node:zlib";
 import { repoRoot, tempDir } from "./mcp.mjs";
 import { owned, ownedPid } from "./process.mjs";
 
@@ -173,6 +176,47 @@ export function pngSize(file) {
   const bytes = readFileSync(file);
   assert.equal(bytes.subarray(1, 4).toString("latin1"), "PNG", `${file} is not a PNG`);
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+// The paeth predictor of PNG's filter type 4.
+const paeth = (a, b, c) => {
+  const p = a + b - c;
+  const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - b), Math.abs(p - c)];
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+};
+
+export function pngPixel(file, x, y) {
+  const bytes = readFileSync(file);
+  const { width, height } = pngSize(file);
+  const [depth, type, interlace] = [bytes[24], bytes[25], bytes[28]];
+  assert.ok(depth === 8 && (type === 2 || type === 6) && interlace === 0, `${file}: only 8-bit RGB or RGBA, not interlaced, is read (depth ${depth}, type ${type}, interlace ${interlace})`);
+  assert.ok(x >= 0 && x < width && y >= 0 && y < height, `${file}: (${x}, ${y}) is outside its ${width}x${height}`);
+  const chunks = [];
+  for (let at = 8; at < bytes.length;) {
+    const length = bytes.readUInt32BE(at);
+    const kind = bytes.subarray(at + 4, at + 8).toString("latin1");
+    if (kind === "IDAT") chunks.push(bytes.subarray(at + 8, at + 8 + length));
+    if (kind === "IEND") break;
+    at += 12 + length;
+  }
+  const data = inflateSync(Buffer.concat(chunks));
+  const channels = type === 6 ? 4 : 3;
+  const stride = width * channels;
+  let previous = Buffer.alloc(stride);
+  let row;
+  for (let line = 0; line <= y; line++) {
+    const filter = data[line * (stride + 1)];
+    row = Buffer.from(data.subarray(line * (stride + 1) + 1, (line + 1) * (stride + 1)));
+    for (let i = 0; i < stride; i++) {
+      const left = i >= channels ? row[i - channels] : 0;
+      const up = previous[i];
+      const corner = i >= channels ? previous[i - channels] : 0;
+      const add = [0, left, up, (left + up) >> 1, paeth(left, up, corner)][filter];
+      row[i] = (row[i] + add) & 0xff;
+    }
+    previous = row;
+  }
+  return [...row.subarray(x * channels, x * channels + 3)];
 }
 
 // Playwright's browsers path, as playwright-core's registry finds it.

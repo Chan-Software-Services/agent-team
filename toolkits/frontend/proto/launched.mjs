@@ -11,6 +11,9 @@
 //                              pinned build's executable is missing, or, for WebKit on Linux, when
 //                              webkit-libs.mjs's check names a soname it lacks (run at every
 //                              reading), each naming `proto install`
+//   await driver.launch({ headless })   a browser of the engine, launched headed or headless
+//                              (the driver's own setting by default), as open launches one; the
+//                              capture (capture.mjs) launches its own headless
 //   const window = await driver.open(url, target, storageState, hooks)
 //                              a browser launched headed (headless with `headless`) with one
 //                              window in it, as window.reopen makes one; on any failure the
@@ -50,6 +53,12 @@
 //   window.close()             closes the window's context, and its browser when no other
 //                              context is left in it, its process exited when it resolves
 //
+//   contextOptions(target, storageState)   the options of a context at the target: its
+//                              viewport, scale, mobile and touch flags, a device's user agent, and
+//                              the storage state when one is given
+//   await guardContext(context, onBlocked)  the localhost guard below on the context, calling
+//                              onBlocked(url) for each main-frame navigation it blocks
+//
 // The localhost guard: a route on each context takes every request off localhost (guards.mjs's
 // isLocalUrl) and answers a main-frame navigation 204, which leaves the page where it was in
 // every engine (an abort shows Chromium's error page in its place), and lets any other request,
@@ -73,6 +82,7 @@ export const firstLine = (error) => String(error?.message ?? error).split("\n")[
 export function launchedDriver(name, { headless = false } = {}) {
   const type = () => playwright()[name];
   const version = () => pinnedBrowsers().find((browser) => browser.name === name).browserVersion;
+  const launch = ({ headless: launchHeadless = headless } = {}) => type().launch({ headless: launchHeadless, timeout: loadTimeoutMs, ...(name === "chromium" ? { channel: "chromium" } : {}) });
   return {
     name,
     capabilities: {
@@ -95,8 +105,9 @@ export function launchedDriver(name, { headless = false } = {}) {
         return { available: false, reason: error.message };
       }
     },
+    launch,
     async open(url, target, storageState, hooks) {
-      const browser = await type().launch({ headless, timeout: loadTimeoutMs, ...(name === "chromium" ? { channel: "chromium" } : {}) });
+      const browser = await launch();
       try {
         return await openWindow(browser, url, target, storageState, hooks);
       } catch (error) {
@@ -107,31 +118,37 @@ export function launchedDriver(name, { headless = false } = {}) {
   };
 }
 
+export const contextOptions = (target, storageState) => ({
+  viewport: { width: target.width, height: target.height },
+  deviceScaleFactor: target.scale,
+  isMobile: target.mobile,
+  hasTouch: target.touch,
+  ...(target.userAgent ? { userAgent: target.userAgent } : {}),
+  ...(storageState ? { storageState } : {}),
+});
+
+export const guardContext = (context, onBlocked) => context.route((address) => !isLocalUrl(address.href), async (route) => {
+  const request = route.request();
+  let mainFrame = false;
+  try {
+    mainFrame = request.isNavigationRequest() && request.frame().parentFrame() === null;
+  } catch {
+    // A service worker's request has no frame.
+  }
+  if (!mainFrame) return route.continue();
+  onBlocked(request.url());
+  return route.fulfill({ status: 204 });
+});
+
 async function openWindow(browser, url, target, storageState, hooks = {}) {
-  const context = await browser.newContext({
-    viewport: { width: target.width, height: target.height },
-    deviceScaleFactor: target.scale,
-    isMobile: target.mobile,
-    hasTouch: target.touch,
-    ...(target.userAgent ? { userAgent: target.userAgent } : {}),
-    ...(storageState ? { storageState } : {}),
-  });
+  const context = await browser.newContext(contextOptions(target, storageState));
   const blockedWaiters = new Set();
   let page = null;
   try {
     await installOverlay(context, () => page, hooks.onMessage);
-    await context.route((address) => !isLocalUrl(address.href), async (route) => {
-      const request = route.request();
-      let mainFrame = false;
-      try {
-        mainFrame = request.isNavigationRequest() && request.frame().parentFrame() === null;
-      } catch {
-        // A service worker's request has no frame.
-      }
-      if (!mainFrame) return route.continue();
-      hooks.onBlocked?.(request.url());
-      for (const resolve of blockedWaiters) resolve(request.url());
-      return route.fulfill({ status: 204 });
+    await guardContext(context, (address) => {
+      hooks.onBlocked?.(address);
+      for (const resolve of blockedWaiters) resolve(address);
     });
     page = await context.newPage();
     await page.goto(url, { waitUntil: "load", timeout: loadTimeoutMs });
