@@ -1974,6 +1974,10 @@ assert_no_answer_logged() {
     --from-message 'T7 DONE .scratch/task/notes.md' --from T7-builder --relay 1564000000000000008
   refuses_message "team-log: $why, not T7-builder's DONE" \
     --from-message 'T7 DONE 01 a1b2c3d the ticket' --relay 1564000000000000008
+  # An ops done is known by its role, never by a field a message may write itself: a gate run's
+  # DONE that carries a report_chars pair is refused too, its relay id never dropped silently.
+  refuses_message "team-log: $why, not DONE" \
+    --from-message 'T7 DONE gate run=r1 head=0123456 outcome=pushed report_chars=1' --relay 1564000000000000008
   # A malformed id is a malformed command line, and so is --relay with no message or twice.
   local id
   for id in 01564000000000000008 x 15640000000000000080; do

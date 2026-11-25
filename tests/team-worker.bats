@@ -91,7 +91,7 @@ merge_method = "merge"
 required_checks = []
 task_dir = ".scratch/task"
 docs = []
-toolkits = ["prod-read", "prod-write", "vercel-read", "prod-mongo", "browser", "codegraph", "effect", "spec-review", "kit-a", "kit-b", "kit-c"]
+toolkits = ["prod-read", "prod-write", "vercel-read", "prod-mongo", "browser", "codegraph", "effect", "rust", "spec-review", "kit-a", "kit-b", "kit-c"]
 $extra
 pool = { provider = "git", slots = ["slots/$name/1", "slots/$name/2"] }
 
@@ -1670,6 +1670,21 @@ EOF
   assert_equal "$(launches | jq -c .toolkits)" '["codegraph"]'
 }
 
+# rust-analyzer is declared in the plugin's manifest, which Claude Code reads from the plugin
+# directory, so the toolkit adds no MCP server for any role (tests/toolkits/rust.test.mjs).
+@test "the rust toolkit adds its plugin directory and no MCP server, for the planner, the builder and the reviewer" {
+  local role
+  open_task T7
+  for role in planner builder reviewer; do
+    echo "role: $role" >&2
+    run_bin -0 team-worker T7 "$role" "$wt1" --toolkit rust -- go
+    assert_equal "$(bg_calls | tail -n 1 | jq -c '[index("--plugin-dir") as $i | .[$i + 1]]')" \
+      "$(jq -cn --arg code "$REPO_ROOT" '["\($code)/toolkits/rust"]')"
+    assert_equal "$(jq -c . "$TEAM_HOME/tasks/T7/mcp.$role.proj.json")" '{"mcpServers":{}}'
+    assert_equal "$(launches | tail -n 1 | jq -c .toolkits)" '["rust"]'
+  done
+}
+
 @test "the spec-review toolkit adds its plugin directory and no MCP server" {
   open_task T7
   run_bin -0 team-worker T7 builder "$wt1" --toolkit spec-review -- go
@@ -1844,13 +1859,13 @@ again() {
   # A toolkit that is not skills-only still needs the project's line, on a delivery too.
   unlist codegraph
   again T7
-  refused_launch "toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, kit-a, kit-b, kit-c): $UNLISTED" \
+  refused_launch "toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, rust, kit-a, kit-b, kit-c): $UNLISTED" \
     T7 builder "$wt1" --toolkit codegraph -- "$brief_prompt"
 }
 
 @test "a ticket builder, a launch with no brief record and a reviewer get no delivery toolkit; given spec-review unlisted they launch with it, and another unlisted toolkit is refused as before" {
   unlist spec-review codegraph
-  local unlisted="toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, kit-a, kit-b, kit-c): $UNLISTED"
+  local unlisted="toolkit 'codegraph' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, effect, rust, kit-a, kit-b, kit-c): $UNLISTED"
   # launch: "<role> <template, or none for a prompt naming no brief>"
   local launch role template prompt
   for launch in "builder builder-ticket" "builder builder-merge-base" "builder resume" "builder none" \
@@ -2033,7 +2048,7 @@ skills_only_kit() {
     calls=$(bg_calls | wc -l) logged=$(wc -l <"$TEAM_HOME/ledger.jsonl")
     run_fake T7 planner "$wt1" --toolkit "$kit" -- go
     assert_equal "$change: $status" "$change: 1"
-    assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, codegraph, effect, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
+    assert_equal "$change: $output" "$change: team-worker: toolkit '$kit' is not one of proj's toolkits in projects.toml (prod-read, prod-write, vercel-read, prod-mongo, browser, codegraph, effect, rust, spec-review, kit-a, kit-b, kit-c): $UNLISTED"
     assert_equal "$change: $(bg_calls | wc -l) $(wc -l <"$TEAM_HOME/ledger.jsonl")" "$change: $calls $logged"
   done
   # The toolkit's own name is in that text too: one that is not lowercase letters, digits and

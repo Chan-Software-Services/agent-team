@@ -1,0 +1,31 @@
+# The Cargo workspace of the team's Rust code: every crate under crates/, built with the toolchain
+# rust-toolchain.toml pins, its dependencies held by deny.toml, and checked by tests/run rust.
+# The core (crates/team-core) holds the team's rules alone: no code for one platform (Linux, macOS,
+# Windows) and no interface (a command line, Discord, a web app). Each platform's implementation and
+# each interface is a crate of its own under crates/, which the core never depends on, so a new
+# platform or interface is a new crate and no change to the core.
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.100"
+license = "Apache-2.0"
+publish = false
+
+# The lints every crate takes with `[lints] workspace = true`: a closed set with every case handled
+# and no panic outside a test. tests/run rust turns every warning into an error (-D warnings).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+wildcard_enum_match_arm = "warn"
+match_wildcard_for_single_variants = "warn"

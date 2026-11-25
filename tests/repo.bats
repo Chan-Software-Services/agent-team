@@ -174,6 +174,15 @@ profile = "minimal"
 components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
 }
 
+# The dependency policy's sources rule, which needs a fetch to show live, so it is held here:
+# crates come from crates.io alone, no other registry and no git source.
+@test "deny.toml's [sources] refuses every registry but crates.io and every git source" {
+  assert_equal "$(sed -n '/^\[sources\]$/,/^\[/p' "$REPO_ROOT/deny.toml" | grep -v -e '^#' -e '^$' -e '^\[')" 'unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]'
+  run -1 grep -E '^(allow-git|\[sources\.)' "$REPO_ROOT/deny.toml"
+}
+
 # Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
 # read on home-pc from the pinned releases, rustup's from its source, since its install there was
 # refused (its commit and date are placeholders). Each pattern reads the pin from its line.
@@ -1096,6 +1105,34 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   grep -qF 'on the head under review' <<<"$line"
   grep -qF 'trap table' <<<"$line"
   grep -qF 'still-type-checks list' <<<"$line"
+  grep -qF '`review.md` with its kind and scope' <<<"$line"
+}
+
+# Only the rust toolkit's sessions list rust-core, so the planner, builder and reviewer roles name
+# it, once each under "What you do", for a session that lists it, each with its duty: a session on
+# a task with no Rust code reads the line and does nothing. The skill is named as `rust-core`, so
+# a line naming the design doc docs/rust-core.md is no second one.
+@test "the planner, builder and reviewer roles name the rust toolkit's rust-core, each with its duty, for a session that lists it" {
+  local role body line
+  assert_equal "$(sed -n 's/^name: //p' "$REPO_ROOT/toolkits/rust/skills/rust-core/SKILL.md")" rust-core
+  for role in planner builder reviewer; do
+    echo "role: $role" >&2
+    assert_equal "$(grep -cF '`rust-core`' "$REPO_ROOT/roles/$role.md")" 1
+    body=$(awk '$0 == "## What you do" { on = 1; next } /^## / { on = 0 } on' "$REPO_ROOT/roles/$role.md")
+    line=$(grep -F '`rust-core`' <<<"$body")
+    grep -qF 'when your session lists `rust-core`' <<<"$line"
+  done
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/planner.md")
+  grep -qF 'On a project with Rust code' <<<"$line"
+  grep -qF 'before you spec Rust code' <<<"$line"
+  grep -qF "toolchain's version and the check command" <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/builder.md")
+  grep -qF 'before you write Rust code' <<<"$line"
+  grep -qF 'run its check before you report DONE or PR' <<<"$line"
+  grep -qF '"Rust check" line in the PR body' <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/reviewer.md")
+  grep -qF 'on the head under review' <<<"$line"
+  grep -qF 'judge the diff against its rules' <<<"$line"
   grep -qF '`review.md` with its kind and scope' <<<"$line"
 }
 
@@ -2357,7 +2394,7 @@ YAML
 @test "tests/run, the team-heavy lock it runs under, and servers/install, which its toolkit tests run, need no team home" {
   unset TEAM_HOME
   run -2 --separate-stderr "$REPO_ROOT/tests/run" nothing
-  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -0 --separate-stderr "$REPO_ROOT/bin/team-heavy" run -- echo ran
   assert_equal "$output" ran
   run -2 --separate-stderr "$REPO_ROOT/servers/install" nothing
@@ -2526,7 +2563,7 @@ YAML
   for k in '--shard 0/3' '--shard 4/3' '--shard 1/0' '--shard 1/3x' '--list' '--shard' '--shard 1/3 --list x'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/run" bats $k
-    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   done
   run -2 --separate-stderr "$REPO_ROOT/tests/run" toolkits --shard 1/3
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
@@ -2792,7 +2829,7 @@ changed_rebase() {
     run -2 --separate-stderr "$copy/tests/run" bats --changed $k
   done
   run -2 --separate-stderr "$copy/tests/run" bats --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -2 --separate-stderr "$copy/tests/run" bats --shard 1/3 --changed
   run -1 --separate-stderr "$copy/tests/run" bats --changed --list
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run bats --changed <base>)"
@@ -2942,7 +2979,7 @@ shellcheck_checkout() {
     run -2 --separate-stderr "$copy/tests/run" shellcheck $k
   done
   run -2 --separate-stderr "$copy/tests/run" shellcheck --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -1 --separate-stderr "$copy/tests/run" shellcheck --changed
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run shellcheck --changed <base>)"
   [[ ! -e $STUB_CALLS/shellcheck.log ]]
