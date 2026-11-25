@@ -64,14 +64,6 @@
 #                    but a skills-only one, as its header defines it (T0, the load check, takes
 #                    one unlisted but prod-* and vercel-read); a new one that is not skills-only
 #                    takes Daniel's yes, then its name here
-#   models           optional: a table of worker role (planner, builder or reviewer) to the model
-#                    alias or name its sessions launch on, such as { reviewer = "sonnet" }
-#                    (default none: every role on the user settings' model); team-worker passes
-#                    it as --model and logs it on the launch; for a task opened since 2026-11-17
-#                    with no team-open --builder-model, the builder line as team-open reads it at
-#                    the open is its builder model, kept on its opened event (until a builder's
-#                    team-worker --model switches it), so a later edit changes none of its
-#                    builders; ops always runs on the default (sops/model-trials.md)
 #   visibility       optional: "public" or "private", the GitHub repository's visibility, which
 #                    team-worker states in each worker's autoMode lines (default "public", the
 #                    reading that treats whatever reaches the repository as published)
@@ -106,9 +98,11 @@
 # Paths in the file are relative to $HOME, except pool.lease and pool.return (relative to the
 # primary checkout) and task_dir, docs, stack.compose and stack.seed (relative to a worktree, so
 # they stay relative).
-# A new key goes in this list and in the script's key lists. A retired key (merge_with_plan,
-# retired by T276, since the approved plan is every project's merge word) is refused by --check,
-# and so by every command, until it is removed.
+# A new key goes in this list and in the script's key lists. A retired key is refused by --check,
+# and so by every command, until it is removed: merge_with_plan, retired by T276, since the
+# approved plan is every project's merge word; models, which moved to the team home's
+# models.toml (sops/models.md), where every session category's model and effort is chosen
+# (team-models).
 #
 # Every command refuses a registry that fails --check. Exit 0 done, 1 refused or a check
 # failed, 2 usage error. Python standard library only (tomllib, Python 3.11 or later).
@@ -147,12 +141,15 @@ RESERVED = {
     "own": "the team's own project in bin/lib/guarded's @own lines",
 }
 # Optional keys, with the value a project without one has.
-PROJECT_OPTIONAL = {"local_checks": [], "changed_tests": "", "branch_ci": "", "models": {}, "uptime": [], "visibility": "public", "confine": "off"}
+PROJECT_OPTIONAL = {"local_checks": [], "changed_tests": "", "branch_ci": "", "uptime": [], "visibility": "public", "confine": "off"}
 # A branch_ci: one workflow's file name, no directory.
 BRANCH_CI = re.compile(r"[A-Za-z0-9._-]+\.ya?ml")
 # Keys no project may hold any more, each with why and what to do, which --check names in place of
 # an unknown key.
-RETIRED = {"merge_with_plan": "retired by T276, since the approved plan is every project's merge word: remove the key"}
+RETIRED = {
+    "merge_with_plan": "retired by T276, since the approved plan is every project's merge word: remove the key",
+    "models": "moved to the team home's models.toml (sops/models.md)",
+}
 # A production check's keys, every one required and a string, and the most checks the registry
 # may list in all, so the heartbeat's uptime step fits its time limit.
 UPTIME_KEYS = ("name", "url", "expect")
@@ -163,11 +160,6 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 VISIBILITIES = ("public", "private")
 # The values a project's confine takes.
 CONFINES = ("off", "on")
-# The roles a project's models table may name: the worker roles but ops, whose production work
-# stays on the default model.
-MODEL_ROLES = ("planner", "builder", "reviewer")
-# A model alias or name as claude --model takes it: sonnet, claude-sonnet-5-5, sonnet[1m].
-MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]*")
 POOL_KEYS = ("provider", "lease", "return", "slots")
 # A stack block's keys: its required strings and list, then its optional lists and pattern, with
 # the value a block without one has (legacy_gate has none).
@@ -335,23 +327,6 @@ def check_stack(name, stack, problems):
             problems.append(problem)
 
 
-# Check one project's models table, role to model.
-def check_models(name, models, problems):
-    where = f"{name}.models"
-    if not isinstance(models, dict):
-        problems.append(f"{where}: must be a table of role to model")
-        return
-    for role, model in models.items():
-        if role == "ops":
-            problems.append(f"{where}: 'ops' always runs on the default model")
-        elif role not in MODEL_ROLES:
-            problems.append(f"{where}: '{role}' is not a worker role; one of {', '.join(MODEL_ROLES)}")
-        elif not isinstance(model, str):
-            problems.append(f"{where}.{role}: must be a string")
-        elif not MODEL.fullmatch(model):
-            problems.append(f"{where}.{role}: '{model}' is not a model alias or name")
-
-
 # The problem with a check's url, or None: one line with no spaces, https:// to a host or http://
 # to the loopback, and no user name or password.
 def uptime_url_problem(url):
@@ -446,7 +421,6 @@ def check(registry):
                     f"{name}.branch_ci: needs delivery = \"direct-pr\", not {json.dumps(project.get('delivery'))}"
                 )
         uptime_checks += check_uptime(name, project.get("uptime", []), problems)
-        check_models(name, project.get("models", {}), problems)
         if project.get("visibility", "public") not in VISIBILITIES:
             problems.append(f"{name}.visibility: must be one of {', '.join(VISIBILITIES)}")
         if project.get("confine", "off") not in CONFINES:

@@ -115,7 +115,8 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `knowledge-graph.md`: a project's knowledge graph.
   - `machine-setup.md`: a new machine, driven by `SETUP.md`.
   - `merging.md`: merging on the per-head word and the default word, the approved plan: their events, the order `team-merge` tries them, what each holds a PR to, the plan approval, the short list, the withdrawals, what never merges, the coordinator's steps and the retired words.
-  - `model-trials.md`: trialling a cheaper model on one role of one project, or a setup change that claims to save tokens: the registry's `models`, a task's builder model, the effort check, the paired reviews, a toolkit's arm, the measures, their sources, the PR-size baseline and the note to Daniel.
+  - `model-trials.md`: trialling a cheaper model on one role of one project, or a setup change that claims to save tokens: a `models.toml` arm, a task's builder model, the effort check, the paired reviews, a toolkit's arm, the measures, their sources, the PR-size baseline and the note to Daniel.
+  - `models.md`: how each session's model and effort are chosen: `models.toml`, its lines, categories and precedence, the overrides, what each launch logs and where, what is left out and where those models are set, how a line is changed, and how the Rust core keeps the same config.
   - `platform-gotchas.md`: general rules about the tools the team runs on, which every brief but the ops one points at in the code checkout, never the team home; the retro proposes keeping it short, and each change Daniel approves lands through a PR on this repository.
   - `portability.md`: moving the team between machines.
   - `records-rewrite.md`: the cutover that rewrites the records repository's history with `team-records-rewrite`, each step Daniel's or the coordinator's.
@@ -174,9 +175,11 @@ It holds:
 | `ledger.jsonl` | The append-only record of every task's events |
 | `level.jsonl` | The team's resource level and mode, one line per change (`team-level`), committed with the ledger so a level holds across restarts and handoffs |
 | `drills.jsonl` | Each run of a drill, one line per run (`team-drill`): what ran, on which machine, code commit and Claude Code version, and its verdict, appended and never rewritten |
+| `sessions.jsonl` | Each launch of the coordinator and the assistant, one line per launch (`claude-coordinator`, `claude-assistant`): the machine, the session's name, its model category and the model and effort it launched on, with where each came from, as a worker's ledger `launch` event says them |
 | `waiting.md` | What waits on Daniel, every open ask, PR ready to merge, interview and walk, and the asks and owed replies of the two kept lists, `tasks/current.md` and `assistant/current.md`, the assistant's marked, numbered and ranked by what each answer unblocks, as `team-inbox` last wrote it from the ledger and those files |
 | `waiting.json` | The same list with each item's number, key and count and the latest post, which `team-inbox` reads to keep each number while its item stands |
 | `projects.toml` | The project registry, read only through `bin/team-project`, whose `--help` documents every key |
+| `models.toml` | The model config, the model and effort each session category launches on, one line per choice, read through `bin/team-models` (the doctor's `models` line also counts its keys), whose `--help` documents the line form, the categories and the precedence |
 | `tasks/` | Each task's plan, briefs and archived scratch; history, kept as written |
 | `projects/` | Each project's planning (Conventioner's backlog) |
 | `memory/` | Each registered project's Claude Code auto memory, `memory/<project>/`, which every machine and worktree of it shares once `team-config apply` points the project at it (a worker of it through `team-worker`'s settings), and the coordinator's, `memory/coordinator/`, the team home's own while it is no project's primary checkout, and the assistant's, `memory/assistant/`, which its settings name |
@@ -200,6 +203,7 @@ It holds:
   Its `pre-push` catches what those never see (a cherry-pick, a revert, `git am`, a fast-forward merge): it refuses every push to `dev`, and a push to `main` may only fast-forward it to a commit already on `origin/dev`.
   On every remote and branch, it also refuses a push whose tip tree holds a records path unless the remote's URL is the team home's origin (a trailing `.git` or slash aside), so the records never reach the code repository from a stale checkout.
 - The records repository takes its one hook from here by absolute path, `git -C ~/agent-team-records config core.hooksPath ~/agent-team/bin/hooks/records-git`, which `team-doctor`'s `records hooks` line checks: its `pre-commit` refuses a records commit that adds an email address at a public provider or any image (a screenshot is never kept in git), naming each path, never the address.
+  It also refuses a commit that stages a `models.toml` that does not read, naming each problem `team-models --check` finds in the staged file, so a broken one never reaches another machine.
 - One scan, `bin/lib/data-check`, holds both data rules: that hook runs its `records` policy, and CI's `data` job its `code` policy (no email address outside the fixture domains, no image, no `node_modules/` path), after gitleaks over the PR's commits.
   Its rule on addresses is `email_kind` and `refused_emails` in `bin/lib/team.sh`, which `team-post` holds a worker's post and a capture's text to as well.
   A test that needs an address uses `example.com`, `example.invalid` or another fixture domain `bin/lib/data-check`'s header lists, and builds one at a real provider from a variable, so the file never holds one written out.

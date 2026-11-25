@@ -117,7 +117,6 @@ The open plans' Rust core lines, taken from their plans; each moves into the map
 
 | Plan | What | Crate | Seam |
 | - | - | - | - |
-| T513 | The model and effort config, one entry per session category, the most specific match winning, read by every launch and logged | `team-model` (its type), `team-core` (sessions) | `none` |
 | T514 | The topic role and its script (`team-topic open`) | `team-core` (sessions) | `platform`, `interface` |
 | T514 | The digest's schedule and its config line (an IANA zone and three local times) | `teamd` (a timer), `team-model` (its type) | `interface` (`Notifier`) |
 
@@ -158,6 +157,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/team-load-check` | `team-cli` | `platform` | Probes what a worker reaches |
 | `bin/team-log` | `team-core` | `interface` | The append; reports become claims (step 3) |
 | `bin/team-merge` | `team-core` | `vcs`, `interface` | `give_merge_word`, the verifier |
+| `bin/team-models` | `team-model` | `none` | The model and effort config's reader (`sops/models.md`): its categories, each falling back through its parent to `default`, the most specific line winning; stays the reader until the port replaces it |
 | `bin/team-next` | `team-core` | `interface` | Lifecycle actions (step 5) |
 | `bin/team-open` | `team-core` | `vcs`, `interface` | |
 | `bin/team-ops-end` | `team-core` | `platform` | |
@@ -347,7 +347,9 @@ The config in `bin/lib/` is in the library's table above; the rest, with the tea
 | - | - | - | - | - |
 | `ledger.jsonl` | the team home | `team-model` (events), `team-core` (the append) | `none` | The log the read model folds |
 | `projects.toml` | the team home | `team-model` | `none` | The registry, read through `team-project` today |
+| `models.toml` | the team home | `team-model` | `none` | The model and effort of every session category, read through `team-models` today; its format is the contract |
 | `level.jsonl` | the team home | `team-core` | `platform` | The resource level |
+| `sessions.jsonl` | the team home | `team-core` (sessions) | `none` | The coordinator's and the assistant's launches, each with what it runs on |
 | `drills.jsonl` | the team home | `team-model` | `none` | |
 | `waiting.json`, `waiting.md` | the team home | `team-core` | `interface` | The one inbox (step 4) |
 | `tasks/current.md`, `assistant/current.md` | the team home | `team-core` | `none` | Step 4 moves their requests into the inbox |

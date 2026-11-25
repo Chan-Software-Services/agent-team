@@ -8,13 +8,12 @@
 #   role       planner | builder | reviewer | ops
 #   worktree   a linked git worktree of the task's repo (never a primary checkout), one of the
 #              task's open worktrees (opened or added, not returned)
-#   --model    not for ops: the model alias or name to launch on instead of the registry's, such
-#              as opus for a model trial's paired review (sops/model-trials.md); a planner's or a
-#              reviewer's is that launch's alone, while a task's builder's becomes its task's
-#              builder model, which every later builder launch of the task keeps (below);
-#              default is the settings' word: no --model passed to claude, the settings' word
-#              logged, and for a task's builder of a task that has a builder model, it makes
-#              default the task's builder model from then on
+#   --model    not for ops: the model alias or name to launch on instead of the config's
+#              (models.toml, below), such as opus for a model trial's paired review
+#              (sops/model-trials.md); a planner's or a reviewer's is that launch's alone, while a
+#              task's builder's becomes its task's builder model, which every later builder
+#              launch of the task keeps (below); default is the config's word for this launch,
+#              and for a task's builder it also ends the task's builder model from then on
 #   --request  ops only, and required for it: the link to Daniel's Discord message asking for
 #              this launch, https://discord.com/channels/<guild>/<channel>/<message>; any other
 #              value is a malformed command line (exit 2)
@@ -112,29 +111,46 @@
 # every session at the close. Each stop and each session left is said on stderr; a stop that
 # fails, or a session list that cannot be read, is a warning, and the launch goes on. T0 stops
 # nothing.
+# The session's category, model and effort come from the team home's models.toml (sops/models.md),
+# as team-models resolve reads it: the category is T0's <role>.load-check; else the one its
+# brief's template maps to (reviewer.rereview for a rereview), a resume's or a resume-crash's the
+# template of the brief it resumes, read from that brief's record beside it (the resume record's
+# values.brief names it); else its role's, planner, builder, reviewer or ops, with a warning on
+# stderr when a resumed brief has no record naming a template, or a template is another role's.
+# It is resolved with the worktree's project and the task's path (its opened event's), T0 with
+# neither, and logged on the launch as category. A models.toml that does not read refuses the
+# launch, before the lease or anything else is started (exit 1, nothing logged), "models.toml
+# does not read: <team-models' first line>; fix it, then team-models --check"; with no file, the
+# model and the effort are each the settings' word below.
 # The session's model, logged on the launch as model with where it came from as model_from: the
-# model --model names (launch), but --model default, the settings' word below; else a task's
+# model --model names (launch), but --model default, the config's word below; else a task's
 # builder launches on its task's builder model (task), which the latest of its opened event and
-# its builder launches decides: the builder_model of its opened event (team-open --builder-model,
-# else the registry's builder line at the open), the model of a builder launch on --model or on
-# the task's model (or of one logged with a model before launches logged model_from), default
-# after a builder launch on the settings' word once the task had a builder model (--model
-# default, the way back to it), and none after a launch logged before model_from with no model,
-# which ran on the settings' word, or one on the registry's line; so every builder of the task,
-# in each of its projects' worktrees, a fix round's, team-next's hand-offs and --fill's ticket
-# builders, a resume's, a level's and a recovery's relaunch among them, runs on it until another
-# builder's --model switches it, and one of default names none, so its builders run on the
-# settings' word below, whatever the registry says since; else on the one the worktree's
-# project names for the role in the registry, team-project's models (registry), which a builder
-# of a task with no builder model reads too, each passed to claude --model; else on its
-# settings' word, passing none: an ANTHROPIC_MODEL in the env of its generated settings, then of
-# the user settings (${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json), then their model key
+# its builder launches decides: the builder_model of its opened event (team-open
+# --builder-model) unless default, the model of a builder launch on --model or on the task's
+# model (or of one logged with a model before launches logged model_from), and none after any
+# other builder launch (on the config, on the settings' word, on the registry's line before
+# models.toml, or a legacy one that logged no model); so every builder of the task, in each of
+# its projects' worktrees, a fix round's, team-next's hand-offs and --fill's ticket builders, a
+# resume's, a level's and a recovery's relaunch among them, runs on it until another builder's
+# --model switches it, and --model default ends it; else on its category's model in the config,
+# the most specific line naming one (config), as ops does; each passed to claude --model; else on
+# its settings' word, passing none: an ANTHROPIC_MODEL in the env of its generated settings, then
+# of the user settings (${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json), then their model key
 # (settings), and with none of them Claude Code's own default, logged as model default
 # (default). The settings' word is logged as written, an alias such as opus as much as a model
 # id, and an ANTHROPIC_MODEL in the launching process's environment or managed settings is not
 # read, so model names the model a session was asked for; the models its replies ran on are
-# team-tokens' reply_models. Ops never takes a named one, so it logs the settings' word, and T0
-# none from the registry or a task.
+# team-tokens' reply_models. Ops never takes --model or a task's builder model, and T0 no task's.
+# The session's effort, logged as effort with where it came from as effort_from: its category's
+# effort in the config, the most specific line naming one (config), passed as claude --effort;
+# else none is passed, and the settings' word is logged (settings): a CLAUDE_CODE_EFFORT_LEVEL in
+# the env of its generated settings, then of the user settings, then their modelSettings'
+# effortLevel for the model logged, then their effortLevel; with none of them, default (default).
+# No option names an effort: the config is the one place one is chosen.
+# A line's subagent_model and subagent_effort, the config's choice for the session's subagents,
+# go into its generated settings' env as CLAUDE_CODE_SUBAGENT_MODEL and
+# CLAUDE_CODE_SUBAGENT_EFFORT, and on the launch as subagent_model and subagent_effort, only when
+# a line names them (a value of default names none), never CLAUDE_CODE_SUBAGENT_MODEL_FORCE.
 # The MCP config merges the chosen toolkits' .mcp.json servers, each but those a toolkit's
 # mcp-roles.json names for other roles only; an ops launch's servers each get AGENT_TEAM_ROLE=ops
 # in their own environment, since the production servers read no secret without it.
@@ -319,7 +335,7 @@ shift
 prompt="$*"
 [[ -n $prompt ]] || usage_error "missing first prompt"
 [[ -z $request || $role == ops ]] || usage_error "--request is for the ops role only"
-[[ -z $model || $role != ops ]] || usage_error "--model is not for the ops role, which runs on the default model"
+[[ -z $model || $role != ops ]] || usage_error "--model is not for the ops role, which runs on the config's ops line"
 [[ $task != T0 || ${#past[@]} -eq 0 ]] || usage_error "--past-ask is not for T0, the load check, which has no asks"
 # How long a handed-on session still busy is waited on (the header's hand-off paragraph).
 IDLE_SECONDS=${TEAM_WORKER_IDLE_SECONDS:-60}
@@ -583,6 +599,52 @@ if ((${#toolkits[@]})); then
   done
 fi
 
+# The launch's category in models.toml (sops/models.md): T0's <role>.load-check; else its brief's
+# template's, a resume's the template of the brief it resumes, read from that brief's record beside
+# it; else its role's, warned of when a template was looked for and not found or is another role's.
+# The config's choice for it is resolved with the worktree's project and the task's path, and a
+# file that does not read refuses the launch before the lease or anything else is started.
+config_template=$template
+if [[ $task != T0 && $template =~ ^resume(-crash)?$ ]]; then
+  config_template=''
+  resumed=$(jq -r '.values.brief | strings' "$record" 2>/dev/null) || resumed=''
+  case $resumed in
+    \~/*) resumed=$HOME/${resumed#\~/} ;;
+    '$HOME/'*) resumed=$HOME/${resumed#'$HOME/'} ;;
+    '${HOME}/'*) resumed=$HOME/${resumed#'${HOME}/'} ;;
+  esac
+  if [[ -z $resumed ]]; then
+    echo "team-worker: warning: the brief ${record%.json}.md resumes no brief its record names, so the launch takes the $role category" >&2
+  elif ! config_template=$(jq -r 'if type == "object" then .template | strings else error("no object") end' "${resumed%.md}.json" 2>/dev/null) ||
+    [[ -z $config_template || $config_template =~ ^resume(-crash)?$ ]]; then
+    config_template=''
+    echo "team-worker: warning: the brief ${record%.json}.md resumes $resumed, which has no brief record naming its template, so the launch takes the $role category" >&2
+  fi
+fi
+config_args=(--role "$role")
+if [[ $task == T0 ]]; then
+  config_args+=(--load-check)
+else
+  [[ -z $project ]] || config_args+=(--project "$project")
+  task_path=$(jq -r 'map(select(.event == "opened") | .path | strings) | last // empty' <<<"$events")
+  [[ -z $task_path ]] || config_args+=(--path "$task_path")
+fi
+config_errors=$(team_mktemp)
+config_resolve() { TEAM_HOME=$TEAM_HOME "$code/bin/team-models" resolve "${config_args[@]}" "$@" 2>"$config_errors"; }
+config_rc=0
+config=$(config_resolve ${config_template:+--template "$config_template"}) || config_rc=$?
+if ((config_rc == 2)) && [[ -n $config_template && $task != T0 ]]; then
+  echo "team-worker: warning: $(grep -m1 . "$config_errors" | sed 's/^team-models: //'), so the launch takes the $role category" >&2
+  config_rc=0
+  config=$(config_resolve) || config_rc=$?
+fi
+((config_rc != 1)) || die "models.toml does not read: $(grep -m1 . "$config_errors" || echo "team-models resolve said nothing"); fix it, then team-models --check"
+((config_rc == 0)) || die "team-models resolve failed for $task-$role (exit $config_rc): $(grep -m1 . "$config_errors" || echo "no reason given")"
+# Each axis's value, a value of default naming none, so the settings' word stands for it.
+IFS=$'\x1f' read -r category config_model config_effort subagent_model subagent_effort < <(jq -r '[.category]
+  + ([.model, .effort, .subagent_model, .subagent_effort] | map(if . == null or . == "default" then "" else . end))
+  | join("\u001f")' <<<"$config")
+
 if [[ $task != T0 ]]; then
   lease_gate "a worker"
   machine=$(machine_name) || exit 1
@@ -670,33 +732,31 @@ stem=$role
 [[ -z $ticket ]] || stem+=--$ticket
 
 # The model the session launches on, and where it came from (the header's model paragraph):
-# --model's (launch), but --model default, which names the settings' word; for a task's builder
+# --model's (launch), but --model default, which names the config's word; for a task's builder
 # its task's builder model (task), which the latest of its opened event and its builder launches
 # decides: opened's builder_model, a launch's model when it came from --model or the task (or,
-# logged before launches said where, it logged one), and default after a launch on the settings'
-# word once the task had one; a legacy launch that logged no model, or one from the registry,
-# leaves the task none, default naming none too; else the registry's for the role (registry);
-# ops takes none of them. With none, the settings' word, read once its settings are generated,
-# below.
-model_from='' task_model='' settings_named=''
-if [[ $model == default ]]; then model='' settings_named=1; fi
+# logged before launches said where, it logged one), and none after any other launch, so a launch
+# on the config, the settings or the registry, or a legacy one that logged no model, leaves the
+# task none, as a builder_model of default names none; else the config's line for the launch's
+# category (config). With none, the settings' word, read once its settings are generated, below.
+model_from='' task_model='' to_config=''
+if [[ $model == default ]]; then model='' to_config=1; fi
 [[ -z $model ]] || model_from=launch
-if [[ -z $model && -z $settings_named && $role == builder && $task != T0 ]]; then
+if [[ -z $model && -z $to_config && $role == builder && $task != T0 ]]; then
   task_model=$(jq -r 'reduce (.[] | select(.event == "opened" or (.event == "launch" and .role == "builder"))) as $e ("";
       if $e.event == "opened" then ($e.builder_model | strings) // .
       elif $e.model_from == "launch" or $e.model_from == "task" then $e.model
       elif $e.model_from == null then ($e.model | strings) // ""
-      elif $e.model_from == "registry" or . == "" then ""
-      else "default" end)' <<<"$events")
+      else "" end)' <<<"$events")
   [[ -z $task_model || $task_model == default ]] || model=$task_model model_from=task
 fi
-if [[ -z $model && -z $task_model && -z $settings_named && -n $project && $role != ops ]]; then
-  models=$(team_project "$project" models) || exit 1
-  model=$(jq -r --arg role "$role" '.[$role] // empty' <<<"$models")
-  [[ -z $model ]] || model_from=registry
-fi
+if [[ -z $model && -n $config_model ]]; then model=$config_model model_from=config; fi
 model_args=()
 if [[ -n $model ]]; then model_args=(--model "$model"); fi
+# The effort is the config's alone (config), passed as --effort; with none, the settings' word,
+# read below.
+effort=$config_effort effort_from='' effort_args=()
+if [[ -n $effort ]]; then effort_from=config effort_args=(--effort "$effort"); fi
 
 taskdir=$TEAM_HOME/tasks/$task
 mkdir -p "$taskdir"
@@ -912,6 +972,7 @@ fi
 settings=$taskdir/settings.$stem.json
 jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg worktree "$worktree" --arg role "$role" --arg session "$name" --argjson facts "$facts" \
   --arg memory "$memory" --arg shell_program "$shell_program" \
+  --arg subagent_model "$subagent_model" --arg subagent_effort "$subagent_effort" \
   --argjson login_env "$login_env" --arg login_line "$login_line" '.[0] as $base | .[1] as $own
   | ($base * $own)
   | .permissions.deny = (($base.permissions.deny // []) + ($own.permissions.deny // []))
@@ -931,6 +992,8 @@ jq -s --arg code "$code" --arg task "$task" --arg taskdir "$taskdir" --arg workt
   | if $task == "T0" and $role != "ops" then .remoteControlAtStartup = false else . end
   | if $memory != "" then .autoMemoryDirectory = $memory else . end
   | if $shell_program != "" then .env += {CLAUDE_CODE_SHELL: $shell_program, CLAUDE_CODE_SHELL_PREFIX: $shell_program, RUSTUP_AUTO_INSTALL: "0"} else . end
+  | if $subagent_model != "" then .env += {CLAUDE_CODE_SUBAGENT_MODEL: $subagent_model} else . end
+  | if $subagent_effort != "" then .env += {CLAUDE_CODE_SUBAGENT_EFFORT: $subagent_effort} else . end
   | '"$substitute"'
   | if $login_env == {} then . else .env += $login_env | .autoMode.environment += [$login_line] end' \
   "$code/settings/worker.json" "$code/settings/$role.json" >"$settings"
@@ -1074,12 +1137,22 @@ fi
 # ANTHROPIC_MODEL in the env of its --settings, then of the user settings
 # (${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json), then their model key in that order; with none,
 # Claude Code's own default, logged as default. No --model is passed for it.
+user_settings=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json
+[[ -f $user_settings ]] || user_settings=/dev/null
 if [[ -z $model ]]; then
-  user_settings=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json
-  [[ -f $user_settings ]] || user_settings=/dev/null
   model=$(jq -rn '[inputs] as $s | ([$s[] | .env.ANTHROPIC_MODEL? | strings | select(. != "")] | first)
       // ([$s[] | .model? | strings | select(. != "")] | first) // empty' "$settings" "$user_settings" 2>/dev/null) || model=''
   if [[ -n $model ]]; then model_from=settings; else model=default model_from=default; fi
+fi
+# With no effort named, the settings' word, read the same way: a CLAUDE_CODE_EFFORT_LEVEL in the
+# env of its --settings, then of the user settings, then their modelSettings' effortLevel for the
+# model word, then their effortLevel; with none, default. No --effort is passed for it.
+if [[ -z $effort ]]; then
+  effort=$(jq -rn --arg model "$model" '[inputs] as $s
+      | ([$s[] | (.env.CLAUDE_CODE_EFFORT_LEVEL)? | strings | select(. != "")] | first)
+      // ([$s[] | (.modelSettings[$model].effortLevel)? | strings | select(. != "")] | first)
+      // ([$s[] | .effortLevel? | strings | select(. != "")] | first) // empty' "$settings" "$user_settings" 2>/dev/null) || effort=''
+  if [[ -n $effort ]]; then effort_from=settings; else effort=default effort_from=default; fi
 fi
 
 # --mcp-config and --tools take several values, so neither may come right before the prompt.
@@ -1089,7 +1162,7 @@ out=$(cd "$worktree" && claude --bg "${restricted[@]}" "${sources[@]}" \
   --settings "$settings" \
   --append-system-prompt-file "$system_prompt" \
   --permission-mode auto \
-  "${model_args[@]}" \
+  "${model_args[@]}" "${effort_args[@]}" \
   --name "$name" \
   "$prompt")
 [[ $out != *"send a prompt to start"* ]] || die "the session started without its prompt: $out"
@@ -1110,12 +1183,14 @@ fi
 
 if [[ $task != T0 ]]; then
   ledger_append "$(jq -cn --arg task "$task" --arg role "$role" --arg session "$id" --arg worktree "$worktree" \
-    --arg machine "$machine" --arg admission "$admission" --arg model "$model" --arg model_from "$model_from" --arg request "$request" --arg discord_message "$request_message" --arg brief "$brief" --arg template "$template" --arg ticket "$ticket" --argjson at "${worktree_event:-null}" --argjson past "$(jq -cn '$ARGS.positional' --args -- ${past[@]+"${past[@]}"})" --args '{ts: (now | todate), task: $task,
+    --arg machine "$machine" --arg admission "$admission" --arg category "$category" --arg model "$model" --arg model_from "$model_from" --arg effort "$effort" --arg effort_from "$effort_from" --arg subagent_model "$subagent_model" --arg subagent_effort "$subagent_effort" --arg request "$request" --arg discord_message "$request_message" --arg brief "$brief" --arg template "$template" --arg ticket "$ticket" --argjson at "${worktree_event:-null}" --argjson past "$(jq -cn '$ARGS.positional' --args -- ${past[@]+"${past[@]}"})" --args '{ts: (now | todate), task: $task,
       event: "launch", role: $role, session: $session, worktree: $worktree, toolkits: $ARGS.positional}
       + ($at // {} | {project, branch} | with_entries(select(.value != null)))
       + {machine: $machine}
       + (if $admission == "" then {} else {admission: $admission} end)
-      + {model: $model, model_from: $model_from}
+      + {category: $category, model: $model, model_from: $model_from, effort: $effort, effort_from: $effort_from}
+      + (if $subagent_model == "" then {} else {subagent_model: $subagent_model} end)
+      + (if $subagent_effort == "" then {} else {subagent_effort: $subagent_effort} end)
       + (if $request == "" then {} else {request: $request} end)
       + (if $discord_message == "" then {} else {discord_message: $discord_message} end)
       + (if $brief == "" then {} else {brief: $brief} end)

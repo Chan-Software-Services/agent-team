@@ -41,6 +41,16 @@
 # and bin/hooks/compact-hold, which holds each automatic compaction until the coordinator has
 # stowed (team-stowed), for at most 15 minutes after telling it, and below 300k tokens.
 #
+# It runs on the coordinator line of the team home's models.toml (bin/team-models, sops/models.md):
+# the line's model and effort as --model and --effort, its subagent fields as
+# CLAUDE_CODE_SUBAGENT_MODEL and CLAUDE_CODE_SUBAGENT_EFFORT in its settings' env, and an axis no
+# line names on the settings' word; a file that does not read is a warning, and it launches on the
+# settings' word, since it is the session that fixes the file (launch_models in
+# bin/lib/launch.sh). Once claude --bg has started it, the launch appends what it runs on to the
+# team home's sessions.jsonl, {ts, machine, name, category, model, model_from, effort,
+# effort_from} with the session's id, which team-checkpoint commits; a failed write is a warning
+# (launch_log).
+#
 # Its starting context, which every reply carries and every compaction starts from, holds only
 # what it uses. Its settings deny, by bare name, the tools it never calls (Artifact and its two
 # readers, Workflow, ScheduleWakeup, ReportFindings and the task list's TaskCreate, TaskGet,
@@ -104,10 +114,13 @@ settings=$LAUNCH_STATE/coordinator.settings.json
 launch_settings "$code/coordinator.settings.json" "$code/toolkits/coordinator/.mcp.json" \
   "$code/toolkits/coordinator/connectors.json" "$settings" "$mcp"
 launch_skills_off "$settings" "$code/plugins/coordinator-skills"
+launch_models coordinator "$settings"
 
 # Not exec: this shell keeps the lock until claude returns, and the session it starts does not
 # inherit the lock's file, so a running coordinator never holds the next launch's lock.
-claude --bg --name coordinator \
+status=0
+out=$(claude --bg --name coordinator \
+  ${LAUNCH_MODEL_ARGS[@]+"${LAUNCH_MODEL_ARGS[@]}"} \
   --autocompact 200k \
   --mcp-config "$mcp" \
   --channels plugin:discord@claude-plugins-official \
@@ -116,4 +129,7 @@ claude --bg --name coordinator \
   --plugin-dir "$code/plugins/coordinator-skills" \
   --settings "$settings" \
   "$prompt" \
-  {LAUNCH_LOCK_FD}>&-
+  {LAUNCH_LOCK_FD}>&-) || status=$?
+[[ -z $out ]] || printf '%s\n' "$out"
+((status != 0)) || launch_log coordinator "$out"
+exit "$status"
