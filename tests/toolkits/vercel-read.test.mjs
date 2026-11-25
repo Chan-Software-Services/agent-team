@@ -162,11 +162,12 @@ const opValues = (values = tokens, { team = teamId, ids = {} } = {}) => ({
     [[idReference, ids[label] ?? id], [reference, values[label]]])),
 });
 
-// Start the server on the op stub's values (each project's token by default) and the fake,
-// initialize it, run `body`, then close it and check what must hold after every run.
-async function withServer(body, { values = opValues(), env } = {}) {
+// Start the server on the op stub's values (each project's token by default) and the fake, in a
+// session of `role` (ops by default), initialize it, run `body`, then close it and check what
+// must hold after every run.
+async function withServer(body, { values = opValues(), env, role } = {}) {
   const op = opStub({ values });
-  const server = startToolkitServer("vercel-read", { home, opDir: op.dir, env: { VERCEL_READ_API: vercel.origin, ...env } });
+  const server = startToolkitServer("vercel-read", { home, opDir: op.dir, env: { VERCEL_READ_API: vercel.origin, ...env }, role });
   try {
     await server.initialize();
     await body(server, op);
@@ -245,6 +246,14 @@ describe("the tools", () => {
     });
   });
 
+  test("are the same five in the assistant's read session", async () => {
+    await withServer(async (server, op) => {
+      assert.deepEqual((await server.listTools()).map((tool) => tool.name),
+        ["domain-deployment", "get-deployment", "list-deployments", "list-env-names", "runtime-logs"]);
+      assert.deepEqual(op.calls().map((call) => call.split(" ")[0]), ["read", "read", "read", "read", "read", "signout"]);
+    }, { role: "assistant-read" });
+  });
+
   test("are the tools/list the skill's eval mocks give the server", async () => {
     await withServer(async (server) => {
       assert.deepEqual(evalMockTools("vercel-read", "vercel-read"), await server.listTools(),
@@ -312,6 +321,7 @@ describe("the launch", () => {
 describe("the launcher refuses before the server starts", () => {
   launcherRefusalTests("vercel-read", () => ({ value: tokens["front-end"], home, marker: tokens["front-end"] }), {
     reads: 5,
+    roles: ["ops", "assistant-read"],
     notTheSecret: {
       what: "when the value is not a Vercel team id",
       reason: /^op read returned something that is not a Vercel team id$/,

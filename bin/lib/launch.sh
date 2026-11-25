@@ -23,6 +23,17 @@
 #   launch_skills_off <settings> <plugin directory>
 #                                turns off, in the written settings, each of the user's personal
 #                                skills but one named as a skill of the plugin.
+#   launch_models <category> <settings>
+#                                resolves the category's line of the team home's models.toml
+#                                (bin/team-models resolve), writes its subagent fields into the
+#                                written settings' env, and sets LAUNCH_MODEL_ARGS, the --model
+#                                and --effort to pass, and LAUNCH_CHOICE, what the launch runs
+#                                on; a file that does not read is a warning, and the settings'
+#                                word stands.
+#   launch_log <name> <launch output>
+#                                appends the launch's line to the team home's sessions.jsonl:
+#                                {ts, machine, name}, LAUNCH_CHOICE's fields and the id the
+#                                output names; a failed write is a warning.
 #
 # The lock only serialises launches: `claude --bg` returns at once, so the session list, not the
 # lock, says whether a session is alive. Each function after launch_lock runs what it calls with
@@ -172,4 +183,99 @@ launch_skills_off() {
   jq '.skillOverrides = (reduce $ARGS.positional[] as $name ({}; .[$name] = "off")) + (.skillOverrides // {})' \
     "$settings" --args "${skill_names[@]}" >"$settings.$$"
   mv -f "$settings.$$" "$settings"
+}
+
+# This library's own bin/, where team-models lives.
+LAUNCH_BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# launch_models <category> <settings>: the model and effort the session of <category> launches
+# on, from the team home's models.toml as `team-models resolve --category <category>` reads it
+# (sops/models.md), for the settings launch_settings wrote at <settings>.
+# Sets LAUNCH_MODEL_ARGS to --model <m> when a line names the model and --effort <e> when a line
+# names the effort (a value of default names none); writes a line's subagent_model and
+# subagent_effort, but default, into <settings>' env as CLAUDE_CODE_SUBAGENT_MODEL and
+# CLAUDE_CODE_SUBAGENT_EFFORT, written whole and then moved into place; and sets LAUNCH_CHOICE to
+# the JSON object {category, model, model_from, effort, effort_from}, with subagent_model and
+# subagent_effort when written, for launch_log.
+# An axis no line names is the settings' word, as Claude Code reads it, logged settings: the model
+# an ANTHROPIC_MODEL in the env of <settings>, then of the user settings
+# (${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json), then their model key in that order; the effort
+# a CLAUDE_CODE_EFFORT_LEVEL in the env of each, then each one's modelSettings.<the model>.effortLevel,
+# then each one's effortLevel; with none, Claude Code's own default, logged default.
+# A missing file names nothing. A file that does not read (team-models exits non-zero, its first
+# line a problem of the file, "models.toml: ...") is a warning on stderr, "<script>: models.toml
+# does not read: <its first line>; launching on the settings' model"; any other failure of
+# team-models (no team home named, say) is "<script>: cannot read the model config: <its first
+# line>; launching on the settings' model". Either names nothing, so the session that fixes the
+# file still starts.
+# TEAM_HOME, when set, names the team home to team-models, else it finds it as every script does.
+launch_models() {
+  local category=$1 settings=$2 out status=0 user config_model='' config_effort='' sub='{}'
+  LAUNCH_MODEL_ARGS=()
+  out=$(TEAM_HOME=${TEAM_HOME:-} launch_unlocked "$LAUNCH_BIN/team-models" resolve --category "$category" 2>&1) || status=$?
+  if ((status == 0)) && out=$(tail -n 1 <<<"$out" | jq -ce 'select(type == "object")' 2>/dev/null); then
+    config_model=$(jq -r '.model // "" | select(. != "default")' <<<"$out")
+    config_effort=$(jq -r '.effort // "" | select(. != "default")' <<<"$out")
+    sub=$(jq -c '{subagent_model, subagent_effort} | with_entries(select(.value != null and .value != "default"))' <<<"$out")
+  else
+    out=$(head -n 1 <<<"$out")
+    if [[ $out == models.toml:* ]]; then
+      echo "${0##*/}: models.toml does not read: $out; launching on the settings' model" >&2
+    else
+      echo "${0##*/}: cannot read the model config: $out; launching on the settings' model" >&2
+    fi
+  fi
+  [[ -z $config_model ]] || LAUNCH_MODEL_ARGS+=(--model "$config_model")
+  [[ -z $config_effort ]] || LAUNCH_MODEL_ARGS+=(--effort "$config_effort")
+  if [[ $sub != '{}' ]]; then
+    jq --argjson sub "$sub" '.env = (.env // {})
+      + ({CLAUDE_CODE_SUBAGENT_MODEL: $sub.subagent_model, CLAUDE_CODE_SUBAGENT_EFFORT: $sub.subagent_effort}
+        | with_entries(select(.value != null)))' "$settings" >"$settings.$$"
+    mv -f "$settings.$$" "$settings"
+  fi
+  user=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json
+  [[ -f $user ]] || user=/dev/null
+  LAUNCH_CHOICE=$(jq -cn --arg category "$category" --arg model "$config_model" --arg effort "$config_effort" \
+    --argjson sub "$sub" '[inputs] as $s
+    | def word(f): [$s[] | f | strings | select(. != "")] | first;
+    (if $model != "" then {model: $model, model_from: "config"}
+      else (word(.env.ANTHROPIC_MODEL?) // word(.model?)) as $m
+        | if $m then {model: $m, model_from: "settings"} else {model: "default", model_from: "default"} end
+      end) as $chosen
+    | (if $effort != "" then {effort: $effort, effort_from: "config"}
+      else (word(.env.CLAUDE_CODE_EFFORT_LEVEL?) // word(.modelSettings?[$chosen.model]?.effortLevel?)
+          // word(.effortLevel?)) as $e
+        | if $e then {effort: $e, effort_from: "settings"} else {effort: "default", effort_from: "default"} end
+      end) as $level
+    | {category: $category} + $chosen + $level + $sub' "$settings" "$user" 2>/dev/null) ||
+    LAUNCH_CHOICE=$(jq -cn --arg category "$category" --arg model "$config_model" --arg effort "$config_effort" \
+      --argjson sub "$sub" '{category: $category}
+      + (if $model != "" then {model: $model, model_from: "config"} else {model: "default", model_from: "default"} end)
+      + (if $effort != "" then {effort: $effort, effort_from: "config"} else {effort: "default", effort_from: "default"} end)
+      + $sub')
+}
+
+# launch_log <name> <launch output>: appends one line to the team home's sessions.jsonl, after
+# claude --bg returned: {ts, machine, name, category, model, model_from, effort, effort_from},
+# from LAUNCH_CHOICE (launch_models), with id, the output's first 8-character hex word, when it
+# names one, and subagent_model and subagent_effort when LAUNCH_CHOICE has them. The session is
+# already running, so a line it cannot write (no team name for this machine, a team home it
+# cannot write) is a warning on stderr, "<script>: could not record the launch in <file>: <why>;
+# the session runs on", and returns 0. team-checkpoint commits the file with the ledger.
+launch_log() {
+  local name=$1 out=$2 file=$TEAM_HOME/sessions.jsonl id machine line why
+  id=$(grep -oE '\b[0-9a-f]{8}\b' <<<"$out" | head -n 1) || id=''
+  if ! machine=$(machine_name 2>&1); then
+    echo "${0##*/}: could not record the launch in $file: ${machine#"${0##*/}: "}; the session runs on" >&2
+    return 0
+  fi
+  line=$(jq -cn --arg machine "$machine" --arg name "$name" --arg id "$id" --argjson choice "$LAUNCH_CHOICE" \
+    '{ts: (now | floor | todate), machine: $machine, name: $name}
+    + ($choice | {category, model, model_from, effort, effort_from})
+    + (if $id == "" then {} else {id: $id} end)
+    + ($choice | with_entries(select(.key == "subagent_model" or .key == "subagent_effort")))')
+  if ! why=$({ printf '%s\n' "$line" >>"$file"; } 2>&1); then
+    echo "${0##*/}: could not record the launch in $file: ${why##*: }; the session runs on" >&2
+  fi
+  return 0
 }

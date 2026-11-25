@@ -149,6 +149,7 @@ lock_has_its_shape() {
     echo 'assistant channel'
     echo gate-agent
     echo records
+    echo models
     echo drills
     echo 'trust team home'
     echo captures
@@ -183,6 +184,7 @@ lock_has_its_shape() {
     echo 'assistant channel'
     echo gate-agent
     echo records
+    echo models
     echo drills
     echo 'trust team home'
     echo captures

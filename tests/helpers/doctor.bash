@@ -108,6 +108,8 @@ EOF
   jq -c --arg at "$(date -u +%FT%TZ)" --arg commit "$CODE_START" '.drills[] | {at: $at, drill: .name,
     machine: "home-pc", commit: $commit, dirty: false, claude: "2.1.321", verdict: "pass", detail: ""}' \
     "$REPO_ROOT/bin/lib/drills.json" >"$TEAM_HOME/drills.jsonl"
+  # The model config, the shipped one, so the models line passes.
+  cp "$REPO_ROOT/tests/fixtures/models.toml" "$TEAM_HOME/models.toml"
   # The team home, with the records guard on, as Daniel turns it on.
   git -C "${TEAM_HOME:?}" config core.hooksPath "$CODE_CHECKOUT/bin/hooks/records-git"
 
