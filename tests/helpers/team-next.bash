@@ -13,6 +13,7 @@
 # answering with a --json end (ci_wait_ends). $url is T7's PR, 9, and $counts a verdict's
 # findings counts, every one 0.
 
+# team_next_sandbox: sandbox, then T7 in proj as the header says; call it in setup.
 team_next_sandbox() {
   sandbox
   hold_lease home-pc >/dev/null
@@ -203,6 +204,8 @@ record() {
   jq -c '{template, values}' "$TEAM_HOME/tasks/T7/brief-$1.json"
 }
 
+# checks: writes a one-line checks file under $BATS_TEST_TMPDIR, as a first review's --checks
+# takes, and prints its path.
 checks() {
   echo "1. team-next launches the reviewer." >"$BATS_TEST_TMPDIR/checks"
   echo "$BATS_TEST_TMPDIR/checks"
