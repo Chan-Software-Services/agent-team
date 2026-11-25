@@ -21,7 +21,7 @@ Its rules are `roles/assistant.md`'s, which this skill restates none of: "Daniel
    An ask `waiting.json` does not hold yet (logged since it was last written) goes after those with the same total, by its `ts`.
    With no readable `waiting.json`, the coordinator's items go oldest first.
    Then your asks, then the due manual steps, each in the order their file lists them.
-4. **Present.** Open the walk's thread in `#assistant` with `team-assistant thread --from <Daniel's message id> "Walk: <n> items waiting on you"`; when Daniel wrote in a thread of `#assistant`, walk in that thread and open none.
+4. **Present.** Open the walk's thread in `#assistant` with `team-assistant thread "Walk: <n> items waiting on you" --from <Daniel's message id>`; when Daniel wrote in a thread of `#assistant`, walk in that thread and open none.
    Post a first message listing the items, one per line, each a bullet with its number in bold (`- **3** T586 q1: ...`), since Discord renumbers an ordered list.
    Then post one message per item, under 2000 characters: what it is; the facts read from the task's own records (`tasks/T<n>/scratch/questions-<round>.md`, `tasks/T<n>/scratch/report.md`, `tasks/T<n>/plan.md`, the ask's text), linking a file too long to quote; a recommendation, the records' own when they give one; and the exact reply form.
    Wait for Daniel's answer before the next item, unless they skip it ("skip", "later"), which moves it to the end once.

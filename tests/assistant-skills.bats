@@ -65,7 +65,8 @@ code_spans() {
   local span spans missing=()
   spans=$(code_spans)
   for span in 'team-snapshot --json' 'team-state T<n> --json' 'team-current reconcile' 'team-current list' \
-    'team-assistant thread --from' 'team-assistant send decision' '--daniel <their message id>' \
+    "team-assistant thread \"Walk: <n> items waiting on you\" --from <Daniel's message id>" \
+    'team-assistant send decision' '--daniel <their message id>' \
     "--channel <the walk's thread id>" 'team-assistant show H<n>' 'team-current add ask' 'team-current add owe' \
     '--until handoff H<n> answered' 'team-current done' 'team-assistant thread --close' 'ASSISTANT H<n> decision' \
     pending_asks pr.state pr.merge_approved unblocks fetch_messages; do
