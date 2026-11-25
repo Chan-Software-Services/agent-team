@@ -45,9 +45,9 @@ No MCP server: none of the read-only crate-docs servers is worth a pin (each bui
 - The skill's description, about 50 tokens, in the starting context of every session that lists the toolkit.
 - When invoked, its body: 4.5 kB, about 1.1k tokens.
 - The `LSP` tool is deferred in a worker session: its name alone is in the starting context, and its definition, about 2 kB (about 500 tokens), only once the session loads it with `ToolSearch`; `team-load-check --context --toolkit rust` measures what each role starts with.
-- Each `LSP` call costs what it returns: on the skeleton crate, a `documentSymbol` of `crates/team-core/src/lib.rs` returned its three symbols in about 150 characters, and a `goToDefinition` one line of about 45.
+- Each `LSP` call costs what it returns: on the skeleton crate, a `documentSymbol` of `crates/team-core/src/lib.rs` returned its three symbols in 150 characters, and a `goToDefinition` one line of 42.
 - rust-analyzer starts on the session's first `LSP` call, never before, and that call's answer came within 4 s of its start on the skeleton workspace.
-  Its resident memory after the call was 566 MB, most of it the standard library's index, steady over the next three minutes, with two `rust-analyzer-proc-macro-srv` processes of about 26 MB each: about 620 MB per session that calls `LSP`, so three builders at once hold about 1.9 GB for it.
+  Its resident memory after the call was 566 MB, steady over the next three minutes, with two `rust-analyzer-proc-macro-srv` processes of about 26 MB each: about 620 MB per session that calls `LSP`, so three builders at once hold about 1.9 GB for it.
 - The sccache server: one per machine, about 15 MB resident after a build of six registry crates.
 - The session-start hook's banner, one line of about 30 tokens, in every session that lists the toolkit.
 - The post-edit hook's context: at most 4,000 characters per edit of a Rust file, nothing for a clean package; its time per edit on the skeleton crate, by hand on the event an `Edit` gives: 89 to 103 ms cold (a fresh target directory) and 66 to 73 ms warm, and an in-session `Edit` adding an `unwrap()` brought its `unwrap_used` finding back with the edit.
@@ -58,6 +58,7 @@ No MCP server: none of the read-only crate-docs servers is worth a pin (each bui
 - What it shares: the dependencies from the registry, whose source paths under `~/.cargo` are the same in every worktree.
   What it does not: the workspace's own crates (their paths differ per worktree, and Cargo compiles them incrementally, which sccache does not cache) and anything linked (binaries, proc macros).
   Measured with a probe crate of six registry dependencies (`bitflags`, `either`, `itoa`, `memchr`, `regex-syntax`, `smallvec`), built in two directories at different paths, each with its own target directory: the first build took 1.0 s with 6 cache misses, the second 0.2 s with 6 hits of its 6 compiles (100 %), its 6 other calls (the probe crate itself, compiled incrementally, and cargo's queries of `rustc`) being ones sccache does not cache.
+- The one sccache server runs in the systemd scope of whichever session compiles first, a `cargo` call of its rust-analyzer included, so stopping that task's sessions ends the server every session on the machine shares; no build was seen to fail on it.
 - Each worktree keeps its own `target/` directory, never a shared one: with one shared target directory, a second `cargo` waits on "Blocking waiting for file lock on build directory", so builders would run one at a time.
   Nothing cleans a `target/` directory: a worktree's is under 1 GiB for the skeleton, and step 2 decides a cleanup once sizes are real.
 - `cargo`'s jobs are held to the team's CPU budget by one rule in three places: `tests/run rust` per run (`TEAM_JOBS`, else `team-capacity jobs` with a team home, else `cargo`'s default), a session's own `cargo` calls, and rust-analyzer's, fixed at `CARGO_BUILD_JOBS=2` in its `env`.

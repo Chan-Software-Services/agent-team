@@ -195,11 +195,11 @@ jobs:
   # commit it checks only a change that reaches a Rust path since the base, the one the data job
   # reads its range from, and otherwise passes at once, so the required check reports on every PR
   # and a new advisory fails only a PR that touches Rust; by hand it checks the whole workspace.
-  # No sccache and no cache action: the skeleton builds in seconds; add one when the job passes 5
-  # minutes.
+  # No sccache and no cache action: the skeleton builds in seconds; add one, and raise the limit,
+  # when its runs near it.
   rust:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       CARGO_NEXTEST_VERSION: 0.9.152
       CARGO_NEXTEST_SHA256: 521c5f790ed07ee69d0a88403d9d86a8c8ab27977f12fc73f22aa4e7e14a0f71

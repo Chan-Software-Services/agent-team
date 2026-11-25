@@ -2537,7 +2537,7 @@ YAML
   block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  rust:$/,/^  [a-z_-]*:$/p' | sed '1!{/^  [a-z_-]*:$/d}' | grep -v '^ *#')
   [[ -n $block ]] || { echo "ci.yml has no rust job" >&2; return 1; }
   grep -qx '    runs-on: ubuntu-24.04' <<<"$block"
-  grep -qx '    timeout-minutes: 15' <<<"$block"
+  grep -qx '    timeout-minutes: 5' <<<"$block"
   # The checkout has the whole history, for the base, and keeps no credential.
   grep -qx '      - uses: actions/checkout@[0-9a-f]\{40\} # v[0-9.]*' <<<"$block"
   grep -qxF '          fetch-depth: 0' <<<"$block"
@@ -2582,7 +2582,7 @@ YAML
   (($(grep -nxF '          rustup toolchain install' <<<"$block" | cut -d: -f1) < $(grep -nxF '      - run: tests/run toolkits' <<<"$block" | cut -d: -f1)))
 }
 
-# CI runs no macOS job, so no required check waits on GitHub's macOS runners.
+# Every job of ci.yml has a runner, and each is ubuntu-24.04, so CI runs no macOS job.
 @test "every CI job runs on Linux" {
   local ci=$REPO_ROOT/.github/workflows/ci.yml ids runners
   ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
