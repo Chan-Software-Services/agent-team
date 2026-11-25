@@ -7,36 +7,37 @@ It covers setup trials too, since T247: a toolkit, hook or instruction that clai
 
 ## How a role gets a model
 
-- A project's `models` table in the registry names a model alias or name per worker role: `models = { reviewer = "sonnet" }` under `[<project>]` in the team home's `projects.toml` (`team-project --help` documents the key).
-  With no table, every role runs on the user settings' model (Opus 5.5 today).
-- A task's builder model is the task's own: `team-open --builder-model <alias>` names it, else the project's registry `builder` line at the open is the task's, else `default` (the settings' word), and `team-open` keeps it on the task's `opened` event as `builder_model`.
-  `team-worker` launches every builder of the task on it, in each of the task's projects' worktrees, a fix round's, `team-next`'s hand-offs and `--fill`'s ticket builders, and a resume's, a level's or a recovery's relaunch among them, so a task stays in its arm through every relaunch, and a later edit of the registry changes the builders of no task opened since 2026-11-17.
+- Every session's model and effort come from the team home's `models.toml`, one line per choice, the most specific line naming each wins (`sops/models.md`, `team-models --help`).
+  It ships with one line, `"default" = { model = "opus", effort = "high" }`, so every role runs on Opus 5.5 at `high` until a line says otherwise.
+- A trial arm is a line: `"reviewer.rereview" = { model = "sonnet" }` puts every re-review on Sonnet, `"builder path=small" = { model = "sonnet", effort = "high" }` every small task's builders, and `"reviewer project=conventioner"` one project's reviewers.
+  `team-models resolve` and `team-models list` say which line decides each category before the next launch, and the next launch of the category takes it, an open task's included.
+- A per-task arm is still the task's builder model: `team-open --builder-model <alias>` names it on the task's `opened` event as `builder_model`, and `team-worker` launches every builder of the task on it, in each of the task's projects' worktrees, a fix round's, `team-next`'s hand-offs and `--fill`'s ticket builders, and a resume's, a level's or a recovery's relaunch among them, so a task stays in its arm through every relaunch.
+  With no `--builder-model`, the task names none, and its builders take the config's builder line at each launch.
   A builder launched with `team-worker --model <alias>` switches its task's builder model: every later builder launch of the task with no `--model` takes that one.
-  `team-worker --model default` is the way back to the settings' word: it passes no `--model` to `claude`, logs the settings' word, and for a task's builder of a task that has a builder model makes it `default` from then on.
-  The task's latest builder launch decides, so a task opened before 2026-11-17, which has no `builder_model`, keeps the model of its latest builder launch when that one was on a named `--model <alias>` or logged a `model` with no `model_from`; a legacy launch that logged neither ran on the settings' word, so it ends that model, and with none the task's builders take the registry's `builder` line at each launch.
-- `team-worker` passes a named model to `claude --bg` as `--model` and logs it as `model` on the launch event, with `model_from` saying where it came from (`task`, `launch` or `registry`), so the ledger tells a trial's sessions from the baseline's.
-  A launch with none named passes no `--model` and logs the settings' word: the `ANTHROPIC_MODEL` of its settings' `env`, else their `model` key, as `model_from` `settings`, and with neither `model` `default`, Claude Code's own default.
-  The settings' word is logged as written, an alias such as `opus` as much as a model id, and an `ANTHROPIC_MODEL` in the launching process's environment or in managed settings is not read, so `model` is the model a session was asked for, and only `reply_models` (below) says what it ran on.
-  A launch from before 2026-11-17 logged no `model` when none was named, and ran on the settings' model.
-- So one baseline is two rows: wherever launches are grouped by `model` (`team-time --json`'s `by_role_model`, `team-tokens`' `reviewer_models` and `builder_models`), the settings' model's launches since 2026-11-17 are a row by its word (`opus` today), and the earlier ones are in `default`; add the two for the baseline.
-- `team-worker --model <alias>` launches one planner or reviewer on another model than the registry's, for a paired review below, and the launch logs that model too, as `model_from` `launch`; a builder's `--model` is its task's from then on, as above.
-- An ops session never takes a named model: its production work stays on the settings' word, which its launch logs.
-  T0 and tasks opened before `team-open` have no project, so they take none from the registry.
+  `team-worker --model default` is the way back to the config: it passes the config's word for that launch, and for a task's builder of a task that has a builder model ends it from then on.
+  The task's latest builder launch decides, so a builder launch on the config's or the settings' word, or a legacy one that logged no model, leaves the task none; a task opened before 2026-11-17, which has no `builder_model`, keeps the model of its latest builder launch when that one was on a named `--model <alias>` or logged a `model` with no `model_from`.
+- `team-worker --model <alias>` launches one planner or reviewer on another model than the config's, for a paired review below, and the launch logs that model, as `model_from` `launch`; a builder's `--model` is its task's from then on, as above.
+- `team-worker` passes the chosen model to `claude --bg` as `--model` and the chosen effort as `--effort`, and logs on the launch event `category`, `model` with `model_from` (`launch`, `task`, `config`, `settings` or `default`), and `effort` with `effort_from` (`config`, `settings` or `default`), so the ledger tells a trial's sessions from the baseline's by category and model alike.
+  A launch no line names a model or effort for passes neither, and logs the settings' word as written, an alias such as `opus` as much as a model id: `model_from` `settings`, and with none `model` `default`, Claude Code's own default, and the same for the effort.
+  So `model` is the model a session was asked for, and only `reply_models` (below) says what it ran on.
+  A launch from before 2026-11-17 logged no `model` when none was named, and ran on the settings' model; one from before 2026-11-24 logged no `category` or `effort`, and one of those with `model_from` `registry` ran on the registry's retired `models` table.
+- So one baseline is two rows: wherever launches are grouped by `model` (`team-time --json`'s `by_role_model`, `team-tokens`' `reviewer_models` and `builder_models`), the baseline's launches since 2026-11-17 are a row by its word (`opus` today), and the earlier ones are in `default`; add the two for the baseline.
+- An ops session never takes `--model` or a task's builder model: it runs on the config's `ops` line, which changes only on Daniel's word.
+  T0's launches take their `<role>.load-check` lines and no task's builder model.
 - To read back what a session ran on, `team-tokens --json --task T<n>`'s `outcomes.reviewer_models` and `outcomes.builder_models` give each launch model's row with `reply_models`, the models its sessions' replies ran on, read from their transcripts.
 
 ## Before the trial
 
 1. Daniel says yes to the trial, its project, its role and its model, and to the size (20 trial reviews unless they pick another number).
-2. The effort is the baseline's.
-   The baseline reviewers run on Opus 5.5 at `high`, from the machine settings' `modelSettings` entry for `claude-opus-5-5`.
-   Sonnet 5.5's own default is `medium`, and the machine settings' top-level `effortLevel: "high"` sits in the user settings, where the settings reference says it applies to "Opus 5, Fable 5.1, and earlier models" while "Opus 5.5 and models released after it ignore it"; it does not say whether Sonnet 5.5 is one of those, so count on `medium`.
-   So the trial needs a `modelSettings` entry of its own, `"claude-sonnet-5-5": {"effortLevel": "high"}`, in the team home's `machine/claude/settings.json`, which `team-config apply` puts on each machine; that change is Daniel's to approve too.
-3. The coordinator commits the registry line on `dev`, a records-only commit, after `team-project --check` passes, and notes the trial's start time, `<start>`.
+2. The effort is the baseline's, named in the trial's line beside its model.
+   A line naming only a model takes the effort of the most specific line that names one, `default`'s `high` as the file ships, and with no line naming one the settings' word, which for Sonnet 5.5 may be its own default, `medium`; so a trial line reads `{ model = "sonnet", effort = "high" }` unless Daniel picks another effort, and holds whatever the lines above it become.
+3. The coordinator edits `models.toml`, runs `team-models --check`, checks with `team-models resolve` that the trial's category resolves to the trial's model and effort, commits it as a records commit, and notes the trial's start time, `<start>`.
 
 ## While it runs
 
-- Every reviewer launch of the project runs on the trial model; the first trial review's transcript shows the effort it ran at, one count per value, no content: `jq -r 'select(.type == "assistant") | .effort' <transcript> | sort | uniq -c` must say `high`.
-  If it does not, stop the trial and fix the setting before counting any review.
+- Every launch of the trial's category runs on the trial model, and its launch event's `effort` must be the trial's, with `effort_from` `config`.
+  The first trial review's transcript shows the effort it ran at, one count per value, no content: `jq -r 'select(.type == "assistant") | .effort' <transcript> | sort | uniq -c` must say the launch event's `effort`.
+  If either does not, stop the trial and fix the line before counting any review.
 - **The paired reviews.** For each of the first five trial reviews, an Opus reviewer reviews the same head too.
   Once the trial reviewer has reported and its session has ended (the two share the session name `T<n>-reviewer`), the coordinator launches `team-worker T<n> reviewer <worktree> --model opus -- <brief>`.
   Its brief names the trial review's head commit and not the PR, so it reviews `origin/<base>...<head>` whatever the builder has pushed since and, as a review with no PR, writes nothing to GitHub; and it names the file to write in place of `review.md`, which holds the trial review: `.scratch/task/paired-review-<k>.md`.
@@ -53,13 +54,13 @@ Each measure is taken per review, for the trial's reviews and for the baseline's
 | Blocking findings and notes sent back | The ledger's `review` events: the share with `verdict` `findings`, and the notes sent back per review, the length of `sent_back` |
 | Re-review rounds per PR | `team-time --json`'s `reviews` (reviews and findings per PR, a review's PR the latest `pr` event before it), and `team-tokens --json`'s `rereviews` |
 | Issues found after a passing review that it should have caught | By the gate after the pass (a later `gate-run` on the PR with a `cause` of `review`, `notes` or `gate-finding`), by a later review of the same PR, or by Daniel; the coordinator judges each and lists it with where it was found |
-| $w per review | `team-tokens --json --task T<n>` for each of the project's tasks in the window: `outcomes.reviewer_models`, the trial model's row against the baseline's (`default`, or the settings' model by name for a launch since 2026-11-17), whose `reply_models` must show the model each ran on |
+| $w per review | `team-tokens --json --task T<n>` for each of the project's tasks in the window: `outcomes.reviewer_models`, the trial model's row against the baseline's (`default`, or the baseline's model by name for a launch since 2026-11-17), whose `reply_models` must show the model each ran on |
 
 The paired reviews' own launches log `opus`, so their $w is a row of their own in `reviewer_models`: the cost of the check, never part of the baseline.
 
 ## The baseline
 
-- The baseline is the same project's Opus reviews before `<start>`: reviewer launches with no named model (no `model`, or `model_from` `settings` or `default`), from the weeks before the trial, back to the first with usage in the team home's `usage/` (`team-tokens`'s `sources`).
+- The baseline is the same project's Opus reviews before `<start>`: reviewer launches on the baseline's model (no `model`, or `model_from` `settings`, `default`, or `config` on the line the baseline ran on), from the weeks before the trial, back to the first with usage in the team home's `usage/` (`team-tokens`'s `sources`).
 - Reviews are matched by PR size, the lines a PR changes (`gh pr view <n> --repo <repo> --json additions,deletions`, added and deleted together), in four buckets: under 100, 100 to 499, 500 to 1,999, and 2,000 or more.
   Each baseline measure is weighed to the trial's mix of buckets, so a trial of small PRs is never compared with a baseline of large ones.
 - A bucket with no baseline review is left out of both sides, and the note says so.
@@ -68,8 +69,7 @@ The paired reviews' own launches log `opus`, so their $w is a row of their own i
 
 - After the trial's 20th review (or Daniel's number), the coordinator writes a short note to Daniel and keeps it in the team home as `projects/<project>/model-trials/<YYYY-MM-DD>-<role>-<model>.md`, the date `<start>`'s.
 - The note gives each measure for the trial and the baseline, each with the count of reviews behind it and the bucket mix; the five paired comparisons, finding by finding; the effort each side ran at; and the $w the trial model saved per review and over the trial.
-- Daniel decides: the registry line stays, as the project's new default, or goes, by a records change to `projects.toml` either way.
-  The machine settings' `modelSettings` entry for the trial model stays or goes with it.
+- Daniel decides: the trial's line stays, as the category's new choice, or goes, by a records change to `models.toml` either way.
 
 ## Trialling a setup change
 

@@ -1,0 +1,123 @@
+{
+  "id": 135550948643,
+  "run_id": 44521489292,
+  "name": "e2e shard 4/10",
+  "status": "completed",
+  "conclusion": "failure",
+  "runner_name": "GitHub Actions 1000009575",
+  "html_url": "https://github.com/Chan-Software-Services/Conventioner/actions/runs/44521489292/job/135550948643",
+  "steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1,
+      "started_at": "2026-11-19T12:10:56Z",
+      "completed_at": "2026-11-19T12:10:56Z"
+    },
+    {
+      "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2,
+      "started_at": "2026-11-19T12:10:56Z",
+      "completed_at": "2026-11-19T12:10:59Z"
+    },
+    {
+      "name": "Run ./.github/actions/front-end-deps",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 3,
+      "started_at": "2026-11-19T12:10:59Z",
+      "completed_at": "2026-11-19T12:11:05Z"
+    },
+    {
+      "name": "Run ./.github/actions/e2e-stack",
+      "status": "completed",
+      "conclusion": "failure",
+      "number": 4,
+      "started_at": "2026-11-19T12:11:05Z",
+      "completed_at": "2026-11-19T12:16:14Z"
+    },
+    {
+      "name": "Run Playwright tests",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 5,
+      "started_at": "2026-11-19T12:16:14Z",
+      "completed_at": "2026-11-19T12:16:14Z"
+    },
+    {
+      "name": "Report flaky tests",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 6,
+      "started_at": "2026-11-19T12:16:14Z",
+      "completed_at": "2026-11-19T12:16:14Z"
+    },
+    {
+      "name": "Docker compose logs",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 7,
+      "started_at": "2026-11-19T12:16:14Z",
+      "completed_at": "2026-11-19T12:16:14Z"
+    },
+    {
+      "name": "The back end's log, for the test map",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 8,
+      "started_at": "2026-11-19T12:16:14Z",
+      "completed_at": "2026-11-19T12:16:14Z"
+    },
+    {
+      "name": "Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 9,
+      "started_at": "2026-11-19T12:16:14Z",
+      "completed_at": "2026-11-19T12:16:14Z"
+    },
+    {
+      "name": "Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 10,
+      "started_at": "2026-11-19T12:16:14Z",
+      "completed_at": "2026-11-19T12:16:15Z"
+    },
+    {
+      "name": "Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 11,
+      "started_at": "2026-11-19T12:16:15Z",
+      "completed_at": "2026-11-19T12:16:15Z"
+    },
+    {
+      "name": "Post Run ./.github/actions/front-end-deps",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 21,
+      "started_at": "2026-11-19T12:16:15Z",
+      "completed_at": "2026-11-19T12:16:15Z"
+    },
+    {
+      "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 22,
+      "started_at": "2026-11-19T12:16:15Z",
+      "completed_at": "2026-11-19T12:16:15Z"
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 23,
+      "started_at": "2026-11-19T12:16:15Z",
+      "completed_at": "2026-11-19T12:16:15Z"
+    }
+  ]
+}

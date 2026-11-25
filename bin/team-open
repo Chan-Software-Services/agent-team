@@ -76,13 +76,15 @@
 # projects/<project>/backlog/ (story_file in bin/lib/team.sh; refused before anything is taken
 # otherwise): opened and the printed facts carry it as story, and team-merge marks it done.
 # --builder-model names the task's builder model, a model alias or name as claude --model takes it
-# (sonnet, claude-sonnet-5-5, sonnet[1m]); with none, the project's registry builder line
-# (team-project's models) at the open is the task's, and with neither it is default, the settings'
-# word. opened and the printed facts carry it as builder_model, and team-worker launches every
-# builder of the task on it, in each of its projects' worktrees and its relaunches among them,
-# until a builder's team-worker --model switches it, so a later edit of the registry changes the
-# builders of no task it opened. It goes only with a new task (a usage error with --add, --resume or
-# --ticket).
+# (sonnet, claude-sonnet-5-5, sonnet[1m]): opened and the printed facts carry it as builder_model,
+# and team-worker launches every builder of the task on it, in each of its projects' worktrees and
+# its relaunches among them, until a builder's team-worker --model switches it. With none, opened
+# names no builder model, so the task's builders follow the team home's models.toml at each launch
+# (sops/models.md), and the printed facts' builder_model is the config's builder line for the
+# project and path (team-models resolve --role builder --project <project> --path <path>), or
+# default, the settings' word, when no line names one; a models.toml that does not read is said on
+# stderr, the open going on with default. It goes only with a new task (a usage error with --add,
+# --resume or --ticket).
 # Prints the task's facts as JSON; the project's other open tasks go to stderr, each with the files
 # its branch changes against the base (git diff --name-only origin/<base>...<branch>, origin's
 # branch when pushed, else the local one), or "no branch yet". Exit 75 when a new task has no room
@@ -339,10 +341,17 @@ grep -qxF -- "$project" <<<"$projects" ||
 if [[ -n $resume ]]; then machine=$(machine_name) || exit 1; fi
 [[ -z $story ]] || story_file "$project" "$story" >/dev/null || exit 1
 facts=$(team_project "$project")
-# A new task's builder model: --builder-model's, else the registry's builder line now, else
-# default, the settings' word.
+# A new task's builder model: --builder-model's, the task's own, which opened carries; else none
+# on opened, and the printed facts carry the config's builder line for the project and path, else
+# default, the settings' word. A models.toml that does not read stops no open.
 if [[ -z $builder_model && -z $add && -z $resume && -z $ticket ]]; then
-  builder_model=$(jq -r '.models.builder // "default"' <<<"$facts")
+  if builder_line=$(TEAM_HOME=$TEAM_HOME "$bin/team-models" resolve --role builder --project "$project" \
+    --path "$path" 2>&1); then
+    builder_model=$(jq -r '.model // "default"' <<<"$builder_line")
+  else
+    echo "team-open: models.toml does not read: $(head -n 1 <<<"$builder_line"); the task opens, but its builders launch only once team-models --check passes" >&2
+    builder_model=default
+  fi
 fi
 primary=$(jq -r .path <<<"$facts")
 base=$(jq -r .base <<<"$facts")
@@ -1028,11 +1037,12 @@ else
 
   ledger_append "$(jq -cn --arg task "$task" --arg project "$project" --arg path "$path" --arg type "$type" \
     --arg title "$title" --arg branch "$branch" --arg base "$base" --arg base_sha "$base_sha" --arg worktree "$worktree" \
-    --arg story "$story" --arg builder_model "$builder_model" --arg daniel "$daniel" --arg channel "$channel" \
+    --arg story "$story" --arg builder_model "$builder_model" --arg builder_model_given "$builder_model_given" \
+    --arg daniel "$daniel" --arg channel "$channel" \
     '{ts: (now | todate), task: $task, event: "opened", project: $project, path: $path, type: $type,
       title: $title, branch: $branch, base: $base, base_sha: $base_sha, worktree: $worktree}
       + (if $story == "" then {} else {story: $story} end)
-      + {builder_model: $builder_model}
+      + (if $builder_model_given == "" then {} else {builder_model: $builder_model} end)
       + (if $daniel == "" then {} else {discord_message: $daniel, discord_channel: $channel} end)')"
 
   [[ -z $queued_given ]] || link_queued

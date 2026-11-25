@@ -2760,6 +2760,32 @@ $ready"
   no_github
 }
 
+@test "queue-ready: an item whose project's treehouse pool has no free tree is passed over, and none is named when every ready item's pool is full" {
+  queue_room
+  # th, beside proj, on a treehouse pool whose treehouse.toml caps it at one tree, held.
+  printf '%s\n' '[th]' 'repo = "owner/th"' 'path = "projects/th"' 'base = "main"' 'delivery = "direct-pr"' \
+    'merge_method = "merge"' 'required_checks = []' 'task_dir = ".scratch/task"' 'docs = []' 'toolkits = []' \
+    '[th.pool]' 'provider = "treehouse"' 'lease = "scripts/th-lease.sh"' 'return = "scripts/th-return.sh"' \
+    'slots = ["pools/th/1/th"]' >>"$TEAM_HOME/projects.toml"
+  mkdir -p "$HOME/projects/th"
+  printf 'max_trees = 1\n' >"$HOME/projects/th/treehouse.toml"
+  stub_command treehouse
+  jq -cn --arg path "$HOME/pools/th/1/th" '[{name: "1", path: $path, status: "leased", branch: "", lease_holder: "T9"}]' \
+    >"$STUB_FIXTURES/treehouse.out"
+  queued top.md "summary: the work on th" "project: th" "priority: 1" "size: S"
+  queued_ready next.md 2 "the work on proj"
+  local full="th's pool is full (1 of 1 tree, none free)"
+  run_bin -1 --separate-stderr team-sweep
+  assert_equal "$stderr" ""
+  assert_equal "$output" "queue: $ROOM; $full: open next.md (proj, priority 2, S): the work on proj; next: team-open --queued next.md"
+  assert_equal "$(stub_calls treehouse)" '["status","--json"]'
+  # With proj's item gone, every ready item's pool is full: no finding.
+  rm "$TEAM_HOME/tasks/queued/next.md"
+  run_bin -0 team-sweep --json
+  assert_equal "$output" "[]"
+  no_github
+}
+
 @test "queue and current-stale: a malformed queued file and a closed task's current items, after queue-ready, each with task null" {
   queue_room
   queued_ready top.md 2 "the approved work"

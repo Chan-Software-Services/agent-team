@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29961
+manual_bytes=29958
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -336,7 +336,7 @@ worker_roles() { roles | grep -vxe coordinator -e assistant; }
   # The two rows: a hand-off from the assistant is read, acted on by kind and answered; its answer is read.
   rows=$(grep -E '^\| `ASSISTANT ' "$manual")
   assert_equal "$(wc -l <<<"$rows")" 2
-  grep -qF '| `ASSISTANT H<n> <kind>`, the assistant'"'"'s hand-off | `team-assistant show H<n>` | Act by kind on Daniel'"'"'s message, which `show` prints verbatim: a `task` is `team-open` (`When: now`) or a `tasks/queued/` file (`When: queue`), Fable for `Model: fable` (planner'"'"'s brief, `--builder-model`)' <<<"$rows"
+  grep -qF '| `ASSISTANT H<n> <kind>`, the assistant'"'"'s hand-off | `team-assistant show H<n>` | Act by kind on Daniel'"'"'s message, which `show` prints verbatim: a `task` is `team-open` (`When: now`) or a `tasks/queued/` file (`When: queue`), Fable for `Model: fable` (planner'"'"'s brief, `--builder-model`), another model a `models.toml` line (`team-models --check`),' <<<"$rows"
   grep -qF 'and a `now` or `fable` that message does not say is asked of Daniel first;' <<<"$rows"
   grep -qF 'a `decision` an ask'"'"'s answer with `team-answer T<n> <id> <message id> --channel <channel id>`, a hold or a relay to a worker' <<<"$rows"
   grep -qF 'then `team-assistant answer H<n> --file <answer>` (`--task T<n>` for a task opened from it) and send `assistant` `COORDINATOR ANSWER H<n>`.' <<<"$rows"
