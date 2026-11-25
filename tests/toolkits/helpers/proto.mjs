@@ -4,8 +4,11 @@
 //   const proto = protoSession(t, { env })
 //                         a runtime directory of the test's own (PROTO_RUNTIME_DIR), the window
 //                         headless (PROTO_HEADLESS=1) and the test routes on (PROTO_TEST_SEAM=1),
-//                         a temporary directory of the test's own (TMPDIR), the environment
-//                         without a team session's role, plus `env`; when `t`
+//                         a temporary directory of the test's own (TMPDIR), the Agent Chrome at
+//                         an address nothing answers on (PROTO_AGENT_CHROME_URL, port 1 of
+//                         127.0.0.1, so no test reaches Daniel's on 9222; a test of the target
+//                         names its throwaway Chrome's in `env`), the environment without a team
+//                         session's role, plus `env`; when `t`
 //                         ends, `proto stop`, then every host the session saw is ended by
 //                         ownedPid (helpers/process.mjs), with the browsers below it
 //   proto.dir, proto.env  that runtime directory, and the CLI's environment
@@ -70,11 +73,14 @@ export function runScript(t, command, args, { cwd, env, timeoutMs = 180_000 } = 
   });
 }
 
+// An address no Agent Chrome answers on: nothing listens on port 1, so a connection is refused.
+export const noAgentChrome = "http://127.0.0.1:1";
+
 export function protoSession(t, { env = {} } = {}) {
   const dir = join(tempDir("proto"), "rt");
   // TMPDIR too, where Playwright makes each browser's throwaway profile, which a browser that
   // outlives a killed host leaves behind.
-  const sessionEnv = cleanEnvironment({ PROTO_RUNTIME_DIR: dir, PROTO_HEADLESS: "1", PROTO_TEST_SEAM: "1", TMPDIR: tempDir("proto-tmp"), ...env });
+  const sessionEnv = cleanEnvironment({ PROTO_RUNTIME_DIR: dir, PROTO_HEADLESS: "1", PROTO_TEST_SEAM: "1", TMPDIR: tempDir("proto-tmp"), PROTO_AGENT_CHROME_URL: noAgentChrome, ...env });
   const seen = new Set();
   const paths = { socket: join(dir, "host.sock"), token: join(dir, "token") };
 

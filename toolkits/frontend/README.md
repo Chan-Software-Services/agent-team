@@ -85,6 +85,28 @@ At the laptop, in the project's checkout, with its dev server running:
    `proto set` with no window open is refused, naming `proto open`, and when Daniel closes the window or quits its browser the host drops it and runs on, so `proto status` says "no window" until the next `proto open`.
 4. `proto status` says whether the host runs, and which target and URL the window shows; `proto targets` lists the engines, each with its version, availability or the reason it is unavailable with its fix, and capabilities, then the sizes; `proto stop` closes the window and ends the host, leaving no socket or token.
 
+The Agent Chrome is a target too, `agent-chrome`, attached rather than launched, so Daniel keeps its real DevTools and right-click Inspect beside the toolbar:
+
+- It is available while a Chrome answers `GET /json/version` on its debugging address within 2 s, `http://127.0.0.1:9222` where `scripts/agent-chrome` starts it; `proto targets` shows it with that Chrome's version, and with none running it is unavailable, "no Agent Chrome answers on 127.0.0.1:9222; start it with `toolkits/frontend/scripts/agent-chrome`".
+  The host never starts the Agent Chrome itself: that window is Daniel's.
+- `proto set agent-chrome`, `proto open --target agent-chrome/window` or the toolbar's "Engine" opens the window's URL in a new tab of the Agent Chrome's own profile and brings it to the front; a later switch back reuses that tab while it is open.
+  The toolbar is in that tab alone: every other tab keeps its page and shows no toolbar, even reloaded, and the host navigates, sizes and closes none of them.
+- A size is applied to that tab alone by emulation, its width, height, scale and the mobile and touch flags (a device's user agent is not applied), and `window`, a size for this target alone, clears it, leaving the tab at the Agent Chrome's own window size.
+- Switching to it takes no login along: the host writes no cookie or storage into the Agent Chrome, which keeps its own.
+  Switching away carries the tab's URL and the Agent Chrome's `localhost` and `127.0.0.1` cookies and the tab's `localStorage` into the new engine, as any switch does.
+- Switching away or `proto stop` leaves the Agent Chrome as it was: the host's tab stays open on its page, its toolbar removed and its size back to the window's own, and its next reload has no overlay and no binding.
+  The host attaches with Playwright's `noDefaults`, so the Agent Chrome's downloads, focus and colour scheme stay at its own settings while it is attached.
+- When the Agent Chrome quits, or Daniel closes the host's tab, the host drops the window and runs on (`proto status`: "no window").
+
+Sharing the Agent Chrome with the `frontend` MCP server and `ui-capture` was checked on 2026-11-24, on daniel-pc with a throwaway headless Google Chrome 156.0.8078.47 started the Agent Chrome's way, `playwright-core` 1.65.1 attached as the host attaches and the pinned `chrome-devtools-mcp` 1.12.0 started with `.mcp.json`'s flags:
+
+- nothing disturbed the other: the host's overlay, binding and emulated size held while the server attached, listed and selected the page, took a snapshot and a screenshot and evaluated a script, and the server saw the host's size, then its resize and reload made with the server still attached;
+- disconnecting closed no tab and gave the window its own size back at once, and after the next reload neither the overlay nor the binding was there;
+- `ui-capture`'s `page.png` and `page-snapshot.txt` of the host's tab show the toolbar, since its controls are in the page's accessibility tree; "Hide toolbar" keeps it to a small "proto" button in the corner.
+
+The probe was headless, so a headed window's real focus was not exercised; the toolbar reads no focus state.
+`tests/toolkits/proto-agent-chrome.test.mjs` holds those checks as a test, on the host itself.
+
 The toolbar, "Prototype targets", sits at the bottom right of every page of the window, so the switch is made from the page itself:
 
 - "Engine" switches to another engine and "Size" to another size, as `proto set` does; an engine that is unavailable is listed but disabled, "<engine> (unavailable)", and its tooltip says why and how to fix it.
@@ -163,6 +185,8 @@ The bats suite checks the coordinator's side with `ui-capture` stubbed: `tests/t
 `tests/toolkits/proto-host.test.mjs` runs the prototyping host through `scripts/proto` as Daniel does, headless (`PROTO_HEADLESS=1`), in a runtime directory of each test's own, against fixture pages on 127.0.0.1 (`tests/toolkits/helpers/proto.mjs`): a window in each engine at a preset, a device and a free size, read back from the page itself, moved by a second open in the same host, and every refusal and failure above.
 `tests/toolkits/proto-switch.test.mjs` switches the window the same way, against a fixture site that records each request it is sent, on 127.0.0.1, on `[::1]` (off localhost by the guard's rule) and on `localhost`: an engine switch round every engine the machine has, carrying the localhost login and not `[::1]`'s; a resize in place against a fresh context in the same browser; a failed switch, two at once, a link off localhost and a closed browser.
 `tests/toolkits/proto-overlay.test.mjs` drives the toolbar by role and accessible name through the host's test seam, as Daniel's clicks do: the overlay in before the page's first script in the top frame alone and drawn in no other page, its controls and an unavailable engine's option, a switch of engine, size and custom size from it, the controls while a switch runs and the status of one that fails, reload and the collapsed state across reloads and switches, a blocked navigation's status, a message of an unknown type, and a hostile page's CSS against the toolbar's, each way.
+`tests/toolkits/proto-agent-chrome.test.mjs` runs the `agent-chrome` target against a throwaway headless Chrome standing in for the Agent Chrome (`PROTO_AGENT_CHROME_URL`, never Daniel's on 9222), holding a localhost tab of its own and an off-the-record one: the availability and its version, an address that never answers, the host's tab in front with every other tab left on its page with no toolbar, even reloaded, a download in another tab landing where the Chrome puts it, each size by emulation and `window` clearing it, a switch away and `proto stop` leaving the tab as it was, the tab reused, no cookie or storage written into the Agent Chrome, the Chrome quitting while attached, and the `frontend` server listing, snapshotting and evaluating the host's tab with the toolbar, the binding and the size holding.
+Every other proto test sets `PROTO_AGENT_CHROME_URL` to port 1, where nothing answers, so none reaches Daniel's Agent Chrome.
 Each runs every engine the machine has; CI's `toolkits` job installs all three with their system libraries, and there a missing engine fails rather than skips.
 The host's seams, read only from the environment, are in `proto/host.mjs`'s header.
 

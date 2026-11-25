@@ -43,7 +43,7 @@
 //                      token, and exits 0; SIGTERM, SIGINT and SIGHUP do the same
 //   POST /v1/test/page { action, url? } (PROTO_TEST_SEAM=1 only; 404 without it):
 //                      "metrics" -> the window page's innerWidth, innerHeight, devicePixelRatio,
-//                      userAgent, cookie and url; "navigate" with `url` -> follows a link there
+//                      maxTouchPoints, userAgent, cookie and url; "navigate" with `url` -> follows a link there
 //                      as a user would (launched.mjs's follow), then the metrics and `status`,
 //                      the host's status line ("Blocked <url>: off localhost", which the next
 //                      main-frame navigation clears) or null; "close-browser" -> closes the
@@ -76,6 +76,8 @@
 // Seams, read only from the environment:
 //   PROTO_HEADLESS=1        launch the window headless
 //   PROTO_RUNTIME_DIR       the runtime directory (guards.mjs)
+//   PROTO_AGENT_CHROME_URL  the Agent Chrome's debugging address (default http://127.0.0.1:9222),
+//                           so a test attaches to a throwaway Chrome, never Daniel's
 //   PROTO_BROWSERS_PATH     Playwright's browsers path, passed on as PLAYWRIGHT_BROWSERS_PATH,
 //                           so a test points an engine at an empty directory
 //   PROTO_LDD               the program WebKit's library check runs in place of ldd
@@ -87,6 +89,7 @@ import { createServer } from "node:http";
 import { catalogue, checkProject, defaultTarget, launchedEngines, readProject, resolveTarget, targetText } from "./catalogue.mjs";
 import { protocol } from "./client.mjs";
 import { checkLocalUrl, checkRuntimeDir, refuseTeamSession, runtimeDir, runtimePaths } from "./guards.mjs";
+import { agentChromeDriver, defaultAgentChromeUrl } from "./agent-chrome.mjs";
 import { firstLine, launchedDriver } from "./launched.mjs";
 
 refuseTeamSession();
@@ -109,14 +112,7 @@ const paths = runtimePaths(dir);
 
 const headless = env.PROTO_HEADLESS === "1";
 const drivers = new Map(launchedEngines.map((name) => [name, launchedDriver(name, { headless })]));
-// The Agent Chrome's driver is agent-chrome.mjs's; until it is in, the target says so.
-const agentChrome = {
-  name: "agent-chrome",
-  capabilities: { sizeBy: "emulation", overlayBeforePageScripts: true, matchedRules: "cdp", navigationGuard: false },
-  version: () => null,
-  available: () => ({ available: false, reason: "the agent-chrome target is not in this build of the host" }),
-};
-drivers.set("agent-chrome", agentChrome);
+drivers.set("agent-chrome", agentChromeDriver({ address: env.PROTO_AGENT_CHROME_URL || defaultAgentChromeUrl }));
 
 class Refusal extends Error {
   constructor(status, message) {
@@ -159,23 +155,23 @@ const windowAnswer = (window) => ({
   touch: window.target.touch,
 });
 
-function engineState(driver) {
-  const { available, reason = null } = driver.available();
+async function engineState(driver) {
+  const { available, reason = null } = await driver.available();
   return { name: driver.name, available, reason, version: driver.version(), capabilities: driver.capabilities };
 }
 
 // The engines' availability as the toolbar last read it: read again at each hello and at each
-// switch's end, not at every push (WebKit's check runs ldd).
+// switch's end, not at every push (WebKit's check runs ldd, the Agent Chrome's asks its address).
 let toolbarEngines = null;
-const readToolbarEngines = () => (toolbarEngines = [...drivers.values()].map((driver) => {
-  const { available, reason = null } = driver.available();
+const readToolbarEngines = async () => (toolbarEngines = await Promise.all([...drivers.values()].map(async (driver) => {
+  const { available, reason = null } = await driver.available();
   return { name: driver.name, available, reason };
-}));
+})));
 
 // The state of the window `record`, the host's window or the one a switch is opening.
 const overlayState = (record = current) => ({
   show: true,
-  engines: toolbarEngines ?? readToolbarEngines(),
+  engines: toolbarEngines ?? [],
   sizes: catalogue(record.project).sizes.map(({ id, width, height, scale }) => ({ id, width, height, scale })),
   current: { engine: record.target.engine, size: record.target.size, width: record.target.width, height: record.target.height, scale: record.target.scale },
   switching: switching > 0,
@@ -229,8 +225,8 @@ function windowHooks() {
 
 // The overlay's messages, by type; each answers the binding.
 const messages = {
-  hello: (message, record) => {
-    readToolbarEngines();
+  hello: async (message, record) => {
+    await readToolbarEngines();
     return overlayState(record);
   },
   set_target: (message) => {
@@ -290,7 +286,7 @@ async function place(url, target, project) {
     return windowAnswer(old);
   }
   if (!sameEngine) {
-    const state = driver.available();
+    const state = await driver.available();
     if (!state.available) throw new Refusal(503, state.reason);
   }
   const record = windowHooks();
@@ -315,18 +311,18 @@ function switched(target, operation) {
   switching++;
   statusLine = `Opening ${target.engine} at ${target.size}...`;
   pushState();
-  const done = (error) => {
+  const done = async (error) => {
     switching--;
     if (error) statusLine = error instanceof Refusal ? error.message : firstLine(error);
     else if (switching === 0) statusLine = null;
-    readToolbarEngines();
+    await readToolbarEngines();
     pushState();
   };
-  return queued(operation).then((answer) => {
-    done(null);
+  return queued(operation).then(async (answer) => {
+    await done(null);
     return answer;
-  }, (error) => {
-    done(error);
+  }, async (error) => {
+    await done(error);
     throw error;
   });
 }
@@ -439,7 +435,7 @@ const routes = {
   "GET /v1/targets": async () => {
     const project = current?.project ?? defaultProject;
     const listing = catalogue(project);
-    return { ...listing, engines: listing.engines.map((name) => engineState(drivers.get(name))), current: current ? targetText(current.target) : null };
+    return { ...listing, engines: await Promise.all(listing.engines.map((name) => engineState(drivers.get(name)))), current: current ? targetText(current.target) : null };
   },
   "POST /v1/open": open,
   "POST /v1/target": switchTarget,

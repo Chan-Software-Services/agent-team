@@ -7,7 +7,7 @@
 //                              overlayBeforePageScripts true, matchedRules "cdp" (chromium) or
 //                              "stylesheet-walk" (firefox, webkit), navigationGuard true
 //   driver.version()           the pinned build's version (playwright-core's browsers.json)
-//   driver.available()         { available: true }, or { available: false, reason } when the
+//   await driver.available()   { available: true }, or { available: false, reason } when the
 //                              pinned build's executable is missing, or, for WebKit on Linux, when
 //                              webkit-libs.mjs's check names a soname it lacks (run at every
 //                              reading), each naming `proto install`
@@ -24,7 +24,7 @@
 //                              whose answer onMessage returns (overlay-page.mjs)
 //   window.url()               the page's URL now
 //   window.metrics()           what the page reports: innerWidth, innerHeight, devicePixelRatio,
-//                              userAgent, cookie and url
+//                              maxTouchPoints, userAgent, cookie and url
 //   window.resize(target)      the viewport set to the target's width and height, in place: the
 //                              page is not loaded again
 //   await window.reload()      the page reloaded, resolving once it has loaded
@@ -82,7 +82,7 @@ export function launchedDriver(name, { headless = false } = {}) {
       navigationGuard: true,
     },
     version,
-    available() {
+    async available() {
       const path = type().executablePath();
       if (!existsSync(path)) return { available: false, reason: `${name} ${version()} is not installed (no ${path}); run \`proto install\`` };
       if (name !== "webkit") return { available: true };
@@ -172,6 +172,7 @@ function makeWindow(browser, context, page, hooks, blockedWaiters) {
       innerWidth,
       innerHeight,
       devicePixelRatio,
+      maxTouchPoints: navigator.maxTouchPoints,
       userAgent: navigator.userAgent,
       cookie: document.cookie,
       url: location.href,

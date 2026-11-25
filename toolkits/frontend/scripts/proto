@@ -40,7 +40,10 @@
 //            of this checkout; --series reads another Ubuntu series, --add pins another package
 //            for the sonames still missing. By hand, for a Playwright bump; never in CI
 // Targets, <engine>/<size>:
-//   engines  chromium, firefox, webkit (launched), agent-chrome (Daniel's Agent Chrome)
+//   engines  chromium, firefox, webkit (launched), agent-chrome (Daniel's Agent Chrome, attached
+//            on 127.0.0.1:9222 where scripts/agent-chrome starts it, never started by the host:
+//            the window is a tab of the host's own in it, sized by emulation, and a switch away
+//            or `stop` leaves the tab open as it was, with no toolbar and its own size)
 //   sizes    a preset: phone-small 360x800@3, phone 390x844@3, tablet 768x1024@2 (each mobile
 //            and touch), laptop 1440x900, desktop 1920x1080; a size of the project file; a
 //            Playwright device by name ("chromium/iPhone 15", its viewport, scale, mobile and
@@ -59,7 +62,7 @@
 // ~/.local/state/agent-team/proto; PROTO_RUNTIME_DIR for tests) is mode 0700 and refused when
 // open to others, and every request to the host carries its token.
 // Seams, for tests (proto/host.mjs's header): PROTO_HEADLESS=1, PROTO_RUNTIME_DIR,
-// PROTO_BROWSERS_PATH, PROTO_TEST_SEAM=1, PROTO_LDD, PROTO_WEBKIT_LIBS_SOURCES and
+// PROTO_AGENT_CHROME_URL, PROTO_BROWSERS_PATH, PROTO_TEST_SEAM=1, PROTO_LDD, PROTO_WEBKIT_LIBS_SOURCES and
 // PROTO_WEBKIT_LIBS_FILE (proto/webkit-libs.mjs's header), and PROTO_INSTALLER, the script
 // `install` runs with node in place of playwright-core's cli.js.
 // Exit 0 done; 1 refused or failed, with one line on stderr; 2 a malformed command line.
