@@ -104,10 +104,11 @@
 # builds in seconds; once it passes 5 minutes or 4 GiB of peak memory on home-pc, the task that sees
 # it puts it under team-heavy. With --changed, it runs only when a Rust path changed since <base>
 # (the paths bats --changed starts from): Cargo.toml, Cargo.lock, clippy.toml, deny.toml,
-# rust-toolchain.toml, tests/run, .github/workflows/ci.yml, or anything under crates/,
-# tests/fixtures/rust-deny/, toolkits/rust/ or tests/toolkits/fixtures/rust-crate/, printing them
-# first, and otherwise prints "rust: no Rust path changed, nothing to check" and passes; --list
-# prints those paths, one per line, and runs nothing.
+# rust-toolchain.toml, tests/run, .github/workflows/ci.yml, .github/workflows/rust-macos.yml, or
+# anything under crates/, tests/fixtures/rust-deny/, toolkits/rust/ or
+# tests/toolkits/fixtures/rust-crate/, printing them first, and otherwise prints "rust: no Rust
+# path changed, nothing to check" and passes; --list prints those paths, one per line, and runs
+# nothing.
 # After the bats, it names each file that took over 1.5 times and 60 seconds more than its seconds
 # in the timings for this platform, as a warning annotation under GitHub Actions, advising to find
 # what slowed it. TESTS_TIMINGS names the timings file it and tests/shards read (default
@@ -486,7 +487,7 @@ parallelism() {
 }
 
 # The Rust paths (see the header), as an extended regular expression on a path from the root.
-rust_paths='^(Cargo\.toml|Cargo\.lock|clippy\.toml|deny\.toml|rust-toolchain\.toml|tests/run|\.github/workflows/ci\.yml|(crates|tests/fixtures/rust-deny|toolkits/rust|tests/toolkits/fixtures/rust-crate)/.+)$'
+rust_paths='^(Cargo\.toml|Cargo\.lock|clippy\.toml|deny\.toml|rust-toolchain\.toml|tests/run|\.github/workflows/(ci|rust-macos)\.yml|(crates|tests/fixtures/rust-deny|toolkits/rust|tests/toolkits/fixtures/rust-crate)/.+)$'
 
 # The changed Rust paths, one per line, sorted (see the header).
 changed_rust_paths() {

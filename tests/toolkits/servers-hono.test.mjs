@@ -1,11 +1,11 @@
-// @hono/node-server as servers/ installs it for its two parents: @modelcontextprotocol/sdk (the
-// top-level dependency) and @modelcontextprotocol/node (under mongodb-mcp-server's HTTP runners,
-// which its CLI imports on every start, stdio included). Each must resolve 2.1.3 or later
-// (tests/repo.bats holds the lock to it), and each parent's Streamable HTTP server transport,
-// which turns Node's request into a web one and back with @hono/node-server's getRequestListener,
-// must still answer an MCP initialize request on it: the test serves the transport's handler on
-// the loopback, POSTs a JSON-RPC initialize and reads the server's result, within a deadline that
-// a stream which never sends its event is shown to fail.
+// hono and @hono/node-server as servers/ installs them for their two parents: @modelcontextprotocol/sdk
+// (the top-level dependency) and @modelcontextprotocol/node (under mongodb-mcp-server's HTTP runners,
+// which its CLI imports on every start, stdio included). Each must resolve hono 4.13.16 or later and
+// @hono/node-server 2.1.6 or later (tests/repo.bats holds the lock to both), and each parent's
+// Streamable HTTP server transport, which turns Node's request into a web one and back with
+// @hono/node-server's getRequestListener, must still answer an MCP initialize request on them: the
+// test serves the transport's handler on the loopback, POSTs a JSON-RPC initialize and reads the
+// server's result, within a deadline that a stream which never sends its event is shown to fail.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -104,10 +104,12 @@ const assertInitialized = ({ status, type, message }, name) => {
   assert.deepEqual(message.result.serverInfo, { name, version: "1.0.0" });
 };
 
-test("@modelcontextprotocol/sdk and @modelcontextprotocol/node resolve @hono/node-server 2.1.3 or later", () => {
+test("@modelcontextprotocol/sdk and @modelcontextprotocol/node resolve hono 4.13.16 and @hono/node-server 2.1.6 or later", () => {
   for (const [parent, entry] of [["sdk", sdkTransportEntry], ["node", nodeEntry]]) {
-    const { version } = resolvePackage("@hono/node-server", pathToFileURL(entry)).pkg;
-    assert.ok(atLeast(version, "2.1.3"), `${parent}: @hono/node-server ${version}`);
+    for (const [name, floor] of [["hono", "4.13.16"], ["@hono/node-server", "2.1.6"]]) {
+      const { version } = resolvePackage(name, pathToFileURL(entry)).pkg;
+      assert.ok(atLeast(version, floor), `${parent}: ${name} ${version}`);
+    }
   }
 });
 

@@ -208,7 +208,8 @@ rust: cargo fmt --all --check"
   local copy=$BATS_TEST_TMPDIR/copy path
   rust_checkout "$copy"
   for path in Cargo.toml Cargo.lock clippy.toml deny.toml rust-toolchain.toml .github/workflows/ci.yml \
-    crates/new/Cargo.toml tests/fixtures/rust-deny/Cargo.toml toolkits/rust/x tests/toolkits/fixtures/rust-crate/src/lib.rs; do
+    .github/workflows/rust-macos.yml crates/new/Cargo.toml tests/fixtures/rust-deny/Cargo.toml toolkits/rust/x \
+    tests/toolkits/fixtures/rust-crate/src/lib.rs; do
     mkdir -p "$copy/$(dirname "$path")"
     echo x >"$copy/$path"
   done
@@ -219,6 +220,7 @@ rust: cargo fmt --all --check"
   echo x >"$copy/Cargo.toml.bak"
   run -0 --separate-stderr "$copy/tests/run" rust --changed base --list
   assert_equal "$output" ".github/workflows/ci.yml
+.github/workflows/rust-macos.yml
 Cargo.lock
 Cargo.toml
 clippy.toml

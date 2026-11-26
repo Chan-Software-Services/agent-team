@@ -92,13 +92,14 @@ job() {
          conclusion: (.value[$i + 1:] | if . == "" then null else . end)}]}' --args "$@")"
 }
 
-# head_runs <look> [<id>:<name>:<status>[:<conclusion>]]...: the head's workflow runs as gh api lists
-# them, from <look> on (none given: every one completed, so none listed here keeps the wait going).
+# head_runs <look> [<id>:<name>:<status>[:<conclusion>[:<path>]]]...: the head's workflow runs as gh
+# api lists them, from <look> on (none given: every one completed, so none listed here keeps the
+# wait going); <path> the workflow's file (default none).
 head_runs() {
   local look=$1
   shift
   answer "$look" runs "$(jq -cn '{total_count: ($ARGS.positional | length), workflow_runs: [$ARGS.positional[] | split(":")
-    | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: (.[3] // null),
+    | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: (.[3] | if . == "" then null else . end), path: .[4],
        updated_at: "2026-10-30T18:52:11Z", display_title: "OUTPUT-MARKER"}]}' --args "$@")"
 }
 
@@ -2483,4 +2484,135 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 1
   assert_equal "$(ended_at)" 20
   assert_contains "$output" "infrastructure: test is still queued after 10 minutes of looks"
+}
+
+# The team's own project (agent-team by name), whose one check that holds nothing is the macOS Rust
+# job of bin/lib/advisory-checks: own_team_project
+own_team_project() {
+  sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
+}
+
+# The macOS job's check of the head, in <state>, of run 7002 of its own workflow.
+macos_check() {
+  check rust-macos "$1" 7002
+}
+
+# That workflow's run of the head, as head_runs takes it: macos_run <status> [<conclusion>]
+macos_run() {
+  echo "7002:Rust on macOS:$1:${2:-}:.github/workflows/rust-macos.yml"
+}
+
+macos_link=https://github.com/owner/proj/actions/runs/7002/job/97002
+aside="; no merge waits on these, so none counted:"
+
+@test "the team's own project's head whose only red check is the macOS job's passes, naming it, with the job's run read as no failure" {
+  own_team_project
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  both "$url" "$head"
+  assert_equal "$text_status" 0
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: every check passed on a1b2c3d: test passed$aside rust-macos failed ($macos_link)"
+  assert_equal "$(jq -r '[.outcome, (.failures | length)] | join(" ")' <<<"$output")" "passed 0"
+  # No failure, so no job of its is read.
+  [[ $(gh_calls) != *actions/jobs/* ]]
+}
+
+@test "the team's own project's macOS job still queued or running, its run open, holds neither the pass nor the look" {
+  own_team_project
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check QUEUED)"
+  head_runs 0 7001:CI:completed:success "$(macos_run queued)"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 0
+  # The ordinary settle of a passing reading, never the macOS job's wait.
+  assert_equal "$(ended_at)" 4
+  assert_contains "$output" "team-ci-wait: every check passed on a1b2c3d: test passed$aside rust-macos pending ($macos_link)"
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check IN_PROGRESS)"
+  head_runs 0 7001:CI:completed:success "$(macos_run in_progress)"
+  run_bin team-ci-wait --look "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 0
+  assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed$aside rust-macos pending ($macos_link)"
+  # A look with another check pending names that one, and the macOS job apart from it.
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(check test IN_PROGRESS 7001)" "$(macos_check CANCELLED)"
+  head_runs 0 7001:CI:in_progress "$(macos_run completed cancelled)"
+  workflow_run 0 7001 in_progress
+  run_bin team-ci-wait --look "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$output" "team-ci-wait: no check has failed on a1b2c3d so far; still pending: test (in_progress, run 7001 in_progress)$aside rust-macos cancelled ($macos_link)"
+}
+
+@test "the team's own project's head with a red required check still fails beside a red macOS job, which no failure names" {
+  own_team_project
+  sed -i 's/^required_checks = \[\]$/required_checks = ["test"]/' "$TEAM_HOME/projects.toml"
+  checks 0 "$(check test FAILURE 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:failure "$(macos_run completed failure)"
+  job 0 97001 "GitHub Actions 1" "Set up job=success" "Run tests/run bats=failure"
+  answer 0 log-97001 ""
+  both "$url" "$head"
+  assert_equal "$text_status" 1
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/97001"
+  assert_equal "$(jq -c '[.failures[].name]' <<<"$output")" '["test"]'
+  # A required check that never reports fails beside it too.
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(macos_check FAILURE)"
+  head_runs 0 "$(macos_run completed failure)"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: test was not reported for 2 minutes, and the project requires it"
+}
+
+@test "a project that requires the macOS check, or another project's check of its name, is held by it as by any check" {
+  own_team_project
+  sed -i 's/^required_checks = \[\]$/required_checks = ["rust-macos"]/' "$TEAM_HOME/projects.toml"
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  job 0 97002 "GitHub Actions 1" "Check=failure"
+  answer 0 log-97002 ""
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  # Another project's check of the same name is one of its checks.
+  sed -i 's/^\[agent-team/[proj/; s/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+}
+
+@test "the head's own macOS run in progress counts as none of the repository's other work, so a check no runner takes still ends queued" {
+  own_team_project
+  checks 0 "$(check test QUEUED 7001)" "$(macos_check IN_PROGRESS)"
+  workflow_run 0 7001 queued
+  head_runs 0 7001:CI:queued "$(macos_run in_progress)"
+  running 0 1
+  job 0 97001 null
+  TEAM_CI_WAIT_QUEUED_SECONDS=600 TEAM_CI_WAIT_DEADLINE_SECONDS=1800 run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 10
+  assert_contains "$output" "infrastructure: test is still queued after 10 minutes of looks"
+}
+
+@test "--merge-group passes a trial commit whose only red check is the macOS job's" {
+  local trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  own_team_project
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed success 7001)" "$(check_run rust-macos completed failure 7002)"
+  statuses 0
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 0
+  assert_contains "$output" "every check passed on ${trial:0:7}: test passed$aside rust-macos failed ($macos_link)"
+  # A name the base's rules require, which a trial commit's wait reads, is held as any check.
+  rules_require rust-macos
+  job 0 97002 "GitHub Actions 1" "Check=failure"
+  answer 0 log-97002 ""
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
 }

@@ -101,6 +101,7 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 13. A link inbox: Daniel shares links into a `#inbox` channel, each starting a full research task; fetchers by kind, sandboxed, with no login anywhere; it runs on the team's host and moves with it; decided, not built, since it waits until the core is done (Daniel, 2026-11-23, H180).
   It lands as an input of the interface seam, its fetchers behind the platform seam where the tools differ (the assistant's sketch: faster-whisper on Linux, whisper.cpp on the Mac).
 14. One macOS job in CI for the Rust workspace, on GitHub's runners, so long as nothing requires it to merge: neither a required check nor a job a required check depends on; its findings are fixed without blocking a merge, and if it cannot be kept so, there is none (Daniel, 2026-11-23, H194).
+  It is `rust-macos` in `.github/workflows/rust-macos.yml`, which no required check names and `bin/lib/advisory-checks` keeps every merge from waiting on (`sops/merging.md`, "The checks no merge waits on").
 
 ## Open
 
@@ -110,6 +111,15 @@ The port map's seam `interface` means a line reaches `team-api`, `Notifier` or `
 - How an event's Discord reference (a thread, Daniel's message) stays behind the interface seam: an adapter-opaque reference, its adapter's kind and its id, inside the event or the `Attestation`, is one shape.
 - Where a guard of one adapter's tools lives, as `bin/hooks/assistant-discord-guard` is of Discord's: in `team-guard` behind the same kind of reference, or with its adapter.
 - Which of the 16 interface proposals Daniel keeps.
+- Whether a ticket's identity includes its text, for step 5's ticket scheduling: today whether a ticket is running or done comes from its number alone (`bin/team-tickets`), and `plan-approved` records the sha256 of `plan.md`, `spec.md` and `scope.txt` but of no ticket file (`bin/lib/ledger-contract.json`).
+  One proposal: record each ticket file's hash at approval, and have the engine name a done ticket whose file changed since then, and its dependents, instead of letting it stay done unseen.
+  The idea comes from omo's DAG engine note, which keys a node by a fingerprint of its definition: https://github.com/code-yeongyu/oh-my-openagent/blob/9b85b90dc4e3e6593e35ca3830b0c2c92f1d1656/packages/senpi-task/src/dag/AGENTS.md.
+- Whether the engine bounds a ticket builder's relaunches, for step 5, where a relaunch becomes automatic: today `team-next` names them `resume-build-NN`, then `-2`, `-3` and so on, with no bound.
+  One proposal: the engine counts them, and past a bound hands the ticket to the coordinator's `recover-worker` judgment instead of relaunching again.
+  The idea comes from omo's DAG engine note, where a lost child is readmitted at most three times: https://github.com/code-yeongyu/oh-my-openagent/blob/9b85b90dc4e3e6593e35ca3830b0c2c92f1d1656/packages/senpi-task/src/dag/AGENTS.md.
+- How a successor `teamd` meets a lease its predecessor still holds while draining, for step 7's lease.
+  One proposal: it treats the refusal as one to retry, never as final, watching the holder's pid and claiming the lease again once that process is gone, and never watching its own pid.
+  The idea comes from omo's DAG engine note's rule for a lease held by a live holder: https://github.com/code-yeongyu/oh-my-openagent/blob/9b85b90dc4e3e6593e35ca3830b0c2c92f1d1656/packages/senpi-task/src/dag/AGENTS.md.
 
 ## Planned, not built
 
@@ -216,6 +226,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 
 | Path | Crate | Seam | Note |
 | - | - | - | - |
+| `bin/lib/advisory-checks` | `team-model` | `vcs` | Config: the checks no merge waits on |
 | `bin/lib/capacity.jq` | `team-core` | `platform` | The admission rule and its readings |
 | `bin/lib/channel-access.sh` | `adapter-discord` | `interface` | |
 | `bin/lib/chrome.sh` | `team-platform` | `platform` | The trait here, each OS's path in its own crate |

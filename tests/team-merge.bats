@@ -1057,3 +1057,37 @@ app_case() {
   assert_equal "$(merged_events | jq -r .event)" merged
   assert_equal "$(stub_calls gh | jq -c 'select(.[1] // "" | test("/rules/|/rulesets/"))')" ""
 }
+
+# The check of the macOS Rust job (bin/lib/advisory-checks) on PR #5's head, in <bucket>.
+macos_on_head() {
+  jq --arg bucket "$1" '. + [{name: "rust-macos", bucket: $bucket, state: ($bucket | ascii_upcase)}]' "$gh_dir/checks.json" \
+    >"$gh_dir/checks.next" && mv "$gh_dir/checks.next" "$gh_dir/checks.json"
+}
+
+@test "an agent-team PR merges with the macOS job red or still pending, which no merge waits on" {
+  local bucket
+  review_app_off
+  as_project agent-team
+  for bucket in fail pending; do
+    macos_on_head "$bucket"
+    run_bin -0 team-merge T14
+    assert_equal "$(merged_events | wc -l)" 1
+    merge_again
+  done
+}
+
+@test "a required check red beside the macOS job refuses the agent-team merge, naming it alone, and another project's check of its name refuses" {
+  review_app_off
+  as_project agent-team
+  macos_on_head fail
+  jq 'map(if .name == "test" then .bucket = "fail" | .state = "FAILURE" else . end)' "$gh_dir/checks.json" \
+    >"$gh_dir/checks.next" && mv "$gh_dir/checks.next" "$gh_dir/checks.json"
+  refused "required check test has not passed on the head" "checks failing on the head: test"
+  [[ $stderr != *rust-macos* ]]
+  merge_again
+  sed -i 's/^\[agent-team/[proj/' "$TEAM_HOME/projects.toml"
+  jq -c 'if .project == "agent-team" then .project = "proj" else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l"
+  mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  macos_on_head fail
+  refused "checks failing on the head: rust-macos"
+}

@@ -926,6 +926,14 @@ def rehome_failures:
 # The index of the task's latest event of $kind, or -1 when it has none.
 def latest_index($kind): [to_entries[] | select(.value.event == $kind) | .key] | last // -1;
 
+# The task's interview under way: {since, thread}, the ts and discord_thread of its latest
+# interview-thread, while no planner's done and no plan-approved is logged after it, else null,
+# whatever the task's phase. Read by task_state and interview_under_way.
+def qc_interview:
+  latest_index("interview-thread") as $i
+  | if $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not)
+    then .[$i] | {since: .ts, thread: (.discord_thread | tostring)} else null end;
+
 # The index of the task's latest stowed, or -1 when it has none.
 def latest_stowed: latest_index("stowed");
 
@@ -1382,15 +1390,17 @@ def bypass_text($on):
 # after it (a pr event of the URL, or any review of the task, whichever of its PRs it read, since a
 # fix after findings is reviewed at a head no pr event logs and a review names no PR), the PR left
 # the queue with no team-merge to log its dequeued, a push having dropped it, and it is null.
-# rules_due says the queue dropped the PR for a check the base's rules require and no workflow made
-# on the trial commit (a failed of class rules) with no pr event of the URL and no review of the
-# task since: the trial merge cannot be judged until every required check runs there, so the fix is
-# the base's rules or a workflow's merge_group trigger, then a team-merge, whose queued ends it.
 # round_due says the queue dropped the PR for a failure of its own on the trial merge (a failed of
-# class pr) with no pr event of the URL and no review of the task since, and no rules_due: the head
-# passed what the trial merge failed, so it is the builder's merge-base round, then a rereview,
-# never a second enqueue of the same head; beside a rules failure it is false, since the trial merge
-# was not judged in full.
+# class pr) with no pr event of the URL and no review of the task since: the head passed what the
+# trial merge failed, so it is the builder's merge-base round, then a rereview, never a second
+# enqueue of the same head; beside a rules failure too, since the queue cancels the rest of a trial
+# commit it gives up, so a roll-up whose shards it cancelled reads as the rules' once no run is
+# open, and a rules gap that is real shows alone on the round's new head.
+# rules_due says the queue dropped the PR for a check the base's rules require and no workflow made
+# on the trial commit (a failed of class rules), with no failure of the PR's own, no pr event of the
+# URL and no review of the task since: the trial merge cannot be judged until every required check
+# runs there, so the fix is the base's rules or a workflow's merge_group trigger, then a
+# team-merge, whose queued ends it.
 def queue_state($url):
   ($url | rtrimstr("/")) as $u
   | . as $events
@@ -1403,9 +1413,9 @@ def queue_state($url):
         if any($since[]; (.head | type) == "string" and (same_head(.head; $e.head) | not)) then null
         else {state: "queued", since: $e.ts, head: $e.head} end
       elif $e.event == "dequeued" then
-        ($since == [] and any($e.failed[]?; .class == "rules")) as $rules
+        ($since == [] and any($e.failed[]?; .class == "pr")) as $round
         | {state: "dequeued", since: $e.ts, reason: $e.reason, head: $e.head, failed: ($e.failed // []),
-           round_due: ($since == [] and ($rules | not) and any($e.failed[]?; .class == "pr")), rules_due: $rules}
+           round_due: $round, rules_due: ($since == [] and ($round | not) and any($e.failed[]?; .class == "rules"))}
       else null end
     end;
 # The task's PRs not merged that stand in the merge queue (queue_state is queued), from task_prs,
@@ -1750,7 +1760,7 @@ def task_state($sessions; $home):
      thread: (map(select(.event == "thread") | .discord_thread) | last),
      workers: $workers, last_event: last, pending_asks: ($state | lifecycle_pending_asks),
      waiting: ($state | lifecycle_waiting), parks: ($state | lifecycle_parks), stowing: ($state | lifecycle_stowing), walk: qc_walk,
-     rehome_failures: rehome_failures, checks_wait: checks_wait, pr: null,
+     interview: qc_interview, rehome_failures: rehome_failures, checks_wait: checks_wait, pr: null,
      progress: progress($workers)};
 
 # A task's state (team-state's JSON) as one line of text, each live worker's context in thousands
@@ -2666,10 +2676,8 @@ def default_may_hold: by_task | any(.[]; is_open and phase == "awaiting-merge" a
 # The following defs serve team-inbox, a task's events as an array, then every ledger event as one.
 
 # Whether the task's latest interview thread still holds an interview: no planner's done and no
-# plan-approved logged after its interview-thread.
-def interview_under_way:
-  latest_index("interview-thread") as $i
-  | $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not);
+# plan-approved logged after its interview-thread (qc_interview).
+def interview_under_way: qc_interview != null;
 
 # Whether the event is a merge-approved naming the PR $pr (one of task_prs) at its head: its url is
 # the PR's, a trailing slash aside, and its head the PR's, or none, as a legacy line.
