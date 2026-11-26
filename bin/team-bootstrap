@@ -591,7 +591,7 @@ setup_project() {
     moved=$(moved_origin "$origin")
     # treehouse names the pool from the origin URL, so the origin moves with the pool, by hand.
     if [[ -n $moved && $(jq -r .pool.provider <<<"$facts") == treehouse ]]; then
-      daniel "$(pool_move_fix "$project") (origin $origin, a repository that moved to $moved)"
+      daniel "$(pool_move_fix "$project" "$repo") (origin $origin, a repository that moved to $moved)"
       return
     fi
     act "git -C $(printf %q "$path") remote set-url origin $url"

@@ -19,10 +19,11 @@
 # reads state from: 080-team-home.sh
 
 # Each checkout to read: its path, its label, its project (empty for the code checkout and the
-# team home, whose line is moved origins) and its project's pool provider (empty for none).
+# team home, whose line is moved origins) and the pool of the project registered there, as
+# <provider>:<project>:<repo> (empty for none).
 moved_paths=() moved_labels=() moved_projects=() moved_providers=()
-# moved_add <path> <label> <project> <provider>: one checkout, unless an earlier one is the same
-# directory, whose provider it gives when the earlier has none (the code checkout registered as a
+# moved_add <path> <label> <project> <pool>: one checkout, unless an earlier one is the same
+# directory, whose pool it gives when the earlier has none (the code checkout registered as a
 # project, which stays on the code checkout's line).
 moved_add() {
   local i
@@ -44,8 +45,8 @@ if project_registry --list 2>/dev/null; then
   while IFS= read -r moved_project; do
     [[ -n $moved_project ]] || continue
     project_registry "$moved_project" 2>/dev/null || continue
-    mapfile -d '' -t moved_fields < <(jq --raw-output0 '.path, .pool.provider' <<<"$registry_reply")
-    moved_add "${moved_fields[0]}" "$moved_project's checkout" "$moved_project" "${moved_fields[1]}:$moved_project"
+    mapfile -d '' -t moved_fields < <(jq --raw-output0 '.path, .pool.provider, .repo' <<<"$registry_reply")
+    moved_add "${moved_fields[0]}" "$moved_project's checkout" "$moved_project" "${moved_fields[1]}:$moved_project:${moved_fields[2]}"
   done <<<"$registry_reply"
 fi
 
@@ -54,7 +55,7 @@ fi
 # else true, with moved_url and moved_shown its origin and path, and moved_reason and moved_fix
 # empty, or naming the move and its fix when the origin names a moved repository.
 moved_judge() {
-  local path=${moved_paths[$1]} to top
+  local path=${moved_paths[$1]} to top pool
   moved_reason='' moved_fix=''
   [[ -d $path ]] || return 1
   if [[ -n ${moved_projects[$1]} ]]; then
@@ -68,7 +69,8 @@ moved_judge() {
   [[ -n $to ]] || return 0
   moved_reason="${moved_labels[$1]} $moved_shown has origin $moved_url, a repository that moved to $to"
   if [[ ${moved_providers[$1]} == treehouse:* ]]; then
-    moved_fix=$(pool_move_fix "${moved_providers[$1]#treehouse:}")
+    pool=${moved_providers[$1]#treehouse:}
+    moved_fix=$(pool_move_fix "${pool%:*}" "${pool##*:}")
   else
     moved_fix="git -C $moved_shown remote set-url origin https://github.com/$to.git"
   fi
