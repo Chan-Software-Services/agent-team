@@ -1187,6 +1187,25 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   roll-up: unit, of unit shards 2, left out"
 }
 
+# agent-team's test needs future-clock beside its shards, so it fails when future-clock alone does.
+@test "a roll-up beside a failed future-clock of the same run is left out, after future-clock's line, with its shards all passed" {
+  checks 0 "$(check test FAILURE 7001 71)" "$(check "test-shards (1)" SUCCESS 7001 72)" "$(check "test-shards (2)" SUCCESS 7001 73)" \
+    "$(check "test-shards (3)" SUCCESS 7001 74)" "$(check future-clock FAILURE 7001 75)"
+  job 0 75 "" "Set up job=skipped" "Run tests/run bats --clock-ahead 365=skipped"
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_equal "$output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  infrastructure: future-clock never started: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/75); rerun it with gh run rerun 7001 --job 75 --repo owner/proj, then run team-ci-wait again
+  roll-up: test, of future-clock, left out"
+  # A future-clock of another run makes no roll-up of test.
+  checks 0 "$(check test FAILURE 7001 71)" "$(check future-clock FAILURE 7002 75)"
+  job 0 71 "GitHub Actions 3" "Set up job=success" "Every shard and the future clock passed=failure"
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "  the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/71"
+}
+
 @test "a job with no runner and no step that ran is infrastructure, failed or cancelled, with its rerun" {
   checks 0 "$(check "smoke-shards (1)" CANCELLED 7001 81)" "$(check "smoke-shards (2)" FAILURE 7001 82)"
   job 0 81 null
