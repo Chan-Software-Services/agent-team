@@ -133,7 +133,7 @@ thread_posts() {
   # The plan, from the topic's template.
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/plan.md")" "# T1: The release checklist
 
-A topic, opened by the assistant on Daniel's word, $(date -u +%F).
+A topic, opened on Daniel's word, $(date -u +%F).
 Project: proj.
 Path: topic.
 Daniel's message: $daniel in channel $ASKED_IN.

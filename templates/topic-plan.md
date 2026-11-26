@@ -1,6 +1,6 @@
 # {{task}}: {{title}}
 
-A topic, opened by the assistant on Daniel's word, {{date}}.
+A topic, opened on Daniel's word, {{date}}.
 Project: {{project}}.
 Path: topic.
 Daniel's message: {{daniel}} in channel {{channel}}.

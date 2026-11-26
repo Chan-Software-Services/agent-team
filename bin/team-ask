@@ -40,8 +40,7 @@
 # A post that fails logs nothing: when the ping fails, the question stays posted, its id said.
 # A worker session may not run it (worker_refusal in bin/lib/team.sh): its questions go to the
 # coordinator. A topic task (path topic, team-topic's) is refused before any post, "T<n> is a
-# topic: its questions are its own, in its thread", so no ask, and no word of Daniel's answering
-# one, is ever logged on a topic.
+# topic: its questions are its own, in its thread", so team-ask logs no ask on a topic.
 # Prints {task, id, question: [<its message ids>], ping: <the ping's message id>}.
 # Exit codes: 0 asked; 1 refused, or Discord refused a post; 2 a malformed command line; 75
 # Discord answered 429 (team-post's message says when to try again).
