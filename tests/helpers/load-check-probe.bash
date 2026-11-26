@@ -11,7 +11,7 @@
 # role and attempt from what its transcript shows refused each call.
 #
 # The sessions are a claude stub (planner 1a1a1a1a, builder 2b2b2b2b, reviewer 3c3c3c3c, assistant
-# 4d4d4d4d), whose argv each launch also keeps in $BATS_TEST_TMPDIR/argv-<role>: claude --bg
+# 4d4d4d4d, topic 5e5e5e5e), whose argv each launch also keeps in $BATS_TEST_TMPDIR/argv-<role>: claude --bg
 # notes in $BATS_TEST_TMPDIR/launch-<role> where it started, whether .scratch/probe.git was a bare
 # repository then, and its prompt, and in $BATS_TEST_TMPDIR/canary-<role> the role's canary
 # directory, read from its prompt's kernel-delete line, and whether each kernel attempt's canary
@@ -31,7 +31,7 @@
 probe_sandbox() {
   load_check_sandbox
   stub_script claude <<'SH'
-declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c [assistant]=4d4d4d4d)
+declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c [assistant]=4d4d4d4d [topic]=5e5e5e5e)
 uuid() { echo "$1-0000-4000-8000-000000000001"; }
 case $1 in
   --bg)
@@ -58,7 +58,7 @@ case $1 in
     echo "Started background session $id ($2). Attach with: claude attach $id"
     ;;
   agents)
-    for role in planner builder reviewer assistant; do
+    for role in planner builder reviewer topic assistant; do
       id=${ids[$role]} state=idle
       [[ -f $STUB_FIXTURES/launched-$role && ! -f $STUB_FIXTURES/removed-$id ]] || continue
       [[ ! -f $STUB_FIXTURES/state-$role ]] || state=$(cat "$STUB_FIXTURES/state-$role")
@@ -88,7 +88,7 @@ case $1 in
 esac
 SH
   local role
-  for role in planner builder reviewer assistant; do probe_transcript "$role"; done
+  for role in planner builder reviewer topic assistant; do probe_transcript "$role"; done
 }
 
 # The data file the load check reads: the test's own checkout's when it made one.
@@ -119,7 +119,8 @@ attempts() {
 # file-rule's shape for a file tool; script: the script's own refusal, run for the role; kernel:
 # it ran with the kernel's refusal as its result, after its marker when it has one, a background
 # attempt's call made with run_in_background; allowed: it ran and printed its marker; refused: auto
-# mode, or for the assistant, in bypass mode, a deny rule), or
+# mode, or for the assistant, in bypass mode, a deny rule, and for a topic its command-guard row's
+# block, which comes before its deny rule), or
 # for an attempt named, one call per outcome given: hook, other-hook (a block by another hook's
 # message), script (the script's own refusal, its input's bin/ dropped), marked (a call that ran and
 # printed the attempt's marker), no-marker (a kernel attempt's refusal after its
@@ -149,7 +150,7 @@ probe_transcript() {
     case $role:$expect:$tool in
       *:hook:*) outcomes=hook ;; *:rule:Bash) outcomes=rule ;; *:rule:*) outcomes='file-rule' ;; *:script:*) outcomes=script ;;
       *:kernel:*) outcomes=refused-by-kernel ;; *:login:*) outcomes=as-$(login) ;; *:allowed:*) outcomes=marked ;;
-      assistant:*) outcomes=rule ;; *) outcomes=automode ;;
+      assistant:*) outcomes=rule ;; topic:refused:*) outcomes=hook ;; *) outcomes=automode ;;
     esac
     outcomes=${given[$id]:-$outcomes}
     for outcome in ${outcomes//,/ }; do
@@ -195,13 +196,13 @@ call_id() {
 }
 
 # passes <role>...: the PASS line of each attempt of each role, refused as it expects (a refused
-# attempt by auto mode, the assistant's by a deny rule, a login attempt answered with the worker
-# login, an allowed attempt run), in order
+# attempt by auto mode, the assistant's by a deny rule, a topic's by a hook, a login attempt
+# answered with the worker login, an allowed attempt run), in order
 passes() {
   local role
   for role; do
     attempts "$role" | jq -r --arg role "$role" --arg login "$(login)" '"PASS \($role) \(.id): " +
-      (if .expect == "refused" then "refused by \(if $role == "assistant" then "rule" else "automode" end)"
+      (if .expect == "refused" then "refused by \(if $role == "assistant" then "rule" elif $role == "topic" then "hook" else "automode" end)"
         elif .expect == "login" then "the session'\''s GitHub login is \($login)"
         elif .expect == "allowed" then "ran"
         else "\(.expect) refused it" end)'
@@ -209,7 +210,7 @@ passes() {
 }
 
 # verdicts: the output's PASS and FAIL lines of attempts, in order
-verdicts() { grep -E '^(PASS|FAIL) (planner|builder|reviewer|assistant) [a-z-]+: ' <<<"$output" || true; }
+verdicts() { grep -E '^(PASS|FAIL) (planner|builder|reviewer|topic|assistant) [a-z-]+: ' <<<"$output" || true; }
 
 # github_lines: the output's github lines, in order
 github_lines() { grep -E '^(PASS|FAIL|WARN) github ' <<<"$output" || true; }
@@ -230,8 +231,8 @@ probe_checkout() {
   jq --argjson attempts "$1" '.attempts = $attempts' "$REPO_ROOT/bin/lib/probe.json" >"$CODE_CHECKOUT/bin/lib/probe.json"
 }
 
-# total: the attempts of the three roles together
-total() { local role; for role in planner builder reviewer; do attempts "$role"; done | wc -l; }
+# total: the attempts of the four roles together
+total() { local role; for role in planner builder reviewer topic; do attempts "$role"; done | wc -l; }
 
 # login_on: the worker login on (worker_login_on, as team-worker-bot) in a code checkout of the test's own
 # holding the data file's own attempts, a registry that also names the team's own project,
@@ -250,7 +251,7 @@ login_on() {
   committed_checkout
   own_registry
   local role
-  for role in planner builder reviewer; do probe_transcript "$role"; done
+  for role in planner builder reviewer topic; do probe_transcript "$role"; done
   stub_script gh <<'SH'
 printf '%s GH_CONFIG_DIR=<%s> GH_TOKEN=<%s> GITHUB_TOKEN=<%s>\n' "$*" "${GH_CONFIG_DIR-unset}" \
   "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"$STUB_CALLS/gh.env"

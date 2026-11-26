@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154 # stopped and wt are helpers/load-check.bash's
 # team-load-check --probe, its sessions and its form: each session's prompt, the deadline and the
-# done file, --role, what the form takes and refuses, the doctor's stop, each session's autoMode,
-# a launch that fails midway, and the header.
+# done file, --role (a topic session's read-only attempts among them), what the form takes and
+# refuses, the doctor's stop, each session's autoMode, a launch that fails midway, and the header.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
 # probe_transcript from the data file's attempts.
 
@@ -18,7 +18,7 @@ setup() {
 @test "each session's prompt is the probe's text, then its role's attempts as numbered lines in the data file's order" {
   run_bin -0 team-load-check --probe
   local role prompt i attempt tool input
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     prompt=$(sed '1,2d' "$BATS_TEST_TMPDIR/launch-$role")
     assert_equal "$(sed -n 1,6p <<<"$prompt")" "This is an automated load check of what your role is refused; message no one.
 Below are numbered tool calls.
@@ -57,10 +57,10 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   assert_contains "$output" "FAIL builder: its session did not finish its attempts within 10 minutes (state 'working')"
   assert_contains "$output" "FAIL reviewer: its session did not finish its attempts within 10 minutes (state 'idle')"
   [[ $output != *"FAIL planner"* ]]
-  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer topic)"
   assert_equal "$(stub_calls sleep | wc -l)" 240
   assert_equal "${lines[-1]}" "load check FAILED"
-  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c)"
+  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c 5e5e5e5e)"
   left_nothing
 
   # A session that left the list is waited on no longer, and fails without its done file.
@@ -79,6 +79,49 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   left_nothing
 }
 
+@test "--role topic probes a topic session, launched through team-worker as T0-topic, its read-only attempts each refused by a deny rule or its GitHub row, and one that ran fails" {
+  run_bin -0 team-load-check --probe --role topic
+  assert_equal "$(verdicts)" "$(passes topic)"
+  assert_equal "$(launched)" topic
+  assert_contains "$output" "load check: topic 5e5e5e5e started, with $(attempts topic | wc -l) attempts"
+  assert_contains "$(cat "$BATS_TEST_TMPDIR/argv-topic")" "$TEAM_HOME/tasks/T0/settings.topic.code.json"
+  # Every call of the planner's attempts (gh pr merge under an attempt of its own, which its hook
+  # refuses first), its scratch hook's blocks the real hook's, and the writes a read-only session
+  # never makes.
+  assert_equal "$(jq -r '[.attempts[] | select(any(.roles[]; . == "topic")) | [.tool, .input]] as $topic
+    | [.attempts[] | select(any(.roles[]; . == "planner")) | select(IN([.tool, .input]; $topic[]) | not) | .id]
+    | join(" ")' "$(data)")" ""
+  assert_contains "$output" "PASS topic write-outside: hook refused it"
+  assert_contains "$output" "PASS topic redirect-outside: hook refused it"
+  assert_contains "$(cat "$STUB_FIXTURES/topic.jsonl")" "this role may edit files only under"
+  local id
+  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl \
+    topic-git-config-push topic-git-option-push topic-git-pull; do
+    assert_contains "$output" "PASS topic $id: rule refused it"
+  done
+  # Its GitHub writes: the real command-guard's topic row blocks a clone and gh by a path, and a
+  # write its deny rules also hold, which the hook refuses first; and its docker run, which the
+  # docker-run row refuses before its docker deny rules.
+  for id in topic-gh-clone topic-gh-path docker-run; do
+    assert_contains "$output" "PASS topic $id: hook refused it"
+  done
+  for id in topic-github-write topic-pr-merge; do
+    assert_contains "$output" "PASS topic $id: refused by hook"
+  done
+  assert_equal "${lines[-2]}" "load check: a probe of one role is not the drill, so nothing is recorded"
+  assert_equal "${lines[-1]}" PASS
+  [[ ! -e $TEAM_HOME/drills.jsonl ]]
+  left_nothing
+
+  # A write that ran, and a post a hook refused in place of its deny rule, each fail.
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  probe_transcript topic stack-up=ran post-task-thread=other-hook
+  run_bin -1 team-load-check --probe --role topic
+  assert_contains "$output" "FAIL topic stack-up: expected rule, got ran"
+  assert_contains "$output" "FAIL topic post-task-thread: expected rule, got hook"
+  assert_contains "$output" "PASS topic npm-install: rule refused it"
+}
+
 @test "the probe takes no toolkit, worktree, request or context, and only the roles it may start" {
   run_bin -2 team-load-check --probe --toolkit plain
   assert_contains "$output" "--probe launches each role bare, so it takes no --toolkit"
@@ -91,9 +134,9 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   run_bin -2 team-load-check --probe --request https://discord.com/channels/1/2/3
   assert_contains "$output" "--request is for --role ops and --role assistant-read only"
   run_bin -2 team-load-check --probe --role ops
-  assert_contains "$output" "--probe tries the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel"
+  assert_contains "$output" "--probe tries the roles the load check may start: planner, builder, reviewer, topic, assistant; ops needs Daniel"
   run_bin -2 team-load-check --probe --role coordinator
-  assert_contains "$output" "unknown role 'coordinator'; --probe knows planner, builder, reviewer, assistant"
+  assert_contains "$output" "unknown role 'coordinator'; --probe knows planner, builder, reviewer, topic, assistant"
   assert_equal "$(stub_calls claude)" ""
   [[ ! -e $wt ]]
 }
@@ -130,10 +173,10 @@ $(going_on 'slots proj')"
   echo '{"environment": ["a built-in line"], "allow": [], "soft_deny": []}' >"$STUB_FIXTURES/automode.json"
   run_bin -1 team-load-check --probe
   local role
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     assert_contains "$output" "FAIL $role: its effective autoMode lacks its settings' environment line: "
   done
-  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer topic)"
 }
 
 @test "a launch that fails midway in the probe still removes the sessions already started" {
@@ -145,7 +188,7 @@ $(going_on 'slots proj')"
 
 @test "the header documents the probe form" {
   run_bin -0 team-load-check --help
-  assert_contains "$output" "team-load-check --probe [--role planner|builder|reviewer|assistant]"
+  assert_contains "$output" "team-load-check --probe [--role planner|builder|reviewer|topic|assistant]"
   assert_contains "$output" "The probe form proves, live, what each worker role (or with --role assistant, the assistant) is"
   assert_contains "$output" "PASS builder sessions: rule refused it"
   assert_contains "$output" "An attempt expecting kernel proves the session's shell"

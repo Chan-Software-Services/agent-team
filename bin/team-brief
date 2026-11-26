@@ -20,7 +20,9 @@
 #               became of the uncommitted changes the stow found),
 #               resume-crash (one relaunched after its machine crashed: --set role=, brief=,
 #               machine= the machine that crashed, checkpoint= the checkpoint's time, snapshot=
-#               what became of that checkpoint's uncommitted changes)
+#               what became of that checkpoint's uncommitted changes),
+#               topic (a topic task's read-only conversation with Daniel in its interview thread:
+#               --set-file about= what Daniel asked for; team-topic open writes it)
 #   --project   the project whose worktree the brief is for; required when the task has open
 #               worktrees in two projects
 #   --ticket    two digits: the brief is for ticket NN's open ticket worktree (team-open --ticket's),

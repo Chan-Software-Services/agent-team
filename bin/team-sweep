@@ -51,7 +51,8 @@
 #   silent         a live, idle session of an open task, not parked, with no ledger event for the
 #                  task after that session's latest launch but denied ones (one waiting for input
 #                  is not also silent); a ticket's builder by its own events: none since its
-#                  launch naming its session or its ticket, and no park of its ticket standing
+#                  launch naming its session or its ticket, and no park of its ticket standing;
+#                  never a topic session, whose talk with Daniel is in Discord, not the ledger
 #   stalled        a live, busy session of an open task, not parked, not waiting for input, whose
 #                  transcripts (its own and its subagents', under ~/.claude/projects) have not been
 #                  written for longer than its limit (stall_limits in bin/lib/ledger.jq), the

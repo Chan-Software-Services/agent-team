@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# team-load-check --probe, the drill record: a probe of all three roles is the load-check-probe
+# team-load-check --probe, the drill record: a probe of all four roles is the load-check-probe
 # drill, recorded through this checkout's team-drill once a session has launched; a probe of one
 # role is no drill; and a refused record says why on stderr and leaves the probe's exit status.
 # The sessions are helpers/load-check-probe's claude stub, their transcripts built by
@@ -14,7 +14,7 @@ setup() {
   probe_sandbox
 }
 
-@test "a probe of all three roles records load-check-probe: pass on exit 0, fail otherwise, with the attempts as expected" {
+@test "a probe of all four roles records load-check-probe: pass on exit 0, fail otherwise, with the attempts as expected" {
   local n
   n=$(total)
   run_bin -0 team-load-check --probe

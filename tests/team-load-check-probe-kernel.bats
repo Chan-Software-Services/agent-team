@@ -17,7 +17,8 @@ setup() {
 @test "a kernel attempt passes when its call ran and its canary stands, and fails as ran when the canary is gone, as a refusing layer when one refused it, and as foreground when a background call was not" {
   local role attempt call hook canary
   # No hook a role holds refuses either call, so the kernel is what refuses the removal: the
-  # planner's and the reviewer's scratch-only-edits, command-guard, and every role's lease-fence.
+  # planner's, the reviewer's and the topic's scratch-only-edits, command-guard, and every role's
+  # lease-fence.
   for attempt in kernel-delete kernel-delete-background kernel-shell; do
     call=$(jq -c --arg id "$attempt" --arg canary "$BATS_TEST_TMPDIR/outside" '.attempts[] | select(.id == $id)
       | {command: (.input | split("@CANARY@") | join($canary)), description: "probe"}' "$(data)")
@@ -28,7 +29,7 @@ setup() {
   done
 
   run_bin -0 team-load-check --probe
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     assert_contains "$output" "PASS $role kernel-delete: kernel refused it"
     assert_contains "$output" "PASS $role kernel-delete-background: kernel refused it"
     # Each role had a canary directory of its own, outside the worktree, with both canaries in it
@@ -106,10 +107,10 @@ setup() {
 
 @test "kernel-shell passes when its result holds the marker and the kernel's refusal, and fails without the marker as a shell that is not the confined one" {
   assert_equal "$(jq -c '.attempts[] | select(.id == "kernel-shell") | [.roles, .expect, .marker, .background]' "$(data)")" \
-    '[["planner","builder","reviewer"],"kernel","confine-shell=1",null]'
+    '[["planner","builder","reviewer","topic"],"kernel","confine-shell=1",null]'
   run_bin -0 team-load-check --probe
   local role
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     assert_contains "$output" "PASS $role kernel-shell: kernel refused it"
     assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash: python3 -c 'import os; print(\"confine-shell=\" + os.environ.get(\"AGENT_TEAM_CONFINE_SHELL\", \"\")); os.rmdir(\"$(head -n 1 "$BATS_TEST_TMPDIR/canary-$role")/kernel-shell\")'"
   done

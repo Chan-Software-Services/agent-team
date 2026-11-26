@@ -19,9 +19,9 @@ setup() {
 
 @test "every attempt refused as expected passes, in each role's order, and every session and the worktree are removed" {
   run_bin -0 team-load-check --probe
-  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer topic)"
   assert_equal "${lines[-1]}" PASS
-  assert_equal "$(launched)" "$(printf '%s\n' planner builder reviewer)"
+  assert_equal "$(launched)" "$(printf '%s\n' planner builder reviewer topic)"
   # The hook attempts pass on the real hooks' blocks, each with its own marker.
   assert_contains "$output" "PASS planner write-outside: hook refused it"
   assert_contains "$output" "PASS reviewer redirect-outside: hook refused it"
@@ -31,7 +31,7 @@ setup() {
   # Each role is refused each probed session-record place by the session records guard's own
   # block, by Read, and five of them by Bash as well.
   local role id absent=load-check-probe-absent
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     for id in file-history mcp-logs transcripts job-directory transcripts-directory prompt-history paste-cache \
       task-lists session-env live-sessions daemon daemon-log job-directory-bash transcripts-directory-bash \
       prompt-history-bash paste-cache-bash projects-bash; do
@@ -42,19 +42,19 @@ setup() {
     assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: Read of $HOME/.claude/jobs/$absent/state.json: under ~/.claude/jobs a session reads only what lies in its own job directory, and this is another session's."
     assert_contains "$(cat "$STUB_FIXTURES/$role.jsonl")" "bin/hooks/session-records-guard]: Blocked by session-records-guard: a Bash command naming ~/.claude/history.jsonl/$absent: ~/.claude/history.jsonl holds every session's records, and a worker session reads none of it."
   done
-  # Only the planner and the reviewer write outside .scratch/ by their hook.
+  # Only the planner, the reviewer and the topic write outside .scratch/ by their hook.
   [[ $output != *"builder write-outside"* && $output != *"builder redirect-outside"* ]]
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     assert_contains "$output" "load check: $role's effective autoMode holds the"
     assert_equal "$(sed -n 1,2p "$BATS_TEST_TMPDIR/launch-$role")" "$(printf '%s\n' "$wt" true)"
   done
-  assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(printf '%s\n' "$wt" "$wt" "$wt")"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/automode-cwd")" "$(printf '%s\n' "$wt" "$wt" "$wt" "$wt")"
   # Each read with the sources team-worker launches the role with, --setting-sources user.
   assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
-    "$(for role in planner builder reviewer; do
+    "$(for role in planner builder reviewer topic; do
       echo "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.$role.code.json\",\"auto-mode\",\"config\"]"
     done)"
-  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c)"
+  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" "$(printf '%s\n' 1a1a1a1a 2b2b2b2b 3c3c3c3c 5e5e5e5e)"
   left_nothing
   # The probe rehearses no lease and keeps no inventory.
   [[ ! -e $TEAM_HOME/tasks/T0/inventory.txt ]]
@@ -63,7 +63,8 @@ setup() {
 @test "each role's broad kill and delete outside pass on command-guard's own block, which no other hook makes first, and fail when one ran or another hook refused it" {
   local role attempt call
   # The other hooks a role holds let both calls through, so the guard's block is the one each role
-  # meets: the planner's and the reviewer's scratch-only-edits, and every role's lease-fence.
+  # meets: the planner's, the reviewer's and the topic's scratch-only-edits, and every role's
+  # lease-fence.
   for attempt in broad-kill delete-outside; do
     call=$(jq -c --arg id "$attempt" '.attempts[] | select(.id == $id) | {command: .input, description: "probe"}' "$(data)")
     run hook_result toolu_x1 scratch-only-edits Bash "$call" "$wt"
@@ -72,7 +73,7 @@ setup() {
     assert_equal "$status" 1
   done
   run_bin -0 team-load-check --probe
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     assert_contains "$output" "PASS $role broad-kill: hook refused it"
     assert_contains "$output" "PASS $role delete-outside: hook refused it"
     # The transcripts hold command-guard's real block of each.

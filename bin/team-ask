@@ -39,7 +39,8 @@
 # anything is posted and logs it as image-posted; the ping carries none.
 # A post that fails logs nothing: when the ping fails, the question stays posted, its id said.
 # A worker session may not run it (worker_refusal in bin/lib/team.sh): its questions go to the
-# coordinator.
+# coordinator. A topic task (path topic, team-topic's) is refused before any post, "T<n> is a
+# topic: its questions are its own, in its thread", so team-ask logs no ask on a topic.
 # Prints {task, id, question: [<its message ids>], ping: <the ping's message id>}.
 # Exit codes: 0 asked; 1 refused, or Discord refused a post; 2 a malformed command line; 75
 # Discord answered 429 (team-post's message says when to try again).
@@ -76,6 +77,8 @@ done
 why=$(worker_refusal "$task" "asks Daniel nothing in Discord") && die "$why"
 
 events=$(open_task_events "$task")
+# A topic (is_topic in bin/lib/ledger.jq) talks with Daniel in its own thread, and logs no ask.
+! ledger_jq 'is_topic' -e <<<"$events" >/dev/null || die "$task is a topic: its questions are its own, in its thread"
 thread=$(jq -r 'map(select(.event == "thread") | .discord_thread | strings) | last // empty' <<<"$events")
 [[ -n $thread ]] || die "$task has no Discord thread in the ledger; team-thread opens one"
 [[ -f $file && -r $file ]] || die "no file to ask: $file"

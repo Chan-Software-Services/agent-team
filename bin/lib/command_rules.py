@@ -109,6 +109,12 @@ The rows, in order:
     browse, status, licenses, completion, help, version) pass. Reason: a GitHub write, which an
     assistant session never makes (<the method, the body, the field, the mutation, the query it
     cannot read, or the group and subcommand>).
+  topic-github-write, for a topic session alone: the same reading of every gh or gh-axi call, but
+    with a topic's reads (TOPIC_GITHUB_READS) in place of the assistant's: gh pr view, list and
+    diff, gh issue view and list, gh run view and list, gh repo view, gh search and gh auth status,
+    and gh-axi's same, so its clones, downloads, gh pr checks, gh browse and gh status are refused
+    too, by any path or wrapper its settings' gh deny rules never matched. Reason: a GitHub write,
+    which a topic session never makes (<what it read, as the assistant's row says it>).
   upload: a curl or wget sending a file or body to a literal host outside the team's own,
     directly or through a proxy, as bin/lib/outbound.py decides each command (its header says
     which flags and hosts); a host held in a variable is not seen.
@@ -124,12 +130,13 @@ The rows, in order:
     bot's files. Each read command by command, never across a call's other commands, as the deny
     rules they replace in settings/worker.json and assistant.settings.json did (the coordinator,
     which runs no command-guard, keeps its own).
-  docker-run, for a planner, builder or reviewer alone (a gate agent, the assistant and an ops
-    session pass): docker, past its global options (-H, --host, -c, --context, --config, -l,
-    --log-level and the --tls options with a value, joined or next; -D, --debug, --tls and
+  docker-run, for a planner, builder, reviewer or topic session alone (a gate agent, the assistant
+    and an ops session pass): docker, past its global options (-H, --host, -c, --context, --config,
+    -l, --log-level and the --tls options with a value, joined or next; -D, --debug, --tls and
     --tlsverify alone), running run or create, or container run or container create, but with
     --help as the first word after it. Reason: a container started by hand outlives the session
-    with its volumes, and the reaper never removes it. Its allowed way: start the worktree's stack
+    with its volumes, and the reaper never removes it. Its allowed way, but for a topic session,
+    whose settings deny team-stack up too, so its refusal names none: start the worktree's stack
     with team-stack up, or run the project's own script for a one-off server.
   The kill rows, bin/lib/kill_rules.py's (its header holds their wording): a kill by name or
     pattern, tmux's kill-*, a kill of PIDs read from input, of a PID the guard cannot read before
@@ -605,6 +612,22 @@ GH_CONFIG_KEYS = frozenset((
 # GraphQL's operation keywords that write or stream, as whole names (case-sensitive, as GraphQL's are).
 GRAPHQL_WRITES = re.compile(r"(?<![_0-9A-Za-z])(?:mutation|subscription)(?![_0-9A-Za-z])")
 GITHUB_REASON = "a GitHub write, which an assistant session never makes ({})"
+# A topic session's reads, fewer than the assistant's: the spec's list (gh pr view, list and diff,
+# gh issue view and list, gh run view and list, gh repo view and gh search), gh auth status, which
+# a load check's login attempts run, and gh api's reads; every other group and subcommand, the
+# assistant's clones, downloads, gh pr checks, gh browse and gh status among them, is no read of a
+# topic's, since a clone or a download writes outside its task directory.
+TOPIC_GITHUB_READS = {
+    "gh": {
+        "auth": _reads("status"), "issue": _reads("list", "view"), "pr": _reads("list", "view", "diff"),
+        "repo": _reads("view"), "run": _reads("list", "view"), "search": ANY_READ,
+    },
+    "gh-axi": {
+        "issue": _reads("list", "view"), "pr": _reads("list", "view", "diff"), "repo": _reads("view"),
+        "run": _reads("list", "view"), "search": ANY_READ,
+    },
+}
+TOPIC_GITHUB_REASON = "a GitHub write, which a topic session never makes ({})"
 
 
 def _cobra_commands(args):
@@ -701,6 +724,20 @@ def _github_write(command, context):
     role's call is not this row's."""
     if context is None or context.role != "assistant":
         return None
+    return _gh_write(command, GITHUB_READS, GITHUB_REASON)
+
+
+def _topic_github_write(command, context):
+    """A topic session's gh or gh-axi call that is none of its reads (TOPIC_GITHUB_READS), the
+    reason naming what it read; any other role's call is not this row's."""
+    if context is None or context.role != "topic":
+        return None
+    return _gh_write(command, TOPIC_GITHUB_READS, TOPIC_GITHUB_REASON)
+
+
+def _gh_write(command, table, reason):
+    """The first gh or gh-axi call of <command> that is no read by <table>, as <reason> words it,
+    or None."""
     for words in heads(command):
         if not words or command_name(words[0]) not in GITHUB_CLIS:
             continue
@@ -710,20 +747,20 @@ def _github_write(command, context):
         if group == "api":
             write = _api_write(args[found[0] + 1 :])
             if write is not None:
-                return GITHUB_REASON.format(write)
-        elif group is not None and (write := _group_write(name, args, found)) is not None:
-            return GITHUB_REASON.format(write)
+                return reason.format(write)
+        elif group is not None and (write := _group_write(name, args, found, table)) is not None:
+            return reason.format(write)
     return None
 
 
-def _group_write(name, args, found):
+def _group_write(name, args, found, table=GITHUB_READS):
     """What makes a gh or gh-axi call past its group no read, or None: a group the guard knows no
     read of, a subcommand (or a subcommand's own) outside its reads, gh auth status showing the
     token, and gh-axi update but its --check. A group with no subcommand prints its help."""
     group = args[found[0]]
     if name == "gh-axi" and group == "update":
         return None if "--check" in args else f"{name} update, a command the guard knows no read of"
-    reads = GITHUB_READS[name].get(group)
+    reads = table[name].get(group)
     if reads is None:
         return f"{name} {group}, a command the guard knows no read of"
     if reads == ANY_READ or len(found) < 2:
@@ -836,7 +873,7 @@ def _cd_into(command, context):
 
 
 # The roles the docker-run row holds: the workers whose roles forbid docker run.
-DOCKER_ROLES = frozenset(("planner", "builder", "reviewer"))
+DOCKER_ROLES = frozenset(("planner", "builder", "reviewer", "topic"))
 # docker's global options before its command that take a value, long and short; the rest
 # (-D, --debug, --tls, --tlsverify) stand alone.
 DOCKER_VALUED = frozenset(("--host", "--context", "--config", "--log-level", "--tlscacert", "--tlscert", "--tlskey"))
@@ -865,8 +902,9 @@ def _docker_command(words):
 
 
 def _docker_run(command, context):
-    """A planner's, builder's or reviewer's docker run or create, or docker container run or
-    create, past docker's global options; --help first after it passes."""
+    """A planner's, builder's, reviewer's or topic session's docker run or create, or docker
+    container run or create, past docker's global options; --help first after it passes. A topic's
+    refusal names no allowed way, since its settings deny team-stack up too."""
     if context.role not in DOCKER_ROLES:
         return False
     for words in heads(command):
@@ -876,7 +914,7 @@ def _docker_run(command, context):
         if rest[:1] == ["container"]:
             rest = _docker_command(rest[1:])
         if rest[:1] and rest[0] in DOCKER_STARTS and rest[1:2] != ["--help"]:
-            return True
+            return (True, None) if context.role == "topic" else True
     return False
 
 
@@ -947,6 +985,7 @@ ROWS = (
     ),
     Row("assistant-acts", _assistant_act, None),
     Row("assistant-github-write", _github_write, None),
+    Row("topic-github-write", _topic_github_write, None),
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),

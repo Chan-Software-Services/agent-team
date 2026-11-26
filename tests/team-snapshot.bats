@@ -165,6 +165,24 @@ section() {
   assert_contains "$tasks" "  $output"
 }
 
+@test "an open topic shows topic in place of a phase, in the text and in --json, while team-state names its path and phase" {
+  opened T3
+  event T5 opened '{project: "proj", path: "topic", type: "research", title: "Talk", branch: "research/T5-talk",
+    base: "main", base_sha: "0123456", worktree: "/w/1", discord_message: "1563000000000000005",
+    discord_channel: "1563000000000000006"}'
+  event T5 interview-thread '{discord_thread: "1563000000000000007"}'
+  launch T5 topic 5a5a5a5a
+  sessions "$(session 5a5a5a5a T5-topic idle)"
+  run_bin -0 team-snapshot
+  assert_equal "$(section "Open tasks")" "Open tasks (2):
+  T3 proj feature planning | no live worker
+  T5 proj topic | T5-topic idle"
+  run_bin -0 team-state T5
+  assert_equal "$output" "T5 proj topic planning | T5-topic idle"
+  run_bin -0 team-snapshot --json
+  assert_equal "$(jq -c '[.tasks[] | [.task, .path, .phase]]' <<<"$output")" '[["T3","feature","planning"],["T5","topic","topic"]]'
+}
+
 @test "--json carries a schema and each open task's team-state JSON" {
   opened T3
   launch T3 builder 59709d99

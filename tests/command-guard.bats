@@ -895,11 +895,14 @@ DOCKER_RUN="a container started by hand outlives the session with its volumes, a
 DOCKER_WAY="start the worktree's stack with ~/agent-team/bin/team-stack up, or run the project's own script for a one-off server (Conventioner's scripts/real-mongo-test.sh)"
 
 # The roles' rule against docker run, held by the docker-run row past docker's global options,
-# by a path, in a shell's string and after a cd; every other docker call passes.
+# by a path, in a shell's string and after a cd; every other docker call passes. A topic session's
+# refusal names no allowed way, since its settings deny team-stack up too.
 @test "a worker's docker run or docker create is refused past docker's global options, naming the allowed way" {
-  local role
-  for role in planner builder reviewer; do
-    refuses_as "$role" "$DOCKER_RUN" "$DOCKER_WAY" "docker run --rm -d -p 27017:27017 mongo:7" \
+  local role way
+  for role in planner builder reviewer topic; do
+    way=$DOCKER_WAY
+    [[ $role != topic ]] || way=''
+    refuses_as "$role" "$DOCKER_RUN" "$way" "docker run --rm -d -p 27017:27017 mongo:7" \
       "docker create --name x mongo:7" "docker container run --rm mongo:7" "docker container create mongo:7" \
       "docker -H unix:///run/docker.sock run mongo:7" "docker --host=unix:///run/docker.sock run mongo:7" \
       "docker --context default run mongo:7" "docker --context=default run mongo:7" "docker -c default run mongo:7" \
@@ -1044,6 +1047,23 @@ COMMANDS
   # And the coordinator's, whose settings run the guard with its own role.
   AGENT_TEAM_ROLE=coordinator guard -0 'team-quota usage --if-due'
   assert_equal "$stderr" ""
+}
+
+@test "the assistant's team-topic passes its guard and its settings, every form: a topic is the assistant's to open and close" {
+  local command
+  # shellcheck disable=SC2088 # the command as an agent types it
+  for command in 'team-topic open --help' 'team-topic close --help' \
+    'team-topic open --daniel 1566 --channel 1570 --about assistant/topic-about.md interfaces "Design the interfaces"' \
+    '~/agent-team/bin/team-topic open --task T5 --daniel 1566 --channel 1570 --about /tmp/about.md --project proj ingest Ingest' \
+    'team-topic close T5' '~/agent-team/bin/team-topic close T5 --no-report'; do
+    AGENT_TEAM_ROLE=assistant guard -0 "$command"
+    assert_equal "$stderr" ""
+    # The rule table passes it too, past the hook's fast path, which a name added to it would skip.
+    AGENT_TEAM_ROLE=assistant run -0 --separate-stderr python3 -I "$REPO_ROOT/bin/lib/command_rules.py" <<<"$(jq -cn \
+      --arg c "$command" '{hook_event_name: "PreToolUse", cwd: env.HOME, tool_name: "Bash", tool_input: {command: $c}}')"
+    assert_equal "$output$stderr" ""
+    if denied_in "$REPO_ROOT/assistant.settings.json" "$command"; then echo "assistant.settings.json denies: $command" >&2; return 1; fi
+  done
 }
 
 @test "the acts' names go to Python past the fast path only for the assistant, so fail closed there when Python fails" {
@@ -1279,7 +1299,7 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
   done
 }
 
-@test "every gh and gh-axi call goes to Python past the fast path only for the assistant, so fails closed there when Python fails" {
+@test "every gh and gh-axi call goes to Python past the fast path only for the assistant and a topic session, so fails closed there when Python fails" {
   printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
   chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
   local command
@@ -1288,12 +1308,85 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
     AGENT_TEAM_ROLE=builder guard -0 "$command"
     assert_equal "$stderr" ""
     guard -0 "$command"
-    AGENT_TEAM_ROLE=assistant guard -2 "$command"
-    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
-      { echo "the assistant's $command passed the fast path: $stderr" >&2; return 1; }
+    for role in assistant topic; do
+      AGENT_TEAM_ROLE=$role guard -2 "$command"
+      [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+        { echo "the $role's $command passed the fast path: $stderr" >&2; return 1; }
+    done
   done
-  # An assistant's call naming gh only inside a word still exits at once.
+  # An assistant's or a topic's call naming gh only inside a word still exits at once.
   AGENT_TEAM_ROLE=assistant guard -0 'cat high.txt github.md'
+  AGENT_TEAM_ROLE=topic guard -0 'cat high.txt github.md'
+}
+
+TOPIC_GITHUB="a GitHub write, which a topic session never makes"
+
+@test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes, behind any of git's options too, are denied" {
+  local command settings
+  # The spellings the review found passing: a group or subcommand its settings never listed, gh
+  # by a path or behind a wrapper.
+  refuses_as topic "$TOPIC_GITHUB (gh repo clone)" "" 'gh repo clone load-check-probe/absent --help' \
+    'gh repo clone o/r /tmp/r' 'env A=1 gh repo clone o/r' "bash -c 'gh repo clone o/r'"
+  refuses_as topic "$TOPIC_GITHUB (gh pr create)" "" '/usr/bin/gh pr create --help' 'bin/gh pr create' \
+    'gh -R o/r pr create' 'gh pr create --help'
+  refuses_as topic "$TOPIC_GITHUB (gh gist, a command the guard knows no read of)" "" 'gh gist clone x'
+  refuses_as topic "$TOPIC_GITHUB (gh run download)" "" 'gh run download 1'
+  refuses_as topic "$TOPIC_GITHUB (gh release, a command the guard knows no read of)" "" 'gh release download v1' 'gh release list'
+  refuses_as topic "$TOPIC_GITHUB (gh pr checks)" "" 'gh pr checks 5'
+  refuses_as topic "$TOPIC_GITHUB (gh browse, a command the guard knows no read of)" "" 'gh browse --no-browser'
+  refuses_as topic "$TOPIC_GITHUB (gh status, a command the guard knows no read of)" "" 'gh status'
+  refuses_as topic "$TOPIC_GITHUB (gh-axi pr create)" "" 'gh-axi pr create' '/opt/bin/gh-axi pr create'
+  refuses_as topic "$TOPIC_GITHUB (gh api --method POST)" "" 'gh api -X POST repos/o/r/issues' '/usr/bin/gh api -X POST x'
+  refuses_as topic "$TOPIC_GITHUB (gh api with a field and no --method GET or HEAD, which sends a POST)" "" \
+    'gh api repos/o/r/issues -f title=x'
+  refuses_as topic "$TOPIC_GITHUB (gh auth status --show-token, which prints the token)" "" 'gh auth status -t'
+  # Its reads: the spec's list, gh api's reads, and gh auth status, which a probe's login attempts run.
+  for command in 'gh api repos/o/r/pulls' 'gh api -X GET search/issues -f q=x' 'gh api user --jq .login' \
+    "gh api graphql -f query='{viewer{login}}'" 'gh pr view 5' 'gh pr list' 'gh pr diff 5' 'gh issue view 5' \
+    'gh issue list' 'gh run view 1 --log' 'gh run list' 'gh repo view o/r' 'gh search prs x' '/usr/bin/gh pr view 5' \
+    'gh' 'gh --help' 'gh pr --help' 'gh auth status' 'gh-axi pr view 5' 'gh-axi issue list' 'gh-axi run view 1' \
+    'gh-axi repo view' 'gh-axi search issues x' "grep -rn 'gh pr create' bin"; do
+    AGENT_TEAM_ROLE=topic guard -0 "$command"
+    assert_equal "$stderr" ""
+  done
+  # git's writes behind any of git's own options before the verb, which its deny rules hold beside
+  # git push and */git push: -C, -c and --git-dir, and the others the review found passing.
+  for command in 'git -c core.pager=cat push --dry-run origin load-check-probe-absent' 'git -c a=b commit -m x' \
+    'git --git-dir=/w/.git commit -m x' 'git --git-dir /w/.git push' '/usr/bin/git -c a=b merge x' \
+    'git -c a=b rebase main' 'git --git-dir=d reset HEAD' 'git -c a=b checkout -b x' 'git -c a=b switch -c x' \
+    'git --git-dir=d branch x' '/usr/bin/git --git-dir=d switch --create x' 'git -C d push' 'git -C d commit -m x' \
+    'git --no-pager push origin x' 'git -P commit -m x' 'git --work-tree=. commit -am x' 'git --no-optional-locks push' \
+    'git --config-env=a=B push' 'git --no-pager merge x' 'git -P rebase main' 'git --work-tree=. reset HEAD' \
+    'git --no-pager checkout -b x' 'git -P checkout -B x' 'git --no-pager switch -c x' 'git -P switch -C x' \
+    'git --no-pager switch --create x' 'git -P branch x' '/usr/bin/git --no-pager push origin x' \
+    'git --no-pager -c a=b push origin x' 'git pull' 'git -C d pull' 'git cherry-pick x' 'git revert HEAD' \
+    'git am x.patch' 'git tag x' 'git update-ref refs/heads/x HEAD' 'git worktree add ../x' '/usr/bin/git pull' \
+    'git -P cherry-pick x' 'git --no-pager revert HEAD' 'git -C d am x.patch' 'git -c a=b tag x' \
+    'git -C d update-ref refs/heads/x HEAD' 'git -C d worktree add ../x'; do
+    denied_in "$REPO_ROOT/settings/topic.json" "$command" || { echo "settings/topic.json lets through: $command" >&2; return 1; }
+  done
+  for command in 'git -c core.pager=cat log' 'git --git-dir=d status' 'git -c a=b diff' 'git --no-pager log' \
+    'git -P diff' 'git -C d status' 'git worktree list' 'git -C d worktree list'; do
+    if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
+  done
+  # A shell's string: a bare name in it matches no deny rule of the topic's two settings files and
+  # no row refuses it, but for a force push, which the force-push row reads in a string too, while
+  # a name spelled by a path is denied wherever it stands in the call.
+  for command in "bash -c 'docker compose up -d'" "bash -c 'team-stack up'" "bash -c 'npm install'" \
+    "bash -c 'git push'"; do
+    AGENT_TEAM_ROLE=topic guard -0 "$command"
+    assert_equal "$stderr" ""
+    for settings in topic worker; do
+      if denied_in "$REPO_ROOT/settings/$settings.json" "$command"; then
+        echo "settings/$settings.json denies: $command" >&2
+        return 1
+      fi
+    done
+  done
+  refuses_as topic "$FORCE" "$FORCE_WAY" "bash -c 'git push -f'"
+  for command in "bash -c '~/agent-team/bin/team-stack up'" "bash -c '/usr/bin/git push'"; do
+    denied_in "$REPO_ROOT/settings/topic.json" "$command" || { echo "settings/topic.json lets through: $command" >&2; return 1; }
+  done
 }
 
 @test "the assistant's reads and writes of the thread list pass at the fast path, as a worker's do" {

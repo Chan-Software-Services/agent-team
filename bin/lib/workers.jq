@@ -8,7 +8,7 @@ include "ledger";
 include "time";
 
 # The roles in report order; any other role comes after them, by name.
-def role_rank: .role as $role | [(["builder", "reviewer", "planner", "ops"] | index($role)) // 4, $role];
+def role_rank: .role as $role | [(["builder", "reviewer", "planner", "ops", "topic"] | index($role)) // 5, $role];
 
 # A lifetime's minutes, unrounded, from its start to its end, or to $hi while it runs.
 def span_minutes($hi): (((if .end then .end | fromdate else $hi end) - (.start | fromdate)) / 60);

@@ -102,12 +102,12 @@ TOML
 TOML
   run_bin -1 --separate-stderr team-models --check
   assert_equal "$output" ""
-  local known="default, coordinator, coordinator.compaction-drill, assistant, assistant.load-check, planner, planner.feature, planner.research, planner.interview, planner.walk, planner.retro, planner.load-check, builder, builder.ticket, builder.deliver, builder.fix, builder.round, builder.merge-base, builder.load-check, reviewer, reviewer.review, reviewer.rereview, reviewer.verify, reviewer.load-check, ops, ops.load-check"
+  local known="default, coordinator, coordinator.compaction-drill, assistant, assistant.load-check, planner, planner.feature, planner.research, planner.interview, planner.walk, planner.retro, planner.load-check, builder, builder.ticket, builder.deliver, builder.fix, builder.round, builder.merge-base, builder.load-check, reviewer, reviewer.review, reviewer.rereview, reviewer.verify, reviewer.load-check, ops, ops.load-check, topic, topic.load-check"
   assert_equal "$stderr" "models.toml: \"reviewr\": unknown category 'reviewr'; known: $known
 models.toml: \"builder team=x\": unknown qualifier 'team'; one of project, path
 models.toml: \"builder path=small project=agent-team\": the qualifiers go project= first, then path=, each at most once
 models.toml: \"builder project=nowhere\": project 'nowhere' is not in the registry; known: conventioner, agent-team, no-mistakes
-models.toml: \"builder path=huge\": unknown path 'huge'; one of feature, bug, small, research, retro
+models.toml: \"builder path=huge\": unknown path 'huge'; one of feature, bug, small, research, retro, topic
 models.toml: \"planner\": unknown field 'modle'; one of model, effort, subagent_model, subagent_effort
 models.toml: \"reviewer\": model: 'sonet' is not opus, sonnet, haiku, fable or claude-<name>, each optionally with [1m], or default
 models.toml: \"reviewer\": effort: 'hgh' is not one of low, medium, high, xhigh, max, default
@@ -181,6 +181,21 @@ TOML
   assert_equal "$(field model_line)" "reviewer"
 }
 
+@test "a topic session resolves as team-worker launches it, its template, project and the path topic, to the topic category" {
+  models <<'TOML'
+"default" = { model = "opus", effort = "high" }
+"topic" = { model = "sonnet" }
+"topic project=agent-team" = { effort = "medium" }
+"topic.load-check" = { model = "haiku" }
+TOML
+  run_bin -0 team-models --check
+  run_bin -0 team-models resolve --role topic --template topic --project agent-team --path topic
+  assert_equal "$(field category) $(field model) $(field model_line) $(field effort) $(field effort_line)" \
+    "topic sonnet topic medium topic project=agent-team"
+  run_bin -0 team-models resolve --role topic --load-check
+  assert_equal "$(field category) $(field model) $(field model_line)" "topic.load-check haiku topic.load-check"
+}
+
 @test "resolve takes the deeper category over a project, and a project over a path" {
   models <<'TOML'
 "default project=conventioner" = { model = "sonnet", effort = "low" }
@@ -234,7 +249,7 @@ TOML
     run_bin -0 team-models resolve --role "$role" --template "$template"
     assert_equal "$template $(field category)" "$template $category"
   done < <("$REPO_ROOT/bin/team-models" templates)
-  for role in planner builder reviewer ops coordinator assistant; do
+  for role in planner builder reviewer ops topic coordinator assistant; do
     run_bin -0 team-models resolve --role "$role"
     assert_equal "$(field category)" "$role"
   done
@@ -246,7 +261,7 @@ TOML
 
 @test "resolve --load-check gives the role's load-check category, whatever the template" {
   local role
-  for role in planner builder reviewer ops assistant; do
+  for role in planner builder reviewer ops topic assistant; do
     run_bin -0 team-models resolve --role "$role" --load-check
     assert_equal "$(field category)" "$role.load-check"
   done
@@ -267,7 +282,7 @@ TOML
   run_bin -2 --separate-stderr team-models resolve --category reviewer.again
   assert_contains "$stderr" "unknown category 'reviewer.again'; known: default, coordinator,"
   run_bin -2 --separate-stderr team-models resolve --role tester
-  assert_contains "$stderr" "unknown role 'tester'; one of coordinator, assistant, planner, builder, reviewer, ops"
+  assert_contains "$stderr" "unknown role 'tester'; one of coordinator, assistant, planner, builder, reviewer, ops, topic"
   run_bin -2 --separate-stderr team-models resolve --role builder --template builder-nap
   assert_contains "$stderr" "unknown template 'builder-nap'; known: planner-feature,"
   run_bin -2 --separate-stderr team-models resolve --role builder --template resume
@@ -279,7 +294,7 @@ TOML
   run_bin -2 --separate-stderr team-models resolve --category builder --role builder
   assert_contains "$stderr" "give --category or --role, not both"
   run_bin -2 --separate-stderr team-models resolve --role builder --path huge
-  assert_contains "$stderr" "--path 'huge' is not one of feature, bug, small, research, retro"
+  assert_contains "$stderr" "--path 'huge' is not one of feature, bug, small, research, retro, topic"
   run_bin -2 --separate-stderr team-models resolve
   assert_contains "$stderr" "give --category or --role, not both"
 }
@@ -306,9 +321,9 @@ TOML
   assert_equal "${lines[1]}" "default                       opus    default            high    default"
   assert_equal "${lines[6]}" "planner                       opus    default            high    default  subagent_model haiku from planner"
   assert_equal "${lines[22]}" "reviewer.rereview             sonnet  reviewer.rereview  high    default"
-  assert_equal "${#lines[@]}" 27
+  assert_equal "${#lines[@]}" 29
   assert_equal "$(printf '%s\n' "${lines[@]:1}" | cut -d' ' -f1 | tr '\n' ' ')" \
-    "default coordinator coordinator.compaction-drill assistant assistant.load-check planner planner.feature planner.research planner.interview planner.walk planner.retro planner.load-check builder builder.ticket builder.deliver builder.fix builder.round builder.merge-base builder.load-check reviewer reviewer.review reviewer.rereview reviewer.verify reviewer.load-check ops ops.load-check "
+    "default coordinator coordinator.compaction-drill assistant assistant.load-check planner planner.feature planner.research planner.interview planner.walk planner.retro planner.load-check builder builder.ticket builder.deliver builder.fix builder.round builder.merge-base builder.load-check reviewer reviewer.review reviewer.rereview reviewer.verify reviewer.load-check ops ops.load-check topic topic.load-check "
 }
 
 @test "list --json is the array of resolve's objects, for the project and path given" {
@@ -319,7 +334,7 @@ TOML
 TOML
   run_bin -0 team-models list --json --project agent-team --path small
   local listed=$output
-  assert_equal "$(jq length <<<"$listed")" 26
+  assert_equal "$(jq length <<<"$listed")" 28
   while read -r category; do
     run_bin -0 team-models resolve --category "$category" --project agent-team --path small
     assert_equal "$(jq -c --arg c "$category" '.[] | select(.category == $c)' <<<"$listed")" "$(jq -c . <<<"$output")"

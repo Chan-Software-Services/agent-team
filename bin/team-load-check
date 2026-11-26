@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prove what a worker can and cannot reach, with a throwaway session on task T0, and that each
 # treehouse pool hands out a clean slot.
-# Each T0 planner, builder and reviewer it starts, and the --role assistant form's T0-assistant,
+# Each T0 planner, builder, reviewer and topic it starts, and the --role assistant form's T0-assistant,
 # has Remote Control off (team-worker, and bin/claude-assistant's --load-check form, set
 # remoteControlAtStartup false in the settings they generate for one), so they leave no row in
 # Daniel's Remote Control list on claude.ai; its ops session keeps settings/ops.json's Remote
@@ -19,8 +19,8 @@
 # tests' seam), which answers --json.
 #
 # Usage: team-load-check [--toolkit <name>]...
-#        team-load-check --context [--role planner|builder|reviewer|assistant] [--toolkit <name>]...
-#        team-load-check --probe [--role planner|builder|reviewer|assistant]
+#        team-load-check --context [--role planner|builder|reviewer|topic|assistant] [--toolkit <name>]...
+#        team-load-check --probe [--role planner|builder|reviewer|topic|assistant]
 #        team-load-check --role ops --worktree <path> --request <link> --toolkit <name>...
 #        team-load-check --role assistant-read --request <link> --toolkit <name>...
 # The ops form takes the seven toolkit sets team-worker launches an ops session with: prod-read,
@@ -118,8 +118,9 @@
 # before it has done anything, its role prompt, settings, skills, tools and the given toolkits. It
 # rehearses no lease. In the same fresh worktree as the planner form it launches, through this
 # checkout's bin/team-worker, one T0 session per role (planner, builder and reviewer, or the one
-# --role names; never ops, which needs Daniel), each with only the prompt "Reply with OK and nothing
-# else.", waits up to 5 minutes for each to reply and go idle, and prints one row per role:
+# --role names, topic among them; never ops, which needs Daniel), each with only the prompt "Reply
+# with OK and nothing else.", waits up to 5 minutes for each to reply and go idle, and prints one
+# row per role:
 #   role      context  skills  deferred tools  MCP servers
 #   builder     51004       5               4            2
 # context is the first reply's input plus cache write plus cache read tokens, from the session's
@@ -143,7 +144,7 @@
 # refuses the role itself. It rehearses no lease and takes no toolkit. In the same fresh worktree
 # as the planner form, with a bare repository made in it at .scratch/probe.git for the attempts that
 # push, it launches through this checkout's bin/team-worker one T0 session per role (planner,
-# builder and reviewer, or the one --role names; never ops) all at once, and checks each one's
+# builder, reviewer and topic, or the one --role names; never ops) all at once, and checks each one's
 # effective autoMode as the other forms do. Each session's prompt asks it to make, exactly as
 # written, each alone and in order, the numbered tool calls of bin/lib/probe.json's attempts for its
 # role (@HOME@ in an input standing for the home directory, @CANARY@ for the role's canary
@@ -309,12 +310,12 @@
 # instead (the tests' seam). It records no drill, and says so.
 #
 # Each run of the planner form, and of the ops form with prod-read and prod-write or with
-# vercel-read alone, and of the probe form for all three roles, is a drill (sops/drills.md): once
+# vercel-read alone, and of the probe form for all four roles, is a drill (sops/drills.md): once
 # it has launched its session (the probe form, its first one), it records one line in the team home's
 # drills.jsonl through this checkout's bin/team-drill record, as load-check-planner (its detail
 # "toolkits: <names>" or "no toolkit"), load-check-ops-prod-write or load-check-ops-vercel-read (no
 # detail), or load-check-probe ("<passed> of <total> attempts as expected", the PASS lines
-# of attempts and github calls against all three roles' attempts and the github calls, a WARN
+# of attempts and github calls against all four roles' attempts and the github calls, a WARN
 # line's counted in neither): pass on exit 0, else fail, with team-drill's line
 # just before the verdict line; and fail, team-drill's line last, on every way it ends after the
 # launch before its verdict line (no inventory within 5 minutes, an error, an interruption). The
@@ -364,22 +365,22 @@ if [[ -n $probe ]]; then
   [[ -z $worktree ]] || usage_error "--worktree is for --role ops only"
   [[ -z $request ]] || usage_error "--request is for --role ops and --role assistant-read only"
   case $role in
-    '') probe_roles=(planner builder reviewer) ;;
-    planner | builder | reviewer | assistant) probe_roles=("$role") ;;
-    ops) usage_error "--probe tries the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel" ;;
-    *) usage_error "unknown role '$role'; --probe knows planner, builder, reviewer, assistant" ;;
+    '') probe_roles=(planner builder reviewer topic) ;;
+    planner | builder | reviewer | topic | assistant) probe_roles=("$role") ;;
+    ops) usage_error "--probe tries the roles the load check may start: planner, builder, reviewer, topic, assistant; ops needs Daniel" ;;
+    *) usage_error "unknown role '$role'; --probe knows planner, builder, reviewer, topic, assistant" ;;
   esac
   roles=("${probe_roles[@]}")
 elif [[ -n $context ]]; then
   [[ -z $worktree ]] || usage_error "--worktree is for --role ops only"
   case $role in
     '') context_roles=(planner builder reviewer) ;;
-    planner | builder | reviewer) context_roles=("$role") ;;
+    planner | builder | reviewer | topic) context_roles=("$role") ;;
     assistant)
       ((${#expected[@]} == 0)) || usage_error "--role assistant launches the assistant's own settings, so it takes no --toolkit"
       context_roles=("$role") ;;
-    ops) usage_error "--context measures the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel" ;;
-    *) usage_error "unknown role '$role'; --context knows planner, builder, reviewer, assistant" ;;
+    ops) usage_error "--context measures the roles the load check may start: planner, builder, reviewer, topic, assistant; ops needs Daniel" ;;
+    *) usage_error "unknown role '$role'; --context knows planner, builder, reviewer, topic, assistant" ;;
   esac
   roles=("${context_roles[@]}")
 else
@@ -390,7 +391,7 @@ else
     assistant-read)
       [[ -z $worktree ]] ||
         usage_error "--role assistant-read takes no --worktree: its session runs in the team home's .claude/worktrees/T0-assistant-read" ;;
-    *) usage_error "unknown role '$role'; known: planner, ops (and builder, reviewer and assistant with --context or --probe), and assistant-read for the assistant's read session" ;;
+    *) usage_error "unknown role '$role'; known: planner, ops (and builder, reviewer, topic and assistant with --context or --probe), and assistant-read for the assistant's read session" ;;
   esac
   roles=("$role")
 fi
@@ -515,7 +516,7 @@ check_failed() { echo "FAIL: $*"; fail=1; }
 record_pending='' drill='' drill_detail=''
 no_drill="load check: no drill is registered for this toolkit set, so nothing is recorded"
 if [[ -n $probe ]]; then
-  if ((${#probe_roles[@]} == 3)); then drill=load-check-probe
+  if ((${#probe_roles[@]} == 4)); then drill=load-check-probe
   else no_drill="load check: a probe of one role is not the drill, so nothing is recorded"; fi
 elif [[ -z $context ]]; then
   case $role,${kits[*]} in
@@ -747,11 +748,11 @@ declared_servers() {
 
 # automode_check <role> <worktree>: the role's effective autoMode, as auto mode's classifier reads
 # it for the session just launched: claude auto-mode config with the settings team-worker generated
-# for it (tasks/T0/settings.<role>.<project>.json for a planner, builder or reviewer of a registered
-# project's worktree, else tasks/T0/settings.<role>.json, as team-worker names them), run in its
-# worktree, since a session's own shell gets no --settings, and with the session's setting sources,
-# as team-worker launches it: --setting-sources user for a planner, a builder and a reviewer, none
-# for ops, whose command has no such flag. The config is kept in tasks/T0/automode-<role>.json, and
+# for it (tasks/T0/settings.<role>.<project>.json for a planner, builder, reviewer or topic of a
+# registered project's worktree, else tasks/T0/settings.<role>.json, as team-worker names them), run
+# in its worktree, since a session's own shell gets no --settings, and with the session's setting
+# sources, as team-worker launches it: --setting-sources user for a planner, a builder, a reviewer
+# and a topic, none for ops, whose command has no such flag. The config is kept in tasks/T0/automode-<role>.json, and
 # every line of those settings' autoMode lists but "$defaults" must be in the same list of it. The
 # assistant, in bypass mode, has no effective autoMode, which its line says.
 automode_check() {

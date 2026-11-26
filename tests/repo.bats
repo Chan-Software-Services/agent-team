@@ -303,9 +303,10 @@ B/X: its moves end in a cycle'
 # The refusal probe's data, bin/lib/probe.json, held to the probed roles' settings (the worker
 # roles' and the assistant's), so a deny rule or a PreToolUse hook added to them is either probed
 # live by `team-load-check --probe` or says why it is not.
-PROBE_ROLES=(planner builder reviewer assistant)
+PROBE_ROLES=(planner builder reviewer topic assistant)
 # Every settings file a probed role loads.
-PROBE_SETTINGS=(settings/worker.json settings/planner.json settings/builder.json settings/reviewer.json assistant.settings.json)
+PROBE_SETTINGS=(settings/worker.json settings/planner.json settings/builder.json settings/reviewer.json settings/topic.json
+  assistant.settings.json)
 
 # probe_settings <role>: the settings files a <role> session loads, one per line: a worker's
 # settings/worker.json and its own, the assistant's assistant.settings.json alone
@@ -325,7 +326,7 @@ probe_rules() {
   local out malformed
   malformed='(.families | map(.family)) as $families | .attempts[]
     | select((.id | test("^[a-z]+(-[a-z]+)*$") | not)
-      or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "assistant") | not)
+      or (.roles | length) == 0 or any(.roles[]; IN("planner", "builder", "reviewer", "topic", "assistant") | not)
       or (.tool | IN("Bash", "Read", "Write") | not) or (.input | type) != "string"
       or (.expect | IN("rule", "hook", "refused", "script", "kernel", "login", "allowed") | not)
       or (.expect == "kernel" and (. as $a | .tool != "Bash" or (.input | contains("@CANARY@/\($a.id)\"") | not)))
@@ -335,7 +336,7 @@ probe_rules() {
       or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
       or (.expect == "rule" and (.family | type) != "string")
       or (.family != null and ((.family | type) != "string" or (.family | IN($families[]) | not)
-        or (.expect != "rule" and (.expect != "refused" or .roles != ["assistant"])))))
+        or (.expect != "rule" and (.expect != "refused" or (.roles - ["assistant", "topic"]) != [] or .roles == [])))))
     | .id'
   out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
@@ -349,19 +350,22 @@ probe_rules() {
   assert_equal "$out" "no-marker
 number-marker
 login-hook"
-  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's refused
-  # one's, whose deny rule and hook both refuse it in bypass mode; never a worker's refused one,
-  # auto mode's stand-in, nor a hook's.
+  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's or a
+  # topic's refused one's, whose deny rule and hook both refuse it (the hook first, as a live run
+  # shows); never another worker's refused one, auto mode's stand-in, nor a hook's.
   out=$(jq -r "$malformed" <<<'{"families": [{"family": "f"}], "attempts": [
     {"id": "rule-bare", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule"},
     {"id": "rule", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule", "family": "f"},
     {"id": "refused-assistant", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "refused-assistant-bare", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused"},
+    {"id": "refused-topic", "roles": ["topic"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-topic-worker", "roles": ["topic", "planner"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "refused-worker", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "refused-both", "roles": ["builder", "assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
     {"id": "hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "m", "family": "f"},
     {"id": "unknown", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "g"}]}')
   assert_equal "$out" "rule-bare
+refused-topic-worker
 refused-worker
 refused-both
 hook
@@ -488,7 +492,7 @@ probe_denies() {
   local file role hook hooks roles markers marker found probe=$REPO_ROOT/bin/lib/probe.json missing=() listed=()
   for file in "${PROBE_SETTINGS[@]}"; do
     case $file in
-      settings/worker.json) roles=(planner builder reviewer) ;;
+      settings/worker.json) roles=(planner builder reviewer topic) ;;
       assistant.settings.json) roles=(assistant) ;;
       *) roles=("$(basename "$file" .json)") ;;
     esac

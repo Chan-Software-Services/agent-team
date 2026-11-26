@@ -20,7 +20,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `channel-access.sh`: the bot's permissions in one Discord channel, worked out as Discord does from its roles and the channel's overwrites, and the doctor line reported from them, for the doctor's interview and assistant channel lines.
     - `chrome.sh`: the one lookup of a machine's Chrome, its executable and its app, which `team-doctor`'s `chrome` line and `team-tickets --graph` both take.
     - `code`: the paths every tracked path matches.
-    - `command_rules.py`: `bin/hooks/command-guard`'s rows, one per guarded thing a call runs (an ops launch, the capture script, role and login variables, an emptied environment, a lease steal, the coordinator's commands, the assistant's acts and writes, an upload, a force push, a cd to the keys).
+    - `command_rules.py`: `bin/hooks/command-guard`'s rows, one per guard (an ops launch, `ui-capture`, role and login variables, an emptied environment, a lease steal, the coordinator's commands, the assistant's acts and writes, a topic's GitHub writes, an upload, a force push, a cd to the keys).
     - `command_text.py`: a Bash command's code text (heredoc bodies out unless a shell may read one, `-c` strings and what is piped into a shell in) and the walk of each simple command it runs, past wrappers, into tools' strings, for `command_rules.py`; `team-tokens` takes its heredoc rule.
     - `compact-hold.sh`: the record of the coordinator's held auto-compaction, one file per session, written under its lock, and its log of each hold, tell, reminder, stow and release, for `bin/hooks/compact-hold` and `team-stowed`.
     - `confine-roots`: the roots every confined session has beside its own, one path per line: the team's machine state `~/.local/state/agent-team`, `~/.cargo` and `~/.cache/sccache`; a guarded path, and none may be in the team home, `~/.config/agent-team` or `~/.claude`.
@@ -94,7 +94,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
 - `plugins/assistant-skills/`: skills loaded only into the assistant by `bin/claude-assistant`: `walk`, through what waits on Daniel one item at a time.
 - `plugins/coordinator-skills/`: skills loaded only into the coordinator by `bin/claude-coordinator`.
 - `README.md`, `SETUP.md`: what a stranger reads first, with the sentence Daniel types on a new machine, and the agent's entry point for "set up as host".
-- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's, the assistant's and its read session's included; `team-worker` follows a planner's, builder's or reviewer's with its project's root `CLAUDE.md` and `AGENTS.md` as `origin/<base>` has them.
+- `roles/`: the role prompts each session's system prompt is appended with, one per role, the coordinator's, the assistant's and its read session's included; `team-worker` follows a planner's, builder's, reviewer's or topic's with its project's root `CLAUDE.md` and `AGENTS.md` at `origin/<base>`.
 - `rust-toolchain.toml`: the Rust toolchain every checkout builds with, its channel, profile and components, which rustup reads below the root and `team-doctor`'s `tool rust-toolchain` line checks.
 - `servers/`: the MCP servers the toolkits and sessions run, the MCP client `ui-capture` speaks with, the `chrome-devtools-axi` client the browser toolkit's test runs, and the packages the effect toolkit's tests check its skill, hook and Foldkit DevTools server against.
   - `install`: puts them in the gitignored `servers/node_modules/`, as `team-bootstrap` does while `team-doctor`'s `servers` line fails.
@@ -112,7 +112,7 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
     - `typescript`: TypeScript 7, which `effect-tsgo diagnostics` needs installed beside it, though `@effect/tsgo` declares no peer.
     - `vite`: the Vite version that app pins, which runs the fixture app's dev servers.
   - `prod-mongo/`: the prod-mongo toolkit's server body: its start and tools, the backups root's rules, `childEnv` and `scrubbed`, a dump's counts, the throwaway MongoDB a drill or a rehearsal restores a dump into, the snapshots that say what changed, by ids, and the undo it prepares for Daniel.
-- `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder or reviewer loads (`--setting-sources user`), none of its worktree's `.claude/`.
+- `settings/`: worker settings: `worker.json` shared, one file per role layered on it; with the user settings, all a planner, builder, reviewer or topic session loads (`--setting-sources user`), none of its worktree's `.claude/`.
 - `sops/`: standing procedures.
   - `ci-only.md`: moving a project's whole test suite off the team's machine into required CI checks, only when its repository goes public on Daniel's word: the workflow's task, Daniel's steps at github.com, the proof and the registry edit.
   - `coordinator-manual.md`: what goes in a script, a coordinator skill, a brief template and the coordinator's manual, cheapest first, the manual's line and byte caps and what holds them down, and its no-task-number rule.
@@ -133,7 +133,9 @@ One path per bullet and one thing per line, alphabetical within each list, so tw
   - `tmp.md`: the team's temporary files: `team-janitor tmp`'s roots, rules and list and how a line is added, the session tmp and task-named scratch, what a run says and where, the warning, the heartbeat's step, the doctor's `tmp` line and the test seams.
 - `templates/`: the task plan and the worker briefs `team-open` and `team-brief` render.
   - `briefs/planner-walk.md`: a planner following Daniel's manual QC walk in its interview thread, capturing the page they drive.
+  - `briefs/topic.md`: a topic session's brief, its task's facts, its interview thread and what Daniel asked for (`{{about}}`), opening the thread with its understanding of the topic.
   - `plan-rust-core.md`: the `## Rust core` section `team-open` puts in a plan of the team's own project alone, where `templates/plan.md` has `{{rust_core}}`.
+  - `topic-plan.md`: a topic task's `plan.md`, which `team-topic open` writes in place of a plan: the title, Daniel's message asking for it and what they asked for (`{{about}}`).
 - `tests/`: the bats suite, one `.bats` file per script (a long one split by topic, as `team-doctor-*.bats`).
   - `tests/bootstrap-drill`: runs `team-bootstrap` on a fresh runner for the by-hand Bootstrap workflow, and ends with the record line `team-drill import` reads from the job's log.
   - `tests/bootstrap-drill.bats`: runs `tests/bootstrap-drill` on a stub `team-bootstrap`.

@@ -74,7 +74,8 @@ PASS builder proc: rule refused it"
   run_bin -1 team-load-check --probe
   assert_equal "$(verdicts)" "$(passes planner
     attempts builder | jq -r '"FAIL builder \(.id): cannot read its session'\''s transcript"'
-    attempts reviewer | jq -r '"FAIL reviewer \(.id): cannot read its session'\''s transcript"')"
+    attempts reviewer | jq -r '"FAIL reviewer \(.id): cannot read its session'\''s transcript"'
+    passes topic)"
   assert_equal "${lines[-1]}" "load check FAILED"
   left_nothing
 }

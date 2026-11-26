@@ -96,7 +96,7 @@ out of git; take each out, then commit again:
   commit -1
   assert_equal "$stderr" "pre-commit: refused: the staged models.toml does not read, so every worker launch from it would be refused; fix each line team-models --check names, then commit again:
   models.toml: \"default\": model: 'gpt-5' is not opus, sonnet, haiku, fable or claude-<name>, each optionally with [1m], or default
-  models.toml: \"reviewr\": unknown category 'reviewr'; known: default, coordinator, coordinator.compaction-drill, assistant, assistant.load-check, planner, planner.feature, planner.research, planner.interview, planner.walk, planner.retro, planner.load-check, builder, builder.ticket, builder.deliver, builder.fix, builder.round, builder.merge-base, builder.load-check, reviewer, reviewer.review, reviewer.rereview, reviewer.verify, reviewer.load-check, ops, ops.load-check"
+  models.toml: \"reviewr\": unknown category 'reviewr'; known: default, coordinator, coordinator.compaction-drill, assistant, assistant.load-check, planner, planner.feature, planner.research, planner.interview, planner.walk, planner.retro, planner.load-check, builder, builder.ticket, builder.deliver, builder.fix, builder.round, builder.merge-base, builder.load-check, reviewer, reviewer.review, reviewer.rereview, reviewer.verify, reviewer.load-check, ops, ops.load-check, topic, topic.load-check"
   assert_equal "$(git -C "${TEAM_HOME:?}" rev-parse HEAD)" "$head"
   # The staged blob is what is read: a good file on disk does not let a broken one through.
   git -C "${TEAM_HOME:?}" add models.toml

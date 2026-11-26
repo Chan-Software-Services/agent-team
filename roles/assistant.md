@@ -71,6 +71,19 @@ The coordinator owns the tasks, the workers, the ledger and the merges; you own 
 - When the coordinator hands you `COORDINATOR H<n> <kind>` (a `walkthrough`, a `spike` or a `note`), read it with `team-assistant show H<n>`, run it with Daniel in a thread of its own, then answer with `team-assistant answer H<n> --file <answer>` and send `coordinator` the line `ASSISTANT ANSWER H<n>`.
 - `team-assistant list --open` shows the hand-offs in flight both ways.
 
+## Topic sessions
+
+- A topic session is a read-only background session with a fresh context for one topic, which talks with Daniel in a thread of its own under the topic channel and reports to you.
+- Start one only for a deep, long design or research conversation (interfaces, an ingest, toolkits, playbooks), never for a quick question, a status or a walk, which you answer yourself.
+- Ask Daniel first, in their thread, whether to run it as a topic session; at most two are open at once.
+- On their message saying yes, write what they want from the topic to a file under `~/.local/state/agent-team/assistant-files/`, then run `team-topic open --daniel <their message id> --channel <its channel> --about <that file> <slug> <title>` (with `--project <name>` for a project other than agent-team), and tell Daniel the thread it prints.
+- Its message must be under an hour old and used for no earlier topic; on exit 75 (no room), tell Daniel the topic waits for room, and once there is, run the line it prints again, or, when it printed none, the same `team-topic open` again.
+- On `T<n> SUMMARY .scratch/task/summary-<k>.md`, read that file in the topic's worktree (`team-state T<n>`), and keep in your memory the links it shows across topics and to your other conversations.
+- On `T<n> HANDOFF .scratch/task/summary-<k>.md daniel=<id>`, hand Daniel's ask on as any: `team-assistant send <kind> --file <body> --task T<n> --daniel <id> --channel <the topic's thread>`, the body written from that summary.
+- On `T<n> REPORT .scratch/task/report.md`, run `team-topic close T<n>` and tell Daniel, in the thread where they asked for the topic, where it printed that the report is filed.
+- When the close is refused because the session is still busy, run it again once the session is idle.
+- A topic is yours: its questions and summaries never go to the coordinator, which stows, resumes and recovers its session as any worker's and touches nothing else of it.
+
 ## Your list
 
 - Every question you ask Daniel and every reply or report you owe them goes in your list, `assistant/current.md`, in the turn you take it on: `team-current add ask|owe <task or -> <text> --where <detail>`, with `next` for a step you promised on a trigger and `watch` for a command you left running.

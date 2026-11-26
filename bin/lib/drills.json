@@ -128,7 +128,7 @@
     },
     {
       "name": "load-check-probe",
-      "what": "The load check's probe form: a live planner, builder and reviewer each make the attempts of bin/lib/probe.json, and each is refused by the layer it expects, the kernel for a delete outside a confined session's roots.",
+      "what": "The load check's probe form: a live planner, builder, reviewer and topic session each make the attempts of bin/lib/probe.json, and each is refused by the layer it expects, the kernel for a delete outside a confined session's roots.",
       "by": "coordinator",
       "proves": [
         "bin/team-load-check",
@@ -142,10 +142,12 @@
         "roles/planner.md",
         "roles/builder.md",
         "roles/reviewer.md",
+        "roles/topic.md",
         "settings/worker.json",
         "settings/planner.json",
         "settings/builder.json",
         "settings/reviewer.json",
+        "settings/topic.json",
         "bin/lib/tools.lock"
       ]
     },

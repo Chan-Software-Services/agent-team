@@ -127,7 +127,6 @@ The open plans' Rust core lines, taken from their plans; each moves into the map
 
 | Plan | What | Crate | Seam |
 | - | - | - | - |
-| T514 | The topic role and its script (`team-topic open`) | `team-core` (sessions) | `platform`, `interface` |
 | T514 | The digest's schedule and its config line (an IANA zone and three local times) | `teamd` (a timer), `team-model` (its type) | `interface` (`Notifier`) |
 
 ## The port map
@@ -196,6 +195,7 @@ Each `team-<name>` command becomes `team <name>` of `team-cli` unless its line s
 | `bin/team-time` | `team-core` | `none` | A read model view |
 | `bin/team-timers` | `teamd` | `platform` | The heartbeat becomes the service (step 3) |
 | `bin/team-tokens` | `team-cli` | `platform` | Reads the sessions' transcripts |
+| `bin/team-topic` | `team-core` | `platform`, `interface` | `topic_open`, with Daniel's `topic-request` `Attestation`; the cap a core rule |
 | `bin/team-ui` | `team-cli` | `interface` | |
 | `bin/team-uptime` | `teamd` | `interface` | `Notifier` |
 | `bin/team-worker` | `team-core` | `platform` | Spawn and confinement |
@@ -327,7 +327,7 @@ Every kind is a variant of `team-model`'s event enum; the column says which comm
 | `merge-default-withdrawn` | `team-log` | `withdraw_approval` | `interface` |
 | The four retired merge-word kinds, which `sops/merging.md` names under "The retired words" | none: retired, `team-log` refuses a new one | none: retired, read only | `none` |
 | `merged` | `team-merge` | `team-core` | `vcs` |
-| `opened` | `team-open` | `team-core` | `none` |
+| `opened` | `team-open` | `team-core`, a topic's on Daniel's word | `interface` |
 | `paused` | `team-log`, `team-worker` | `team-core` | `none` |
 | `plan-approval-withdrawn` | `team-log` | `withdraw_approval` | `interface` |
 | `plan-approved` | `team-log` | `approve_plan` | `interface` |

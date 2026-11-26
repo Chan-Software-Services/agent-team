@@ -4,6 +4,7 @@ A team of Claude Code sessions that plans, builds, reviews and ships software ch
 A coordinator session talks to its owner on Discord and turns each request into a task.
 An assistant session beside it, in a Discord channel of its own, walks the owner through manual steps and runs quick research spikes, handing anything that needs a task to the coordinator.
 Each task gets one background session per role (planner, builder, reviewer, ops), each in its own git worktree, briefed by the coordinator and reporting back to it.
+A topic, a long read-only design or research conversation the assistant starts on its owner's word, is a task with one session of its own, which talks with the owner in a Discord thread of its own and reports back to the assistant.
 The ledger, an append-only file of every task's events, is the record of what happened and the state every command reads.
 
 This repository holds the code: the `team-*` commands, the role prompts, the sessions' settings and hooks, the toolkits and the tests.

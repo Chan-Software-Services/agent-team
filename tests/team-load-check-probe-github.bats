@@ -26,8 +26,8 @@ setup() {
   run_bin -0 team-load-check --probe
   assert_equal "$(github_lines)" "$(refused_all)"
   # Each session's login attempt passes, among its role's attempts, all of which pass.
-  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
-  for role in planner builder reviewer; do
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer topic)"
+  for role in planner builder reviewer topic; do
     assert_contains "$output" "PASS $role login: the session's GitHub login is team-worker-bot"
     assert_contains "$output" "PASS $role login-assigned: hook refused it"
     assert_contains "$output" "PASS $role login-unset: hook refused it"
@@ -36,7 +36,7 @@ setup() {
     assert_contains "$(cat "$BATS_TEST_TMPDIR/launch-$role")" ". Bash: gh api user --jq .login"
   done
   # The github lines come after every role's attempts.
-  assert_equal "$(grep -nE '^(PASS|FAIL) reviewer ' <<<"$output" | tail -n 1 | cut -d: -f1)" \
+  assert_equal "$(grep -nE '^(PASS|FAIL) topic ' <<<"$output" | tail -n 1 | cut -d: -f1)" \
     "$(($(grep -n '^PASS github push ' <<<"$output" | cut -d: -f1) - 1))"
   # Each call on the worker login: its directory, both tokens empty.
   assert_equal "$(sed 's/ GH_CONFIG_DIR=.*//' "$STUB_CALLS/gh.env")" "api repos/owner/agent-team

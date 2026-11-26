@@ -57,12 +57,12 @@ setup() {
   assert_equal "$(github_lines)" ""
   assert_equal "$(stub_calls gh)" ""
   [[ $output != *" login: "* ]]
-  for role in planner builder reviewer; do
+  for role in planner builder reviewer topic; do
     [[ $(cat "$BATS_TEST_TMPDIR/launch-$role") != *"gh api user"* ]]
     [[ $(cat "$BATS_TEST_TMPDIR/launch-$role") != *"The one exception"* ]]
     assert_contains "$output" "PASS $role login-assigned: hook refused it"
   done
-  assert_equal "$(verdicts)" "$(passes planner builder reviewer)"
+  assert_equal "$(verdicts)" "$(passes planner builder reviewer topic)"
   assert_equal "$(drill_lines)" "$(checkout_drill_line pass "$n of $n attempts as expected")"
   assert_equal "${lines[-1]}" PASS
 }

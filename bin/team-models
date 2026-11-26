@@ -33,8 +33,8 @@
 #   "builder path=small" = { model = "sonnet", effort = "high" }
 #   "planner" = { subagent_model = "haiku" }
 # A key is a category, then optionally " project=<registry name>" and " path=<path>", in that
-# order, single spaces between; a path is team-open's: feature, bug, small, research or retro. A
-# bare dotted key (reviewer.rereview = ...) is TOML's nested table, refused: quote the key.
+# order, single spaces between; a path is team-open's: feature, bug, small, research, retro or
+# topic. A bare dotted key (reviewer.rereview = ...) is TOML's nested table, refused: quote the key.
 # A value's fields, each optional, at least one:
 #   model, subagent_model     an alias opus, sonnet, haiku or fable, or a name claude-<lowercase
 #                             letters, digits, dots and dashes>, either optionally followed by
@@ -70,6 +70,8 @@
 #     reviewer.load-check        a reviewer of T0
 #   ops                          ops, and a brief of no template
 #     ops.load-check             ops of T0
+#   topic                        topic, a topic session (team-topic), and a brief of no template
+#     topic.load-check           a topic session of T0
 # The templates resume and resume-crash take the category of the brief they resume, which
 # team-worker reads, so resolve refuses them; --role alone gives the role's own category, and
 # --load-check <role>.load-check, whatever template of that role is given. The coordinator, the
@@ -144,6 +146,8 @@ CATEGORIES = (
     "reviewer.load-check",
     "ops",
     "ops.load-check",
+    "topic",
+    "topic.load-check",
 )
 # The roles, a launch's root category, which --role takes.
 ROLES = tuple(category for category in CATEGORIES if category != "default" and "." not in category)
@@ -164,6 +168,7 @@ TEMPLATES = {
     "rereview": "reviewer.rereview",
     "verify": "reviewer.verify",
     "ops": "ops",
+    "topic": "topic",
 }
 # The templates whose category is the brief's they resume, which team-worker reads.
 RESUMES = ("resume", "resume-crash")
@@ -172,7 +177,7 @@ UNQUALIFIED_ROOTS = ("coordinator", "assistant")
 # The qualifiers a key may have, in their order.
 QUALIFIERS = ("project", "path")
 # team-open's paths.
-PATHS = ("feature", "bug", "small", "research", "retro")
+PATHS = ("feature", "bug", "small", "research", "retro", "topic")
 # The fields of a line, each an axis, in their order, with the key resolve names its line by.
 FIELDS = {"model": "model_line", "effort": "effort_line", "subagent_model": "subagent_line", "subagent_effort": "subagent_effort_line"}
 MODEL = re.compile(r"(?:opus|sonnet|haiku|fable|claude-[a-z0-9.-]+)(?:\[1m\])?|default")

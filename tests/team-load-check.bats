@@ -1519,7 +1519,7 @@ blobbed() {
   run_bin -2 team-load-check --role builder
   assert_contains "$output" "unknown role 'builder'"
   run_bin -2 team-load-check --role assistant
-  assert_contains "$output" "unknown role 'assistant'; known: planner, ops (and builder, reviewer and assistant with --context or --probe)"
+  assert_contains "$output" "unknown role 'assistant'; known: planner, ops (and builder, reviewer, topic and assistant with --context or --probe)"
   run_bin -2 team-load-check --toolkit
   assert_equal "$(stub_calls claude)" ""
 }
@@ -1766,7 +1766,7 @@ read_calls() {
 }
 
 # The context form. The claude stub plays one session per role, its id from the role
-# (1a1a1a1a planner, 2b2b2b2b builder, 3c3c3c3c reviewer, 4d4d4d4d assistant): claude --bg notes in
+# (1a1a1a1a planner, 2b2b2b2b builder, 3c3c3c3c reviewer, 4d4d4d4d assistant, 5e5e5e5e topic): claude --bg notes in
 # $BATS_TEST_TMPDIR/launch-<role> where it started and with what prompt, and writes its transcript
 # from tests/fixtures/load-check-context/<role>.jsonl (or '{}' when $STUB_FIXTURES/silent-<role>
 # exists), and fails when $STUB_FIXTURES/fail-<role> exists; claude agents lists each until claude rm,
@@ -1777,7 +1777,7 @@ read_calls() {
 context_setup() {
   export CONTEXT_FIXTURES=$BATS_TEST_DIRNAME/fixtures/load-check-context
   stub_script claude <<'SH'
-declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c [assistant]=4d4d4d4d)
+declare -A ids=([planner]=1a1a1a1a [builder]=2b2b2b2b [reviewer]=3c3c3c3c [assistant]=4d4d4d4d [topic]=5e5e5e5e)
 uuid() { echo "$1-0000-4000-8000-000000000001"; }
 case $1 in
   --bg)
@@ -1794,7 +1794,7 @@ case $1 in
     echo "Started background session $id ($2). Attach with: claude attach $id"
     ;;
   agents)
-    for role in planner builder reviewer assistant; do
+    for role in planner builder reviewer topic assistant; do
       id=${ids[$role]}
       [[ -f $STUB_FIXTURES/launched-$role && ! -f $STUB_FIXTURES/removed-$id && ! -f $STUB_FIXTURES/gone-$role ]] || continue
       jq -cn --arg id "$id" --arg name "T0-$role" --arg uuid "$(uuid "$id")" '{id: $id, name: $name, state: "idle", sessionId: $uuid}'
@@ -1859,7 +1859,7 @@ reviewer    45003       2               2            0"
   [[ ! -e $BATS_TEST_TMPDIR/launch-planner ]]
 
   run_bin -2 team-load-check --context --role ops
-  assert_contains "$output" "--context measures the roles the load check may start: planner, builder, reviewer, assistant; ops needs Daniel"
+  assert_contains "$output" "--context measures the roles the load check may start: planner, builder, reviewer, topic, assistant; ops needs Daniel"
   run_bin -2 team-load-check --context --role coordinator
   assert_contains "$output" "unknown role 'coordinator'"
   run_bin -2 team-load-check --context --worktree "$HOME"
@@ -1897,6 +1897,29 @@ assistant    39005       4               5            0"
   rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
   run_bin -0 team-load-check --context
   [[ ! -e $STUB_FIXTURES/launched-assistant ]]
+}
+
+@test "the context form measures a topic session with --role topic, launched through team-worker as T0-topic on its own settings, and the bare form leaves it out" {
+  context_setup
+  run_bin -0 team-load-check --context --role topic
+  assert_contains "$output" "load check: topic 5e5e5e5e started"
+  assert_contains "$output" "role      context  skills  deferred tools  MCP servers
+topic       38007       2               3            0"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/launch-topic")" "$(printf '%s\n' "$wt" 'Reply with OK and nothing else.')"
+  # team-worker's launch: the session T0-topic, under the settings it generated from settings/topic.json.
+  assert_contains "$(cat "$BATS_TEST_TMPDIR/argv-topic")" "T0-topic"
+  assert_contains "$output" "load check: topic's effective autoMode holds the $(team_lines topic | wc -l) lines of its settings' autoMode"
+  assert_equal "$(stub_calls claude | jq -c 'select(index("auto-mode") != null)')" \
+    "[\"--setting-sources\",\"user\",\"--settings\",\"$TEAM_HOME/tasks/T0/settings.topic.code.json\",\"auto-mode\",\"config\"]"
+  jq -e '.permissions.deny | any(.[]; . == "Bash(git push*)")' "$TEAM_HOME/tasks/T0/settings.topic.code.json" >/dev/null
+  [[ $output != *planner* && $output != *builder* ]]
+  assert_equal "$(stub_calls claude | jq -r 'select(.[0] == "rm") | .[1]')" 5e5e5e5e
+  assert_equal "${lines[-1]}" PASS
+  left_nothing
+
+  rm "$STUB_FIXTURES"/launched-* "$STUB_FIXTURES"/removed-*
+  run_bin -0 team-load-check --context
+  [[ ! -e $STUB_FIXTURES/launched-topic ]]
 }
 
 @test "in the context form, a role whose given toolkit's MCP server listed no tool before its first reply fails, naming the toolkit and server" {

@@ -393,7 +393,7 @@ read 3 of 3 transcripts; wrote 1 day file"
   assert_equal "$(q '.tasks[]' | paste -sd ' ')" \
     '{"task":"T1","project":"agent-team","tokens":545000,"w":3.36,"plan_w":0.69,"build_w":1.92,"review_w":0.75,"launches":{"home-pc":6},"merged":1,"tickets_done":1,"reviews":2,"closed":true} {"task":"T2","project":"conventioner","tokens":160000,"w":0.62,"plan_w":0,"build_w":0.62,"review_w":0,"launches":{"laptop":2},"merged":0,"tickets_done":1,"reviews":0,"closed":false}'
   assert_equal "$(q '.days[] | [.day, .w, .roles]' | paste -sd ' ')" \
-    '["2026-10-20",5.895,{"coordinator":2.19,"assistant":0,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0}] ["2026-10-21",0.96,{"coordinator":0.34,"assistant":0,"planner":0,"builder":0.62,"reviewer":0,"ops":0}]'
+    '["2026-10-20",5.895,{"coordinator":2.19,"assistant":0,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0,"topic":0}] ["2026-10-21",0.96,{"coordinator":0.34,"assistant":0,"planner":0,"builder":0.62,"reviewer":0,"ops":0,"topic":0}]'
 }
 
 # Append to home-pc's day file of the report fixture a reply of 0.08 $w at 09:<minute>, request
@@ -421,12 +421,27 @@ usage_row() {
     '["coordinator",2,6,2.53,0.14] ["assistant",2,3,0.24,0.08] ["planner",1,2,0.69,0] ["builder",4,7,2.54,0.3] ["reviewer",2,2,0.75,0] ["unlaunched",1,1,0.08,0] ["team-test",2,2,0.16,0] ["daniel",1,1,0.105,0]'
   assert_equal "$(q '.projects[] | select(.project | test("assistant")) | [.project, .w]')" '["(none: assistant)",0.24]'
   assert_equal "$(q '.days[0] | [.day, .roles]')" \
-    '["2026-10-20",{"coordinator":2.19,"assistant":0.24,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0}]'
+    '["2026-10-20",{"coordinator":2.19,"assistant":0.24,"planner":0.69,"builder":1.92,"reviewer":0.75,"ops":0,"topic":0}]'
   assert_equal "$(q '.sessions[] | select(.role == "assistant") | [.sessions, .max_replies, .max_context]')" '[2,1,10000]'
   assert_equal "$(q '.rebuilds.roles[] | select(.role == "assistant") | [.rebuilds, .role_w, .compactions]')" '[0,0.16,0]'
   run_bin -0 team-tokens --until 2026-10-21T16:00Z
   assert_contains "$output" "| assistant | 2 | 3 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.24 | 3.4% | 33.3% |"
-  assert_contains "$output" "| Day | Tokens (M) | \$w | Coordinator | Assistant | Planner | Builder | Reviewer | Ops |"
+  assert_contains "$output" "| Day | Tokens (M) | \$w | Coordinator | Assistant | Planner | Builder | Reviewer | Ops | Topic |"
+}
+
+@test "a topic session is classed topic by its launch, a worker role of its own in the roles, days and sessions" {
+  report_fixture
+  local topic=e5e5e5e5-0000-4000-8000-000000000000
+  printf '{"ts":"2026-10-20T08:30:00Z","task":"T3","event":"launch","role":"topic","session":"e5e5e5e5","worktree":"/home/dan/agent-team/.claude/worktrees/3","toolkits":[]}\n' >>"$TEAM_HOME/ledger.jsonl"
+  usage_row 01 tp_1 "$topic" -home-dan-agent-team--claude-worktrees-3 '{}'
+  usage_row 02 tp_2 "$topic" -home-dan-agent-team--claude-worktrees-3 '{}'
+  report_json
+  assert_equal "$(q '.roles[] | select(.role == "topic") | [.sessions, .replies, .w]')" '[1,2,0.16]'
+  assert_equal "$(q '.days[0].roles.topic')" 0.16
+  assert_equal "$(q '.sessions[] | select(.role == "topic") | [.sessions, .max_replies]')" '[1,2]'
+  assert_equal "$(q '.outcomes.sessions[] | select(.role == "topic") | [.sessions, .w]')" '[1,0.16]'
+  run_bin -0 team-tokens --until 2026-10-21T16:00Z
+  assert_contains "$output" "| Day | Tokens (M) | \$w | Coordinator | Assistant | Planner | Builder | Reviewer | Ops | Topic |"
 }
 
 @test "the report gives each role's sessions, starting context, context buckets and cache rebuilds" {

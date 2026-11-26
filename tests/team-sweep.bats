@@ -2261,7 +2261,48 @@ walk_note_at() {
   assert_equal "$(jq -c '[.[] | .kind]' <<<"$output")" '["silent"]'
 }
 
-# level_task <task> <opened at HH:MM> [<role>:<session>]: <task> opened at that time on
+# topic <task>: a topic task opened on Daniel's word, its interview thread opened and its topic
+# session launched, as team-topic open logs them.
+topic() {
+  event "$1" opened "{project: \"proj\", path: \"topic\", type: \"research\", title: \"Interfaces\",
+    branch: \"research/$1-interfaces\", base: \"main\", base_sha: \"0123456\", worktree: \"/w/1\",
+    discord_message: \"1564000000000000514\", discord_channel: \"1561234567890123456\"}"
+  event "$1" interview-thread '{discord_thread: "1571111111111111111"}'
+  launch "$1" topic 4f2a9c1e
+}
+
+@test "a topic session idle on Daniel is never silent, but a crashed one is no-worker and a stowed one nothing" {
+  topic T3
+  # Idle in its thread's wait for days, with no ledger event since its launch: its talk is in
+  # Discord, so nothing is found.
+  sessions "$(session 4f2a9c1e T3-topic idle)"
+  run_bin -0 --separate-stderr team-sweep
+  assert_equal "$output$stderr" ""
+  # A planner idle the same way is still silent.
+  opened T4
+  launch T4 planner 5e5e5e5e
+  sessions "$(session 4f2a9c1e T3-topic idle)" "$(session 5e5e5e5e T4-planner idle)"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c '[.[] | [.task, .kind]]' <<<"$output")" '[["T4","silent"]]'
+  : >"$TEAM_HOME/ledger.jsonl"
+  topic T3
+  # Waiting for input, it is named as any worker is.
+  sessions "$(session 4f2a9c1e T3-topic idle blocked)"
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 waiting-input: T3-topic 4f2a9c1e is waiting for input; next: read claude logs 4f2a9c1e, then answer it in one line or put the question to Daniel with team-log T3 asked"
+  # Crashed, or its machine gone: no live session, so no-worker, for a resume-crash.
+  sessions
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 no-worker: no live session among its 1 launch (latest T3-topic 4f2a9c1e); next: read claude logs 4f2a9c1e for how it ended, then launch the next worker with team-worker or log what is known with team-log"
+  # Stowed, its stop is accounted for: nothing until its resume.
+  event T3 paused '{reason: "stowed", cause: "stow", role: "topic", session: "4f2a9c1e"}'
+  event T3 stowed '{machine: "home-pc", cause: "handoff", roles: ["topic"], worktrees: []}'
+  run_bin -0 team-sweep
+  assert_equal "$output" ""
+  no_github
+}
+
+# level_task<task> <opened at HH:MM> [<role>:<session>]: <task> opened at that time on
 # 2026-10-22 in /w/<n>, with its worker launched a minute later.
 level_task() {
   ledger_line --arg t "$1" --arg ts "2026-10-22T$2:00Z" '{ts: $ts, task: $t, event: "opened", project: "proj",

@@ -240,7 +240,7 @@ TOML
   run_bin -2 team-open --task 13 proj feature feat slug "Title"
   assert_contains "$output" "task must look like T<n>, got '13'"
   run_bin -2 team-open proj hotfix feat slug "Title"
-  assert_contains "$output" "path must be feature, bug, small, research or retro, got 'hotfix'"
+  assert_contains "$output" "path must be feature, bug, small, research, retro or topic, got 'hotfix'"
   run_bin -2 team-open proj feature feature slug "Title"
   assert_contains "$output" "type must be feat, fix, docs, chore, build, ci, test, refactor, perf or research, got 'feature'"
   local slug
@@ -885,4 +885,256 @@ From the queue: \`tasks/queued/fix-the-sign-in-limit.md\`: the summary of fix-th
   run_bin -2 team-open --task T1 --queued a.md --resume proj
   run_bin -2 team-open --task T1 --queued a.md --ticket 01
   assert_equal "$(wc -c <"$TEAM_HOME/ledger.jsonl")" "0"
+}
+
+# A topic's word: #assistant, a thread under it and one under another channel, as Discord answers
+# them, and Daniel (757) in the plugin's allowFrom.
+TOPIC_ASSISTANT=1570965039278596199
+TOPIC_THREAD=1571000000000000001
+TOPIC_OTHER=1571000000000000002
+
+# The fake Discord of a topic's open: GET channels/<c>/messages/<m> answers
+# $DISCORD_DIR/<c>-<m>.json, GET channels/<c> answers $DISCORD_DIR/channel-<c>.json, a POST of a
+# thread answers a new id; anything else fails as curl -f does on a 404: topic_discord
+topic_discord() {
+  export TEAM_ASSISTANT_CHANNEL=$TOPIC_ASSISTANT DISCORD_DIR=$BATS_TEST_TMPDIR/discord
+  mkdir -p "$DISCORD_DIR"
+  echo '{"dmPolicy": "allowlist", "allowFrom": ["757"], "groups": {}, "pending": {}}' \
+    >"$HOME/.claude/channels/discord/access.json"
+  stub_script curl <<'STUB'
+url=${*: -1}
+if [[ $url =~ ^https://discord\.com/api/v10/channels/[0-9]+/threads$ ]]; then
+  echo '{"id": "1563000000000000001"}'
+elif [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)/messages/([0-9]+)$ &&
+  -f $DISCORD_DIR/${BASH_REMATCH[1]}-${BASH_REMATCH[2]}.json ]]; then
+  cat "$DISCORD_DIR/${BASH_REMATCH[1]}-${BASH_REMATCH[2]}.json"
+elif [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.json ]]; then
+  cat "$DISCORD_DIR/channel-${BASH_REMATCH[1]}.json"
+else
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+STUB
+  jq -n --arg id "$TOPIC_THREAD" --arg p "$TOPIC_ASSISTANT" '{id: $id, type: 11, parent_id: $p}' \
+    >"$DISCORD_DIR/channel-$TOPIC_THREAD.json"
+  jq -n --arg id "$TOPIC_OTHER" '{id: $id, type: 11, parent_id: "1562486564871995482"}' \
+    >"$DISCORD_DIR/channel-$TOPIC_OTHER.json"
+}
+
+# Print the id of a new message in <channel> by <author> (757, Daniel, by default), sent <seconds>
+# ago (60 by default), whose id holds that time as Discord's ids do:
+# topic_word [--author <id>] [--ago <seconds>] <channel>
+topic_word() {
+  local author=757 ago=60 n ms id
+  while [[ $1 == --* ]]; do
+    case $1 in
+      --author) author=$2 ;;
+      --ago) ago=$2 ;;
+    esac
+    shift 2
+  done
+  n=$(($(cat "$DISCORD_DIR/count" 2>/dev/null || echo 0) + 1))
+  echo "$n" >"$DISCORD_DIR/count"
+  ms=$(($(date +%s%3N) - ago * 1000))
+  id=$((((ms - 1420070400000) << 22) | n))
+  jq -n --arg c "$1" --arg id "$id" --arg a "$author" \
+    '{id: $id, channel_id: $c, content: "Open a topic on the checklist.", author: {id: $a, username: "daniel"}, edited_timestamp: null}' \
+    >"$DISCORD_DIR/$1-$id.json"
+  echo "$id"
+}
+
+# What an open takes: the task directories, the ledger and the primary checkout's worktrees.
+taken_state() {
+  ls "$TEAM_HOME/tasks" 2>/dev/null || true
+  cat "$TEAM_HOME/ledger.jsonl" 2>/dev/null || true
+  git -C "${primary:?}" worktree list --porcelain
+}
+
+# Log open topic task <task>, opened on message <id>: topic_open_logged <task> <id>
+topic_open_logged() {
+  jq -cn --arg task "$1" --arg m "$2" --arg c "$TOPIC_ASSISTANT" '{ts: "2026-11-24T00:00:00Z", task: $task, event: "opened",
+    project: "proj", path: "topic", type: "research", title: "A topic", branch: "research/\($task)-a-topic", base: "main",
+    base_sha: "0123456", worktree: "/w/\($task)", discord_message: $m, discord_channel: $c}' >>"$TEAM_HOME/ledger.jsonl"
+}
+
+@test "a topic opens on Daniel's word with no thread under #coordinator and no plan, its word on opened" {
+  topic_discord
+  local word worktree=$slots/1 base_sha
+  word=$(topic_word "$TOPIC_THREAD")
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research release-checklist "The release checklist"
+  base_sha=$(git -C "${primary:?}" rev-parse origin/main)
+  assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$worktree" --arg sha "$base_sha" --arg home "$TEAM_HOME" \
+    --arg m "$word" --arg c "$TOPIC_THREAD" '{
+    task: "T1", project: "proj", path: "topic", title: "The release checklist",
+    branch: "research/T1-release-checklist", base: "main", base_sha: $sha, worktree: $wt,
+    task_dir: "\($wt)/.scratch/task", plan: "\($home)/tasks/T1/plan.md", builder_model: "default",
+    discord_message: $m, discord_channel: $c}')"
+  assert_equal "$(events opened | jq -c '{path, type, discord_message, discord_channel}')" \
+    "{\"path\":\"topic\",\"type\":\"research\",\"discord_message\":\"$word\",\"discord_channel\":\"$TOPIC_THREAD\"}"
+  # No thread: no POST to Discord, no thread event, and team-open's plan left to team-topic open.
+  assert_equal "$(events thread)" ""
+  [[ $(stub_calls curl) != *POST* && $(stub_calls curl) != *"/threads\""* ]]
+  [[ ! -e $TEAM_HOME/tasks/T1/plan.md ]]
+  # The word is read from Discord: the thread's parent, then the message in it.
+  assert_equal "$(stub_calls curl | jq -r '.[-1]')" \
+    "$(printf '%s\n' "https://discord.com/api/v10/channels/$TOPIC_THREAD" "https://discord.com/api/v10/channels/$TOPIC_THREAD/messages/$word")"
+  run_bin -0 team-log --check
+  # In #assistant itself too, its channel known without asking Discord.
+  word=$(topic_word "$TOPIC_ASSISTANT")
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_ASSISTANT" proj topic research toolkits "Toolkits"
+  assert_equal "$(jq -r '"\(.task) \(.discord_channel)"' <<<"$output")" "T2 $TOPIC_ASSISTANT"
+}
+
+@test "the topic path needs Daniel's word, which goes with no other path, nor --queued or another type" {
+  topic_discord
+  local word before
+  word=$(topic_word "$TOPIC_THREAD")
+  run_bin -2 --separate-stderr team-open proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: a topic needs Daniel's message asking for it: usage: team-open [--task T<n>] --daniel <message id> --channel <channel id> <project> topic research <slug> <title...>"
+  run_bin -2 --separate-stderr team-open --daniel "$word" proj topic research ingest "Ingest"
+  assert_contains "$stderr" "a topic needs Daniel's message asking for it"
+  run_bin -2 --separate-stderr team-open --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_contains "$stderr" "a topic needs Daniel's message asking for it"
+  run_bin -2 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj feature feat ingest "Ingest"
+  assert_equal "$stderr" "team-open: --daniel and --channel go only with the path topic: usage: team-open [--task T<n>] --daniel <message id> --channel <channel id> <project> topic research <slug> <title...>"
+  run_bin -2 --separate-stderr team-open --daniel "$word" proj research research ingest "Ingest"
+  assert_contains "$stderr" "--daniel and --channel go only with the path topic"
+  run_bin -2 --separate-stderr team-open --task T7 --daniel "$word" --channel "$TOPIC_THREAD" --add proj research more
+  assert_contains "$stderr" "--daniel and --channel go only with the path topic"
+  run_bin -2 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic feat ingest "Ingest"
+  assert_equal "$stderr" "team-open: a topic's type is research, got 'feat'"
+  run_bin -2 --separate-stderr team-open --daniel abc --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: --daniel needs a Discord id, got 'abc'"
+  queued_item ingest.md "Ingest" "project: proj" "priority: 2" "size: M"
+  before=$(taken_state)
+  run_bin -2 --separate-stderr team-open --queued ingest.md --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: a topic opens on Daniel's word alone, with team-topic open"
+  assert_equal "$(taken_state)" "$before"
+  assert_equal "$(stub_calls curl)" ""
+}
+
+@test "a word not Daniel's, edited, outside #assistant and its threads, over an hour old or used is refused before anything is taken" {
+  topic_discord
+  local word before
+  before=$(taken_state)
+  word=$(topic_word --author 999 "$TOPIC_THREAD")
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: Discord message $word in channel $TOPIC_THREAD cannot open a topic: Discord message $word is by daniel (999), who is not in allowFrom of ~/.claude/channels/discord/access.json"
+  assert_equal "$(taken_state)" "$before"
+
+  word=$(topic_word "$TOPIC_THREAD")
+  jq '.edited_timestamp = "2026-11-24T10:05:00+00:00"' "$DISCORD_DIR/$TOPIC_THREAD-$word.json" >"$DISCORD_DIR/edited.json"
+  mv "$DISCORD_DIR/edited.json" "$DISCORD_DIR/$TOPIC_THREAD-$word.json"
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: Discord message $word in channel $TOPIC_THREAD was edited at 2026-11-24T10:05:00+00:00, so its text may not be what Daniel first sent: ask them to say it again as a new message"
+  assert_equal "$(taken_state)" "$before"
+
+  word=$(topic_word "$TOPIC_OTHER")
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_OTHER" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: Discord message $word in channel $TOPIC_OTHER cannot open a topic: channel $TOPIC_OTHER is neither #assistant ($TOPIC_ASSISTANT) nor a thread under it, so Daniel's word there is not for the assistant"
+  word=$(topic_word 1562486564871995482)
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel 1562486564871995482 proj topic research ingest "Ingest"
+  assert_contains "$stderr" "cannot open a topic: channel 1562486564871995482 cannot be read from Discord, so it is not known to be under #assistant"
+  word=$(topic_word "$TOPIC_THREAD")
+  rm "$DISCORD_DIR/$TOPIC_THREAD-$word.json"
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: Discord message $word in channel $TOPIC_THREAD cannot open a topic: Discord message $word cannot be fetched from the #assistant thread $TOPIC_THREAD: curl: (22) The requested URL returned error: 404"
+  assert_equal "$(taken_state)" "$before"
+
+  word=$(topic_word --ago 3700 "$TOPIC_THREAD")
+  : >"$STUB_CALLS/curl.log"
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_contains "$stderr" "team-open: Discord message $word in channel $TOPIC_THREAD was sent at "
+  assert_contains "$stderr" ", more than 60 minutes before this open, the limit for a topic's request: ask Daniel for a new message"
+  # The age is read from the id, before Discord's message is.
+  [[ $(stub_calls curl) != *"/messages/"* ]]
+  assert_equal "$(taken_state)" "$before"
+
+  word=$(topic_word "$TOPIC_THREAD")
+  topic_open_logged T4 "$word"
+  echo '{"ts":"2026-11-24T00:00:01Z","task":"T4","event":"closed","archive":[],"returned":[],"kept":[]}' >>"$TEAM_HOME/ledger.jsonl"
+  before=$(taken_state)
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: Discord message $word in channel $TOPIC_THREAD cannot open a topic: message $word already opened T4"
+  assert_equal "$(taken_state)" "$before"
+}
+
+@test "a third open topic is refused with the cap's line, a closed one not counted, and no other path capped" {
+  topic_discord
+  local word before
+  topic_open_logged T3 1571000000000000301
+  topic_open_logged T5 1571000000000000302
+  word=$(topic_word "$TOPIC_THREAD")
+  before=$(taken_state)
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$stderr" "team-open: Discord message $word in channel $TOPIC_THREAD cannot open a topic: two topic sessions are open (T3, T5), the most at once; close one with team-topic close first"
+  assert_equal "$(taken_state)" "$before"
+  run_bin -0 --separate-stderr team-open proj feature feat other "Other"
+  echo '{"ts":"2026-11-24T00:00:01Z","task":"T5","event":"closed","archive":[],"returned":[],"kept":[]}' >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  assert_equal "$(jq -r '"\(.task) \(.path)"' <<<"$output")" "T7 topic"
+  # A task whose latest opened is of another path is no topic, as is_topic reads it everywhere, so
+  # T3 opened again as a feature task frees its place.
+  word=$(topic_word "$TOPIC_THREAD")
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research more "More"
+  assert_contains "$stderr" "two topic sessions are open (T3, T7)"
+  jq -cn '{ts: "2026-11-24T00:00:02Z", task: "T3", event: "opened", project: "proj", path: "feature", type: "feat",
+    title: "A topic", branch: "feat/T3-a-topic", base: "main", base_sha: "0123456", worktree: "/w/T3"}' >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research more "More"
+  assert_equal "$(jq -r .path <<<"$output")" "topic"
+}
+
+@test "two topic opens at once with one place left: one opens, the other is refused with the cap's line" {
+  topic_discord
+  local first second pid_a pid_b status_a=0 status_b=0
+  topic_open_logged T3 1571000000000000301
+  first=$(topic_word "$TOPIC_THREAD")
+  second=$(topic_word "$TOPIC_ASSISTANT")
+  "$REPO_ROOT/bin/team-open" --daniel "$first" --channel "$TOPIC_THREAD" proj topic research first "First" \
+    >"$BATS_TEST_TMPDIR/a.out" 2>"$BATS_TEST_TMPDIR/a.err" &
+  pid_a=$!
+  "$REPO_ROOT/bin/team-open" --daniel "$second" --channel "$TOPIC_ASSISTANT" proj topic research second "Second" \
+    >"$BATS_TEST_TMPDIR/b.out" 2>"$BATS_TEST_TMPDIR/b.err" &
+  pid_b=$!
+  wait "$pid_a" || status_a=$?
+  wait "$pid_b" || status_b=$?
+  assert_equal "$(printf '%s\n' "$status_a" "$status_b" | sort | paste -sd ' ')" "0 1"
+  assert_equal "$(events opened | jq -r 'select(.path == "topic") | .task' | wc -l)" "2"
+  assert_contains "$(cat "$BATS_TEST_TMPDIR/a.err" "$BATS_TEST_TMPDIR/b.err")" \
+    "cannot open a topic: two topic sessions are open (T3, T"
+  run_bin -0 team-log --check
+}
+
+@test "a topic open waits on the open lock, then exits 75, taking nothing" {
+  topic_discord
+  local word before held
+  word=$(topic_word "$TOPIC_THREAD")
+  before=$(taken_state)
+  mkdir -p "$HOME/.local/state/agent-team"
+  exec {held}<>"$HOME/.local/state/agent-team/topic-open.lock"
+  flock -x "$held"
+  TEAM_TOPIC_OPEN_WAIT_SECONDS=1 run_bin -75 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+  exec {held}>&-
+  assert_equal "$stderr" "team-open: another open held ~/.local/state/agent-team/topic-open.lock for 1 seconds; run this again"
+  assert_equal "$(taken_state)" "$before"
+  run_bin -0 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research ingest "Ingest"
+}
+
+@test "a topic left half open says its rerun reads Daniel's word again, so past the hour it needs a new message, which finishes it" {
+  topic_discord
+  local word new
+  word=$(topic_word "$TOPIC_THREAD")
+  # The opened append fails once the slot holds the branch: the ledger cannot be written.
+  : >>"$TEAM_HOME/ledger.jsonl"
+  chmod a-w "$TEAM_HOME/ledger.jsonl"
+  run_bin -1 --separate-stderr team-open --daniel "$word" --channel "$TOPIC_THREAD" proj topic research release-checklist "The release checklist"
+  chmod u+w "$TEAM_HOME/ledger.jsonl"
+  assert_contains "$stderr" "team-open: T1 is half open in $slots/1; finish it with: team-open --task T1 --daniel $word --channel $TOPIC_THREAD proj topic research release-checklist The\\ release\\ checklist"
+  assert_contains "$stderr" "team-open: that rerun reads Daniel's message $word again, so once it is over an hour old it is refused: ask Daniel for a new message asking for the topic, and give its id and channel to --daniel and --channel"
+  assert_equal "$(events opened)" ""
+  # A new message of Daniel's finishes it, on the same task and slot.
+  new=$(topic_word "$TOPIC_THREAD")
+  run_bin -0 --separate-stderr team-open --task T1 --daniel "$new" --channel "$TOPIC_THREAD" proj topic research release-checklist "The release checklist"
+  assert_equal "$(jq -r '"\(.task) \(.worktree) \(.discord_message)"' <<<"$output")" "T1 $slots/1 $new"
+  assert_equal "$(events opened | jq -r .discord_message)" "$new"
 }
