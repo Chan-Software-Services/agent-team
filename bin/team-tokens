@@ -2234,7 +2234,7 @@ def render(report):
     packed = report["builder_compactions"]["sessions"]
     if packed:
         P("Each builder main conversation in the window that compacted, its replies and $w from the first compaction's "
-          "on, and its ledger events after that:\n")
+          "on, and its done, paused and blocked events after that reply:\n")
         P(table(["Task", "Session", "Brief", "Window", "Compactions", "Largest before", "Replies after", "$w after", "Events after"],
                 [[x["task"], x["session"], x["brief"] or "none", x["autocompact"], x["compactions"], fk(x["max_before"]),
                   x["replies_after"], fd(x["w_after"]),
