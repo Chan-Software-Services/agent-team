@@ -1063,7 +1063,7 @@ CONTEXT_EDGES = (0, 50e3, 100e3, 200e3, 400e3, 700e3, 2e6)
 MARK_LINE = re.compile(r"tokens=([1-9][0-9]{5,8})")
 # The rows the Markdown report prints of the long sessions table's tasks, and of the builder
 # compactions table.
-LONG_TASKS_SHOWN = 15
+ROWS_SHOWN = 15
 FIVE_HOURS = timedelta(hours=5)
 WEEK = timedelta(days=7)
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z")
@@ -1233,6 +1233,11 @@ def encode(path):
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
+# Each launched session's latest launch, by the 8 characters of its id the launch logged.
+def launch_by_session(launches):
+    return {e["session"][:8]: e for e in launches}
+
+
 # Each session's role and task, from the ledger, its name and its directory (the header says how),
 # and each launch's machine as its _machine; <places> are the coordinator's working directories on
 # this machine. classify <rows sorted by time> <launches> <places> <home>
@@ -1254,7 +1259,7 @@ def classify(rows, launches, places, home):
             return "unlaunched"
         return "daniel"
 
-    by_prefix = {e["session"][:8]: e for e in launches}
+    by_prefix = launch_by_session(launches)
     first, named = {}, set()
     for r in rows:
         first.setdefault(r["session"], r)
@@ -1816,8 +1821,7 @@ def build_report(opts):
     }
 
     # Each builder main conversation that compacted, with what came from its first compaction on.
-    # A session's launch is its latest, as classify takes it.
-    launch_of = {e["session"][:8]: e for e in launches}
+    launch_of = launch_by_session(launches)
     ends = group(
         [e for e in ledger if e.get("event") in ("done", "paused", "blocked") and isinstance(e.get("session"), str) and e["_t"] <= until],
         lambda e: e["session"][:8],
@@ -2222,9 +2226,9 @@ def render(report):
     P("\nPer task and role, those sessions, their largest context and the task's tickets done in the window:\n")
     P(table(["Task", "Project", "Role", "Sessions past it", "$w", "$w of replies past it", "Largest context", "Tickets done"],
             [[x["task"], x["project"], x["role"], x["sessions"], fd(x["w"]), fd(x["past_w"]), fk(x["max_context"]), x["tickets_done"]]
-             for x in longs["tasks"][:LONG_TASKS_SHOWN]]))
-    if len(longs["tasks"]) > LONG_TASKS_SHOWN:
-        P(f"\nThe {LONG_TASKS_SHOWN} of {len(longs['tasks'])} rows with the most $w; --json gives every one.")
+             for x in longs["tasks"][:ROWS_SHOWN]]))
+    if len(longs["tasks"]) > ROWS_SHOWN:
+        P(f"\nThe {ROWS_SHOWN} of {len(longs['tasks'])} rows with the most $w; --json gives every one.")
 
     P("\n## Builder compactions\n")
     packed = report["builder_compactions"]["sessions"]
@@ -2235,9 +2239,9 @@ def render(report):
                 [[x["task"], x["session"], x["brief"] or "none", x["autocompact"], x["compactions"], fk(x["max_before"]),
                   x["replies_after"], fd(x["w_after"]),
                   ", ".join(e["event"] + (f" ({e['cause']})" if "cause" in e else "") for e in x["after"]) or "none yet"]
-                 for x in packed[:LONG_TASKS_SHOWN]]))
-        if len(packed) > LONG_TASKS_SHOWN:
-            P(f"\nand {len(packed) - LONG_TASKS_SHOWN} more; --json gives every one.")
+                 for x in packed[:ROWS_SHOWN]]))
+        if len(packed) > ROWS_SHOWN:
+            P(f"\nand {len(packed) - ROWS_SHOWN} more; --json gives every one.")
     else:
         P("No builder session compacted in the window.")
 

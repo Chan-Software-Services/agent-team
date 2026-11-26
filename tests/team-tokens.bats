@@ -636,7 +636,7 @@ compaction_fixture() {
   ledger_row 08:22:00 T5 question '{"role":"builder","session":"a5a5a5a5","text":"which?"}'
   ledger_row 08:23:00 T5 paused '{"role":"builder","session":"a5a5a5a5","reason":"stowed","cause":"stow"}'
   ledger_row 08:25:00 T6 'done' '{"role":"builder","session":"c6c6c6c6"}'
-  ledger_row 08:40:00 T5 blocked '{"role":"builder","session":"a5a5a5a5","reason":"no network"}'
+  ledger_row 08:40:00 T5 blocked '{"role":"builder","session":"a5a5a5a5","reason":"no network","cause":"worker"}'
   ledger_row 08:50:00 T5 'done' '{"role":"builder","session":"a5a5a5a5"}'
 }
 
@@ -677,21 +677,28 @@ compaction_fixture() {
   mkdir -p "$TEAM_HOME/usage/home-pc"
   : >"$TEAM_HOME/ledger.jsonl"
   # Seventeen builders, T1 to T17, each compacting once from 200k, the $w after growing with its
-  # number; T18 and T19 tie with T17's, which the task then the session orders.
-  local n
+  # number; T18, T19 and a second builder of T17 tie with T17's, which the task and then the session
+  # order. The later a task, the earlier its replies, and T17's second builder replies before all, so
+  # the order of the replies is the reverse of the ties' order.
+  local n minute
   for n in {1..19}; do
+    minute=$((59 - n))
     launch_row 07:00:00 "T$n" builder "$((n + 10000000))"
-    compact_row 08:00:00 "${n}_1" "$((n + 10000000))" 200000
-    compact_row 08:10:00 "${n}_2" "$((n + 10000000))" "$(((n < 18 ? n : 17) * 1000))"
+    compact_row "08:$minute:00" "${n}_1" "$((n + 10000000))" 200000
+    compact_row "09:$minute:00" "${n}_2" "$((n + 10000000))" "$(((n < 18 ? n : 17) * 1000))"
   done
+  launch_row 07:00:00 T17 builder 20000017
+  compact_row 08:00:00 second_1 20000017 200000
+  compact_row 09:00:00 second_2 20000017 17000
   report_json
-  assert_equal "$(q '.builder_compactions.sessions | [length, (map(.task) | .[0:4]), .[-1].task]')" '[19,["T17","T18","T19","T16"],"T1"]'
+  assert_equal "$(q '.builder_compactions.sessions | [length, (map(.session) | .[0:5]), .[-1].task]')" \
+    '[20,["10000017","20000017","10000018","10000019","10000016"],"T1"]'
   run_bin -0 --separate-stderr team-tokens --until 2026-10-21T16:00Z
   section=${output#*$'\n'"## Builder compactions"$'\n'}
   section=${section%%$'\n'"## Cache rebuilds"$'\n'*}
-  assert_contains "$section" "| T5 | 10000005 |"
-  [[ $section != *"| T4 | 10000004 |"* ]]
-  assert_contains "$section" "and 4 more; --json gives every one."
+  assert_contains "$section" "| T6 | 10000006 |"
+  [[ $section != *"| T5 | 10000005 |"* ]]
+  assert_contains "$section" "and 5 more; --json gives every one."
 }
 
 @test "the report gives cost per outcome, relaunches and re-reviews from the ledger" {
