@@ -214,13 +214,29 @@ SH
     "$REPO_ROOT/roles/reviewer.md"
 }
 
-@test "--merge-group sets success on the queue's trial commit that is the reviewed head merged cleanly onto the entry's base" {
+@test "--merge-group sets success on the queue's trial commit that is the reviewed head merged cleanly onto the entry's base, its fetch given no task's merge lock" {
   queued_pr
   local trial
   trial=$(trial_commit "$QUEUE_BASE" "$QUEUE_HEAD")
   queue_entry "$trial"
   run ! git -C "${QUEUE_PRIMARY:?}" cat-file -e "$trial"
-  run_bin -0 team-review-status --merge-group "$URL" "$trial"
+  # The run inherits a task's merge lock, as team-land's posters do from the team-merge that took
+  # it, and its fetch leaves a process behind, which would hold the lock had it been given it.
+  local lock=$BATS_TEST_TMPDIR/T9.lock fd
+  exec {fd}>>"$lock"
+  flock -n "$fd"
+  leave_behind_on_fetch
+  TEAM_MERGE_LOCK_FD=$fd run_bin -0 team-review-status --merge-group "$URL" "$trial"
+  exec {fd}>&-
+  local -a left
+  mapfile -t left <"$GH_DIR/left-behind"
+  rm "$BATS_TEST_TMPDIR/stubs/git"
+  ((${#left[@]} == 1))
+  kill -0 "${left[@]}"
+  local rc=0
+  flock -n "$lock" true || rc=$?
+  kill "${left[@]}"
+  assert_equal "$rc" 0
   assert_equal "$output" "agent-review success on Owner/Proj@$trial"
   # GitHub is read for the PR's queue entry alone, then the status goes on the trial commit.
   assert_equal "$(stub_calls gh | jq -c 'if .[1] == "graphql" then [.[0, 1], .[4:][]] else . end')" "$(jq -cn --arg trial "$trial" --arg head "${QUEUE_HEAD:0:7}" '

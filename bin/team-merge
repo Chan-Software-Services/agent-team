@@ -117,17 +117,18 @@
 # ~/.local/state/agent-team/merge/T<n>.lock, whose file holds the pid of the run that took it, is
 # taken after the local checks, or, when a queued stands for the PR, as the run starts, since the
 # run waits on that PR from then on and team-sweep's queue-wait reads the lock (a run that finds it
-# held then tries again before the local checks); neither the local checks nor team-merge's fetches
-# of the PR's branches, a --holds run's included, are given it, so no process one leaves behind holds
-# it. It is let go once merged or dequeued is logged, or as the run ends: while another team-merge
-# holds it, found before the local checks and again where it is taken, this one prints "team-merge
-# is already landing <url> (pid <n>)" and exits 0, changing nothing; and when the task's events,
-# read again under it, show a merged of the PR another run logged meanwhile, it says so and exits
-# 0, with no second merged, and a queued stands only when it is still the latest of them. It logs
-# queued (url, head, project) and runs team-land --task T<n> <url> <head>, never gh pr merge,
-# showing team-land's lines on stderr; team-land enqueues the PR, holds the word and the checks
-# again before each trial commit's agent-review (--holds below), posts it and waits, and on its
-# outcome:
+# held then tries again before the local checks); the local checks, team-merge's fetches of the PR's
+# branches (a --holds run's included) and the fetch that proves a trial commit under team-land
+# (queue_commit_problems in bin/lib/team.sh) are not given it, so no process one of them leaves
+# behind holds it. It is let go once merged or dequeued is logged, or as the run ends: while
+# another team-merge holds it, found before the local checks and again where it is taken, this one
+# prints "team-merge is already landing <url> (pid <n>)" and exits 0, changing nothing; and when the
+# task's events, read again under it, show a merged of the PR another run logged meanwhile, it says
+# so and exits 0, with no second merged, and a queued stands only when it is still the latest of
+# them. It logs queued (url, head, project) and runs team-land --task T<n> <url> <head>, never
+# gh pr merge, showing team-land's lines on stderr; team-land enqueues the PR, holds the word and
+# the checks again before each trial commit's agent-review (--holds below), posts it and waits, and
+# on its outcome:
 #   merged    the PR's merge commit is the one team-land names, and everything below follows as
 #             after gh pr merge;
 #   dequeued  the queue dropped it, or team-land took it out: dequeued is logged (url, head,
@@ -297,16 +298,6 @@ take_lock() {
   export TEAM_MERGE_LOCK_FD=$lock_fd
   echo $$ >"$lock" || die "cannot write $lock"
 }
-# Runs <command>... without the lock, for one that may leave a process behind, which would else
-# hold it past this run (a local check's own, git's maintenance after a fetch). The lock is the one
-# this run took, or, in a --holds run, the one it inherited through team-land from the run that
-# took it, which names its descriptor in TEAM_MERGE_LOCK_FD: unlocked <command>...
-unlocked() (
-  fd=${lock_fd:-${TEAM_MERGE_LOCK_FD:-}}
-  [[ -z $fd ]] || exec {fd}>&-
-  unset TEAM_MERGE_LOCK_FD
-  "$@"
-)
 # A PR a queued stands for is in the queue already, as far as the ledger shows, so this run waits
 # on it from here, through its reads of GitHub and its local checks: it takes the lock now, so no
 # reader takes the PR for one nobody waits on. A run that finds it held goes on and tries again
@@ -537,7 +528,7 @@ word_from() {
 primary=$(team_project "$project" path) fetched='' fetch_error=''
 fetch_pr() {
   if [[ -z $fetched ]]; then
-    if unlocked git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+    if without_merge_lock git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
       "+refs/heads/$base:refs/remotes/origin/$base" 2>"$scratch/fetch-error"; then
       fetched=ok
     else
@@ -833,13 +824,13 @@ local_checks=()
 if [[ -z $landed ]]; then mapfile -t local_checks < <(team_project "$project" local_checks | jq -r '.[]'); fi
 if ((${#local_checks[@]})); then
   primary=$(team_project "$project" path)
-  if ! unlocked git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>"$scratch/fetch-error" ||
+  if ! without_merge_lock git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>"$scratch/fetch-error" ||
     ! git -C "$primary" cat-file -e "$head^{commit}" 2>/dev/null; then
     later merge_reasons "the head ${head:0:7} cannot be fetched into $primary for the local checks: $(grep -m1 . "$scratch/fetch-error" || echo "origin's $branch is elsewhere")"
     refuse_on_problems
   fi
   rc=0
-  unlocked "$(dirname "$TEAM_LIB")/team-checks" "$project" "$head" --from "$primary" --label "team-merge $task" >"$scratch/checks" || rc=$?
+  without_merge_lock "$(dirname "$TEAM_LIB")/team-checks" "$project" "$head" --from "$primary" --label "team-merge $task" >"$scratch/checks" || rc=$?
   if ((rc)); then
     why="the local checks did not pass on the head ${head:0:7} (team-checks exit $rc):"$'\n'"$({ grep -v "' passed on the head " "$scratch/checks" || true; } | sed 's/^/    /')"
     # Exit 75: team-checks could not run them now (the heavy-run lock stayed held), and nothing failed.
