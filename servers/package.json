@@ -7,7 +7,7 @@
     "@effect/platform-browser": "4.1.2",
     "@effect/tsgo": "0.67.5",
     "@foldkit/devtools-mcp": "0.26.0",
-    "@foldkit/vite-plugin": "0.29.0",
+    "@foldkit/vite-plugin": "0.29.1",
     "@modelcontextprotocol/sdk": "1.32.1",
     "chrome-devtools-axi": "0.1.44",
     "chrome-devtools-mcp": "1.12.0",
