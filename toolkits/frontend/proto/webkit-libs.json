@@ -1,0 +1,21 @@
+{
+  "checkedFor": { "playwrightCore": "1.65.1", "webkitRevision": "2388", "webkitVersion": "27.2" },
+  "series": "noble",
+  "checked": "2026-11-24, EndeavourOS",
+  "packages": [
+    {
+      "name": "libicu74",
+      "version": "74.2-1ubuntu3.1",
+      "pool": "pool/main/i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb",
+      "sha256": "c9a70989678660eed9a1e904c74fa043da8bec8e2036856fc16e31ced79b04f8",
+      "links": { "libicudata.so.74": "libicudata.so.74.2", "libicui18n.so.74": "libicui18n.so.74.2", "libicuuc.so.74": "libicuuc.so.74.2" }
+    },
+    {
+      "name": "libxml2",
+      "version": "2.9.14+dfsg-1.3ubuntu3.10",
+      "pool": "pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3ubuntu3.10_amd64.deb",
+      "sha256": "c5a065f85c1e6f605741e365e40cad71c3ceb0e85e2791400bd35b8896e12ad1",
+      "links": { "libxml2.so.2": "libxml2.so.2.9.14" }
+    }
+  ]
+}

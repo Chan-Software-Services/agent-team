@@ -1721,6 +1721,9 @@ EOF
   assert_equal "$(stub_calls claude)" ""
 }
 
+# wall-clock: the list's read is its file's time, which the kernel writes from the real clock, so with
+# the clock moved ahead a list written now reads as older than a launch logged now.
+# bats test_tags=wall-clock
 @test "the plan takes the time of the list it is given as the list's read, so a list older than a launch releases nothing" {
   busy_reading
   level full

@@ -708,6 +708,9 @@ SH
 $t1	post	75	GitHub cannot be read: gh api: error connecting to api.github.com"
 }
 
+# wall-clock: a look log's age is its file's time, which the kernel writes from the real clock, so
+# with the clock moved ahead the PR's own log written now is untouched for a year and removed.
+# bats test_tags=wall-clock
 @test "the look logs are bounded when a run starts: the PR's to its last 1000 lines, and any untouched for 30 days removed" {
   local land=$HOME/.local/state/agent-team/merge/land
   mkdir -p "$land/owner/proj" "$land/owner/other"

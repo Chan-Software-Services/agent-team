@@ -116,6 +116,9 @@ removed $VAR_ROOT/git-template-4 (0 MB, untouched 2 h; no-mistakes)"
   jq -e '(.steps | has("tmp") | not) and .last_run.ended == "ok"' "$state/health.json"
 }
 
+# wall-clock: a tmp entry's age is its file's time, which the kernel writes from the real clock, so
+# with the clock moved ahead an entry made now is stale and removed.
+# bats test_tags=wall-clock
 @test "a quiet tmp step logs nothing: nothing stale, the warning not wanted, and no /tmp root at all" {
   mkdir "$TMP_ROOT/nm-cli-home-1"
   run_bin -0 team-timers run
