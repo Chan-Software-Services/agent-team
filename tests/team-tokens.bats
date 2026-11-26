@@ -505,19 +505,10 @@ long_fixture() {
   assert_contains "$output" "The 15 of 17 rows with the most \$w; --json gives every one."
 }
 
-# A copy of the code's bin/ of the test's own as CODE_CHECKOUT, for context_mark_is to give it
-# another mark.
-test_checkout() {
-  export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
-  mkdir -p "$CODE_CHECKOUT"
-  copy_bin "$CODE_CHECKOUT/bin"
-}
-
 # The long sessions' threshold is bin/lib/context-mark's: under another, the long sessions table and
 # the builder compactions both name it.
 @test "the long sessions threshold and the builder compactions' mark are bin/lib/context-mark's" {
   long_fixture
-  test_checkout
   context_mark_is tokens=300000
   report_json
   # a5's largest context is 300k and c6's 260k: neither passes 300k.
@@ -531,7 +522,7 @@ test_checkout() {
 }
 
 @test "a malformed context mark fails the report, and neither export nor time" {
-  test_checkout
+  context_mark_is tokens=250000
   local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
   for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=1000000000 tokens=abc "tokens=250000 " window=250000 \
     $'tokens=250000\r' $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' unreadable missing; do

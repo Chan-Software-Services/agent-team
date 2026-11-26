@@ -368,11 +368,17 @@ review_app_off() {
   rm -f "$CODE_CHECKOUT/bin/lib/review-app"
 }
 
-# context_mark_is <line>...: the bin/lib/context-mark of CODE_CHECKOUT, the test's own copy of the
-# code (made first, by code_checkout or by copy_bin into it), holds those lines under a comment, so
-# run_bin reads that mark. The shared hard link is replaced, never written through.
+# context_mark_is <line>...: the bin/lib/context-mark of CODE_CHECKOUT (a copy of bin/ made here
+# when the test made none) holds those lines under a comment, so run_bin reads that mark. The
+# shared hard link is replaced, never written through. A test that makes its own code checkout
+# (code_checkout) makes it first.
 context_mark_is() {
-  local mark=${CODE_CHECKOUT:?}/bin/lib/context-mark
+  if [[ -z ${CODE_CHECKOUT:-} ]]; then
+    export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+    mkdir -p "$CODE_CHECKOUT"
+    copy_bin "$CODE_CHECKOUT/bin"
+  fi
+  local mark=$CODE_CHECKOUT/bin/lib/context-mark
   rm -f "$mark"
   printf '%s\n' "# a mark of the test's own" "$@" >"$mark"
 }
