@@ -4,7 +4,7 @@ Path: {{path}}; you are the topic session: a read-only conversation with Daniel 
 Project: {{project}} (`{{repo}}`), base `{{base}}`.
 Worktree: `{{worktree}}`, branch `{{branch}}` from `origin/{{base}}`, for reading the code; the topic changes none of it.
 Task directory: `{{task_dir}}/` in the worktree (excluded from git), where your posts, notes, summaries and report go.
-Topic thread: Discord thread `{{interview_thread}}`, the task's interview thread, under the interview channel; it is no task thread, and the coordinator does not read it.
+Topic thread: Discord thread `{{interview_thread}}`, the task's interview thread, under the topic channel; it is no task thread, and the coordinator does not read it.
 
 ## The topic, as Daniel asked for it
 
