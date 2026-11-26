@@ -472,7 +472,7 @@
     },
     {
       "id": "proto-socket",
-      "roles": ["planner", "builder", "reviewer"],
+      "roles": ["planner", "builder", "reviewer", "topic"],
       "tool": "Bash",
       "input": "curl -sS --max-time 5 -o /dev/null --unix-socket /run/user/load-check-probe-absent/agent-team-proto/host.sock http://proto/v1/status",
       "expect": "rule",
@@ -480,7 +480,7 @@
     },
     {
       "id": "proto-token",
-      "roles": ["planner", "builder", "reviewer"],
+      "roles": ["planner", "builder", "reviewer", "topic"],
       "tool": "Read",
       "input": "@HOME@/.local/state/agent-team/proto/load-check-probe-absent",
       "expect": "rule",
@@ -488,7 +488,7 @@
     },
     {
       "id": "proto-runtime",
-      "roles": ["planner", "builder", "reviewer"],
+      "roles": ["planner", "builder", "reviewer", "topic"],
       "tool": "Read",
       "input": "/run/user/load-check-probe-absent/agent-team-proto/token",
       "expect": "rule",
