@@ -844,6 +844,11 @@ def task_status: lifecycle.status;
 # (the fold's prs).
 def task_prs: lifecycle.prs | map({url, head, number});
 
+# What team-merge is given to act on the PR at $url, over the task's events: T<n>, and --pr <url>
+# after it when the task has more than one PR (task_prs), since team-merge T<n> alone takes the
+# latest pr event's.
+def merge_args($url): .[0].task + (if (task_prs | length) > 1 then " --pr \($url)" else "" end);
+
 # The head the ledger knows for the PR at $url, from task_prs.
 def pr_head($url): task_prs | map(select(.url == $url)) | last | .head;
 
@@ -1382,14 +1387,31 @@ def bypass_text($on):
     then "has bypass actors that cannot be read, so who may merge past its required checks is not known"
     else "lets \(.actors | join(", ")) merge past its required checks" end;
 
+# Whether the merge queue dropped a PR for a runner backlog, a dequeued event or team-land's result
+# as input (its reason and failed): no failure of the PR's own (class pr) and no rules failure, and
+# either the reason is checks_timed_out, the queue's check timeout, whatever follows a ";", or at
+# least one failure is infrastructure of kind queued or missing and every other is one too or a
+# roll-up. The checks waited on runners, so a plain run again meets the same wait.
+def runner_backlog:
+  def waited: .class == "infrastructure" and (.kind | IN("queued", "missing"));
+  (.failed // []) as $f
+  | (any($f[]; .class | IN("pr", "rules")) | not)
+    and (((.reason // "") | split(";") | .[0]) == "checks_timed_out"
+      or (any($f[]; waited) and all($f[]; waited or .class == "rollup")));
+# The next step after such a drop, the one team-merge, team-next --ci and team-sweep's merge-due
+# name, $merge being what team-merge is given: T<n>, or merge_args' for a reader of the ledger.
+def runner_step($repo; $merge):
+  "the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of \($repo)'s merge queue while the backlog stands, and run team-merge \($merge) again once they say the runners are back";
+
 # Where the PR at $url stands with its base's merge queue, over the task's events, or null: by the
 # latest queued, dequeued or merged naming the URL (a trailing slash aside), which team-merge logs
 # as it lands a PR through the queue, {state: "queued", since, head} for a queued (its ts and head),
-# {state: "dequeued", since, reason, head, failed, round_due, rules_due} for a dequeued, and null
-# for a merged or with none. A queued stands only for its head: once the task logged another head
-# after it (a pr event of the URL, or any review of the task, whichever of its PRs it read, since a
-# fix after findings is reviewed at a head no pr event logs and a review names no PR), the PR left
-# the queue with no team-merge to log its dequeued, a push having dropped it, and it is null.
+# {state: "dequeued", since, reason, head, failed, round_due, rules_due, runners_due} for a
+# dequeued, and null for a merged or with none. A queued stands only for its head: once the task
+# logged another head after it (a pr event of the URL, or any review of the task, whichever of its
+# PRs it read, since a fix after findings is reviewed at a head no pr event logs and a review names
+# no PR), the PR left the queue with no team-merge to log its dequeued, a push having dropped it,
+# and it is null.
 # round_due says the queue dropped the PR for a failure of its own on the trial merge (a failed of
 # class pr) with no pr event of the URL and no review of the task since: the head passed what the
 # trial merge failed, so it is the builder's merge-base round, then a rereview, never a second
@@ -1401,6 +1423,9 @@ def bypass_text($on):
 # URL and no review of the task since: the trial merge cannot be judged until every required check
 # runs there, so the fix is the base's rules or a workflow's merge_group trigger, then a
 # team-merge, whose queued ends it.
+# runners_due says the queue dropped the PR for a runner backlog (runner_backlog), with no pr event
+# of the URL and no review of the task since: nothing of the PR's is to fix, so team-merge runs
+# again once the runners are back, and its queued ends it.
 def queue_state($url):
   ($url | rtrimstr("/")) as $u
   | . as $events
@@ -1415,7 +1440,8 @@ def queue_state($url):
       elif $e.event == "dequeued" then
         ($since == [] and any($e.failed[]?; .class == "pr")) as $round
         | {state: "dequeued", since: $e.ts, reason: $e.reason, head: $e.head, failed: ($e.failed // []),
-           round_due: $round, rules_due: ($since == [] and ($round | not) and any($e.failed[]?; .class == "rules"))}
+           round_due: $round, rules_due: ($since == [] and ($round | not) and any($e.failed[]?; .class == "rules")),
+           runners_due: ($since == [] and ($e | runner_backlog))}
       else null end
     end;
 # The task's PRs not merged that stand in the merge queue (queue_state is queued), from task_prs,
@@ -1899,6 +1925,19 @@ def default_holds($pr; $withdrawals; $own):
           own_in($own; $project); $withdrawals)
          | any(.words[]; .word == "default" and .holds));
 
+# merge-due's next step for its PRs $due, those of them in $behind, each {url, merge} with merge its
+# merge_args, dropped by the merge queue for a runner backlog: team-merge T<n> with none dropped;
+# else team-merge T<n> --pr for each other one, then the runners' step (runner_step) for each
+# dropped one.
+def merge_due_step($task; $due; $behind):
+  if $behind == [] then "run team-merge \($task)"
+  else [($due - [$behind[].url])[] | "run team-merge \($task) --pr \(.)"]
+    + [$behind[] | .merge as $merge
+        | .url | capture("^https://github\\.com/(?<repo>[^/]+/[^/]+)/pull/") // {repo: "<owner>/<name>"}
+        | runner_step(.repo; $merge)]
+    | join("; ")
+  end;
+
 # team-sweep's merge-due finding, over a task's events and the session list, or nothing: the task
 # awaits merge, nothing else parks it (no ask nothing settled, pause or wait; an ask that names
 # tickets too, since it may concern a ticket the PR holds), the checks of its latest pass have
@@ -1914,8 +1953,10 @@ def default_holds($pr; $withdrawals; $own):
 # dropped for a failure of its own (trial_failed_prs), which trial-failed names, or for a check the
 # base's rules require and no workflow made on the trial commit (trial_rules_prs), which trial-rules
 # names; nor any PR of a task whose merge lock is held ($landing, the tasks a team-merge is landing
-# a PR of now). $withdrawals is default_events' and $own own_projects' {projects, app} (own_in), or
-# null when the registry cannot be read, which raises none.
+# a PR of now). A named PR the queue dropped for a runner backlog (queue_state's runners_due) is
+# said as dropped, with merge_due_step's next step. $withdrawals is default_events' and $own
+# own_projects' {projects, app} (own_in), or null when the registry cannot be read, which raises
+# none.
 def merge_due_finding($withdrawals; $sessions; $own; $landing):
   .[0].task as $task
   | . as $events
@@ -1928,9 +1969,12 @@ def merge_due_finding($withdrawals; $sessions; $own; $landing):
       | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
          | select($events | default_holds($pr; $withdrawals; $own)) | .url] as $due
       | select($due != [])
+      | [$due[] as $url | $events | merge_args($url) as $merge | queue_state($url) | select(.runners_due? == true)
+         | {url: $url, since, $merge}] as $behind
       | finding($task; "merge-due"; null; null;
-          "awaiting the merge of \($due | join(", ")) on the default word, the approved plan, with no ask open";
-          "run team-merge \($task); on a refusal, ask Daniel for the per-head word with team-ask")
+          "awaiting the merge of \($due | join(", ")) on the default word, the approved plan, with no ask open"
+            + ($behind | map("; the merge queue dropped \(.url) at \(.since)") | add // "");
+          "\(merge_due_step($task; $due; $behind)); on a refusal, ask Daniel for the per-head word with team-ask")
     else empty end;
 
 # team-sweep's queue-wait findings, over a task's events, one for each of its PRs that stands in
