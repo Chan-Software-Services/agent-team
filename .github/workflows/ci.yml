@@ -217,10 +217,12 @@ jobs:
           CLOCK_RESULT: ${{ needs.future-clock.result }}
         run: '[[ $RESULT == success && $CLOCK_RESULT == success ]]'
 
-  # The toolkits' servers over stdio, against a throwaway MongoDB in Docker.
+  # The toolkits' servers over stdio, against a throwaway MongoDB in Docker. Its limit, about twice
+  # its longest healthy run, also holds a run whose first two fetches of the browsers' system
+  # libraries ran out their limits (tests/playwright-deps).
   toolkits:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 18
     env:
       JQ_VERSION: 1.8.1
       JQ_SHA256: 020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d
@@ -234,12 +236,57 @@ jobs:
           node-version: 24.22.1
       # The prototyping host's tests (tests/toolkits/proto-*.test.mjs) run all three of
       # playwright-core's pinned browsers, which fail rather than skip under CI, so this job
-      # installs them with their system libraries; --with-deps runs apt-get under the runner's
-      # own passwordless sudo, and no team machine ever runs it (sops/platform-gotchas.md).
-      - name: Install Playwright's pinned browsers
+      # installs them with their system libraries. Both are kept in GitHub's cache: the browsers
+      # by playwright-core's version, the libraries' apt packages by that and the runner image's
+      # version, an image with none taking the latest of the same playwright-core, apt then
+      # fetching what differs. GitHub gives a run the caches saved on its own ref, its base branch
+      # or the default branch, dev, where this workflow runs only when started by hand: so a PR's
+      # later runs find what an earlier one saved, a merge queue's trial commit, on a ref of its
+      # own, saves none, and a run that finds none fetches the packages under
+      # tests/playwright-deps' limits, which go on to another mirror when the runner's is slow.
+      # That script runs under the runner's own passwordless sudo, and no team machine ever runs
+      # it (sops/platform-gotchas.md).
+      - name: Install the servers and name Playwright's caches
+        id: playwright
         run: |
           servers/install
-          node servers/node_modules/playwright-core/cli.js install --with-deps chromium firefox webkit
+          version=$(node -p 'require("./servers/node_modules/playwright-core/package.json").version')
+          key=$ImageOS-$RUNNER_ARCH-$version
+          echo "browsers=playwright-browsers-$key" >>"$GITHUB_OUTPUT"
+          echo "debs=playwright-debs-$key-$ImageVersion" >>"$GITHUB_OUTPUT"
+          echo "debs-prefix=playwright-debs-$key-" >>"$GITHUB_OUTPUT"
+      - name: Restore Playwright's pinned browsers
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright.outputs.browsers }}
+      - name: Restore the browsers' system libraries' packages
+        id: debs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-debs
+          key: ${{ steps.playwright.outputs.debs }}
+          restore-keys: ${{ steps.playwright.outputs.debs-prefix }}
+      - name: Install Playwright's pinned browsers
+        run: |
+          # Made by the runner's user, so root makes no directory under ~/.cache that the
+          # browsers' install could not write beside.
+          mkdir -p "$HOME/.cache/playwright-debs"
+          sudo -n -H env "PATH=$PATH" tests/playwright-deps "$HOME/.cache/playwright-debs"
+          node servers/node_modules/playwright-core/cli.js install chromium firefox webkit
+      - name: Save Playwright's pinned browsers
+        if: steps.browsers.outputs.cache-hit != 'true' && github.event_name != 'merge_group'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright.outputs.browsers }}
+      - name: Save the browsers' system libraries' packages
+        if: steps.debs.outputs.cache-hit != 'true' && github.event_name != 'merge_group'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-debs
+          key: ${{ steps.playwright.outputs.debs }}
       # The runner's own jq is 1.7.1, older than any team machine's; the toolkits' hooks and the
       # ui-check skill run jq filters, so this job installs the jq test-shards does.
       - name: Install jq ${{ env.JQ_VERSION }}

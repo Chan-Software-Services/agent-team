@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Install the system libraries Playwright's pinned browsers need, as CI's toolkits job does, as
+# root on a GitHub runner. It writes under /etc/apt and installs packages, so no team machine ever
+# runs it.
+#
+# Usage: tests/playwright-deps <debs>
+#
+# <debs> is the directory the job's cache keeps apt's packages in: the ones an earlier run left
+# there are handed to apt before it fetches, and a run that fetched leaves there the packages it
+# then installs from.
+#
+# The fetch is what varies: seconds from a good mirror, ten minutes from a slow one. So the
+# packages are fetched first and installed after. Each fetch is playwright-core's own install-deps
+# (apt-get update, then apt-get install) with apt told to download only, which is safe to stop,
+# under a time limit: first from the mirrors the runner's image lists, then, with that list
+# rewritten, from azure.archive.ubuntu.com, then from archive.ubuntu.com, apt keeping what an
+# earlier fetch brought. The install that follows is install-deps again, under no limit.
+#
+# Exit 0 installed; 2 a malformed command line; else the failing command's own status, but 1 when
+# the last fetch outlived its limit, which it says in the form of apt's "E: Failed to fetch" line,
+# so team-ci-wait reads it as the runner's failure and not the change's.
+#
+# Seams for its test: PLAYWRIGHT_DEPS_ROOT, the directory apt's etc/apt and var/cache/apt are
+# under (default /), and PLAYWRIGHT_DEPS_LIMITS, the three fetches' limits in seconds (default
+# "120 120 240").
+set -euo pipefail
+
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+  sed -n '2,/^[^#]/{/^#/!q;s/^# \{0,1\}//;p}' "$0"
+  exit 0
+fi
+[[ $# == 1 && $1 != -* ]] || { echo "usage: tests/playwright-deps <debs>" >&2; exit 2; }
+debs=$1
+checkout=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+install_deps=(node "$checkout/servers/node_modules/playwright-core/cli.js" install-deps chromium firefox webkit)
+apt=${PLAYWRIGHT_DEPS_ROOT:-}/etc/apt
+archives=${PLAYWRIGHT_DEPS_ROOT:-}/var/cache/apt/archives
+# An empty mirror is the runner's own list, as its image has it.
+mirrors=('' http://azure.archive.ubuntu.com/ubuntu/ http://archive.ubuntu.com/ubuntu/)
+read -ra limits <<<"${PLAYWRIGHT_DEPS_LIMITS:-120 120 240}"
+
+mkdir -p "$debs"
+shopt -s nullglob
+saved=("$debs"/*.deb)
+((${#saved[@]} == 0)) || cp "${saved[@]}" "$archives/"
+
+download_only=$apt/apt.conf.d/99playwright-deps
+trap 'rm -f "$download_only"' EXIT
+echo 'APT::Get::Download-Only "true";' >"$download_only"
+
+for i in "${!mirrors[@]}"; do
+  from=${mirrors[i]:-the runner\'s mirror}
+  [[ -z ${mirrors[i]} ]] || printf '%s\tpriority:1\n' "${mirrors[i]}" >"$apt/apt-mirrors.txt"
+  echo "playwright-deps: fetching from $from, ${limits[i]} s at most"
+  status=0
+  # timeout signals its whole process group, so apt-get under playwright-core stops with it.
+  timeout -k 10 "${limits[i]}" "${install_deps[@]}" || status=$?
+  ((status != 0)) || break
+  # 124: stopped at the limit; 137: it took the kill that follows 10 s later.
+  outlived=$((status == 124 || status == 137))
+  if ((i < ${#mirrors[@]} - 1)); then
+    if ((outlived)); then
+      echo "playwright-deps: the fetch from $from did not end within ${limits[i]} s"
+    else
+      echo "playwright-deps: the fetch from $from failed (exit $status)"
+    fi
+  # After the last fetch, print nothing more under apt's own errors: team-ci-wait reads them as
+  # the runner's only with at most 3 lines after the last "E: Failed to fetch", which apt's closing
+  # error and install-deps' two lines fill.
+  elif ((outlived)); then
+    echo "E: Failed to fetch Playwright's system libraries: the last fetch, from $from, did not end within ${limits[i]} s"
+    exit 1
+  else
+    exit "$status"
+  fi
+done
+rm -f "$download_only"
+
+# Without the versions apt can no longer fetch, so what is saved does not grow with each image.
+apt-get autoclean
+rm -f "$debs"/*.deb
+fetched=("$archives"/*.deb)
+((${#fetched[@]} == 0)) || install -m 644 "${fetched[@]}" "$debs/"
+
+"${install_deps[@]}"
