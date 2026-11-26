@@ -155,7 +155,7 @@ lock_has_its_shape() {
     echo captures
     echo 'heavy runs'
     project_checks
-    printf '%s\n' 'stack memory' clock lease heartbeat health 'quota model' resources tmp offline)
+    printf '%s\n' 'stack memory' clock lease heartbeat health 'quota model' resources tmp offline disk)
   assert_equal "$(checks)" "$expected"
   assert_equal "$(line_of os)" "PASS os: Arch Linux"
   assert_equal "$(line_of 'tool claude')" "PASS tool claude: $(lock_pin claude)"
@@ -166,6 +166,7 @@ lock_has_its_shape() {
   assert_equal "$(line_of records)" "PASS records: the ledger meets its contract (0 lines), the registry passes (2 projects) and machine/secrets.md describes every enabled secret"
   assert_contains "$(line_of lease)" "PASS lease: held here, epoch 1"
   assert_equal "$(line_of heartbeat)" "PASS heartbeat: enabled, and this machine holds the lease"
+  assert_equal "$(line_of disk)" "PASS disk: no Go build cache at ~/.cache/go-build; 0 job tmps cleared today (0 MB)"
 }
 
 @test "on macOS with every tool at its version, every line passes, Homebrew's included, but the confine line's warning" {
@@ -189,7 +190,7 @@ lock_has_its_shape() {
     echo captures
     echo 'heavy runs'
     project_checks
-    printf '%s\n' 'stack memory' clock lease heartbeat health 'quota model' resources power tmp offline)
+    printf '%s\n' 'stack memory' clock lease heartbeat health 'quota model' resources power tmp offline disk)
   assert_equal "$(checks)" "$expected"
   assert_equal "$(line_of os)" "PASS os: macOS"
 }

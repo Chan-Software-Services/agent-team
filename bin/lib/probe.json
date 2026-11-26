@@ -160,6 +160,14 @@
       "marker": "a force push"
     },
     {
+      "id": "docker-run",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "docker run --rm --pull never agent-team-probe:none true",
+      "expect": "hook",
+      "marker": "a container started by hand"
+    },
+    {
       "id": "protected-push",
       "roles": ["planner", "builder", "reviewer", "topic", "assistant"],
       "tool": "Bash",

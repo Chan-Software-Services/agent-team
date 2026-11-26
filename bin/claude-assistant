@@ -32,7 +32,8 @@
 # sed -i, an interpreter, a wrapper, an assignment, a loop and the rest), so it still reads the
 # cache, whose Edit its settings deny. Its memory is the
 # team home's memory/assistant/ (autoMemoryDirectory), not the coordinator's, though both run in
-# the team home. Its role prompt is roles/assistant.md, appended to the system prompt. Its MCP
+# the team home. Its role prompt is roles/assistant.md, appended to the system prompt, and its
+# skills, walk, load from plugins/assistant-skills; no other session loads them. Its MCP
 # config, ~/.local/state/agent-team/assistant.mcp.json, names no server, and its settings deny
 # every server `claude mcp list` names in the team home but the Discord plugin's, as
 # claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
@@ -119,6 +120,7 @@ if [[ -n $load_check ]]; then
     --mcp-config "$mcp" \
     --dangerously-skip-permissions \
     --append-system-prompt-file "$code/roles/assistant.md" \
+    --plugin-dir "$code/plugins/assistant-skills" \
     --settings "$settings" \
     "$prompt")
   id=$(grep -oE '\b[0-9a-f]{8}\b' <<<"$out" | head -n 1) || die "could not read the session id from: $out"
@@ -174,6 +176,7 @@ out=$(claude --bg --name assistant \
   --channels plugin:discord@claude-plugins-official \
   --dangerously-skip-permissions \
   --append-system-prompt-file "$code/roles/assistant.md" \
+  --plugin-dir "$code/plugins/assistant-skills" \
   --settings "$settings" \
   "$prompt" \
   {LAUNCH_LOCK_FD}>&-) || status=$?

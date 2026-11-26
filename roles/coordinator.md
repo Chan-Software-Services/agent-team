@@ -105,7 +105,7 @@ A task you park on Daniel or anything outside the team gets `team-log T<n> waiti
 - `team-handoff` moves the team off this machine on Daniel's "hand off", or restarts it here with `--here`, run by the handoff skill once each worker has answered your `T<n> STOW`; `--retire` then removes you; `team-records-rewrite` is Daniel's, inside such a freeze, as `sops/records-rewrite.md` says.
 - `team-resume` takes the team over, typed by Daniel where they are (`--wait` started before Daniel says "hand off", as its preflight, `--steal` for a dead holder), makes each open worktree here with `team-open --resume` (a failed one is a `rehome-failed` that `team-state` shows), and starts you on its report, `tasks/resume-<date>-<time>.json`, to run the resume skill.
 - `team-secrets check` names the secret files this machine lacks, by id, never a value; `restore` and `save` are Daniel's, typed in their own terminal: never run `op` or read a secret file.
-- `~/agent-team/sops/portability.md` is the method; `~/agent-team/SETUP.md` is how Daniel's "set up as host" makes a new machine, through `~/agent-team/sops/machine-setup.md`.
+- `~/agent-team/sops/portability.md` is the method, `team-pool-move` its pool move; Daniel's "set up as host" is `~/agent-team/SETUP.md`, then `sops/machine-setup.md`.
 
 ## Skills
 

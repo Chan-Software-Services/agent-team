@@ -129,19 +129,19 @@
 #   trial-failed   an open task in awaiting-merge, with no ask open and nothing parking it and no
 #                  merge-base round in flight, whose PR the merge queue dropped for a failure of
 #                  its own on the trial merge (its latest queued, dequeued or merged is a dequeued
-#                  whose failed holds one of class pr, with no pr event of it and no review since;
-#                  queue_state's round_due in bin/lib/ledger.jq), with session null: "PR <url>
-#                  failed <checks> on the merge queue's trial merge, which dropped it at <the
-#                  dequeued's time>; next: run team-next T<n> --ci, which names the
-#                  builder-merge-base step and who takes it, then a rereview; never team-merge
-#                  T<n> on the same head", beside the task's other findings; never for a PR
-#                  trial-rules names
+#                  whose failed holds one of class pr, whatever else failed, with no pr event of it
+#                  and no review since; queue_state's round_due in bin/lib/ledger.jq), with session
+#                  null: "PR <url> failed <checks> on the merge queue's trial merge, which dropped
+#                  it at <the dequeued's time>; next: run team-next T<n> --ci, which names the
+#                  builder-merge-base step and who takes it, then a rereview; never team-merge T<n>
+#                  on the same head", beside the task's other findings; never for a PR trial-rules
+#                  names
 #   trial-rules    an open task in awaiting-merge, with no ask open and nothing parking it and no
 #                  process holding its merge lock, whose PR the merge queue dropped for a check the
 #                  base's rules require and no workflow made on the trial commit (its latest
-#                  queued, dequeued or merged is a dequeued whose failed holds one of class rules,
-#                  with no pr event of it and no review since; queue_state's rules_due in
-#                  bin/lib/ledger.jq), whatever else failed, with session null: "<checks> never
+#                  queued, dequeued or merged is a dequeued whose failed holds one of class rules
+#                  and none of class pr, with no pr event of it and no review since; queue_state's
+#                  rules_due in bin/lib/ledger.jq), with session null: "<checks> never
 #                  reported on the trial commit of <url>, which <base>'s rules require; next: run
 #                  team-doctor and tell Daniel; run team-merge T<n> once the rules or the workflow
 #                  are fixed", <base> the base of the PR's project (that of its latest queued, else
@@ -175,6 +175,13 @@
 #                  GitHub and no process, so a wait still running past it is the coordinator's to
 #                  see in its background commands, and a second one armed beside it says so and
 #                  ends (team-next's lock)
+#   park-over      after the task's other findings, an open task with a standing waiting or
+#                  blocked whose on names another task (T<m>) that has a closed logged after that
+#                  park, 15 minutes or more ago, and no held, and no ask nothing settled that no
+#                  launch went past, standing, with session null, one for each such park: "waits
+#                  on T<m>, closed at <its closed's ts> (<h>h<mm>m ago, or <m>m under an hour):
+#                  <the park's reason>; next: do what it says (tell its holder, or launch its
+#                  builder), then team-log T<n> resumed id=<the park's id>"
 #   stray          a live session named like a team worker (T<n>-<role>, or T<n>-<role>-<NN> for
 #                  a ticket's builder) whose task is closed or not in the ledger; never one of T0,
 #                  the load check's task
@@ -251,8 +258,9 @@
 #                  in tasks/queued/: "queue: <n> problem(s) in tasks/queued/: <the first two>; next:
 #                  fix each file team-queue index --check names"; or, when team-queue fails or prints
 #                  no team-queue/1 view, "queue: <its last line on stderr>: fix what team-queue names"
-#   current-stale  after it, with task and session null: the current items whose task closed, as
-#                  team-current check --json names them: "current: <n> item(s) name a closed task:
+#   current-stale  after it, with task and session null: the current items whose task closed, and
+#                  the until items on a task T<m> merged that closed with no merge (each by T<m>),
+#                  as team-current check --json names them: "current: <n> item(s) name a closed task:
 #                  <id> (T181, closed 2026-11-02), ...; next: team-current done <id> for each that is
 #                  done, or add it again under an open task"
 #   current        in its place, with task and session null: team-current check fails (an exit

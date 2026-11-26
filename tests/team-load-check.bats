@@ -9,16 +9,16 @@
 # as team-load-check <its pid> (the stub copies git worktree list --porcelain at its launch to
 # $BATS_TEST_TMPDIR/worktrees, and blocks while $STUB_FIXTURES/block exists until
 # $STUB_FIXTURES/go does, writing where in $STUB_FIXTURES/blocked), reports its
-# MCP tools and skills, and the check fails on anything production or coordinator-only. The session
-# is a claude stub that writes the inventory from $STUB_FIXTURES/inventory.txt, notes in
-# $BATS_TEST_TMPDIR/launch where it started, and writes outside.txt where it started when
-# $STUB_FIXTURES/write-outside exists. It copies the markers planted in its worktree to
-# $BATS_TEST_TMPDIR/planted-claude.md and planted-claude/, and writes the isolation report from what
-# team-worker gave it (its fixtures are named beside it). It writes its transcript from
-# $STUB_FIXTURES/planner.jsonl (planner_transcript, from helpers/transcript; none when the file is
-# absent), which claude agents --json --all lists as done. Before it, each treehouse project's
-# lease is rehearsed on a fake pool (helpers/treehouse); the registry has no treehouse project
-# unless a test adds one.
+# MCP tools and skills, and the check fails on anything production, coordinator-only or
+# assistant-only. The session is a claude stub that writes the inventory from
+# $STUB_FIXTURES/inventory.txt, notes in $BATS_TEST_TMPDIR/launch where it started, and writes
+# outside.txt where it started when $STUB_FIXTURES/write-outside exists. It copies the markers
+# planted in its worktree to $BATS_TEST_TMPDIR/planted-claude.md and planted-claude/, and writes the
+# isolation report from what team-worker gave it (its fixtures are named beside it). It writes its
+# transcript from $STUB_FIXTURES/planner.jsonl (planner_transcript, from helpers/transcript; none
+# when the file is absent), which claude agents --json --all lists as done. Before it, each
+# treehouse project's lease is rehearsed on a fake pool (helpers/treehouse); the registry has no
+# treehouse project unless a test adds one.
 
 load helpers/common
 load helpers/load-check
@@ -181,23 +181,34 @@ team_lines() {
   inventory mcp__prod-read__find --- tdd
   run_bin -1 team-load-check
   assert_contains "$output" "FAIL: MCP tools from outside the toolkits:"$'\n'"  mcp__prod-read__find"
-  assert_contains "$output" "FAIL: a production or coordinator-only server or plugin reached the worker"
+  assert_contains "$output" "FAIL: a production, coordinator-only or assistant-only server or plugin reached the worker"
 
   inventory --- prod-write:changing-production-data
   run_bin -1 team-load-check
-  assert_contains "$output" "FAIL: a production or coordinator-only server or plugin reached the worker"
+  assert_contains "$output" "FAIL: a production, coordinator-only or assistant-only server or plugin reached the worker"
   assert_contains "$output" "load check FAILED"
+}
+
+@test "the coordinator's or the assistant's skills in a planner fail the check" {
+  inventory --- tdd coordinator-skills:stow
+  run_bin -1 team-load-check
+  assert_contains "$output" "FAIL: a production, coordinator-only or assistant-only server or plugin reached the worker"
+
+  inventory --- tdd assistant-skills:walk
+  run_bin -1 team-load-check
+  assert_contains "$output" "FAIL: a production, coordinator-only or assistant-only server or plugin reached the worker"
+  assert_equal "${lines[-1]}" "load check FAILED (inventory in tasks/T0/)"
 }
 
 @test "a vercel-read tool or skill in a planner fails the check" {
   inventory mcp__vercel-read__list-env-names --- tdd
   run_bin -1 team-load-check
   assert_contains "$output" "FAIL: MCP tools from outside the toolkits:"$'\n'"  mcp__vercel-read__list-env-names"
-  assert_contains "$output" "FAIL: a production or coordinator-only server or plugin reached the worker"
+  assert_contains "$output" "FAIL: a production, coordinator-only or assistant-only server or plugin reached the worker"
 
   inventory --- tdd vercel-read:reading-vercel-deployments
   run_bin -1 team-load-check
-  assert_contains "$output" "FAIL: a production or coordinator-only server or plugin reached the worker"
+  assert_contains "$output" "FAIL: a production, coordinator-only or assistant-only server or plugin reached the worker"
   [[ $output != *"MCP tools from outside"* ]]
   assert_equal "${lines[-1]}" "load check FAILED (inventory in tasks/T0/)"
 }
