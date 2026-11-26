@@ -386,7 +386,7 @@ context_mark_is() {
 # context_mark_refusal: what a script says of CODE_CHECKOUT's bin/lib/context-mark when it does
 # not read, after its own name.
 context_mark_refusal() {
-  echo "${CODE_CHECKOUT:?}/bin/lib/context-mark is malformed: it needs one tokens=<n> line, a whole number of tokens that is a multiple of 1000 and at least 100000"
+  echo "${CODE_CHECKOUT:?}/bin/lib/context-mark is malformed: it needs one tokens=<n> line, a whole number of tokens of six to nine digits with no leading zero, a multiple of 1000"
 }
 
 # worker_login_on [<login>]: the worker login on for the scripts run_bin runs: CODE_CHECKOUT (a

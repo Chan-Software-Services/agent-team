@@ -1113,7 +1113,7 @@ def context_mark(path):
             pass
     found = MARK_LINE.fullmatch(lines[0]) if len(lines) == 1 else None
     if not found or int(found.group(1)) % 1000:
-        fail(f"{path} is malformed: it needs one tokens=<n> line, a whole number of tokens that is a multiple of 1000 and at least 100000")
+        fail(f"{path} is malformed: it needs one tokens=<n> line, a whole number of tokens of six to nine digits with no leading zero, a multiple of 1000")
     return int(found.group(1))
 
 
