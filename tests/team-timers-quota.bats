@@ -88,7 +88,9 @@ stdin='' lock=''
 if [[ -d /proc/$$/fd ]]; then
   stdin=$(readlink "/proc/$$/fd/0")
   lock=closed
-  ! ls -l "/proc/$$/fd" | grep -q 'heartbeat[.]lock' || lock=open
+  # ls may name a descriptor this shell closes while it is listed, the pipe's own among them: said
+  # on stderr, that would be the first line the step reads as team-quota's reason.
+  ! ls -l "/proc/$$/fd" 2>/dev/null | grep -q 'heartbeat[.]lock' || lock=open
 fi
 printf '%s | TEAM_HOME=%s | stdin=%s | lock=%s\n' "$*" "$TEAM_HOME" "$stdin" "$lock" >>"$here/quota-calls"
 if [[ ${1:-} == usage ]]; then
