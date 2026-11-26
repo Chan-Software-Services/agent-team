@@ -28,7 +28,7 @@ section() {
 # manual_lines: the manual's lines equal it, so a PR that adds a line removes one.
 manual_lines=119
 # manual_bytes: the manual's bytes are at most it, and it is set to them whenever they change.
-manual_bytes=29962
+manual_bytes=29954
 # manual_slack: how far under manual_bytes the bytes may fall before the cap must follow them
 # down, so a reworded sentence needs no new constant and the cap never keeps room to grow into.
 manual_slack=100
@@ -697,7 +697,7 @@ retired_words='merge_with_plan|merge-preapprov|merge-standing|plan-time|standing
   grep -qF '"(Daniel'"'"'s default word does not hold: ask them for the per-head word on the head <short head> with team-ask, naming <url>)"' "$sop"
   grep -qF '(Daniel'"'"'s default word does not hold: ask them for the per-head word on $on with team-ask, naming $url)' "$REPO_ROOT/bin/team-merge"
   grep -qF '"merge on the default word: run team-merge T<n> for ..."' "$sop"
-  grep -qF '"merge on the default word: run team-merge \($task) for \($facts)"' "$REPO_ROOT/bin/team-next"
+  grep -qF '"merge on the default word: run team-merge \($merge) for \($facts)"' "$REPO_ROOT/bin/team-next"
   for line in 'default word covers it' 'default word withdrawn' 'default word does not cover it: '; do
     grep -qF "\`$line" "$sop"
     grep -qF "\" | $line" "$REPO_ROOT/bin/lib/ledger.jq"

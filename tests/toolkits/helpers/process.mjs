@@ -19,6 +19,13 @@
 //                              one of them or below the child (one it started since, as on its
 //                              SIGTERM) gets SIGKILL, the child too, and the hook resolves once
 //                              the child has exited
+//   ownedPid(t, pid)           the same end for a process that is not this one's child (a host a
+//                              test's command started detached, whose parent has exited): its
+//                              start time is read now, and when `t` ends, while that pid is
+//                              still the same process, the tree below it is read, it gets
+//                              SIGTERM and up to 15 s to exit, and then it and every process of
+//                              that tree still the same, and every process now below one of them,
+//                              get SIGKILL; the hook resolves once it is gone, or 15 s later
 //   inetPeers(pid)             the remote address of every TCP and UDP socket it holds, as
 //                              "host:port": an IPv4 address, or an IPv4-mapped IPv6 one, as
 //                              dotted IPv4 on both systems; any other IPv6 address in each
@@ -28,6 +35,7 @@
 //                              its zero address in the same forms ("0.0.0.0:0" for IPv4).
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const linux = process.platform === "linux";
 
@@ -131,6 +139,40 @@ async function endTree(child) {
   }
   if (running(child)) child.kill("SIGKILL");
   await exited(child);
+}
+
+// The start time of `pid` in `table`, or undefined when it is not there.
+const startIn = (table, pid) => table.find(([row]) => row === String(pid))?.[2];
+
+export function ownedPid(t, pid) {
+  const started = startIn(processTable(), pid);
+  if (started === undefined) throw new Error(`ownedPid: no process ${pid}`);
+  t.after(() => endPid(pid, started));
+}
+
+async function endPid(pid, started) {
+  const same = () => startIn(processTable(), pid) === started;
+  if (!same()) return;
+  const tree = below([pid], processTable());
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+  for (const deadline = Date.now() + graceMs; same() && Date.now() < deadline;) await sleep(100);
+  const now = processTable();
+  const startOf = new Map(now.map(([row, , rowStarted]) => [row, rowStarted]));
+  const left = [...tree].filter(([row, rowStarted]) => startOf.get(row) === rowStarted).map(([row]) => row);
+  const roots = same() ? [String(pid), ...left] : left;
+  for (const row of new Set([...roots, ...below(roots, now).keys()])) {
+    try {
+      process.kill(Number(row), "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+    }
+  }
+  // A zombie its parent has yet to reap still reads as the same process, so the wait is bounded.
+  for (const deadline = Date.now() + graceMs; same() && Date.now() < deadline;) await sleep(100);
 }
 
 export function inetPeers(pid) {

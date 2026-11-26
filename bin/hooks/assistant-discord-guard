@@ -6,13 +6,13 @@
 #   reply, react, edit_message and download_attachment (their chat_id) and fetch_messages (its
 #     channel) pass only in ASSISTANT_CHANNEL (bin/lib/team.sh) or a thread whose parent_id is
 #     it (assistant_thread_of in bin/lib/team.sh), so the Discord plugin's own outbound gate is
-#     not the only wall. A thread is read once with discord_api GET channels/<id> and then kept
-#     in the thread cache, ~/.local/state/agent-team/assistant-threads (ASSISTANT_THREADS), which
-#     team-assistant thread writes too; a channel that is neither is not kept, and is read again
-#     on its next call. The cache is trusted only because the assistant cannot write it: its
-#     settings deny the Edit tool, and its command guard's assistant-thread-cache row a Bash call
-#     that writes the file by a redirection or a writer it names (tee, cp, rm, sed -i and the
-#     rest).
+#     not the only wall. Every channel but ASSISTANT_CHANNEL is read from Discord at every call,
+#     with discord_api GET channels/<id> bounded at 10 seconds (--max-time 10), and passes on
+#     Discord's answer alone. A thread that passes is appended to the thread list,
+#     ~/.local/state/agent-team/assistant-threads (ASSISTANT_THREADS, assistant_thread_keep),
+#     which the start digest names and no guard reads to decide a call: an id there grants
+#     nothing, and the guard reads it only to append an id once. Every failure of the read
+#     refuses: an error, a rate limit (HTTP 429), no answer in time, no token.
 #   reply's files pass only when each, an absolute path, resolves (symlinks followed) to a file
 #     under ~/.local/state/agent-team/assistant-files/ or the team home's assistant/, so a link
 #     there into ~/.claude/channels/ or the records attaches nothing.
@@ -58,14 +58,14 @@ chat=$(jq -er --arg f "$field" '.tool_input | objects | .[$f] | strings' <<<"$in
 [[ -n $ASSISTANT_CHANNEL ]] ||
   block "no assistant channel is set (TEAM_ASSISTANT_CHANNEL is empty), so assistant-discord-guard cannot tell #assistant; $CANNOT"
 
-# The chat: #assistant itself, a thread kept as known-good, or one Discord says is a thread of it.
+# The chat: #assistant itself, or one Discord says, at this call, is a thread of it.
 # A chat id is a snowflake, checked before it goes into a URL.
 [[ $chat =~ ^[1-9][0-9]{0,19}$ ]] ||
   block "'$chat' is not a Discord channel id; the assistant reaches only #assistant ($ASSISTANT_CHANNEL) and its threads."
-if [[ $chat != "$ASSISTANT_CHANNEL" ]] && ! grep -qxF -- "$chat" "$ASSISTANT_THREADS" 2>/dev/null; then
+if [[ $chat != "$ASSISTANT_CHANNEL" ]]; then
   rc=0
   err=$(team_mktemp)
-  channel=$(discord_api "channels/$chat" 2>"$err") || rc=$?
+  channel=$(discord_api "channels/$chat" --max-time 10 2>"$err") || rc=$?
   reason=$(grep -m1 . "$err" || echo "no reason given")
   team_tmp_rm "$err"
   ((rc == 0)) ||

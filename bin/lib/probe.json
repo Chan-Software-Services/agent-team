@@ -152,6 +152,14 @@
       "marker": "a force push"
     },
     {
+      "id": "docker-run",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "docker run --rm --pull never agent-team-probe:none true",
+      "expect": "hook",
+      "marker": "a container started by hand"
+    },
+    {
       "id": "protected-push",
       "roles": ["planner", "builder", "reviewer", "assistant"],
       "tool": "Bash",
@@ -455,6 +463,30 @@
       "family": "devtools-port"
     },
     {
+      "id": "proto-socket",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Bash",
+      "input": "curl -sS --max-time 5 -o /dev/null --unix-socket /run/user/load-check-probe-absent/agent-team-proto/host.sock http://proto/v1/status",
+      "expect": "rule",
+      "family": "proto-host"
+    },
+    {
+      "id": "proto-token",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "@HOME@/.local/state/agent-team/proto/load-check-probe-absent",
+      "expect": "rule",
+      "family": "proto-host"
+    },
+    {
+      "id": "proto-runtime",
+      "roles": ["planner", "builder", "reviewer"],
+      "tool": "Read",
+      "input": "/run/user/load-check-probe-absent/agent-team-proto/token",
+      "expect": "rule",
+      "family": "proto-host"
+    },
+    {
       "id": "post-coordinator",
       "roles": ["planner"],
       "tool": "Bash",
@@ -620,14 +652,6 @@
       "input": "cat ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
       "expect": "allowed",
       "marker": "No such file"
-    },
-    {
-      "id": "thread-cache-write",
-      "roles": ["assistant"],
-      "tool": "Bash",
-      "input": "sed -i -n p ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
-      "expect": "hook",
-      "marker": "the thread cache"
     },
     {
       "id": "read-launchers",
@@ -837,6 +861,10 @@
     {
       "family": "production",
       "rules": "mongodb\\+srv://|migrate_user_emails"
+    },
+    {
+      "family": "proto-host",
+      "rules": "agent-team-proto|agent-team/proto|host\\.sock"
     },
     {
       "family": "push",

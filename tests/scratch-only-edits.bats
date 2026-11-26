@@ -435,15 +435,6 @@ Blocked: this role may write files only under $wt/.scratch; write there with the
   unread 'cmd > "$out"; select x in a; do :; done' 'a select command'
 }
 
-# The CPU seconds the shell's waited-for children have used so far, in CPU: cpu_now. Read with the
-# times builtin in this shell (a subshell would read its own), so a bound on a hook's CPU holds on a
-# loaded machine, where its wall time does not.
-cpu_now() {
-  times >"$BATS_TEST_TMPDIR/times"
-  CPU=$(awk 'NR == 2 { split($1, u, /[ms]/); split($2, s, /[ms]/); print u[1] * 60 + u[2] + s[1] * 60 + s[2] }' \
-    "$BATS_TEST_TMPDIR/times")
-}
-
 # Succeed when the children have used under <seconds> of CPU since <before>: cpu_under <before> <seconds>
 cpu_under() {
   cpu_now

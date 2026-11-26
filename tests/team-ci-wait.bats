@@ -731,9 +731,9 @@ EOF
   run_bin team-ci-wait "$url"
   assert_equal "$status" 75
   assert_contains "$output" "the team is holding"
-  # One look's five reads: the PR, its head's check runs and statuses, the head's runs and the repository's runs in
-  # progress.
-  assert_equal "$(stub_calls gh | grep -c .)" 5
+  # The base's rules, once (dev unprotected, so its branch alone), then one look's five reads: the
+  # PR, its head's check runs and statuses, the head's runs and the repository's runs in progress.
+  assert_equal "$(stub_calls gh | grep -c .)" 6
 }
 
 # GitHub's rate limit: a wait sleeps it out and goes on, never reading it as an outage (T407).
@@ -1019,13 +1019,16 @@ sleeps() {
 api repos/owner/proj/actions/runs/7002
 api repos/owner/proj/actions/runs?head_sha=$head&per_page=100
 api repos/owner/proj/actions/runs?status=in_progress&per_page=1
+api repos/owner/proj/branches/dev
 api repos/owner/proj/commits/$head/check-runs?filter=latest&per_page=100
 api repos/owner/proj/commits/$head/status?per_page=100
 api repos/owner/proj/pulls/217"
-  # One read of each distinct run per look and of the failed job at the end, with nothing that writes.
+  # One read of the base's rules at the start, of each distinct run per look and of the failed job
+  # at the end, with nothing that writes.
   assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | LC_ALL=C sort -u)" '["api","repos/owner/proj/actions/jobs/97002"]
-["api","repos/owner/proj/actions/runs/7002"]'
-  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | grep -c .)" 3
+["api","repos/owner/proj/actions/runs/7002"]
+["api","repos/owner/proj/branches/dev"]'
+  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | grep -c .)" 4
   assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and length != 2)')" ""
 }
 
@@ -1185,6 +1188,25 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   roll-up: smoke, of smoke-shards (1), left out
   roll-up: e2e, of e2e shard 3/6, e2e shard 4/6, left out
   roll-up: unit, of unit shards 2, left out"
+}
+
+# agent-team's test needs future-clock beside its shards, so it fails when future-clock alone does.
+@test "a roll-up beside a failed future-clock of the same run is left out, after future-clock's line, with its shards all passed" {
+  checks 0 "$(check test FAILURE 7001 71)" "$(check "test-shards (1)" SUCCESS 7001 72)" "$(check "test-shards (2)" SUCCESS 7001 73)" \
+    "$(check "test-shards (3)" SUCCESS 7001 74)" "$(check future-clock FAILURE 7001 75)"
+  job 0 75 "" "Set up job=skipped" "Run tests/run bats --clock-ahead 365=skipped"
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_equal "$output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  infrastructure: future-clock never started: no runner took it (https://github.com/owner/proj/actions/runs/7001/job/75); rerun it with gh run rerun 7001 --job 75 --repo owner/proj, then run team-ci-wait again
+  roll-up: test, of future-clock, left out"
+  # A future-clock of another run makes no roll-up of test.
+  checks 0 "$(check test FAILURE 7001 71)" "$(check future-clock FAILURE 7002 75)"
+  job 0 71 "GitHub Actions 3" "Set up job=success" "Every shard and the future clock passed=failure"
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "  the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/71"
 }
 
 @test "a job with no runner and no step that ran is infrastructure, failed or cancelled, with its rerun" {
@@ -1580,7 +1602,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   both "$url"
   assert_equal "$status" 1
   assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" \
-    '["failed",[{"name":"build","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]]'
+    '["failed",[{"name":"build","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"required_checks"}]]'
 }
 
 @test "--json ends as other-head, moved and closed with the PR's head and no failures" {
@@ -1889,13 +1911,88 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","rules","missing"]]'
 }
 
-@test "a PR's head reads no rules, and a required check missing there stays the PR's" {
-  rules_require test build
-  required test build
+# Conventioner's registry lists no required_checks, so a check its dev's rules newly require that
+# never reports on a PR's head (after a catch-up, say) must end the checks wait as red, before
+# team-next prints the merge ask, not only at team-merge after Daniel's word.
+@test "a PR's head holds every check the base's rules require but agent-review, and one never reported there is the PR's, named as the rules', read once" {
+  rules_require test:15368 "Analyze (python):15368" agent-review:5727451
   checks 0 "$(check test SUCCESS 7001)"
-  run_bin team-ci-wait --json "$url"
+  both "$url"
+  assert_equal "$text_status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: Analyze (python) was not reported for 2 minutes, though dev's rules require it"
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" \
+    '["failed",[{"name":"Analyze (python)","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"rules"}]]'
+  # The rules are read once a wait, at its start, however many looks it takes: two waits, two reads.
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rules/branches/dev --paginate' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rulesets/41' "$GH_DIR/calls")" 2
+  # Once it reports, the wait passes; agent-review, which the rules require too, is the reviewer's
+  # to set, so a head without it is not held for it.
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(check test SUCCESS 7001)" "$(check "Analyze (python)" SUCCESS 7002)"
+  both --no-agent-review "$url"
+  assert_equal "$text_status" 0
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" '["passed",[]]'
+}
+
+@test "a PR's head names a check both require as the rules', and one the registry alone requires as the project's" {
+  rules_require test build
+  required test build data
+  checks 0 "$(check test SUCCESS 7001)"
+  both "$url"
+  assert_equal "$text_status" 1
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: build was not reported for 2 minutes, though dev's rules require it
+  the PR's: data was not reported for 2 minutes, and the project requires it"
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .source]]' <<<"$output")" \
+    '[["build","pr","missing","rules"],["data","pr","missing","required_checks"]]'
+}
+
+@test "a PR's head goes on with the registry's required checks alone when the base's rules cannot be read, saying so on one line" {
+  required test
+  answer 0 branch fail
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 0
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held until a look reads them: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  assert_equal "${lines[-1]}" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  # Each look tries the rules again, so a wait of 5 looks read the branch 5 times.
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 5
+}
+
+# A read of the rules that fails is tried again at each look on a PR's head, so one failure at the
+# start does not leave a rules-required check unheld for the whole wait.
+@test "a PR's head reads the base's rules again at the next look after a read that failed, and holds them once one succeeds" {
+  rules_require test "Analyze (python)"
+  answer 0 branch fail
+  answer 1 branch '{"protected": true}'
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin --separate-stderr team-ci-wait "$url"
   assert_equal "$status" 1
-  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["build","pr","missing"]]'
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held until a look reads them: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  assert_equal "${lines[-1]}" "  the PR's: Analyze (python) was not reported for 2 minutes, though dev's rules require it"
+  # Read twice, the second time with its rules and ruleset, then never again.
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rulesets/41' "$GH_DIR/calls")" 1
+}
+
+@test "--look on a PR's head and --run read no rules, since neither holds a check not reported" {
+  rules_require test build
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin team-ci-wait --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  if grep -E 'branches/dev|rulesets/' "$GH_DIR/calls"; then return 1; fi
+  echo 0 >"$GH_DIR/look"
+  the_run 0 completed success
+  run_jobs 0 "$(run_job test completed success)"
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_equal "$status" 0
   if grep -E 'branches/dev|rulesets/' "$GH_DIR/calls"; then return 1; fi
 }
 
@@ -2030,6 +2127,8 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$status" 1
   assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind, .run])]' <<<"$output")" \
     '["failed",["e2e shard 1/2","infrastructure","queued",7001],["e2e shard 2/2","infrastructure","queued",7001],["e2e","infrastructure","missing",null]]'
+  # It waits on runners, not on what requires it, so it carries no source, as no rules failure is.
+  assert_equal "$(jq -c '[.failures[] | has("source")]' <<<"$output")" '[false,false,false]'
   assert_contains "$text_output" "
   infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
   [[ $text_output != *rules:* && $text_output != *"no workflow makes it"* ]]
@@ -2295,7 +2394,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
 team-ci-wait: the checks on a1b2c3d did not pass:
   the branch's: test was not reported, and the project requires it"
   assert_equal "$(jq -c '.failures' <<<"$output")" \
-    '[{"name":"test","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]'
+    '[{"name":"test","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"required_checks"}]'
 }
 
 @test "--run on a green run of another workflow than the project's branch_ci passes on its own jobs, the required checks being branch_ci's" {
@@ -2566,7 +2665,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_contains "$output" "the PR's: test was not reported for 2 minutes, and the project requires it"
 }
 
-@test "a project that requires the macOS check, or another project's check of its name, is held by it as by any check" {
+@test "a project or its base's rules that require the macOS check, or another project's check of its name, hold it as any check" {
   own_team_project
   sed -i 's/^required_checks = \[\]$/required_checks = ["rust-macos"]/' "$TEAM_HOME/projects.toml"
   checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
@@ -2576,6 +2675,23 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   run_bin team-ci-wait "$url" "$head"
   assert_equal "$status" 1
   assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  # A name the base's rules require, which a PR's head's wait reads too, is held as any check, red
+  # or never reported.
+  sed -i 's/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
+  rules_require rust-macos
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  checks 0 "$(check test SUCCESS 7001)"
+  head_runs 0 7001:CI:completed:success
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos was not reported for 2 minutes, though dev's rules require it"
+  rules_require
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
   # Another project's check of the same name is one of its checks.
   sed -i 's/^\[agent-team/[proj/; s/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
   echo 0 >"$GH_DIR/look"

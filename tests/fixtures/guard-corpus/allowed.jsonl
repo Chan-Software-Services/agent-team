@@ -185,7 +185,7 @@
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "grep -rn assistant-threads @TEAM_CODE@/bin | cut -c1-200"}, "local": true}
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "cat ~/.local/state/agent-team/assistant-threads; wc -l ~/.local/state/agent-team/assistant-threads"}, "local": true}
 {"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "jq -R . ~/.local/state/agent-team/assistant-threads && sed -n 1p ~/.local/state/agent-team/assistant-threads"}, "local": true}
-{"roles": ["coordinator"], "tool": "Bash", "input": {"command": "while read -r id; do echo \"thread $id\"; done < ~/.local/state/agent-team/assistant-threads"}, "local": true}
+{"roles": ["coordinator", "assistant"], "tool": "Bash", "input": {"command": "while read -r id; do echo \"thread $id\"; done < ~/.local/state/agent-team/assistant-threads"}, "local": true}
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "~/agent-team/bin/claude-assistant-read start --request https://example.com/channels/1/2/3 --toolkit prod-read --toolkit vercel-read --file ~/.local/state/agent-team/assistant-files/read-question.md"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant"], "tool": "Bash", "input": {"command": "~/agent-team/bin/claude-assistant-read answer"}, "cwd": "@TEAM_HOME@"}
 {"roles": ["assistant", "coordinator"], "tool": "Bash", "input": {"command": "~/agent-team/bin/claude-assistant-read end"}, "cwd": "@TEAM_HOME@"}
