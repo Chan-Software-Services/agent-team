@@ -2,7 +2,7 @@
 name: claims-reader
 description: A fresh reader who checks each sentence a branch adds or changes in docs, comments, headers, help text and the PR body against the code at the head, and names each the code does not bear out. Dispatched by the claims-check skill; give it only the code root, the diff and the PR body.
 tools: [Read, Grep, Glob]
-model: inherit
+model: opus
 omitClaudeMd: true
 ---
 

@@ -78,7 +78,7 @@ pr body: <path, or none>
 
 ```
 
-- The `reader:` line is `ran on <model>`, `ran on <model> on retry`, `not run: <why>` or step 2's `not dispatched: the branch changes nothing against <base>`; `<model>` is the session's model, since the agent's `model` is `inherit`.
+- The `reader:` line is `ran on <model>`, `ran on <model> on retry`, `not run: <why>` or step 2's `not dispatched: the branch changes nothing against <base>`; `<model>` is `opus`, the agent's own `model`.
 - The merge base is `git -C <code root> merge-base <base> HEAD`, and the head `git -C <code root> rev-parse HEAD`.
 - `## Findings` holds the reader's "Findings" verbatim, each item numbered 1, 2, ... in its order in place of its dash, or `none`.
 - `## Checked` holds the reader's "Checked" verbatim.
