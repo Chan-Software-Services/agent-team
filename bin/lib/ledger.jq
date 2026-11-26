@@ -2759,9 +2759,7 @@ def default_may_hold: by_task | any(.[]; is_open and phase == "awaiting-merge" a
 
 # The following defs serve team-inbox, a task's events as an array, then every ledger event as one.
 
-# Whether the task's latest interview thread still holds an interview: no planner's done and no
-# plan-approved logged after its interview-thread, and a topic's from its interview-thread to its
-# close (qc_interview).
+# Whether the task's latest interview thread still holds an interview, as qc_interview says.
 def interview_under_way: qc_interview != null;
 
 # Whether the event is a merge-approved naming the PR $pr (one of task_prs) at its head: its url is

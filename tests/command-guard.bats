@@ -1369,6 +1369,14 @@ TOPIC_GITHUB="a GitHub write, which a topic session never makes"
     'git -P diff' 'git -C d status' 'git worktree list' 'git -C d worktree list'; do
     if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
   done
+  # What roles/topic.md and the PR body name as refused by neither guard: an install, a stack
+  # command and a git write in a shell's string, which no deny rule matches and no row reads.
+  for command in "bash -c 'docker compose up -d'" "bash -c 'team-stack up'" "bash -c 'npm install'" \
+    "bash -c 'git push'"; do
+    AGENT_TEAM_ROLE=topic guard -0 "$command"
+    assert_equal "$stderr" ""
+    if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
+  done
 }
 
 @test "the assistant's reads and writes of the thread list pass at the fast path, as a worker's do" {

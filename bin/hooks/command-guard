@@ -100,10 +100,9 @@ command=$(jq -er '.tool_input.command | strings' <<<"$input" 2>/dev/null) ||
 stripped=${command//\\$'\n'/}
 stripped=${stripped//\$\"/\"}
 text=$command$'\n'${stripped//[\'\"\\]/}
-# The assistant's own trigger words, the coordinator's acts its assistant-acts row refuses, and gh
-# and gh-axi, whose every call its assistant-github-write row reads; a worker's fast path never
-# reads them.
-# A topic session's gh and gh-axi, whose every call its topic-github-write row reads.
+# The assistant's own trigger words: gh and gh-axi, read for the assistant and a topic session
+# alone, whose every call their assistant-github-write and topic-github-write rows read, and the
+# coordinator's acts its assistant-acts row refuses, read for the assistant alone.
 assistant_words=
 [[ ${AGENT_TEAM_ROLE:-} != topic ]] || assistant_words='(^|[^[:alnum:]_.-])gh(-axi)?([^[:alnum:]_.-]|$)'
 [[ ${AGENT_TEAM_ROLE:-} != assistant ]] ||
