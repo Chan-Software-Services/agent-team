@@ -266,7 +266,7 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   assert_contains "$(tail -n 1 <<<"$output")" "merge base: $url is 3 behind main and conflicts on one.txt"
 }
 
-@test "--ci's merge runners line names team-merge --pr in a task with a PR in another repository, since team-merge alone takes the latest pr event's" {
+@test "--ci's merge steps name team-merge --pr in a task with a PR in another repository, since team-merge alone takes the latest pr event's" {
   # shellcheck disable=SC2030,SC2031 # each test is a subshell of its own, and sets it for its stub
   export GH_QUEUE=1
   on_origin
@@ -280,6 +280,18 @@ then, once the checks pass on its merge: merge ask: $url at $sha; the review fou
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_equal "$(tail -n 1 <<<"$output")" \
     "merge runners: $url was dropped by the merge queue at 2026-10-23T10:00:00Z: the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of owner/proj's merge queue while the backlog stands, and run team-merge T7 --pr $url again once they say the runners are back"
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T11:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "failed_checks",
+      failed: [{name: "lint", class: "infrastructure", kind: "setup", link: "", step: "Set up job"}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge on the default word: run team-merge T7 --pr $url for $url at $sha, agent-review success, checks green"
+  jq -cn --arg url "$url" --arg head "$sha" '{ts: "2026-10-23T12:00:00Z", task: "T7", event: "dequeued", url: $url, head: $head, reason: "",
+      failed: [{name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}' \
+    >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -0 --separate-stderr team-next T7 --ci
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "merge rules: $url was dropped by the merge queue at 2026-10-23T12:00:00Z: e2e never reported on its trial commit, which main's rules require; the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then run team-merge T7 --pr $url again"
 }
 
 @test "--ci on a PR behind its base whose merge cannot be read prints the builder-merge-base step with the reason" {
