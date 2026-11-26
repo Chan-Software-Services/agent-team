@@ -10,6 +10,13 @@
 //   const browser = await browserSession(chrome.browserUrl);   CDP to the browser itself:
 //   await browser.send("Target.getTargets"); browser.on("Target.targetInfoChanged", fn);
 //   browser.close();
+//   const tab = await tabSession(chrome.browserUrl, targetId);   the same on one tab, by its id
+//   const server = await declaredServer(chrome.browserUrl);   the frontend toolkit's MCP server
+//                                                     as .mcp.json declares it, on that Chrome:
+//                                                     server.call(name, args) answers text,
+//                                                     server.client is the MCP client
+//   declared()                                        that server's entry in .mcp.json, with
+//                                                     ${CLAUDE_PLUGIN_ROOT} resolved to the toolkit
 //   await bringToFront(chrome.browserUrl, url);       Daniel's click on the tab at that URL: it is
 //                                                     its window's front tab, the most recent
 //   await chrome.close(); await site.close();
@@ -17,11 +24,13 @@
 // Chrome is the machine's (TEAM_CHROME, else Google Chrome's app on macOS, else google-chrome or
 // chromium on PATH), started with a throwaway profile, the mock keychain and the basic password
 // store (no keychain prompt under the test's HOME), and no first-run, sync or metrics; its tabs
-// are off the record, so no page's first request waits for the profile's cookie database. A
-// Chrome too old for open_devtools fails startChrome at once. inspect drives the DevTools window
-// through the pinned chrome-devtools-mcp with --experimentalDevtools and --devtoolsComments
-// (which brings open_devtools), setting the Elements panel's selection exactly as a click there
-// does; ui-capture never runs with that flag.
+// are off the record, so no page's first request waits for the profile's cookie database. Each
+// launch has 120 s (or startChrome's { portWaitMs }) to open its debugging port, so a slow start
+// on a loaded machine is waited for; a Chrome that has not by then is ended and fails
+// startChrome, and one that exits first, or one too old for open_devtools, fails it at once.
+// inspect drives the DevTools window through the pinned chrome-devtools-mcp with
+// --experimentalDevtools and --devtoolsComments (which brings open_devtools), setting the
+// Elements panel's selection exactly as a click there does; ui-capture never runs with that flag.
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -31,6 +40,10 @@ import { repoRoot, tempDir } from "./mcp.mjs";
 
 const modules = join(repoRoot, "servers", "node_modules");
 const devtoolsServer = join(modules, "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js");
+// How long a launched Chrome has to open its debugging port, unless startChrome's caller says: a
+// loaded CI runner's has taken more than 30 s, and this is under half of the 5 minutes tests/run
+// gives a test or hook.
+const defaultPortWaitMs = 120_000;
 
 export function chromePath() {
   const candidates = [process.env.TEAM_CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
@@ -65,9 +78,9 @@ export async function serveFixture(pages) {
 // title). On a busy machine a tab can wait a long time for its first request, and a tab that has
 // not loaded never answers the DevTools protocol, so a tab not loaded within 20 s is closed and
 // opened again, twice, and then the whole Chrome is started again, twice at most.
-export async function startChrome(urls) {
+export async function startChrome(urls, { portWaitMs = defaultPortWaitMs } = {}) {
   for (let launch = 1; ; launch++) {
-    const chrome = await launchChrome();
+    const chrome = await launchChrome(portWaitMs);
     const browser = await browserSession(chrome.browserUrl);
     let pages = [];
     try {
@@ -120,6 +133,19 @@ const loaded = (pages, url) => pages.some((t) => t.url === url && t.title && t.t
 // params of each event of that method.
 export async function browserSession(browserUrl) {
   const { webSocketDebuggerUrl } = await fetch(`${browserUrl}/json/version`, { signal: AbortSignal.timeout(10_000) }).then((r) => r.json());
+  return socketSession(webSocketDebuggerUrl);
+}
+
+// A CDP session on one tab of the browser at `browserUrl`, by its target id, over the tab's own
+// debugging socket, as browserSession's.
+export async function tabSession(browserUrl, targetId) {
+  const tabs = await fetch(`${browserUrl}/json/list`, { signal: AbortSignal.timeout(10_000) }).then((r) => r.json());
+  const tab = tabs.find((t) => t.id === targetId);
+  if (!tab) throw new Error(`tabSession: no tab ${targetId} in ${browserUrl}`);
+  return socketSession(tab.webSocketDebuggerUrl);
+}
+
+async function socketSession(webSocketDebuggerUrl) {
   const socket = new WebSocket(webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     socket.onopen = resolve;
@@ -178,7 +204,7 @@ export async function bringToFront(browserUrl, url) {
 }
 
 // One headless Chrome, at the tab it opens at its start.
-async function launchChrome() {
+async function launchChrome(portWaitMs) {
   const profile = tempDir("chrome-profile");
   const child = spawn(
     chromePath(),
@@ -202,21 +228,33 @@ async function launchChrome() {
   let log = "";
   child.stderr.on("data", (chunk) => (log = (log + chunk).slice(-4000)));
   const exited = new Promise((resolve) => child.once("exit", resolve));
+  // Exited, with all it logged read.
+  const drained = new Promise((resolve) => child.once("close", resolve));
   const close = async () => {
     child.kill("SIGTERM");
     await Promise.race([exited, sleep(5000).then(() => child.kill("SIGKILL"))]);
   };
+  const deadline = Date.now() + portWaitMs;
+  const gone = () => child.exitCode !== null || child.signalCode !== null;
   let port;
-  for (let i = 0; i < 600 && !port; i++) {
+  while (!port && !gone() && Date.now() < deadline) {
     try {
       port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
     } catch {
-      await sleep(50);
+      // not written yet
     }
+    if (!port) await sleep(50);
   }
   if (!port) {
+    let failure = `Chrome did not open its debugging port in ${portWaitMs / 1000} s`;
+    if (gone()) {
+      failure = `Chrome exited (${child.signalCode ?? `status ${child.exitCode}`}) before it opened its debugging port`;
+      // A process it started may hold its stderr open after it.
+      await Promise.race([drained, sleep(1000)]);
+    }
     await close();
-    throw new Error(`Chrome did not open its debugging port:\n${log}`);
+    child.stderr.destroy();
+    throw new Error(`${failure}:\n${log}`);
   }
   const browserUrl = `http://127.0.0.1:${port}`;
   // open_devtools, which inspect drives, sends Target.openDevTools and Target.getDevToolsTarget:
@@ -256,6 +294,34 @@ export async function devtoolsClient(browserUrl, flags = []) {
     return text;
   };
   return { call, close: () => client.close() };
+}
+
+// The toolkit's server exactly as .mcp.json declares it, with ${CLAUDE_PLUGIN_ROOT} resolved as
+// Claude Code does for --plugin-dir and the Agent Chrome's port moved to the test's.
+export async function declaredServer(browserUrl) {
+  const { Client } = await import(join(modules, "@modelcontextprotocol", "sdk", "dist", "esm", "client", "index.js"));
+  const { StdioClientTransport } = await import(join(modules, "@modelcontextprotocol", "sdk", "dist", "esm", "client", "stdio.js"));
+  const entry = declared();
+  const client = new Client({ name: "toolkit-test", version: "0" });
+  await client.connect(
+    new StdioClientTransport({
+      command: entry.command === "node" ? process.execPath : entry.command,
+      args: entry.args.map((arg) => (arg === "--browser-url=http://127.0.0.1:9222" ? `--browser-url=${browserUrl}` : arg)),
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...entry.env },
+      stderr: "ignore",
+    }),
+  );
+  const call = async (name, args = {}) => {
+    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 90_000 });
+    return result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  };
+  return { client, call, close: () => client.close() };
+}
+
+// The frontend server's entry in the toolkit's .mcp.json, ${CLAUDE_PLUGIN_ROOT} resolved.
+export function declared() {
+  const text = readFileSync(join(repoRoot, "toolkits", "frontend", ".mcp.json"), "utf8");
+  return JSON.parse(text.replaceAll("${CLAUDE_PLUGIN_ROOT}", join(repoRoot, "toolkits", "frontend"))).mcpServers.frontend;
 }
 
 // Ask `connect()` for a server until its list_pages names `url`, as `listed` in inspect does:

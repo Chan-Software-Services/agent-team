@@ -2067,6 +2067,33 @@ node --test tests/toolkits/frontend.test.mjs
 COMMANDS
 }
 
+# The prototyping host drives Daniel's window, the Agent Chrome's tab included, through its socket
+# and token in its runtime directory ($XDG_RUNTIME_DIR/agent-team-proto, else
+# ~/.local/state/agent-team/proto), which any process of Daniel's user can reach; the client module
+# refuses a team session, and these rules are a speed bump on a worker's curl of the socket or read
+# of the token, Daniel's decision, which also refuse a search naming them.
+@test "a worker's Bash call naming the prototyping host's runtime directory or socket, and its Read there, are denied" {
+  local SETTINGS=(settings/worker.json) command rule
+  assert_denies 'Bash(*agent-team-proto*)' \
+    'curl --unix-socket "$XDG_RUNTIME_DIR/agent-team-proto/host.sock" -H "authorization: Bearer x" http://proto/v1/target' \
+    'cat /run/user/1000/agent-team-proto/token'
+  assert_denies 'Bash(*agent-team/proto*)' 'cat ~/.local/state/agent-team/proto/token'
+  assert_denies 'Bash(*host.sock*)' 'curl --unix-socket ./host.sock http://proto/v1/status' \
+    'cd "$XDG_RUNTIME_DIR" && socat - UNIX-CONNECT:agent-team-proto/host.sock'
+  for rule in 'Read(//run/user/*/agent-team-proto/**)' 'Read(~/.local/state/agent-team/proto/**)'; do
+    jq -e --arg r "$rule" '.permissions.deny | index($r)' "$REPO_ROOT/settings/worker.json" >/dev/null ||
+      { echo "settings/worker.json lacks the deny rule $rule" >&2; return 1; }
+  done
+  while IFS= read -r command; do
+    if denied settings/worker.json "$command"; then echo "settings/worker.json denies: $command" >&2; return 1; fi
+  done <<'COMMANDS'
+node --test tests/toolkits/proto-host.test.mjs
+git switch feat/T7-proto-host
+ls ~/.local/state/agent-team
+toolkits/frontend/scripts/proto --help
+COMMANDS
+}
+
 # A walk's planner reads the Agent Chrome only by team-ui --capture, Daniel's decision: no role's
 # settings names the toolkit's server, whose tools drive the window, and only the planner's allow
 # that capture.

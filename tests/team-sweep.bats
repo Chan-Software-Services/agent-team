@@ -1260,6 +1260,10 @@ rules_drop() {
       {name: "lint", class: "rules", kind: "missing", link: "", step: "", source: "rules"}]}'
   run_bin -1 team-sweep
   assert_equal "$(grep trial-rules <<<"$output")" "T3 trial-rules: lint never reported on the trial commit of $url, which dev's rules require; data never reported on the trial commit of $url, which the project's required_checks require; next: run team-doctor and tell Daniel; run team-merge T3 once the rules, the project's required_checks or the workflow are fixed"
+  # With a PR in proj too, logged since, team-merge T3 alone would take that one.
+  event T3 pr '{url: "https://github.com/owner/proj/pull/5", head: "a1b2c3d"}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep trial-rules <<<"$output")" "T3 trial-rules: lint never reported on the trial commit of $url, which dev's rules require; data never reported on the trial commit of $url, which the project's required_checks require; next: run team-doctor and tell Daniel; run team-merge T3 --pr $url once the rules, the project's required_checks or the workflow are fixed"
   no_github
 }
 
@@ -1316,9 +1320,13 @@ rules_drop() {
   event T3 review '{verdict: "pass", head: "a1b2c3d4e5", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
   ci T3 passed
   sessions "$(session 11111111 T3-reviewer idle)"
-  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
-  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
   # team-merge T3 alone takes the latest pr event's PR, the other one, so each step names its PR.
+  run_bin -1 team-sweep
+  assert_equal "$output" "T3 merge-due: awaiting the merge of $url, $other on the default word, the approved plan, with no ask open; next: run team-merge T3 --pr $url; run team-merge T3 --pr $other; $ask"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep queue-wait <<<"$output")" "T3 queue-wait: PR $url is in the merge queue since 2026-10-22T03:00:00Z with no team-merge waiting on it; next: run team-merge T3 --pr $url with Bash run_in_background, which goes on waiting and logs how it ends"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
   run_bin -1 team-sweep
   assert_equal "$output" "$due; next: run team-merge T3 --pr $other; $(step owner/proj "$url"); $ask"
   # Both dropped: each its own runners step.
@@ -1483,7 +1491,7 @@ rules_drop() {
   event T3 ci '{url: "https://github.com/owner/conv/pull/7", head: "c3d4e5f", outcome: "passed"}'
   event T3 worktree-added '{project: "conv", branch: "feat/T3-work", worktree: "/w/2"}'
   run_bin -1 team-sweep
-  assert_equal "$output" "$(due)"
+  assert_equal "$output" "$(due | sed 's|run team-merge T3;|run team-merge T3 --pr https://github.com/owner/proj/pull/5;|')"
 }
 
 @test "merge-due: with the registry unreadable, none, and stderr says why" {

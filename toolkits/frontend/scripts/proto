@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+// Open the project's dev site in a prototyping window, in Chromium, Firefox or WebKit
+// (Playwright's pinned builds), at a named size or any free size, through the prototyping host:
+// one long-lived local process per user that owns the browsers and Daniel's one window.
+//
+// Usage: proto open [<url>] [--target <engine>/<size>]
+//        proto set <engine>/<size> | proto set <engine> | proto set <size>
+//        proto capture [--url <url>] [--engine <engine>]... [--size <size>]... [--selector <css>]
+//                      [--full-page] [--out <dir>]
+//        proto status | proto targets | proto stop
+//        proto install [--refresh-pins [--series <codename>] [--add <package>]...]
+//   open     starts the host when none runs and opens the window, or moves the one open to the
+//            URL and target as set does (the new one opened and then the old closed, or a resize
+//            in place when only the width and height change on the same page); prints
+//            "proto: <engine> <version> at <size> (<width>x<height>@<scale>) on <url>". The URL
+//            defaults to the project's url (http://localhost:5173/ without one), the target to
+//            the window's own, else chromium/laptop; an engine or a size alone keeps the other.
+//   set      switches the open window to the target, on the page it shows now, and prints the
+//            same line; an engine or a size alone keeps the other. Another launched engine
+//            reopens the page there with the window's localhost cookies and localStorage and
+//            closes the old browser, and in a launched engine a new scale, mobile or touch flag
+//            or user agent reopens it in a fresh context of the same browser, carrying them the
+//            same way; a switch to the Agent Chrome writes no login into it, a switch away from
+//            it detaches rather than closing it, and a new size there is emulated anew in its
+//            one tab. A new width and height alone resize the window in place, keeping the page
+//            as it is. A switch that fails leaves the window as it was. Refused with no window
+//            open: run `proto open`
+//   capture  starts the host when none runs and takes the page at every target asked, each in a
+//            headless browser of its own, never in the window, which keeps its engine, size and
+//            page: one PNG per target and an index, matrix.md, in a new directory, by default
+//            <checkout>/.scratch/ui/matrix-<UTC YYYYMMDD-HHMMSS>/ of the working directory's git
+//            checkout (outside one, --out is required; --out must be absolute and new or empty).
+//            The URL defaults to the window's page, else the project's url; the engines (each
+//            --engine, chromium, firefox or webkit, never agent-chrome) and the sizes (each
+//            --size) to the project's matrix, else every launched engine at the five presets.
+//            Each page carries the window's localhost cookies and localStorage (none with no
+//            window), loads (30 s), and is taken as its viewport, its full page (--full-page) or
+//            the first element matching --selector once visible (10 s). The files are
+//            <engine>-<size>.png, the size lowered with any other run than letters, digits, "@"
+//            and "." as "-" (webkit-phone.png, chromium-iphone-15.png, firefox-1024x768@2.png).
+//            Prints "proto: <target>: <file>" or "proto: <target>: <error>" per target (an
+//            unavailable engine's "unavailable: <reason>"), each failing alone, then
+//            "proto: index: <matrix.md>"; exits 0 when one target was captured, else 1
+//   status   the host's pid and the window's target and URL, or "proto: no host running"
+//   targets  starts the host when none runs; the engines, each with its version, availability
+//            or the reason it is unavailable, and capabilities, then the sizes with their metrics
+//   stop     closes the window, ends the host, and waits for it to exit: "proto: stopped", or
+//            "proto: no host running"
+//   install  fetches the pinned browsers into Playwright's cache with playwright-core's own
+//            installer (node servers/node_modules/playwright-core/cli.js install chromium
+//            firefox webkit), never with --with-deps and never under sudo, so no system package
+//            is installed: a browser's missing system library is named where it is used. Then, on
+//            Linux, it places what WebKit's build lacks (proto/webkit-libs.mjs): with nothing
+//            missing, "proto: WebKit's libraries resolve; nothing to place"; else the pinned
+//            Ubuntu packages (proto/webkit-libs.json) providing the missing sonames, fetched over
+//            HTTPS, each held to its SHA-256, their libraries put in WebKit's own two sys/lib
+//            directories alone: "proto: placed <sonames> from <package> <version> into WebKit
+//            <version>"
+//     --refresh-pins   after the installer, moves the pins to the series' current packages
+//            (its -updates pocket, else its release), each served alike by archive.ubuntu.com
+//            and Launchpad, places them, and only once WebKit lacks nothing writes the pin file
+//            of this checkout; --series reads another Ubuntu series, --add pins another package
+//            for the sonames still missing. By hand, for a Playwright bump; never in CI
+// Targets, <engine>/<size>:
+//   engines  chromium, firefox, webkit (launched), agent-chrome (Daniel's Agent Chrome, attached
+//            on 127.0.0.1:9222 where scripts/agent-chrome starts it, never started by the host:
+//            the window is a tab of the host's own in it, sized by emulation, and a switch away
+//            or `stop` leaves the tab open as it was, with no toolbar and its own size)
+//   sizes    a preset: phone-small 360x800@3, phone 390x844@3, tablet 768x1024@2 (each mobile
+//            and touch), laptop 1440x900, desktop 1920x1080; a size of the project file; a
+//            Playwright device by name ("chromium/iPhone 15", its viewport, scale, mobile and
+//            touch flags and user agent); <width>x<height> or <width>x<height>@<scale> (whole
+//            pixels from 120 to 7680, a scale from 0.5 to 4); or window, agent-chrome's own size
+// The project file, optional: .proto.json at the root of the git checkout of the working
+// directory, JSON with only url (the dev site's start URL), sizes (extra sizes by id, each
+// { "width", "height", "scale", "mobile", "touch" }, the last three optional, or
+// { "device": "<Playwright device name>" }) and matrix ({ "engines": [...], "sizes": [...] }, a
+// capture's defaults); a mistake is refused naming the file, the key and the reason.
+// Guards: only http or https URLs on localhost or 127.0.0.1 are opened, any other refused
+// before anything opens, and a link or a script in a window that navigates its page off
+// localhost is blocked, the page left where it was (a frame, a font or a script off localhost
+// still loads); a team session (AGENT_TEAM_ROLE set) is refused before anything is
+// read; the host's runtime directory ($XDG_RUNTIME_DIR/agent-team-proto, else
+// ~/.local/state/agent-team/proto; PROTO_RUNTIME_DIR for tests) is mode 0700 and refused when
+// open to others, and every request to the host carries its token.
+// Seams, for tests (proto/host.mjs's header): PROTO_HEADLESS=1, PROTO_RUNTIME_DIR,
+// PROTO_AGENT_CHROME_URL, PROTO_BROWSERS_PATH, PROTO_TEST_SEAM=1, PROTO_LDD, PROTO_WEBKIT_LIBS_SOURCES and
+// PROTO_WEBKIT_LIBS_FILE (proto/webkit-libs.mjs's header), and PROTO_INSTALLER, the script
+// `install` runs with node in place of playwright-core's cli.js.
+// Exit 0 done; 1 refused or failed, with one line on stderr; 2 a malformed command line.
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { refuseTeamSession } from "../proto/guards.mjs";
+
+refuseTeamSession();
+
+const { readProject, resolveTarget, targetsText, windowLine } = await import("../proto/catalogue.mjs");
+const { checkout, connect } = await import("../proto/client.mjs");
+const { defaultOutDir } = await import("../proto/capture.mjs");
+const { checkLocalUrl } = await import("../proto/guards.mjs");
+const { installerPath } = await import("../proto/playwright.mjs");
+
+const usage = "usage: proto open [<url>] [--target <engine>/<size>] | set <engine>/<size> | capture [--url <url>] [--engine <engine>]... [--size <size>]... [--selector <css>] [--full-page] [--out <dir>] | status | targets | stop | install [--refresh-pins [--series <codename>] [--add <package>]...]";
+const fail = (reason, status = 1) => {
+  process.stderr.write(`proto: ${reason}\n`);
+  process.exit(status);
+};
+const say = (line) => process.stdout.write(`proto: ${line}\n`);
+
+// The header above, without the comment marks, is the --help.
+function help() {
+  const header = [];
+  for (const line of readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1)) {
+    if (!line.startsWith("//")) break;
+    header.push(line.replace(/^\/\/ ?/, ""));
+  }
+  process.stdout.write(`${header.join("\n")}\n`);
+  process.exit(0);
+}
+
+const project = () => readProject(checkout());
+
+async function open(args) {
+  let url;
+  let target;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--target" && i + 1 < args.length) target = args[++i];
+    else if (!args[i].startsWith("-") && url === undefined) url = args[i];
+    else fail(usage, 2);
+  }
+  const settings = project();
+  url = checkLocalUrl(url ?? settings.url);
+  // Checked here too, so a bad target is refused before a host starts.
+  if (target !== undefined) resolveTarget(target, settings);
+  const host = await connect({ start: true });
+  const window = await host.request("POST", "/v1/open", { url, ...(target === undefined ? {} : { target }), project: { file: settings.file, settings: settings.settings } }, { timeoutMs: 90_000 });
+  say(windowLine(window));
+}
+
+async function set(args) {
+  if (args.length !== 1 || args[0].startsWith("-")) fail(usage, 2);
+  const host = await connect();
+  if (!host) fail("no window is open; run `proto open`");
+  const window = await host.request("POST", "/v1/target", { target: args[0] }, { timeoutMs: 90_000 });
+  say(windowLine(window));
+}
+
+async function capture(args) {
+  const body = {};
+  const engines = [];
+  const sizes = [];
+  for (let i = 0; i < args.length; i++) {
+    const value = i + 1 < args.length ? args[i + 1] : undefined;
+    if (args[i] === "--full-page") body.fullPage = true;
+    else if (value === undefined) fail(usage, 2);
+    else if (args[i] === "--url" && body.url === undefined) body.url = args[++i];
+    else if (args[i] === "--engine") engines.push(args[++i]);
+    else if (args[i] === "--size") sizes.push(args[++i]);
+    else if (args[i] === "--selector" && body.selector === undefined) body.selector = args[++i];
+    else if (args[i] === "--out" && body.outDir === undefined) body.outDir = args[++i];
+    else fail(usage, 2);
+  }
+  if (engines.length) body.engines = engines;
+  if (sizes.length) body.sizes = sizes;
+  const root = checkout();
+  if (body.outDir === undefined) {
+    if (root === null) fail("outside a git checkout, proto capture needs --out <an absolute directory>");
+    body.outDir = defaultOutDir(root);
+  }
+  // Checked here too, so a URL off localhost is refused before a host starts.
+  if (body.url !== undefined) body.url = checkLocalUrl(body.url);
+  const settings = readProject(root);
+  const host = await connect({ start: true });
+  const { rows, index } = await host.request("POST", "/v1/capture", { ...body, project: { file: settings.file, settings: settings.settings } }, { timeoutMs: 600_000 });
+  for (const row of rows) say(`${row.target}: ${row.file ?? row.error}`);
+  say(`index: ${index}`);
+  if (!rows.some((row) => row.file)) fail(`no target was captured; see ${index}`);
+}
+
+async function status() {
+  const host = await connect();
+  if (!host) return say("no host running");
+  const { window } = host.status;
+  say(`host ${host.pid}; ${window ? `window ${window.target} on ${window.url}` : "no window"}`);
+}
+
+async function targets() {
+  const settings = project();
+  const host = await connect({ start: true });
+  const listing = await host.request("GET", "/v1/targets");
+  // The sizes of this checkout's project file, which may differ from the window's.
+  process.stdout.write(`${targetsText(listing, settings)}\n`);
+}
+
+async function stop() {
+  const host = await connect();
+  if (!host) return say("no host running");
+  await host.request("POST", "/v1/stop");
+  if (!(await host.stopped(30_000))) fail(`the host ${host.pid} did not exit in 30 s`);
+  say("stopped");
+}
+
+async function install(args) {
+  let refresh = false;
+  let series;
+  const add = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--refresh-pins") refresh = true;
+    else if (args[i] === "--series" && i + 1 < args.length) series = args[++i];
+    else if (args[i] === "--add" && i + 1 < args.length) add.push(args[++i]);
+    else fail(usage, 2);
+  }
+  if (!refresh && (series !== undefined || add.length)) fail(usage, 2);
+  if (process.getuid?.() === 0) fail("proto install never runs as root or under sudo; run it as yourself");
+  // Before playwright-core loads, which reads it once.
+  if (process.env.PROTO_BROWSERS_PATH) process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PROTO_BROWSERS_PATH;
+  const installer = process.env.PROTO_INSTALLER || installerPath;
+  const run = spawnSync(process.execPath, [installer, "install", "chromium", "firefox", "webkit"], { stdio: "inherit", env: process.env });
+  if (run.error) fail(`the installer did not run: ${run.error.message}`);
+  if (run.status !== 0) fail(`playwright-core's installer exited ${run.status ?? run.signal}`);
+  say("the pinned browsers are installed");
+  if (process.platform !== "linux") return;
+  const { placeWebkitLibs, refreshPins, webkitBuild } = await import("../proto/webkit-libs.mjs");
+  const build = webkitBuild();
+  const warn = (line) => process.stderr.write(`proto: ${line}\n`);
+  if (refresh) await refreshPins(build.dir, { build, series, add, say });
+  else await placeWebkitLibs(build.dir, { build, say, warn });
+}
+
+const [command, ...args] = process.argv.slice(2);
+if (command === "--help" || command === "-h") help();
+const commands = { open, set, capture, status, targets, stop, install };
+const simple = new Set(["status", "targets", "stop"]);
+if (!Object.hasOwn(commands, command)) fail(usage, 2);
+if (simple.has(command) && args.length) fail(usage, 2);
+try {
+  await commands[command](args);
+} catch (error) {
+  fail(error.message);
+}

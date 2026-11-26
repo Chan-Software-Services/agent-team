@@ -17,6 +17,12 @@
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
         "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"
       }
+    },
+    "proto": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/proto/bridge.mjs"
+      ]
     }
   }
 }
