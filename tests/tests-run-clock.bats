@@ -6,7 +6,8 @@
 # helper), the empty tree selects every file, and macOS, a missing cc and a malformed command line
 # are refused. Each runs in a checkout of its own, with this checkout's bin/, tests/run,
 # tests/shards and shim, and the vendored bats. The cases that build the shim need Linux and cc,
-# and skip without them unless CLOCK_TESTS=require, which CI's future-clock job sets.
+# and those that run a file under it a dynamically linked jq too, which the test shards' jq is not;
+# each skips without them unless CLOCK_TESTS=require, which CI's future-clock job sets.
 
 load helpers/common
 
@@ -16,14 +17,22 @@ setup() {
   export TEAM_JOBS=2
 }
 
-# Skips the test where the shim cannot be built (no Linux or no cc), unless CLOCK_TESTS=require.
+# Skips the test where the shim cannot be built (no Linux or no cc), or with jq, where a run under
+# it is refused since jq is statically linked (ldd names no dynamic executable), as the jq release
+# binary the test shards install is, unless CLOCK_TESTS=require: needs_shim [jq]
 needs_shim() {
-  if [[ $(uname -s) == Linux ]] && command -v cc >/dev/null; then return 0; fi
+  local why=''
+  if [[ $(uname -s) != Linux ]] || ! command -v cc >/dev/null; then
+    why="the clock shim needs Linux and cc: $(uname -s), cc $(command -v cc || echo missing)"
+  elif [[ ${1:-} == jq ]] && ! ldd "$(command -v jq)" >/dev/null 2>&1; then
+    why="a run under the clock shim needs a dynamically linked jq, and $(command -v jq) is not"
+  fi
+  [[ -n $why ]] || return 0
   if [[ ${CLOCK_TESTS:-} == require ]]; then
-    echo "CLOCK_TESTS=require, and this machine cannot build the shim: $(uname -s), cc $(command -v cc || echo missing)" >&2
+    echo "CLOCK_TESTS=require, but $why" >&2
     return 1
   fi
-  skip "the clock shim needs Linux and cc"
+  skip "$why"
 }
 
 # A checkout of its own at <copy>, committed and tagged base: this checkout's bin/, tests/run,
@@ -73,7 +82,7 @@ path_without() {
 clock_usage="run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
 
 @test "a test comparing a date 30 days ahead with the clock passes with no shift and fails a year ahead" {
-  needs_shim
+  needs_shim jq
   local copy=$BATS_TEST_TMPDIR/copy
   clock_checkout "$copy"
   run -0 "$REPO_ROOT/tests/vendor/bats-core/bin/bats" "$copy/tests/later.bats"
@@ -91,7 +100,7 @@ clock_usage="run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bat
 }
 
 @test "a test tagged wall-clock is not run a year ahead, and is named after the file lines" {
-  needs_shim
+  needs_shim jq
   local copy=$BATS_TEST_TMPDIR/copy
   clock_checkout "$copy"
   # Written by printf, since bats rewrites a line of the test file that begins with @test.
