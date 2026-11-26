@@ -4,5 +4,7 @@
 # Claude Code compacts a builder about 32k under the window.
 # A whole number of tokens, a multiple of 1000 and at least 100000, on the one line below that is
 # neither empty nor a comment.
-# Read by bin/lib/context-mark.sh, for team-worker and team-next.
+# It is also the context past which team-tokens' report counts a session long.
+# Read by bin/lib/context-mark.sh, for team-worker and team-next, and by team-tokens, which reads
+# it by the same rule.
 tokens=250000

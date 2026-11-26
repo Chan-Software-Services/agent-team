@@ -1,5 +1,6 @@
 # The one Bash reader of bin/lib/context-mark, the builders' context mark, for team-worker and
-# team-next. Sourced after team.sh: source "$TEAM_LIB/context-mark.sh"
+# team-next (team-tokens, in Python, reads it by the same rule).
+# Sourced after team.sh: source "$TEAM_LIB/context-mark.sh"
 #
 # context_mark: prints the mark in tokens from this checkout's bin/lib/context-mark, whose lines
 # but comments (#) and empty ones are one tokens=<n> line, <n> a whole number of tokens of six to

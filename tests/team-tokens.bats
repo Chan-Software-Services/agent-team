@@ -468,7 +468,7 @@ long_fixture() {
     reply("2026-10-20T08:30:00.000Z"; "c6c6c6c6"; "req_c6_1"; 10000; 250000)' >"$TEAM_HOME/usage/home-pc/2026-10-20.jsonl"
 }
 
-@test "the report gives each worker role's sessions past 250k of context, and each task's" {
+@test "the report gives each worker role's sessions past the context mark, and each task's" {
   long_fixture
   report_json
   assert_equal "$(q '.long_sessions.threshold')" 250000
@@ -503,6 +503,195 @@ long_fixture() {
   assert_contains "$output" "| T3 | (unknown) | builder |"
   [[ $output != *"| T2 | (unknown) | builder |"* ]]
   assert_contains "$output" "The 15 of 17 rows with the most \$w; --json gives every one."
+}
+
+# A copy of the code's bin/ of the test's own as CODE_CHECKOUT, for context_mark_is to give it
+# another mark.
+test_checkout() {
+  export CODE_CHECKOUT=$BATS_TEST_TMPDIR/code
+  mkdir -p "$CODE_CHECKOUT"
+  copy_bin "$CODE_CHECKOUT/bin"
+}
+
+# The long sessions' threshold is bin/lib/context-mark's: under another, the long sessions table and
+# the builder compactions both name it.
+@test "the long sessions threshold and the builder compactions' mark are bin/lib/context-mark's" {
+  long_fixture
+  test_checkout
+  context_mark_is tokens=300000
+  report_json
+  # a5's largest context is 300k and c6's 260k: neither passes 300k.
+  assert_equal "$(q '[.long_sessions.threshold, .builder_compactions.mark, .long_sessions.tasks]')" '[300000,300000,[]]'
+  assert_equal "$(q '.long_sessions.roles[] | [.role, .long, .past_w]' | paste -sd ' ')" '["builder",0,0] ["reviewer",0,0]'
+  run_bin -0 --separate-stderr team-tokens --until 2026-10-21T16:00Z
+  assert_contains "$output" "whose largest context passed 300k,"
+  context_mark_is tokens=299000
+  report_json
+  assert_equal "$(q '[.long_sessions.threshold, [.long_sessions.tasks[] | [.task, .past_w]]]')" '[299000,[["T5",0.236]]]'
+}
+
+@test "a malformed context mark fails the report, and neither export nor time" {
+  test_checkout
+  local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
+  for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=abc "tokens=250000 " window=250000 \
+    $'tokens=250000\r' $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' unreadable missing; do
+    echo "mark: $bad"
+    case $bad in
+      missing) rm -f "$mark" ;;
+      unreadable) context_mark_is tokens=250000 && chmod 000 "$mark" ;;
+      *) context_mark_is "$bad" ;;
+    esac
+    run_bin -1 --separate-stderr team-tokens --json
+    assert_equal "$stderr" "team-tokens: $(context_mark_refusal)"
+    assert_equal "$output" ""
+  done
+  run_bin -1 --separate-stderr team-tokens
+  assert_equal "$stderr" "team-tokens: $(context_mark_refusal)"
+  run_bin -0 team-tokens export
+  assert_contains "$output" "wrote 2 day files"
+  run_bin -0 --separate-stderr team-tokens time
+  assert_equal "$stderr" ""
+}
+
+# One reply of <session>'s main conversation on home-pc's day file at 2026-10-20T<time>, request
+# req_<request>, reading <read> tokens of cache on Opus 5.5 ($0.20 a million) and writing no output:
+# $w is read * 0.2 / 1e6. With <agent>, a subagent's; on <model> when given:
+# compact_row <time> <request> <session> <read> [<agent> [<model>]]
+compact_row() {
+  jq -nc --arg ts "2026-10-20T$1.000Z" --arg request "req_$2" --arg session "$3-0000-4000-8000-000000000000" \
+    --argjson read "$4" --arg agent "${5:-}" --arg model "${6:-claude-opus-5-5}" \
+    '{ts: $ts, machine: "home-pc", session: $session, project_dir: "-home-dan-agent-team--claude-worktrees-1",
+      model: $model, request: $request, input: 0, cache_write_1h: 0, cache_write_5m: 0, cache_read: $read, output: 0}
+     + (if $agent == "" then {} else {agent: $agent} end)' >>"$TEAM_HOME/usage/home-pc/2026-10-20.jsonl"
+}
+
+# A ledger line of 2026-10-20, its other fields a JSON object's: ledger_row <time> <task> <event> [<more>]
+ledger_row() {
+  local more=${4:-}
+  jq -nc --arg ts "2026-10-20T$1Z" --arg task "$2" --arg event "$3" --argjson more "${more:-null}" \
+    '{ts: $ts, task: $task, event: $event} + $more' >>"$TEAM_HOME/ledger.jsonl"
+}
+
+# A launch of <role>: launch_row <time> <task> <role> <session> [<more>]
+launch_row() {
+  local more=${5:-}
+  ledger_row "$1" "$2" launch "$(jq -nc --arg role "$3" --arg session "$4" --argjson more "${more:-null}" \
+    '{role: $role, session: $session, worktree: "/home/dan/agent-team/.claude/worktrees/1", toolkits: [], machine: "home-pc"} + $more')"
+}
+
+# A report of its own for the builder compactions, on 2026-10-20 from 08:00, each reply's $w its
+# cache read's ($0.20 a million):
+# - T5's builder a5, launched on a brief with the 250k window: 120k, 215k, 40k, 60k, one compaction
+#   at 08:20 from 215k, then two replies (0.008, 0.012: 0.02 $w); its subagent's 400k then 10k is no
+#   main conversation's. After 08:20 the ledger says it asked a question (not shown), paused for a
+#   stow, was blocked and finished; before it, a done of its own (not shown); another session's done
+#   at 08:25 (not shown). Claude Code's own error reply at 08:15, with no usage, is between 215k
+#   and 40k;
+# - T5's builder b5, no brief and no window logged: 150k, 70k (a compaction at 09:10), 140k, 60k (a
+#   second, from 140k), then 200k and 90k (a third, from 200k): its first at 09:10 starts the count,
+#   so five replies after, 0.112 $w; no event after;
+# - T6's builder c6: 300k, an error reply with no usage, then 400k, past the mark with no drop: long,
+#   not compacted;
+# - T6's builder d6: 90k then 20k (under 100k before, so no compaction) and 150k then 75k (exactly
+#   half, so no compaction);
+# - T6's reviewer e6, which compacts: not a builder's;
+# - T0's builder f0, the load check's, which compacts: team-test's.
+compaction_fixture() {
+  rm -r "${HOME:?}/.claude/projects"
+  mkdir -p "$TEAM_HOME/usage/home-pc"
+  : >"$TEAM_HOME/ledger.jsonl"
+  ledger_row 07:00:00 T5 opened '{"project":"agent-team"}'
+  launch_row 07:01:00 T5 builder a5a5a5a5 '{"brief":"brief-build-01","autocompact":"250k"}'
+  launch_row 07:02:00 T5 builder b5b5b5b5
+  launch_row 07:03:00 T6 builder c6c6c6c6 '{"autocompact":"250k"}'
+  launch_row 07:04:00 T6 builder d6d6d6d6 '{"autocompact":"250k"}'
+  launch_row 07:05:00 T6 reviewer e6e6e6e6
+  launch_row 07:06:00 T0 builder f0f0f0f0 '{"autocompact":"250k"}'
+  compact_row 08:00:00 a5_1 a5a5a5a5 120000
+  compact_row 08:10:00 a5_2 a5a5a5a5 215000
+  compact_row 08:12:00 a5_s1 a5a5a5a5 400000 agent-x
+  compact_row 08:13:00 a5_s2 a5a5a5a5 10000 agent-x
+  compact_row 08:15:30 a5_e a5a5a5a5 0 "" "<synthetic>"
+  compact_row 08:20:00 a5_3 a5a5a5a5 40000
+  compact_row 08:30:00 a5_4 a5a5a5a5 60000
+  compact_row 09:00:00 b5_1 b5b5b5b5 150000
+  compact_row 09:10:00 b5_2 b5b5b5b5 70000
+  compact_row 09:20:00 b5_3 b5b5b5b5 140000
+  compact_row 09:30:00 b5_4 b5b5b5b5 60000
+  compact_row 09:40:00 b5_5 b5b5b5b5 200000
+  compact_row 09:50:00 b5_6 b5b5b5b5 90000
+  compact_row 09:00:00 c6_1 c6c6c6c6 300000
+  compact_row 09:05:00 c6_e c6c6c6c6 0 "" "<synthetic>"
+  compact_row 09:10:00 c6_2 c6c6c6c6 400000
+  compact_row 09:00:00 d6_1 d6d6d6d6 90000
+  compact_row 09:10:00 d6_2 d6d6d6d6 20000
+  compact_row 09:20:00 d6_3 d6d6d6d6 150000
+  compact_row 09:30:00 d6_4 d6d6d6d6 75000
+  compact_row 09:00:00 e6_1 e6e6e6e6 200000
+  compact_row 09:10:00 e6_2 e6e6e6e6 20000
+  compact_row 09:00:00 f0_1 f0f0f0f0 200000
+  compact_row 09:10:00 f0_2 f0f0f0f0 20000
+  ledger_row 08:15:00 T5 'done' '{"role":"builder","session":"a5a5a5a5"}'
+  ledger_row 08:20:00 T5 blocked '{"role":"builder","session":"a5a5a5a5","reason":"at the compaction reply"}'
+  ledger_row 08:22:00 T5 question '{"role":"builder","session":"a5a5a5a5","text":"which?"}'
+  ledger_row 08:23:00 T5 paused '{"role":"builder","session":"a5a5a5a5","reason":"stowed","cause":"stow"}'
+  ledger_row 08:25:00 T6 'done' '{"role":"builder","session":"c6c6c6c6"}'
+  ledger_row 08:40:00 T5 blocked '{"role":"builder","session":"a5a5a5a5","reason":"no network"}'
+  ledger_row 08:50:00 T5 'done' '{"role":"builder","session":"a5a5a5a5"}'
+}
+
+@test "the report names each builder session that compacted, with what came after its first compaction" {
+  compaction_fixture
+  report_json
+  assert_equal "$(q '.builder_compactions.mark')" 250000
+  assert_equal "$(q '.builder_compactions.sessions[]' | paste -sd ' ')" \
+    '{"task":"T5","session":"b5b5b5b5","brief":null,"autocompact":"default","compactions":3,"max_before":200000,"replies_after":5,"w_after":0.112,"after":[]} {"task":"T5","session":"a5a5a5a5","brief":"brief-build-01","autocompact":"250k","compactions":1,"max_before":215000,"replies_after":2,"w_after":0.02,"after":[{"event":"paused","cause":"stow"},{"event":"blocked"},{"event":"done"}]}'
+  # The cache rebuilds table counts the same compactions: a5's one and b5's three, and e6's.
+  assert_equal "$(q '[.rebuilds.roles[] | [.role, .compactions]]')" '[["builder",4],["reviewer",1]]'
+  # c6 grew past the mark with no drop: long, not compacted.
+  assert_equal "$(q '[.long_sessions.tasks[] | select(.role == "builder") | [.task, .max_context]]')" '[["T6",400000]]'
+  run_bin -0 --separate-stderr team-tokens --until 2026-10-21T16:00Z
+  assert_contains "$output" $'\n'"## Builder compactions"$'\n'
+  section=${output#*$'\n'"## Builder compactions"$'\n'}
+  section=${section%%$'\n'"## Cache rebuilds"$'\n'*}
+  assert_contains "$section" "| Task | Session | Brief | Window | Compactions | Largest before | Replies after | \$w after | Events after |"
+  assert_contains "$section" "| T5 | b5b5b5b5 | none | default | 3 | 200k | 5 | 0.11 | none yet |"
+  assert_contains "$section" "| T5 | a5a5a5a5 | brief-build-01 | 250k | 1 | 215k | 2 | 0.02 | paused (stow), blocked, done |"
+  [[ $section == *b5b5b5b5*a5a5a5a5* ]]
+  [[ $section != *d6d6d6d6* && $section != *e6e6e6e6* && $section != *f0f0f0f0* && $section != *" more"* ]]
+  # --until stops the events with the replies, and --task keeps that task's sessions.
+  run_bin -0 team-tokens --until 2026-10-20T08:30Z --json
+  assert_equal "$(jq -c '[.builder_compactions.sessions[] | [.session, .replies_after, [.after[].event]]]' <<<"$output")" \
+    '[["a5a5a5a5",2,["paused"]]]'
+  report_json --task T6
+  assert_equal "$(q '.builder_compactions.sessions')" '[]'
+  run_bin -0 team-tokens --until 2026-10-21T16:00Z --task T6
+  assert_contains "$output" "## Builder compactions"$'\n\n'"No builder session compacted in the window."
+  run_bin -0 team-tokens --help
+  assert_contains "$output" "builder compactions"
+  assert_contains "$output" "builder_compactions {mark, sessions"
+}
+
+@test "the builder compactions table shows the top 15 sessions by \$w after the first, and says how many more" {
+  rm -r "${HOME:?}/.claude/projects"
+  mkdir -p "$TEAM_HOME/usage/home-pc"
+  : >"$TEAM_HOME/ledger.jsonl"
+  # Seventeen builders, T1 to T17, each compacting once from 200k, the $w after growing with its
+  # number; T18 and T19 tie with T17's, which the task then the session orders.
+  local n
+  for n in {1..19}; do
+    launch_row 07:00:00 "T$n" builder "$((n + 10000000))"
+    compact_row 08:00:00 "${n}_1" "$((n + 10000000))" 200000
+    compact_row 08:10:00 "${n}_2" "$((n + 10000000))" "$(((n < 18 ? n : 17) * 1000))"
+  done
+  report_json
+  assert_equal "$(q '.builder_compactions.sessions | [length, (map(.task) | .[0:4]), .[-1].task]')" '[19,["T17","T18","T19","T16"],"T1"]'
+  run_bin -0 --separate-stderr team-tokens --until 2026-10-21T16:00Z
+  section=${output#*$'\n'"## Builder compactions"$'\n'}
+  section=${section%%$'\n'"## Cache rebuilds"$'\n'*}
+  assert_contains "$section" "| T5 | 10000005 |"
+  [[ $section != *"| T4 | 10000004 |"* ]]
+  assert_contains "$section" "and 4 more; --json gives every one."
 }
 
 @test "the report gives cost per outcome, relaunches and re-reviews from the ledger" {
@@ -654,7 +843,7 @@ long_fixture() {
   assert_contains "$output" "21 replies in 13 sessions, 1.5M tokens, 6.9 \$w; 17 ledger events in the window."
   assert_contains "$output" "Day files: home-pc through 2026-10-20, laptop through 2026-10-21; and 0 replies from this machine's transcripts since its last."
   for heading in "Token types" "Models" "Machines" "Roles" "Projects and tasks" "Days (UTC)" "Sessions and context" "Context" \
-    "Long sessions" "Cache rebuilds" "Cost per outcome" "Relaunches" "5-hour blocks" "The last seven days"; do
+    "Long sessions" "Builder compactions" "Cache rebuilds" "Cost per outcome" "Relaunches" "5-hour blocks" "The last seven days"; do
     assert_contains "$output" $'\n'"## $heading"$'\n'
   done
   assert_contains "$output" "| cache_write_1h | 0.7 | 44.8% | 5.2 | 75.3% |"
@@ -727,6 +916,7 @@ long_fixture() {
   run_bin -0 team-tokens --until 2026-10-21T16:00Z
   assert_contains "$output" "0 replies in 0 sessions, 0.0M tokens, 0.00 \$w; 0 ledger events in the window."
   assert_contains "$output" "## Roles"$'\n\n'"None in the window."
+  assert_contains "$output" "## Builder compactions"$'\n\n'"No builder session compacted in the window."
   run_bin -0 team-tokens --until 2026-10-21T16:00Z --json
   assert_equal "$(jq -c '[.since, .totals, .blocks, .current_block]' <<<"$output")" \
     '["2026-10-21T16:00:00Z",{"replies":0,"sessions":0,"tokens":0,"w":0},[],null]'

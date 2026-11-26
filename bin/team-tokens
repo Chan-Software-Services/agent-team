@@ -10,7 +10,9 @@
 # day file) and this machine's transcripts from the day of its last day file on (all of them when
 # it has none), one reply per request id wherever it appears, and weighs each reply at
 # bin/lib/prices.json's list prices ($w: a weight, not a bill), each cache write at its own
-# lifetime; a model with no price is weighed as claude-opus-5-5, with a warning on stderr. It
+# lifetime; a model with no price is weighed as claude-opus-5-5, with a warning on stderr. The
+# context mark, bin/lib/context-mark, is the long sessions table's threshold: one that is malformed
+# or missing fails the report (exit 1, naming the file and its rule), never export or time. It
 # joins each session to the ledger:
 #   a launch whose 8-character session id begins the session's gives its role and task (task T0
 #     is team-test); the launch's machine is its own, else the machine its session's replies
@@ -47,15 +49,24 @@
 #   context          the main conversations' replies by their context, 0-50k to 700k-2,000k:
 #                    replies, $w, $w per reply, and the share of it in cache reads
 #   long sessions    per worker role, its main conversations whose largest context (as the
-#                    sessions table measures it) passed 250k, against the role's: how many, their
-#                    $w and its share of the role's, and the $w of their replies past 250k; then
-#                    per task and role those sessions, their $w and that of their replies past
-#                    250k, their largest context and the task's tickets done in the window, by $w,
-#                    the top 15 (--json gives every one)
+#                    sessions table measures it) passed the context mark (250,000 tokens today),
+#                    against the role's: how many, their $w and its share of the role's, and the $w
+#                    of their replies past the mark; then per task and role those sessions, their $w
+#                    and that of their replies past the mark, their largest context and the task's
+#                    tickets done in the window, by $w, the top 15 (--json gives every one)
+#   builder compactions
+#                    each builder main conversation with a compaction (as the cache rebuilds table
+#                    counts one): its task, session (8 characters), launch's brief (or none) and
+#                    auto-compaction window (default when its launch logged none), its compactions,
+#                    the largest context before one, the replies from the first compaction's on and
+#                    their $w, and, in order, the ledger events naming its session after that
+#                    reply's time and up to --until: done, paused (with its cause) and blocked, or
+#                    none yet; by that $w, the top 15, saying how many more (--json gives every one)
 #   cache rebuilds   per role, a reply after a session's first writing over half of a context
 #                    above 50k anew, and the extra $w (each write's price minus a read's); a
-#                    compaction, a context below half of the reply before's, from over 100k; and
-#                    the gaps before the rebuilds
+#                    compaction, a context below half of the reply before's, from over 100k, a reply
+#                    with no context (Claude Code's own error replies) passed over; and the gaps
+#                    before the rebuilds
 #   cost per outcome each worker role's sessions' $w, subagents included; the window's merges,
 #                    tickets done, reviews and launches; and worker $w per merged PR, per ticket
 #                    and per review over the tasks complete in the data (every launch of theirs
@@ -125,20 +136,22 @@
 # filters {task, machine}, sources {machine: last day file, or null}, live (this machine's
 # replies read from its transcripts), totals {replies, sessions, tokens, w}, ledger_events (in
 # the window), token_types, models, machines, roles, projects, tasks, days, sessions, context,
-# long_sessions {threshold (250000), roles [{role, sessions, long, w, role_w, past_w}], tasks
-# [{task, project, role, sessions, w, past_w, max_context, tickets_done}] (every one, by w)},
-# rebuilds {roles, gap_minutes}, outcomes {sessions, counts, complete_tasks, measures,
-# reviewer_models, builder_models [{model, launches, with_replies, tasks, tickets_done, prs, w,
-# w_per_task, reply_models}], builder_toolkits [{project, toolkits, launches, with_replies, tickets_done, w,
-# w_per_ticket}], reviewer_toolkits [{project, toolkits, launches, with_replies, reviews, findings,
-# w, w_per_review}] (each sorted by project, then toolkits, an empty list first; a ratio with no
-# outcome null)}, relaunches {reasons, all, warmup_w}, rereviews {count, complete, w, median_w,
-# mean_w}, blocks, current_block (or null), seven_days {from, to, machines, all}, quota (team-quota
-# status --json's object, its model_note included, or null when it could not be read), quota_error
-# (why, or null) and coordinator (or null) {machine, sessions, unread_replies, turns, all,
-# daniel_turns, waits {all, idle, mid_turn}, compactions}, its times in seconds; each list's items
-# are objects named after the table's columns, tokens are counts and $w has six decimals, a whole
-# number printed as an integer.
+# long_sessions {threshold (the context mark), roles [{role, sessions, long, w, role_w, past_w}],
+# tasks [{task, project, role, sessions, w, past_w, max_context, tickets_done}] (every one, by w)},
+# builder_compactions {mark, sessions [{task, session, brief (or null), autocompact, compactions,
+# max_before, replies_after, w_after, after [{event, cause (a paused event's, when it names one)}]}]
+# (every one, by w_after, then task and session)}, rebuilds {roles, gap_minutes}, outcomes
+# {sessions, counts, complete_tasks, measures, reviewer_models, builder_models [{model, launches,
+# with_replies, tasks, tickets_done, prs, w, w_per_task, reply_models}], builder_toolkits [{project,
+# toolkits, launches, with_replies, tickets_done, w, w_per_ticket}], reviewer_toolkits [{project,
+# toolkits, launches, with_replies, reviews, findings, w, w_per_review}] (each sorted by project,
+# then toolkits, an empty list first; a ratio with no outcome null)}, relaunches {reasons, all,
+# warmup_w}, rereviews {count, complete, w, median_w, mean_w}, blocks, current_block (or null),
+# seven_days {from, to, machines, all}, quota (team-quota status --json's object, its model_note
+# included, or null when it could not be read), quota_error (why, or null) and coordinator (or
+# null) {machine, sessions, unread_replies, turns, all, daniel_turns, waits {all, idle, mid_turn},
+# compactions}, its times in seconds; each list's items are objects named after the table's columns,
+# tokens are counts and $w has six decimals, a whole number printed as an integer.
 #
 # export reads this machine's Claude Code transcripts (~/.claude/projects/*/*.jsonl and each
 # session's subagents/*.jsonl) and writes one line per assistant reply into the team home's
@@ -1046,9 +1059,10 @@ WORKERS = ("planner", "builder", "reviewer", "ops")
 # The roles the sessions, days and rebuild tables show.
 SESSION_ROLES = ("coordinator", "assistant", "planner", "builder", "reviewer", "ops")
 CONTEXT_EDGES = (0, 50e3, 100e3, 200e3, 400e3, 700e3, 2e6)
-# The context past which a session ran long, as the long sessions table counts it.
-LONG = 250e3
-# The rows of the long sessions table's tasks the Markdown report prints.
+# The line of bin/lib/context-mark that is neither empty nor a comment.
+MARK_LINE = re.compile(r"tokens=([1-9][0-9]{5,8})")
+# The rows the Markdown report prints of the long sessions table's tasks, and of the builder
+# compactions table.
 LONG_TASKS_SHOWN = 15
 FIVE_HOURS = timedelta(hours=5)
 WEEK = timedelta(days=7)
@@ -1077,6 +1091,30 @@ def tok(r):
 
 def total(rows, key="w"):
     return sum(r[key] for r in rows)
+
+
+# A main conversation's compactions, as (reply before, reply): each reply whose context is below
+# half of the one before's, which was over 100k. A reply with no context is passed over, as Claude
+# Code's own <synthetic> error replies are: it read nothing, so it shows no compaction.
+def compactions_of(replies):
+    read = [r for r in replies if ctx(r)]
+    return [(before, r) for before, r in zip(read, read[1:]) if ctx(before) > 100e3 and ctx(r) < 0.5 * ctx(before)]
+
+
+# The context mark in tokens, from bin/lib/context-mark, past which a session ran long: read by the
+# rule of bin/lib/context-mark.sh, the Bash reader, whose line this one fails with.
+def context_mark(path):
+    lines = []
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace", newline="") as file:
+                lines = [line for line in file.read().split("\n") if line and not line.startswith("#")]
+        except OSError:
+            pass
+    found = MARK_LINE.fullmatch(lines[0]) if len(lines) == 1 else None
+    if not found or int(found.group(1)) % 1000:
+        fail(f"{path} is malformed: it needs one tokens=<n> line, a whole number of tokens that is a multiple of 1000 and at least 100000")
+    return int(found.group(1))
 
 
 # The q-th percentile by nearest rank: the ceil(q * n)-th smallest.
@@ -1582,6 +1620,7 @@ def build_report(opts):
     here = os.path.dirname(os.path.abspath(__file__))
     code = re.sub(r"/\.claude/worktrees/[^/]+$", "", os.path.dirname(here))
     prices = Prices(os.path.join(here, "lib", "prices.json"))
+    mark = context_mark(os.path.join(here, "lib", "context-mark"))
     replies, sources, live = load_replies(team, home, machine)
     ledger = read_ledger(team)
     launches = [e for e in ledger if e.get("event") == "launch" and isinstance(e.get("session"), str)]
@@ -1735,14 +1774,14 @@ def build_report(opts):
                 {"from": int(low), "to": int(high), "replies": len(rs), "w": r6(total(rs)), "cache_read_w": r6(sum(r["wt"]["cache_read"] for r in rs))}
             )
 
-    # Each worker role's main conversations whose largest context in the window passed LONG, and
+    # Each worker role's main conversations whose largest context in the window passed the mark, and
     # per task and role those sessions, their largest context and the task's tickets done.
     long_roles, long_tasks = [], collections.defaultdict(list)
     for role in WORKERS:
         ss = [v for k, v in sessions.items() if classes[k][0] == role]
         if not ss:
             continue
-        long = [v for v in ss if max(map(ctx, v)) > LONG]
+        long = [v for v in ss if max(map(ctx, v)) > mark]
         long_roles.append(
             {
                 "role": role,
@@ -1750,13 +1789,13 @@ def build_report(opts):
                 "long": len(long),
                 "w": r6(sum(total(v) for v in long)),
                 "role_w": r6(sum(total(v) for v in ss)),
-                "past_w": r6(sum(r["w"] for v in long for r in v if ctx(r) > LONG)),
+                "past_w": r6(sum(r["w"] for v in long for r in v if ctx(r) > mark)),
             }
         )
         for v in long:
             long_tasks[(v[0]["task"], role)].append(v)
     report["long_sessions"] = {
-        "threshold": int(LONG),
+        "threshold": mark,
         "roles": long_roles,
         "tasks": sorted(
             (
@@ -1766,7 +1805,7 @@ def build_report(opts):
                     "role": role,
                     "sessions": len(vs),
                     "w": r6(sum(total(v) for v in vs)),
-                    "past_w": r6(sum(r["w"] for v in vs for r in v if ctx(r) > LONG)),
+                    "past_w": r6(sum(r["w"] for v in vs for r in v if ctx(r) > mark)),
                     "max_context": max(ctx(r) for v in vs for r in v),
                     "tickets_done": kinds_by_task.get(name, collections.Counter())["ticket-done"],
                 }
@@ -1774,6 +1813,43 @@ def build_report(opts):
             ),
             key=lambda x: (-x["w"], str(x["task"]), x["role"]),
         ),
+    }
+
+    # Each builder main conversation that compacted, with what came from its first compaction on.
+    # A session's launch is its latest, as classify takes it.
+    launch_of = {e["session"][:8]: e for e in launches}
+    ends = group(
+        [e for e in ledger if e.get("event") in ("done", "paused", "blocked") and isinstance(e.get("session"), str) and e["_t"] <= until],
+        lambda e: e["session"][:8],
+    )
+    builder_compactions = []
+    for session, v in sessions.items():
+        if classes[session][0] != "builder":
+            continue
+        found = compactions_of(v)
+        if not found:
+            continue
+        short, first = session[:8], v.index(found[0][1])
+        builder_compactions.append(
+            {
+                "task": v[0]["task"],
+                "session": short,
+                "brief": launch_of[short].get("brief"),
+                "autocompact": launch_of[short].get("autocompact", "default"),
+                "compactions": len(found),
+                "max_before": max(ctx(before) for before, _ in found),
+                "replies_after": len(v) - first,
+                "w_after": r6(total(v[first:])),
+                "after": [
+                    {"event": e["event"], **({"cause": e["cause"]} if e["event"] == "paused" and "cause" in e else {})}
+                    for e in ends.get(short, [])
+                    if e["_t"] > v[first]["t"]
+                ],
+            }
+        )
+    report["builder_compactions"] = {
+        "mark": mark,
+        "sessions": sorted(builder_compactions, key=lambda x: (-x["w_after"], str(x["task"]), x["session"])),
     }
 
     rebuilds, gaps = [], []
@@ -1789,8 +1865,7 @@ def build_report(opts):
                     n_rebuilds += 1
                     extra += (r["cache_write_1h"] * (p["cache_write_1h"] - p["cache_read"]) + r["cache_write_5m"] * (p["cache_write_5m"] - p["cache_read"])) / 1e6
                     gaps.append((r["t"] - before["t"]).total_seconds() / 60)
-                if ctx(before) > 100e3 and ctx(r) < 0.5 * ctx(before):
-                    n_compactions += 1
+            n_compactions += len(compactions_of(v))
         rebuilds.append({"role": role, "rebuilds": n_rebuilds, "extra_w": r6(extra), "role_w": r6(sum(total(v) for v in ss)), "compactions": n_compactions})
     report["rebuilds"] = {
         "roles": rebuilds,
@@ -2151,9 +2226,24 @@ def render(report):
     if len(longs["tasks"]) > LONG_TASKS_SHOWN:
         P(f"\nThe {LONG_TASKS_SHOWN} of {len(longs['tasks'])} rows with the most $w; --json gives every one.")
 
+    P("\n## Builder compactions\n")
+    packed = report["builder_compactions"]["sessions"]
+    if packed:
+        P("Each builder main conversation in the window that compacted, its replies and $w from the first compaction's "
+          "on, and its ledger events after that:\n")
+        P(table(["Task", "Session", "Brief", "Window", "Compactions", "Largest before", "Replies after", "$w after", "Events after"],
+                [[x["task"], x["session"], x["brief"] or "none", x["autocompact"], x["compactions"], fk(x["max_before"]),
+                  x["replies_after"], fd(x["w_after"]),
+                  ", ".join(e["event"] + (f" ({e['cause']})" if "cause" in e else "") for e in x["after"]) or "none yet"]
+                 for x in packed[:LONG_TASKS_SHOWN]]))
+        if len(packed) > LONG_TASKS_SHOWN:
+            P(f"\nand {len(packed) - LONG_TASKS_SHOWN} more; --json gives every one.")
+    else:
+        P("No builder session compacted in the window.")
+
     P("\n## Cache rebuilds\n")
     P("A rebuild is a reply after a session's first writing over half of a context above 50k anew; a compaction, a context "
-      "below half of the reply before's, from over 100k.\n")
+      "below half of the reply before's, from over 100k, a reply with no context passed over.\n")
     rb = report["rebuilds"]
     P(table(["Role", "Rebuilds", "Their extra $w (write minus read)", "Share of the role's $w", "Compactions"],
             [[x["role"], x["rebuilds"], fd(x["extra_w"]), share(x["extra_w"], x["role_w"]), x["compactions"]] for x in rb["roles"]]))
