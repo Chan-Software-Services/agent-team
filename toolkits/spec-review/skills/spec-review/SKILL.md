@@ -56,7 +56,7 @@ escalated: none
 ```
 
 - `<task>` is the task's id when you know it, else the task directory's name.
-- A reader's line is `ran on <model>`, `ran on <model> on retry` or `not run: <why>`; `<model>` is the `--model` alias, else the session's model when the agent's `model` is `inherit`.
+- A reader's line is `ran on <model>`, `ran on <model> on retry` or `not run: <why>`; `<model>` is the `--model` alias, else `opus`, the agent's own `model`.
 - Each item of the readiness reader's "Findings" is one row, its text verbatim.
 - Each item of the paraphrase's "Could not follow" is one row too, reader `spec-paraphrase`, severity `note`, kind `could-not-follow`, so no passage a reader raised goes unsorted.
 - Escape a `|` in a finding as `\|`.

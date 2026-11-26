@@ -97,6 +97,10 @@ SH
   run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
   assert_equal "$(tail -n 1 <<<"$output")" \
     "send to T7-builder (b0000001, 250k): T7 STOW; its PAUSED stowed goes to team-next, which launches the round"
+  # Under the mark, the holder takes the round.
+  live b0000001 249000
+  run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+  assert_contains "$(tail -n 1 <<<"$output")" "send to T7-builder (b0000001, 249k): T7 fix findings 3"
   live
   run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
   assert_contains "$output" "already logged review verdict=findings"
@@ -105,6 +109,37 @@ SH
   # Nothing sent back: no round.
   run_bin -0 --separate-stderr team-next T7 --sent-back none -- "T7 DONE findings .scratch/task/review.md ${counts/note-before:0/note-before:1} before=2 guarded=none"
   assert_equal "$(tail -n 1 <<<"$output")" "no hand-off: the review sent nothing back, so there is no fix round"
+}
+
+@test "the fix round's mark is bin/lib/context-mark's: under another, a holder past 250k takes the round" {
+  code_checkout
+  context_mark_is tokens=300000
+  reviewing "$sha"
+  pr_on_github "$sha"
+  live b0000001 260000
+  run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+  assert_contains "$(tail -n 1 <<<"$output")" "send to T7-builder (b0000001, 260k): T7 fix findings 3"
+  live b0000001 300000
+  run_bin -0 --separate-stderr team-next T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+  assert_equal "$(tail -n 1 <<<"$output")" \
+    "send to T7-builder (b0000001, 300k): T7 STOW; its PAUSED stowed goes to team-next, which launches the round"
+}
+
+@test "a missing or malformed context mark refuses any team-next run, and logs nothing" {
+  code_checkout
+  reviewing "$sha"
+  pr_on_github "$sha"
+  live b0000001 120000
+  local bad reason
+  reason="team-next: $(context_mark_refusal)"
+  for bad in tokens=250 missing; do
+    if [[ $bad == missing ]]; then rm -f "$CODE_CHECKOUT/bin/lib/context-mark"; else context_mark_is "$bad"; fi
+    refused "$reason" T7 --sent-back 3 -- "T7 DONE findings .scratch/task/review.md ${counts/blocking:0/blocking:1} before=none guarded=none"
+    refused "$reason" T7 -- "T7 PAUSED stowed"
+    refused "$reason" T7 --fill
+    refused "$reason" T7 --ci
+  done
+  assert_equal "$(outside_calls)" ""
 }
 
 @test "a findings round's look names the PR's own failed checks of the reviewed head and their report in the holder's message, logged once, infrastructure and roll-ups left out" {
