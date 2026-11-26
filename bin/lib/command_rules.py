@@ -24,7 +24,7 @@ row refuses ends the walk: it prints one JSON line, {"rule": <id>, "reason": <te
 <text or null>, "where": <text or null>}, the reason being the text command-guard puts after
 "Blocked by command-guard: ",
 and the allowed way the row's, or one a delete row's refusal names of its own (a relative path
-read from a cd's directory), null for every row but force-push and the kill and delete rows; where, for a call of
+read from a cd's directory), null for every row but force-push, docker-run and the kill and delete rows; where, for a call of
 more than one line, "It stands on line <n> of the call: <the line>", the first line whose own walk
 runs the refused command, else the first holding each of its words (one outside a heredoc's body
 first), and, after a heredoc's closing line, "; the heredoc opened on line <n> (<its operator and
@@ -155,6 +155,13 @@ The rows, in order:
     bot's files. Each read command by command, never across a call's other commands, as the deny
     rules they replace in settings/worker.json and assistant.settings.json did (the coordinator,
     which runs no command-guard, keeps its own).
+  docker-run, for a planner, builder or reviewer alone (a gate agent, the assistant and an ops
+    session pass): docker, past its global options (-H, --host, -c, --context, --config, -l,
+    --log-level and the --tls options with a value, joined or next; -D, --debug, --tls and
+    --tlsverify alone), running run or create, or container run or container create, but with
+    --help as the first word after it. Reason: a container started by hand outlives the session
+    with its volumes, and the reaper never removes it. Its allowed way: start the worktree's stack
+    with team-stack up, or run the project's own script for a one-off server.
   The kill rows, bin/lib/kill_rules.py's (its header holds their wording): a kill by name or
     pattern, tmux's kill-*, a kill of PIDs read from input, of a PID the guard cannot read before
     it runs, of a process group, every process or PID 0 or 1, and of a literal PID not proven the
@@ -1088,6 +1095,51 @@ def _cd_into(command, context):
     return None
 
 
+# The roles the docker-run row holds: the workers whose roles forbid docker run.
+DOCKER_ROLES = frozenset(("planner", "builder", "reviewer"))
+# docker's global options before its command that take a value, long and short; the rest
+# (-D, --debug, --tls, --tlsverify) stand alone.
+DOCKER_VALUED = frozenset(("--host", "--context", "--config", "--log-level", "--tlscacert", "--tlscert", "--tlskey"))
+DOCKER_VALUED_SHORT = frozenset("Hcl")
+DOCKER_STARTS = frozenset(("run", "create"))
+
+
+def _docker_command(words):
+    """The words from docker's command on, past its global options (their values joined or next,
+    a short cluster's last flag taking the next word), up to a --."""
+    k = 0
+    while k < len(words) and words[k].startswith("-") and words[k] != "-":
+        word = words[k]
+        k += 1
+        if word == "--":
+            break
+        if word.startswith("--"):
+            if "=" not in word and word in DOCKER_VALUED:
+                k += 1
+            continue
+        for i, flag in enumerate(word[1:], 1):
+            if flag in DOCKER_VALUED_SHORT:
+                k += 1 if i == len(word) - 1 else 0
+                break
+    return words[k:]
+
+
+def _docker_run(command, context):
+    """A planner's, builder's or reviewer's docker run or create, or docker container run or
+    create, past docker's global options; --help first after it passes."""
+    if context.role not in DOCKER_ROLES:
+        return False
+    for words in heads(command):
+        if not words or command_name(words[0]) != "docker":
+            continue
+        rest = _docker_command(list(words[1:]))
+        if rest[:1] == ["container"]:
+            rest = _docker_command(rest[1:])
+        if rest[:1] and rest[0] in DOCKER_STARTS and rest[1:2] != ["--help"]:
+            return True
+    return False
+
+
 FORCE_REASON = (
     "a force push (git push with --force, --force-with-lease, --force-if-includes, -f or a +refspec),"
     " which rewrites what others pushed"
@@ -1095,6 +1147,14 @@ FORCE_REASON = (
 FORCE_WAY = (
     "push without forcing; when the remote branch moved under you, start a fresh local branch from it under a new"
     " name and carry your commits over"
+)
+DOCKER_REASON = (
+    "a container started by hand outlives the session with its volumes, and the reaper never removes it"
+    " (docker run or docker create)"
+)
+DOCKER_WAY = (
+    "start the worktree's stack with ~/agent-team/bin/team-stack up, or run the project's own script for a one-off"
+    " server (Conventioner's scripts/real-mongo-test.sh)"
 )
 CD_SECRETS = "a cd into ~/.config/agent-team or ~/.claude/channels, which hold the team's keys and the Discord bot's files"
 CD_ASSISTANT = "a cd into ~/.config/agent-team or the Discord bot's directories, which hold the team's keys and the bot's files"
@@ -1151,6 +1211,7 @@ ROWS = (
     Row("upload", _upload, outbound.REASON),
     Row("force-push", _force_push, FORCE_REASON, FORCE_WAY),
     Row("cd-secrets", _cd_into, None),
+    Row("docker-run", _docker_run, DOCKER_REASON, DOCKER_WAY),
 ) + tuple(Row(id, test, None, allowed) for id, test, allowed in kill_rules.ROWS + delete_rules.ROWS) + (
     # Last, so a more particular row behind an emptied environment (a team script, an upload, a
     # kill or a delete) speaks first.

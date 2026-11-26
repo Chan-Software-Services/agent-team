@@ -44,7 +44,10 @@
 # leaves out, each named on stderr, a missing or empty one reported on stderr, a mirror that
 # fails stopping the close with rsync's reason, the task half closed; claude rm <id>
 # for each of the task's other sessions (an ops session is team-ops-end's alone, so a launched one
-# no longer listed is left); each landed worktree returned through its pool (git: git
+# no longer listed is left), and then, whether it succeeded or failed, the tmp of each of their job
+# directories it left, ~/.claude/jobs/<id>/tmp, emptied by bin/lib/disk.sh's disk_clear_job_tmp,
+# the directory kept, "team-close: cleared the job tmp of <id> (<size>), which claude rm left" on
+# stderr, a clearing that fails one line there, failing nothing; each landed worktree returned through its pool (git: git
 # worktree remove, never --force; treehouse: its task directory emptied, then the project's
 # return command run from the primary checkout with the path, and, for a project with a stack
 # block, whose stack team-stack down took down already, with TEAM_STACK_DOWN=1 in its environment,
@@ -109,7 +112,8 @@
 # 75, "<name> <id> is still busy; run this again once it is idle", nothing changed. Then, as the
 # close does: claude stop for each live one (then the changes check again), the worktree's stack
 # taken down, its task directory mirrored to tasks/T<n>/scratch--NN (scratch-<project>--NN for an
-# added project), claude rm for each of its sessions, the slot returned through its pool
+# added project), claude rm for each of its sessions and the job tmp it left cleared, as the close
+# does, the slot returned through its pool
 # with worktree-returned and the ticket branch's rule above, then the ticket's wip/<project>/T<n>--NN
 # deleted on the team home's origin and in the primary checkout, by the rule above (an origin
 # that cannot be reached is one line, and no failure). Prints {task, ticket, stopped,
@@ -123,6 +127,10 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
 # shellcheck source=bin/lib/threads.sh
 source "$TEAM_LIB/threads.sh"
+# shellcheck source=bin/lib/tmp.sh
+source "$TEAM_LIB/tmp.sh"
+# shellcheck source=bin/lib/disk.sh
+source "$TEAM_LIB/disk.sh"
 why=$(worker_refusal "" "closes no task") && die "$why"
 
 usage="usage: team-close T<n> [--keep-worktree] [--stop-busy] [--worktree <path>]..., or team-close T<n> --ticket <NN>"
@@ -485,6 +493,25 @@ teardown_stacks() {
       die "cannot take down the stack of $path ($project); its reason is above"
   done
 }
+# Remove the session <id> (claude rm), adding it to removed, a failure one line on stderr; then,
+# whether claude rm succeeded or not, when its job directory is still there, empty its tmp
+# (disk_clear_job_tmp, bin/lib/disk.sh), keeping the directory, and name it with its size on
+# stderr, a clearing that fails one line there too (disk_clear_job_tmp's), failing nothing. An
+# id that is no job's name (8 lowercase hex digits) names no job directory. <why> is the
+# clearing's why in the day's file: remove_session <id> <why>
+remove_session() {
+  if claude rm "$1" >&2; then
+    removed+=("$1")
+  else
+    echo "team-close: claude rm $1 failed; remove it by hand if it still exists" >&2
+  fi
+  [[ $1 =~ ^[0-9a-f]{8}$ ]] || return 0
+  local job=$HOME/.claude/jobs/$1 cleared=0
+  [[ -e $job || -L $job ]] || return 0
+  disk_clear_job_tmp "$job" "$2" || cleared=$?
+  ((cleared != 0)) ||
+    echo "team-close: cleared the job tmp of $1 ($(tmp_size "$DISK_KB")), which claude rm left" >&2
+}
 # Delete <project>'s work-in-progress snapshots of the task, team-checkpoint's on the team home's
 # origin, as origin lists them, and team-open --resume's copies under refs/remotes/team-home/ in
 # the project's primary checkout: <which> is a ticket NN for wip/<project>/T<n>--NN alone, or all
@@ -579,11 +606,7 @@ if [[ -n $ticket ]]; then
   archive_worktree "$wt"
   removed=()
   for id in "${ticket_sessions[@]}"; do
-    if claude rm "$id" >&2; then
-      removed+=("$id")
-    else
-      echo "team-close: claude rm $id failed; remove it by hand if it still exists" >&2
-    fi
+    remove_session "$id" "$task's ticket $ticket is returned"
   done
   returned=() branch_deleted=false origin_branch=none
   return_worktree "$wt"
@@ -716,11 +739,7 @@ done
 
 # Remove every other session of the task, live or not, now that the archive is made.
 while IFS= read -r id; do
-  if claude rm "$id" >&2; then
-    removed+=("$id")
-  else
-    echo "team-close: claude rm $id failed; remove it by hand if it still exists" >&2
-  fi
+  remove_session "$id" "$task is closed"
 done < <(jq -r '.[] | select(.ops | not) | .session' <<<"$sessions")
 
 # Return each landed worktree through its project's pool.
