@@ -36,7 +36,7 @@ updates:
         #   builds and to each other, which tests/toolkits/effect-devtools.test.mjs ("runs the
         #   @foldkit/devtools-mcp servers/ pins, the version released with foldkit 0.170.0") holds.
         # - vite, to the Foldkit app the team builds, and mongodb, to the version the pinned MongoDB
-        #   MCP server installs, as CLAUDE.md's Layout says; no test holds these.
+        #   MCP server installs, as LAYOUT.md's Layout says; no test holds these.
         exclude-patterns:
           - "chrome-devtools-mcp"
           - "chrome-devtools-axi"
