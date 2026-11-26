@@ -95,7 +95,7 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   assert_contains "$output" "PASS topic redirect-outside: hook refused it"
   assert_contains "$(cat "$STUB_FIXTURES/topic.jsonl")" "this role may edit files only under"
   local id
-  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl \
+  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose topic-docker-run npm-install systemctl \
     topic-git-config-push topic-git-option-push topic-git-pull; do
     assert_contains "$output" "PASS topic $id: rule refused it"
   done

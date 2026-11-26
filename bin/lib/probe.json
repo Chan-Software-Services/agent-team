@@ -519,6 +519,14 @@
       "family": "stacks"
     },
     {
+      "id": "topic-docker-run",
+      "roles": ["topic"],
+      "tool": "Bash",
+      "input": "docker run --rm --pull never agent-team-probe:none true",
+      "expect": "rule",
+      "family": "docker"
+    },
+    {
       "id": "docker-compose",
       "roles": ["topic"],
       "tool": "Bash",
