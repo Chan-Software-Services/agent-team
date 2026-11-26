@@ -926,6 +926,14 @@ def rehome_failures:
 # The index of the task's latest event of $kind, or -1 when it has none.
 def latest_index($kind): [to_entries[] | select(.value.event == $kind) | .key] | last // -1;
 
+# The task's interview under way: {since, thread}, the ts and discord_thread of its latest
+# interview-thread, while no planner's done and no plan-approved is logged after it, else null,
+# whatever the task's phase. Read by task_state and interview_under_way.
+def qc_interview:
+  latest_index("interview-thread") as $i
+  | if $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not)
+    then .[$i] | {since: .ts, thread: (.discord_thread | tostring)} else null end;
+
 # The index of the task's latest stowed, or -1 when it has none.
 def latest_stowed: latest_index("stowed");
 
@@ -1382,15 +1390,17 @@ def bypass_text($on):
 # after it (a pr event of the URL, or any review of the task, whichever of its PRs it read, since a
 # fix after findings is reviewed at a head no pr event logs and a review names no PR), the PR left
 # the queue with no team-merge to log its dequeued, a push having dropped it, and it is null.
-# rules_due says the queue dropped the PR for a check the base's rules require and no workflow made
-# on the trial commit (a failed of class rules) with no pr event of the URL and no review of the
-# task since: the trial merge cannot be judged until every required check runs there, so the fix is
-# the base's rules or a workflow's merge_group trigger, then a team-merge, whose queued ends it.
 # round_due says the queue dropped the PR for a failure of its own on the trial merge (a failed of
-# class pr) with no pr event of the URL and no review of the task since, and no rules_due: the head
-# passed what the trial merge failed, so it is the builder's merge-base round, then a rereview,
-# never a second enqueue of the same head; beside a rules failure it is false, since the trial merge
-# was not judged in full.
+# class pr) with no pr event of the URL and no review of the task since: the head passed what the
+# trial merge failed, so it is the builder's merge-base round, then a rereview, never a second
+# enqueue of the same head; beside a rules failure too, since the queue cancels the rest of a trial
+# commit it gives up, so a roll-up whose shards it cancelled reads as the rules' once no run is
+# open, and a rules gap that is real shows alone on the round's new head.
+# rules_due says the queue dropped the PR for a check the base's rules require and no workflow made
+# on the trial commit (a failed of class rules), with no failure of the PR's own, no pr event of the
+# URL and no review of the task since: the trial merge cannot be judged until every required check
+# runs there, so the fix is the base's rules or a workflow's merge_group trigger, then a
+# team-merge, whose queued ends it.
 def queue_state($url):
   ($url | rtrimstr("/")) as $u
   | . as $events
@@ -1403,9 +1413,9 @@ def queue_state($url):
         if any($since[]; (.head | type) == "string" and (same_head(.head; $e.head) | not)) then null
         else {state: "queued", since: $e.ts, head: $e.head} end
       elif $e.event == "dequeued" then
-        ($since == [] and any($e.failed[]?; .class == "rules")) as $rules
+        ($since == [] and any($e.failed[]?; .class == "pr")) as $round
         | {state: "dequeued", since: $e.ts, reason: $e.reason, head: $e.head, failed: ($e.failed // []),
-           round_due: ($since == [] and ($rules | not) and any($e.failed[]?; .class == "pr")), rules_due: $rules}
+           round_due: $round, rules_due: ($since == [] and ($round | not) and any($e.failed[]?; .class == "rules"))}
       else null end
     end;
 # The task's PRs not merged that stand in the merge queue (queue_state is queued), from task_prs,
@@ -1750,7 +1760,7 @@ def task_state($sessions; $home):
      thread: (map(select(.event == "thread") | .discord_thread) | last),
      workers: $workers, last_event: last, pending_asks: ($state | lifecycle_pending_asks),
      waiting: ($state | lifecycle_waiting), parks: ($state | lifecycle_parks), stowing: ($state | lifecycle_stowing), walk: qc_walk,
-     rehome_failures: rehome_failures, checks_wait: checks_wait, pr: null,
+     interview: qc_interview, rehome_failures: rehome_failures, checks_wait: checks_wait, pr: null,
      progress: progress($workers)};
 
 # A task's state (team-state's JSON) as one line of text, each live worker's context in thousands
@@ -2034,6 +2044,32 @@ def ci_due_finding:
   | select($age >= ci_due_seconds)
   | finding($task; "ci-due"; null; null; "the checks of \(.url) at \(.head[:8]) have had no wait end for \($age | duration)";
       "arm team-next \($task) --ci with Bash run_in_background unless it is running");
+
+# How long after the closed of the task a park waits on team-sweep calls the park park-over: 15
+# minutes, room for the coordinator's own relay to the parks the close frees.
+def park_over_seconds: 900;
+
+# team-sweep's park-over findings, over a task's events with every task's events by id ($tasks,
+# by_task's), or nothing: one for each standing waiting or blocked whose on names another task
+# (T<m>) that has a closed logged after the park, park_over_seconds or more ago, while no held and
+# no ask nothing settled (none a launch went past) stands, with session null. Its next step names
+# the park's id, which a resumed ends it by.
+def park_over_findings($tasks):
+  .[0].task as $task
+  | lifecycle as $state
+  | select(any($state.parks[]; .kind == "held") or any($state.asks[]; .passed | not) | not)
+  | $state.parks[]
+  | select(IN(.kind; "waiting", "blocked") and (.on | type) == "string" and (.on | test("^T[1-9][0-9]*$")) and .on != $task)
+  | . as $park
+  | ($tasks[$park.on] // null) as $other
+  | select($other != null and ($other | task_status) == "closed")
+  | ([$other[] | select(.event == "closed" and (.ts | tostring) > ($park.ts | tostring))] | last) as $closed
+  | select($closed != null)
+  | (now - ($closed.ts | fromdate)) as $ago
+  | select($ago >= park_over_seconds)
+  | finding($task; "park-over"; null; null;
+      "waits on \($park.on), closed at \($closed.ts) (\($ago | duration) ago): \($park.reason // "no reason logged")";
+      "do what it says (tell its holder, or launch its builder), then team-log \($task) resumed id=\($park.id)");
 
 # The stall limits, in seconds: how long a busy session's transcripts may go unwritten before
 # team-sweep calls it stalled. default, 50 minutes, so with the sweep watch's three-minute stand
@@ -2392,7 +2428,8 @@ def assistant_twin_lines($self):
 # takes it): each open task's stowing finding, then its merge-due (on the default word, judged with
 # every task's withdrawals), else its findings unless it is parked, then its queue-wait,
 # trial-unmarked, trial-failed and trial-rules findings, then its walk-stale, parked or not, since a parked task's
-# walk still needs asking about, then its ci-due, then the stray sessions (named like a team worker
+# walk still needs asking about, then its ci-due, then its park-over, parked or not, since the park
+# is what it names, then the stray sessions (named like a team worker
 # whose task is closed or not in the ledger, never the load check's T0, whose session the
 # coordinator waits on for up to 30 minutes), in task number order; then the coordinator-twin,
 # assistant-twin, activity, level, retro-due and health findings. $own is the registered projects
@@ -2412,7 +2449,8 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
         trial_failed_findings($sessions),
         trial_rules_findings($landing),
         walk_stale_finding,
-        ci_due_finding),
+        ci_due_finding,
+        park_over_findings($tasks)),
       (team_sessions($tasks; $sessions)[] | select(.task_state | IN("closed", "unknown"))
         | finding(.task; "stray"; .session; .name;
             "\(.name) \(.session) is live but \(stray_reason)";
@@ -2428,7 +2466,8 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
 # The findings team-sweep adds after sweep's, from the views it reads beside the ledger: team-queue
 # list --json's object ($queue), its findings (queue-ready, queue) as team-queue made them, then
 # team-current check --json's ($current), one current-stale finding naming each item whose task
-# closed, then team-current due --json's for the coordinator's list ($due), one current-due finding
+# closed, and each until item on a task T<m> merged that closed with no merge (its closed entry's
+# task being T<m>), counting items by id, so an item with both entries is one, then team-current due --json's for the coordinator's list ($due), one current-due finding
 # for each item whose review date has come, then team-assistant list --open --to coordinator
 # --json's list ($handoffs), one assistant-handoff finding for each sent more than 30 minutes
 # before $now (seconds); each view null when there is nothing to read, and {error} when its
@@ -2445,7 +2484,7 @@ def sweep_views($queue; $current; $due; $handoffs; $now):
      | if . == null then []
        elif .error != null then [failed("current"; "team-current")]
        elif (.closed // []) == [] then []
-       else (.closed | length) as $n
+       else ([.closed[].id] | unique | length) as $n
          | "team-current done <id> for each that is done, or add it again under an open task" as $next
          | [{task: null, kind: "current-stale", session: null, name: null, next: $next,
              text: "current: \($n) item\(if $n == 1 then " names" else "s name" end) a closed task: \(
@@ -2666,10 +2705,8 @@ def default_may_hold: by_task | any(.[]; is_open and phase == "awaiting-merge" a
 # The following defs serve team-inbox, a task's events as an array, then every ledger event as one.
 
 # Whether the task's latest interview thread still holds an interview: no planner's done and no
-# plan-approved logged after its interview-thread.
-def interview_under_way:
-  latest_index("interview-thread") as $i
-  | $i >= 0 and all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not);
+# plan-approved logged after its interview-thread (qc_interview).
+def interview_under_way: qc_interview != null;
 
 # Whether the event is a merge-approved naming the PR $pr (one of task_prs) at its head: its url is
 # the PR's, a trailing slash aside, and its head the PR's, or none, as a legacy line.

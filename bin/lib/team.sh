@@ -15,7 +15,7 @@
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, assistant_refusal, capture_refusal, toolkit_refusal, task_own_dirs, path_under, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
 # pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
-# own_project, own_projects, own_bar, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
+# own_project, own_projects, own_bar, advisory_checks, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
@@ -2072,6 +2072,27 @@ own_bar() (
   jq -cn --arg app "${app%% *}" '{app: (if $app == "" then null else $app | tonumber end)}'
 )
 
+# The checks of the registered project <name> that no merge waits on, from this checkout's
+# bin/lib/advisory-checks: on the team's own project (own_project) each line as a JSON array of
+# {workflow, check}, in the file's order, and [] on any other project. Fails on an unknown
+# project, or naming the file on stderr when it is missing or holds a line that is neither a
+# comment, blank, nor "<workflow file> <check name>": advisory_checks <name>
+advisory_checks() (
+  local file=$TEAM_LIB/advisory-checks checks
+  if ! (own_project "$1"); then
+    team_project "$1" >/dev/null || exit 1
+    echo '[]'
+    return
+  fi
+  checks=$(jq -Rnc '[inputs | select(test("^\\s*(#|$)") | not)
+      | (capture("^(?<workflow>[A-Za-z0-9._-]+\\.ya?ml) (?<check>[^ ].*)$") // error("not <workflow file> <check name>"))]' \
+    "$file" 2>/dev/null) || {
+    echo "${0##*/}: $file cannot be read as <workflow file> <check name> lines" >&2
+    exit 1
+  }
+  printf '%s\n' "$checks"
+)
+
 # The reviewer App, the one GitHub App whose agent-review check run the team's own project merges
 # behind: its id and slug, "<id> <slug>" on one line, from this checkout's bin/lib/review-app, a
 # committed constant of exactly two lines, id=<a positive whole number> and then slug=<lowercase
@@ -2524,9 +2545,13 @@ review_refusal() {
 # App or a commit status of that name is on the head, else missing; review_check_run, the App's
 # run's id; and review_check_by, what a foreign one is ("a check run of App <id> (<slug>)" or "a
 # commit status by <login>"). Else the four are null, nothing more read, and agent_review alone
-# says agent-review's state: pr_part '<events>' '<pr event>' <dir>
+# says agent-review's state. The checks no merge waits on (advisory_checks, but a name required or
+# of the base's rules is never among them) are in none of checks' passed, failing and pending but
+# listed under advisory, each {name, bucket}, a key only a head with one has: pr_part '<events>'
+# '<pr event>' <dir>
 pr_part() {
   local events=$1 pr=$2 dir=$3 url project repo='' number required_checks='[]' facts behind_by=null queue=null base head bar=false
+  local advisory='[]' rules_required='[]'
   local review='{"review_app": null, "review_check": null, "review_check_run": null, "review_check_by": null}'
   url=$(jq -r .url <<<"$pr") || return 1
   project=$(jq -r '.project // empty' <<<"$pr") || return 1
@@ -2548,6 +2573,7 @@ pr_part() {
     repo=$(canonical_repo "$repo") || return 1
     required_checks=$(team_project "$project" required_checks) || return 1
     bar=$(own_bar "$project") || return 1
+    [[ $bar == false ]] || advisory=$(advisory_checks "$project") || return 1
   fi
   facts=$(ledger_jq '{url: $url, number: $number, repo: $repo, project: $project,
       ledger_head: pr_head($url),
@@ -2583,6 +2609,7 @@ pr_part() {
       base=$(jq -r .baseRefName "$dir/view")
       if base_rules "$repo" "$base" >"$dir/rules" 2>"$dir/rules.error"; then
         queue=$(jq -c .queue "$dir/rules")
+        rules_required=$(jq -c '[.required[].context]' "$dir/rules")
         rm -f "$dir/rules.error"
       else
         rm -f "$dir/rules"
@@ -2596,23 +2623,29 @@ pr_part() {
       $view[0] as $view | $checks[0] as $checks
       | ($checks | map(.name)) as $present
       | (($required[0] | map(.name)) + $project_required | unique) as $required
+      # The checks no merge waits on, never a name anything requires.
+      | [$advisory[].check | select(. as $c | ($required + $rules_required) | index([$c]) | not)] as $aside
+      | [$checks[] | select(.name | IN($aside[]) | not)] as $counted
+      | [$checks[] | select(.name | IN($aside[])) | {name, bucket}] as $set_aside
       | . + {state: ($view.state | ascii_downcase), base: $view.baseRefName, branch: $view.headRefName,
           head: $view.headRefOid,
           head_moved: (same_head($view.headRefOid; .ledger_head) | not),
           caught_up: (.caught_up_by != null and same_head(.caught_up_by.head; $view.headRefOid)
             and same_head(.caught_up_by.from; .ledger_head)),
           checks: {
-            passed: [$checks[] | select(.bucket == "pass" or .bucket == "skipping") | .name] | unique,
-            failing: [$checks[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | unique,
-            pending: [$checks[] | select(.bucket == "pending") | .name] | unique},
+            passed: [$counted[] | select(.bucket == "pass" or .bucket == "skipping") | .name] | unique,
+            failing: [$counted[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | unique,
+            pending: [$counted[] | select(.bucket == "pending") | .name] | unique},
           required: $required,
           required_missing: [$required[] | select(IN($present[]) | not)],
           agent_review: ([$checks[] | select(.name == "agent-review") | .state | ascii_downcase] | first // "missing"),
           behind_by: $behind_by, queue: $queue}
       | {url, number, repo, project, state, base, branch, head, ledger_head, head_moved, caught_up, checks, required,
-         required_missing, agent_review, merge_approved, behind_by, queue, merge_authority} + $review' \
+         required_missing, agent_review, merge_approved, behind_by, queue, merge_authority} + $review
+        + if $set_aside == [] then {} else {advisory: $set_aside} end' \
       -c --slurpfile view "$dir/view" --slurpfile checks "$dir/checks" --argjson review "$review" \
       --slurpfile required "$dir/required" --argjson project_required "$required_checks" \
+      --argjson advisory "$advisory" --argjson rules_required "$rules_required" \
       --argjson behind_by "$behind_by" --argjson queue "$queue" <<<"$facts"
   else
     jq -c --rawfile error "$dir/error" 'del(.caught_up_by) + {error: ($error | rtrimstr("\n"))}' <<<"$facts"

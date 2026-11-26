@@ -1,0 +1,66 @@
+# Dependabot's version updates, and the titles of its security updates too.
+# Options: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+# Its PRs target the default branch, dev, and merge like any other PR: on every required check
+# passed on their head, the agent review's included.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    # The MCP servers, clients and packages the sessions and the toolkits' tests run, which
+    # servers/package-lock.json pins and servers/install installs.
+    directory: "/servers"
+    schedule:
+      interval: "weekly"
+    # A new release waits a week before Dependabot proposes it, so a bad one has time to be pulled
+    # before CI runs it. Security updates are not delayed: GitHub applies no cooldown to them.
+    cooldown:
+      default-days: 7
+    # Titles are Conventional Commits: fix(deps): for what servers/package.json lists under
+    # dependencies, which today is every package, tooling included, and chore(deps-dev): for what
+    # it lists under devDependencies.
+    commit-message:
+      prefix: "fix"
+      prefix-development: "chore"
+      include: "scope"
+    # A week's minor and patch bumps arrive as one PR per dependency type, so CI runs once for each;
+    # with no devDependencies today, that is the one fix(deps): PR. A major bump comes on its own.
+    groups:
+      production:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+        # Each package whose pin is tied to one outside the lock comes as its own PR instead, to be
+        # moved with its partner by hand, so a red or silent tie never holds the group back:
+        # - chrome-devtools-mcp and chrome-devtools-axi, to bin/lib/tools.lock's global installs,
+        #   which tests/repo.bats ("every session's chrome-devtools-axi runs the
+        #   chrome-devtools-mcp that servers/ pins") holds equal and Dependabot never edits.
+        # - @foldkit/devtools-mcp, @foldkit/vite-plugin and foldkit, to the Foldkit app the team
+        #   builds and to each other, which tests/toolkits/effect-devtools.test.mjs ("runs the
+        #   @foldkit/devtools-mcp servers/ pins, the version released with foldkit 0.170.0") holds.
+        # - vite, to the Foldkit app the team builds, and mongodb, to the version the pinned MongoDB
+        #   MCP server installs, as CLAUDE.md's Layout says; no test holds these.
+        exclude-patterns:
+          - "chrome-devtools-mcp"
+          - "chrome-devtools-axi"
+          - "@foldkit/devtools-mcp"
+          - "@foldkit/vite-plugin"
+          - "foldkit"
+          - "vite"
+          - "mongodb"
+      development:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    # The workflows in .github/workflows/.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # The same week's wait as npm's, for the same reason.
+    cooldown:
+      default-days: 7
+    # ci(deps): an action bump changes CI, not what the sessions run.
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      actions:
+        update-types: ["minor", "patch"]
