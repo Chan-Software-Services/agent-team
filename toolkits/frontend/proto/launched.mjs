@@ -1,0 +1,236 @@
+// The engine driver for the launched engines, chromium, firefox and webkit: one code path over
+// Playwright's three browser types, each its pinned build in Playwright's browsers path (its
+// default cache, or PLAYWRIGHT_BROWSERS_PATH, which the host sets from PROTO_BROWSERS_PATH).
+//
+//   const driver = launchedDriver("firefox", { headless });
+//   driver.name, driver.capabilities    the engine, and what it can do: sizeBy "context",
+//                              overlayBeforePageScripts true, matchedRules "cdp" (chromium) or
+//                              "stylesheet-walk" (firefox, webkit), navigationGuard true
+//   driver.version()           the pinned build's version (playwright-core's browsers.json)
+//   await driver.available()   { available: true }, or { available: false, reason } when the
+//                              pinned build's executable is missing, or, for WebKit on Linux, when
+//                              webkit-libs.mjs's check names a soname it lacks (run at every
+//                              reading), each naming `proto install`
+//   await driver.launch({ headless })   a browser of the engine, launched headed or headless
+//                              (the driver's own setting by default), as open launches one; the
+//                              capture (capture.mjs) launches its own headless
+//   const window = await driver.open(url, target, storageState, hooks)
+//                              a browser launched headed (headless with `headless`) with one
+//                              window in it, as window.reopen makes one; on any failure the
+//                              browser is closed and the error thrown
+//   hooks                      { onGone(), onBlocked(url), onNavigated(url), onMessage(message,
+//                              { own }) }, each optional: the window's page or browser was closed
+//                              by someone else (Daniel, or the test seam), never by
+//                              window.close(); a main-frame navigation off localhost was blocked;
+//                              the main frame navigated; a page of the window's context sent the
+//                              overlay's binding a message, `own` when it is the window's page,
+//                              whose answer onMessage returns (overlay-page.mjs)
+//   window.url()               the page's URL now
+//   window.metrics()           what the page reports: innerWidth, innerHeight, devicePixelRatio,
+//                              maxTouchPoints, userAgent, cookie and url
+//   window.resize(target)      the viewport set to the target's width and height, in place: the
+//                              page is not loaded again
+//   await window.reload()      the page reloaded, resolving once it has loaded
+//   window.push(state)         the overlay's state pushed to the page (overlay-page.mjs)
+//   await window.toolbar(body), await window.popup(url), await window.send(message)
+//                              the test seam's: an act on the page's toolbar (overlay-page.mjs's
+//                              toolbarAction), a second page of the window's context opened at
+//                              `url` and read (popupReport), and `message` sent to the binding
+//                              from the page's own script, answering the host's answer
+//   await window.reopen(url, target, storageState, hooks)
+//                              a new window in the same browser: a fresh context at the target
+//                              (its viewport, scale, mobile and touch, and a device's user agent)
+//                              with the storage state, the localhost guard's route on it, and
+//                              its page loaded at `url`; on any failure that context is closed
+//                              and the error thrown, this window left as it was
+//   await window.storageState()   the context's cookies and localStorage, localhost's alone
+//                              (guards.mjs's localStorageState), what a switch carries
+//   await window.follow(url)   a link to `url` added to the page and clicked, as a user does,
+//                              resolving once the page has loaded there or the guard blocked it
+//                              (10 s at most); the test seam's navigate
+//   await window.closeBrowser()   the browser closed as Daniel quits it, so hooks.onGone runs
+//   window.gone                a promise resolved once the window is closed, by anyone
+//   window.close()             closes the window's context, and its browser when no other
+//                              context is left in it, its process exited when it resolves
+//
+//   contextOptions(target, storageState)   the options of a context at the target: its
+//                              viewport, scale, mobile and touch flags, a device's user agent, and
+//                              the storage state when one is given
+//   await guardContext(context, onBlocked)  the localhost guard below on the context, calling
+//                              onBlocked(url) for each main-frame navigation it blocks
+//
+// The localhost guard: a route on each context takes every request off localhost (guards.mjs's
+// isLocalUrl) and answers a main-frame navigation 204, which leaves the page where it was in
+// every engine (an abort shows Chromium's error page in its place), and lets any other request,
+// a frame's, a font's or a script's, go on unrouted. A redirect is never routed (Playwright
+// routes only a navigation's first request), so a localhost page redirecting off localhost is
+// not caught.
+// Chromium runs Playwright's "chromium" channel, the full browser headed or headless, so one
+// executable serves both and its availability is that file's.
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
+import { isLocalUrl, localStorageState } from "./guards.mjs";
+import { installOverlay, pageMetrics, popupReport, pushState, testLink, toolbarAction } from "./overlay-page.mjs";
+import { pinnedBrowsers, playwright } from "./playwright.mjs";
+import { checkWebkitLibs, lacksLine } from "./webkit-libs.mjs";
+
+const loadTimeoutMs = 30_000;
+const followTimeoutMs = 10_000;
+
+export const firstLine = (error) => String(error?.message ?? error).split("\n")[0].replace(/^\w+\.\w+: /, "");
+
+export function launchedDriver(name, { headless = false } = {}) {
+  const type = () => playwright()[name];
+  const version = () => pinnedBrowsers().find((browser) => browser.name === name).browserVersion;
+  const launch = ({ headless: launchHeadless = headless } = {}) => type().launch({ headless: launchHeadless, timeout: loadTimeoutMs, ...(name === "chromium" ? { channel: "chromium" } : {}) });
+  return {
+    name,
+    capabilities: {
+      sizeBy: "context",
+      overlayBeforePageScripts: true,
+      matchedRules: name === "chromium" ? "cdp" : "stylesheet-walk",
+      navigationGuard: true,
+    },
+    version,
+    async available() {
+      const path = type().executablePath();
+      if (!existsSync(path)) return { available: false, reason: `${name} ${version()} is not installed (no ${path}); run \`proto install\`` };
+      if (name !== "webkit") return { available: true };
+      // Every time: Playwright checks the libraries once per revision, so one lost later would show
+      // only as a loader error at launch.
+      try {
+        const missing = checkWebkitLibs(dirname(path));
+        return missing.length ? { available: false, reason: lacksLine(version(), missing) } : { available: true };
+      } catch (error) {
+        return { available: false, reason: error.message };
+      }
+    },
+    launch,
+    async open(url, target, storageState, hooks) {
+      const browser = await launch();
+      try {
+        return await openWindow(browser, url, target, storageState, hooks);
+      } catch (error) {
+        await browser.close().catch(() => {});
+        throw error;
+      }
+    },
+  };
+}
+
+export const contextOptions = (target, storageState) => ({
+  viewport: { width: target.width, height: target.height },
+  deviceScaleFactor: target.scale,
+  isMobile: target.mobile,
+  hasTouch: target.touch,
+  ...(target.userAgent ? { userAgent: target.userAgent } : {}),
+  ...(storageState ? { storageState } : {}),
+});
+
+export const guardContext = (context, onBlocked) => context.route((address) => !isLocalUrl(address.href), async (route) => {
+  const request = route.request();
+  let mainFrame = false;
+  try {
+    mainFrame = request.isNavigationRequest() && request.frame().parentFrame() === null;
+  } catch {
+    // A service worker's request has no frame.
+  }
+  if (!mainFrame) return route.continue();
+  onBlocked(request.url());
+  return route.fulfill({ status: 204 });
+});
+
+async function openWindow(browser, url, target, storageState, hooks = {}) {
+  const context = await browser.newContext(contextOptions(target, storageState));
+  const blockedWaiters = new Set();
+  let page = null;
+  try {
+    await installOverlay(context, () => page, hooks.onMessage);
+    await guardContext(context, (address) => {
+      hooks.onBlocked?.(address);
+      for (const resolve of blockedWaiters) resolve(address);
+    });
+    page = await context.newPage();
+    await page.goto(url, { waitUntil: "load", timeout: loadTimeoutMs });
+    return makeWindow(browser, context, page, hooks, blockedWaiters);
+  } catch (error) {
+    await context.close().catch(() => {});
+    throw error;
+  }
+}
+
+function makeWindow(browser, context, page, hooks, blockedWaiters) {
+  let closed = null;
+  let markGone;
+  const gone = new Promise((resolve) => (markGone = resolve));
+  const close = () => {
+    closed ??= (async () => {
+      browser.off("disconnected", lost);
+      await context.close().catch(() => {});
+      if (browser.isConnected() && browser.contexts().length === 0) await browser.close().catch(() => {});
+      markGone();
+    })();
+    return closed;
+  };
+  // Closed by someone else: the host is told, and what is left of the window is closed.
+  const lost = () => {
+    if (closed) return;
+    hooks.onGone?.();
+    close();
+  };
+  page.on("close", lost);
+  browser.on("disconnected", lost);
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) hooks.onNavigated?.(frame.url());
+  });
+  return {
+    url: () => page.url(),
+    metrics: () => pageMetrics(page),
+    resize: (target) => page.setViewportSize({ width: target.width, height: target.height }),
+    reload: () => page.reload({ waitUntil: "load", timeout: loadTimeoutMs }),
+    push: (state) => pushState(page, state),
+    toolbar: (body) => toolbarAction(page, body),
+    popup: (url) => popupReport(context, url),
+    send: (message) => page.evaluate((sent) => window.__protoHost(sent), message),
+    reopen: (url, target, storageState, newHooks) => openWindow(browser, url, target, storageState, newHooks),
+    storageState: async () => localStorageState(await context.storageState()),
+    async follow(url) {
+      const href = new URL(url).href;
+      let onBlocked;
+      let wasBlocked = false;
+      const blocked = new Promise((resolve) => {
+        onBlocked = (address) => {
+          wasBlocked = true;
+          resolve(address);
+        };
+        blockedWaiters.add(onBlocked);
+      });
+      const link = await testLink(page, href);
+      try {
+        const loaded = page.waitForURL((address) => address.href === href, { waitUntil: "load", timeout: followTimeoutMs });
+        // Still waiting when the guard blocks it, so its later timeout is nobody's error.
+        loaded.catch(() => {});
+        try {
+          await link.asElement().click();
+        } catch (error) {
+          // The click waits for the navigation it starts, which a block ends as aborted.
+          if (!wasBlocked) throw error;
+        }
+        // A blocked navigation fails the wait for its URL too.
+        await Promise.race([blocked, loaded.catch((error) => {
+          if (!wasBlocked) throw error;
+        })]);
+      } finally {
+        blockedWaiters.delete(onBlocked);
+        await link.evaluate((anchor) => anchor.remove()).catch(() => {});
+        await link.dispose().catch(() => {});
+      }
+    },
+    async closeBrowser() {
+      await browser.close();
+      await gone;
+    },
+    gone,
+    close,
+  };
+}

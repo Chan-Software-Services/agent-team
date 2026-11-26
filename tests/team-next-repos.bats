@@ -215,7 +215,7 @@ SH
   ci_wait_ends passed "$head_other"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
-  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 --pr $url_other for $url_other at $head_other, "
   assert_equal "$(stub_calls team-ci-wait | tail -n 1)" \
     "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", $url, $h]')"
   # The passed wait stands before the failed one, which only its own repository's next review ends.
@@ -243,7 +243,7 @@ SH
   ci_wait_ends passed "$head_other"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
-  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 --pr $url_other for $url_other at $head_other, "
   assert_equal "$(stub_calls team-ci-wait | tail -n 1)" \
     "$(jq -cn --arg url "$url_other" --arg h "$head_other" '["--no-agent-review", "--json", $url, $h]')"
   # With nothing else waiting, the blocked wait is the task's again, ahead of the passed one.
@@ -269,7 +269,7 @@ SH
   ci_wait_ends passed "$head_other"
   run_bin -0 --separate-stderr team-next T7 --ci
   assert_contains "$output" "logged ci url=$url_other head=$head_other outcome=passed"
-  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 for $url_other at $head_other, "
+  assert_contains "$(tail -n 1 <<<"$output")" "merge on the default word: run team-merge T7 --pr $url_other for $url_other at $head_other, "
 }
 
 @test "with reviewers in two repositories, a verdict from a session that is not its own repository's latest reviewer is still refused" {

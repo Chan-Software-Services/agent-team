@@ -151,8 +151,9 @@ ci_logged() {
 }
 
 # red_checks <head>: --ci's wait ends failed on <head>, exit 1, with a roll-up, a failed shard of
-# the PR's own, a runner that never started, a required check not reported and a lint step of the
-# PR's own, in that order, as team-ci-wait --json gives them.
+# the PR's own, a runner that never started, a check the base's rules require and one the registry
+# alone requires, not reported, and a lint step of the PR's own, in that order, each in
+# team-ci-wait --json's form.
 red_checks() {
   local job=https://github.com/owner/proj/actions/runs/7/job
   ci_wait_ends failed "$1" 1 "team-ci-wait: the checks on ${1:0:7} did not pass" "$(jq -cn --arg j "$job" '[
@@ -161,7 +162,10 @@ red_checks() {
      step: "Run the tests", rerun: null},
     {name: "smoke-shards (1)", class: "infrastructure", kind: "never-started", state: "CANCELLED", link: "\($j)/10", run: 7,
      job: 10, step: null, rerun: "gh run rerun 7 --job 10 --repo owner/proj"},
-    {name: "build", class: "pr", kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null},
+    {name: "build", class: "pr", kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null,
+     source: "rules"},
+    {name: "data", class: "pr", kind: "missing", state: null, link: null, run: null, job: null, step: null, rerun: null,
+     source: "required_checks"},
     {name: "lint", class: "pr", kind: "failed", state: "FAILURE", link: "\($j)/11", run: 7, job: 11, step: "Lint", rerun: null}]')"
 }
 

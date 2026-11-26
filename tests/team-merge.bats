@@ -656,6 +656,11 @@ proj_moved() {
 @test "a head that moves between the reads is refused" {
   jq '.headRefOid = "b2c3d4e5f60718293a4b5c6d7e8f901234567890"' "$gh_dir/pr.json" >"$gh_dir/pr-again.json"
   refused "the head moved while it was read (a1b2c3d, then b2c3d4e); run team-merge again"
+  # With another PR of the task, the reason names this one, as team-merge T14 alone takes the latest.
+  local url=https://github.com/owner/proj/pull/5
+  second_pr
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "  the head moved while it was read (a1b2c3d, then b2c3d4e); run team-merge T14 --pr $url again"
 }
 
 @test "a PR whose repo is not a registered project is refused" {
@@ -776,6 +781,12 @@ EOF
   echo 'jq ".headRefOid = \"5555555555555555555555555555555555555555\"" "$GH_DIR/pr.json" >"$GH_DIR/pr.next" && mv "$GH_DIR/pr.next" "$GH_DIR/pr.json"' \
     >"$GH_DIR/check.extra"
   refused "the head moved while the local checks ran (${head:0:7}, then 5555555); run team-merge again"
+  # With another PR of the task, the reason names this one.
+  local url=https://github.com/owner/proj/pull/5
+  green_pr
+  second_pr
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "  the head moved while the local checks ran (${head:0:7}, then 5555555); run team-merge T14 --pr $url again"
 }
 
 @test "local checks never run while another reason refuses the merge" {

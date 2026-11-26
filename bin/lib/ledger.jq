@@ -845,9 +845,11 @@ def task_status: lifecycle.status;
 def task_prs: lifecycle.prs | map({url, head, number});
 
 # What team-merge is given to act on the PR at $url, over the task's events: T<n>, and --pr <url>
-# after it when the task has more than one PR (task_prs), since team-merge T<n> alone takes the
-# latest pr event's.
-def merge_args($url): .[0].task + (if (task_prs | length) > 1 then " --pr \($url)" else "" end);
+# after it when the task has more than one PR (task_prs, one a repository) or its latest pr event
+# is another URL's, a trailing slash aside, since team-merge T<n> alone takes that event's.
+def merge_args($url):
+  ([.[] | select(.event == "pr")] | last | .url // $url) as $latest
+  | .[0].task + (if (task_prs | length) > 1 or ($latest | rtrimstr("/")) != ($url | rtrimstr("/")) then " --pr \($url)" else "" end);
 
 # The head the ledger knows for the PR at $url, from task_prs.
 def pr_head($url): task_prs | map(select(.url == $url)) | last | .head;
@@ -1399,7 +1401,7 @@ def runner_backlog:
     and (((.reason // "") | split(";") | .[0]) == "checks_timed_out"
       or (any($f[]; waited) and all($f[]; waited or .class == "rollup")));
 # The next step after such a drop, the one team-merge, team-next --ci and team-sweep's merge-due
-# name, $merge being what team-merge is given: T<n>, or merge_args' for a reader of the ledger.
+# name, $merge being what team-merge is given (merge_args).
 def runner_step($repo; $merge):
   "the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of \($repo)'s merge queue while the backlog stands, and run team-merge \($merge) again once they say the runners are back";
 
@@ -1503,14 +1505,15 @@ def rules_reason($base; $where):
   [rules_failures[] | "\(.names | name_list) never reported on \($where), which "
     + (if .source == "rules" then "\($base // "the base")'s rules require" else "the project's required_checks require" end)]
   | join("; ");
-# The next step for a PR such failures (the input) dropped, the one team-merge, team-next --ci and
-# team-sweep's trial-rules name, by the sources of rules_failures: for the base's rules alone,
-# "the base's rules require a check no workflow makes on a trial commit: run team-doctor (its
-# merge queue line), fix the workflow's merge_group trigger or ask Daniel to change <repo>'s
-# ruleset, then run team-merge <task> again"; for the project's required_checks it names them
-# among the requirers and "or the project's required_checks in the registry" among the fixes, and
-# without the rules it names neither team-doctor nor the ruleset.
-def rules_step($repo; $task):
+# The next step for a PR such failures (the input) dropped, the one team-merge and team-next --ci
+# name (team-sweep's trial-rules words its own, in trial_rules_findings), by the sources of
+# rules_failures: for the base's rules alone, "the base's rules require a check no workflow makes
+# on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger
+# or ask Daniel to change <repo>'s ruleset, then run team-merge <merge> again", $merge being what
+# team-merge is given (merge_args); for the project's required_checks it names them among the
+# requirers and "or the project's required_checks in the registry" among the fixes, and without the
+# rules it names neither team-doctor nor the ruleset.
+def rules_step($repo; $merge):
   [rules_failures[].source] as $sources
   | IN($sources[]; "rules") as $rules
   | IN($sources[]; "required_checks") as $registry
@@ -1521,7 +1524,7 @@ def rules_step($repo; $task):
     + "fix the workflow's merge_group trigger"
     + (if $registry then " or the project's required_checks in the registry" else "" end)
     + (if $rules then " or ask Daniel to change \($repo)'s ruleset" else "" end)
-    + ", then run team-merge \($task) again";
+    + ", then run team-merge \($merge) again";
 
 # The project a PR (one of lifecycle.prs, the input) is of, as the task's reviews show it ($events),
 # or null: the project (review_project) of the latest review that names a head one of the PR's pr
@@ -1925,18 +1928,15 @@ def default_holds($pr; $withdrawals; $own):
           own_in($own; $project); $withdrawals)
          | any(.words[]; .word == "default" and .holds));
 
-# merge-due's next step for its PRs $due, those of them in $behind, each {url, merge} with merge its
-# merge_args, dropped by the merge queue for a runner backlog: team-merge T<n> with none dropped;
-# else team-merge T<n> --pr for each other one, then the runners' step (runner_step) for each
-# dropped one.
-def merge_due_step($task; $due; $behind):
-  if $behind == [] then "run team-merge \($task)"
-  else [($due - [$behind[].url])[] | "run team-merge \($task) --pr \(.)"]
-    + [$behind[] | .merge as $merge
-        | .url | capture("^https://github\\.com/(?<repo>[^/]+/[^/]+)/pull/") // {repo: "<owner>/<name>"}
-        | runner_step(.repo; $merge)]
-    | join("; ")
-  end;
+# merge-due's next step for its PRs $due, over the task's events, those of them in $behind dropped
+# by the merge queue for a runner backlog: team-merge, given merge_args, for each other one, then
+# the runners' step (runner_step) for each dropped one.
+def merge_due_step($due; $behind):
+  [($due - $behind)[] as $url | "run team-merge \(merge_args($url))"]
+  + [$behind[] as $url | merge_args($url) as $merge
+      | $url | capture("^https://github\\.com/(?<repo>[^/]+/[^/]+)/pull/") // {repo: "<owner>/<name>"}
+      | runner_step(.repo; $merge)]
+  | join("; ");
 
 # team-sweep's merge-due finding, over a task's events and the session list, or nothing: the task
 # awaits merge, nothing else parks it (no ask nothing settled, pause or wait; an ask that names
@@ -1969,12 +1969,11 @@ def merge_due_finding($withdrawals; $sessions; $own; $landing):
       | [$prs[] | select(pr_merged($events; $prs) | not) | select(.url | IN($queued[]) | not) | . as $pr
          | select($events | default_holds($pr; $withdrawals; $own)) | .url] as $due
       | select($due != [])
-      | [$due[] as $url | $events | merge_args($url) as $merge | queue_state($url) | select(.runners_due? == true)
-         | {url: $url, since, $merge}] as $behind
+      | [$due[] as $url | $events | queue_state($url) | select(.runners_due? == true) | {url: $url, since}] as $behind
       | finding($task; "merge-due"; null; null;
           "awaiting the merge of \($due | join(", ")) on the default word, the approved plan, with no ask open"
             + ($behind | map("; the merge queue dropped \(.url) at \(.since)") | add // "");
-          "\(merge_due_step($task; $due; $behind)); on a refusal, ask Daniel for the per-head word with team-ask")
+          "\(merge_due_step($due; [$behind[].url])); on a refusal, ask Daniel for the per-head word with team-ask")
     else empty end;
 
 # team-sweep's queue-wait findings, over a task's events, one for each of its PRs that stands in
@@ -1983,10 +1982,11 @@ def merge_due_finding($withdrawals; $sessions; $own; $landing):
 def queue_wait_findings($landing):
   .[0].task as $task
   | select($task | IN($landing[]) | not)
-  | queued_prs[]
+  | queued_prs[] as $pr
+  | merge_args($pr.url) as $merge
   | finding($task; "queue-wait"; null; null;
-      "PR \(.url) is in the merge queue since \(.since) with no team-merge waiting on it";
-      "run team-merge \($task) with Bash run_in_background, which goes on waiting and logs how it ends");
+      "PR \($pr.url) is in the merge queue since \($pr.since) with no team-merge waiting on it";
+      "run team-merge \($merge) with Bash run_in_background, which goes on waiting and logs how it ends");
 
 # The task's PRs that stand in the merge queue (queued_prs) whose latest trial-unmarked since the
 # latest queued of the PR, logged by team-land, says the trial commit passed every other check, with
@@ -2048,7 +2048,7 @@ def trial_rules_findings($landing):
   | [$pr.failed | rules_failures[].source] as $sources
   | finding($task; "trial-rules"; null; null; $pr.failed | rules_reason($pr.base; "the trial commit of \($pr.url)");
       (if IN($sources[]; "rules") then "run team-doctor and tell Daniel; " else "" end)
-      + "run team-merge \($task) once "
+      + "run team-merge \(merge_args($pr.url)) once "
       + ([if IN($sources[]; "rules") then "the rules" else empty end,
           if IN($sources[]; "required_checks") then "the project's required_checks" else empty end, "the workflow"]
          | if length < 3 then join(" or ") else "\(.[:-1] | join(", ")) or \(.[-1])" end)
