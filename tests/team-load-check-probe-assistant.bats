@@ -35,7 +35,6 @@ setup() {
   assert_contains "$output" "PASS assistant land: rule refused it"
   assert_contains "$output" "PASS assistant discord-token: rule refused it"
   assert_contains "$output" "PASS assistant upload: hook refused it"
-  assert_contains "$output" "PASS assistant thread-cache-write: hook refused it"
   assert_contains "$output" "PASS assistant lease-steal: refused by rule"
   # And its reads, each of which ran and printed its marker.
   assert_contains "$output" "PASS assistant read-launchers: ran"

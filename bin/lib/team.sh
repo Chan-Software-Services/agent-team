@@ -1924,12 +1924,10 @@ daniel_message() {
     '{place: $place, channel: $channel, who: $who, message: .}' <<<"$reply"
 }
 
-# The assistant's thread cache: the ids of the threads under #assistant found so far, one
-# known-good id per line, which the assistant's Discord guard passes without asking Discord and
-# its digest lists. It is trusted only because the assistant cannot write it: its settings deny
-# the Edit tool (assistant.settings.json) and its command guard's assistant-thread-cache row a
-# Bash call that writes the file by a redirection or a writer it names, so only the scripts and
-# hooks below add to it.
+# The assistant's thread list: the ids of the threads under #assistant found so far, one per
+# line, appended by the assistant's Discord guard, team-assistant thread and assistant_place
+# (assistant_thread_keep), and named by the start digest's catch-up step. It is trusted by
+# nothing: an id there grants no Discord call, since the guard reads Discord at every call.
 # shellcheck disable=SC2034 # read by the scripts that source this library
 ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
 
@@ -1942,7 +1940,7 @@ assistant_thread_of() {
       and ((.parent_id // "") | tostring) == $parent' >/dev/null 2>&1 <<<"$1"
 }
 
-# Add thread <id> to the thread cache (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
+# Add thread <id> to the thread list (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
 assistant_thread_keep() {
   grep -qxF -- "$1" "$ASSISTANT_THREADS" 2>/dev/null && return 0
   mkdir -p "${ASSISTANT_THREADS%/*}" && echo "$1" >>"$ASSISTANT_THREADS"
@@ -1952,7 +1950,7 @@ assistant_thread_keep() {
 # "#assistant <id>", or a thread under it (assistant_thread_of), "the #assistant thread <id>",
 # read from Discord (discord_api GET channels/<id>) every time, so Daniel's word is held to the
 # assistant's channel by Discord's answer alone, never by a file; a thread found so is added to
-# the thread cache (assistant_thread_keep). Fails with the one reason on stderr: no channel is
+# the thread list (assistant_thread_keep). Fails with the one reason on stderr: no channel is
 # set (TEAM_ASSISTANT_CHANNEL empty), the channel cannot be read, or it is neither.
 # team-assistant and team-answer --channel hold Daniel's word to it: assistant_place <id>
 assistant_place() {

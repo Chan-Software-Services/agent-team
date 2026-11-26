@@ -1,9 +1,10 @@
 #!/usr/bin/env bats
 # hooks/assistant-discord-guard: the PreToolUse hook on the assistant's Discord tools. It passes a
-# call in #assistant and in a thread whose parent is #assistant (read from Discord once, then
-# from its cache), refuses every other channel, a reply file outside the assistant's two
-# directories, input it cannot read and a Discord read that fails. Discord is a fake: GET
-# channels/<id> answers $DISCORD_DIR/channel-<id>.json, a missing one fails as curl -f does.
+# call in #assistant and in a thread whose parent is #assistant (read from Discord at every
+# call, whatever the thread list holds), refuses every other channel, a reply file outside the
+# assistant's two directories, input it cannot read and a Discord read that fails. Discord is a
+# fake: GET channels/<id> answers $DISCORD_DIR/channel-<id>.json, a missing one fails as curl -f
+# does, and one with a $DISCORD_DIR/channel-<id>.fail fails with its exit and line.
 
 load helpers/common
 load helpers/signals
@@ -23,7 +24,11 @@ setup() {
   mkdir -p "$files" "$TEAM_HOME/assistant/research"
   stub_script curl <<'EOF'
 url=${*: -1}
-if [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.json ]]; then
+if [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.fail ]]; then
+  { read -r code; read -r line; } <"$DISCORD_DIR/channel-${BASH_REMATCH[1]}.fail"
+  echo "$line" >&2
+  exit "$code"
+elif [[ $url =~ ^https://discord\.com/api/v10/channels/([0-9]+)$ && -f $DISCORD_DIR/channel-${BASH_REMATCH[1]}.json ]]; then
   cat "$DISCORD_DIR/channel-${BASH_REMATCH[1]}.json"
 else
   echo "curl: (22) The requested URL returned error: 404" >&2
@@ -39,6 +44,12 @@ EOF
 channel() {
   jq -n --arg id "$1" --argjson type "$2" --arg parent "$3" \
     '{id: $id, type: $type, parent_id: $parent, name: "x"}' >"$DISCORD_DIR/channel-$1.json"
+}
+
+# Discord's read of channel <id> fails as curl does, exiting <exit> with <line> on stderr:
+# fails <id> <exit> <line>
+fails() {
+  printf '%s\n' "$2" "$3" >"$DISCORD_DIR/channel-$1.fail"
 }
 
 # The hook on a call to the Discord tool <tool> with <input> (JSON), as Claude Code sends it:
@@ -58,6 +69,19 @@ reads() {
   stub_calls curl | jq -r '.[-1] | capture("/channels/(?<id>[0-9]+)$").id'
 }
 
+# The thread list holds $THREAD, and a real shell appends $COORDINATOR to it by the path's
+# form <form>, a line of Bash with the id as $1 and the state directory as $2; then a reply to
+# $COORDINATOR is refused as no thread of #assistant, Discord was asked, and the list holds it:
+# listed_elsewhere <form>
+listed_elsewhere() {
+  echo "$THREAD" >"$state/assistant-threads"
+  bash -c "$1" _ "$COORDINATOR" "$state"
+  grep -qxF -- "$COORDINATOR" "$state/assistant-threads"
+  reply -2 "$COORDINATOR"
+  assert_equal "$stderr" "Blocked: channel $COORDINATOR is not #assistant ($ASSISTANT) or a thread of it; the assistant reaches only #assistant and its threads."
+  assert_equal "$(reads)" "$COORDINATOR"
+}
+
 @test "every Discord tool passes in #assistant itself, without asking Discord" {
   reply -0 "$ASSISTANT"
   assert_equal "$stderr" ""
@@ -69,25 +93,52 @@ reads() {
   [[ ! -e $state/assistant-threads ]]
 }
 
-@test "a thread of #assistant passes, read from Discord once and then from the cache" {
+@test "a thread of #assistant passes on Discord's word at every call" {
   reply -0 "$THREAD"
   assert_equal "$stderr" ""
   assert_equal "$(reads)" "$THREAD"
   assert_equal "$(cat "$state/assistant-threads")" "$THREAD"
   # The token reached curl on stdin, never its arguments.
   stub_calls curl | jq -e --arg t "$FAKE_DISCORD_TOKEN" 'map(select(contains($t))) | length == 0' >/dev/null
-  # Every later call, whatever its tool, reads the cache: Discord is not asked again.
-  rm "$DISCORD_DIR/channel-$THREAD.json"
+  # A later call, whatever its tool, reads Discord again; the thread list keeps the thread once.
   hook -0 fetch_messages "{\"channel\": \"$THREAD\"}"
-  hook -0 react "{\"chat_id\": \"$THREAD\", \"message_id\": \"9\", \"emoji\": \"x\"}"
-  assert_equal "$(reads)" "$THREAD"
-  assert_equal "$(cat "$state/assistant-threads")" "$THREAD"
-  # A thread team-assistant thread recorded is known-good without a read; only whole lines count.
-  echo 1570000000000000202 >>"$state/assistant-threads"
-  hook -0 download_attachment '{"chat_id": "1570000000000000202", "message_id": "9"}'
-  hook -2 download_attachment '{"chat_id": "157000000000000020", "message_id": "9"}'
+  assert_equal "$stderr" ""
   assert_equal "$(reads)" "$THREAD
-157000000000000020"
+$THREAD"
+  assert_equal "$(cat "$state/assistant-threads")" "$THREAD"
+  # A listed thread that Discord no longer answers for is refused as a read that failed.
+  rm "$DISCORD_DIR/channel-$THREAD.json"
+  hook -2 react "{\"chat_id\": \"$THREAD\", \"message_id\": \"9\", \"emoji\": \"x\"}"
+  assert_equal "$stderr" "Blocked: assistant-discord-guard could not read channel $THREAD from Discord (curl: (22) The requested URL returned error: 404), so it cannot tell whether it is a thread of #assistant; a guard that cannot decide refuses, so tell Daniel and do not reach it another way."
+  assert_equal "$(reads | tail -n 1)" "$THREAD"
+}
+
+@test "an id written to the thread list by a glob of its path grants nothing" {
+  listed_elsewhere 'echo "$1" >>"$2"/assistant-thread?'
+}
+
+@test "an id written to the thread list by an ANSI-C quoted name grants nothing" {
+  listed_elsewhere 'echo "$1" >>"$2"/assistant$'"'"'\x2d'"'"'threads'
+}
+
+@test "an id written to the thread list by a variable holding part of its name grants nothing" {
+  listed_elsewhere 'n=threads; echo "$1" >>"$2/assistant-$n"'
+}
+
+@test "a rate limit and a read with no answer in time are refused, quoting curl's line" {
+  fails "$THREAD" 22 "curl: (22) The requested URL returned error: 429"
+  hook -2 fetch_messages "{\"channel\": \"$THREAD\"}"
+  assert_equal "$stderr" "Blocked: assistant-discord-guard could not read channel $THREAD from Discord (curl: (22) The requested URL returned error: 429), so it cannot tell whether it is a thread of #assistant; a guard that cannot decide refuses, so tell Daniel and do not reach it another way."
+  fails "$THREAD" 28 "curl: (28) Operation timed out after 10000 milliseconds with 0 bytes received"
+  reply -2 "$THREAD"
+  assert_equal "$stderr" "Blocked: assistant-discord-guard could not read channel $THREAD from Discord (curl: (28) Operation timed out after 10000 milliseconds with 0 bytes received), so it cannot tell whether it is a thread of #assistant; a guard that cannot decide refuses, so tell Daniel and do not reach it another way."
+  [[ ! -e $state/assistant-threads ]]
+  # Each read, refused or passed, is bounded at 10 seconds.
+  rm "$DISCORD_DIR/channel-$THREAD.fail"
+  reply -0 "$THREAD"
+  reply -2 "$COORDINATOR"
+  assert_equal "$(stub_calls curl | wc -l)" 4
+  stub_calls curl | jq -se 'all(index("--max-time") as $i | $i != null and .[$i + 1] == "10")' >/dev/null
 }
 
 @test "another channel and a thread of another parent are refused, and neither is kept" {
