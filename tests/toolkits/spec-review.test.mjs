@@ -126,12 +126,13 @@ describe("the reader agents", () => {
   for (const name of Object.keys(forbidden)) {
     const text = read("agents", `${name}.md`);
     const frontmatter = frontmatterOf(text);
-    test(`${name} is read-only, omits CLAUDE.md and names a model`, () => {
+    test(`${name} is read-only, omits CLAUDE.md and is pinned to Opus`, () => {
       assert.equal(fieldOf(frontmatter, "name"), name);
       assert.ok(fieldOf(frontmatter, "description"), `${name} has no description`);
       assert.equal(fieldOf(frontmatter, "tools"), "[Read, Grep, Glob]");
       assert.equal(fieldOf(frontmatter, "omitClaudeMd"), "true");
-      assert.match(fieldOf(frontmatter, "model") ?? "", /^(inherit|opus|sonnet|haiku|claude-[\w-]+)$/);
+      // inherit, or no model, would follow the calling session or a config's subagent_model.
+      assert.equal(fieldOf(frontmatter, "model"), "opus");
     });
 
     test(`${name} is told never to read the task directory beyond its inputs`, () => {
