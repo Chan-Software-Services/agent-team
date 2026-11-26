@@ -309,8 +309,9 @@ unlocked() (
 )
 # A PR a queued stands for is in the queue already, as far as the ledger shows, so this run waits
 # on it from here, through its reads of GitHub and its local checks: it takes the lock now, so no
-# reader takes the PR for one nobody waits on. A run that finds it held goes on, and ends below as
-# any second run does. Not with --holds, which team-land runs under the lock.
+# reader takes the PR for one nobody waits on. A run that finds it held goes on and tries again
+# below, before the local checks, where it ends as any second run does if another run holds it
+# still. Not with --holds, which team-land runs under the lock.
 if [[ -z $holds ]]; then
   standing_url=$(jq -r .url <<<"$pr")
   if latest_queue_event "$standing_url" <<<"$events" | jq -e '.event == "queued"' >/dev/null; then

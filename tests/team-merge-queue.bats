@@ -649,7 +649,7 @@ SH
 }
 
 # A git on PATH whose every fetch leaves a process behind, holding every descriptor the fetch was
-# given but bats' fd 3, its pid in $GH_DIR/left-behind: leave_behind_on_fetch
+# given but its standard streams and bats' fd 3, its pid in $GH_DIR/left-behind: leave_behind_on_fetch
 leave_behind_on_fetch() {
   # shellcheck disable=SC2030 # each test's own, read by the scripts it runs
   export TEAM_PATH_FIRST=$BATS_TEST_TMPDIR/stubs
