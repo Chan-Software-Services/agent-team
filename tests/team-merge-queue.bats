@@ -831,7 +831,7 @@ SH
   assert_equal "$(queue_events)" "$(queued; merged_on_head)"
 }
 
-# The queue-wait findings the coordinator's Stop hook keeps its turn open with, run as Claude
+# T14's queue-wait findings the coordinator's Stop hook keeps its turn open with, run as Claude
 # Code runs it at a turn's end, one a line; nothing with none. Fails when the sweep itself did.
 hook_queue_waits() {
   local out
@@ -844,7 +844,7 @@ hook_queue_waits() {
 }
 
 # The Bash for a stub to run, which holds it at step <step> the first time it gets there, until
-# release <step>: pause_at <step>
+# release <step> or for 1200 sleeps of 0.05 s: pause_at <step>
 pause_at() {
   printf '%s\n' "if [[ ! -e \$GH_DIR/at-$1 ]]; then : >\"\$GH_DIR/at-$1\"" \
     "  for _ in {1..1200}; do [[ -e \$GH_DIR/go-$1 ]] && break; sleep 0.05; done" 'fi'
