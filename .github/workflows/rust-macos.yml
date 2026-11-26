@@ -1,0 +1,74 @@
+# The Rust check on macOS: one GitHub-hosted macos-15 job that no merge waits on, so a failure only
+# macOS shows is seen on the pull request without ever holding it or the merge queue. It is required
+# by nothing, bin/lib/advisory-checks names it, which team-ci-wait, team-merge and team-catch-up
+# pass over, and it never runs on a merge queue's trial commit. It runs on every pull request to dev
+# and to main, where it checks only a change that reaches a Rust path since the base (tests/run rust
+# --changed) and passes at once on any other, and by hand (workflow_dispatch) on the whole
+# workspace. A red one is a finding fixed in a task of its own: team-ci-wait's passing or pending
+# end and team-next's merge line name it, and gh run list --workflow rust-macos.yml lists its runs.
+# It installs what the check needs: Homebrew's Bash 5 and GNU tools, which every team script runs
+# on there (bin/lib/platform.sh), cargo-nextest and cargo-deny at tools.lock's macOS pins, each
+# archive checked by its SHA-256, and the toolchain rust-toolchain.toml pins.
+name: Rust on macOS
+
+on:
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer run cancels an older one of the same event and ref, as CI's do.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  rust-macos:
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+      CARGO_NEXTEST_VERSION: 0.9.152
+      CARGO_NEXTEST_SHA256: 2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76
+      CARGO_DENY_VERSION: 0.20.2
+      CARGO_DENY_SHA256: fe67d82a10d8597a3549364cb733a3f9cc1bfff9031b7ae46384a9f2a72090c3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the tools the team's scripts run on
+        run: brew install bash coreutils findutils gnu-sed grep flock jq
+      # Each archive and tool outside the checkout, so tests/run rust --changed sees none of them
+      # among the working tree's changes.
+      - name: Install cargo-nextest ${{ env.CARGO_NEXTEST_VERSION }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/rust-bin"
+          archive=$RUNNER_TEMP/cargo-nextest-$CARGO_NEXTEST_VERSION-universal-apple-darwin.tar.gz
+          curl --retry 5 --retry-all-errors -fsSLo "$archive" "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$CARGO_NEXTEST_VERSION/${archive##*/}"
+          echo "$CARGO_NEXTEST_SHA256  $archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/rust-bin" cargo-nextest
+      - name: Install cargo-deny ${{ env.CARGO_DENY_VERSION }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/rust-bin"
+          archive=$RUNNER_TEMP/cargo-deny-$CARGO_DENY_VERSION-aarch64-apple-darwin.tar.gz
+          curl --retry 5 --retry-all-errors -fsSLo "$archive" "https://github.com/EmbarkStudios/cargo-deny/releases/download/$CARGO_DENY_VERSION/${archive##*/}"
+          echo "$CARGO_DENY_SHA256  $archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/rust-bin" --strip-components=1 "cargo-deny-$CARGO_DENY_VERSION-aarch64-apple-darwin/cargo-deny"
+          echo "$RUNNER_TEMP/rust-bin" >>"$GITHUB_PATH"
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          cargo --version
+      - name: Check what the change reaches
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: tests/run rust --changed "$BASE_SHA"
+      - name: Check the whole workspace
+        if: github.event_name == 'workflow_dispatch'
+        run: tests/run rust

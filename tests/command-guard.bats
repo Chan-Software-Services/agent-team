@@ -891,6 +891,65 @@ passes() {
   guard -0 "cd ~/.config/agent-team"
 }
 
+DOCKER_RUN="a container started by hand outlives the session with its volumes, and the reaper never removes it (docker run or docker create)"
+DOCKER_WAY="start the worktree's stack with ~/agent-team/bin/team-stack up, or run the project's own script for a one-off server (Conventioner's scripts/real-mongo-test.sh)"
+
+# The roles' rule against docker run, held by the docker-run row past docker's global options,
+# by a path, in a shell's string and after a cd; every other docker call passes.
+@test "a worker's docker run or docker create is refused past docker's global options, naming the allowed way" {
+  local role
+  for role in planner builder reviewer; do
+    refuses_as "$role" "$DOCKER_RUN" "$DOCKER_WAY" "docker run --rm -d -p 27017:27017 mongo:7" \
+      "docker create --name x mongo:7" "docker container run --rm mongo:7" "docker container create mongo:7" \
+      "docker -H unix:///run/docker.sock run mongo:7" "docker --host=unix:///run/docker.sock run mongo:7" \
+      "docker --context default run mongo:7" "docker --context=default run mongo:7" "docker -c default run mongo:7" \
+      "docker --config /tmp/cfg run mongo:7" "docker -l debug run mongo:7" "docker --log-level=debug create mongo:7" \
+      "docker -D run mongo:7" "docker --debug container run mongo:7" "docker --tlsverify run mongo:7" \
+      "docker --tls --tlscacert ca.pem --tlscert c.pem --tlskey k.pem run mongo:7" "docker -Hunix:///x run mongo:7" \
+      "/usr/bin/docker run mongo:7" "bash -c 'docker run --rm mongo:7'" "cd x && docker run mongo:7" \
+      "ls; docker create mongo:7" "sudo docker run mongo:7" "timeout 60 docker run mongo:7" \
+      "docker run --rm --pull never agent-team-probe:none true"
+  done
+}
+
+@test "every other docker call passes, and so do the roles without the docker-run row" {
+  local role command
+  for role in planner builder reviewer; do
+    for command in "docker ps" "docker ps -a --filter name=t12" "docker exec t12-mongo-1 mongosh --eval 1" \
+      "docker logs t12-backend --tail 3" "docker inspect -f '{{.State.Status}}' t12-backend" "docker cp x:/a ./a" \
+      "docker volume ls" "docker info --format '{{.ServerVersion}}'" "docker compose up -d" \
+      "docker compose run --rm backend npm test" "docker compose -p t12 run backend true" "docker image ls" \
+      "docker build -t x ." "docker run --help" "docker create --help" "docker container run --help" \
+      "docker -H unix:///x ps" "docker --context default compose run x" "docker container ls" \
+      "grep -rn 'docker run' sops roles" 'git commit -m "fix: refuse docker run by hand"' \
+      "echo 'docker create x' > notes.md" "git log -S'docker run' --oneline"; do
+      AGENT_TEAM_ROLE=$role guard -0 "$command"
+      assert_equal "$stderr" ""
+    done
+  done
+  # A gate agent (no role), the assistant and an ops session are not the row's.
+  guard -0 "docker run --rm mongo:7"
+  for role in assistant ops; do
+    AGENT_TEAM_ROLE=$role guard -0 "docker run --rm mongo:7"
+    assert_equal "$stderr" ""
+    AGENT_TEAM_ROLE=$role guard -0 "docker container create mongo:7"
+    assert_equal "$stderr" ""
+  done
+}
+
+@test "a call naming docker goes to Python past the fast path, and one without it passes at once" {
+  printf '#!/bin/sh\nexit 3\n' >"$BATS_TEST_TMPDIR/stubs/python3"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/python3"
+  local command
+  for command in "docker ps" "/usr/bin/docker run x" "cd x && docker info" "bash -c 'docker run x'"; do
+    AGENT_TEAM_ROLE=builder guard -2 "$command"
+    [[ ${stderr%%$'\n'*} == "Blocked by command-guard: it could not read the command"* ]] ||
+      { echo "docker passed the fast path: $command" >&2; return 1; }
+  done
+  AGENT_TEAM_ROLE=builder guard -0 "git status && ls dockerfiles docker-compose.yml"
+  AGENT_TEAM_ROLE=builder guard -0 "cat Dockerfile"
+}
+
 # The coordinator's acts, which the assistant's deny rules held by any call naming the script
 # until its assistant-acts row took them over, command by command.
 ACTS="the coordinator's acts, which an assistant session never runs"

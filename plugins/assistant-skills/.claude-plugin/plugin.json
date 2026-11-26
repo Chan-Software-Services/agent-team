@@ -1,0 +1,6 @@
+{
+  "name": "assistant-skills",
+  "version": "1.0.0",
+  "description": "The agent team assistant's procedures: walking Daniel through every item waiting on them, one at a time. Loaded only by bin/claude-assistant.",
+  "skills": "./skills/"
+}

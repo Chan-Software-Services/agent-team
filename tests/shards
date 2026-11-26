@@ -14,9 +14,9 @@
 #                                         rewrite tests/timings.tsv, or write <file>, from the
 #                                         per-file seconds that a CI run's shard jobs printed
 #                                         (default: the latest successful CI run), through gh, as
-#                                         the Linux seconds; CI runs no macOS job, so each file
-#                                         keeps the macOS seconds tests/timings.tsv had, and a
-#                                         file it lacks has none; a run whose shard jobs printed
+#                                         the Linux seconds; no CI shard job runs on macOS, so
+#                                         each file keeps the macOS seconds tests/timings.tsv had,
+#                                         and a file it lacks has none; a run whose shard jobs printed
 #                                         fewer than half of tests/*.bats is refused, writing
 #                                         nothing, so a partial run cannot skew the split
 # CI's shard-plan job runs update --to on every run and its shards name that file by TESTS_TIMINGS,
@@ -62,7 +62,7 @@ update() {
   if [[ -f $timings ]]; then cp "$timings" "$scratch/before"; else : >"$scratch/before"; fi
   {
     echo "# The seconds each bats file took on Linux in CI run $run (head ${sha:0:7}, $created),"
-    echo "# and on macOS as the timings before it had them, since CI runs no macOS job; tests/shards update rewrites it."
+    echo "# and on macOS as the timings before it had them, since CI runs no bats on macOS; tests/shards update rewrites it."
     printf 'file\tlinux\tmacos\n'
     awk -F'\t' '
       FILENAME != "-" {

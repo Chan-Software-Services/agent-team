@@ -329,6 +329,52 @@ tasks/current.md:6: T9 closed at 2026-11-05T10:00:00Z; done it (team-current don
   assert_equal "$(git -C "${TEAM_HOME:?}" status --porcelain)" " D tasks/current.md"
 }
 
+@test "check names an until item 'task T<m> merged' whose task closed with no merge; merged or open, nothing" {
+  opened_task T4
+  closed_task T5 2026-11-14T08:00:00Z
+  local a="- next T4 tell T4's builder to merge dev | ledger 2026-11-01T07:08:11Z | until task T5 merged | $ADDED"
+  local b="- watch - T4's own merge | ledger 2026-11-01T07:08:11Z | until task T4 merged | $ADDED"
+  # The item's own task closed too, and its until on itself: one entry, the unmet one.
+  local c="- next T5 its follow-up | ledger 2026-11-01T07:08:11Z | until task T5 merged | $ADDED"
+  printf '%s\n' "# Current items" "$a" "$b" "$c" >"$current"
+  commit_all
+  run_bin -1 team-current check
+  assert_equal "$output" "tasks/current.md:2: T5 closed at 2026-11-14T08:00:00Z with no merge, so 'task T5 merged' never holds; done it (team-current done $(id_of "$a")), or add it again on what carried its change (pr <url> merged)
+tasks/current.md:4: T5 closed at 2026-11-14T08:00:00Z with no merge, so 'task T5 merged' never holds; done it (team-current done $(id_of "$c")), or add it again on what carried its change (pr <url> merged)"
+  run_bin -1 --separate-stderr team-current check --json
+  assert_equal "$stderr" ""
+  assert_equal "$(jq -c .closed <<<"$output")" "$(jq -cn --arg a "${a#- }" --arg ida "$(id_of "$a")" \
+    --arg c "${c#- }" --arg idc "$(id_of "$c")" '
+    [{line: 2, id: $ida, item: $a, task: "T5", closed_at: "2026-11-14T08:00:00Z", unmet: true},
+     {line: 4, id: $idc, item: $c, task: "T5", closed_at: "2026-11-14T08:00:00Z", unmet: true}]')"
+  assert_equal "$(git -C "${TEAM_HOME:?}" status --porcelain)" ""
+
+  # With T5 merged before its close, check names no until item as unmet, only the item whose own
+  # task closed, as before, and reconcile closes both.
+  : >"$TEAM_HOME/ledger.jsonl"
+  opened_task T4
+  opened_task T5
+  jq -cn '{ts: "2026-11-14T07:00:00Z", task: "T5", event: "merged", url: "https://github.com/owner/proj/pull/5"},
+    {ts: "2026-11-14T08:00:00Z", task: "T5", event: "closed"}' >>"$TEAM_HOME/ledger.jsonl"
+  printf '%s\n' "# Current items" "$a" "$c" >"$current"
+  commit_all
+  run_bin -1 team-current check
+  assert_equal "$output" "tasks/current.md:3: T5 closed at 2026-11-14T08:00:00Z; done it (team-current done $(id_of "$c")) or add it again under an open task"
+  run_bin -0 team-current reconcile
+  assert_contains "$output" "closed $(id_of "$a"): task T5 merged"
+  assert_contains "$output" "closed $(id_of "$c"): task T5 merged"
+  assert_equal "$(cat "$current")" "# Current items"
+  run_bin -0 team-current check
+
+  # With T5 open, nothing.
+  : >"$TEAM_HOME/ledger.jsonl"
+  opened_task T4
+  opened_task T5
+  printf '%s\n' "# Current items" "$a" >"$current"
+  run_bin -0 team-current check
+  assert_equal "$output" ""
+}
+
 @test "add and done commit tasks/current.md alone and push it, another changed record left uncommitted" {
   echo "# Plan, changed" >"$TEAM_HOME/tasks/T4/plan.md"
   echo "a staged note" >"$TEAM_HOME/README.md"

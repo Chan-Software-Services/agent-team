@@ -29,17 +29,18 @@
 # mutation or a $ in a query, and any group's subcommand outside its reads), so it still reads
 # GitHub. Its memory is the team home's memory/assistant/ (autoMemoryDirectory), not the
 # coordinator's, though both run in the team home. Its role prompt is roles/assistant.md, appended
-# to the system prompt. Its MCP config, ~/.local/state/agent-team/assistant.mcp.json, names no
-# server, and its settings deny every server `claude mcp list` names in the team home but the
-# Discord plugin's, as claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker
-# login when bin/lib/worker-login names one, by its settings' env, as the coordinator's does. It
-# runs on the assistant line of the team home's models.toml as the coordinator runs on its own
-# (bin/team-models, sops/models.md): the line's model and effort as --model and --effort, its
-# subagent fields in its settings' env, an axis no line names on the settings' word, and a file that
-# does not read a warning, launching on the settings' word (launch_models in bin/lib/launch.sh). It
-# runs with the user settings' Remote Control, as the coordinator does, and compacts at 200k tokens
-# by the launch's --autocompact flag, idle from 100k. Once claude --bg has started it, the launch
-# appends what it runs on to the team home's sessions.jsonl, as the coordinator's does (launch_log).
+# to the system prompt, and its skills, walk, load from plugins/assistant-skills; no other session
+# loads them. Its MCP config, ~/.local/state/agent-team/assistant.mcp.json, names no server, and its
+# settings deny every server `claude mcp list` names in the team home but the Discord plugin's, as
+# claude-coordinator's do (bin/lib/launch.sh). Its session runs on the worker login when
+# bin/lib/worker-login names one, by its settings' env, as the coordinator's does. It runs on the
+# assistant line of the team home's models.toml as the coordinator runs on its own (bin/team-models,
+# sops/models.md): the line's model and effort as --model and --effort, its subagent fields in its
+# settings' env, an axis no line names on the settings' word, and a file that does not read a
+# warning, launching on the settings' word (launch_models in bin/lib/launch.sh). It runs with the
+# user settings' Remote Control, as the coordinator does, and compacts at 200k tokens by the
+# launch's --autocompact flag, idle from 100k. Once claude --bg has started it, the launch appends
+# what it runs on to the team home's sessions.jsonl, as the coordinator's does (launch_log).
 #
 # It refuses (exit 1), in this order: while another launch holds the non-blocking flock on
 # ~/.local/state/agent-team/assistant-launch.lock; while `claude agents --json --all` lists a
@@ -115,6 +116,7 @@ if [[ -n $load_check ]]; then
     --mcp-config "$mcp" \
     --dangerously-skip-permissions \
     --append-system-prompt-file "$code/roles/assistant.md" \
+    --plugin-dir "$code/plugins/assistant-skills" \
     --settings "$settings" \
     "$prompt")
   id=$(grep -oE '\b[0-9a-f]{8}\b' <<<"$out" | head -n 1) || die "could not read the session id from: $out"
@@ -170,6 +172,7 @@ out=$(claude --bg --name assistant \
   --channels plugin:discord@claude-plugins-official \
   --dangerously-skip-permissions \
   --append-system-prompt-file "$code/roles/assistant.md" \
+  --plugin-dir "$code/plugins/assistant-skills" \
   --settings "$settings" \
   "$prompt" \
   {LAUNCH_LOCK_FD}>&-) || status=$?

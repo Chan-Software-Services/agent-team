@@ -589,7 +589,7 @@ file_reasons() {
     bin/lib/confine-roots bin/lib/confine-shell bin/lib/confine-session bin/hooks/git/pre-push \
     bin/hooks/records-git/pre-commit bin/hooks/lease-fence settings/worker.json settings/reviewer.json coordinator.settings.json \
     assistant.settings.json \
-    bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/team-next \
+    bin/lib/team.sh bin/lib/platform.sh bin/lib/ledger.jq bin/lib/messages.jq bin/lib/review-app bin/lib/advisory-checks bin/team-next \
     bin/team-catch-up bin/team-review-check bin/team-land bin/team-log bin/team-project bin/lib/lifecycle.json roles/reviewer.md \
     roles/coordinator.md deny.toml rust-toolchain.toml .cargo/config.toml rust-toolchain .cargo/config \
     crates/team-core/.cargo/config.toml crates/team-core/rust-toolchain.toml; do
