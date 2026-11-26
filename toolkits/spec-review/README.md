@@ -41,7 +41,7 @@ Before the first launch that loads a new or changed skill of it, the coordinator
   It passes over style, wording and claims about anything outside the repository.
 - All three agents have only Read, Grep and Glob, and `omitClaudeMd: true`, since the session's `CLAUDE.md` is the worktree's, which in a replay is not the archived project's: the readiness reader reads the code root's own instead, and the claims reader reads it only when a sentence makes a claim about it.
   All three are pinned to `model: opus`, since each one's reading is a judgment, so neither the calling session's model nor a `models.toml` line's `subagent_model` moves them off Opus.
-  The `spec-review` skill may still give its two another with `--model`; T240's replay named no model for it, since neither passed.
+  The `spec-review` skill may still give its two another with `--model`.
   All three are told never to read the task directory beyond their inputs: no plan, brief, interview, memory, handoff, build note or other review, and for the claims reader no spec, ticket or earlier `claims-check.md` either.
   The readiness reader and the claims reader keep their searches out of the task directory when it lies under the code root.
 - No MCP server, hook or script.

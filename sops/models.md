@@ -100,7 +100,7 @@ Each category falls back through its parent, the part before its last dot, to `d
 - The gate's agent: Daniel's `~/.no-mistakes/config.yaml` sets it, every step on `claude-haiku-5-5` (`agent_config.claude.model`) and its reviewer and fixer on `claude-opus-5-5` (`review_agents`).
   Its Claude starts with `--setting-sources project,local --strict-mcp-config --settings bin/lib/gate-claude-settings.json` (the doctor's `gate-agent` line checks those flags), so it reads neither the user settings nor `models.toml`; a change of it is a change of that file, never a line here.
 - The toolkits' evals: each case's `model`, in its `prompt.md` frontmatter, or in its `case.yaml` for a `spec-review` case, under `toolkits/<name>/evals/`.
-- The `spec-review` toolkit's three reader agents: each is pinned to `model: opus` in its front matter under `toolkits/spec-review/agents/`, since each one's reading is a judgment.
+- The `spec-review` toolkit's three reader agents: each is pinned to `model: opus` in its frontmatter under `toolkits/spec-review/agents/`, since each one's reading is a judgment.
   That field wins over a line's `subagent_model`, as above, while an Agent call's own `model`, such as the one the `spec-review` skill's `--model` passes, wins over it; a change of the pin is a change of those files, never a line here.
 - Auto mode's classifier, which Claude Code chooses itself.
 - The doctor's and `team-quota`'s probes, which make no model request.
