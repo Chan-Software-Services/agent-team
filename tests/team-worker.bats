@@ -259,7 +259,7 @@ run_fake() {
     "--strict-mcp-config", "--mcp-config", "\($t)/mcp.builder.proj.json",
     "--settings", "\($t)/settings.builder.proj.json",
     "--append-system-prompt-file", "\($prompts)/builder.proj.md",
-    "--permission-mode", "auto", "--name", "T7-builder", "Read your brief at \($t)/brief.md"]')"
+    "--permission-mode", "auto", "--autocompact", "250k", "--name", "T7-builder", "Read your brief at \($t)/brief.md"]')"
   assert_equal "$(jq -c . "$t/mcp.builder.proj.json")" '{"mcpServers":{}}'
 }
 
@@ -1082,7 +1082,7 @@ session-records-guard block 10"
   run_bin -0 team-worker T7 builder link/proj/1 -- go
   assert_equal "$(launches)" "$(jq -cn --arg wt "$wt1" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "builder",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one", machine: "home-pc", admission: $a,
-    category: "builder", model: "default", model_from: "default", effort: "default", effort_from: "default"}')"
+    category: "builder", model: "default", model_from: "default", effort: "default", effort_from: "default", autocompact: "250k"}')"
   run_bin -0 team-log --check
 }
 
@@ -3767,7 +3767,7 @@ build_brief() {
   assert_equal "$(files --name "$call")" T7-builder-03
   assert_equal "$(launches)" "$(jq -cn --arg wt "$twt" --arg a "$(admitted_id)" '{task: "T7", event: "launch", role: "builder",
     session: "4f2a9c1e", worktree: $wt, toolkits: [], project: "proj", branch: "feat/T7-one--03", machine: "home-pc",
-    admission: $a, category: "builder", model: "default", model_from: "default", effort: "default", effort_from: "default", brief: "brief-build-03", ticket: "03"}')"
+    admission: $a, category: "builder", model: "default", model_from: "default", effort: "default", effort_from: "default", autocompact: "250k", brief: "brief-build-03", ticket: "03"}')"
   assert_equal "$(files --settings "$call")" "$t/settings.builder.proj--03.json"
   assert_equal "$(files --mcp-config "$call")" "$t/mcp.builder.proj--03.json"
   assert_equal "$(files --append-system-prompt-file "$call")" "$HOME/.local/state/agent-team/prompts/T7/builder.proj--03.md"
@@ -3828,4 +3828,73 @@ JSON
   assert_contains "$stderr" "team-worker: stopped T7-builder 30303030: its work is handed on"
   [[ $stderr != *11111111* && $stderr != *33333333* ]]
   assert_equal "$(launches | tail -n 1 | jq -c '[.ticket, .branch]')" '["03","feat/T7-one--03"]'
+}
+
+# Each claude --bg call's --autocompact values, an array a line, empty when the call gives none.
+bg_windows() {
+  bg_calls | jq -c '[indices("--autocompact")[] as $i | .[$i + 1]]'
+}
+
+@test "every builder launch compacts at the context mark: --autocompact once and logged, a ticket's, T0's and a resumed one the same, and no other role's" {
+  open_task T7
+  ticket_worktree 03
+  mkdir -p "$TEAM_HOME/tasks/T7"
+  echo "# resume" >"$TEAM_HOME/tasks/T7/brief-resume-build-03.md"
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  run_bin -0 team-worker T7 builder "$twt" -- "Read your brief at $(build_brief 03)"
+  run_bin -0 team-worker T7 builder "$twt" -- "Read your brief at $TEAM_HOME/tasks/T7/brief-resume-build-03.md"
+  run_bin -0 team-worker T0 builder "$wt1" -- go
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  run_bin -0 team-worker T7 reviewer "$wt1" -- Review it
+  ops_stub
+  run_bin -0 team-worker T7 ops "$wt1" --toolkit prod-read --request "$(ops_request "$OPS_COORDINATOR")" -- go
+  assert_equal "$(bg_windows)" $'["250k"]\n["250k"]\n["250k"]\n["250k"]\n[]\n[]\n[]'
+  # T0 logs nothing, so its builder's launch is the fourth call and has no event.
+  assert_equal "$(launches | jq -c '[.role, .autocompact]')" \
+    $'["builder","250k"]\n["builder","250k"]\n["builder","250k"]\n["planner",null]\n["reviewer",null]\n["ops",null]'
+  run_bin -0 team-log --check
+  # The ledger holds the field to a builder's launch.
+  local bad
+  bad=$(jq -c 'select(.event == "launch" and .role == "reviewer") | .autocompact = "250k"' "$TEAM_HOME/ledger.jsonl")
+  echo "$bad" >>"$TEAM_HOME/ledger.jsonl"
+  run_bin -1 team-log --check
+  assert_contains "$output" "autocompact"
+}
+
+@test "another mark in bin/lib/context-mark is the window of a builder's launch" {
+  code_checkout
+  context_mark_is tokens=300000
+  open_task T7
+  run_bin -0 team-worker T7 builder "$wt1" -- go
+  assert_equal "$(bg_windows)" '["300k"]'
+  assert_equal "$(launches | jq -r .autocompact)" 300k
+}
+
+@test "a missing or malformed context mark refuses a builder launch, T0's too, before the lease, the admission or any ledger line, and no other role's" {
+  code_checkout
+  open_task T7
+  local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
+  # With no lease held, a task's launch the mark lets through is refused for the lease instead (T0's
+  # takes no lease).
+  run_bin -0 team-lease release
+  for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=1000000000 tokens=abc "tokens=250000 " window=250000 \
+    $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' unreadable missing; do
+    case $bad in
+      missing) rm -f "$mark" ;;
+      unreadable) context_mark_is tokens=250000 && chmod 000 "$mark" ;;
+      *) context_mark_is "$bad" ;;
+    esac
+    refused_launch "$(context_mark_refusal)" T7 builder "$wt1" -- go
+    refused_launch "$(context_mark_refusal)" T0 builder "$wt1" -- go
+  done
+  [[ ! -e $(generated settings builder) ]]
+  [[ ! -e $HOME/.local/state/agent-team/capacity/admitted.json ]]
+  assert_equal "$(stub_calls claude)" ""
+  # No other role reads the mark: with the lease back, a reviewer launches on a missing mark and a
+  # planner on a malformed one.
+  hold_lease home-pc >/dev/null
+  run_bin -0 team-worker T7 reviewer "$wt1" -- Review it
+  context_mark_is tokens=250
+  run_bin -0 team-worker T7 planner "$wt1" -- go
+  assert_equal "$(bg_windows)" $'[]\n[]'
 }
