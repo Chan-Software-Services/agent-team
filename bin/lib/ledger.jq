@@ -1989,7 +1989,9 @@ def queued_logged:
 # the queued events logged before the locks were read (queued_logged), and the events are read
 # after them: a queued in both stood while its task's lock was read, so a free lock had no
 # team-merge waiting on it, since one holds it from before it logs a queued for as long as it
-# waits on the PR. A queued logged while the locks were read is not judged.
+# waits on the PR. A run again on a queued PR takes it just after its start, or, finding it held
+# then, only after its reads of GitHub, so until then a free lock can be read beside it. A queued
+# logged while the locks were read is not judged.
 def queue_wait_findings($landing; $queued):
   .[0].task as $task
   | select($task | IN($landing[]) | not)

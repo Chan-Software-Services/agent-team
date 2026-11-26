@@ -120,10 +120,10 @@
 #                  task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
 #                  taking it (merge_lock_held in bin/lib/team.sh), its queued logged before the
 #                  locks were read (one a team-merge logs while they are read is the next look's
-#                  to judge), with session null: "PR <url> is
-#                  in the merge queue since <the queued's time> with no team-merge waiting on it;
-#                  next: run team-merge T<n> with Bash run_in_background, which goes on waiting and
-#                  logs how it ends", beside the task's other findings
+#                  to judge), with session null: "PR <url> is in the merge queue since <the
+#                  queued's time> with no team-merge waiting on it; next: run team-merge T<n> with
+#                  Bash run_in_background, which goes on waiting and logs how it ends", beside the
+#                  task's other findings
 #   trial-unmarked an open task's PR that stands in the merge queue, whose latest trial-unmarked
 #                  since its latest queued (team-land's: a trial commit it could not post agent-review
 #                  on for 10 minutes of looks) says the trial commit passed every other check, with

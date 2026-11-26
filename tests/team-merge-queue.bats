@@ -567,6 +567,19 @@ SH
   assert_equal "$(wc -l <"$gh_dir/land.calls")" 1
 }
 
+# A git on PATH whose every fetch leaves a process behind, holding every descriptor the fetch was
+# given but bats' fd 3, its pid in $GH_DIR/left-behind: leave_behind_on_fetch
+leave_behind_on_fetch() {
+  # shellcheck disable=SC2030 # each test's own, read by the scripts it runs
+  export TEAM_PATH_FIRST=$BATS_TEST_TMPDIR/stubs
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'if [[ " $* " == *" fetch "* ]]; then' \
+      '  sleep 300 >/dev/null 2>&1 3>&- &' '  echo $! >>"$GH_DIR/left-behind"' 'fi'
+    printf 'exec %q "$@"\n' "$(command -v git)"
+  } >"$BATS_TEST_TMPDIR/stubs/git"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/git"
+}
+
 @test "the task's lock is taken after the local checks, so a process one leaves behind never holds it" {
   with_local_checks
   with_queue
@@ -592,22 +605,36 @@ SH
   # The local check and each git fetch leave a process behind, which would hold the lock had it
   # been given its descriptor.
   cat >"$gh_dir/check.extra" <<'SH'
-sleep 300 &
+sleep 300 3>&- &
 echo $! >>"$GH_DIR/left-behind"
 SH
-  # shellcheck disable=SC2030 # each test's own, read by the scripts it runs
-  export TEAM_PATH_FIRST=$BATS_TEST_TMPDIR/stubs
-  {
-    printf '%s\n' '#!/usr/bin/env bash' 'if [[ " $* " == *" fetch "* ]]; then' \
-      '  sleep 300 >/dev/null 2>&1 &' '  echo $! >>"$GH_DIR/left-behind"' 'fi'
-    printf 'exec %q "$@"\n' "$(command -v git)"
-  } >"$BATS_TEST_TMPDIR/stubs/git"
-  chmod +x "$BATS_TEST_TMPDIR/stubs/git"
+  leave_behind_on_fetch
   run_bin -0 --separate-stderr team-merge T14
   local -a left
   mapfile -t left <"$gh_dir/left-behind"
   rm "$BATS_TEST_TMPDIR/stubs/git"
   # The fetch's and the check's.
+  ((${#left[@]} >= 2))
+  kill -0 "${left[@]}"
+  rc=0
+  flock -n "$(lock)" true || rc=$?
+  kill "${left[@]}"
+  assert_equal "$rc" 0
+}
+
+@test "the --holds run a team-land starts under the lock gives it to no git fetch, so what that leaves behind never holds it" {
+  # Daniel's word named another head, so each run fetches the branch to check the head against it.
+  moved_head base
+  with_queue
+  # team-land holds the merge again before it lands, as the real one does.
+  land merged
+  sed -i '1i "$CODE_CHECKOUT/bin/team-merge" T14 --pr "$1" --holds "$2" || exit' "$gh_dir/land.sh"
+  leave_behind_on_fetch
+  run_bin -0 --separate-stderr team-merge T14
+  local -a left
+  mapfile -t left <"$gh_dir/left-behind"
+  rm "$BATS_TEST_TMPDIR/stubs/git"
+  # The run's fetch and the --holds run's.
   ((${#left[@]} >= 2))
   kill -0 "${left[@]}"
   rc=0
@@ -860,6 +887,34 @@ pause_the_lock_reading() {
   release scan
   wait "$hook"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/hook.out")" ""
+}
+
+@test "the Stop hook's sweep finds no queue-wait for a team-merge run again on a queued PR that found the lock held at its start, once its holder ends" {
+  stub_reply claude '[]'
+  with_local_checks
+  with_queue
+  was_queued
+  in_queue
+  pause_at reads >"$gh_dir/entry.sh"
+  pause_at checks >"$gh_dir/check.extra"
+  land waiting "the deadline came with the PR in the queue"
+  # Another run holds the lock as this one starts, and ends, the PR still queued, while this one
+  # reads GitHub.
+  mkdir -p "$(dirname "$(lock)")"
+  flock -o "$(lock)" bash -c "$(pause_at holder)" 3>&- &
+  local holder=$!
+  reached holder
+  start_merge
+  reached reads
+  release holder
+  wait "$holder"
+  release reads
+  reached checks
+  assert_equal "$(hook_queue_waits)" ""
+  release checks
+  local rc=0
+  wait "$merging" || rc=$?
+  assert_equal "$rc" 75
 }
 
 @test "a refusal on a base with a queue logs nothing, takes no lock and runs no team-land, and a method other than merge is refused" {
