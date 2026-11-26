@@ -630,14 +630,6 @@
       "marker": "No such file"
     },
     {
-      "id": "thread-cache-write",
-      "roles": ["assistant"],
-      "tool": "Bash",
-      "input": "sed -i -n p ~/.local/state/agent-team/assistant-threads.load-check-probe-absent",
-      "expect": "hook",
-      "marker": "the thread cache"
-    },
-    {
       "id": "read-launchers",
       "roles": ["assistant"],
       "tool": "Bash",

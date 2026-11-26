@@ -32,7 +32,7 @@
 # coordinator's load check: an assistant session runs none").
 #
 # start refuses, starting nothing and writing nothing but its lock and, for a message in a thread
-# under #assistant, that thread's line in the assistant's thread cache (assistant_place), in this
+# under #assistant, that thread's line in the assistant's thread list (assistant_place), in this
 # order:
 #   1. a malformed command line (exit 2): no subcommand or another one, a missing or repeated
 #      --request or --file, no --toolkit, an option with no value, an unknown option;
