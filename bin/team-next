@@ -349,7 +349,15 @@
 # team-merge T<n> again", a check the project's required_checks alone require said as theirs, in its
 # own clause, and the step as team-merge words it for them (rules_reason and rules_step in
 # bin/lib/ledger.jq), never the merge line nor the merge-base step, since the trial merge cannot be
-# judged until every required check runs there.
+# judged until every required check runs there. A PR the merge queue dropped for a runner backlog,
+# with no pr event of its URL and no review of the task since (queue_state's runners_due), gets
+# "merge runners: <url> was dropped by the merge queue at <ts>: the runners are behind, with
+# nothing of the PR's to fix: tell Daniel, who may raise the check timeout of <repo>'s merge queue
+# while the backlog stands, and run team-merge T<n> again once they say the runners are back" (the
+# step as team-merge words it, runner_step in bin/lib/ledger.jq, "team-merge T<n> --pr <url>" in a
+# task with more than one PR, merge_args there) where the merge line would be, behind its base on a
+# base with a merge queue too; the builder-merge-base step above comes first, as for any PR, and
+# after a team-catch-up line the merge line stays, for the merge it makes.
 # The churn rule: when this review sent back a finding its widening= marks (one in what the last
 # fix added), the task's previous review in the verdict's project (project_reviews: the latest
 # made there before this one, on a rerun the latest before the line that holds it, another
@@ -576,7 +584,7 @@ arm_line() {
 # read_state's variables and the task's events: the merge ask or the default word's merge, or for a
 # PR behind its base the merge base step (see the header).
 merge_line() {
-  local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial rules repo
+  local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial rules runners repo
   url=$pr_url
   caught='' no_catch_up=''
   # A PR the merge queue dropped for a check the base's rules require that no run made on the trial
@@ -639,6 +647,19 @@ merge_line() {
         full) echo "$step send $task STOW to $who, then launch a fresh builder on team-brief $task builder-merge-base" ;;
         gone) echo "$step $task-builder $session is gone, so launch a fresh builder on team-brief $task builder-merge-base" ;;
       esac
+      return 0
+    fi
+  fi
+  # A PR the merge queue dropped for a runner backlog, with no pr event of it and no review of the
+  # task since (queue_state's runners_due): the runners are the wait, so team-merge's step for that
+  # in place of the merge line; after a catch-up's line the merge line stays, for the merge it makes.
+  if [[ -z $caught ]]; then
+    runners=$(task_event_array "$task" | ledger_jq 'merge_args($url) as $merge
+      | queue_state($url) | select(.runners_due? == true)
+      | "was dropped by the merge queue at \(.since): \(runner_step($repo; $merge))"' \
+      -r --arg url "${url%/}" --arg repo "$repo") || exit 1
+    if [[ -n $runners ]]; then
+      echo "merge runners: $url $runners"
       return 0
     fi
   fi
