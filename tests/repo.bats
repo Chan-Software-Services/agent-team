@@ -2640,6 +2640,35 @@ ci_needed() {
     "$(jq '[.tools[] | select(.from == "download")] | length' "$REPO_ROOT/bin/lib/tools.lock")"
 }
 
+# The toolkits job installs Playwright's system libraries by tests/playwright-deps, which limits
+# each of its fetches, between the restore and the save of two caches: the browsers by
+# playwright-core's version, the libraries' packages by that and the runner image's, else the latest
+# of the same playwright-core. A trial commit saves neither, since no other run reads its ref's.
+@test "CI's toolkits job restores Playwright's browsers and its libraries' packages, installs by tests/playwright-deps and saves both but on a trial commit" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml block cache path
+  block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  toolkits:$/,/^  [a-z_-]*:$/p' | sed '1!{/^  [a-z_-]*:$/d}' | grep -v '^ *#')
+  grep -qxF '          sudo -n -H env "PATH=$PATH" tests/playwright-deps "$HOME/.cache/playwright-debs"' <<<"$block"
+  grep -qxF '          node servers/node_modules/playwright-core/cli.js install chromium firefox webkit' <<<"$block"
+  if grep -nF -- '--with-deps' <<<"$block"; then echo "the toolkits job installs the libraries with no limit" >&2; return 1; fi
+  grep -qxF '          key=$ImageOS-$RUNNER_ARCH-$version' <<<"$block"
+  grep -qxF '          echo "browsers=playwright-browsers-$key" >>"$GITHUB_OUTPUT"' <<<"$block"
+  grep -qxF '          echo "debs=playwright-debs-$key-$ImageVersion" >>"$GITHUB_OUTPUT"' <<<"$block"
+  grep -qxF '          echo "debs-prefix=playwright-debs-$key-" >>"$GITHUB_OUTPUT"' <<<"$block"
+  grep -qxF '          restore-keys: ${{ steps.playwright.outputs.debs-prefix }}' <<<"$block"
+  # Each cache is restored and saved at one path and key, and saved only on a miss of that key.
+  for cache in browsers:ms-playwright debs:playwright-debs; do
+    path=${cache#*:} cache=${cache%:*}
+    assert_equal "$(grep -cxF "          path: ~/.cache/$path" <<<"$block")" 2
+    assert_equal "$(grep -cxF "          key: \${{ steps.playwright.outputs.$cache }}" <<<"$block")" 2
+    grep -qxF "        if: steps.$cache.outputs.cache-hit != 'true' && github.event_name != 'merge_group'" <<<"$block"
+  done
+  assert_equal "$(grep -oE 'uses: actions/cache[a-z/]*' <<<"$block" | cut -d' ' -f2)" \
+    $'actions/cache/restore\nactions/cache/restore\nactions/cache/save\nactions/cache/save'
+  # Restored before the install, saved after it and before the tests.
+  assert_equal "$(grep -oE 'actions/cache/[a-z]+|tests/playwright-deps|run: tests/run toolkits' <<<"$block" | uniq)" \
+    $'actions/cache/restore\ntests/playwright-deps\nactions/cache/save\nrun: tests/run toolkits'
+}
+
 # The rust job checks the Cargo workspace on Linux: on a pull request and a merge queue's trial
 # commit only what reaches a Rust path since the base the data job reads its range from, so it
 # reports on every PR and passes at once on any other, and by hand the whole workspace; its
