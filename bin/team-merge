@@ -4,7 +4,13 @@
 # Usage: team-merge T<n> [--pr <url>] [--holds <head>]
 # The PR is the task's latest pr event, or --pr, which must be one of the task's pr events (a URL
 # under a moved repo's old owner or its new one, bin/lib/repo-moves.json, naming the same PR); its
-# repo must be a project in projects.toml. Checks first, changing nothing, each failure a reason.
+# repo must be a project in projects.toml.
+# Each step it prints that says to run team-merge again gives it this PR: T<n>, followed by --pr
+# <url> in a task with more than one PR, when the task's latest pr event is another URL's, which
+# team-merge T<n> alone would take (merge_args in bin/lib/ledger.jq, read as the step is said), or
+# when the ledger cannot be read then; a moved head's reason, "run team-merge again", names both
+# only in those cases.
+# Checks first, changing nothing, each failure a reason.
 # Two words may merge it, read from the ledger by merge_authority in bin/lib/ledger.jq (the
 # derivation every reader shares) and tried in this order, the first that holds merging it:
 #   Daniel's per-head word, when a merge-approved event names the PR's url (the latest counts; a
@@ -344,6 +350,20 @@ later() {
 jq_failed() {
   die "PR #$number cannot be checked: jq failed${1:+ (exit $1)}, so nothing changed"
 }
+# What a step that says to run team-merge again gives it to act on this PR (merge_args in
+# bin/lib/ledger.jq), read from the ledger as it stands when the step is said, since a PR may be
+# logged while this run waits; when the ledger cannot be read, --pr too, which team-merge takes for
+# any PR of the task's pr events.
+merge_target() {
+  task_event_array "$task" | ledger_jq 'merge_args($url)' -r --arg url "${url%/}" || echo "$task --pr ${url%/}"
+}
+# The step a head that moved is refused with, naming the task and PR only where merge_target does
+# more than name the task.
+run_again() {
+  local target
+  target=$(merge_target)
+  if [[ $target == "$task" ]]; then echo "run team-merge again"; else echo "run team-merge $target again"; fi
+}
 # Each line jq prints is one reason more of the list <name>: add_reasons <name> <jq arguments>...
 add_reasons() {
   local -n add_to=$1
@@ -412,7 +432,7 @@ else
   fi
   [[ $(jq -r .base <<<"$facts") == "$base" ]] || merge_reasons+=("PR #$number targets $(jq -r .base <<<"$facts"), not $project's base $base")
   [[ -z $holds || $holds == "$head" ]] || merge_reasons+=("PR #$number's head is ${head:0:7}, not ${holds:0:7}, the head --holds names")
-  [[ $(jq -r .headRefOid "$scratch/pr") == "$head" ]] || merge_reasons+=("the head moved while it was read (${head:0:7}, then $(jq -r '.headRefOid[:7]' "$scratch/pr")); run team-merge again")
+  [[ $(jq -r .headRefOid "$scratch/pr") == "$head" ]] || merge_reasons+=("the head moved while it was read (${head:0:7}, then $(jq -r '.headRefOid[:7]' "$scratch/pr")); $(run_again)")
   # agent-review is the reviewer App's check run on the team's own project with the App on
   # (review_check, from pr_part), else the check or status of that name gh pr checks shows.
   # A PR not open has no rules read, and is refused as not open; rules that cannot be read are a
@@ -751,7 +771,7 @@ refuse_on_problems() {
     exit 1
   fi
   if [[ -n $entry && -n $untold ]]; then
-    echo "team-merge: PR #$number is left in the merge queue, since whether its merge holds cannot be told now: run team-merge $task again" >&2
+    echo "team-merge: PR #$number is left in the merge queue, since whether its merge holds cannot be told now: run team-merge $(merge_target) again" >&2
   elif [[ -n $entry ]]; then
     if why=$(dequeue_pr "$pr_id"); then
       why=$(printf '%s; ' "${reasons[@]}" | tr '\n' ' ' | tr -s ' ')
@@ -827,7 +847,7 @@ if ((${#local_checks[@]})); then
   if github "$scratch" again pr view "$number" --repo "$repo" --json headRefOid; then
     moved=$(jq -r .headRefOid "$scratch/again")
     [[ $moved == "$head" ]] ||
-      merge_reasons+=("the head moved while the local checks ran (${head:0:7}, then ${moved:0:7}); run team-merge again")
+      merge_reasons+=("the head moved while the local checks ran (${head:0:7}, then ${moved:0:7}); $(run_again)")
   else
     later merge_reasons "GitHub cannot be read after the local checks: $(<"$scratch/error")"
   fi
@@ -894,9 +914,9 @@ if [[ -n $landing ]]; then
   if ! outcome=$(jq -er 'select(.schema == "team-land/1") | .outcome | strings' <<<"$landed_as" 2>/dev/null); then
     if out_of_queue; then
       log_dequeued "team-land ended with no result (exit $rc); PR #$number is in no merge queue"
-      die "team-land ended with no result (exit $rc), and PR #$number is in no merge queue: run team-merge $task again"
+      die "team-land ended with no result (exit $rc), and PR #$number is in no merge queue: run team-merge $(merge_target) again"
     fi
-    die "team-land ended with no result (exit $rc), so whether PR #$number is in the queue is not known: run team-merge $task again"
+    die "team-land ended with no result (exit $rc), so whether PR #$number is in the queue is not known: run team-merge $(merge_target) again"
   fi
   reason=$(jq -r '.reason // "team-land gave no reason"' <<<"$landed_as")
   case $outcome in
@@ -930,12 +950,12 @@ if [[ -n $landing ]]; then
         if jq -e 'any(.failed // [] | .[]; .class == "pr")' <<<"$landed_as" >/dev/null; then
           echo "  the trial merge failed what the head ${head:0:7} passed: render team-brief $task builder-merge-base for the builder, then a rereview"
         elif jq -e 'any(.failed // [] | .[]; .class == "rules")' <<<"$landed_as" >/dev/null; then
-          echo "  $(ledger_jq '.failed // [] | rules_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
+          echo "  $(ledger_jq '.failed // [] | rules_step($repo; $merge)' -r --arg repo "$repo" --arg merge "$(merge_target)" <<<"$landed_as")"
         elif ledger_jq runner_backlog -e <<<"$landed_as" >/dev/null; then
           # Runners behind (team-land enqueued once more already when only infrastructure failed).
-          echo "  $(ledger_jq 'runner_step($repo; $task)' -r --arg repo "$repo" --arg task "$task" <<<"$landed_as")"
+          echo "  $(ledger_jq 'runner_step($repo; $merge)' -r --arg repo "$repo" --arg merge "$(merge_target)" <<<"$landed_as")"
         else
-          echo "  run team-merge $task again once what dropped it is fixed"
+          echo "  run team-merge $(merge_target) again once what dropped it is fixed"
         fi
       } >&2
       exit 1
@@ -944,13 +964,13 @@ if [[ -n $landing ]]; then
       echo "team-merge: $reason" >&2
       if out_of_queue; then
         log_dequeued "$reason; PR #$number is in no merge queue"
-        echo "team-merge: PR #$number is in no merge queue: run team-merge $task again with run_in_background to enqueue it" >&2
+        echo "team-merge: PR #$number is in no merge queue: run team-merge $(merge_target) again with run_in_background to enqueue it" >&2
       elif [[ $after == queued ]]; then
-        echo "team-merge: the PR is still in the queue: run team-merge $task again with run_in_background to go on waiting" >&2
+        echo "team-merge: the PR is still in the queue: run team-merge $(merge_target) again with run_in_background to go on waiting" >&2
       elif [[ $after == unread ]]; then
-        echo "team-merge: whether PR #$number is still in the queue is not known, GitHub unread: run team-merge $task again with run_in_background to go on waiting" >&2
+        echo "team-merge: whether PR #$number is still in the queue is not known, GitHub unread: run team-merge $(merge_target) again with run_in_background to go on waiting" >&2
       else
-        echo "team-merge: PR #$number is merged by now: run team-merge $task again, which logs how it ended" >&2
+        echo "team-merge: PR #$number is merged by now: run team-merge $(merge_target) again, which logs how it ended" >&2
       fi
       exit 75
       ;;
@@ -967,7 +987,7 @@ if [[ -n $landing ]]; then
       fi
       die "team-land refused PR #$number: $reason"
       ;;
-    *) die "team-land ended $outcome, which is no outcome of its: check PR #$number on GitHub, then run team-merge $task again" ;;
+    *) die "team-land ended $outcome, which is no outcome of its: check PR #$number on GitHub, then run team-merge $(merge_target) again" ;;
   esac
 else
   gh pr merge "$number" --repo "$repo" "--$method" --match-head-commit "$head" >&2 ||

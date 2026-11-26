@@ -233,6 +233,83 @@ no_land_call() {
   assert_equal "$status" 0
 }
 
+# dropped_again [<args for team-merge>...]: team-merge T14 of a PR the queue dropped, exiting 1,
+# on a queue and a PR as before the drop.
+dropped_again() {
+  merge_again
+  queue_rule
+  run_bin -1 --separate-stderr team-merge T14 "$@"
+}
+
+@test "in a task with more than one PR, every step a queue drop names says to run team-merge --pr on the dropped PR, since team-merge T14 alone takes the latest pr event's" {
+  local again="run team-merge T14 --pr $url again"
+  with_queue
+  second_pr
+  land dequeued "Analyze (python) never reported on the trial commit, which dev's rules require" \
+    '[{"name": "Analyze (python)", "class": "rules", "kind": "missing", "link": null, "step": null}]'
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "  the base's rules require a check no workflow makes on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger or ask Daniel to change owner/proj's ruleset, then $again"
+  land dequeued "checks_timed_out"
+  dropped_again --pr "$url"
+  assert_contains "$stderr" "while the backlog stands, and $again once they say the runners are back"
+  land dequeued "the queue was cleared"
+  dropped_again --pr "$url"
+  assert_contains "$stderr" "  $again once what dropped it is fixed"
+  # PR #5 logged again, so it is the latest pr event's: its step names it all the same.
+  event T14 pr "{url: \"$url\", head: \"a1b2c3d4\", project: \"proj\"}"
+  dropped_again
+  assert_contains "$stderr" "  $again once what dropped it is fixed"
+}
+
+@test "a task whose latest pr event is another PR of the same repository names --pr too, as team-merge T14 alone would pass over the PR --pr named" {
+  with_queue
+  second_pr https://github.com/owner/proj/pull/6
+  land dequeued "the queue was cleared"
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "  run team-merge T14 --pr $url again once what dropped it is fixed"
+}
+
+@test "in a task with more than one PR, the steps after a wait, a run of team-land with no result and an outcome it does not know name the PR with --pr" {
+  local again="run team-merge T14 --pr $url again" after
+  with_queue
+  second_pr
+  in_queue
+  land waiting "still in the queue"
+  run_bin -75 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "team-merge: the PR is still in the queue: $again with run_in_background to go on waiting"
+  # The PR as read after team-land's wait: out of the queue, merged, or unread.
+  for after in \
+    "out|{\"data\": {\"repository\": {\"pullRequest\": {\"id\": \"PR_kwDOtest5\", \"state\": \"OPEN\", \"mergeQueueEntry\": null}}}}|team-merge: PR #5 is in no merge queue: $again with run_in_background to enqueue it" \
+    "merged|{\"data\": {\"repository\": {\"pullRequest\": {\"id\": \"PR_kwDOtest5\", \"state\": \"MERGED\", \"mergeQueueEntry\": null}}}}|team-merge: PR #5 is merged by now: $again, which logs how it ended" \
+    "unread|not json|team-merge: whether PR #5 is still in the queue is not known, GitHub unread: $again with run_in_background to go on waiting"; do
+    merge_again
+    queue_rule
+    in_queue
+    land waiting "still in the queue"
+    sed -i "1i echo '$(cut -d'|' -f2 <<<"$after")' >\"\$GH_DIR/entry.json\"" "$gh_dir/land.sh"
+    run_bin -75 --separate-stderr team-merge T14 --pr "$url"
+    assert_contains "$stderr" "$(cut -d'|' -f3 <<<"$after")"
+  done
+  # No result, with the PR in the queue and then in none.
+  merge_again
+  queue_rule
+  in_queue
+  printf '%s\n' 'echo "team-land: jq: error" >&2' 'exit 5' >"$gh_dir/land.sh"
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "so whether PR #5 is in the queue is not known: $again"
+  merge_again
+  queue_rule
+  in_queue no
+  printf '%s\n' 'echo "team-land: jq: error" >&2' 'exit 5' >"$gh_dir/land.sh"
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "and PR #5 is in no merge queue: $again"
+  merge_again
+  queue_rule
+  land adrift
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "team-land ended adrift, which is no outcome of its: check PR #5 on GitHub, then $again"
+}
+
 @test "a PR still in the queue at team-land's deadline logs nothing more and exits 75, to go on waiting" {
   with_queue
   in_queue
@@ -524,8 +601,12 @@ no_land_call() {
   assert_contains "$stderr" "  the plan's files cannot be read"
   # And the PR in the queue is left there by a team-merge that refuses on it alone.
   run_bin -1 --separate-stderr team-merge T14
-  assert_contains "$stderr" "team-merge: PR #5 is left in the merge queue, since whether its merge holds cannot be told now"
+  assert_contains "$stderr" "team-merge: PR #5 is left in the merge queue, since whether its merge holds cannot be told now: run team-merge T14 again"
   assert_equal "$(dequeues)" ""
+  # With another PR of the task, the step names this one.
+  second_pr
+  run_bin -1 --separate-stderr team-merge T14 --pr "$url"
+  assert_contains "$stderr" "team-merge: PR #5 is left in the merge queue, since whether its merge holds cannot be told now: run team-merge T14 --pr $url again"
 }
 
 @test "a run that read the PR open while another logged its merge finds the merged under the lock, and logs no second one" {

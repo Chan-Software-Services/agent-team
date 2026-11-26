@@ -113,9 +113,12 @@
 #                  bin/lib/ledger.jq), "next: the runners are behind, with nothing of the PR's to
 #                  fix: tell Daniel, who may raise the check timeout of <repo>'s merge queue while
 #                  the backlog stands, and run team-merge T<n> again once they say the runners are
-#                  back; on a refusal, ...", one such step for each PR so dropped, in a task with
-#                  more than one PR naming "team-merge T<n> --pr <url>" (merge_args there), after
-#                  "run team-merge T<n> --pr <url>" for each PR named that was not so dropped
+#                  back; on a refusal, ...", one such step for each PR so dropped, after "run
+#                  team-merge T<n>" for each PR named that was not, "; " between them. In this
+#                  finding, queue-wait and trial-rules, "team-merge T<n>" is "team-merge T<n>
+#                  --pr <url>" of the PR in a task with more than one PR, or when the task's latest
+#                  pr event is another URL's, which team-merge T<n> alone would take (merge_args in
+#                  bin/lib/ledger.jq)
 #   queue-wait     an open task's PR that stands in the merge queue while no process holds the
 #                  task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
 #                  taking it (merge_lock_held in bin/lib/team.sh), its queued logged before the

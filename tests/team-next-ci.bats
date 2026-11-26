@@ -20,7 +20,7 @@ red_logged() {
 
 # ci_fix <who> <head>: the fix message --ci prints to the holder <who> for red_checks on <head>.
 ci_fix() {
-  echo "send to $1: T7 fix the failed checks test-shards (2), build and lint of ${2:0:8} in $TEAM_HOME/tasks/T7/ci-${2:0:8}.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
+  echo "send to $1: T7 fix the failed checks test-shards (2), build, data and lint of ${2:0:8} in $TEAM_HOME/tasks/T7/ci-${2:0:8}.md on the same branch, each as narrowly as it asks (a fix that would reach shapes it does not name is a T7 QUESTION first), then deliver again as your brief says"
 }
 
 # ci_ends <end>...: the team-ci-wait stub answers its calls with these ends of $sha in turn, the
@@ -298,20 +298,22 @@ $(ci_fix "T7-builder (b0000001, 120k)" "$sha")"
   # One ci, holding every failure, the infrastructure one and the roll-up among them.
   assert_equal "$(logged_from $((count + 1)) | jq -c 'del(.task)')" \
     "$(jq -cn --arg url "$url" --arg h "$sha" --argjson f "$(red_logged)" '{event: "ci", url: $url, head: $h, outcome: "failed", failed: $f}')"
-  assert_equal "$(red_logged | jq -r 'map(.name) | join(",")')" "test,test-shards (2),smoke-shards (1),build,lint"
+  assert_equal "$(red_logged | jq -r 'map(.name) | join(",")')" "test,test-shards (2),smoke-shards (1),build,data,lint"
   # The report: the PR's failures first, then infrastructure, then the roll-up, each with its
-  # class, name, kind, step, link and rerun, and the closing line.
+  # class, name, kind (a missing one with what requires it), step, link and rerun, and the closing
+  # line.
   assert_equal "$(<"$TEAM_HOME/tasks/T7/ci-$short.md")" "# The failed checks of $url at $sha
 
 The checks wait after the pass ended on these failures, one a line, the PR's first: each one's class, check, kind, failing step, link and rerun command.
 
 - the PR's: \`test-shards (2)\`, failed, at the step \"Run the tests\", $job/8, no rerun
-- the PR's: \`build\`, missing, at no step, no link, no rerun
+- the PR's: \`build\`, missing (the base's rules require it), at no step, no link, no rerun
+- the PR's: \`data\`, missing (the project's required_checks require it), at no step, no link, no rerun
 - the PR's: \`lint\`, failed, at the step \"Lint\", $job/11, no rerun
 - infrastructure: \`smoke-shards (1)\`, never-started, at no step, $job/10, rerun with \`gh run rerun 7 --job 10 --repo owner/proj\`
 - roll-up: \`test\`, rollup, at no step, $job/9, no rerun
 
-The PR's failures, \`test-shards (2)\`, \`build\` and \`lint\`, are this round's \`blocking\` findings; the others are not, since an infrastructure failure or a roll-up is no defect of the PR, and the round's new head runs every check again."
+The PR's failures, \`test-shards (2)\`, \`build\`, \`data\` and \`lint\`, are this round's \`blocking\` findings; the others are not, since an infrastructure failure or a roll-up is no defect of the PR, and the round's new head runs every check again."
   # Nothing was rerun, posted or launched.
   assert_equal "$(outside_calls)" ""
   assert_equal "$(bg_calls)" ""
@@ -352,10 +354,10 @@ The PR's failures, \`test-shards (2)\`, \`build\` and \`lint\`, are this round's
   assert_equal "$(tail -n 2 <<<"$output")" "brief $TEAM_HOME/tasks/T7/brief-round-1.md
 launched T7-builder c0000001"
   assert_equal "$(record round-1 | jq -cS .)" "$(jq -cnS --arg url "$url" --arg r "$report" --arg s "$short" '{template: "builder-round",
-    values: {findings: "the failed checks test-shards (2), build and lint of \($s)", findings_file: $r,
+    values: {findings: "the failed checks test-shards (2), build, data and lint of \($s)", findings_file: $r,
       goal: "Coordinator toil goes to the scripts.", pr: $url}}')"
   assert_contains "$(<"$TEAM_HOME/tasks/T7/brief-round-1.md")" \
-    "and findings the failed checks test-shards (2), build and lint of $short in \`$report\`."
+    "and findings the failed checks test-shards (2), build, data and lint of $short in \`$report\`."
   # A second stow after that launch launches nothing.
   run_bin -0 --separate-stderr team-next T7 -- "T7 PAUSED stowed"
   assert_equal "$(tail -n 1 <<<"$output")" "no hand-off for PAUSED stowed: no review's sent-back findings or failed checks wait for a round"
@@ -365,7 +367,7 @@ launched T7-builder c0000001"
   run_bin -0 --separate-stderr team-next T7 -- "T7 PR $url"
   assert_contains "$output" "brief $TEAM_HOME/tasks/T7/brief-rereview-2.md"
   assert_equal "$(record rereview-2 | jq -r .template)" rereview
-  grep -qxF "The last review, of \`$short\`, passed; then the checks test-shards (2), build and lint failed on it, which this round fixed." \
+  grep -qxF "The last review, of \`$short\`, passed; then the checks test-shards (2), build, data and lint failed on it, which this round fixed." \
     "$TEAM_HOME/tasks/T7/brief-rereview-2.md"
   # A stow after a pass with no failed ci since launches nothing.
   review_logged pass "$fix" '[]'
