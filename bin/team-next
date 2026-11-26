@@ -354,10 +354,12 @@
 # "merge runners: <url> was dropped by the merge queue at <ts>: the runners are behind, with
 # nothing of the PR's to fix: tell Daniel, who may raise the check timeout of <repo>'s merge queue
 # while the backlog stands, and run team-merge T<n> again once they say the runners are back" (the
-# step as team-merge words it, runner_step in bin/lib/ledger.jq, "team-merge T<n> --pr <url>" in a
-# task with more than one PR, merge_args there) where the merge line would be, behind its base on a
-# base with a merge queue too; the builder-merge-base step above comes first, as for any PR, and
-# after a team-catch-up line the merge line stays, for the merge it makes.
+# step as team-merge words it, runner_step in bin/lib/ledger.jq) where the merge line would be,
+# behind its base on a base with a merge queue too; the builder-merge-base step above comes first,
+# as for any PR, and after a team-catch-up line the merge line stays, for the merge it makes. In the
+# default word's merge, the rules step and the runners step, "team-merge T<n>" is "team-merge T<n>
+# --pr <url>" in a task with more than one PR, or when the task's latest pr event is another URL's,
+# which team-merge T<n> alone would take (merge_args in bin/lib/ledger.jq).
 # The churn rule: when this review sent back a finding its widening= marks (one in what the last
 # fix added), the task's previous review in the verdict's project (project_reviews: the latest
 # made there before this one, on a rerun the latest before the line that holds it, another
@@ -578,9 +580,11 @@ arm_line() {
 # read_state's variables and the task's events: the merge ask or the default word's merge, or for a
 # PR behind its base the merge base step (see the header).
 merge_line() {
-  local url caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial rules runners repo
+  local url target caught behind_by project primary rc fetched merged step risky default own withdrawals no_catch_up trial rules runners repo
   url=$pr_url
   caught='' no_catch_up=''
+  # What each step below that names team-merge gives it to act on this PR.
+  target=$(task_event_array "$task" | ledger_jq 'merge_args($url)' -r --arg url "${url%/}") || exit 1
   # A PR the merge queue dropped for a check the base's rules require that no run made on the trial
   # commit, with no failure of its own, no pr event of it and no review of the task since
   # (queue_state's rules_due): the trial merge cannot be judged until every required check runs
@@ -588,8 +592,8 @@ merge_line() {
   repo=${url#https://github.com/}
   repo=${repo%%/pull/*}
   rules=$(task_event_array "$task" | ledger_jq 'queue_state($url) | select(.rules_due? == true)
-    | "was dropped by the merge queue at \(.since): \(.failed | rules_reason($base | select(. != "" and . != "null") // null; "its trial commit")); \(.failed | rules_step($repo; $task))"' \
-    -r --arg url "${url%/}" --arg base "$base" --arg repo "$repo" --arg task "$task") || exit 1
+    | "was dropped by the merge queue at \(.since): \(.failed | rules_reason($base | select(. != "" and . != "null") // null; "its trial commit")); \(.failed | rules_step($repo; $merge))"' \
+    -r --arg url "${url%/}" --arg base "$base" --arg repo "$repo" --arg merge "$target") || exit 1
   if [[ -n $rules ]]; then
     echo "merge rules: $url $rules"
     return 0
@@ -648,10 +652,9 @@ merge_line() {
   # task since (queue_state's runners_due): the runners are the wait, so team-merge's step for that
   # in place of the merge line; after a catch-up's line the merge line stays, for the merge it makes.
   if [[ -z $caught ]]; then
-    runners=$(task_event_array "$task" | ledger_jq 'merge_args($url) as $merge
-      | queue_state($url) | select(.runners_due? == true)
+    runners=$(task_event_array "$task" | ledger_jq 'queue_state($url) | select(.runners_due? == true)
       | "was dropped by the merge queue at \(.since): \(runner_step($repo; $merge))"' \
-      -r --arg url "${url%/}" --arg repo "$repo") || exit 1
+      -r --arg url "${url%/}" --arg repo "$repo" --arg merge "$target") || exit 1
     if [[ -n $runners ]]; then
       echo "merge runners: $url $runners"
       return 0
@@ -695,13 +698,13 @@ merge_line() {
     | (if $applies then ", so the default word does not hold" else "" end) as $held
     | [($review.guarded // [])[] | select(IN(guarded_areas[]))] as $guarded
     | (if $caught != "" then "then, once the checks pass on its merge: " else "" end)
-    + if $default.holds == true then "merge on the default word: run team-merge \($task) for \($facts)"
+    + if $default.holds == true then "merge on the default word: run team-merge \($merge) for \($facts)"
       else "merge ask: \($facts)" end
     + (if $guarded == [] then ""
        else "; the review found guarded areas: \($guarded | join(", "))\($held)" end)
     + (if $held != "" and $risky != [] then "; \($risky | and_text)\($held)" else "" end)
     + (if $before == "" then "" else "; queue before notes \($before) as follow-ups and say where each went" end)' \
-    -r --arg task "$task" --argjson review "$review" --argjson risky "$risky" --arg caught "$caught" \
+    -r --arg merge "$target" --argjson review "$review" --argjson risky "$risky" --arg caught "$caught" \
     --arg before "$before" --argjson default "$default" --arg at "$reviewed" <<<"$state"
 }
 

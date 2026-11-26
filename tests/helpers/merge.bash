@@ -63,6 +63,12 @@ open_task() {
   event T14 merge-approved '{url: "https://github.com/owner/proj/pull/5", discord_message: "1562661774950400000"}'
 }
 
+# A second PR of T14, in another repository unless <url> names one, logged after PR #5, so
+# team-merge T14 alone would act on it: second_pr [<url>]
+second_pr() {
+  event T14 pr "{url: \"${1:-https://github.com/owner/other/pull/3}\", head: \"0123456\"}"
+}
+
 # PR #5 as GitHub shows it: open, mergeable, on dev, every check green on the head, two
 # commits with clean messages and two changed files under src/; edit the files under $GH_DIR to
 # break one fact.
