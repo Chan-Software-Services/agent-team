@@ -1163,7 +1163,10 @@ due() {
   ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
   ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "failed checks",
     failed: [{name: "test", class: "pr", kind: "failed", link: "https://github.com/owner/proj/actions/runs/1/job/2", step: "Run tests"},
-      {name: "data", class: "infrastructure", kind: "setup", link: "", step: ""}]}'
+      {name: "data", class: "infrastructure", kind: "setup", link: "", step: ""},
+      {name: "e2e", class: "rules", kind: "missing", link: "", step: ""}]}'
+  # Beside a rules failure too, the PR's own failure leads, with no trial-rules: a roll-up whose
+  # shards the queue cancelled once test failed reads as the rules' with no run open.
   run_bin -1 team-sweep
   assert_equal "$output" "T3 trial-failed: PR $url failed test on the merge queue's trial merge, which dropped it at 2026-10-22T03:30:00Z; next: run team-next T3 --ci, which names the builder-merge-base step and who takes it, then a rereview; never team-merge T3 on the same head"
   run_bin -1 team-sweep --json
@@ -1182,12 +1185,12 @@ due() {
 }
 
 # A dequeued of PR 5 at 03:30 whose failed holds rules failures of Analyze (python) and
-# Analyze (actions) and one of the PR's own, test: the queue's trial commit missed checks the
+# Analyze (actions) and an infrastructure one, data: the queue's trial commit missed checks the
 # base's rules require.
 rules_drop() {
   ledger_line --arg url https://github.com/owner/proj/pull/5 '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5",
     reason: "Analyze (python) never reported on the trial commit, which main'"'"'s rules require",
-    failed: [{name: "test", class: "pr", kind: "failed", link: "https://github.com/owner/proj/actions/runs/1/job/2", step: "Run tests"},
+    failed: [{name: "data", class: "infrastructure", kind: "setup", link: "", step: "Set up job"},
       {name: "Analyze (python)", class: "rules", kind: "missing", link: "", step: ""},
       {name: "Analyze (actions)", class: "rules", kind: "missing", link: "", step: ""}]}'
 }
