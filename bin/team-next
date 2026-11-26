@@ -273,13 +273,14 @@
 #   failed           with a failure of class pr (the PR's own): writes the report
 #                    tasks/T<n>/ci-<the head's first 8 characters>.md in the team home (a heading
 #                    naming the PR and head, one line per failure, the PR's, then infrastructure,
-#                    then roll-ups, each with its class, name, kind, failing step, link and rerun
-#                    command, and a closing line: the PR's are the round's blocking findings, the
-#                    others not), logs ci outcome=failed failed=<every failure's name, class,
-#                    kind, link and step>, reruns nothing, and prints the round's hand-off as a
-#                    findings round's: the message to fix "the failed checks <the PR's names> of
-#                    <short> in <the report>" for the holder under 250k, else its STOW, after
-#                    recovering it when gone, exit 0
+#                    then roll-ups, each with its class, name, kind (a missing one with what
+#                    requires it, the base's rules or the project's required_checks), failing
+#                    step, link and rerun command, and a closing line: the PR's are the round's
+#                    blocking findings, the others not), logs ci outcome=failed failed=<every
+#                    failure's name, class, kind, link and step>, reruns nothing, and prints the
+#                    round's hand-off as a findings round's: the message to fix "the failed
+#                    checks <the PR's names> of <short> in <the report>" for the holder under
+#                    250k, else its STOW, after recovering it when gone, exit 0
 #                    with infrastructure and roll-up failures alone: reruns each never-started,
 #                    setup or stuck check (never a queued one, a roll-up or one of the PR's own)
 #                    that no ci-rerun of the head names since its latest ci outcome=infrastructure,
@@ -504,7 +505,9 @@ ci_report() {
       (if $look then "The findings round\($q)s look at the reviewed head found these failures of the PR\($q)s own, one a line: each one\($q)s class, check, kind, failing step, link and rerun command."
        else "The checks wait after the pass ended on these failures, one a line, the PR\($q)s first: each one\($q)s class, check, kind, failing step, link and rerun command." end),
       "",
-      ($failures[] | "- \($words[.class] // .class): `\(.name)`, \(.kind), at \(if .step then "the step \"\(.step)\"" else "no step" end), \(.link // "no link"), \(if .rerun then "rerun with `\(.rerun)`" else "no rerun" end)"),
+      ($failures[] | "- \($words[.class] // .class): `\(.name)`, \(.kind)"
+        + ({rules: " (the base\($q)s rules require it)", required_checks: " (the project\($q)s required_checks require it)"}[.source // ""] // "")
+        + ", at \(if .step then "the step \"\(.step)\"" else "no step" end), \(.link // "no link"), \(if .rerun then "rerun with `\(.rerun)`" else "no rerun" end)"),
       "",
       if $look then "The PR\($q)s failures, \($own), are `blocking` findings of this round beside the review\($q)s; the look leaves out infrastructure failures and roll-ups, since the round\($q)s new head runs every check again."
       else "The PR\($q)s failures, \($own), are this round\($q)s `blocking` findings; the others are not, since an infrastructure failure or a roll-up is no defect of the PR, and the round\($q)s new head runs every check again." end' >"$1"
