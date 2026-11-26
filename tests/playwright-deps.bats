@@ -82,7 +82,7 @@ install $OWN libnew_2_amd64.deb libold_1_amd64.deb"
   assert_equal "$(stub_calls apt-get)" '["autoclean"]'
   assert_equal "$(stub_calls node | sort -u)" \
     "[\"$REPO_ROOT/servers/node_modules/playwright-core/cli.js\",\"install-deps\",\"chromium\",\"firefox\",\"webkit\"]"
-  # apt is left as it was found.
+  # The download-only setting is removed.
   assert_equal "$(ls "$RUNNER/etc/apt/apt.conf.d")" ""
 }
 

@@ -244,8 +244,8 @@ jobs:
       # later runs find what an earlier one saved, a merge queue's trial commit, on a ref of its
       # own, saves none, and a run that finds none fetches the packages under
       # tests/playwright-deps' limits, which go on to another mirror when the runner's is slow.
-      # That script runs under the runner's own passwordless sudo, and no team machine ever runs
-      # it (sops/platform-gotchas.md).
+      # That script runs under the runner's own passwordless sudo; a team machine runs it only
+      # through tests/playwright-deps.bats, on stubs and without sudo (sops/platform-gotchas.md).
       - name: Install the servers and name Playwright's caches
         id: playwright
         run: |

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the system libraries Playwright's pinned browsers need, as CI's toolkits job does, as
-# root on a GitHub runner. It writes under /etc/apt and installs packages, so no team machine ever
-# runs it.
+# root on a GitHub runner. It writes under /etc/apt and installs packages, so a team machine runs
+# it only through tests/playwright-deps.bats, on stubs and without root.
 #
 # Usage: tests/playwright-deps <debs>
 #
@@ -17,8 +17,9 @@
 # earlier fetch brought. The install that follows is install-deps again, under no limit.
 #
 # Exit 0 installed; 2 a malformed command line; else the failing command's own status, but 1 when
-# the last fetch outlived its limit, which it says in the form of apt's "E: Failed to fetch" line,
-# so team-ci-wait reads it as the runner's failure and not the change's.
+# the last fetch outlived its limit, which it says in the form of apt's "E: Failed to fetch" line:
+# team-ci-wait reads that as the runner's failure, unless the change touches .github/ or a path the
+# step names, as its header says.
 #
 # Seams for its test: PLAYWRIGHT_DEPS_ROOT, the directory apt's etc/apt and var/cache/apt are
 # under (default /), and PLAYWRIGHT_DEPS_LIMITS, the three fetches' limits in seconds (default
