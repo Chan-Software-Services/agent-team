@@ -2264,6 +2264,9 @@ EOF
   assert_equal "$(grep -c ' pack: ' <<<"$output")" 0
 }
 
+# wall-clock: git trusts a gc.pid only while its file time is under 12 hours older than now, and
+# the file time is the real clock's, so with the clock moved ahead git runs the gc it should refuse.
+# bats test_tags=wall-clock
 @test "a pack that fails is logged with git's reason, the steps after it still run, and the run exits 1" {
   docker_machine
   stack_json '{"heartbeat_janitor": true}'

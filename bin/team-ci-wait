@@ -171,8 +171,9 @@
 #   roll-up         a failed or cancelled check R beside a check of the same workflow run (the run
 #                   id in their Actions links), failed, cancelled, stuck or queued, whose name is R
 #                   then "-shard" or " shard" (test beside test-shards (2), e2e beside e2e shard
-#                   3/6): "roll-up: R, of <its shards>, left out"; one whose shards all passed is
-#                   the PR's
+#                   3/6), or, for a check named test, one named future-clock (rollup_needs below,
+#                   since agent-team's test needs it): "roll-up: R, of <its shards>, left out";
+#                   a failed or cancelled check with none of those beside it is no roll-up
 #   infrastructure  never started: a failed or cancelled check whose job has no runner and no step
 #                   that ran (none concluded but skipped); setup: a failed check whose first
 #                   failing step is GitHub's own (Set up job, Set up runner, Initialize containers,
@@ -582,17 +583,21 @@ tick() {
 # (change_touches_ci), $repo, and the mode's $whose and $again. unpassed is each check
 # that did not pass, failed, cancelled, stuck or queued, with its run_id and job_id from its Actions
 # job link (else null) and shards, the names of the checks of its run, failed, cancelled, stuck or
-# queued, that make a failed or cancelled check a roll-up of them. classed is each of them as
+# queued, that make a failed or cancelled check a roll-up of them: those whose names begin with its
+# name and "-shard" or " shard", and those rollup_needs names, the checks a roll-up needs beside
+# its shards. classed is each of them as
 # {name, class, kind, state, link, run, job, step, rerun, line}, line its text.
 CLASSES='
   def ids: (.link | capture("/actions/runs/(?<run>[0-9]+)/job/(?<job>[0-9]+)")
     | {run_id: (.run | tonumber), job_id: (.job | tonumber)}) // {run_id: null, job_id: null};
+  def rollup_needs: {"test": ["future-clock"]};
   def unpassed:
     [.checks[] | select(.bucket == "fail" or .bucket == "cancel" or (.name | IN($stuck[], $queued[]))) | . + ids] as $c
     | $c[] | . as $r
     | . + {shards: (if (.bucket == "fail" or .bucket == "cancel") and .run_id != null then
         [$c[] | select(.run_id == $r.run_id
-          and (.name | startswith($r.name + "-shard") or startswith($r.name + " shard"))) | .name]
+          and (.name | startswith($r.name + "-shard") or startswith($r.name + " shard")
+            or IN(rollup_needs[$r.name][]?))) | .name]
       else [] end)};
   def setup_step: IN("Set up job", "Set up runner", "Initialize containers", "Complete job")
     or startswith("Run actions/") or startswith("Post Run actions/");

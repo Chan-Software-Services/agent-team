@@ -3,8 +3,13 @@
 # to dev: its protection and projects.toml's required_checks for agent-team require each job by its
 # id (shellcheck, test, toolkits, rust, data, zizmor), so renaming a job changes a required check,
 # and team-merge merges only with every one passed on the PR's head, as the queue lands a trial commit
-# only with every one passed on it; test passes only when every shard of test-shards did, so a
-# shard job is never a required check itself, nor is shard-plan, whose timings every shard splits by.
+# only with every one passed on it; test passes only when every shard of test-shards and
+# future-clock did, so a shard job is never a required check itself, nor is shard-plan, whose
+# timings every shard splits by, nor future-clock.
+# future-clock runs the bats files a change touches with the wall clock a year ahead
+# (tests/run bats --clock-ahead 365 --touched <base>), so a test that will fail on a later date
+# fails in the PR that writes it; by hand, its clock-base input names the base, the empty tree's
+# 4b825dc642cb6eb9a060e54bf8d69288fbee4904 for every bats file.
 # The shards split the bats files by each file's seconds in the latest successful CI run, which
 # shard-plan reads through the Actions API (tests/shards update --to) and hands every shard as the
 # timings artifact, which each names by TESTS_TIMINGS beside the committed tests/timings.tsv, so
@@ -38,6 +43,11 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      clock-base:
+        description: "future-clock's base, a full commit or tree sha, the files touched since it run a year ahead (empty: origin/dev's merge base; 4b825dc642cb6eb9a060e54bf8d69288fbee4904: every file)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -136,16 +146,76 @@ jobs:
           head -n 1 "$RUNNER_TEMP/timings/timings.tsv"
       - run: tests/run bats --shard "$SHARD/3"
 
+  # The bats files a change adds or changes, those naming a fixture it changes, and
+  # tests/tests-run-clock.bats when it changes tests/run, tests/shards or the shim, with the wall
+  # clock a year ahead (tests/helpers/clockshift.c), the tests tagged wall-clock not run. The base
+  # is the one the PR's merge commit was built on, the merge queue's, else the clock-base input or
+  # origin/dev's merge base. Its limit covers a run of every file by hand, one runner's whole suite.
+  future-clock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      JQ_VERSION: 1.8.1
+      JQ_SOURCE_SHA256: 2be64e7129cecb11d5906290eba10af694fb9e3e7f9fc208a311dc33ca837eb0
+      ONIG_VERSION: 6.9.10
+      ONIG_SOURCE_SHA256: 2a5cfc5ae259e4e97f86b68dfffc152cdaffe94e2060b770cb827238d769fc05
+      CLOCK_TESTS: require
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The jq the other jobs install is a static binary, which the shim never loads, so its now
+      # would read the real clock beside date's moved one. This job builds the same jq from its
+      # release source instead, with Oniguruma (its regular expressions) from its own, each tarball
+      # checked against the sha256 its release publishes: both linked into one binary that loads
+      # the C library, and the shim with it, dynamically.
+      - name: Install jq ${{ env.JQ_VERSION }}
+        run: |
+          src=$RUNNER_TEMP/jq-src
+          mkdir -p "$src"
+          cd "$src"
+          onig=onig-$ONIG_VERSION.tar.gz
+          curl --retry 5 --retry-all-errors -fsSLO "https://github.com/kkos/oniguruma/releases/download/v$ONIG_VERSION/$onig"
+          echo "$ONIG_SOURCE_SHA256  $onig" | sha256sum -c -
+          jq=jq-$JQ_VERSION.tar.gz
+          curl --retry 5 --retry-all-errors -fsSLO "https://github.com/jqlang/jq/releases/download/jq-$JQ_VERSION/$jq"
+          echo "$JQ_SOURCE_SHA256  $jq" | sha256sum -c -
+          tar -xzf "$onig"
+          tar -xzf "$jq"
+          (cd "onig-$ONIG_VERSION" && ./configure --prefix="$src/onig" --disable-shared --with-pic && make -j"$(nproc)" && make install)
+          (cd "jq-$JQ_VERSION" && ./configure --prefix="$RUNNER_TEMP/jq" --with-oniguruma="$src/onig" --disable-shared --disable-docs --disable-valgrind && make -j"$(nproc)" && make install)
+          file "$RUNNER_TEMP/jq/bin/jq"
+          echo "$RUNNER_TEMP/jq/bin" >>"$GITHUB_PATH"
+      - run: jq --version
+      # A pull request's checkout is its merge commit, built on the base branch as it is now, while
+      # its base sha is the base when the PR was last pushed: the merge's first parent is the base
+      # whose diff is the PR's own. The base reaches the job's environment only as a full sha, so
+      # an input holding a newline sets no variable.
+      - name: Name the base
+        env:
+          EVENT: ${{ github.event_name }}
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          INPUT_BASE: ${{ inputs.clock-base }}
+        run: |
+          base=${QUEUE_BASE_SHA:-$INPUT_BASE}
+          [[ $EVENT != pull_request ]] || base=$(git rev-parse HEAD^1)
+          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)
+          [[ $base =~ ^[0-9a-f]{40}$ ]] || { echo "the base is no full commit or tree sha: $base" >&2; exit 1; }
+          echo "CLOCK_BASE=$base" >>"$GITHUB_ENV"
+      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"
+
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: test-shards
+    needs: [test-shards, future-clock]
     if: always()
     steps:
-      - name: Every shard passed
+      - name: Every shard and the future clock passed
         env:
           RESULT: ${{ needs.test-shards.result }}
-        run: '[[ $RESULT == success ]]'
+          CLOCK_RESULT: ${{ needs.future-clock.result }}
+        run: '[[ $RESULT == success && $CLOCK_RESULT == success ]]'
 
   # The toolkits' servers over stdio, against a throwaway MongoDB in Docker.
   toolkits:

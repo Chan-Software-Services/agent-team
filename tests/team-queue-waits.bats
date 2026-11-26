@@ -150,6 +150,9 @@ ages() {
   assert_equal "$output" "0 waits older than 7 days"
 }
 
+# wall-clock: with no history each wait's age is its file's own time, which the kernel writes from
+# the real clock, so with the clock moved ahead a wait written now is a year old.
+# bats test_tags=wall-clock
 @test "a history that cannot be read is said, on stderr and in the count's line, never read as the files' times alone" {
   item a-old.md "waits: Daniel's word"
   committed 20

@@ -19,12 +19,13 @@
 # How many at once is TEAM_JOBS when set (a whole number above 0, else refused), else, when a
 # team home is found, team-capacity jobs (the floor of the level's CPU budget, at
 # least 1: 3 at minor on 12 cores), else nproc (CI, a fresh clone).
-# Every part but shellcheck alone, rust alone and a --list (a shard's or --changed's) runs under the
-# machine's heavy-run lock (team-heavy run, whose cost sample is heavy:tests-run), so a suite
-# waits for another suite or a gate's end-to-end run instead of overlapping it; under a heavy run
-# already (TEAM_HEAVY_HELD set, as a local check team-checks runs), it runs at once.
+# Every part but shellcheck alone, rust alone and a --list (a shard's, --changed's or
+# --clock-ahead's) runs under the machine's heavy-run lock (team-heavy run, whose cost sample is
+# heavy:tests-run), so a suite waits for another suite or a gate's end-to-end run instead of
+# overlapping it; under a heavy run already (TEAM_HEAVY_HELD set, as a local check team-checks
+# runs), it runs at once.
 #
-# Usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]
+# Usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]
 #        (default: all four)
 # With --changed, shellcheck checks only the shell scripts a change touches, in seconds, as a
 # builder does on its machine while CI checks every script: each shell script among the paths
@@ -66,6 +67,31 @@
 # caller or user of a changed file, or most of bin/lib would reach the whole suite; a file the
 # library reads or runs is, like any other. A named base that is no commit is a usage error; a
 # missing origin/dev is refused.
+# With --clock-ahead <days> --touched <base>, bats runs the files a change touches with the wall
+# clock <days> days ahead (a whole number from 1 to 99999), as CI's future-clock job does, so a test
+# that will fail on a later date fails in the change that writes it: each tests/<name>.bats file the
+# diff from <base> to the working tree adds or changes (git diff --name-only --no-renames <from>,
+# untracked files included, <from> being the merge base of <base> and HEAD when <base> is a commit,
+# else <base> itself, a tree such as the empty tree's, for every file), and each tests/*.bats file
+# that names a path under tests/fixtures/ the diff changes, or one of that path's directories
+# there, as fixtures/<path> with no name character on either side, itself or through a
+# tests/helpers/*.bash it loads (as bats --changed follows a helper), and tests/tests-run-clock.bats
+# when the diff changes tests/run, tests/shards or tests/helpers/clockshift.c, the clock run's own
+# code, which that file tests. It prints the files first;
+# when there is none it prints "clock-ahead: no bats file touched since <base>" and passes, and
+# --list prints them, one tests/<name>.bats per line, and runs none, on any platform. Otherwise it
+# runs only on Linux, refusing macOS, which has no LD_PRELOAD, and any other system, and refuses
+# when cc is not on PATH, naming it, before it takes the heavy-run lock; it builds
+# tests/helpers/clockshift.c with cc -shared -fPIC -O2 -ldl into its temporary directory, fails
+# naming the shim when date +%s or jq's now under it does not read the clock moved ahead (a static
+# jq, as the jq release binary is, never loads it, so a dynamically linked one must be first on
+# PATH, as CI's future-clock job builds it), and runs each file
+# with LD_PRELOAD the shim (before any LD_PRELOAD already set) and CLOCKSHIFT_SECONDS the days'
+# seconds, and with bats' --filter-tags '!wall-clock', so a test tagged "# bats
+# test_tags=wall-clock" (one whose result rests on a clock the shim does not move, such as the
+# times the kernel writes on files) is not run; it names each such test of the files it runs, as
+# "tests/<name>.bats: <test> # not run: tagged wall-clock", after the file lines. What the shim
+# moves and what it does not, its header says.
 # The rust part checks the Cargo workspace at the root in six steps, each printed first as
 # "rust: <step>", stopping at the first that fails with "rust: <step> failed": cargo fmt --all
 # --check; cargo clippy --workspace --all-targets --locked -- -D warnings; cargo nextest run
@@ -105,8 +131,8 @@ team_home_report=1
 # shellcheck source=bin/lib/team.sh
 source "$root/bin/lib/team.sh" "$@"
 
-usage="usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
-what=${1:-all} shard='' changed='' base='' list=''
+usage="usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]|--clock-ahead <days> --touched <base> [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
+what=${1:-all} shard='' changed='' base='' list='' clock=''
 if [[ ($what == bats || $what == shellcheck || $what == rust) && $# -gt 1 && $2 == --changed ]]; then
   changed=1 base=origin/dev
   rest=("${@:3}")
@@ -118,6 +144,19 @@ if [[ ($what == bats || $what == shellcheck || $what == rust) && $# -gt 1 && $2 
   if ! git -C "${root:?}" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
     [[ $# -gt 2 && $3 == "$base" ]] || die "no $base to compare with in $root: fetch it, or name a base (tests/run $what --changed <base>)"
     usage_error "--changed: no commit $base; $usage"
+  fi
+elif [[ $what == bats && $# -gt 1 && $2 == --clock-ahead ]]; then
+  [[ ($# -eq 5 || ($# -eq 6 && $6 == --list)) && $3 =~ ^[1-9][0-9]{0,4}$ && $4 == --touched ]] || usage_error "$usage"
+  clock=$3 base=$5
+  [[ $# -eq 5 ]] || list=1
+  git -C "${root:?}" rev-parse --verify --quiet "$base^{tree}" >/dev/null || usage_error "--touched: no commit or tree $base; $usage"
+  if [[ -z $list ]]; then
+    case $(uname -s) in
+      Linux) ;;
+      Darwin) die "--clock-ahead runs only on Linux: macOS has no LD_PRELOAD to load tests/helpers/clockshift.c into every process" ;;
+      *) die "--clock-ahead runs only on Linux, whose LD_PRELOAD loads tests/helpers/clockshift.c into every process, not on $(uname -s)" ;;
+    esac
+    command -v cc >/dev/null || die "--clock-ahead builds tests/helpers/clockshift.c with cc, and no cc is on PATH: install a C compiler"
   fi
 elif [[ $what == bats && $# -gt 1 ]]; then
   if ! [[ $# -le 4 && $2 == --shard && ${3:-} =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] ||
@@ -163,12 +202,12 @@ shell_scripts() {
 }
 
 # The tests/*.bats files to run, the slowest first (so none of them starts last), one path per
-# line: every one, with --shard k/n only shard k's (tests/shards), with --changed only the
-# selection's ($selected).
+# line: every one, with --shard k/n only shard k's (tests/shards), with --changed or --clock-ahead
+# only the selection's ($selected).
 bats_files() {
   local k=1 n=1
   if [[ -n $shard ]]; then k=${shard%/*} n=${shard#*/}; fi
-  "$root/tests/shards" "$n" | awk -F'\t' -v k="$k" -v root="$root" -v changed="$changed" -v selected="$selected" '
+  "$root/tests/shards" "$n" | awk -F'\t' -v k="$k" -v root="$root" -v changed="$changed$clock" -v selected="$selected" '
     BEGIN { n = split(selected, list, "\n"); for (i = 1; i <= n; i++) chosen[list[i]] = 1 }
     $1 == k && (changed == "" || $3 in chosen) { print root "/" $3 }'
 }
@@ -385,6 +424,54 @@ changed_selection() {
   done
 }
 
+# The paths --clock-ahead starts from (see the header), one per line, relative to the checkout:
+# the diff from <base>, or from its merge base with HEAD when it is a commit, to the working tree,
+# and the untracked files.
+clock_paths() {
+  local from=$base
+  if git -C "${root:?}" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+    from=$(git -C "${root:?}" merge-base "$base" HEAD) || return 1
+  fi
+  git -C "${root:?}" diff --name-only --no-renames "$from" || return 1
+  git -C "${root:?}" ls-files --others --exclude-standard
+}
+
+# <text> as an extended regular expression matching it literally.
+literal_ere() {
+  local text=${1//\\/\\\\} c
+  for c in . '[' ']' '*' '^' '$' '+' '?' '(' ')' '{' '}' '|'; do text=${text//"$c"/\\$c}; done
+  echo "$text"
+}
+
+# The bats files --clock-ahead runs (see the header), one tests/<name>.bats per line, repeats and
+# all: the changed ones, those naming a changed fixture or one of its directories, directly or
+# through a helper they load, and tests/tests-run-clock.bats on a change to the clock run's code.
+clock_selection() {
+  local paths path rel pattern helper fixture_names=()
+  paths=$(clock_paths | LC_ALL=C sort -u) || return 1
+  cd "$root"
+  while IFS= read -r path; do
+    case $path in
+      tests/run | tests/shards | tests/helpers/clockshift.c)
+        [[ ! -f tests/tests-run-clock.bats ]] || echo tests/tests-run-clock.bats ;;
+      tests/*/*) ;;
+      tests/*.bats) [[ ! -f $path ]] || echo "$path" ;;
+    esac
+    [[ $path == tests/fixtures/?* ]] || continue
+    rel=${path#tests/}
+    while [[ $rel == fixtures/?* ]]; do
+      fixture_names+=("$(literal_ere "$rel")")
+      rel=${rel%/*}
+    done
+  done <<<"$paths"
+  ((${#fixture_names[@]})) || return 0
+  pattern="(^|[^A-Za-z0-9._-])($(IFS='|' && echo "${fixture_names[*]}"))([^A-Za-z0-9._-]|\$)"
+  naming -E -- "$pattern"
+  while IFS= read -r helper; do
+    helper_reach "$helper"
+  done < <(grep -lE -- "$pattern" tests/helpers/*.bash || (($? == 1)))
+}
+
 # The team's count of jobs at once (see the header): TEAM_JOBS when set, else team-capacity jobs
 # when a team home is found, else nothing.
 budget_jobs() {
@@ -486,16 +573,68 @@ slow_files() {
     }' "$timings" -
 }
 
+# The clock shim, tests/helpers/clockshift.c, built into <dir>/clockshift.so, and checked to move
+# date's clock and jq's now the run's days past the unshifted clock (see the header); fails naming
+# why.
+clock_shim() {
+  local so=$1/clockshift.so seconds=$((clock * 86400)) now ahead
+  if ! cc -shared -fPIC -O2 -o "$so" "$root/tests/helpers/clockshift.c" -ldl; then
+    echo "clock-ahead: cc could not build tests/helpers/clockshift.c"
+    return 1
+  fi
+  # The clock with no shift, as a shim this run is already under reads it with CLOCKSHIFT_SECONDS 0.
+  now=$(CLOCKSHIFT_SECONDS=0 date +%s)
+  ahead=$(LD_PRELOAD=$so CLOCKSHIFT_SECONDS=$seconds date +%s)
+  if ((ahead - now < seconds - 60)); then
+    echo "clock-ahead: date +%s read $ahead under tests/helpers/clockshift.c, not $clock days past $now, so the shim moves no clock here"
+    return 1
+  fi
+  # jq's now, which the team's programs read beside date's: a static jq never loads the shim.
+  ahead=$(LD_PRELOAD=$so CLOCKSHIFT_SECONDS=$seconds jq -n 'now | floor') || {
+    echo "clock-ahead: jq -n now failed under tests/helpers/clockshift.c"
+    return 1
+  }
+  if ! [[ $ahead =~ ^[0-9]+$ ]] || ((ahead - now < seconds - 60)); then
+    echo "clock-ahead: jq's now read $ahead under tests/helpers/clockshift.c, not $clock days past $now: $(command -v jq) is a static binary or loads no shim, so a test reading its now beside date's would fail on the two clocks alone; put a dynamically linked jq first on PATH"
+    return 1
+  fi
+}
+
+# Each test tagged wall-clock in the files listed in <files>, which a --clock-ahead run does not
+# run, as "tests/<name>.bats: <test> # not run: tagged wall-clock".
+wall_clock_tests() {
+  local file
+  while IFS= read -r file; do
+    awk -v name="tests/${file##*/}" '
+      /^# bats test_tags=/ { n = split(substr($0, length("# bats test_tags=") + 1), tags, /[[:space:]]*,[[:space:]]*/)
+        for (i = 1; i <= n; i++) if (tags[i] == "wall-clock") tagged = 1
+        next }
+      /^@test / { if (tagged) { t = $0; sub(/^@test +"/, "", t); sub(/" *\{ *$/, "", t); print name ": " t " # not run: tagged wall-clock" }
+        tagged = 0 }' "$file"
+  done <"$1"
+}
+
 # The bats files (bats_files), in parallel, each test and file under its time limit (see the
 # header); fails if any file fails.
 run_bats() {
-  local file failed=0 names minutes="$file_minutes minutes"
+  local file failed=0 names minutes="$file_minutes minutes" tags='' clock_env=()
   ((file_minutes != 1)) || minutes='1 minute'
   out=$(team_mktemp -d)
   # Each file's output goes to $out/<file>, with $out/<file>.failed beside it when it fails,
   # $out/<file>.stopped when its time limit stopped it, and $out/<file>.seconds its seconds.
   bats_files >"$out/files" || { echo "bats: tests/shards could not split the files"; return 1; }
-  if [[ -n $changed ]]; then
+  if [[ -n $clock ]]; then
+    if [[ ! -s $out/files ]]; then
+      echo "clock-ahead: no bats file touched since $base"
+      return 0
+    fi
+    echo "clock-ahead $clock days: $(wc -l <"$out/files") of $(find "$root/tests" -maxdepth 1 -name '*.bats' | wc -l) files touched since $base"
+    mapfile -t names <<<"$selected"
+    printf '  %s\n' "${names[@]}"
+    clock_shim "$out" || return 1
+    tags='!wall-clock'
+    clock_env=("LD_PRELOAD=$out/clockshift.so${LD_PRELOAD:+ $LD_PRELOAD}" "CLOCKSHIFT_SECONDS=$((clock * 86400))")
+  elif [[ -n $changed ]]; then
     if [[ ! -s $out/files ]]; then
       echo "bats: no path changed since $base, so no file runs"
       return 0
@@ -514,11 +653,14 @@ run_bats() {
   # the trap is set before timeout starts and reads $! when it fires, so a signal that comes
   # first ends the bash before it starts one, and any later one reaches it.
   # shellcheck disable=SC2016 # expanded by each file's bash
+  # A --clock-ahead run's files (and every process they start) read the clock moved ahead, and
+  # skip the tests tagged wall-clock; $3 is the tags filter, or none.
   tr '\n' '\0' <"$out/files" |
-    BATS_TEST_TIMEOUT=$test_seconds xargs -0 -r -n 1 -P "$jobs" bash -c '
-      name=${3##*/} verdict=ok rc=0 stopped=""
+    env BATS_TEST_TIMEOUT="$test_seconds" "${clock_env[@]}" xargs -0 -r -n 1 -P "$jobs" bash -c '
+      name=${4##*/} verdict=ok rc=0 stopped="" tags=()
+      [[ -z $3 ]] || tags=(--filter-tags "$3")
       trap "[[ -z \$! ]] || { kill -TERM \$! 2>/dev/null; wait \$!; }; exit 143" INT TERM HUP
-      timeout -k 30 "$2m" "$0/tests/vendor/bats-core/bin/bats" "$3" >"$1/$name" 2>&1 &
+      timeout -k 30 "$2m" "$0/tests/vendor/bats-core/bin/bats" "${tags[@]}" "$4" >"$1/$name" 2>&1 &
       wait "$!" || rc=$?
       if ((rc != 0)); then verdict="not ok"; touch "$1/$name.failed"; fi
       if ((rc == 124 || rc == 137)) && ((SECONDS >= $2 * 60)); then
@@ -526,7 +668,7 @@ run_bats() {
         stopped=": stopped at its $2-minute limit"
       fi
       echo "$SECONDS" >"$1/$name.seconds"
-      printf "%s tests/%s (%ds)%s\n" "$verdict" "$name" "$SECONDS" "$stopped"' "$root" "$out" "$file_minutes"
+      printf "%s tests/%s (%ds)%s\n" "$verdict" "$name" "$SECONDS" "$stopped"' "$root" "$out" "$file_minutes" "$tags"
   for file in "$out"/*.bats; do
     [[ -e $file.failed ]] || continue
     failed=$((failed + 1))
@@ -541,6 +683,7 @@ run_bats() {
   for file in "$out"/*.bats; do
     grep -E '^ok [0-9]+ .* # skip( |$)' "$file" | sed "s|^|tests/${file##*/}: |" || (($? == 1))
   done
+  [[ -z $clock ]] || wall_clock_tests "$out/files"
   echo "bats: $(cat "$out"/*.bats | grep -c '^ok ') tests passed; $failed of $(find "$out" -name '*.bats' | wc -l) files failed"
   slow_files "$out"
   ((failed == 0))
@@ -553,8 +696,10 @@ elif [[ -n $changed && $what == rust ]]; then
   selected=$(changed_rust_paths) || die "could not read the paths changed since $base"
 elif [[ -n $changed ]]; then
   selected=$(changed_selection | LC_ALL=C sort -u) || die "could not read the paths changed since $base"
+elif [[ -n $clock ]]; then
+  selected=$(clock_selection | LC_ALL=C sort -u) || die "could not read the paths changed since $base"
 fi
-if [[ -n $list && -n $changed ]]; then
+if [[ -n $list && -n $changed$clock ]]; then
   [[ -z $selected ]] || echo "$selected"
   exit
 elif [[ -n $list ]]; then
