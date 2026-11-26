@@ -45,7 +45,7 @@ on:
   workflow_dispatch:
     inputs:
       clock-base:
-        description: "future-clock's base, the files touched since it run a year ahead (empty: origin/dev's merge base; 4b825dc642cb6eb9a060e54bf8d69288fbee4904: every file)"
+        description: "future-clock's base, a full commit or tree sha, the files touched since it run a year ahead (empty: origin/dev's merge base; 4b825dc642cb6eb9a060e54bf8d69288fbee4904: every file)"
         required: false
         default: ""
 
@@ -148,8 +148,8 @@ jobs:
 
   # The bats files a change adds or changes, and those naming a fixture it changes, with the wall
   # clock a year ahead (tests/helpers/clockshift.c), the tests tagged wall-clock not run. The base
-  # is the PR's base, the merge queue's, else the clock-base input or origin/dev's merge base. Its
-  # limit covers a run of every file by hand, one runner's whole suite.
+  # is the one the PR's merge commit was built on, the merge queue's, else the clock-base input or
+  # origin/dev's merge base. Its limit covers a run of every file by hand, one runner's whole suite.
   future-clock:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -187,14 +187,20 @@ jobs:
           file "$RUNNER_TEMP/jq/bin/jq"
           echo "$RUNNER_TEMP/jq/bin" >>"$GITHUB_PATH"
       - run: jq --version
+      # A pull request's checkout is its merge commit, built on the base branch as it is now, while
+      # its base sha is the base when the PR was last pushed: the merge's first parent is the base
+      # whose diff is the PR's own. The base reaches the job's environment only as a full sha, so
+      # an input holding a newline sets no variable.
       - name: Name the base
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
           QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           INPUT_BASE: ${{ inputs.clock-base }}
         run: |
-          base=${BASE_SHA:-${QUEUE_BASE_SHA:-$INPUT_BASE}}
+          base=${QUEUE_BASE_SHA:-$INPUT_BASE}
+          [[ $EVENT != pull_request ]] || base=$(git rev-parse HEAD^1)
           [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)
+          [[ $base =~ ^[0-9a-f]{40}$ ]] || { echo "the base is no full commit or tree sha: $base" >&2; exit 1; }
           echo "CLOCK_BASE=$base" >>"$GITHUB_ENV"
       - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"
 

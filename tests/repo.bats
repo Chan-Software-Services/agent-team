@@ -2484,20 +2484,29 @@ ci_needed() {
 }
 
 # future-clock, which test waits for as for its shards, runs the bats files a change touches a
-# year ahead from the PR's base, the merge queue's, else the clock-base input or origin/dev's merge
-# base, with the full history the merge base needs, requires its own tests to build the shim, and
-# builds the jq the shim loads into.
-@test "future-clock runs the touched bats files a year ahead from the PR's, the queue's or the input's base, and test waits for it" {
+# year ahead from the base its pull request's merge commit was built on (its first parent, so a PR
+# that lags dev runs only its own files), the merge queue's, else the clock-base input or
+# origin/dev's merge base, refusing any but a full sha before it reaches the job's environment,
+# with the full history the merge base needs, requires its own tests to build the shim, and builds
+# the jq the shim loads into.
+@test "future-clock runs the touched bats files a year ahead from the PR merge's, the queue's or the input's base, and test waits for it" {
   local ci=$REPO_ROOT/.github/workflows/ci.yml block
   block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  future-clock:$/,/^  [a-z_-]*:$/p' | sed '$d' | grep -v '^ *#')
   grep -qx '    runs-on: ubuntu-.*' <<<"$block"
   grep -qxF '          fetch-depth: 0' <<<"$block"
   grep -qxF '      CLOCK_TESTS: require' <<<"$block"
-  grep -qxF '          BASE_SHA: ${{ github.event.pull_request.base.sha }}' <<<"$block"
+  if grep -nF 'github.event.pull_request.base.sha' <<<"$block"; then echo "future-clock takes the PR's base sha, which lags the merge commit's" >&2; return 1; fi
+  grep -qxF '          EVENT: ${{ github.event_name }}' <<<"$block"
   grep -qxF '          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}' <<<"$block"
   grep -qxF '          INPUT_BASE: ${{ inputs.clock-base }}' <<<"$block"
-  grep -qxF '          base=${BASE_SHA:-${QUEUE_BASE_SHA:-$INPUT_BASE}}' <<<"$block"
+  grep -qxF '          base=${QUEUE_BASE_SHA:-$INPUT_BASE}' <<<"$block"
+  grep -qxF '          [[ $EVENT != pull_request ]] || base=$(git rev-parse HEAD^1)' <<<"$block"
   grep -qxF '          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)' <<<"$block"
+  # The base reaches GITHUB_ENV only as a full sha, so an input with a newline sets no variable.
+  assert_equal "$(grep -A1 -xF '          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)' <<<"$block" | tail -n 1)" \
+    '          [[ $base =~ ^[0-9a-f]{40}$ ]] || { echo "the base is no full commit or tree sha: $base" >&2; exit 1; }'
+  assert_equal "$(grep -c 'GITHUB_ENV' <<<"$block")" 1
+  grep -A2 -xF '          [[ -n $base ]] || base=$(git merge-base origin/dev HEAD)' <<<"$block" | tail -n 1 | grep -qxF '          echo "CLOCK_BASE=$base" >>"$GITHUB_ENV"'
   grep -qxF '      - run: tests/run bats --clock-ahead 365 --touched "$CLOCK_BASE"' <<<"$block"
   # Its jq is built from the release source, Oniguruma's too, each tarball checked by its pin, so
   # the shim loads into it.
