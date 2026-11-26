@@ -1322,7 +1322,7 @@ query { viewer { login } }' --jq .data.viewer.login" 'gh api user --jq .login' '
 TOPIC_GITHUB="a GitHub write, which a topic session never makes"
 
 @test "a topic session's gh and gh-axi calls pass only as its reads, by any spelling, and its git writes, behind any of git's options too, are denied" {
-  local command
+  local command settings
   # The spellings the review found passing: a group or subcommand its settings never listed, gh
   # by a path or behind a wrapper.
   refuses_as topic "$TOPIC_GITHUB (gh repo clone)" "" 'gh repo clone load-check-probe/absent --help' \
@@ -1369,13 +1369,23 @@ TOPIC_GITHUB="a GitHub write, which a topic session never makes"
     'git -P diff' 'git -C d status' 'git worktree list' 'git -C d worktree list'; do
     if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
   done
-  # What roles/topic.md and the PR body name as refused by neither guard: an install, a stack
-  # command and a git write in a shell's string, which no deny rule matches and no row reads.
+  # A shell's string: a bare name in it matches no deny rule of the topic's two settings files and
+  # no row refuses it, but for a force push, which the force-push row reads in a string too, while
+  # a name spelled by a path is denied wherever it stands in the call.
   for command in "bash -c 'docker compose up -d'" "bash -c 'team-stack up'" "bash -c 'npm install'" \
     "bash -c 'git push'"; do
     AGENT_TEAM_ROLE=topic guard -0 "$command"
     assert_equal "$stderr" ""
-    if denied_in "$REPO_ROOT/settings/topic.json" "$command"; then echo "settings/topic.json denies: $command" >&2; return 1; fi
+    for settings in topic worker; do
+      if denied_in "$REPO_ROOT/settings/$settings.json" "$command"; then
+        echo "settings/$settings.json denies: $command" >&2
+        return 1
+      fi
+    done
+  done
+  refuses_as topic "$FORCE" "$FORCE_WAY" "bash -c 'git push -f'"
+  for command in "bash -c '~/agent-team/bin/team-stack up'" "bash -c '/usr/bin/git push'"; do
+    denied_in "$REPO_ROOT/settings/topic.json" "$command" || { echo "settings/topic.json lets through: $command" >&2; return 1; }
   done
 }
 
