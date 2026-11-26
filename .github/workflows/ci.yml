@@ -273,7 +273,7 @@ jobs:
           # Made by the runner's user, so root makes no directory under ~/.cache that the
           # browsers' install could not write beside.
           mkdir -p "$HOME/.cache/playwright-debs"
-          sudo -n -H env "PATH=$PATH" tests/playwright-deps "$HOME/.cache/playwright-debs"
+          sudo -n -H env "PATH=$PATH" PLAYWRIGHT_DEPS_LIMITS="3 120 240" tests/playwright-deps "$HOME/.cache/playwright-debs"
           node servers/node_modules/playwright-core/cli.js install chromium firefox webkit
       - name: Save Playwright's pinned browsers
         if: steps.browsers.outputs.cache-hit != 'true' && github.event_name != 'merge_group'
