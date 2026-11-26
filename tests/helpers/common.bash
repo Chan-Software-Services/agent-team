@@ -496,6 +496,19 @@ EOF
   ln -f "$BATS_RUN_TMPDIR/shared/fails-on-call" "$BATS_TEST_TMPDIR/stubs/$1"
 }
 
+# A git on PATH whose every fetch leaves a process behind, holding every descriptor the fetch was
+# given but its standard streams and bats' fd 3, its pid in $GH_DIR/left-behind: leave_behind_on_fetch
+leave_behind_on_fetch() {
+  # shellcheck disable=SC2030 # each test's own, read by the scripts it runs
+  export TEAM_PATH_FIRST=$BATS_TEST_TMPDIR/stubs
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'if [[ " $* " == *" fetch "* ]]; then' \
+      '  sleep 300 >/dev/null 2>&1 3>&- &' '  echo $! >>"$GH_DIR/left-behind"' 'fi'
+    printf 'exec %q "$@"\n' "$(command -v git)"
+  } >"$BATS_TEST_TMPDIR/stubs/git"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/git"
+}
+
 # Each file under the team home, HOME and the stubs' call log, with its sha256, one per line, so a
 # test can show a run read and changed nothing, but the log of a uname stub, which the library
 # calls as it is sourced (bin/lib/platform.sh): files_state

@@ -121,10 +121,12 @@
 #                  bin/lib/ledger.jq)
 #   queue-wait     an open task's PR that stands in the merge queue while no process holds the
 #                  task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, read without
-#                  taking it (merge_lock_held in bin/lib/team.sh), with session null: "PR <url> is
-#                  in the merge queue since <the queued's time> with no team-merge waiting on it;
-#                  next: run team-merge T<n> with Bash run_in_background, which goes on waiting and
-#                  logs how it ends", beside the task's other findings
+#                  taking it (merge_lock_held in bin/lib/team.sh), its queued logged before the
+#                  locks were read (one a team-merge logs while they are read is the next look's
+#                  to judge), with session null: "PR <url> is in the merge queue since <the
+#                  queued's time> with no team-merge waiting on it; next: run team-merge T<n> with
+#                  Bash run_in_background, which goes on waiting and logs how it ends", beside the
+#                  task's other findings
 #   trial-unmarked an open task's PR that stands in the merge queue, whose latest trial-unmarked
 #                  since its latest queued (team-land's: a trial commit it could not post agent-review
 #                  on for 10 minutes of looks) says the trial commit passed every other check, with
@@ -515,7 +517,7 @@ own_covered() {
 # list cannot be read, and with the sweep's exit code when its jq fails.
 look() {
   local sessions plan activity plan_file own health plan_pid health_pid activity_pid own_pid queue current
-  local due handoffs queue_pid='' current_pid='' due_pid='' handoffs_pid='' found landing rc=0
+  local due handoffs queue_pid='' current_pid='' due_pid='' handoffs_pid='' found queued landing rc=0
   sessions=$(LIVE_SESSIONS='' && live_sessions && printf '%s' "$LIVE_SESSIONS") || return 1
   run_file plan_file plan
   printf '%s\n' "$sessions" >"$plan_file.sessions"
@@ -558,10 +560,16 @@ look() {
   own=$(cat "$plan_file.own")
   [[ -n $activity ]] || activity='{"error": "session-activity printed nothing"}'
   [[ -n $own ]] || own=null
-  landing=$(merge_locks_held)
-  found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self; $landing)' -nRc \
-    --argjson sessions "$sessions" --argjson plan "$plan" --argjson activity "$activity" --argjson own "$own" \
-    --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" --argjson landing "$landing" "$ledger") || rc=$?
+  # The queued events, then the merge locks, then the ledger again: queue_wait_findings in
+  # bin/lib/ledger.jq says why in that order.
+  queued=$(ledger_jq 'queued_logged' -nRc "$ledger") || rc=$?
+  if ((rc == 0)); then
+    landing=$(merge_locks_held)
+    found=$(ledger_jq 'ledger_events | sweep($sessions; $plan; $activity; $own; $health; $self; $landing; $queued)' -nRc \
+      --argjson sessions "$sessions" --argjson plan "$plan" --argjson activity "$activity" --argjson own "$own" \
+      --argjson health "$health" --arg self "${CLAUDE_CODE_SESSION_ID:-}" --argjson landing "$landing" \
+      --slurpfile queued <(printf '%s\n' "$queued") "$ledger") || rc=$?
+  fi
   [[ -z $queue_pid ]] || wait "$queue_pid" || true
   [[ -z $current_pid ]] || wait "$current_pid" || true
   [[ -z $due_pid ]] || wait "$due_pid" || true

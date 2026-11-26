@@ -2016,7 +2016,7 @@ EOF
   code_checkout
   local lib=$BATS_TEST_TMPDIR/code/bin/lib
   rm -f "$lib/ledger.jq"
-  { cat "$REPO_ROOT/bin/lib/ledger.jq"; echo 'def sweep($a; $b; $c; $d; $e; $f; $g): "" | halt_error(4);'; } >"$lib/ledger.jq"
+  { cat "$REPO_ROOT/bin/lib/ledger.jq"; echo 'def sweep($a; $b; $c; $d; $e; $f; $g; $h): "" | halt_error(4);'; } >"$lib/ledger.jq"
   looks '[]'
   run_bin -1 --separate-stderr team-sweep --wait
   assert_equal "$stderr" "team-sweep: a look failed with exit 4 and nothing on stderr, for 5 minutes running"
@@ -2029,7 +2029,7 @@ EOF
   # A merge replaces the library under the running watch, and its next look fails on the new
   # definitions, as PR 111's change of own_covered's shape did on 2026-11-12.
   local code=$BATS_TEST_TMPDIR/code lib=$BATS_TEST_TMPDIR/code/bin/lib
-  printf '%s\n' "{ cat '$lib/ledger.jq'; echo 'def sweep(\$a; \$b; \$c; \$d; \$e; \$f; \$g): error(\"Cannot index array\");'; } >'$lib/ledger.jq.new'" \
+  printf '%s\n' "{ cat '$lib/ledger.jq'; echo 'def sweep(\$a; \$b; \$c; \$d; \$e; \$f; \$g; \$h): error(\"Cannot index array\");'; } >'$lib/ledger.jq.new'" \
     "mv '$lib/ledger.jq.new' '$lib/ledger.jq'" >"$BATS_TEST_TMPDIR/at-look.2"
   run_bin -1 --separate-stderr team-sweep --wait
   assert_equal "$output" ""

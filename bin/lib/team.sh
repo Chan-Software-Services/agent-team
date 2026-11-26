@@ -16,7 +16,7 @@
 # pool_name, pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, advisory_checks, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
-# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
+# discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, without_merge_lock, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
 # DATA_EMAIL, DATA_FILE_TYPE, DATA_PROVIDER, PACK_LOOSE, COORDINATOR_CHANNEL, INTERVIEW_CHANNEL, ASSISTANT_CHANNEL, OPS_REQUEST_MAX_AGE, and
 # LEDGER_TASKS, LEDGER_KINDS and LEDGER_PUSH_DUE for ledger_push, and LEDGER_INBOX_DUE for refresh_inbox.
 # It sources bin/lib/github-login.sh, whose header lists what it provides: the GitHub logins' functions and arrays,
@@ -2392,7 +2392,8 @@ clean_base_merges() {
 # The proof that <sha> is the merge queue's trial commit of PR <number> of <project>, in <repo>:
 # the PR's head, as reviewed, merged cleanly onto what is ahead of it in the queue. Reads the PR's
 # queue entry from GitHub by GraphQL (given 30 seconds), then fetches <sha> and the PR's head
-# into the project's primary checkout, changing no ref. With no problem it prints the PR's head
+# into the project's primary checkout, changing no ref, the fetch not given the task's merge lock
+# a run under team-land inherits (without_merge_lock). With no problem it prints the PR's head
 # and returns 0. Else it prints the first problem, one line, and returns 1: <sha> is not the
 # entry's headCommit (or the PR has no entry); the entry is UNMERGEABLE; <sha> has not exactly two
 # parents; its second parent is not the PR's head; its first parent does not hold the entry's
@@ -2445,7 +2446,7 @@ queue_commit_proof() {
     return 2
   fi
   primary=$(team_project "$queue_project" path) || return 2
-  if ! git -C "$primary" fetch -q origin "$queue_sha" "$head" 2>"$dir/fetch.stderr"; then
+  if ! without_merge_lock git -C "$primary" fetch -q origin "$queue_sha" "$head" 2>"$dir/fetch.stderr"; then
     printf "the trial commit %s and the head %s cannot be fetched into %s: " "$short" "${head:0:7}" "$primary"
     grep -m1 . "$dir/fetch.stderr" || echo "git fetch failed"
     return 2
@@ -2751,14 +2752,27 @@ ticket_graph_dir() {
   [[ -z $file ]] || printf '%s\n' "${file%/tickets/*}"
 }
 
+# Run <command>... without the task's merge lock (merge_lock_held), for one that may leave a
+# process behind, which would else hold the lock past the landing (a local check's own, git's
+# maintenance after a fetch). The run that takes the lock (team-merge) names its descriptor in
+# TEAM_MERGE_LOCK_FD, which team-land and the scripts it runs inherit with it; with that unset, the
+# command runs as it is: without_merge_lock <command>...
+without_merge_lock() (
+  merge_fd=${TEAM_MERGE_LOCK_FD:-}
+  [[ -z $merge_fd ]] || exec {merge_fd}>&-
+  unset TEAM_MERGE_LOCK_FD
+  "$@"
+)
+
 # Whether a process holds a task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, which
-# team-merge keeps for as long as it lands the task's PR through the merge queue, and team-land
-# under it. Read without taking it, since a reader that took it, for an instant, would have a
-# team-merge started in that instant say another one is landing the PR: the lock is held while a
-# process has the file open, since only team-merge opens it, and only to lock it, so on Linux it
-# reads each process's open files (/proc/<pid>/fd, its own user's) and elsewhere lsof's. Not
-# held with no such file, and when lsof cannot be run. Test seam: TEAM_PROC, the /proc to read,
-# one with no self/fd being a machine that has none: merge_lock_held T<n>
+# team-merge keeps for as long as it lands the task's PR through the merge queue (for a PR a queued
+# stands for, from its start when no other run holds it then), and team-land under it. Read without
+# taking it, since a reader that took it, for an instant, would have a team-merge started in that
+# instant say another one is landing the PR: the lock counts as held while a process has the file
+# open, since only team-merge opens it, to lock it and to write or read the holder's pid, so on
+# Linux it reads each process's open files (/proc/<pid>/fd, its own user's) and elsewhere lsof's.
+# Not held with no such file, and when lsof cannot be run. Test seam: TEAM_PROC, the /proc to
+# read, one with no self/fd being a machine that has none: merge_lock_held T<n>
 merge_lock_held() {
   local lock=$HOME/.local/state/agent-team/merge/$1.lock proc=${TEAM_PROC:-/proc} real
   [[ -f $lock ]] || return 1
