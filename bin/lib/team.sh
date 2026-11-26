@@ -2752,13 +2752,14 @@ ticket_graph_dir() {
 }
 
 # Whether a process holds a task's merge lock, ~/.local/state/agent-team/merge/T<n>.lock, which
-# team-merge keeps for as long as it lands the task's PR through the merge queue, and team-land
-# under it. Read without taking it, since a reader that took it, for an instant, would have a
-# team-merge started in that instant say another one is landing the PR: the lock is held while a
-# process has the file open, since only team-merge opens it, and only to lock it, so on Linux it
-# reads each process's open files (/proc/<pid>/fd, its own user's) and elsewhere lsof's. Not
-# held with no such file, and when lsof cannot be run. Test seam: TEAM_PROC, the /proc to read,
-# one with no self/fd being a machine that has none: merge_lock_held T<n>
+# team-merge keeps for as long as it lands the task's PR through the merge queue (from its start,
+# for a PR a queued stands for), and team-land under it. Read without taking it, since a reader
+# that took it, for an instant, would have a team-merge started in that instant say another one is
+# landing the PR: the lock counts as held while a process has the file open, since only team-merge
+# opens it, to lock it and to write or read the holder's pid, so on Linux it reads each process's
+# open files (/proc/<pid>/fd, its own user's) and elsewhere lsof's. Not held with no such file,
+# and when lsof cannot be run. Test seam: TEAM_PROC, the /proc to read, one with no self/fd being
+# a machine that has none: merge_lock_held T<n>
 merge_lock_held() {
   local lock=$HOME/.local/state/agent-team/merge/$1.lock proc=${TEAM_PROC:-/proc} real
   [[ -f $lock ]] || return 1

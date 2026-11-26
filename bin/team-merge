@@ -109,15 +109,18 @@
 # stands for a PR read in no queue, or merged at another head than it names, is ended by a dequeued
 # of the head it names, since it left the queue while no team-merge waited. The task's lock,
 # ~/.local/state/agent-team/merge/T<n>.lock, whose file holds the pid of the run that took it, is
-# taken after the local checks, so no process one of them leaves behind holds it, and let go once
-# merged or dequeued is logged: while another team-merge holds it, read before the local checks and
-# again where it is taken, this one prints "team-merge is already landing <url> (pid <n>)" and exits
-# 0, changing nothing; and when the task's events, read again under it, show a merged of the PR
-# another run logged meanwhile, it says so and exits 0, with no second merged, and a queued stands
-# only when it is still the latest of them. It logs queued (url, head, project) and runs team-land
-# --task T<n> <url> <head>, never gh pr merge, showing team-land's lines on stderr; team-land
-# enqueues the PR, holds the word and the checks again before each trial commit's agent-review
-# (--holds below), posts it and waits, and on its outcome:
+# taken after the local checks, or, when a queued stands for the PR, as the run starts, since the
+# run waits on that PR from then on and team-sweep's queue-wait reads the lock; neither the local
+# checks nor team-merge's own git fetches are given it, so no process one leaves behind holds it.
+# It is let go once merged or dequeued is logged, or as the run ends: while another team-merge
+# holds it, read before the local checks and again where it is taken, this one prints "team-merge
+# is already landing <url> (pid <n>)" and exits 0, changing nothing; and when the task's events,
+# read again under it, show a merged of the PR another run logged meanwhile, it says so and exits
+# 0, with no second merged, and a queued stands only when it is still the latest of them. It logs
+# queued (url, head, project) and runs team-land --task T<n> <url> <head>, never gh pr merge,
+# showing team-land's lines on stderr; team-land enqueues the PR, holds the word and the checks
+# again before each trial commit's agent-review (--holds below), posts it and waits, and on its
+# outcome:
 #   merged    the PR's merge commit is the one team-land names, and everything below follows as
 #             after gh pr merge;
 #   dequeued  the queue dropped it, or team-land took it out: dequeued is logged (url, head,
@@ -264,6 +267,45 @@ else
     die "$url is not one of $task's pr events:"$'\n'"$(jq -r '.[] | select(.event == "pr") | "  \(.url)"' <<<"$events")"
 fi
 
+# The latest queued, dequeued or merged of the PR among the task's events (a JSON array) on stdin,
+# or nothing: latest_queue_event <url>
+latest_queue_event() {
+  jq -c --arg url "${1%/}" '[.[] | select(.event | IN("queued", "dequeued", "merged"))
+    | select((.url | strings | rtrimstr("/")) == $url)] | last // empty'
+}
+
+# The task's lock, under which one run at a time lands the task's PR through the merge queue.
+lock=$HOME/.local/state/agent-team/merge/$task.lock lock_fd=''
+# Takes it, its file then naming this run's pid; fails when another run holds it, keeping no
+# descriptor of it, since a reader counts every process that has the file open (merge_lock_held):
+# take_lock
+take_lock() {
+  mkdir -p "${lock%/*}" || die "cannot make ${lock%/*}"
+  exec {lock_fd}>>"$lock" || die "cannot open $lock"
+  if ! flock -n "$lock_fd"; then
+    exec {lock_fd}>&-
+    lock_fd=''
+    return 1
+  fi
+  echo $$ >"$lock" || die "cannot write $lock"
+}
+# Runs <command>... without the lock, for one that may leave a process behind, which would else
+# hold it past this run (a local check's own, git's maintenance after a fetch): unlocked <command>...
+unlocked() (
+  [[ -z $lock_fd ]] || exec {lock_fd}>&-
+  "$@"
+)
+# A PR a queued stands for is in the queue already, as far as the ledger shows, so this run waits
+# on it from here, through its reads of GitHub and its local checks: it takes the lock now, so no
+# reader takes the PR for one nobody waits on. A run that finds it held goes on, and ends below as
+# any second run does. Not with --holds, which team-land runs under the lock.
+if [[ -z $holds ]]; then
+  standing_url=$(jq -r .url <<<"$pr")
+  if latest_queue_event "$standing_url" <<<"$events" | jq -e '.event == "queued"' >/dev/null; then
+    take_lock || true
+  fi
+fi
+
 scratch=$(team_mktemp -d)
 
 # The PR as team-state sees it: the repo, the project, the head and the checks by bucket.
@@ -320,8 +362,7 @@ elif ! github "$scratch" pr pr view "$number" --repo "$repo" --json isDraft,merg
 else
   head=$(jq -r .head <<<"$facts") branch=$(jq -r .headRefName "$scratch/pr")
   state=$(jq -r .state <<<"$facts")
-  standing=$(jq -c --arg url "${url%/}" '[.[] | select(.event | IN("queued", "dequeued", "merged"))
-    | select((.url | strings | rtrimstr("/")) == $url)] | last | select(.event == "queued")' <<<"$events") || jq_failed $?
+  standing=$(latest_queue_event "$url" <<<"$events" | jq -c 'select(.event == "queued")') || jq_failed $?
   if [[ $state == merged && -n $standing && $(jq -r .head <<<"$standing") == "$head" ]]; then landed=1; fi
   if [[ -z $landed ]]; then
     [[ $state == open ]] || merge_reasons+=("PR #$number is $state, not open")
@@ -469,7 +510,7 @@ word_from() {
 primary=$(team_project "$project" path) fetched='' fetch_error=''
 fetch_pr() {
   if [[ -z $fetched ]]; then
-    if git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+    if unlocked git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
       "+refs/heads/$base:refs/remotes/origin/$base" 2>"$scratch/fetch-error"; then
       fetched=ok
     else
@@ -737,19 +778,19 @@ refuse_on_problems
 # --holds ends here: the word and the checks hold, and nothing was changed.
 [[ -z $holds ]] || exit 0
 
-# Through the queue, one team-merge lands a task's PR at a time, under the task's lock, whose file
-# holds the pid of the run that took it. A run that finds it held says who holds it and ends, so
-# two waits never post on the same trial commit: here, before the local checks, read without
-# taking it (merge_lock_held), so a second run does not run them only to find it held, and again
-# where the lock is taken, after them.
-landing='' lock=$HOME/.local/state/agent-team/merge/$task.lock
+# Through the queue, one team-merge lands a task's PR at a time, under the task's lock. A run
+# that finds it held says who holds it and ends, so two waits never post on the same trial commit:
+# here, before the local checks, read without taking it (merge_lock_held), so a second run does
+# not run them only to find it held, and again where the lock is taken, after them. A run that
+# took it as it started skips both.
+landing=''
 already_landing() {
   echo "team-merge is already landing $url (pid $(grep -m1 -E '^[0-9]+$' "$lock" || echo unknown))"
   exit 0
 }
 if [[ -n $queue || -n $landed ]]; then
   landing=1
-  ! merge_lock_held "$task" || already_landing
+  [[ -n $lock_fd ]] || ! merge_lock_held "$task" || already_landing
 fi
 
 # The project's local checks, last since they are the slowest: team-checks runs them in a detached
@@ -759,13 +800,13 @@ local_checks=()
 if [[ -z $landed ]]; then mapfile -t local_checks < <(team_project "$project" local_checks | jq -r '.[]'); fi
 if ((${#local_checks[@]})); then
   primary=$(team_project "$project" path)
-  if ! git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>"$scratch/fetch-error" ||
+  if ! unlocked git -C "$primary" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>"$scratch/fetch-error" ||
     ! git -C "$primary" cat-file -e "$head^{commit}" 2>/dev/null; then
     later merge_reasons "the head ${head:0:7} cannot be fetched into $primary for the local checks: $(grep -m1 . "$scratch/fetch-error" || echo "origin's $branch is elsewhere")"
     refuse_on_problems
   fi
   rc=0
-  "$(dirname "$TEAM_LIB")/team-checks" "$project" "$head" --from "$primary" --label "team-merge $task" >"$scratch/checks" || rc=$?
+  unlocked "$(dirname "$TEAM_LIB")/team-checks" "$project" "$head" --from "$primary" --label "team-merge $task" >"$scratch/checks" || rc=$?
   if ((rc)); then
     why="the local checks did not pass on the head ${head:0:7} (team-checks exit $rc):"$'\n'"$({ grep -v "' passed on the head " "$scratch/checks" || true; } | sed 's/^/    /')"
     # Exit 75: team-checks could not run them now (the heavy-run lock stayed held), and nothing failed.
@@ -793,21 +834,12 @@ fi
 
 if [[ -n $landing ]]; then
   # The lock, held until the PR's merged or dequeued is logged and by the team-land this run
-  # starts: taken only now, after the local checks, so no process one of them leaves behind
-  # inherits its descriptor and holds the lock past this run.
-  mkdir -p "${lock%/*}"
-  exec {lock_fd}>>"$lock"
-  flock -n "$lock_fd" || already_landing
-  echo $$ >"$lock"
-  # The task's latest queued, dequeued or merged of the PR, read from the ledger now, or nothing.
-  latest_queue_event() {
-    task_event_array "$task" | jq -c --arg url "${url%/}" '[.[] | select(.event | IN("queued", "dequeued", "merged"))
-      | select((.url | strings | rtrimstr("/")) == $url)] | last // empty'
-  }
+  # starts: taken now, after the local checks, unless this run took it as it started.
+  [[ -n $lock_fd ]] || take_lock || already_landing
   # What was read before the lock may be another run's by now: a merged of the PR that run logged
   # since ends this one, with no second merged, and a queued stands only when it is still the
   # latest, so a dequeued that run logged since is followed by this run's queued before it lands.
-  latest=$(latest_queue_event) || jq_failed $?
+  latest=$(task_event_array "$task" | latest_queue_event "$url") || jq_failed $?
   if [[ $(jq -r '.event // empty' <<<"$latest") == merged ]]; then
     echo "team-merge: another team-merge logged PR #$number merged while this one read it: nothing more to do"
     exit 0
@@ -865,7 +897,7 @@ if [[ -n $landing ]]; then
       # and took the PR out, or one that found it out of the queue. That one stands for this
       # leaving of the queue, and no second is logged, unless team-land's result has failures,
       # which the readers need on the latest dequeued to send the PR back to the builder.
-      latest=$(latest_queue_event) || jq_failed $?
+      latest=$(task_event_array "$task" | latest_queue_event "$url") || jq_failed $?
       if [[ $(jq -r '.event // empty' <<<"$latest") == dequeued ]] && jq -e '(.failed // []) == []' <<<"$landed_as" >/dev/null; then
         echo "team-merge: PR #$number's dequeued is logged already, by another team-merge" >&2
       else
@@ -963,7 +995,7 @@ jq -n --arg task "$task" --arg url "$url" --arg merge "$merge" --arg head "$head
 # Pushed now, before the steps that follow, so none of them failing can keep it off origin.
 ledger_push
 # The merge is logged: the task's lock is let go, so nothing the steps below start holds it.
-if [[ -n $landing ]]; then exec {lock_fd}>&-; fi
+if [[ -n $lock_fd ]]; then exec {lock_fd}>&-; fi
 
 # Mark the backlog file <file> done with PR <number> in its front matter, in place: status: done,
 # and the number added to pr: unless there; prints changed or unchanged, or fails saying why on

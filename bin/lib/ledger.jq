@@ -1977,13 +1977,24 @@ def merge_due_finding($withdrawals; $sessions; $own; $landing):
           "\(merge_due_step($task; $due; $behind)); on a refusal, ask Daniel for the per-head word with team-ask")
     else empty end;
 
+# The queued events in the ledger's lines, one {task, url, since} each: team-sweep reads them
+# before it reads the merge locks, for queue_wait_findings.
+def queued_logged:
+  inputs | select(contains("\"queued\"")) | fromjson? | objects | select(.event == "queued") | canonical_event
+  | {task, url: (.url | strings | rtrimstr("/")), since: .ts};
+
 # team-sweep's queue-wait findings, over a task's events, one for each of its PRs that stands in
 # the merge queue (queued_prs) while no process holds the task's merge lock ($landing, the tasks
-# whose lock is held): the queue lands or drops it with no team-merge to log either.
-def queue_wait_findings($landing):
+# whose lock was held): the queue lands or drops it with no team-merge to log either. $queued is
+# the queued events logged before the locks were read (queued_logged), and the events are read
+# after them: a queued in both stood while its task's lock was read, so a free lock had no
+# team-merge waiting on it, since one holds it from before it logs a queued for as long as it
+# waits on the PR. A queued logged while the locks were read is not judged.
+def queue_wait_findings($landing; $queued):
   .[0].task as $task
   | select($task | IN($landing[]) | not)
   | queued_prs[]
+  | select({task: $task, url: (.url | rtrimstr("/")), since} | IN($queued[]))
   | finding($task; "queue-wait"; null; null;
       "PR \(.url) is in the merge queue since \(.since) with no team-merge waiting on it";
       "run team-merge \($task) with Bash run_in_background, which goes on waiting and logs how it ends");
@@ -2479,8 +2490,9 @@ def assistant_twin_lines($self):
 # assistant-twin, activity, level, retro-due and health findings. $own is the registered projects
 # that are the team's own, or null, as merge_due_finding takes it, $health the health view, as
 # health_findings takes it, $self the sweep's own session id, as coordinator_twin_findings takes it,
-# and $landing the tasks whose merge lock a process holds, as merge_due_finding takes it.
-def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
+# $landing the tasks whose merge lock a process holds, as merge_due_finding takes it, and $queued
+# the queued events logged before those locks were read, as queue_wait_findings takes them.
+def sweep($sessions; $plan; $activity; $own; $health; $self; $landing; $queued):
   . as $events
   | by_task as $tasks
   | default_events as $withdrawals
@@ -2488,7 +2500,7 @@ def sweep($sessions; $plan; $activity; $own; $health; $self; $landing):
         ([merge_due_finding($withdrawals; $sessions; $own; $landing)] as $due
          | if $due != [] then $due[] elif parked then empty
            else task_findings($sessions; $activity) end),
-        queue_wait_findings($landing),
+        queue_wait_findings($landing; $queued),
         trial_unmarked_findings,
         trial_failed_findings($sessions),
         trial_rules_findings($landing),

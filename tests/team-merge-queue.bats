@@ -584,6 +584,38 @@ SH
   assert_equal "$rc" 0
 }
 
+@test "a team-merge that takes the lock as it starts, for a queued PR, gives it to neither its local checks nor git's fetch, so what they leave behind never holds it" {
+  with_local_checks
+  with_queue
+  was_queued
+  in_queue
+  # The local check and each git fetch leave a process behind, which would hold the lock had it
+  # been given its descriptor.
+  cat >"$gh_dir/check.extra" <<'SH'
+sleep 300 &
+echo $! >>"$GH_DIR/left-behind"
+SH
+  # shellcheck disable=SC2030 # each test's own, read by the scripts it runs
+  export TEAM_PATH_FIRST=$BATS_TEST_TMPDIR/stubs
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'if [[ " $* " == *" fetch "* ]]; then' \
+      '  sleep 300 >/dev/null 2>&1 &' '  echo $! >>"$GH_DIR/left-behind"' 'fi'
+    printf 'exec %q "$@"\n' "$(command -v git)"
+  } >"$BATS_TEST_TMPDIR/stubs/git"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/git"
+  run_bin -0 --separate-stderr team-merge T14
+  local -a left
+  mapfile -t left <"$gh_dir/left-behind"
+  rm "$BATS_TEST_TMPDIR/stubs/git"
+  # The fetch's and the check's.
+  ((${#left[@]} >= 2))
+  kill -0 "${left[@]}"
+  rc=0
+  flock -n "$(lock)" true || rc=$?
+  kill "${left[@]}"
+  assert_equal "$rc" 0
+}
+
 @test "a PR team-land could not enqueue is logged dequeued with why, so no queued of it stands" {
   with_queue
   land refused "GitHub refused to enqueue $url at ${head:0:7}: the queue is full"
@@ -702,6 +734,132 @@ SH
   touch "$gh_dir/go"
   wait "$first"
   assert_equal "$(queue_events)" "$(queued; merged_on_head)"
+}
+
+# The queue-wait findings the coordinator's Stop hook keeps its turn open with, run as Claude
+# Code runs it at a turn's end, one a line; nothing with none. Fails when the sweep itself did.
+hook_queue_waits() {
+  local out
+  out=$("${CODE_CHECKOUT:?}/bin/hooks/stop-sweep" <<<'{"stop_hook_active": false}') || return
+  if [[ $out == *"team-sweep failed"* ]]; then
+    echo "$out" >&2
+    return 1
+  fi
+  jq -r '.reason // empty' <<<"$out" | sed -n '/^T14 queue-wait: /p'
+}
+
+# The Bash for a stub to run, which holds it at step <step> the first time it gets there, until
+# release <step>: pause_at <step>
+pause_at() {
+  printf '%s\n' "if [[ ! -e \$GH_DIR/at-$1 ]]; then : >\"\$GH_DIR/at-$1\"" \
+    "  for _ in {1..1200}; do [[ -e \$GH_DIR/go-$1 ]] && break; sleep 0.05; done" 'fi'
+}
+
+# Wait until a stub is held at <step> (pause_at): reached <step>
+reached() {
+  for _ in {1..600}; do
+    [[ -e $gh_dir/at-$1 ]] && return 0
+    sleep 0.05
+  done
+  echo "nothing reached the step $1" >&2
+  return 1
+}
+
+release() {
+  : >"$gh_dir/go-$1"
+}
+
+# Start team-merge T14 in the background, as the coordinator's run_in_background does, its pid in
+# $merging: start_merge
+start_merge() {
+  "$CODE_CHECKOUT/bin/team-merge" T14 >"$BATS_TEST_TMPDIR/merge.out" 2>"$BATS_TEST_TMPDIR/merge.err" 3>&- &
+  merging=$!
+}
+
+# Hold the sweep's next reading of a merge lock at the step scan: a find (an lsof where there is
+# no /proc) on PATH that waits there before the real one reads. The lock of a task merged long
+# ago, which nobody holds, is there for it to read, as a machine's lock directory keeps them.
+pause_the_lock_reading() {
+  local cmd real
+  mkdir -p "$HOME/.local/state/agent-team/merge"
+  echo 4242 >"$HOME/.local/state/agent-team/merge/T3.lock"
+  # shellcheck disable=SC2031 # each test's own, read by the scripts it runs
+  export TEAM_PATH_FIRST=$BATS_TEST_TMPDIR/stubs
+  for cmd in find lsof; do
+    real=$(command -v "$cmd") || continue
+    {
+      printf '%s\n' '#!/usr/bin/env bash' 'if [[ " $* " == *"-printf %l"* || $0 == */lsof ]]; then'
+      pause_at scan
+      printf '%s\n' 'fi' "exec $(printf %q "$real") \"\$@\""
+    } >"$BATS_TEST_TMPDIR/stubs/$cmd"
+    chmod +x "$BATS_TEST_TMPDIR/stubs/$cmd"
+  done
+}
+
+@test "the Stop hook's sweep finds no queue-wait at any step of a team-merge run again on a queued PR, and finds it with none" {
+  stub_reply claude '[]'
+  with_local_checks
+  with_queue
+  was_queued
+  in_queue
+  # No team-merge waits on it.
+  assert_contains "$(hook_queue_waits)" "T14 queue-wait: PR $url is in the merge queue"
+  # One run again, at its GitHub reads, at its local checks, and in team-land.
+  pause_at reads >"$gh_dir/entry.sh"
+  pause_at checks >"$gh_dir/check.extra"
+  land waiting "the deadline came with the PR in the queue"
+  pause_at land | sed -i '1r /dev/stdin' "$gh_dir/land.sh"
+  start_merge
+  local step
+  for step in reads checks land; do
+    reached "$step"
+    assert_equal "$step: $(hook_queue_waits)" "$step: "
+    release "$step"
+  done
+  # It ends with the PR still in the queue, so nothing waits on it again.
+  local rc=0
+  wait "$merging" || rc=$?
+  assert_equal "$rc" 75
+  assert_contains "$(hook_queue_waits)" "T14 queue-wait: PR $url is in the merge queue"
+}
+
+@test "the Stop hook's sweep finds no queue-wait for a team-merge that takes the lock and logs its queued while the sweep reads the locks" {
+  stub_reply claude '[]'
+  with_queue
+  land merged
+  pause_at land | sed -i '1r /dev/stdin' "$gh_dir/land.sh"
+  pause_the_lock_reading
+  hook_queue_waits >"$BATS_TEST_TMPDIR/hook.out" 3>&- &
+  local hook=$!
+  reached scan
+  # The task has no lock file yet: the team-merge the coordinator just started makes it.
+  start_merge
+  reached land
+  assert_equal "$(queue_events)" "$(queued)"
+  release scan
+  wait "$hook"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/hook.out")" ""
+  release land
+  wait "$merging"
+  assert_equal "$(hook_queue_waits)" ""
+}
+
+@test "the Stop hook's sweep finds no queue-wait for a team-merge that logs its merge and lets the lock go while the sweep reads the locks" {
+  stub_reply claude '[]'
+  with_queue
+  land merged
+  pause_at land | sed -i '1r /dev/stdin' "$gh_dir/land.sh"
+  start_merge
+  reached land
+  pause_the_lock_reading
+  hook_queue_waits >"$BATS_TEST_TMPDIR/hook.out" 3>&- &
+  local hook=$!
+  reached scan
+  release land
+  wait "$merging"
+  release scan
+  wait "$hook"
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/hook.out")" ""
 }
 
 @test "a refusal on a base with a queue logs nothing, takes no lock and runs no team-land, and a method other than merge is refused" {
