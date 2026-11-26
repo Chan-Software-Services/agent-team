@@ -4,9 +4,9 @@
 #
 # context_mark: prints the mark in tokens from this checkout's bin/lib/context-mark, whose lines
 # but comments (#) and empty ones are one tokens=<n> line, <n> a whole number of tokens of six to
-# nine digits, a multiple of 1000 (so at least 100000). Fails, printing nothing and saying on
-# stderr that the file is malformed and the rule it breaks, on anything else, and on a file that
-# is missing or cannot be read.
+# nine digits, a multiple of 1000 (so at least 100000). Fails, printing nothing, on anything else,
+# and on a file that is missing or cannot be read, with one line on stderr for all of them: that the
+# file is malformed, and what it needs (the line leaves the nine-digit cap unsaid).
 
 # shellcheck shell=bash
 context_mark() {

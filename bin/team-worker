@@ -148,11 +148,11 @@
 # effortLevel for the model logged, then their effortLevel; with none of them, default (default).
 # No option names an effort: the config is the one place one is chosen.
 # A builder's session, every builder's, T0's included, compacts at the context mark,
-# bin/lib/context-mark's tokens, passed as claude --autocompact <tokens/1000>k and logged on the
-# launch as autocompact ("250k"): a flag, since no settings scope preempts it (claude-coordinator's
-# header says why), though CLAUDE_CODE_AUTO_COMPACT_WINDOW would override it. A mark that does not
-# read refuses a builder's launch before the lease or anything else is started (exit 1, nothing
-# logged), "<file> is malformed: ..."; no other role reads it.
+# bin/lib/context-mark's tokens, passed as claude --autocompact <tokens/1000>k and, but for T0's,
+# which logs nothing, logged on the launch as autocompact ("250k"): a flag, since no settings scope
+# preempts it (claude-coordinator's header says why), though CLAUDE_CODE_AUTO_COMPACT_WINDOW would
+# override it. A mark that does not read refuses a builder's launch before the lease or anything
+# else is started (exit 1, nothing logged), "<file> is malformed: ..."; no other role reads it.
 # A line's subagent_model and subagent_effort, the config's choice for the session's subagents,
 # go into its generated settings' env as CLAUDE_CODE_SUBAGENT_MODEL and
 # CLAUDE_CODE_SUBAGENT_EFFORT, and on the launch as subagent_model and subagent_effort, only when
