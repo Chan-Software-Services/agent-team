@@ -533,7 +533,7 @@ test_checkout() {
 @test "a malformed context mark fails the report, and neither export nor time" {
   test_checkout
   local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
-  for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=abc "tokens=250000 " window=250000 \
+  for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=1000000000 tokens=abc "tokens=250000 " window=250000 \
     $'tokens=250000\r' $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' unreadable missing; do
     echo "mark: $bad"
     case $bad in
@@ -678,8 +678,8 @@ compaction_fixture() {
   : >"$TEAM_HOME/ledger.jsonl"
   # Seventeen builders, T1 to T17, each compacting once from 200k, the $w after growing with its
   # number; T18, T19 and a second builder of T17 tie with T17's, which the task and then the session
-  # order. The later a task, the earlier its replies, and T17's second builder replies before all, so
-  # the order of the replies is the reverse of the ties' order.
+  # order. The later a task, the earlier its first builder's replies, and T17's second builder replies
+  # before all, so the ties' order is not the order of the replies.
   local n minute
   for n in {1..19}; do
     minute=$((59 - n))

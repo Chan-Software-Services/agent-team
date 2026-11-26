@@ -3874,9 +3874,10 @@ bg_windows() {
   code_checkout
   open_task T7
   local mark=$CODE_CHECKOUT/bin/lib/context-mark bad
-  # With no lease held, a launch the mark lets through is refused for the lease instead.
+  # With no lease held, a task's launch the mark lets through is refused for the lease instead (T0's
+  # takes no lease).
   run_bin -0 team-lease release
-  for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=abc "tokens=250000 " window=250000 \
+  for bad in tokens=250 tokens=250500 tokens=99000 tokens=0250000 tokens=1000000000 tokens=abc "tokens=250000 " window=250000 \
     $'tokens=250000\ntokens=250000' $'tokens=250000\nother=1' '' unreadable missing; do
     case $bad in
       missing) rm -f "$mark" ;;
