@@ -146,7 +146,8 @@ jobs:
           head -n 1 "$RUNNER_TEMP/timings/timings.tsv"
       - run: tests/run bats --shard "$SHARD/3"
 
-  # The bats files a change adds or changes, and those naming a fixture it changes, with the wall
+  # The bats files a change adds or changes, those naming a fixture it changes, and
+  # tests/tests-run-clock.bats when it changes tests/run, tests/shards or the shim, with the wall
   # clock a year ahead (tests/helpers/clockshift.c), the tests tagged wall-clock not run. The base
   # is the one the PR's merge commit was built on, the merge queue's, else the clock-base input or
   # origin/dev's merge base. Its limit covers a run of every file by hand, one runner's whole suite.

@@ -163,7 +163,7 @@
 #                   then "-shard" or " shard" (test beside test-shards (2), e2e beside e2e shard
 #                   3/6), or, for a check named test, one named future-clock (rollup_needs below,
 #                   since agent-team's test needs it): "roll-up: R, of <its shards>, left out";
-#                   one whose shards all passed is the PR's
+#                   a failed or cancelled check with none of those beside it is no roll-up
 #   infrastructure  never started: a failed or cancelled check whose job has no runner and no step
 #                   that ran (none concluded but skipped); setup: a failed check whose first
 #                   failing step is GitHub's own (Set up job, Set up runner, Initialize containers,
