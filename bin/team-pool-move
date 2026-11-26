@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Move a treehouse project's pool with its origin when its repository moved owner, keeping every
+# slot, its work and its lease: the coordinator's step of sops/portability.md, "A repository that
+# moves owner", run in no slot of the pool and with no session in one.
+#
+# Usage: team-pool-move <project> <new url>
+#   project  a project of projects.toml whose pool.provider is treehouse
+#   new url  https://github.com/<repo>.git, <repo> the project's registry repo at the end of its
+#            moves (bin/lib/repo-moves.json), the origin the doctor's origin line asks for
+#
+# treehouse names a pool <checkout's folder>-<the first 3 bytes of the SHA-256 of the origin URL,
+# in hex> (pool_name) in the folder of pools it finds for the primary checkout (treehouse_state.py
+# pools: <root>/.treehouse, root TREEHOUSE_ROOT, else that of the checkout's treehouse.toml when
+# it has one, else that of ~/.config/treehouse/config.toml, one empty as written HOME, else its
+# variables expanded and a relative one taken from the checkout), and authenticates each slot's
+# state entry with a digest over its path, so a bare set-url sends the next lease to a new, empty
+# pool and a bare rename of the pool folder has treehouse quarantine every slot, and free each one
+# it finds safe, moving that slot's untracked files out first (bin/lib/treehouse_state.py's
+# header).
+# So, with the origin still the old one:
+#   1. refuses, with nothing changed, a treehouse version whose state format
+#      bin/lib/treehouse_state.py was not checked against, a pool whose state it cannot read or
+#      whose digests its formula does not reproduce, a pool already at the new name beside the
+#      old one, a slot treehouse already quarantined (leased to its recovered holder), and a slot
+#      with a process in it (`treehouse status --json`'s processes);
+#   2. under the old pool's lock, which treehouse's own commands take, waiting at most
+#      TEAM_POOL_LOCK_SECONDS (default 30) for it and refusing, with nothing changed, when it is
+#      not freed by then, renames the pool folder to the name the new URL gives, never over an
+#      existing one, and rewrites the state there, each path and its digest with the pool's own
+#      key (treehouse_state.py reroot), so no treehouse command reads the pool between the two;
+#   3. runs git worktree repair in the primary checkout on each slot's new path;
+#   4. sets the primary checkout's origin to <new url>;
+# then checks that `treehouse status --json`, the first treehouse command to read the moved pool,
+# lists each leased slot at its new path leased by its holder, and none under treehouse's
+# recovered holder, and that each slot's git directory is the primary checkout's. It prints each
+# slot ("slot <name> <path> leased by <holder>", or "available") and what is left to the
+# coordinator: the registry's pool.slots under the new folder, then team-open --task T<n> --resume
+# <project> (--ticket NN for a holder T<n>--NN) for each task holding a slot, which logs its
+# worktree-moved.
+# A run stopped part way finishes when run again: a pool already renamed is rewritten (an entry
+# already under the new folder is kept as it is), and once the origin is <new url> a run only
+# checks the moved pool (refusing when no pool has the new name).
+# Exits 1 on any refusal, naming it: one in step 1 changes nothing; one after the rename names
+# what is done and the way to finish (this command again) or, while the state is not yet
+# rewritten, to undo (mv -T <new pool> <old pool>); one of the final check leaves the move done,
+# so a run again only checks. Exits 2 on a wrong command line.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/team.sh" "$@"
+
+[[ $# -eq 2 ]] || usage_error "usage: team-pool-move <project> <new url>"
+project=$1 new=$2
+state_py=$TEAM_LIB/treehouse_state.py
+recovered="recovered: state file was corrupt or truncated; verify before reuse"
+
+provider=$(team_project "$project" pool.provider) || exit 1
+[[ $provider == treehouse ]] || die "$project's pool is $provider, not treehouse: only a treehouse pool is named by its origin"
+primary=$(team_project "$project" path) || exit 1
+[[ -d $primary ]] || die "$project's primary checkout $primary is missing"
+repo=$(canonical_repo "$(team_project "$project" repo)")
+[[ $new == "https://github.com/$repo.git" ]] ||
+  die "$new is not https://github.com/$repo.git, the URL of $project's repo $repo (team-project $project repo, at the end of its moves)"
+origin=$(git -C "$primary" remote get-url origin) || die "$primary has no origin"
+
+version=$(cd "$primary" && bounded 30 treehouse --version 2>/dev/null </dev/null) || die "treehouse --version did not answer in $primary"
+python3 -I "$state_py" known "$(grep -m 1 -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$version" || echo "$version")" || exit 1
+pools=$(python3 -I "$state_py" pools "$primary") || exit 1
+new_pool=$pools/$(pool_name "$primary" "$new")
+
+# <path> with $HOME as ~.
+tilde() {
+  printf '%s\n' "${1/#"$HOME"/\~}"
+}
+
+# The pool's slots, one "<name>\t<path>\t<holder>" each, after treehouse_state.py check, else
+# die with <why>, after the reason it prints: slots_of <pool> <why>
+slots_of() {
+  python3 -I "$state_py" check "$1" || die "the state of $1 is refused: $2"
+}
+
+# pool_status of the primary checkout, else die.
+pool_now() {
+  pool_status "$primary" || die "treehouse status --json did not answer in $primary with an array"
+}
+
+if [[ $origin != "$new" ]]; then
+  old_pool=$pools/$(pool_name "$primary" "$origin")
+  if [[ -e $old_pool || -L $old_pool ]]; then
+    [[ ! -e $new_pool && ! -L $new_pool ]] ||
+      die "both $old_pool and $new_pool exist: a lease after a bare set-url made the second; return and remove what it holds, then run this again"
+    state=$(slots_of "$old_pool" "nothing was changed")
+    quarantined=$(awk -F '\t' -v holder="$recovered" '$3 == holder { print "slot " $1 " (" $2 ")" }' <<<"$state")
+    [[ -z $quarantined ]] ||
+      die "$(paste -sd ';' <<<"$quarantined" | sed 's/;/, /g') is quarantined, leased to treehouse's holder \"$recovered\": check the work in it, then clear it with treehouse return in $primary, and run this again; nothing was changed"
+    busy=$(pool_now | jq -r 'select(.processes > 0) | "slot \(.name) (\(.path)) has \(.processes) process(es) in it"')
+    [[ -z $busy ]] || die "$(paste -sd ';' <<<"$busy" | sed 's/;/; /g'): stow or stop each session in a slot first"
+    renaming=1
+  elif [[ ! -d $new_pool ]]; then
+    die "no pool at $old_pool, the name treehouse gives origin $origin, nor at $new_pool"
+  else
+    renaming=''
+  fi
+  rc=0
+  python3 -I "$state_py" reroot "$old_pool" "$new_pool" >/dev/null || rc=$?
+  if ((rc == 3)); then
+    die "the pool is renamed to $new_pool, but its state is not rewritten and the origin is still $origin: fix the cause above and run team-pool-move $project $new again, or put the old pool back with mv -T $new_pool $old_pool"
+  elif ((rc != 0)) && [[ -n $renaming ]]; then
+    die "the state of $old_pool is refused: nothing was changed"
+  elif ((rc != 0)); then
+    die "the state of $new_pool, which a run that stopped renamed from $old_pool, is refused and left as it is: fix the cause above and run team-pool-move $project $new again"
+  fi
+  moved=$(slots_of "$new_pool" "the origin is left as it is")
+  existing=()
+  while IFS=$'\t' read -r _ path _; do [[ ! -d $path ]] || existing+=("$path"); done <<<"$moved"
+  if ((${#existing[@]} > 0)) && ! repair=$(git -C "$primary" worktree repair "${existing[@]}" 2>&1 >/dev/null); then
+    die "git worktree repair failed in $primary for ${existing[*]}: $(paste -sd ';' <<<"$repair" | sed 's/;/; /g'); the pool is moved to $new_pool and its state rewritten, the origin still $origin: fix the cause and run team-pool-move $project $new again"
+  fi
+  git -C "$primary" remote set-url origin "$new"
+elif [[ ! -d $new_pool ]]; then
+  die "origin is already $new and no pool is at $new_pool: if a bare set-url left the pool under the old origin's name, set the old origin back and run this again"
+fi
+
+# The check, from the moved pool's state and treehouse's first reading of it.
+if [[ $origin == "$new" ]]; then
+  moved=$(slots_of "$new_pool" "if a bare rename left it holding the old folder's paths, set the old origin back (git -C $primary remote set-url origin <old url>) and run this again")
+else
+  moved=$(slots_of "$new_pool" "the origin is $new, the pool $new_pool")
+fi
+entries=()
+[[ -z $moved ]] || mapfile -t entries <<<"$moved"
+listed=$(pool_now)
+common=$(git -C "$primary" rev-parse --path-format=absolute --git-common-dir)
+problems=() report=() holders=()
+for entry in ${entries[@]+"${entries[@]}"}; do
+  IFS=$'\t' read -r name path holder <<<"$entry"
+  seen=$(jq -c --arg name "$name" 'select(.name == $name)' <<<"$listed" | head -n 1)
+  if [[ -z $seen ]] || ! same_path "$(jq -r .path <<<"$seen")" "$path"; then
+    problems+=("treehouse does not list slot $name at $path")
+  else
+    status=$(jq -r .status <<<"$seen") listed_holder=$(jq -r .holder <<<"$seen")
+    if [[ $listed_holder == "$recovered" ]]; then
+      problems+=("treehouse quarantined slot $name at $path")
+    elif [[ -n $holder && $listed_holder != "$holder" ]]; then
+      problems+=("treehouse lists slot $name as $status${listed_holder:+ by $listed_holder}, not leased by $holder")
+    fi
+  fi
+  if [[ -d $path ]] && ! same_path "$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" "$common"; then
+    problems+=("slot $name at $path is not a worktree of $primary")
+  fi
+  report+=("slot $name $(tilde "$path") ${holder:+leased by }${holder:-available}")
+  [[ ! $holder =~ ^(T[0-9]+)(--([0-9]{2}))?$ ]] ||
+    holders+=("team-open --task ${BASH_REMATCH[1]} --resume $project${BASH_REMATCH[3]:+ --ticket ${BASH_REMATCH[3]}}")
+done
+((${#problems[@]} == 0)) ||
+  die "the pool is moved to $new_pool and the origin is $new, but: $(printf '%s; ' "${problems[@]}" | sed 's/; $//'); fix each, then run this again, which only checks"
+
+echo "team-pool-move: $project's pool is $(tilde "$new_pool"), its origin $new"
+((${#report[@]} == 0)) || printf '%s\n' "${report[@]}"
+echo "next: put $project's pool.slots in projects.toml under $(tilde "$new_pool")/, in a commit of the team home"
+((${#holders[@]} == 0)) || printf 'then: %s\n' "${holders[@]}"

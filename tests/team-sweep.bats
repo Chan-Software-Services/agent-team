@@ -1263,6 +1263,76 @@ rules_drop() {
   no_github
 }
 
+@test "merge-due: after a runner backlog drop, says the runners are the wait and names team-merge once they are back, until a queued, and as before after any other drop" {
+  local url=https://github.com/owner/proj/pull/5
+  local runners="the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of owner/proj's merge queue while the backlog stands, and run team-merge T3 again once they say the runners are back"
+  # backlog <time>: merge-due after a runner backlog drop of PR 5 at <time>.
+  backlog() {
+    echo "T3 merge-due: awaiting the merge of $url on the default word, the approved plan, with no ask open; the merge queue dropped $url at $1; next: $runners; on a refusal, ask Daniel for the per-head word with team-ask"
+  }
+  opened T3
+  launch T3 reviewer 11111111
+  approved_pr T3
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "failed_checks",
+    failed: [{name: "e2e shard 1/2", class: "infrastructure", kind: "queued", link: "", step: ""}, {name: "e2e", class: "infrastructure", kind: "missing", link: "", step: ""}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(backlog 2026-10-22T03:30:00Z)"
+  run_bin -1 team-sweep --json
+  assert_equal "$(jq -c 'map([.task, .kind, .next])' <<<"$output")" \
+    "$(jq -cn --arg next "$runners; on a refusal, ask Daniel for the per-head word with team-ask" '[["T3", "merge-due", $next]]')"
+  # The queue's own check timeout, with no failure read on the trial commit.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T04:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(backlog 2026-10-22T04:30:00Z)"
+  # Queued again, it is queue-wait's alone; dropped for anything else, merge-due as before.
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  run_bin -1 team-sweep
+  assert_contains "$output" "T3 queue-wait:"
+  [[ $output != *"runners"* ]]
+  ledger_line --arg url "$url" '{ts: "2026-10-22T05:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "failed_checks",
+    failed: [{name: "data", class: "infrastructure", kind: "setup", link: "", step: "Set up job"}]}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$(due)"
+  no_github
+}
+
+@test "merge-due: of two PRs, the runners step of one dropped for a runner backlog names team-merge --pr on it, after team-merge --pr on one not dropped" {
+  local url=https://github.com/owner/proj/pull/5 other=https://github.com/owner/other/pull/9
+  # step <repo> <url>: the runners step for the PR at <url>.
+  step() {
+    echo "the runners are behind, with nothing of the PR's to fix: tell Daniel, who may raise the check timeout of $1's merge queue while the backlog stands, and run team-merge T3 --pr $2 again once they say the runners are back"
+  }
+  local due="T3 merge-due: awaiting the merge of $url, $other on the default word, the approved plan, with no ask open; the merge queue dropped $url at 2026-10-22T03:30:00Z"
+  local ask="on a refusal, ask Daniel for the per-head word with team-ask"
+  register other
+  opened T3
+  event T3 worktree-added '{project: "other", branch: "feat/T3-work", base: "dev", base_sha: "0123456", worktree: "/w/2"}'
+  launch T3 reviewer 11111111
+  approved_pr T3
+  event T3 pr "{url: \"$other\", head: \"a1b2c3d\"}"
+  event T3 review '{verdict: "pass", head: "a1b2c3d4e5", findings: {blocking: 0, correctness: 0, security: 0, "real-data": 0, "note-change": 0, "note-before": 0}, guarded: []}'
+  ci T3 passed
+  sessions "$(session 11111111 T3-reviewer idle)"
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:00:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "proj"}'
+  ledger_line --arg url "$url" '{ts: "2026-10-22T03:30:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
+  # team-merge T3 alone takes the latest pr event's PR, the other one, so each step names its PR.
+  run_bin -1 team-sweep
+  assert_equal "$output" "$due; next: run team-merge T3 --pr $other; $(step owner/proj "$url"); $ask"
+  # Both dropped: each its own runners step.
+  ledger_line --arg url "$other" '{ts: "2026-10-22T03:40:00Z", task: "T3", event: "queued", url: $url, head: "a1b2c3d4e5", project: "other"}'
+  ledger_line --arg url "$other" '{ts: "2026-10-22T04:00:00Z", task: "T3", event: "dequeued", url: $url, head: "a1b2c3d4e5", reason: "checks_timed_out"}'
+  run_bin -1 team-sweep
+  assert_equal "$output" "$due; the merge queue dropped $other at 2026-10-22T04:00:00Z; next: $(step owner/proj "$url"); $(step owner/other "$other"); $ask"
+  # The other merged, the dropped one alone is due, and still named with --pr.
+  ledger_line --arg url "$other" '{ts: "2026-10-22T05:00:00Z", task: "T3", event: "merged", url: $url, pr: 9, head: "a1b2c3d4e5", project: "other"}'
+  run_bin -1 team-sweep
+  assert_equal "$(grep merge-due <<<"$output")" "T3 merge-due: awaiting the merge of $url on the default word, the approved plan, with no ask open; the merge queue dropped $url at 2026-10-22T03:30:00Z; next: $(step owner/proj "$url"); $ask"
+  no_github
+}
+
 @test "merge-due: none while a team-merge holds the task's lock, before its queued is logged" {
   local pid
   opened T3
@@ -2041,7 +2111,30 @@ retro due since $(plus "$opened" 24) (every 24h, last retro T30): run the retro 
   [[ $output != *slots* ]]
 }
 
-@test "a ledger of 1,000 events sweeps in under two seconds" {
+# jq work that none of the sweep's code has a part in, the timing test's baseline: eight runs of jq,
+# each building and grouping 20,000 objects.
+baseline() {
+  local i
+  for i in 1 2 3 4 5 6 7 8; do
+    jq -n '[range(20000) | {i: ., t: "T\(. % 50)"}] | group_by(.t) | length' >/dev/null
+  done
+}
+
+# timed <name> <command> [<argument>...]: run <command> and add to $BATS_TEST_TMPDIR/timed the line
+# "<name> <CPU before> <CPU after> <time before> <time after>", in seconds, the CPU as cpu_now's.
+timed() {
+  local name=$1 cpu start end
+  shift
+  cpu_now
+  cpu=$CPU
+  start=$(date +%s.%N)
+  "$@"
+  end=$(date +%s.%N)
+  cpu_now
+  echo "$name $cpu $CPU $start $end" >>"$BATS_TEST_TMPDIR/timed"
+}
+
+@test "a ledger of 1,000 events sweeps within 4 times the CPU and 6 times the wall time of a baseline of jq runs" {
   jq -cn '
     range(1000) as $i | ($i % 50 + 1) as $n | "T\($n)" as $t
     | {ts: "2026-10-22T02:00:00Z", task: $t}
@@ -2059,16 +2152,27 @@ retro due since $(plus "$opened" 24) (every 24h, last retro T30): run the retro 
     line=$(jq -cn --arg s "$((i + 10000000))-1111-4222-8333-444455556666" '{type: "assistant",
       timestamp: "2026-10-22T02:10:09Z", sessionId: $s, message: {role: "assistant", content: [{type: "tool_use",
       id: "toolu_01", name: "Bash", input: {command: "tests/run bats"}}, {type: "text", text: ("x" * 60)}]}}')
-    yes "$line" | head -n 20000 | transcript - $((i + 10000000)) 1
+    # Where SIGPIPE is ignored, as on CI, yes says the pipe broke once head has its lines.
+    yes "$line" 2>/dev/null | head -n 20000 | transcript - $((i + 10000000)) 1
   done
   sessions "$(session 10000007 T8-builder idle)" "$(session 10000014 T15-builder idle blocked)" "${busy[@]}"
-  local start end
-  start=$(date +%s%N)
-  run_bin -1 team-sweep
-  end=$(date +%s%N)
-  # Every task but the ten busy builders' finds something.
-  assert_equal "${#lines[@]}" 40
-  (((end - start) < 2000000000))
+  # A fixed number of seconds fails on a loaded runner, so the sweep is bounded by a baseline
+  # measured beside it, which a slower or busier machine slows too. CPU time moves little with load,
+  # so its bound is the tight one, on the sweep's work; wall time moves more, and its looser bound
+  # catches a wait only once it takes the sweep's wall time to 6 times the baseline's. Each is the
+  # best of three runs, taken in turn, so one stall judges neither.
+  for _ in 1 2 3; do
+    timed baseline baseline
+    timed sweep run_bin -1 team-sweep
+    # Every task but the ten busy builders' finds something.
+    assert_equal "${#lines[@]}" 40
+  done
+  awk '{ cpu = $3 - $2; wall = $5 - $4
+      if (!($1 in c) || cpu < c[$1]) c[$1] = cpu
+      if (!($1 in w) || wall < w[$1]) w[$1] = wall }
+    END { printf "best of 3: sweep %.2f s CPU, %.2f s wall; baseline %.2f s CPU, %.2f s wall\n",
+        c["sweep"], w["sweep"], c["baseline"], w["baseline"]
+      exit !(c["sweep"] < 4 * c["baseline"] && w["sweep"] < 6 * w["baseline"]) }' "$BATS_TEST_TMPDIR/timed"
 }
 
 # The walk of <task> turned on at <time>, as team-ui logs it: walk_at <task> <time>

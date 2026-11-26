@@ -13,7 +13,7 @@
 # task_events, task_event_array, known_task_events, open_task_events, task_status, task_worktrees, plan_task_dir, plan_files, script_place_refusal, local_path,
 # archive_left_out, rsync_rule, archive_task_dir, machine_name, os_release, team_os, claude_cache_dir, tool_dirs,
 # team_tool_path, fence_reason, offline_since, offline_hold, lease_refusal, worker_refusal, assistant_refusal, capture_refusal, toolkit_refusal, task_own_dirs, path_under, lease_gate, worktree_changes, memory_setting, same_path, bounded, docker_bounded, docker_silence, trust_probe,
-# pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
+# pool_name, pool_status, pool_entry, pool_slot, pool_slots, pool_trusted, pool_add_worktree, slot_changes, secret_paths, snapshot_left_out, inert_config, worktree_tree, snapshot_message, is_snapshot, wip_origin,
 # only_records, records_list, records_pathspecs, origin_git, origin_reason, commit_records, fast_forward, follow_base, render_template,
 # own_project, own_projects, own_bar, advisory_checks, review_app, base64url, review_app_jwt, review_app_api, default_events_json, registered_pr, canonical_url, canonical_repo, origin_repo, moved_origin, pool_move_fix, team_home_url, attribution_lines, strip_attribution, live_sessions, session_context, machine_level, image_magic, image_type, discord_token, discord_api,
 # discord_link, daniel_message, assistant_place, answer_message, refresh_inbox, github, base_rules, base_merge, host_merge, clean_base_merges, queue_commit_problems, queue_commit_proof, dequeue_pr, merge_lock_held, merge_locks_held, pr_task, review_refusal, pr_part, pr_file_reasons, tickets_digest, ticket_graph_dir, task_state_json, pr_merge_authority, loose_objects, pack_size, story_file and findings_file, and sets IMAGE_TYPE,
@@ -1164,16 +1164,24 @@ trust_probe() {
   fi
 }
 
+# The pool treehouse names for the checkout <path> with origin <url>: <path's folder name>-<the
+# first 3 bytes of the SHA-256 of the URL, in hex> (treehouse's ResolvePoolDir): pool_name <path> <url>
+pool_name() {
+  printf '%s-%s\n' "${1##*/}" "$(printf '%s' "$2" | sha256sum | cut -c1-6)"
+}
+
 # The treehouse pool of the primary checkout <primary>, as `treehouse status --json` run there
-# reports it: one compact {path, status, holder} per slot, path its real path and holder its lease
-# holder ("" while nobody leases it; status leased, available, dirty or another of treehouse's).
+# reports it: one compact {path, status, holder, name, processes} per slot, path its real path,
+# holder its lease holder ("" while nobody leases it; status leased, available, dirty or another
+# of treehouse's), name the slot's and processes how many processes run in it.
 # Fails, printing nothing, when treehouse does not answer within 30 s with a JSON array: pool_status <primary>
 pool_status() {
   local out path resolved=()
   out=$(cd "$1" && bounded 30 treehouse status --json 2>/dev/null </dev/null) ||
     return 1
   jq -e 'type == "array"' <<<"$out" >/dev/null 2>&1 || return 1
-  out=$(jq -c '.[] | objects | {path: (.path | strings), status: (.status // ""), holder: (.lease_holder // "")}' <<<"$out")
+  out=$(jq -c '.[] | objects | {path: (.path | strings), status: (.status // ""), holder: (.lease_holder // ""),
+    name: (.name // "" | tostring), processes: (.processes // [] | length)}' <<<"$out")
   while IFS= read -r path; do resolved+=("$(realpath -m -- "$path")"); done < <(jq -r .path <<<"$out")
   jq -cn '[inputs] as $slots | $ARGS.positional as $real | range($slots | length) | $slots[.] + {path: $real[.]}' \
     --args "${resolved[@]}" <<<"$out"
@@ -1898,12 +1906,10 @@ daniel_message() {
     '{place: $place, channel: $channel, who: $who, message: .}' <<<"$reply"
 }
 
-# The assistant's thread cache: the ids of the threads under #assistant found so far, one
-# known-good id per line, which the assistant's Discord guard passes without asking Discord and
-# its digest lists. It is trusted only because the assistant cannot write it: its settings deny
-# the Edit tool (assistant.settings.json) and its command guard's assistant-thread-cache row a
-# Bash call that writes the file by a redirection or a writer it names, so only the scripts and
-# hooks below add to it.
+# The assistant's thread list: the ids of the threads under #assistant found so far, one per
+# line, appended by the assistant's Discord guard, team-assistant thread and assistant_place
+# (assistant_thread_keep), and named by the start digest's catch-up step. It is trusted by
+# nothing: an id there grants no Discord call, since the guard reads Discord at every call.
 # shellcheck disable=SC2034 # read by the scripts that source this library
 ASSISTANT_THREADS=$HOME/.local/state/agent-team/assistant-threads
 
@@ -1916,7 +1922,7 @@ assistant_thread_of() {
       and ((.parent_id // "") | tostring) == $parent' >/dev/null 2>&1 <<<"$1"
 }
 
-# Add thread <id> to the thread cache (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
+# Add thread <id> to the thread list (ASSISTANT_THREADS) unless it is there: assistant_thread_keep <id>
 assistant_thread_keep() {
   grep -qxF -- "$1" "$ASSISTANT_THREADS" 2>/dev/null && return 0
   mkdir -p "${ASSISTANT_THREADS%/*}" && echo "$1" >>"$ASSISTANT_THREADS"
@@ -1926,7 +1932,7 @@ assistant_thread_keep() {
 # "#assistant <id>", or a thread under it (assistant_thread_of), "the #assistant thread <id>",
 # read from Discord (discord_api GET channels/<id>) every time, so Daniel's word is held to the
 # assistant's channel by Discord's answer alone, never by a file; a thread found so is added to
-# the thread cache (assistant_thread_keep). Fails with the one reason on stderr: no channel is
+# the thread list (assistant_thread_keep). Fails with the one reason on stderr: no channel is
 # set (TEAM_ASSISTANT_CHANNEL empty), the channel cannot be read, or it is neither.
 # team-assistant and team-answer --channel hold Daniel's word to it: assistant_place <id>
 assistant_place() {
