@@ -6,9 +6,10 @@
 # under a moved repo's old owner or its new one, bin/lib/repo-moves.json, naming the same PR); its
 # repo must be a project in projects.toml.
 # Each step it prints that says to run team-merge again gives it this PR: T<n>, followed by --pr
-# <url> in a task with more than one PR, or when the task's latest pr event is another URL's, which
-# team-merge T<n> alone would take (merge_args in bin/lib/ledger.jq, read as the step is said); a
-# moved head's reason, "run team-merge again", names both only then.
+# <url> in a task with more than one PR, when the task's latest pr event is another URL's, which
+# team-merge T<n> alone would take (merge_args in bin/lib/ledger.jq, read as the step is said), or
+# when the ledger cannot be read then; a moved head's reason, "run team-merge again", names both
+# only in those cases.
 # Checks first, changing nothing, each failure a reason.
 # Two words may merge it, read from the ledger by merge_authority in bin/lib/ledger.jq (the
 # derivation every reader shares) and tried in this order, the first that holds merging it:

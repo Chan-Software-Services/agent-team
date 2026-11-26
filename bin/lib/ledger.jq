@@ -1505,14 +1505,14 @@ def rules_reason($base; $where):
   [rules_failures[] | "\(.names | name_list) never reported on \($where), which "
     + (if .source == "rules" then "\($base // "the base")'s rules require" else "the project's required_checks require" end)]
   | join("; ");
-# The next step for a PR such failures (the input) dropped, the one team-merge, team-next --ci and
-# team-sweep's trial-rules name, by the sources of rules_failures: for the base's rules alone,
-# "the base's rules require a check no workflow makes on a trial commit: run team-doctor (its
-# merge queue line), fix the workflow's merge_group trigger or ask Daniel to change <repo>'s
-# ruleset, then run team-merge <merge> again", $merge being what team-merge is given
-# (merge_args); for the project's required_checks it names them among the requirers and "or the
-# project's required_checks in the registry" among the fixes, and without the rules it names
-# neither team-doctor nor the ruleset.
+# The next step for a PR such failures (the input) dropped, the one team-merge and team-next --ci
+# name (team-sweep's trial-rules words its own, in trial_rules_findings), by the sources of
+# rules_failures: for the base's rules alone, "the base's rules require a check no workflow makes
+# on a trial commit: run team-doctor (its merge queue line), fix the workflow's merge_group trigger
+# or ask Daniel to change <repo>'s ruleset, then run team-merge <merge> again", $merge being what
+# team-merge is given (merge_args); for the project's required_checks it names them among the
+# requirers and "or the project's required_checks in the registry" among the fixes, and without the
+# rules it names neither team-doctor nor the ruleset.
 def rules_step($repo; $merge):
   [rules_failures[].source] as $sources
   | IN($sources[]; "rules") as $rules
