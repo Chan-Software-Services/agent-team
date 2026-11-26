@@ -973,6 +973,17 @@ EOF
   ledger_line '{ts: "2026-10-22T04:10:00Z", task: "T15", event: "interview-thread", discord_thread: "1563000000000000003"}'
   run_bin -0 team-state T15 --json
   assert_equal "$(jq -c '[.phase, .interview.thread]' <<<"$output")" '["building","1563000000000000003"]'
+  # D: a topic's interview stands from its interview-thread, past a done, and ends at its close.
+  ledger_line '{ts: "2026-10-22T05:00:00Z", task: "T16", event: "opened", project: "proj", path: "topic",
+    type: "research", title: "A topic", branch: "research/T16-topic", base: "main", worktree: "/w/3",
+    discord_message: "1564000000000000016", discord_channel: "1562486564871995482"}'
+  ledger_line '{ts: "2026-10-22T05:10:00Z", task: "T16", event: "interview-thread", discord_thread: "1563000000000000004"}'
+  event T16 "done" '{role: "planner"}'
+  run_bin -0 team-state T16 --json
+  assert_equal "$(jq -c .interview <<<"$output")" '{"since":"2026-10-22T05:10:00Z","thread":"1563000000000000004"}'
+  event T16 closed '{archive: [], returned: [], kept: []}'
+  run_bin -0 team-state T16 --json
+  assert_equal "$(jq -c .interview <<<"$output")" null
 }
 
 @test "a walk that is on shows with its start, before any waiting part, until it is off or the task closes" {

@@ -112,9 +112,10 @@
 # closed; the text form says "walk on since <ts>" while it is on, then " in its interview thread"
 # for such a walk, before the parks, and nothing of it while it is off.
 # interview is the task's interview under way (team-thread T<n> --interview), {since, thread}, the
-# ts and thread of its latest interview-thread, while no planner's done and no plan-approved is
-# logged after it, whatever the phase, else null (qc_interview in bin/lib/ledger.jq, the rule
-# team-inbox lists an interview by); the text form says nothing of it.
+# ts and thread of its latest interview-thread, while the task is not closed and no planner's done
+# and no plan-approved is logged after it (a topic's, team-topic's, whatever is logged until its
+# close), whatever the phase, else null (qc_interview in bin/lib/ledger.jq, the rule team-inbox
+# lists an interview by); the text form says nothing of it.
 # rehome_failures are the worktrees team-resume could not re-home and nothing has made since: the
 # latest rehome-failed of each project and ticket, as {project, branch, machine, reason, since},
 # with ticket for a ticket worktree's, until a later opened, worktree-added, worktree-moved,

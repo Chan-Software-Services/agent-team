@@ -936,13 +936,13 @@ def latest_index($kind): [to_entries[] | select(.value.event == $kind) | .key] |
 def is_topic: (map(select(.event == "opened")) | last | .path) == "topic";
 
 # The task's interview under way: {since, thread}, the ts and discord_thread of its latest
-# interview-thread, while no planner's done and no plan-approved is logged after it, else null,
-# whatever the task's phase; a topic's holds from its interview-thread to its close, since its
-# session logs no planner's done, so is_open alone ends it. Read by task_state and
-# interview_under_way.
+# interview-thread, while the task is not closed and no planner's done and no plan-approved is
+# logged after it, else null, whatever the task's phase; a topic's holds from its interview-thread
+# to its close, whatever is logged between, since its session logs no planner's done. Read by
+# task_state and interview_under_way.
 def qc_interview:
   latest_index("interview-thread") as $i
-  | if $i >= 0 and (is_topic
+  | if task_status != "closed" and $i >= 0 and (is_topic
       or all(.[$i + 1:][]; ((.event == "done" and .role == "planner") or .event == "plan-approved") | not))
     then .[$i] | {since: .ts, thread: (.discord_thread | tostring)} else null end;
 
