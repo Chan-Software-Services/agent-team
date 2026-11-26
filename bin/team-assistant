@@ -64,7 +64,7 @@
 # channels/<ASSISTANT_CHANNEL>/threads, type 11), or from Daniel's message <message id> there
 # (POST channels/<ASSISTANT_CHANNEL>/messages/<id>/threads), named <title> cut at 100
 # characters, with auto_archive_duration 1440 (THREAD_ARCHIVE_MINUTES in bin/lib/threads.sh), so a
-# quiet one leaves the channel list after a day; adds its id to the thread cache,
+# quiet one leaves the channel list after a day; adds its id to the thread list,
 # ~/.local/state/agent-team/assistant-threads, and prints it.
 #
 # thread --close, the assistant's alone too, closes the topic of thread <thread id>, a thread

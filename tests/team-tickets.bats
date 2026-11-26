@@ -4,7 +4,8 @@
 # Blocked by:, Waits for:, Phase: and Touches: lines and spec.md's Parallel: line, each said done,
 # running, ready, waiting or blocked from the ledger; --check refuses a malformed set, a Touches:
 # path outside scope.txt, two tickets that may build at once and share a path, and a spec without
-# one ## Failure modes and assumptions section holding an item. The fixture tickets are T172's as
+# one ## Failure modes and assumptions section holding an item, and a spec of the team's own
+# project without one ## Rust core section holding one. The fixture tickets are T172's as
 # planned (tests/fixtures/tickets-T172/), with no builder's ticks or notes, beside a stand-in
 # spec.md holding that section, and a small set with Touches: lines, its scope.txt and spec.md
 # (tests/fixtures/tickets-touches/); each test's ledger says which are done.
@@ -451,6 +452,70 @@ team-tickets: $tickets/08-shares.md:5: tickets 06 and 08 may build at once (phas
   assert_contains "$stderr" "team-tickets: $task_dir/spec.md: no $section section"
 }
 
+@test "--check holds a spec of the team's own project to one ## Rust core section, and no other project's spec" {
+  local section="## Rust core" own=$BATS_TEST_TMPDIR/own spec
+  local clean="T172: 20 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present, and the Rust core section on the team's own project"
+  local missing="no $section section: on the team's own project, say where the change lands in docs/rust-core.md (its crate, seam and config) and the lines of that doc it adds or changes, or none"
+  cat >>"$TEAM_HOME/projects.toml" <<'TOML'
+
+[agent-team]
+repo = "owner/agent-team"
+path = "projects/agent-team"
+base = "dev"
+delivery = "direct-pr"
+merge_method = "merge"
+required_checks = []
+task_dir = ".scratch/task"
+docs = []
+toolkits = []
+
+[agent-team.pool]
+provider = "git"
+slots = ["projects/agent-team-slots/1"]
+TOML
+  mkdir -p "$own/.scratch/task/tickets"
+  printf '# 20: own
+
+Blocked by: None
+' >"$own/.scratch/task/tickets/20-own.md"
+  event T172 worktree-added "$(jq -cn --arg wt "$own"     '{project: "agent-team", branch: "feat/T172-own", base: "dev", base_sha: "644a76b", worktree: $wt}')"
+  spec=$own/.scratch/task/spec.md
+  # The failure modes section alone, a level-3 heading of its name, or the name in prose or in a fence.
+  spec_file "$spec" "### Rust core" "" "- team-model" "" "The ## Rust core section is required." '```' "$section" "- in the fence" '```'
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$stderr" "team-tickets: $spec: $missing"
+  # A second section is named at its line, after the first.
+  spec_file "$spec" "$section" "" "- team-cli" "" "$section" "" "- again"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_equal "$stderr" "team-tickets: $spec:7: a second $section section (the first is line 3)"
+  # An empty one: prose alone, or nothing before the next heading of level 1 or 2.
+  local body
+  for body in "" "Nothing here." "-"; do
+    spec_file "$spec" "$section" "" "$body"
+    run_bin -1 --separate-stderr team-tickets T172 --check
+    assert_equal "$stderr" "team-tickets: $spec:3: the $section section is empty: list its items, or write none"
+  done
+  # Both rules hold at once, each named.
+  printf '%s
+' "# spec" >"$spec"
+  run_bin -1 --separate-stderr team-tickets T172 --check
+  assert_contains "$stderr" "team-tickets: $spec: no ## Failure modes and assumptions section"
+  assert_contains "$stderr" "team-tickets: $spec: $missing"
+  # Found in any case, holding a list item or none; the other project's spec, which has none, passes.
+  for body in "## Rust core|- team-core, vcs: the docs/rust-core.md line of bin/team-merge" "## rust CORE  |none" "## RUST CORE|### Crates|1. team-model"; do
+    local lines
+    IFS='|' read -ra lines <<<"$body"
+    spec_file "$spec" "${lines[@]}"
+    run_bin -0 --separate-stderr team-tickets T172 --check
+    assert_equal "$output" "$clean"
+  done
+  assert_equal "$(grep -c 'Rust core' "$task_dir/spec.md")" 0
+  # With no task directory of the team's own project, the line is as before.
+  rm -r "${own:?}/.scratch/task/tickets"
+  run_bin -0 --separate-stderr team-tickets T172 --check
+  assert_equal "$output" "T172: 19 tickets, every Blocked by:, Waits for:, Phase:, Touches: and Parallel: line well-formed, and the spec's failure modes section present"
+}
+
 @test "the listing and --json read a task whose spec lacks the failure modes section, or has no spec, as before" {
   local listing json
   run_bin -0 --separate-stderr team-tickets T172
@@ -531,6 +596,7 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
   assert_contains "$output" "Waits for:"
   assert_contains "$output" '"## Failure modes and assumptions" section in its spec.md'
   assert_contains "$output" "a task directory with no spec.md, a spec with no such"
+  assert_contains "$output" 'one "## Rust core" section as well'
 }
 
 # The two briefs that write tickets give the formats, so the planner's role, which every planner
@@ -559,16 +625,18 @@ team-tickets: $wt2/.work/task/scope.txt:3: bin/team-c is in no ticket's Touches:
   assert_contains "$(cat "$REPO_ROOT/roles/coordinator.md")" '`team-tickets T<n>` shows'
 }
 
-@test "each build-path planner brief asks for the failure modes section, right after the decisions line" {
+@test "each build-path planner brief asks for the failure modes section, right after the decisions line, and the Rust core section" {
   mkdir -p "$TEAM_HOME/tasks/T172"
   event T172 thread '{discord_thread: "1563000000000000012"}'
   event T172 interview-thread '{discord_thread: "1565400000000000012"}'
-  local template decisions failure
+  local template decisions failure rust
   decisions='and end with the line `Left to the builder: none`, or each choice left open and why.'
   failure='   Between its Implementation Decisions and its Testing Decisions it has a `## Failure modes and assumptions` section, which `team-tickets --check` requires: each way the change can fail that it must handle (a crash mid-step, a rerun, two runs at once, a record or a service missing), with its handling and the test that proves it, and each assumption you could not verify that would change the design if wrong, or `none`; leave out what would change nothing.'
+  rust='   On agent-team, the team'"'"'s own project, read `docs/rust-core.md` first, and give the spec a `## Rust core` section, which `team-tickets --check` requires there: where the change lands in the Rust core (its crate, seam and config) and the lines of `docs/rust-core.md` it adds or changes, which a ticket changes in the doc, or `none`.'
   for template in planner-feature planner-interview; do
     run_bin -0 team-brief T172 "$template" --name "$template" --set 'read=- `AGENTS.md`.'
     grep -A1 -F -- "$decisions" "$output" | tail -n 1 | grep -qxF -- "$failure" ||
       { echo "$template lacks the failure modes line after the decisions line" >&2; cat "$output" >&2; return 1; }
+    grep -qxF -- "$rust" "$output" || { echo "$template lacks the Rust core line" >&2; cat "$output" >&2; return 1; }
   done
 }

@@ -13,7 +13,8 @@
 #               builder for a fix round after the holder stowed), reviewer, rereview (pr, head,
 #               reviewed and since derived), verify (the same but since, and findings derived; the
 #               re-review of a round whose findings sent back were all plain notes on lines the PR
-#               changes, or that edited only the PR body, which reads only the fix), ops, retro,
+#               changes, or that edited only the PR body, which reads only the fix and the
+#               claims check's doc and PR-body fixes beside it), ops, retro,
 #               resume (a worker relaunched after a stow, for a handoff, a shutdown or the level:
 #               --set role=, brief= its last brief, from= what it resumes after, snapshot= what
 #               became of the uncommitted changes the stow found),
@@ -89,7 +90,8 @@
 # {{> <name>}} stands for the partial of the project's delivery, templates/briefs/<name>/<delivery>.md:
 # delivery (how a builder delivers), review and rereview (what a reviewer reads and posts, verify
 # reading rereview's too; a gated project's first review reads the branch's local head before the
-# gate, with no pr, or with --set pr the PR the gate opened, through direct-pr's review partial,
+# gate, with no pr, or the PR the gate opened, named with --set pr or else the ledger's open PR in
+# the project's repo (a review made by hand once the PR is open), through direct-pr's review partial,
 # which comments on it and sets its status, and its wait partial, which says the review starts no
 # wait), and wait (the first review's GitHub checks: on a PR, a line saying the review starts no
 # wait, since the coordinator's waits on the checks of a pass; with no PR, that there are none).
@@ -492,10 +494,10 @@ if [[ -z $pr && ! -v sets[pr] ]] && [[ $delivery == no-mistakes || -n $disclosur
 fi
 
 # The template, before the PR its before-pr/ variant where one exists, with each partial of the
-# project's delivery in place of its {{> <name>}}. A gated project's first review of a PR the
-# caller names (--set pr: the gate opened it with no team review of the phase before it) reads,
-# comments on and sets the status of that PR, so its review and wait partials are a direct-PR
-# project's.
+# project's delivery in place of its {{> <name>}}. A gated project's first review of a PR, the one
+# the caller names (--set pr: the gate opened it with no team review of the phase before it) or
+# the ledger's open one in the project's repo, reads, comments on and sets the status of that PR,
+# so its review and wait partials are a direct-PR project's.
 template_file=$briefs/$template.md
 [[ -z $before_pr || ! -f $briefs/before-pr/$template.md ]] || template_file=$briefs/before-pr/$template.md
 text=$(<"$template_file")
@@ -503,7 +505,7 @@ mapfile -t partials < <(grep -oE '\{\{> [a-z]+\}\}' <<<"$text" | sed 's/^{{> //;
 if ((${#partials[@]})); then
   for partial in "${partials[@]}"; do
     partial_delivery=$delivery
-    if [[ $delivery == no-mistakes && -v sets[pr] && ($partial == review || $partial == wait) ]]; then
+    if [[ $delivery == no-mistakes && -z $before_pr && ($partial == review || $partial == wait) ]]; then
       partial_delivery=direct-pr
     fi
     partial_file=$briefs/$partial/$partial_delivery-before-pr.md

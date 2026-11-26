@@ -74,6 +74,7 @@ launch_argv() {
     "--channels", "plugin:discord@claude-plugins-official",
     "--dangerously-skip-permissions",
     "--append-system-prompt-file", "\($code)/roles/assistant.md",
+    "--plugin-dir", "\($code)/plugins/assistant-skills",
     "--settings", "\($state)/assistant.settings.json",
     $prompt]'
 }
@@ -289,7 +290,7 @@ assert_nothing_written() {
     "$(printf '%s\n' 'claude.ai Claude Docs' codegraph plugin:mongodb-atlas:mongodb-atlas vercel)"
 }
 
-@test "its settings keep the coordinator's keys and compaction, and it takes no model or effort of its own" {
+@test "its settings keep the coordinator's keys and compaction and name no model or effort, and with no models.toml its launch names none" {
   run_bin -0 claude-assistant
   local settings=$state/assistant.settings.json coordinator=$REPO_ROOT/coordinator.settings.json key
   # But for what the coordinator alone trims from its starting context: its skill listing
@@ -306,10 +307,13 @@ assert_nothing_written() {
     '[false,false,false,false]'
   local argv
   argv=$(stub_calls claude | tail -n 1)
-  assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--plugin-dir" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
+  assert_equal "$(jq -c 'map(select(. == "--model" or . == "--effort" or . == "--strict-mcp-config"))' <<<"$argv")" '[]'
+  # Its one plugin directory is its own, never the coordinator's skills.
+  assert_equal "$(jq -c '[indices("--plugin-dir")[] as $i | .[$i + 1]]' <<<"$argv")" \
+    "$(jq -cn --arg code "$REPO_ROOT" '["\($code)/plugins/assistant-skills"]')"
 }
 
-@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts, GitHub's writes and the thread cache's writes" {
+@test "its settings deny every rule of the coordinator's and the Discord token and access files, and its command-guard the coordinator's acts and GitHub's writes" {
   local settings=$REPO_ROOT/assistant.settings.json command
   # But for the tools the coordinator denies only to keep their definitions out of its context,
   # and its rules on its GitHub login, a force push and a cd into ~/.config/agent-team, which the
@@ -346,6 +350,7 @@ assert_nothing_written() {
     "team-config apply" "team-config capture" "team-secrets restore" "team-secrets save discord-bot-env" \
     "team-records-rewrite --plan" "team-ops-end T1" "team-stack up --worktree ~/wt" "team-stack down" \
     "team-stack stop" "team-stack seed" "team-capacity install" "team-capacity place" "claude-coordinator" \
+    "team-quota usage" "team-quota usage --if-due" "$REPO_ROOT/bin/team-quota usage" \
     "$REPO_ROOT/bin/claude-coordinator --prompt x" "~/agent-team/bin/team-handoff laptop" \
     "$REPO_ROOT/bin/team-lease take" "~/agent-team/bin/team-stack down" \
     "team-review-comment https://github.com/o/r/pull/5 ~/agent-team-records/tasks/T1/x.md" \
@@ -366,17 +371,6 @@ assert_nothing_written() {
       '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
     assert_contains "$stderr" "Blocked by command-guard: a GitHub write, which an assistant session never makes ("
   done
-  # A write of the thread cache the Discord guard trusts: its assistant-thread-cache row refuses it,
-  # command by command, where its deny rule refused any call naming the cache.
-  # shellcheck disable=SC2088
-  for command in "echo 1571000000000000101 >>~/.local/state/agent-team/assistant-threads" \
-    "cd ~/.local/state/agent-team && tee -a assistant-threads" "sed -i 1d $HOME/.local/state/agent-team/assistant-threads" \
-    "cp /tmp/x ~/.local/state/agent-team/assistant-threads" "rm ~/.local/state/agent-team/assistant-threads" \
-    "ls 2>~/.local/state/agent-team/assistant-threads"; do
-    AGENT_TEAM_ROLE=assistant run_bin -2 --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$command" \
-      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
-    assert_contains "$stderr" "Blocked by command-guard: the thread cache the Discord guard trusts, which only the scripts and hooks write ("
-  done
 }
 
 @test "its settings leave it the reads, its inbox and the team's read-only forms" {
@@ -388,6 +382,7 @@ assert_nothing_written() {
     "cat ~/.claude/channels/discord-assistant/inbox/a.png" \
     "team-state" "team-lease status" "team-lease check" "team-timers health" "team-timers status --json" \
     "team-config diff" "team-secrets check" "team-stack ls" "team-capacity status" "team-doctor" \
+    "team-quota status" "team-quota status --json" \
     "claude agents" "claude --version" "grep -rn claude-coordinator bin" "team-proc 4242" "team-proc 4242 io cgroup" \
     "sed -n 1,40p bin/team-load-check | head -20" "grep -rn toolkit bin/claude-coordinator bin/claude-assistant" \
     "wc -l bin/team-checkpoint bin/team-review-comment" "team-load-check --help" "team-timers watch --once" \
@@ -403,7 +398,7 @@ assert_nothing_written() {
   done
 }
 
-@test "its settings deny the Read and Edit tools the Discord token and access files, the Edit tool the thread cache, and leave the inbox" {
+@test "its settings deny the Read and Edit tools the Discord token and access files, and leave the inbox" {
   local settings=$REPO_ROOT/assistant.settings.json rule tool
   for tool in Read Edit; do
     for rule in "$tool(~/.claude/channels/discord/**)" "$tool(~/.claude/channels/discord-assistant/.env)" \
@@ -412,8 +407,6 @@ assert_nothing_written() {
         { echo "no deny rule $rule" >&2; return 1; }
     done
   done
-  # The thread cache the Discord guard trusts, which only the scripts and hooks write.
-  jq -e '.permissions.deny | index("Edit(~/.local/state/agent-team/assistant-threads)") != null' "$settings" >/dev/null
   assert_equal "$(jq -c '[.permissions.deny[] | select(test("discord-assistant/(inbox|\\*)"))]' "$settings")" '[]'
 }
 
@@ -529,6 +522,7 @@ load_check_argv() {
     "--mcp-config", "\($state)/assistant-load-check.mcp.json",
     "--dangerously-skip-permissions",
     "--append-system-prompt-file", "\($code)/roles/assistant.md",
+    "--plugin-dir", "\($code)/plugins/assistant-skills",
     "--settings", "\($state)/assistant-load-check.settings.json",
     $prompt]'
 }
@@ -604,4 +598,112 @@ echo "Started a background session"
 SH
   run_bin -1 --separate-stderr claude-assistant --load-check "$wt" --prompt x
   assert_equal "$stderr" "claude-assistant: could not read the session id from: Started a background session"
+}
+
+# The model config, the team home's models.toml (bin/team-models, sops/models.md), as
+# tests/claude-coordinator.bats has it: the assistant launches on the assistant line, the load
+# check's on assistant.load-check, and only the assistant's launch is a line of sessions.jsonl.
+
+# models <toml line>...: the team home's models.toml, as those lines.
+models() {
+  printf '%s\n' "$@" >"$TEAM_HOME/models.toml"
+}
+
+# A command line with the model flags given after --name: with_flags <argv> <flag>...
+with_flags() {
+  jq -c '.[0:3] + $ARGS.positional + .[3:]' --args -- "${@:2}" <<<"$1"
+}
+
+# sessions.jsonl's lines, each but its ts.
+session_lines() {
+  jq -c 'del(.ts)' "$TEAM_HOME/sessions.jsonl"
+}
+
+@test "with no models.toml it launches as before, logging the user settings' word" {
+  mkdir -p "$HOME/.claude"
+  echo '{"model": "opus", "effortLevel": "high"}' >"$HOME/.claude/settings.json"
+  run_bin -0 claude-assistant
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(launch_argv)"
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"assistant","category":"assistant","model":"opus","model_from":"settings","effort":"high","effort_from":"settings","id":"4d5e6f70"}'
+}
+
+@test "the assistant line's model and effort are its flags, its subagent fields its settings' env, all logged" {
+  models '"default" = { model = "opus", effort = "high" }' \
+    '"assistant" = { model = "sonnet", effort = "medium", subagent_model = "haiku" }' \
+    '"coordinator" = { model = "fable" }'
+  run_bin -0 claude-assistant
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(with_flags "$(launch_argv)" --model sonnet --effort medium)"
+  assert_equal "$(jq -c '.env | [.CLAUDE_CODE_SUBAGENT_MODEL, has("CLAUDE_CODE_SUBAGENT_EFFORT")]' "$state/assistant.settings.json")" '["haiku",false]'
+  assert_equal "$(session_lines)" \
+    '{"machine":"home-pc","name":"assistant","category":"assistant","model":"sonnet","model_from":"config","effort":"medium","effort_from":"config","id":"4d5e6f70","subagent_model":"haiku"}'
+}
+
+@test "changing the assistant's line between two launches changes the second" {
+  models '"default" = { model = "opus", effort = "high" }'
+  run_bin -0 claude-assistant
+  models '"default" = { model = "opus", effort = "high" }' '"assistant" = { model = "haiku" }'
+  run_bin -0 claude-assistant
+  assert_equal "$(stub_calls claude | grep -F '"--bg"')" "$(with_flags "$(launch_argv)" --model opus --effort high)
+$(with_flags "$(launch_argv)" --model haiku --effort high)"
+  assert_equal "$(jq -c '[.model, .model_from]' "$TEAM_HOME/sessions.jsonl")" '["opus","config"]
+["haiku","config"]'
+}
+
+@test "a models.toml that does not read warns and launches on the settings' word, logged settings" {
+  models '"default" = { model = "opus", effort = "hgh" }'
+  local first
+  first=$("$REPO_ROOT/bin/team-models" --check 2>&1 | head -n 1)
+  [[ -n $first ]]
+  run_bin -0 --separate-stderr claude-assistant
+  assert_equal "$stderr" "claude-assistant: models.toml does not read: $first; launching on the settings' model"
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(launch_argv)"
+  assert_equal "$(jq -c '[.model_from, .effort_from]' "$TEAM_HOME/sessions.jsonl")" '["default","default"]'
+}
+
+@test "a sessions.jsonl that cannot be written is a warning, and a failed launch logs none" {
+  mkdir "$TEAM_HOME/sessions.jsonl"
+  run_bin -0 --separate-stderr claude-assistant
+  assert_contains "$output" "Started background session 4d5e6f70 (assistant)"
+  assert_contains "$stderr" "claude-assistant: could not record the launch in $TEAM_HOME/sessions.jsonl:"
+  rmdir "$TEAM_HOME/sessions.jsonl"
+  echo 3 >"$BATS_TEST_TMPDIR/launch.status"
+  run_bin -3 claude-assistant
+  [[ ! -e $TEAM_HOME/sessions.jsonl ]]
+}
+
+@test "--load-check launches on assistant.load-check, which falls back to the assistant's, and logs no session" {
+  local wt=$BATS_TEST_TMPDIR/load-check
+  mkdir -p "$wt"
+  models '"default" = { model = "opus", effort = "high" }' '"assistant" = { model = "sonnet", subagent_effort = "low" }'
+  run_bin -0 claude-assistant --load-check "$wt"
+  assert_equal "$output" 4d5e6f70
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(with_flags "$(load_check_argv)" --model sonnet --effort high)"
+  assert_equal "$(jq -c '.env.CLAUDE_CODE_SUBAGENT_EFFORT' "$state/assistant-load-check.settings.json")" '"low"'
+  models '"default" = { model = "opus", effort = "high" }' '"assistant" = { model = "sonnet" }' \
+    '"assistant.load-check" = { model = "haiku", effort = "low" }'
+  run_bin -0 claude-assistant --load-check "$wt"
+  assert_equal "$(stub_calls claude | tail -n 1)" "$(with_flags "$(load_check_argv)" --model haiku --effort low)"
+  # Its settings are written afresh: the earlier subagent effort is gone.
+  assert_equal "$(jq -c '.env | has("CLAUDE_CODE_SUBAGENT_EFFORT")' "$state/assistant-load-check.settings.json")" false
+  [[ ! -e $TEAM_HOME/sessions.jsonl ]]
+}
+
+@test "its header says where its model and effort come from and that it logs its launch" {
+  run_bin -0 claude-assistant --help
+  local text
+  text=$(tr -s ' \n' '  ' <<<"$output")
+  assert_contains "$text" "the assistant line of the team home's models.toml"
+  assert_contains "$text" "assistant.load-check"
+  assert_contains "$text" "sessions.jsonl"
+}
+
+@test "its role triggers exactly its plugin's skills, and its header names the plugin" {
+  local role=$REPO_ROOT/roles/assistant.md skills=$REPO_ROOT/plugins/assistant-skills/skills
+  # Each "`<name>` skill" the role names, against each directory of the plugin's skills.
+  assert_equal "$(grep -oE '`[a-z]+(-[a-z]+)*` skill' "$role" | sed -E 's/^`([^`]*)`.*/\1/' | sort -u | paste -sd ' ')" \
+    "$(cd "$skills" && find . -mindepth 1 -maxdepth 1 -type d -printf '%P\n' | sort | paste -sd ' ')"
+  grep -qF '`walk` skill' "$role"
+  run_bin -0 claude-assistant --help
+  assert_contains "$(tr -s ' \n' '  ' <<<"$output")" "its skills, walk, load from plugins/assistant-skills; no other session loads them"
 }

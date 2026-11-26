@@ -126,14 +126,20 @@
 # --from-message reads a worker's message whole (bin/lib/messages.jq) into the events the
 # coordinator's message table gives it, checks each as above, and logs them all, or with --print
 # prints them as JSON lines and logs nothing; any refusal logs none. The message starts with the
-# task. QUESTION <text> is a question; BLOCKED <text> and NEED toolkit <name> a blocked of cause
+# task and its kind on its first line. QUESTION <text> is a question; BLOCKED <text> and NEED toolkit <name> a blocked of cause
 # worker; PAUSED <why> a paused, its cause its first word's (stowed stow, held coordinator-hold,
 # offline offline, any other worker), its reason the whole why; each park carrying the sender's
 # role and session when the sender is known (--from's launch, else the only latest launch of a role
 # with no report since), and neither when it is not, a --from naming no launch refused; FAILED <why> a failed; INJECTION <where> <what> an injection (source its first
 # word). PR <url>, optionally followed by merged <base> conflicts: <files or none>, is a pr whose
 # head is the PR's on GitHub (gh pr view), and a branch-renamed when the PR's head branch is not
-# the task's in the project of the PR's repo. DONE <NN> <sha>... <line> is a ticket-done (commits
+# the task's in the project of the PR's repo; before the pr, a ticket-done (commits the PR's head,
+# pr its url) of each ticket the PR carried: each of the PR's project in the PR's phase, the
+# earliest of the project's tickets or, once its latest merged names phases left, the earliest of
+# those, that team-tickets T<n> --json calls neither done nor running and whose file has no box
+# left open ("- [ ]") outside a fenced code block, so a task one builder built and delivered whole, with no DONE <NN>, reads
+# its tickets done and its merge names no phase left (message_carried in bin/lib/messages.jq);
+# tickets team-tickets cannot read carry none, said on stderr. DONE <NN> <sha>... <line> is a ticket-done (commits
 # the shas of 7 to 40 hex digits, note the line) and the builder's done; DONE review-ready <sha> and
 # DONE merged <base> <sha> conflicts: <files or none> the builder's done, report the rest;
 # DONE pass <PR url or head> and DONE findings <path>, each followed by findings=, before=,
@@ -145,7 +151,10 @@
 # any other DONE the sender's done, report the rest. An ops session's DONE, whatever its first word
 # when --from names that session, and its QUESTION, whose text may hold production data, log its
 # length in characters and never its text: the done report_chars=<n>, the question chars=<n>; its
-# BLOCKED, PAUSED, FAILED and INJECTION are logged as every role's. --relay <id>, the Discord id of
+# BLOCKED, PAUSED, FAILED and INJECTION are logged as every role's. A message is one line, but for
+# an ops session's DONE or QUESTION, which may run to several: any other of more than one line is
+# refused saying so, never logged in part, and a DONE or QUESTION of more than one line whose sender
+# cannot be told, on a task with an ops launch, is refused naming how to name it. --relay <id>, the Discord id of
 # the coordinator's message that relayed an ops answer, is logged as that done's relay, and refused
 # with any other message; an id that is not one is a malformed command line. A review's head is the head of the brief record
 # (tasks/T<n>/<brief>.json) that the reviewer's latest launch read, else a pass's own head, else
@@ -764,7 +773,7 @@ problem=$(jq -r '.problems // empty | join("; ")' <<<"$parsed")
 # A PR's head, and its head branch against the task's in the PR's project: the pr event's head, and
 # a branch-renamed when they differ (the gate moved the branch). The URL's repo and each project's
 # are compared under their new owners (canonical_repo), and gh reads the PR under the new one.
-# github_pr <url>: sets pr_head, and renamed to "project=<p> branch=<b>" or ''.
+# github_pr <url>: sets pr_head, pr_repo_project to the PR's project, and renamed to "project=<p> branch=<b>" or ''.
 github_pr() {
   local url=$1 repo number project='' p r view branch current names=()
   [[ $url =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+)/?$ ]]
@@ -791,6 +800,36 @@ github_pr() {
   current=$(ledger_jq 'task_branch($project) // ""' -r --arg project "$project" <<<"$TASK_EVENTS")
   renamed=''
   [[ $branch == "$current" ]] || renamed="$project $branch"
+  pr_repo_project=$project
+}
+
+# The tickets a builder's PR carried, each a ticket-done added to lines before the pr's, with the
+# PR's head as its commits and its url as its pr: each ticket of the PR's project in the PR's phase
+# that is neither done nor running and whose file has no box left open (a list item "[ ]" outside a
+# fenced code block, as team-tickets reads its own lines), as
+# message_carried in bin/lib/messages.jq reads team-tickets T<n> --json. Tickets team-tickets
+# cannot read carry none, said on stderr, and the pr is logged alone.
+# carried_tickets <project> <head> <url>
+carried_tickets() {
+  local project=$1 head=$2 url=$3 tickets err ticket file open=() carried
+  err=$(team_mktemp)
+  if ! tickets=$(TEAM_HOME=$TEAM_HOME "$(dirname "$TEAM_LIB")/team-tickets" "$task" --json 2>"$err"); then
+    echo "team-log: cannot read $task's tickets ($(grep -m 1 . "$err" || echo "team-tickets failed")), so its PR carries no ticket" >&2
+    return 0
+  fi
+  while IFS=$'\t' read -r ticket file; do
+    if awk '/^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+      !fence && /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+\[ \]/ { found = 1; exit }
+      END { exit !found }' "$file" 2>/dev/null; then open+=("$ticket"); fi
+  done < <(jq -r --arg p "$project" '.[] | select(.project == $p) | "\(.ticket)\t\(.file)"' <<<"$tickets")
+  carried=$(jq -L "$TEAM_LIB" -r --argjson tickets "$tickets" --arg project "$project" \
+    --argjson open "$(jq -cn '$ARGS.positional' --args -- "${open[@]}")" \
+    'include "messages"; include "ledger"; message_carried($tickets; $project; $open)[]' <<<"$TASK_EVENTS")
+  while IFS= read -r ticket; do
+    [[ -n $ticket ]] || continue
+    check_event ticket-done "ticket=$ticket" "commits=$head" "pr=$url"
+    lines+=("$typed")
+  done <<<"$carried"
 }
 
 # Each event as its kind, its GitHub url or nothing, its count of fields and its key=value fields,
@@ -805,6 +844,7 @@ for ((i = 0; i < ${#records[@]}; i += 3 + n)); do
   if [[ -n $url ]]; then
     github_pr "$url"
     fields+=("head=$pr_head")
+    [[ $kind != pr ]] || carried_tickets "$pr_repo_project" "$pr_head" "$url"
   fi
   check_event "$kind" "${fields[@]}"
   lines+=("$typed")

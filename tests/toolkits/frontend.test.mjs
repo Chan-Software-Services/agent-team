@@ -13,11 +13,10 @@ import { connect, createServer } from "node:net";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { promisify } from "node:util";
-import { bringToFront, browserSession, chromePath, inspect, serveFixture, serverListing, startChrome } from "./helpers/chrome.mjs";
+import { bringToFront, browserSession, chromePath, declared, declaredServer, inspect, serveFixture, serverListing, startChrome } from "./helpers/chrome.mjs";
 import { repoRoot, tempDir } from "./helpers/mcp.mjs";
 
 const scripts = join(repoRoot, "toolkits", "frontend", "scripts");
-const modules = join(repoRoot, "servers", "node_modules");
 const run = promisify(execFile);
 
 // The environment with no worker's role in it, as a builder running these tests has one, which
@@ -715,32 +714,6 @@ describe("ui-capture on a page that does not answer", () => {
     assert.ok(!existsSync(join(out, "ui-pick.md")));
   });
 });
-
-// The toolkit's server exactly as .mcp.json declares it, with ${CLAUDE_PLUGIN_ROOT} resolved as
-// Claude Code does for --plugin-dir and the Agent Chrome's port moved to the test's.
-async function declaredServer(browserUrl) {
-  const { Client } = await import(join(modules, "@modelcontextprotocol", "sdk", "dist", "esm", "client", "index.js"));
-  const { StdioClientTransport } = await import(join(modules, "@modelcontextprotocol", "sdk", "dist", "esm", "client", "stdio.js"));
-  const entry = declared();
-  const client = new Client({ name: "toolkit-test", version: "0" });
-  await client.connect(
-    new StdioClientTransport({
-      command: entry.command === "node" ? process.execPath : entry.command,
-      args: entry.args.map((arg) => (arg === "--browser-url=http://127.0.0.1:9222" ? `--browser-url=${browserUrl}` : arg)),
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...entry.env },
-      stderr: "ignore",
-    }),
-  );
-  const call = async (name, args = {}) => {
-    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 90_000 });
-    return result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-  };
-  return { client, call, close: () => client.close() };
-}
-function declared() {
-  const text = readFileSync(join(repoRoot, "toolkits", "frontend", ".mcp.json"), "utf8");
-  return JSON.parse(text.replaceAll("${CLAUDE_PLUGIN_ROOT}", join(repoRoot, "toolkits", "frontend"))).mcpServers.frontend;
-}
 
 describe("the toolkit's MCP server", () => {
   let site, chrome;

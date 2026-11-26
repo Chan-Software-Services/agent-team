@@ -175,6 +175,36 @@ ticket() {
   assert_equal "$(jq -r .phase <<<"$output")" merged
 }
 
+@test "two tickets one builder built and delivered in one PR, with no DONE <NN>, merge as the whole task: no phases left, merged, the sweep says close it, and --fill launches nothing" {
+  in_worktree
+  # T515's shape: two tickets with no Phase: line, the second blocked by the first, both ticked by
+  # the one builder, whose PR the coordinator logs from its message.
+  printf '# 01\n\nBlocked by: None\n\n- [x] the doc\n' >"$wt/.scratch/task/tickets/01-doc.md"
+  printf '# 02\n\nBlocked by: 01\n\n- [x] the check\n' >"$wt/.scratch/task/tickets/02-check.md"
+  event T14 plan-approved '{by: "coordinator"}'
+  event T14 launch "{role: \"builder\", session: \"b0000001\", worktree: \"$wt\", toolkits: [], project: \"proj\",
+    branch: \"feat/T14-tooling\", machine: \"m\", brief: \"brief\"}"
+  run_bin -0 team-log T14 --from-message "T14 PR https://github.com/owner/proj/pull/5"
+  # Logged at 02:00 with the fixture's other events, an hour before Daniel's word.
+  jq -c '.ts = "2026-10-22T02:00:00Z"' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l" && mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  run_bin -0 team-tickets T14
+  assert_equal "$output" "$(printf '%s\n' "01 done    doc" "02 done    check")"
+  run_bin -0 --separate-stderr team-merge T14
+  assert_equal "$(merged_events | jq -c .phases_left)" "[]"
+  stub_reply claude "[]"
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -r .phase <<<"$output")" merged
+  # The sweep tells the task to close, where a merged part had it start a phase already built.
+  run_bin -1 team-sweep
+  assert_equal "$output" "T14 no-worker: merged and not closed, with no live worker (latest T14-builder b0000001); next: close it with team-close T14"
+  # And --fill finds every ticket done, launching no builder.
+  run_bin -0 team-next T14 --fill
+  assert_equal "$output" "phase 1's tickets are all done: its deliverer comes from the last ticket's DONE"
+  assert_equal "$(jq -c 'select(.event == "launch") | .session' "$TEAM_HOME/ledger.jsonl")" '"b0000001"'
+  assert_equal "$(stub_calls claude | jq -c 'select(.[0] == "--bg")')" ""
+  TEAM_HOME=$TEAM_HOME run -0 "$REPO_ROOT/bin/team-log" --check
+}
+
 @test "a task with no tickets logs no phases_left" {
   in_worktree
   run_bin -0 --separate-stderr team-merge T14
@@ -564,6 +594,10 @@ proj_moved() {
   checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"},
     {"name": "agent-review", "bucket": "pass", "state": "SUCCESS"}]'
   refused "required check test is missing on the head"
+  # On a base with no queue, a head behind its base gets no catch-up step: that is the queue's alone.
+  echo 3 >"$gh_dir/behind_by"
+  refused "required check test is missing on the head"
+  [[ $stderr != *team-catch-up* ]]
   # agent-review is required by the branch's protection, which gh pr checks --required cannot
   # show before it reports.
   checks '[{"name": "lint", "bucket": "pass", "state": "SUCCESS"},
@@ -1022,4 +1056,38 @@ app_case() {
   run_bin -0 team-merge T14
   assert_equal "$(merged_events | jq -r .event)" merged
   assert_equal "$(stub_calls gh | jq -c 'select(.[1] // "" | test("/rules/|/rulesets/"))')" ""
+}
+
+# The check of the macOS Rust job (bin/lib/advisory-checks) on PR #5's head, in <bucket>.
+macos_on_head() {
+  jq --arg bucket "$1" '. + [{name: "rust-macos", bucket: $bucket, state: ($bucket | ascii_upcase)}]' "$gh_dir/checks.json" \
+    >"$gh_dir/checks.next" && mv "$gh_dir/checks.next" "$gh_dir/checks.json"
+}
+
+@test "an agent-team PR merges with the macOS job red or still pending, which no merge waits on" {
+  local bucket
+  review_app_off
+  as_project agent-team
+  for bucket in fail pending; do
+    macos_on_head "$bucket"
+    run_bin -0 team-merge T14
+    assert_equal "$(merged_events | wc -l)" 1
+    merge_again
+  done
+}
+
+@test "a required check red beside the macOS job refuses the agent-team merge, naming it alone, and another project's check of its name refuses" {
+  review_app_off
+  as_project agent-team
+  macos_on_head fail
+  jq 'map(if .name == "test" then .bucket = "fail" | .state = "FAILURE" else . end)' "$gh_dir/checks.json" \
+    >"$gh_dir/checks.next" && mv "$gh_dir/checks.next" "$gh_dir/checks.json"
+  refused "required check test has not passed on the head" "checks failing on the head: test"
+  [[ $stderr != *rust-macos* ]]
+  merge_again
+  sed -i 's/^\[agent-team/[proj/' "$TEAM_HOME/projects.toml"
+  jq -c 'if .project == "agent-team" then .project = "proj" else . end' "$TEAM_HOME/ledger.jsonl" >"$TEAM_HOME/l"
+  mv "$TEAM_HOME/l" "$TEAM_HOME/ledger.jsonl"
+  macos_on_head fail
+  refused "checks failing on the head: rust-macos"
 }

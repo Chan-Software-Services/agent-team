@@ -899,6 +899,153 @@ team-stack: stackfix-1 is removed, its logs in $wt/.scratch/task/stack-logs"
   assert_equal "$(jq -c .returned <<<"$output")" "$(jq -cn --arg wt "$wt" '[$wt]')"
 }
 
+# A job directory as Claude Code keeps one, ~/.claude/jobs/<id>/, its state.json and a tmp
+# holding a 2 MiB file and a directory: job_dir <id>
+job_dir() {
+  local job=$HOME/.claude/jobs/$1
+  mkdir -p "$job/tmp/build"
+  echo '{"state":"done"}' >"$job/state.json"
+  head -c $((2 * 1024 * 1024)) /dev/zero >"$job/tmp/big.bin"
+  echo partial >"$job/tmp/build/out.o"
+}
+
+# What the tmp of the job directory <id> holds, one path a line under it.
+job_tmp() {
+  (cd "$HOME/.claude/jobs/$1/tmp" && find . -mindepth 1 | sort)
+}
+
+@test "the close clears the job tmp claude rm left of each of its sessions, keeping the directory, and touches no other's" {
+  run_bin -0 team-open home feature feat work "Do the work"
+  local slot=${home_slots[0]}
+  run_bin -0 team-open home feature feat other "Other work"
+  launch T1 planner 1a2b3c4d "$slot"
+  launch T1 builder 4f2a9c1e "$slot"
+  launch T1 ops 5e5e5e5e "$slot"
+  launch T2 builder 9e9e9e9e "${home_slots[1]}"
+  sessions "$(session 4f2a9c1e T1-builder idle blocked)" "$(session 9e9e9e9e T2-builder busy working)"
+  local id
+  for id in 1a2b3c4d 4f2a9c1e 5e5e5e5e 9e9e9e9e; do job_dir "$id"; done
+  # claude rm fails for the planner and removes the builder's job directory, as it does.
+  stub_script claude <<'SH'
+case $1 in
+  agents) cat "$BATS_TEST_TMPDIR/sessions.json" ;;
+  stop) ;;
+  rm)
+    [[ $2 != 1a2b3c4d ]] || { echo "Error: could not remove $2" >&2; exit 1; }
+    rm -rf -- "${HOME:?}/.claude/jobs/${2:?}"
+    ;;
+  *) exit 64 ;;
+esac
+SH
+  work_and_push "$slot" feature.txt
+
+  run_bin -0 --separate-stderr team-close T1
+  assert_equal "$(jq -c .removed <<<"$output")" '["4f2a9c1e"]'
+  assert_contains "$stderr" "team-close: claude rm 1a2b3c4d failed; remove it by hand if it still exists
+team-close: cleared the job tmp of 1a2b3c4d (2 MB), which claude rm left"
+  # The planner's job directory, state and tmp directory are kept, the tmp empty.
+  [[ -f $HOME/.claude/jobs/1a2b3c4d/state.json ]]
+  [[ -d $HOME/.claude/jobs/1a2b3c4d/tmp ]]
+  assert_equal "$(job_tmp 1a2b3c4d)" ""
+  assert_equal "$(grep -cF "cleared the job tmp of 1a2b3c4d (2 MB; T1 is closed)" "$HOME/.local/state/agent-team/janitor/disk-$(date +%F).md")" 1
+  # The builder's job claude rm removed needs nothing; the ops session's and another task's live
+  # session's keep their tmps.
+  [[ ! -e $HOME/.claude/jobs/4f2a9c1e ]]
+  [[ $stderr != *"job tmp of 4f2a9c1e"* ]]
+  assert_equal "$(job_tmp 5e5e5e5e)" "./big.bin
+./build
+./build/out.o"
+  assert_equal "$(job_tmp 9e9e9e9e)" "$(job_tmp 5e5e5e5e)"
+  [[ $stderr != *"job tmp of 5e5e5e5e"* ]]
+  [[ $stderr != *"job tmp of 9e9e9e9e"* ]]
+  assert_equal "$(events closed | jq -r .task)" T1
+}
+
+@test "a job tmp the close cannot clear is one line on stderr, and the task still closes" {
+  open_home_task
+  job_dir 4f2a9c1e
+  fails_on_call rm 4f2a9c1e
+  work_and_push "$wt" feature.txt
+
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-close: could not clear $HOME/.claude/jobs/4f2a9c1e/tmp: no reason given"
+  [[ $stderr != *"cleared the job tmp of 4f2a9c1e"* ]]
+  assert_equal "$(events closed | jq -r .task)" T1
+}
+
+# The anonymous volume the web container of the Compose project <project> mounts at /cache.
+stack_anonymous() {
+  jq -r --arg name "/$1-web-1" '.[] | select(.Name == $name) | .Mounts[] | select(.Destination == "/cache") | .Name' \
+    "$DOCKER_STATE/containers.json"
+}
+
+# The names of Docker's volumes, one a line.
+volume_names() {
+  jq -r '.[].Name' "$DOCKER_STATE/volumes.json"
+}
+
+@test "a closed task's stack takes the anonymous volumes compose down leaves with it, while another task's stack keeps its own" {
+  home_stack
+  open_home_task
+  run_bin -0 team-open home feature feat other "Other work"
+  local other=${home_slots[1]} mine theirs
+  run_bin -0 team-stack up --worktree "$wt" --no-seed
+  run_bin -0 team-stack up --worktree "$other" --no-seed
+  mine=$(stack_anonymous stackfix-1)
+  theirs=$(stack_anonymous stackfix-2)
+  [[ -n $mine && -n $theirs && $mine != "$theirs" ]]
+  docker_leak anonymous
+  work_and_push "$wt" feature.txt
+
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$(docker_calls)" "compose -p stackfix-1 down -v --remove-orphans"
+  assert_contains "$(docker_calls)" "volume rm $mine"
+  stack_gone stackfix-1
+  run -1 grep -qxF "$mine" <(volume_names)
+  stack_exists stackfix-2
+  grep -qxF "$theirs" <(volume_names)
+  [[ $(docker_calls) != *"stackfix-2 down"* ]]
+}
+
+# conv_stack: as home_stack, for conv, the treehouse project: its slot's stack is stackfix-conv.
+conv_stack() {
+  mkdir -p "$conv/scripts"
+  cp "$REPO_ROOT/tests/fixtures/stack/compose.sh" "$conv/scripts/compose.sh"
+  cp "$REPO_ROOT/tests/fixtures/stack/docker-compose.yml" "$conv/docker-compose.yml"
+  git -C "${conv:?}" add scripts/compose.sh docker-compose.yml
+  git -C "${conv:?}" commit -q -m "feat: add the stack"
+  git -C "${conv:?}" push -q origin HEAD
+  cat >>"$TEAM_HOME/projects.toml" <<'TOML'
+
+[conv.stack]
+compose = "scripts/compose.sh"
+seed = "scripts/seed.sh"
+log_services = ["web"]
+TOML
+  docker_stub "${conv_slots[0]}"
+}
+
+# The return command logs TEAM_STACK_DOWN as it sees it ("unset" when it is not set) to
+# $BATS_TEST_TMPDIR/stack-down.
+log_stack_down() {
+  # shellcheck disable=SC2016 # expanded when the return command runs
+  printf '%s\n' 'echo "${TEAM_STACK_DOWN-unset}" >>"$BATS_TEST_TMPDIR/stack-down"' >>"$conv/scripts/th-return.sh"
+}
+
+@test "a treehouse return after team-stack down runs the return command with TEAM_STACK_DOWN=1, so it does not tear the stack down again" {
+  conv_stack
+  log_stack_down
+  run_bin -0 team-open conv feature feat move "Move it"
+  local slot=${conv_slots[0]}
+  run_bin -0 team-stack up --worktree "$slot" --no-seed
+  stack_exists stackfix-conv
+  work_and_push "$slot" move.txt
+  run_bin -0 --separate-stderr team-close T1
+  assert_contains "$stderr" "team-stack: stackfix-conv is removed, its logs in $slot/.scratch/task/stack-logs"
+  stack_gone stackfix-conv
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/stack-down")" 1
+}
+
 @test "a project without a stack block closes with no Docker call at all" {
   docker_stub "${home_slots[0]}"
   open_home_task
@@ -1131,7 +1278,10 @@ SH
   work_and_push "$home_wt" feature.txt
   work_and_push "$conv_wt" move.txt
 
+  log_stack_down
   run_bin -0 --separate-stderr team-close T1
+  # No team-stack down ran for it, so its return command tears down what it would.
+  assert_equal "$(cat "$BATS_TEST_TMPDIR/stack-down")" unset
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/scratch/spec.md")" "home spec"
   assert_equal "$(cat "$TEAM_HOME/tasks/T1/scratch-conv/notes.md")" "conv notes"
   [[ ! -e $home_wt ]]
@@ -1434,8 +1584,19 @@ integrate() {
   integrate
   local head
   head=$(git -C "${twt:?}" rev-parse HEAD)
+  # claude rm here leaves every job directory: the ticket builder's tmp is cleared, the task's
+  # own builder's kept.
+  job_dir 7c7c7c7c
+  job_dir 4f2a9c1e
 
   run_bin -0 --separate-stderr team-close T1 --ticket 03
+  assert_contains "$stderr" "team-close: cleared the job tmp of 7c7c7c7c (2 MB), which claude rm left"
+  assert_equal "$(job_tmp 7c7c7c7c)" ""
+  [[ -f $HOME/.claude/jobs/7c7c7c7c/state.json ]]
+  assert_equal "$(grep -cF "cleared the job tmp of 7c7c7c7c (2 MB; T1's ticket 03 is returned)" "$HOME/.local/state/agent-team/janitor/disk-$(date +%F).md")" 1
+  assert_equal "$(job_tmp 4f2a9c1e)" "./big.bin
+./build
+./build/out.o"
   assert_equal "$(jq -c . <<<"$output")" "$(jq -cn --arg wt "$twt" '{task: "T1", ticket: "03", stopped: ["7c7c7c7c"],
     removed: ["7c7c7c7c"], archive: "tasks/T1/scratch--03", returned: $wt, branch: "feat/T1-work--03", branch_deleted: true,
     origin_branch: "none"}')"

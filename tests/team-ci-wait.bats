@@ -29,7 +29,9 @@ setup() {
 }
 
 # answer <look> <what> <answer>: from look <look> on, gh answers <what> (view, checks, runs, running,
-# run-<run id>, jobs-<run id> or job-<job id>) with <answer>: JSON, "fail" (gh cannot reach GitHub),
+# run-<run id>, jobs-<run id>, job-<job id>, log-<job id> (the job's log, its text),
+# files (the PR's changed paths, one per line, as gh api --jq prints them) or compare) with
+# <answer>: JSON (for log-<job id> and files, text), "fail" (gh cannot reach GitHub),
 # "limited:<refusal>" (a refusal for the limit, github_limited's arguments: "limited:primary",
 # "limited:retry-after 60") or, for checks, "none" (no check run and no status).
 answer() {
@@ -90,13 +92,14 @@ job() {
          conclusion: (.value[$i + 1:] | if . == "" then null else . end)}]}' --args "$@")"
 }
 
-# head_runs <look> [<id>:<name>:<status>[:<conclusion>]]...: the head's workflow runs as gh api lists
-# them, from <look> on (none given: every one completed, so none listed here keeps the wait going).
+# head_runs <look> [<id>:<name>:<status>[:<conclusion>[:<path>]]]...: the head's workflow runs as gh
+# api lists them, from <look> on (none given: every one completed, so none listed here keeps the
+# wait going); <path> the workflow's file (default none).
 head_runs() {
   local look=$1
   shift
   answer "$look" runs "$(jq -cn '{total_count: ($ARGS.positional | length), workflow_runs: [$ARGS.positional[] | split(":")
-    | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: (.[3] // null),
+    | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: (.[3] | if . == "" then null else . end), path: .[4],
        updated_at: "2026-10-30T18:52:11Z", display_title: "OUTPUT-MARKER"}]}' --args "$@")"
 }
 
@@ -143,10 +146,13 @@ case "${args[*]}" in
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") what=running ;;
   "api repos/owner/proj/actions/runs/"*"/jobs?per_page=100") what=${GITHUB_ENDPOINT%/jobs*} what=jobs-${what##*/} ;;
   "api repos/owner/proj/actions/runs/"*) what=run-${GITHUB_ENDPOINT##*/} ;;
+  "api --allow-escape-sequences repos/owner/proj/actions/jobs/"*"/logs") what=${GITHUB_ENDPOINT%/logs} what=log-${what##*/} ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${GITHUB_ENDPOINT##*/} ;;
   "api repos/owner/proj/branches/dev") what=branch ;;
   "api repos/owner/proj/rules/branches/dev --paginate") what=rules ;;
   "api repos/owner/proj/rulesets/"*) what=ruleset-${GITHUB_ENDPOINT##*/} ;;
+  "api repos/owner/proj/pulls/217/files?per_page=100 --paginate --jq .[].filename") what=files ;;
+  "api repos/owner/proj/compare/"*) what=compare ;;
   *) echo "unplanned gh call: ${args[*]}" >&2; exit 1 ;;
 esac
 # A PR's head's check runs and statuses come from its planned checks, when the test planned some.
@@ -725,9 +731,9 @@ EOF
   run_bin team-ci-wait "$url"
   assert_equal "$status" 75
   assert_contains "$output" "the team is holding"
-  # One look's five reads: the PR, its head's check runs and statuses, the head's runs and the repository's runs in
-  # progress.
-  assert_equal "$(stub_calls gh | grep -c .)" 5
+  # The base's rules, once (dev unprotected, so its branch alone), then one look's five reads: the
+  # PR, its head's check runs and statuses, the head's runs and the repository's runs in progress.
+  assert_equal "$(stub_calls gh | grep -c .)" 6
 }
 
 # GitHub's rate limit: a wait sleeps it out and goes on, never reading it as an outage (T407).
@@ -1013,13 +1019,16 @@ sleeps() {
 api repos/owner/proj/actions/runs/7002
 api repos/owner/proj/actions/runs?head_sha=$head&per_page=100
 api repos/owner/proj/actions/runs?status=in_progress&per_page=1
+api repos/owner/proj/branches/dev
 api repos/owner/proj/commits/$head/check-runs?filter=latest&per_page=100
 api repos/owner/proj/commits/$head/status?per_page=100
 api repos/owner/proj/pulls/217"
-  # One read of each distinct run per look and of the failed job at the end, with nothing that writes.
+  # One read of the base's rules at the start, of each distinct run per look and of the failed job
+  # at the end, with nothing that writes.
   assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | LC_ALL=C sort -u)" '["api","repos/owner/proj/actions/jobs/97002"]
-["api","repos/owner/proj/actions/runs/7002"]'
-  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | grep -c .)" 3
+["api","repos/owner/proj/actions/runs/7002"]
+["api","repos/owner/proj/branches/dev"]'
+  assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and (.[1] | contains("?") or endswith("/pulls/217") | not))' | grep -c .)" 4
   assert_equal "$(gh_calls | jq -c 'select(.[0] == "api" and length != 2)')" ""
 }
 
@@ -1241,6 +1250,192 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/71"
 }
 
+# apt_mirror <log>: check e2e shard 4/10 failed in run 7001's job 71, which is a Conventioner e2e
+# shard's job of 2026-11-19 (tests/fixtures/ci-wait/apt-mirror-job.json), its first failing step
+# "Run ./.github/actions/e2e-stack", and GitHub gives its log as <log> (a file).
+apt_mirror() {
+  checks 0 "$(check "e2e shard 4/10" FAILURE 7001 71)"
+  answer 0 job-71 "$(cat "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror-job.json")"
+  answer 0 log-71 "$(cat "$1")"
+}
+
+# The job's log with the apt lines that failed edited by the sed script <script>, into a file of the
+# test's, whose path it prints.
+apt_log() {
+  sed "$1" "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log" >"$BATS_TEST_TMPDIR/apt.log"
+  echo "$BATS_TEST_TMPDIR/apt.log"
+}
+
+@test "a step that failed because apt could not fetch the runner's packages is infrastructure in setup, when the PR changes nothing under .github/" {
+  apt_mirror "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log"
+  answer 0 files $'front-end/src/app.ts\nREADME.md'
+  both "$url"
+  assert_equal "$text_status" 1
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  infrastructure: e2e shard 4/10 failed in setup, at its step \"Run ./.github/actions/e2e-stack\", where apt could not fetch the runner's packages (https://github.com/owner/proj/actions/runs/7001/job/71); rerun it with gh run rerun 7001 --job 71 --repo owner/proj, then run team-ci-wait again"
+  assert_equal "$(jq -c '.failures[] | [.name, .class, .kind, .step, .rerun]' <<<"$output")" \
+    '["e2e shard 4/10","infrastructure","setup","Run ./.github/actions/e2e-stack","gh run rerun 7001 --job 71 --repo owner/proj"]'
+  # The log and the PR's files are read once a wait, at its end.
+  assert_equal "$(grep -c -F 'actions/jobs/71/logs' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -c -F 'pulls/217/files' "$GH_DIR/calls")" 2
+}
+
+@test "apt's fetch failure stays the PR's when the PR changes anything under .github/, or its files cannot be read" {
+  local files
+  for files in $'src/app.ts\n.github/actions/e2e-stack/action.yml' .github/workflows/ci.yml fail; do
+    echo 0 >"$GH_DIR/look"
+    apt_mirror "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log"
+    answer 0 files "$files"
+    run_bin team-ci-wait "$url"
+    assert_equal "$status" 1
+    assert_equal "$output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: e2e shard 4/10 failed: https://github.com/owner/proj/actions/runs/7001/job/71"
+  done
+  # As many changed paths as GitHub lists at most (3000) may leave one out, so they count as one
+  # under .github/.
+  echo 0 >"$GH_DIR/look"
+  answer 0 files "$(seq -f 'src/f%g.ts' 3000)"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+}
+
+@test "apt's fetch failure stays the PR's when the PR changes a script the failing step runs, outside .github/" {
+  local files
+  # The step runs the project's own install script, named on its Run line by a relative path.
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
+  answer 0 files $'front-end/src/app.ts\nscripts/chromium-packages.sh'
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or by its bare name in the script the group echoes, in the runner's colours.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run set -e|; s|\x1b\[36;1mnpx playwright install-deps chromium\x1b\[0m|\x1b[36;1mbash install-browsers.sh --with-deps\x1b[0m|')"
+  answer 0 files ci/install-browsers.sh
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or by a path under the workspace, which ends in the PR's path.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run "$GITHUB_WORKSPACE/scripts/chromium-packages.sh" install|')"
+  answer 0 files scripts/chromium-packages.sh
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or a local action kept outside .github/, named by its directory, whose action.yml the PR changes.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./ci/actions/install-deps|')"
+  answer 0 files ci/actions/install-deps/action.yml
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or the same directory written with a trailing slash.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./ci/actions/install-deps/|')"
+  answer 0 files ci/actions/install-deps/action.yml
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # Or an action at the repository's root (uses: ./), whose action.yml the PR changes.
+  for files in action.yml action.yaml; do
+    echo 0 >"$GH_DIR/look"
+    apt_mirror "$(apt_log 's|##\[group\]Run \./\.github/actions/e2e-stack|##[group]Run ./|')"
+    answer 0 files "$files"
+    run_bin team-ci-wait "$url"
+    assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  done
+  # A script the step runs that the PR leaves alone keeps the failure infrastructure.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's|##\[group\]Run npx playwright install-deps chromium|##[group]Run ../scripts/chromium-packages.sh install|')"
+  answer 0 files $'front-end/src/app.ts\nscripts/other-packages.sh\ndocs/chromium-packages.sh.md'
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "infrastructure: e2e shard 4/10 failed in setup"
+}
+
+@test "a failed step stays the PR's when apt's failure is not a fetch, when the failing command came after apt's, or when the log cannot be read" {
+  answer 0 files src/app.ts
+  # apt could not find a package the step names: the step's own list.
+  apt_mirror "$(apt_log 's/E: Failed to fetch .*/E: Unable to locate package fonts-nonesuch/; /E: Unable to fetch some archives/d')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # apt's fetch failed in a command that went on, and the tests after it failed: in a group of their
+  # own, or in the same run script (apt-get install ... || true), whose output comes between.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log '/Failed to install browser dependencies/i\
+2026-11-19T12:16:14.3160000Z ##[group]Run npx playwright test')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log '/Failed to install browser dependencies/i\
+2026-11-19T12:16:14.3150001Z Running 412 tests using 4 workers\
+2026-11-19T12:16:14.3150002Z   ok 1 sign-in works\
+2026-11-19T12:16:14.3150003Z   ok 2 sign-out works\
+2026-11-19T12:16:14.3150004Z   x 3 the schedule page loads\
+2026-11-19T12:16:14.3150005Z   1 failed')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # apt's lines come before the step began, in an earlier step that went on.
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$(apt_log 's/^2026-11-19T12:16:14\.31\([0-9]*Z E: \)/2026-11-19T12:11:01.31\1/')"
+  run_bin team-ci-wait "$url"
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  echo 0 >"$GH_DIR/look"
+  apt_mirror "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log"
+  answer 0 log-71 fail
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: e2e shard 4/10 failed"
+  # No file of the PR is read when no log showed apt's failure.
+  if grep -F 'pulls/217/files' "$GH_DIR/calls"; then return 1; fi
+}
+
+@test "a failure classed by its step reads no log, and a test step's failure reads its job's log once" {
+  checks 0 "$(check test FAILURE 7001 71)" "$(check lint FAILURE 7001 72)"
+  job 0 71 "GitHub Actions 2" "Set up job=success" "Run actions/checkout@v4=failure"
+  answer 0 job-72 '{"id": 72, "runner_name": "GitHub Actions 2", "status": "completed", "steps": [
+    {"name": "Set up job", "number": 1, "status": "completed", "conclusion": "success",
+     "started_at": "2026-11-19T11:59:58Z", "completed_at": "2026-11-19T11:59:59Z"},
+    {"name": "Run the lint", "number": 2, "status": "completed", "conclusion": "failure",
+     "started_at": "2026-11-19T11:59:59Z", "completed_at": "2026-11-19T12:00:00Z"}]}'
+  answer 0 log-72 '2026-11-19T12:00:00.0000000Z ##[error]Process completed with exit code 1.'
+  run_bin team-ci-wait "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: lint failed"
+  if grep -F 'actions/jobs/71/logs' "$GH_DIR/calls"; then return 1; fi
+  assert_equal "$(grep -c -F 'actions/jobs/72/logs' "$GH_DIR/calls")" 1
+}
+
+@test "--run reads the branch's changes from the base, and --merge-group the PR's, for apt's fetch failure" {
+  the_run 0 completed failure
+  run_jobs 0 "$(run_job "e2e shard 4/10" completed failure 71)"
+  answer 0 job-71 "$(cat "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror-job.json")"
+  answer 0 log-71 "$(cat "$BATS_TEST_DIRNAME/fixtures/ci-wait/apt-mirror.log")"
+  answer 0 compare '{"files": [{"filename": "src/app.ts"}]}'
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "infrastructure: e2e shard 4/10 failed in setup, at its step \"Run ./.github/actions/e2e-stack\", where apt could not fetch the runner's packages (https://github.com/owner/proj/actions/runs/7001/job/71); rerun it with gh run rerun 7001 --job 71 --repo owner/proj, then wait on the run again"
+  grep -F "api repos/owner/proj/compare/dev...$head" "$GH_DIR/calls"
+  echo 0 >"$GH_DIR/look"
+  answer 0 compare '{"files": [{"filename": "src/app.ts"}, {"filename": ".github/actions/e2e-stack/action.yml"}]}'
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_contains "$output" "the branch's: e2e shard 4/10 failed"
+  # GitHub's compare lists 300 files at most, so as many count as one under .github/.
+  echo 0 >"$GH_DIR/look"
+  answer 0 compare "$(jq -cn '{files: [range(300) | {filename: "src/f\(.).ts"}]}')"
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_contains "$output" "the branch's: e2e shard 4/10 failed"
+
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  echo 0 >"$GH_DIR/look"
+  entry 0 OPEN "$trial"
+  workflow_run 0 7001 completed failure
+  head_runs 0 7001:CI:completed:failure
+  check_runs 0 "$(check_run "e2e shard 4/10" completed failure 7001 71)"
+  statuses 0
+  entry 1 OPEN
+  answer 0 files src/app.ts
+  run_bin team-ci-wait --merge-group "$trial" --json "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["e2e shard 4/10","infrastructure","setup"]]'
+}
+
 @test "a check whose job cannot be read is the PR's, and so said; one with no Actions link reads no job" {
   checks 0 "$(check test FAILURE 7001 71)" "$(check deploy FAILURE)"
   answer 0 job-71 fail
@@ -1388,7 +1583,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   both "$url"
   assert_equal "$status" 1
   assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" \
-    '["failed",[{"name":"build","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]]'
+    '["failed",[{"name":"build","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"required_checks"}]]'
 }
 
 @test "--json ends as other-head, moved and closed with the PR's head and no failures" {
@@ -1697,13 +1892,88 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["data","rules","missing"]]'
 }
 
-@test "a PR's head reads no rules, and a required check missing there stays the PR's" {
-  rules_require test build
-  required test build
+# Conventioner's registry lists no required_checks, so a check its dev's rules newly require that
+# never reports on a PR's head (after a catch-up, say) must end the checks wait as red, before
+# team-next prints the merge ask, not only at team-merge after Daniel's word.
+@test "a PR's head holds every check the base's rules require but agent-review, and one never reported there is the PR's, named as the rules', read once" {
+  rules_require test:15368 "Analyze (python):15368" agent-review:5727451
   checks 0 "$(check test SUCCESS 7001)"
-  run_bin team-ci-wait --json "$url"
+  both "$url"
+  assert_equal "$text_status" 1
+  assert_equal "$(ended_at)" 4
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: Analyze (python) was not reported for 2 minutes, though dev's rules require it"
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" \
+    '["failed",[{"name":"Analyze (python)","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"rules"}]]'
+  # The rules are read once a wait, at its start, however many looks it takes: two waits, two reads.
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rules/branches/dev --paginate' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rulesets/41' "$GH_DIR/calls")" 2
+  # Once it reports, the wait passes; agent-review, which the rules require too, is the reviewer's
+  # to set, so a head without it is not held for it.
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(check test SUCCESS 7001)" "$(check "Analyze (python)" SUCCESS 7002)"
+  both --no-agent-review "$url"
+  assert_equal "$text_status" 0
+  assert_equal "$(jq -c '[.outcome, .failures]' <<<"$output")" '["passed",[]]'
+}
+
+@test "a PR's head names a check both require as the rules', and one the registry alone requires as the project's" {
+  rules_require test build
+  required test build data
+  checks 0 "$(check test SUCCESS 7001)"
+  both "$url"
+  assert_equal "$text_status" 1
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: build was not reported for 2 minutes, though dev's rules require it
+  the PR's: data was not reported for 2 minutes, and the project requires it"
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .source]]' <<<"$output")" \
+    '[["build","pr","missing","rules"],["data","pr","missing","required_checks"]]'
+}
+
+@test "a PR's head goes on with the registry's required checks alone when the base's rules cannot be read, saying so on one line" {
+  required test
+  answer 0 branch fail
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin --separate-stderr team-ci-wait "$url"
+  assert_equal "$status" 0
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held until a look reads them: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  assert_equal "${lines[-1]}" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  # Each look tries the rules again, so a wait of 5 looks read the branch 5 times.
+  assert_equal "$(ended_at)" 4
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 5
+}
+
+# A read of the rules that fails is tried again at each look on a PR's head, so one failure at the
+# start does not leave a rules-required check unheld for the whole wait.
+@test "a PR's head reads the base's rules again at the next look after a read that failed, and holds them once one succeeds" {
+  rules_require test "Analyze (python)"
+  answer 0 branch fail
+  answer 1 branch '{"protected": true}'
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin --separate-stderr team-ci-wait "$url"
   assert_equal "$status" 1
-  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["build","pr","missing"]]'
+  assert_equal "$stderr" "team-ci-wait: dev's rules on owner/proj could not be read, so only the registry's required checks are held until a look reads them: gh api repos/owner/proj/branches/dev: error connecting to api.github.com"
+  assert_equal "${lines[-1]}" "  the PR's: Analyze (python) was not reported for 2 minutes, though dev's rules require it"
+  # Read twice, the second time with its rules and ruleset, then never again.
+  assert_equal "$(grep -cFx 'api repos/owner/proj/branches/dev' "$GH_DIR/calls")" 2
+  assert_equal "$(grep -cFx 'api repos/owner/proj/rulesets/41' "$GH_DIR/calls")" 1
+}
+
+@test "--look on a PR's head and --run read no rules, since neither holds a check not reported" {
+  rules_require test build
+  checks 0 "$(check test SUCCESS 7001)"
+  run_bin team-ci-wait --look "$url"
+  assert_equal "$status" 0
+  assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed"
+  if grep -E 'branches/dev|rulesets/' "$GH_DIR/calls"; then return 1; fi
+  echo 0 >"$GH_DIR/look"
+  the_run 0 completed success
+  run_jobs 0 "$(run_job test completed success)"
+  run_bin team-ci-wait --run "$run_url" "$head"
+  assert_equal "$status" 0
   if grep -E 'branches/dev|rulesets/' "$GH_DIR/calls"; then return 1; fi
 }
 
@@ -1822,6 +2092,79 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" '[["test","pr","failed"]]'
 }
 
+# Conventioner's Test workflow on a merge queue's trial commit while no runner is free, as GitHub
+# showed it on 2026-11-24: the e2e shards queued, and e2e, the roll-up job that needs them, listed
+# by neither the check runs nor the run's jobs until they run. A required check missing while a
+# workflow run of the trial commit is still open waits on runners, so it is never the rules'.
+@test "--merge-group classes a required roll-up not listed while its run's shards are still queued as infrastructure, never the rules'" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  rules_require backend e2e
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run knowledge-graph completed success 7001 97001)" "$(check_run backend completed success 7001 97002)" \
+    "$(check_run "e2e shard 1/2" queued '' 7001 97011)" "$(check_run "e2e shard 2/2" queued '' 7001 97012)"
+  head_runs 0 7001:Test:queued
+  statuses 0
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind, .run])]' <<<"$output")" \
+    '["failed",["e2e shard 1/2","infrastructure","queued",7001],["e2e shard 2/2","infrastructure","queued",7001],["e2e","infrastructure","missing",null]]'
+  # It waits on runners, not on what requires it, so it carries no source, as no rules failure is.
+  assert_equal "$(jq -c '[.failures[] | has("source")]' <<<"$output")" '[false,false,false]'
+  assert_contains "$text_output" "
+  infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
+  [[ $text_output != *rules:* && $text_output != *"no workflow makes it"* ]]
+  [[ $(jq -c '[.failures[] | select(.source)]' <<<"$output") == '[]' ]]
+  # GitHub names no job it has not listed, so any open run counts: lint, which no workflow makes on
+  # a trial commit, reads as infrastructure too while the run is open, as chosen.
+  echo 0 >"$GH_DIR/look"
+  rules_require backend e2e lint
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | select(.kind == "missing") | [.name, .class]]' <<<"$output")" \
+    '[["e2e","infrastructure"],["lint","infrastructure"]]'
+  rules_require backend e2e
+  # GitHub lists the roll-up too, waiting on the shards it needs: it is a queued check like them.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run backend completed success 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)" \
+    "$(check_run e2e waiting '' 7001 97010)"
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind]]' <<<"$output")" \
+    '[["e2e shard 1/2","infrastructure","queued"],["e2e","infrastructure","queued"]]'
+  [[ $text_output != *rules:* ]]
+  # Every run of the trial commit completed and none made e2e: no run can make it now, so it is the
+  # rules'.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run backend completed success 7001 97002)"
+  head_runs 0 7001:Test:completed:success
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.failures[] | [.name, .class, .kind, .source]]' <<<"$output")" '[["e2e","rules","missing","rules"]]'
+  assert_contains "$text_output" "
+  rules: e2e was not reported on the trial commit, though dev's rules require it: no workflow makes it on a merge queue's trial commit"
+}
+
+# The queue gave the trial commit up for a failed check while the run's other jobs still waited on
+# runners: the roll-up of those is no more the rules' than while the entry stays.
+@test "--merge-group classes a required check not listed on a trial commit the queue dropped while its run was open as infrastructure" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  rules_require backend e2e "Analyze (python)"
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run backend completed failure 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)" \
+    "$(check_run "Analyze (python)" queued '' 7002 97021)"
+  job 0 97002 runner-1 "Set up job=success" "Run tests=failure"
+  head_runs 0 7001:Test:in_progress 7002:CodeQL:queued
+  statuses 0
+  entry 1 OPEN
+  both --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, (.failures[] | [.name, .class, .kind])]' <<<"$output")" \
+    '["failed",["backend","pr","failed"],["e2e","infrastructure","missing"]]'
+  assert_contains "$text_output" "
+  infrastructure: e2e was not reported on the trial commit while its workflow runs 7001 (Test, in_progress) and 7002 (CodeQL, queued) are still open there: GitHub lists a job only once the jobs it needs have run, so it waits on runners, not on the rules"
+  [[ $text_output != *rules:* ]]
+}
+
 @test "--merge-group keeps the deadline and the unreadable limit, each exit 75" {
   trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
   entry 0 OPEN "$trial"
@@ -1848,7 +2191,42 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_contains "$(jq -r .text <<<"$output")" "gh api graphql: no such pull request"
 }
 
-@test "--merge-group takes a full sha, no sha after the URL and no --look" {
+# T526: team-land takes one look at a trial commit it cannot mark, to say whether its other checks
+# are green.
+@test "--merge-group --look takes one look at the trial commit: a required check not reported yet is pending, and agent-review is left out with --no-agent-review" {
+  trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  sed -i 's/^required_checks = .*/required_checks = ["test", "data"]/' "$TEAM_HOME/projects.toml"
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed success 7001)"
+  statuses 0
+  both --merge-group "$trial" --look --no-agent-review "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.outcome, .head, .text]' <<<"$output")" \
+    "[\"pending\",\"$trial\",\"team-ci-wait: no check has failed on 5e5e5e5 so far; still pending: data (not reported)\"]"
+  # Every required check passed, agent-review aside: passed at the first look, with no settle.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run test completed success 7001)" "$(check_run data completed success 7001 97002)"
+  both --look --no-agent-review --merge-group "$trial" "$url"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -c '[.outcome, .text]' <<<"$output")" '["passed","team-ci-wait: every check passed on 5e5e5e5: test passed, data passed"]'
+  # A failed check fails the look, and an entry gone from the trial commit ends it at once.
+  echo 0 >"$GH_DIR/look"
+  check_runs 0 "$(check_run test completed failure 7001 97001)" "$(check_run data completed success 7001 97002)"
+  job 0 97001 runner-1 "Run tests=failure"
+  both --merge-group "$trial" --look "$url"
+  assert_equal "$status" 1
+  assert_equal "$(jq -c '[.outcome, [.failures[].name]]' <<<"$output")" '["failed",["test"]]'
+  echo 0 >"$GH_DIR/look"
+  entry 0 OPEN 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+  both --merge-group "$trial" --look "$url"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 0
+  assert_equal "$(jq -r .outcome <<<"$output")" failed
+}
+
+@test "--merge-group takes a full sha and no sha after the URL" {
   trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
   run_bin team-ci-wait --merge-group 5e5e5e5 "$url"
   assert_equal "$status" 2
@@ -1857,7 +2235,7 @@ team-ci-wait: the checks on 5e5e5e5 did not pass:
   assert_equal "$status" 2
   run_bin team-ci-wait --merge-group "$trial" "$url" "$head"
   assert_equal "$status" 2
-  run_bin team-ci-wait --look --merge-group "$trial" "$url"
+  run_bin team-ci-wait --look --merge-group "$trial" "$url" "$head"
   assert_equal "$status" 2
   run_bin team-ci-wait --merge-group "$trial"
   assert_equal "$status" 2
@@ -1997,7 +2375,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
 team-ci-wait: the checks on a1b2c3d did not pass:
   the branch's: test was not reported, and the project requires it"
   assert_equal "$(jq -c '.failures' <<<"$output")" \
-    '[{"name":"test","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null}]'
+    '[{"name":"test","class":"pr","kind":"missing","state":null,"link":null,"run":null,"job":null,"step":null,"rerun":null,"source":"required_checks"}]'
 }
 
 @test "--run on a green run of another workflow than the project's branch_ci passes on its own jobs, the required checks being branch_ci's" {
@@ -2186,4 +2564,152 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_equal "$status" 1
   assert_equal "$(ended_at)" 20
   assert_contains "$output" "infrastructure: test is still queued after 10 minutes of looks"
+}
+
+# The team's own project (agent-team by name), whose one check that holds nothing is the macOS Rust
+# job of bin/lib/advisory-checks: own_team_project
+own_team_project() {
+  sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
+}
+
+# The macOS job's check of the head, in <state>, of run 7002 of its own workflow.
+macos_check() {
+  check rust-macos "$1" 7002
+}
+
+# That workflow's run of the head, as head_runs takes it: macos_run <status> [<conclusion>]
+macos_run() {
+  echo "7002:Rust on macOS:$1:${2:-}:.github/workflows/rust-macos.yml"
+}
+
+macos_link=https://github.com/owner/proj/actions/runs/7002/job/97002
+aside="; no merge waits on these, so none counted:"
+
+@test "the team's own project's head whose only red check is the macOS job's passes, naming it, with the job's run read as no failure" {
+  own_team_project
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  both "$url" "$head"
+  assert_equal "$text_status" 0
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: every check passed on a1b2c3d: test passed$aside rust-macos failed ($macos_link)"
+  assert_equal "$(jq -r '[.outcome, (.failures | length)] | join(" ")' <<<"$output")" "passed 0"
+  # No failure, so no job of its is read.
+  [[ $(gh_calls) != *actions/jobs/* ]]
+}
+
+@test "the team's own project's macOS job still queued or running, its run open, holds neither the pass nor the look" {
+  own_team_project
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check QUEUED)"
+  head_runs 0 7001:CI:completed:success "$(macos_run queued)"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 0
+  # The ordinary settle of a passing reading, never the macOS job's wait.
+  assert_equal "$(ended_at)" 4
+  assert_contains "$output" "team-ci-wait: every check passed on a1b2c3d: test passed$aside rust-macos pending ($macos_link)"
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check IN_PROGRESS)"
+  head_runs 0 7001:CI:completed:success "$(macos_run in_progress)"
+  run_bin team-ci-wait --look "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(ended_at)" 0
+  assert_equal "$output" "team-ci-wait: every check passed on a1b2c3d: test passed$aside rust-macos pending ($macos_link)"
+  # A look with another check pending names that one, and the macOS job apart from it.
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(check test IN_PROGRESS 7001)" "$(macos_check CANCELLED)"
+  head_runs 0 7001:CI:in_progress "$(macos_run completed cancelled)"
+  workflow_run 0 7001 in_progress
+  run_bin team-ci-wait --look "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$output" "team-ci-wait: no check has failed on a1b2c3d so far; still pending: test (in_progress, run 7001 in_progress)$aside rust-macos cancelled ($macos_link)"
+}
+
+@test "the team's own project's head with a red required check still fails beside a red macOS job, which no failure names" {
+  own_team_project
+  sed -i 's/^required_checks = \[\]$/required_checks = ["test"]/' "$TEAM_HOME/projects.toml"
+  checks 0 "$(check test FAILURE 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:failure "$(macos_run completed failure)"
+  job 0 97001 "GitHub Actions 1" "Set up job=success" "Run tests/run bats=failure"
+  answer 0 log-97001 ""
+  both "$url" "$head"
+  assert_equal "$text_status" 1
+  assert_equal "$text_output" "team-ci-wait: waiting on the checks of owner/proj#217 at a1b2c3d
+team-ci-wait: the checks on a1b2c3d did not pass:
+  the PR's: test failed: https://github.com/owner/proj/actions/runs/7001/job/97001"
+  assert_equal "$(jq -c '[.failures[].name]' <<<"$output")" '["test"]'
+  # A required check that never reports fails beside it too.
+  echo 0 >"$GH_DIR/look"
+  checks 0 "$(macos_check FAILURE)"
+  head_runs 0 "$(macos_run completed failure)"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: test was not reported for 2 minutes, and the project requires it"
+}
+
+@test "a project or its base's rules that require the macOS check, or another project's check of its name, hold it as any check" {
+  own_team_project
+  sed -i 's/^required_checks = \[\]$/required_checks = ["rust-macos"]/' "$TEAM_HOME/projects.toml"
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  job 0 97002 "GitHub Actions 1" "Check=failure"
+  answer 0 log-97002 ""
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  # A name the base's rules require, which a PR's head's wait reads too, is held as any check, red
+  # or never reported.
+  sed -i 's/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
+  rules_require rust-macos
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  checks 0 "$(check test SUCCESS 7001)"
+  head_runs 0 7001:CI:completed:success
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos was not reported for 2 minutes, though dev's rules require it"
+  rules_require
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  # Another project's check of the same name is one of its checks.
+  sed -i 's/^\[agent-team/[proj/; s/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+}
+
+@test "the head's own macOS run in progress counts as none of the repository's other work, so a check no runner takes still ends queued" {
+  own_team_project
+  checks 0 "$(check test QUEUED 7001)" "$(macos_check IN_PROGRESS)"
+  workflow_run 0 7001 queued
+  head_runs 0 7001:CI:queued "$(macos_run in_progress)"
+  running 0 1
+  job 0 97001 null
+  TEAM_CI_WAIT_QUEUED_SECONDS=600 TEAM_CI_WAIT_DEADLINE_SECONDS=1800 run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_equal "$(ended_at)" 10
+  assert_contains "$output" "infrastructure: test is still queued after 10 minutes of looks"
+}
+
+@test "--merge-group passes a trial commit whose only red check is the macOS job's" {
+  local trial=5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  own_team_project
+  entry 0 OPEN "$trial"
+  check_runs 0 "$(check_run test completed success 7001)" "$(check_run rust-macos completed failure 7002)"
+  statuses 0
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
+  run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 0
+  assert_contains "$output" "every check passed on ${trial:0:7}: test passed$aside rust-macos failed ($macos_link)"
+  # A name the base's rules require, which a trial commit's wait reads, is held as any check.
+  rules_require rust-macos
+  job 0 97002 "GitHub Actions 1" "Check=failure"
+  answer 0 log-97002 ""
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait --merge-group "$trial" "$url"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
 }

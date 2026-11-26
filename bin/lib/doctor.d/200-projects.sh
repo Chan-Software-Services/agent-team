@@ -44,11 +44,6 @@
 # shellcheck disable=SC2154 # err, the doctor's
 
 # team-project refuses a missing or broken registry itself, the first problem first.
-# The pool treehouse names for the checkout <path> with origin <url>: <path's folder name>-<the
-# first 3 bytes of the SHA-256 of the URL, in hex> (treehouse's ResolvePoolDir).
-pool_name() {
-  printf '%s-%s\n' "${1##*/}" "$(printf '%s' "$2" | sha256sum | cut -c1-6)"
-}
 
 # The slots line of <project>, whose registered slots <slot>... are all in the treehouse pool
 # <pool> of the checkout <path>: each slot of the pool (pool_slots) and each other numbered

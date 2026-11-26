@@ -194,6 +194,15 @@ profile = "minimal"
 components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]'
 }
 
+# The dependency policy's sources rule, which needs a fetch to show live, so it is held here:
+# crates come from crates.io alone, no other registry and no git source.
+@test "deny.toml's [sources] refuses every registry but crates.io and every git source" {
+  assert_equal "$(sed -n '/^\[sources\]$/,/^\[/p' "$REPO_ROOT/deny.toml" | grep -v -e '^#' -e '^$' -e '^\[')" 'unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]'
+  run -1 grep -E '^(allow-git|\[sources\.)' "$REPO_ROOT/deny.toml"
+}
+
 # Each Rust tool's version line as the tool prints it, the tool's own form; the cargo tools' were
 # read on home-pc from the pinned releases, rustup's from its source, since its install there was
 # refused (its commit and date are placeholders). Each pattern reads the pin from its line.
@@ -344,8 +353,9 @@ probe_rules() {
       or ((.expect | IN("hook", "script", "allowed")) and (.marker | type) != "string")
       or (.marker != null and ((.marker | type) != "string" or (.expect | IN("hook", "script", "kernel", "allowed") | not)))
       or ((.marker // "" | contains("@LOGIN@")) and .expect != "allowed")
-      or ((.expect == "rule") != (.family | type == "string"))
-      or (.family != null and (.family | IN($families[]) | not)))
+      or (.expect == "rule" and (.family | type) != "string")
+      or (.family != null and ((.family | type) != "string" or (.family | IN($families[]) | not)
+        or (.expect != "rule" and (.expect != "refused" or .roles != ["assistant"])))))
     | .id'
   out=$(jq -r "$malformed" "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
@@ -359,6 +369,23 @@ probe_rules() {
   assert_equal "$out" "no-marker
 number-marker
 login-hook"
+  # A family says which deny rule refuses an attempt: a rule attempt's, and the assistant's refused
+  # one's, whose deny rule and hook both refuse it in bypass mode; never a worker's refused one,
+  # auto mode's stand-in, nor a hook's.
+  out=$(jq -r "$malformed" <<<'{"families": [{"family": "f"}], "attempts": [
+    {"id": "rule-bare", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule"},
+    {"id": "rule", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "rule", "family": "f"},
+    {"id": "refused-assistant", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-assistant-bare", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused"},
+    {"id": "refused-worker", "roles": ["builder"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "refused-both", "roles": ["builder", "assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "f"},
+    {"id": "hook", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "hook", "marker": "m", "family": "f"},
+    {"id": "unknown", "roles": ["assistant"], "tool": "Bash", "input": "true", "expect": "refused", "family": "g"}]}')
+  assert_equal "$out" "rule-bare
+refused-worker
+refused-both
+hook
+unknown"
   out=$(jq -r '[.attempts[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(" ")' "$REPO_ROOT/bin/lib/probe.json")
   assert_equal "$out" ""
 }
@@ -443,10 +470,10 @@ probe_denies() {
   return 1
 }
 
-@test "every rule attempt of the refusal probe is denied by a rule of its family in each of its roles' settings" {
+@test "every attempt of the refusal probe that names a family is denied by a rule of it in each of its roles' settings" {
   local role id tool input family rules list probe=$REPO_ROOT/bin/lib/probe.json missing=() n=0
   for role in "${PROBE_ROLES[@]}"; do
-    list=$(jq -r --arg role "$role" '.attempts[] | select(.expect == "rule" and any(.roles[]; . == $role))
+    list=$(jq -r --arg role "$role" '.attempts[] | select(.family != null and any(.roles[]; . == $role))
       | [.id, .tool, .input, .family] | @tsv' "$probe")
     while IFS=$'\t' read -r id tool input family; do
       rules=$(jq -r --arg family "$family" --argjson rules "$(probe_rules "$role")" \
@@ -457,6 +484,23 @@ probe_denies() {
   done
   assert_equal "${missing[*]}" ""
   ((n > 3))
+}
+
+# In bypass mode no auto mode judges the assistant's calls, so its refused attempt is one its deny
+# rules and its command guard both refuse, as team-load-check --help says: the live session shows
+# whichever answers first, so each is held here.
+@test "every refused attempt of the assistant is denied by one of its deny rules and refused by its command guard" {
+  local id input denied=() unguarded=() n=0 probe=$REPO_ROOT/bin/lib/probe.json
+  while IFS=$'\t' read -r id input; do
+    n=$((n + 1))
+    probe_denies "$(probe_rules assistant | jq -r '.[]')" Bash "$input" || denied+=("$id")
+    AGENT_TEAM_ROLE=assistant run_bin --separate-stderr hooks/command-guard <<<"$(jq -cn --arg c "$input" \
+      '{tool_name: "Bash", cwd: env.HOME, tool_input: {command: $c}}')"
+    [[ $status == 2 && $stderr == *"Blocked by command-guard: "* ]] || unguarded+=("$id")
+  done < <(jq -r '.attempts[] | select(.expect == "refused" and .roles == ["assistant"]) | [.id, .input] | @tsv' "$probe")
+  assert_equal "${denied[*]}" ""
+  assert_equal "${unguarded[*]}" ""
+  ((n >= 3))
 }
 
 # A hook attempt stands for the hook under bin/hooks/ whose file holds its marker.
@@ -1014,16 +1058,29 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   done
 }
 
-# servers/ takes @hono/node-server 2.1.3 or later (GHSA-rmxm-3fg6-px4f), which
-# @modelcontextprotocol/sdk and @modelcontextprotocol/node (under mongodb-mcp-server) both allow;
-# tests/toolkits/servers-hono.test.mjs checks both still load with it.
-@test "servers/package-lock.json holds no @hono/node-server before 2.1.3" {
+# servers/ takes @hono/node-server 2.1.6 or later (GHSA-rmxm-3fg6-px4f, GHSA-jpvv-r467-5p4w,
+# GHSA-qv5m-9pm6-hqp3), which @modelcontextprotocol/sdk and @modelcontextprotocol/node (under
+# mongodb-mcp-server) both allow; tests/toolkits/servers-hono.test.mjs checks both still serve with it.
+@test "servers/package-lock.json holds no @hono/node-server before 2.1.6" {
   local versions version
   versions=$(jq -r '.packages | to_entries[] | select(.key | test("(^|/)node_modules/@hono/node-server$")) | .value.version' "$REPO_ROOT/servers/package-lock.json")
   [[ -n $versions ]]
   for version in $versions; do
     echo "@hono/node-server $version" >&2
-    assert_equal "$(printf '%s\n' 2.1.3 "$version" | sort -V | head -n 1)" 2.1.3
+    assert_equal "$(printf '%s\n' 2.1.6 "$version" | sort -V | head -n 1)" 2.1.6
+  done
+}
+
+# servers/ takes hono 4.13.16 or later (GHSA-4h7h-rv7c-7m2v, GHSA-h7mg-cq63-vhpq,
+# GHSA-3gg2-335m-rxc6, GHSA-4m76-xfj5-7975, GHSA-46wx-v44x-9hh2), which the same two parents allow;
+# tests/toolkits/servers-hono.test.mjs checks both still serve with it.
+@test "servers/package-lock.json holds no hono before 4.13.16" {
+  local versions version
+  versions=$(jq -r '.packages | to_entries[] | select(.key | test("(^|/)node_modules/hono$")) | .value.version' "$REPO_ROOT/servers/package-lock.json")
+  [[ -n $versions ]]
+  for version in $versions; do
+    echo "hono $version" >&2
+    assert_equal "$(printf '%s\n' 4.13.16 "$version" | sort -V | head -n 1)" 4.13.16
   done
 }
 
@@ -1077,6 +1134,34 @@ SETTINGS=(coordinator.settings.json assistant.settings.json settings/worker.json
   grep -qF 'on the head under review' <<<"$line"
   grep -qF 'trap table' <<<"$line"
   grep -qF 'still-type-checks list' <<<"$line"
+  grep -qF '`review.md` with its kind and scope' <<<"$line"
+}
+
+# Only the rust toolkit's sessions list rust-core, so the planner, builder and reviewer roles name
+# it, once each under "What you do", for a session that lists it, each with its duty: a session on
+# a task with no Rust code reads the line and does nothing. The skill is named as `rust-core`, so
+# a line naming the design doc docs/rust-core.md is no second one.
+@test "the planner, builder and reviewer roles name the rust toolkit's rust-core, each with its duty, for a session that lists it" {
+  local role body line
+  assert_equal "$(sed -n 's/^name: //p' "$REPO_ROOT/toolkits/rust/skills/rust-core/SKILL.md")" rust-core
+  for role in planner builder reviewer; do
+    echo "role: $role" >&2
+    assert_equal "$(grep -cF '`rust-core`' "$REPO_ROOT/roles/$role.md")" 1
+    body=$(awk '$0 == "## What you do" { on = 1; next } /^## / { on = 0 } on' "$REPO_ROOT/roles/$role.md")
+    line=$(grep -F '`rust-core`' <<<"$body")
+    grep -qF 'when your session lists `rust-core`' <<<"$line"
+  done
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/planner.md")
+  grep -qF 'On a project with Rust code' <<<"$line"
+  grep -qF 'before you spec Rust code' <<<"$line"
+  grep -qF "toolchain's version and the check command" <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/builder.md")
+  grep -qF 'before you write Rust code' <<<"$line"
+  grep -qF 'run its check before you report DONE or PR' <<<"$line"
+  grep -qF '"Rust check" line in the PR body' <<<"$line"
+  line=$(grep -F '`rust-core`' "$REPO_ROOT/roles/reviewer.md")
+  grep -qF 'on the head under review' <<<"$line"
+  grep -qF 'judge the diff against its rules' <<<"$line"
   grep -qF '`review.md` with its kind and scope' <<<"$line"
 }
 
@@ -1170,12 +1255,22 @@ pretooluse_problems() {
   done
 }
 
+# The assistant's read session runs with --restricted and no shell, as an ops session does, so
+# its hooks are in exec form, as a worker role's are (tests/team-worker.bats), which Claude Code
+# runs without a shell.
+@test "every hook of the assistant's read session's settings is in exec form" {
+  file=$REPO_ROOT/assistant-read.settings.json
+  assert_equal "$(jq -c '[.hooks | .[][] | .hooks[] | select((.args | type) != "array") | .command]' "$file")" "[]"
+  assert_equal "$(jq -c '[.hooks | .[][] | .hooks[] | select(.command | test("[ \"]")) | .command]' "$file")" "[]"
+  assert_equal "$(jq '[.hooks | .[][] | .hooks[]] | length' "$file")" 4
+}
+
 # A guard hook blocks the call on any failure only when its entry says so, and Claude Code waits
 # 600 seconds on one that hangs by default (T248, R1): every PreToolUse entry fails closed, soon.
 @test "every PreToolUse hook blocks on its failure and has a timeout, in every settings and toolkit hooks file" {
   local files=() file bad=$BATS_TEST_TMPDIR/bad.json
   for file in "$REPO_ROOT"/settings/*.json "$REPO_ROOT"/coordinator.settings.json "$REPO_ROOT"/assistant.settings.json \
-    "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
+    "$REPO_ROOT"/assistant-read.settings.json "$REPO_ROOT"/bin/lib/gate-claude-settings.json \
     "$REPO_ROOT"/toolkits/*/hooks/hooks.json; do
     files+=("${file#"$REPO_ROOT/"}")
   done
@@ -1988,6 +2083,33 @@ node --test tests/toolkits/frontend.test.mjs
 COMMANDS
 }
 
+# The prototyping host drives Daniel's window, the Agent Chrome's tab included, through its socket
+# and token in its runtime directory ($XDG_RUNTIME_DIR/agent-team-proto, else
+# ~/.local/state/agent-team/proto), which any process of Daniel's user can reach; the client module
+# refuses a team session, and these rules are a speed bump on a worker's curl of the socket or read
+# of the token, Daniel's decision, which also refuse a search naming them.
+@test "a worker's Bash call naming the prototyping host's runtime directory or socket, and its Read there, are denied" {
+  local SETTINGS=(settings/worker.json) command rule
+  assert_denies 'Bash(*agent-team-proto*)' \
+    'curl --unix-socket "$XDG_RUNTIME_DIR/agent-team-proto/host.sock" -H "authorization: Bearer x" http://proto/v1/target' \
+    'cat /run/user/1000/agent-team-proto/token'
+  assert_denies 'Bash(*agent-team/proto*)' 'cat ~/.local/state/agent-team/proto/token'
+  assert_denies 'Bash(*host.sock*)' 'curl --unix-socket ./host.sock http://proto/v1/status' \
+    'cd "$XDG_RUNTIME_DIR" && socat - UNIX-CONNECT:agent-team-proto/host.sock'
+  for rule in 'Read(//run/user/*/agent-team-proto/**)' 'Read(~/.local/state/agent-team/proto/**)'; do
+    jq -e --arg r "$rule" '.permissions.deny | index($r)' "$REPO_ROOT/settings/worker.json" >/dev/null ||
+      { echo "settings/worker.json lacks the deny rule $rule" >&2; return 1; }
+  done
+  while IFS= read -r command; do
+    if denied settings/worker.json "$command"; then echo "settings/worker.json denies: $command" >&2; return 1; fi
+  done <<'COMMANDS'
+node --test tests/toolkits/proto-host.test.mjs
+git switch feat/T7-proto-host
+ls ~/.local/state/agent-team
+toolkits/frontend/scripts/proto --help
+COMMANDS
+}
+
 # A walk's planner reads the Agent Chrome only by team-ui --capture, Daniel's decision: no role's
 # settings names the toolkit's server, whose tools drive the window, and only the planner's allow
 # that capture.
@@ -2166,15 +2288,17 @@ team-review-status https://github.com/me/shop/pull/5 a1b2c3d4e5f60718293a4b5c6d7
 COMMANDS
 }
 
-@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
+@test "GitHub's CI runs on every pull request to dev and main, on the merge queue's trial commits and by hand, zizmor's online run and the macOS Rust job on the pull requests and by hand, and no workflow runs on a push or for a fork's target" {
   local workflow ci=$REPO_ROOT/.github/workflows/ci.yml
   # The top-level keys under on:, the branches its pull_request names, and merge_group's types.
   assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$ci")" \
     $'pull_request\nmerge_group\nworkflow_dispatch'
   assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    types: //p' "$ci")" "[checks_requested]"
-  assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/zizmor-online.yml")" \
-    $'pull_request\nworkflow_dispatch'
-  for workflow in ci.yml zizmor-online.yml; do
+  for workflow in zizmor-online.yml rust-macos.yml; do
+    assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^  \([a-z_]*\):.*$/\1/p' "$REPO_ROOT/.github/workflows/$workflow")" \
+      $'pull_request\nworkflow_dispatch'
+  done
+  for workflow in ci.yml zizmor-online.yml rust-macos.yml; do
     assert_equal "$(sed -n '/^on:$/,/^[^ ]/s/^    branches: //p' "$REPO_ROOT/.github/workflows/$workflow")" "[dev, main]"
   done
   # The data job reads a trial commit's range from the merge group, beside the pull request's.
@@ -2338,7 +2462,7 @@ YAML
 @test "tests/run, the team-heavy lock it runs under, and servers/install, which its toolkit tests run, need no team home" {
   unset TEAM_HOME
   run -2 --separate-stderr "$REPO_ROOT/tests/run" nothing
-  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -0 --separate-stderr "$REPO_ROOT/bin/team-heavy" run -- echo ran
   assert_equal "$output" ran
   run -2 --separate-stderr "$REPO_ROOT/servers/install" nothing
@@ -2423,9 +2547,9 @@ YAML
 # its refs/pull/<n>/merge, or a branch's dispatched ones), only for a pull request or a dispatch,
 # never a merge queue's trial commit or a run of another event, since team-ci-run waits on a
 # dispatched run or the PR's.
-@test "CI and zizmor's online run cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
+@test "CI, zizmor's online run and the macOS Rust job cancel an older run of the same event and ref, only a pull request's or a dispatch's" {
   local workflow
-  for workflow in ci.yml zizmor-online.yml; do
+  for workflow in ci.yml zizmor-online.yml rust-macos.yml; do
     assert_equal "$(sed -n '/^concurrency:$/,/^[^ ]/p' "$REPO_ROOT/.github/workflows/$workflow" | sed '$d')" \
       "concurrency:
   group: \${{ github.workflow }}-\${{ github.event_name }}-\${{ github.ref }}
@@ -2464,6 +2588,144 @@ YAML
   run -0 jq -L "$REPO_ROOT/bin/lib" -r --arg os arch --arg machine x86_64 'include "tools"; download_sources($os; $machine)' "$REPO_ROOT/bin/lib/tools.lock"
   assert_equal "$(grep -c '^f=$(mktemp) && d=$(mktemp -d) && curl -fsSLo "$f" https://' <<<"$output")" \
     "$(jq '[.tools[] | select(.from == "download")] | length' "$REPO_ROOT/bin/lib/tools.lock")"
+}
+
+# The rust job checks the Cargo workspace on Linux: on a pull request and a merge queue's trial
+# commit only what reaches a Rust path since the base the data job reads its range from, so it
+# reports on every PR and passes at once on any other, and by hand the whole workspace; its
+# cargo-nextest and cargo-deny are tools.lock's pins, each archive checked by the lock's SHA-256.
+@test "CI's rust job runs tests/run rust on what a change reaches, whole by hand, with tools.lock's cargo-nextest and cargo-deny and the pinned toolchain" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml block tool key version sha source
+  block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  rust:$/,/^  [a-z_-]*:$/p' | sed '1!{/^  [a-z_-]*:$/d}' | grep -v '^ *#')
+  [[ -n $block ]] || { echo "ci.yml has no rust job" >&2; return 1; }
+  grep -qx '    runs-on: ubuntu-24.04' <<<"$block"
+  grep -qx '    timeout-minutes: 5' <<<"$block"
+  # The checkout has the whole history, for the base, and keeps no credential.
+  grep -qx '      - uses: actions/checkout@[0-9a-f]\{40\} # v[0-9.]*' <<<"$block"
+  grep -qxF '          fetch-depth: 0' <<<"$block"
+  grep -qxF '          persist-credentials: false' <<<"$block"
+  # Each tool by its lock pin and the SHA-256 the lock checks its Linux archive by.
+  for tool in cargo-nextest cargo-deny; do
+    key=$(tr a-z- A-Z_ <<<"$tool")
+    version=$(sed -n "s/^      ${key}_VERSION: //p" <<<"$block")
+    sha=$(sed -n "s/^      ${key}_SHA256: //p" <<<"$block")
+    assert_equal "$tool $version" "$tool $(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")"
+    [[ $sha =~ ^[0-9a-f]{64}$ ]] || { echo "$tool: ${key}_SHA256 is no sha256" >&2; return 1; }
+    source=$(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .source.arch' "$REPO_ROOT/bin/lib/tools.lock")
+    [[ $source == *"echo \"$sha  "* && $source == *x86_64-unknown-linux-musl.tar.gz* ]] ||
+      { echo "$tool: ${key}_SHA256 is not the one tools.lock checks its Linux archive by" >&2; return 1; }
+    grep -qxF "      - name: Install $tool \${{ env.${key}_VERSION }}" <<<"$block"
+    grep -qF "echo \"\$${key}_SHA256  \$archive\" | sha256sum -c -" <<<"$block"
+  done
+  grep -qxF '          echo "$RUNNER_TEMP/rust-bin" >>"$GITHUB_PATH"' <<<"$block"
+  # The toolchain rust-toolchain.toml pins, then the base as the data job names its range, then
+  # the check: --changed on a pull request and a trial commit, whole by hand.
+  grep -qxF '          rustup toolchain install' <<<"$block"
+  grep -qxF '          BASE_SHA: ${{ github.event.pull_request.base.sha }}' <<<"$block"
+  grep -qxF '          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}' <<<"$block"
+  grep -qxF '          echo "RUST_BASE=${BASE_SHA:-$QUEUE_BASE_SHA}" >>"$GITHUB_ENV"' <<<"$block"
+  assert_equal "$(grep -E '^        if:|run: tests/run' <<<"$block")" \
+    "        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch'
+        run: tests/run rust --changed \"\$RUST_BASE\"
+        if: github.event_name == 'workflow_dispatch'
+        run: tests/run rust"
+  (($(grep -nxF '          rustup toolchain install' <<<"$block" | cut -d: -f1) < $(grep -n 'run: tests/run rust' <<<"$block" | head -n 1 | cut -d: -f1)))
+  # No cache action and no sccache: the skeleton builds in seconds.
+  if grep -nE 'actions/cache|sccache' <<<"$block"; then echo "the rust job caches" >&2; return 1; fi
+}
+
+# The toolkits job has the pinned toolchain, so the rust toolkit's real-cargo cases run there, and
+# a skip of them fails.
+@test "CI's toolkits job installs the pinned toolchain before the toolkit tests and requires the rust toolkit's real-cargo cases" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml block
+  block=$(sed -n '/^jobs:$/,$p' "$ci" | sed -n '/^  toolkits:$/,/^  [a-z_-]*:$/p' | sed '1!{/^  [a-z_-]*:$/d}' | grep -v '^ *#')
+  grep -qxF '      RUST_TOOLKIT_TESTS: require' <<<"$block"
+  (($(grep -nxF '          rustup toolchain install' <<<"$block" | cut -d: -f1) < $(grep -nxF '      - run: tests/run toolkits' <<<"$block" | cut -d: -f1)))
+}
+
+# Every job of ci.yml has a runner, and each is ubuntu-24.04, so no required check waits on a
+# macOS runner.
+@test "every CI job runs on Linux" {
+  local ci=$REPO_ROOT/.github/workflows/ci.yml ids runners
+  ids=$(sed -n '/^jobs:$/,$s/^  \([a-z_-]*\):$/\1/p' "$ci")
+  runners=$(sed -n '/^jobs:$/,$s/^    runs-on: \(.*\)$/\1/p' "$ci")
+  assert_equal "$(wc -l <<<"$runners")" "$(wc -l <<<"$ids")"
+  assert_equal "$(sort -u <<<"$runners")" ubuntu-24.04
+}
+
+# The checks no merge waits on (bin/lib/advisory-checks) are every job of a workflow that no merge
+# queue's trial commit runs, each job's check named by its id, which no other workflow's job takes,
+# and none a required check of agent-team, so they hold no PR and no queue; and the macOS Rust job
+# is the one macOS job a pull request or a trial commit runs.
+@test "bin/lib/advisory-checks names every job of workflows no queue runs, none required, and the macOS Rust job is the one macOS job a PR runs" {
+  local workflow check jobs listed required macos='' file
+  cp "$BATS_TEST_DIRNAME/fixtures/projects.toml" "$TEAM_HOME/projects.toml"
+  run_bin -0 team-project agent-team required_checks
+  required=$output
+  listed=$(grep -v -E '^[[:space:]]*(#|$)' "$REPO_ROOT/bin/lib/advisory-checks")
+  assert_equal "$listed" "rust-macos.yml rust-macos"
+  run -0 bash -c 'source "$1/bin/lib/team.sh" && advisory_checks agent-team' _ "$REPO_ROOT"
+  assert_equal "$output" '[{"workflow":"rust-macos.yml","check":"rust-macos"}]'
+  while read -r workflow check; do
+    file=$REPO_ROOT/.github/workflows/$workflow
+    [[ -f $file ]] || { echo "$workflow is no workflow" >&2; return 1; }
+    # The workflow's jobs are the listed checks, each named by its id.
+    jobs=$(sed -n '/^jobs:$/,$s/^  \([A-Za-z0-9_-]*\):$/\1/p' "$file")
+    assert_equal "$jobs" "$(awk -v w="$workflow" '$1 == w { print $2 }' <<<"$listed")"
+    if grep -nE '^    name:' "$file"; then echo "$workflow names a job, so its check is not named by its id" >&2; return 1; fi
+    if grep -nE '^\s*merge_group:' "$file"; then echo "$workflow runs on a merge queue's trial commit" >&2; return 1; fi
+    jq -e --arg check "$check" 'index($check) | not' <<<"$required" >/dev/null || { echo "$check is a required check" >&2; return 1; }
+    for file in "$REPO_ROOT"/.github/workflows/*.yml; do
+      [[ ${file##*/} != "$workflow" ]] || continue
+      # By its id or by a name of its own.
+      if grep -nxF -e "  $check:" -e "    name: $check" "$file"; then echo "${file##*/} has a job $check too" >&2; return 1; fi
+    done
+  done <<<"$listed"
+  for file in "$REPO_ROOT"/.github/workflows/*.yml; do
+    grep -qE '^  (pull_request|merge_group):' "$file" || continue
+    if grep -qE '^ +runs-on: .*macos' "$file"; then macos+=" ${file##*/}"; fi
+  done
+  assert_equal "$macos" " rust-macos.yml"
+  assert_equal "$(grep -cE '^ +runs-on:' "$REPO_ROOT/.github/workflows/rust-macos.yml")" 1
+  grep -qx '    runs-on: macos-15' "$REPO_ROOT/.github/workflows/rust-macos.yml"
+}
+
+# The macOS Rust job runs the rust job's check, on a pull request only what reaches a Rust path
+# since its base, and by hand the whole workspace, with tools.lock's macOS cargo-nextest and
+# cargo-deny, each archive checked by the lock's SHA-256, and Homebrew's Bash and GNU tools, which
+# the team's scripts run on there.
+@test "the macOS Rust job runs tests/run rust on what a change reaches, whole by hand, with tools.lock's macOS cargo-nextest and cargo-deny and the pinned toolchain" {
+  local file=$REPO_ROOT/.github/workflows/rust-macos.yml block tool key version sha source
+  [[ -f $file ]] || { echo "rust-macos.yml is missing" >&2; return 1; }
+  block=$(sed -n '/^jobs:$/,$p' "$file" | grep -v '^ *#')
+  grep -qx '    timeout-minutes: 15' <<<"$block"
+  grep -qx '      - uses: actions/checkout@[0-9a-f]\{40\} # v[0-9.]*' <<<"$block"
+  grep -qxF '          fetch-depth: 0' <<<"$block"
+  grep -qxF '          persist-credentials: false' <<<"$block"
+  grep -qxF '        run: brew install bash coreutils findutils gnu-sed grep flock jq' <<<"$block"
+  for tool in cargo-nextest cargo-deny; do
+    key=$(tr a-z- A-Z_ <<<"$tool")
+    version=$(sed -n "s/^      ${key}_VERSION: //p" <<<"$block")
+    sha=$(sed -n "s/^      ${key}_SHA256: //p" <<<"$block")
+    assert_equal "$tool $version" "$tool $(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .pin' "$REPO_ROOT/bin/lib/tools.lock")"
+    [[ $sha =~ ^[0-9a-f]{64}$ ]] || { echo "$tool: ${key}_SHA256 is no sha256" >&2; return 1; }
+    source=$(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .source.macos' "$REPO_ROOT/bin/lib/tools.lock")
+    [[ $source == *"echo \"$sha  "* && $source == *apple-darwin.tar.gz* ]] ||
+      { echo "$tool: ${key}_SHA256 is not the one tools.lock checks its macOS archive by" >&2; return 1; }
+    grep -qxF "      - name: Install $tool \${{ env.${key}_VERSION }}" <<<"$block"
+    grep -qF "echo \"\$${key}_SHA256  \$archive\" | shasum -a 256 -c -" <<<"$block"
+  done
+  grep -qxF '          echo "$RUNNER_TEMP/rust-bin" >>"$GITHUB_PATH"' <<<"$block"
+  grep -qxF '          rustup toolchain install' <<<"$block"
+  grep -qxF '          BASE_SHA: ${{ github.event.pull_request.base.sha }}' <<<"$block"
+  assert_equal "$(grep -E '^        if:|run: tests/run' <<<"$block")" \
+    "        if: github.event_name != 'workflow_dispatch'
+        run: tests/run rust --changed \"\$BASE_SHA\"
+        if: github.event_name == 'workflow_dispatch'
+        run: tests/run rust"
+  # No cache action and no sccache, as the Linux job.
+  if grep -nE 'actions/cache|sccache' <<<"$block"; then echo "the macOS Rust job caches" >&2; return 1; fi
 }
 
 # A hung job ends long before GitHub's 6-hour default, and one that runs bats outlives tests/run's
@@ -2507,7 +2769,7 @@ YAML
   for k in '--shard 0/3' '--shard 4/3' '--shard 1/0' '--shard 1/3x' '--list' '--shard' '--shard 1/3 --list x'; do
     # shellcheck disable=SC2086 # each form splits into its words
     run -2 --separate-stderr "$REPO_ROOT/tests/run" bats $k
-    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+    assert_equal "$stderr" "run: usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   done
   run -2 --separate-stderr "$REPO_ROOT/tests/run" toolkits --shard 1/3
   for k in '' 0 3x '3 4' 'update x' 'update 1 2'; do
@@ -2596,6 +2858,8 @@ SH
   assert_contains "$output" "ok tests/repo.bats ("
   assert_contains "$output" "bats: 1 tests passed; 0 of 1 files failed"
   assert_equal "$(cat "$STUB_CALLS/bats-ran")" repo.bats
+  # Its directory of the files' output is gone once it exits.
+  assert_equal "$(ls -A "$TMPDIR")" ""
 }
 
 # A skipped test counts as passed, and its line is named after the file lines, since a file's ok
@@ -2771,7 +3035,7 @@ changed_rebase() {
     run -2 --separate-stderr "$copy/tests/run" bats --changed $k
   done
   run -2 --separate-stderr "$copy/tests/run" bats --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -2 --separate-stderr "$copy/tests/run" bats --shard 1/3 --changed
   run -1 --separate-stderr "$copy/tests/run" bats --changed --list
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run bats --changed <base>)"
@@ -2921,7 +3185,7 @@ shellcheck_checkout() {
     run -2 --separate-stderr "$copy/tests/run" shellcheck $k
   done
   run -2 --separate-stderr "$copy/tests/run" shellcheck --changed x/y
-  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits]"
+  assert_equal "$stderr" "run: --changed: no commit x/y; usage: tests/run [shellcheck [--changed [<base>] [--list]]|bats [--shard <k>/<n> [--list]|--changed [<base>] [--list]]|toolkits|rust [--changed [<base>] [--list]]]"
   run -1 --separate-stderr "$copy/tests/run" shellcheck --changed
   assert_equal "$stderr" "run: no origin/dev to compare with in $copy: fetch it, or name a base (tests/run shellcheck --changed <base>)"
   [[ ! -e $STUB_CALLS/shellcheck.log ]]
@@ -2930,7 +3194,7 @@ shellcheck_checkout() {
 # tests/run in a checkout of its own, whose bats files are quick.bats, timed above what it takes,
 # and three that sleep 3 s: slow.bats, timed at 1 s, other.bats, timed only on the other platform,
 # and untimed.bats, which the timings lack.
-@test "tests/run names each bats file over 1.5 times and TESTS_SLOWER_BY seconds more than its timing on this platform, annotated under GitHub Actions, and never fails for it" {
+@test "tests/run names each bats file over 1.5 times and TESTS_SLOWER_BY seconds more than its timing on this platform, advising a refresh only of the committed timings, annotated under GitHub Actions, and never fails for it" {
   local copy=$BATS_TEST_TMPDIR/copy name timings slow
   unset TEAM_HOME GITHUB_ACTIONS TESTS_TIMINGS TESTS_SLOWER_BY
   mkdir -p "$copy/tests/vendor"
@@ -2943,7 +3207,7 @@ shellcheck_checkout() {
   timings=$'# timings\nfile\tlinux\tmacos\ntests/quick.bats\t2\t2\ntests/slow.bats\t1\t1\n'
   if [[ $(uname -s) == Darwin ]]; then timings+=$'tests/other.bats\t1\t\n'; else timings+=$'tests/other.bats\t\t1\n'; fi
   printf '%s' "$timings" >"$copy/tests/timings.tsv"
-  slow='tests/run: tests/slow\.bats took [3-9]s, 1s in tests/timings\.tsv; refresh the timings with tests/shards update, or find what slowed it'
+  slow='tests/run: tests/slow\.bats took [3-9]s, 1s in tests/timings\.tsv; find what slowed it, or refresh tests/timings\.tsv with tests/shards update if its seconds are stale'
 
   # Each line comes after the summary and before the wall time, and only under GitHub Actions as
   # an annotation too.
@@ -2952,13 +3216,14 @@ shellcheck_checkout() {
   [[ $(sed -n '/^bats: /,$p' <<<"$output" | sed '1d;$d') =~ ^${slow}$ ]] || { echo "not only slow.bats named after the summary" >&2; return 1; }
   [[ $output != *::warning* ]]
 
-  # A failing file fails the run, the warning beside it; TESTS_TIMINGS names the timings file.
+  # A failing file fails the run, the warning beside it; TESTS_TIMINGS names the timings file,
+  # as CI's shard-plan hands on the latest successful run's, which no refresh changes.
   mv "$copy/tests/timings.tsv" "$BATS_TEST_TMPDIR/timings.tsv"
   echo '@test "fails" { false; }' >"$copy/tests/fail.bats"
   GITHUB_ACTIONS=true TESTS_TIMINGS=$BATS_TEST_TMPDIR/timings.tsv TEAM_JOBS=5 TESTS_SLOWER_BY=1 \
     run -1 --separate-stderr "$copy/tests/run" bats --shard 1/1
   assert_contains "$output" "bats: 4 tests passed; 1 of 5 files failed"
-  slow=${slow//tests\/timings\\.tsv/${BATS_TEST_TMPDIR//./\\.}/timings\\.tsv}
+  slow="tests/run: tests/slow\\.bats took [3-9]s, 1s in ${BATS_TEST_TMPDIR//./\\.}/timings\\.tsv; find what slowed it"
   [[ $(sed -n '/^bats: /,$p' <<<"$output" | sed '1d;$d') =~ ^${slow}$'\n'::warning\ title=bats\ file\ slower::${slow}$ ]] ||
     { echo "not only slow.bats named and annotated after the summary" >&2; return 1; }
 
@@ -2998,6 +3263,8 @@ limits_checkout() {
 ok 2 after it"
   [[ $(grep '^not ok tests/hangs.bats' <<<"$output") =~ ^"not ok tests/hangs.bats ("[0-9]+"s)"$ ]]
   assert_contains "$output" "bats: 2 tests passed; 1 of 2 files failed"
+  # A failed run removes its directory of the files' output too.
+  assert_equal "$(ls -A "$TMPDIR")" ""
 }
 
 @test "tests/run stops a bats file still running after TESTS_FILE_MINUTES, printing its output so far and what held it" {
@@ -3309,14 +3576,52 @@ $forms:69: ps -U \$me --sort=pid -A -o pid=,args=: not bound by its owner (-u or
   assert_equal "$found" ""
 }
 
-# The shell code of bin/: each script, each sourced file (.sh) and each doctor check, but the
-# vendored code.
-bin_shell_files() {
-  local file
+# The clock seams a script of bin/ reads, an instant's TEAM_<name>_NOW or a day's TEAM_<name>_TODAY,
+# one per line, each once: clock_seams <directory>
+clock_seams() {
+  grep -rhoE 'TEAM_[A-Z0-9_]+_(NOW|TODAY)' "$1" | LC_ALL=C sort -u
+}
+
+# The clock seams of <directory> that sandbox, as this test's setup ran it, does not export, one
+# per line: unpinned_seams <directory>
+unpinned_seams() {
+  local seam
+  while IFS= read -r seam; do
+    [[ -n $seam ]] || continue
+    [[ $(declare -p "$seam" 2>/dev/null) == 'declare -x '* ]] || echo "$seam"
+  done < <(clock_seams "$1")
+}
+
+# A fixture date that the code under test compares with today passes until its day comes, then
+# fails on the base branch and every branch caught up with it at once: sandbox pins each
+# TEAM_*_NOW and TEAM_*_TODAY seam.
+@test "sandbox exports every TEAM_*_NOW and TEAM_*_TODAY clock seam a script of bin/ reads, and a seam it does not is named" {
+  local seams
+  seams=$(clock_seams "$REPO_ROOT/bin")
+  [[ $seams == *TEAM_CURRENT_NOW* && $seams == *TEAM_SWEEP_NOW* && $seams == *TEAM_COMPACT_HOLD_NOW* ]]
+  [[ $seams == *TEAM_QUEUE_TODAY* ]]
+  assert_equal "$(unpinned_seams "$REPO_ROOT/bin")" ""
+  # A new seam that sandbox does not export, and one it no longer exports, are each named.
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cp "$REPO_ROOT/bin/team-current" "$BATS_TEST_TMPDIR/bin/"
+  echo 'now=${TEAM_LATER_NOW:-$(date +%s)}' >"$BATS_TEST_TMPDIR/bin/team-later"
+  echo 'day=${TEAM_LATER_TODAY:-$(date -u +%F)}' >>"$BATS_TEST_TMPDIR/bin/team-later"
+  unset TEAM_CURRENT_NOW
+  assert_equal "$(unpinned_seams "$BATS_TEST_TMPDIR/bin")" $'TEAM_CURRENT_NOW\nTEAM_LATER_NOW\nTEAM_LATER_TODAY'
+}
+
+# The shell code the library's EXIT trap holds: each script, sourced file (.sh) and doctor check
+# of bin/, and each tracked script or .sh file elsewhere with a line that sources the library
+# (team.sh or temp-files.sh), as tests/run, tests/shards and servers/install do; never the vendored
+# code, nor a bats file or helper, which run under bats' own EXIT trap.
+library_shell_files() {
+  local file line
   while IFS= read -r file; do
-    [[ $file != bin/lib/vendor/* ]] || continue
-    if [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; }; then echo "$file"; fi
-  done < <(git -C "${REPO_ROOT:?}" ls-files bin)
+    [[ $file != bin/lib/vendor/* && $file != tests/vendor/* && -f $file ]] || continue
+    [[ $file == *.sh ]] || { IFS= read -r line <"$file" && [[ $line == '#!'*bash* ]]; } || continue
+    [[ $file == bin/* ]] || grep -qE '^[^#]*source .*/(team|temp-files)\.sh"' "$file" || continue
+    echo "$file"
+  done < <(git -C "${REPO_ROOT:?}" ls-files)
 }
 
 # Each line of <file>... that runs a bare mktemp, as <file>:<line>: a bare mktemp: <text>: mktemp
@@ -3337,8 +3642,8 @@ bare_mktemps() {
 # bin/lib/temp-files.sh owns the one EXIT trap of every shell that sources it, which removes the
 # files team_mktemp made, so a file made with a bare mktemp, or an EXIT trap set after the
 # library (or temp-files.sh) is sourced, would leave a file when a signal ends the script.
-@test "every script under bin/ makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
-  local file upto found
+@test "every script under bin/ and every one that sources the library makes its temporary files with team_mktemp and sets its exit action with team_exit_trap" {
+  local file upto found files
   cd "$REPO_ROOT"
   # An EXIT trap before the line that sources the library is the one it takes as the exit action.
   found=$(while IFS= read -r file; do
@@ -3349,11 +3654,16 @@ bare_mktemps() {
       /^[[:space:]]*#/ { next }
       FNR > upto && /(^|[;&|({[:space:]])trap( [^#]*)? (EXIT|0)([;)[:space:]]|$)/ { print file ":" FNR ": an EXIT trap: " $0 }
     ' "$file"
-  done < <(bin_shell_files))
+  done < <(library_shell_files))
   assert_equal "$found" ""
-  # The walk reads the scripts it holds to.
-  bin_shell_files | grep -qx bin/team-merge
-  bin_shell_files | grep -qx bin/lib/threads.sh
+  # The walk reads the scripts it holds to, and none that never sources the library outside bin/.
+  files=$(library_shell_files)
+  grep -qx bin/team-merge <<<"$files"
+  grep -qx bin/lib/threads.sh <<<"$files"
+  grep -qx tests/run <<<"$files"
+  grep -qx tests/shards <<<"$files"
+  grep -qx servers/install <<<"$files"
+  assert_equal "$(grep -E '^tests/merge-queue-drill$|\.(bats|bash)$' <<<"$files")" ""
 }
 
 @test "the bare-mktemp check finds mktemp as a command word in each form a script may run it, and leaves a name, a text and a case pattern" {
@@ -3538,7 +3848,7 @@ $planted:28: rm -rf \"\${x:-}\""
 
 # tests/shards update in a checkout of its own, on a gh stub whose CI run 4242 has two
 # test-shards jobs and two jobs of other names, the test job's log holding a bats line too, over
-# timings whose macOS seconds it keeps, since CI runs no macOS job; then with --to, and on a
+# timings whose macOS seconds it keeps, since CI runs no bats on macOS; then with --to, and on a
 # checkout with more files than the run timed.
 @test "tests/shards update writes one row per file from the shard jobs' logs, its Linux seconds, and its macOS ones kept from the timings, else empty, to --to's file if given, and keeps the timings from a run that timed under half the files" {
   local copy=$BATS_TEST_TMPDIR/copy
@@ -3567,7 +3877,7 @@ SH
   run -0 --separate-stderr "$copy/tests/shards" update
   assert_equal "$output" "tests/shards: wrote tests/timings.tsv from CI run 4242"
   local header="# The seconds each bats file took on Linux in CI run 4242 (head abcdef1, 2026-10-31T12:00:00Z),
-# and on macOS as the timings before it had them, since CI runs no macOS job; tests/shards update rewrites it."
+# and on macOS as the timings before it had them, since CI runs no bats on macOS; tests/shards update rewrites it."
   assert_equal "$(cat "$copy/tests/timings.tsv")" "$header
 $(printf 'file\tlinux\tmacos\ntests/a.bats\t12\t30\ntests/b.bats\t7\t15\ntests/c.bats\t3\t')"
   # Only the shard jobs' logs are read.
@@ -3639,8 +3949,8 @@ SH
 }
 
 # The timings are data tests/shards reads: each row names a bats file that exists, with whole
-# seconds on Linux and on macOS whole seconds or none (a file CI timed only since it ran no macOS
-# job, which tests/shards weighs there by its bytes), so a removed file takes its row with it.
+# seconds on Linux and on macOS whole seconds or none (a file CI timed only since it ran no bats
+# on macOS, which tests/shards weighs there by its bytes), so a removed file takes its row with it.
 @test "tests/timings.tsv names only bats files that exist, each with its Linux seconds and its macOS ones or none" {
   local file linux macos rows=0
   while IFS=$'\t' read -r file linux macos; do
@@ -3770,6 +4080,17 @@ briefs_without_gotchas() {
   assert_equal "$output" "$(sed -n 's/^id=//p' "$file") $(sed -n 's/^slug=//p' "$file")"
   patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
   for path in bin/lib/review-app bin/team-review-check; do
+    grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
+  done
+}
+
+# The assistant's read session reads production, so its launcher, its settings and its role
+# prompt come back for Daniel's per-head word as the assistant's own do.
+@test "the assistant's read session's launcher, settings and role prompt are guardrails" {
+  local path patterns
+  patterns=$(sed -n 's/^guardrails@own //p' "$REPO_ROOT/bin/lib/guarded")
+  for path in bin/claude-assistant-read assistant-read.settings.json roles/assistant-read.md; do
+    [[ -e $REPO_ROOT/$path ]] || { echo "$path is missing" >&2; return 1; }
     grep -Eiqx -f <(printf '%s\n' "$patterns") <<<"$path" || { echo "bin/lib/guarded holds no guardrails@own line for $path" >&2; return 1; }
   done
 }

@@ -42,15 +42,15 @@ The scripts depend on the team home holding:
 - Arch Linux or macOS.
 - Bash 5, jq and Python 3.11 or later.
 - Claude Code, and the other tools `bin/lib/tools.lock` pins (`team-doctor` checks each one and prints its install command).
-- Docker with Compose, for `team-stack`, which runs a project's Docker stacks for its tasks (`sops/docker.md`), and for the toolkit tests, which also need Node.js and Google Chrome or Chromium (the frontend toolkit's, run headless).
+- Docker with Compose, for `team-stack`, which runs a project's Docker stacks for its tasks (`sops/docker.md`), and for the toolkit tests, which also need Node.js and Google Chrome or Chromium (the frontend toolkit's, run headless), and whose prototyping host tests run each of Playwright's pinned browsers that `toolkits/frontend/scripts/proto install` has fetched.
 
 ## Tests
 
-`tests/run` runs shellcheck on every shell script, the bats suite (bats-core is vendored) and the toolkit tests.
-`tests/run shellcheck`, `tests/run bats` and `tests/run toolkits` run one part each.
+`tests/run` runs shellcheck on every shell script, the bats suite (bats-core is vendored), the toolkit tests and the Rust check of the Cargo workspace.
+`tests/run shellcheck`, `tests/run bats`, `tests/run toolkits` and `tests/run rust` run one part each.
 `tests/run bats --changed` runs only the bats files reached by the changes since `origin/dev`, committed or not, and `--list` after it prints them and runs none.
 `tests/run shellcheck --changed` checks only the shell scripts those changes touch and the scripts that source them, and `--list` after it prints them and checks none.
-All but `tests/run shellcheck` and a `--list` wait their turn for the machine's heavy-run lock (`bin/team-heavy`), so two suites never overlap.
+All but `tests/run shellcheck`, `tests/run rust` and a `--list` wait their turn for the machine's heavy-run lock (`bin/team-heavy`), so two suites never overlap.
 The suite runs the real scripts in a sandbox with a temporary home, stubs for every outside service and a team home of fixtures, so it needs no records and reaches no real service.
 
 ## License

@@ -8,12 +8,15 @@ Usage: python3 -I command_text.py                  (the command on stdin; prints
 bin/lib/command_rules.py, the rule table bin/hooks/command-guard runs, imports call_commands,
 each simple command a call runs (code_parts, blank_heredocs and commands, the walk, together),
 from it, with heads and the other readings of where a command's name may stand, as
-bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does, and call_redirections, each
-redirection it makes in the same texts; its kill rows, kill_rules.py, import command_name,
-heads_behind and short_cluster, and its delete rows, delete_rules.py, those with the walk, simple_commands,
-plain_sequence (a call's commands in the order they run, below), find's FIND_EXEC, SHELLS, the
-option readers and unquoted; outbound.py imports commands and the
-option readers long_options and short_cluster, and team-tokens without_heredocs.
+bin/lib/fence_rules.py, bin/hooks/lease-fence's reader, does; its kill rows, kill_rules.py,
+import command_name, heads_behind and short_cluster, and its delete rows, delete_rules.py, those
+with the walk, simple_commands, plain_sequence (a call's commands in the order they run, below),
+places and top_pipelines (where each command stands, below) with SAME, expanded_scripts (the
+heredoc bodies, here-strings and piped text a shell reads as its script after the shell running
+the command expanded them), expanded_strings (the command strings code_parts adds that it
+expanded first) and expanding_words (the words it expands), find's FIND_EXEC, SHELLS, the option
+readers and unquoted; outbound.py imports commands and the option readers long_options and
+short_cluster, and team-tokens without_heredocs.
 bin/lib/session_records.py, bin/hooks/session-records-guard's table, imports call_commands,
 command_name, the option readers long_options and short_cluster, and redirection_targets, each
 file the call redirects from or to over the same parts, which --redirections prints as one JSON
@@ -124,6 +127,17 @@ of its pipeline, or nothing at the end), when every pipeline of it is at its top
 its segments one simple command, none holds a group, substitution, compound command or function,
 none is sent to the background or run after ! or coproc, and no command of it runs a string, a
 find -exec, a script file or a sourced file; else None.
+places(text) maps each Command of the walk but a script file's or a sourced file's to each
+Place it stands at: the text it is a simple
+command of (the text walked, or a command string), the pipeline at that text's top level holding
+it, and for a string whether the shell itself runs it (SAME: eval's, trap's action, with no
+wrapper of its own but a bare command or builtin and not run by find -exec) or another process does
+(CHILD), with the Place of the command that runs it; what find -exec runs stands where find does.
+top_pipelines(text) gives each pipeline at the text's top level, in order, with its separator
+after it and its Command when the shell runs that command itself, in its place: its one segment
+one simple command, starting with none of the reserved words LEADING holds and defining no
+function, and not sent to the background, so neither piped nor a group, an if, while or until
+command, a function's definition, ! or coproc, nor a background job; a [[ ... ]] test does get one.
 A command string is never walked again when it is the text being walked, and one nested deeper
 than 20 strings raises, so a guard that walks it refuses.
 Not walked: a command word built by a substitution ($(command -v curl)), a command given as one
@@ -190,7 +204,7 @@ class Heredoc:
 @dataclass
 class Reading:
     """A command's pipelines (each its parent's pipeline and segment, or None, and its segments'
-    spans), its closed heredocs, its here-strings (each its pipeline, its segment and its word),
+    spans), its closed heredocs, its here-strings (each its pipeline, its segment, its word and that word as written),
     where its reading ended: past the ) that closes a group's reading, else the text's end, and
     each subscript read as one bracket pair in an assignment's place, where its word starts mapped
     to just past its ]."""
@@ -500,9 +514,10 @@ def read_command(text, start=0, group=False):
                 pop(i + 1)
             i += 1
         elif text.startswith("<<<", i):
-            word, _, end = _word(text, _past_blanks(text, i + 3))
+            begin = _past_blanks(text, i + 3)
+            word, _, end = _word(text, begin)
             if word is not None:
-                strings.append((*here(), word))
+                strings.append((*here(), word, text[begin:end]))
             i = max(end, i + 3)
         elif text.startswith("<<", i):
             tabs = text.startswith("<<-", i)
@@ -677,12 +692,9 @@ def code_parts(command):
     return _code_parts(command, 0)
 
 
-def _code_parts(command, depth):
-    """code_parts of a command, or of a script written depth scripts deep in one."""
-    if depth > DEPTH:
-        raise ValueError(f"a written script nested deeper than {DEPTH}")
-    reading = read_command(command)
-    bodies = {h.body[0]: h.end for h in reading.heredocs}
+def _shell_segments(command, reading, bodies):
+    """Of each segment of each pipeline of the command's reading, whether it runs a shell, and
+    whether that shell may read its script from stdin, as two lists of lists."""
     shells = [
         [_runs_shell(command, s, e, bodies, reading.subscripts) for s, e in segments]
         for _, segments in reading.pipelines
@@ -700,6 +712,117 @@ def _code_parts(command, depth):
             shells[parent[0]][parent[1]] = True
         if parent is not None and any(script):
             scripts[parent[0]][parent[1]] = True
+    return shells, scripts
+
+
+def _piped(reading, shells, scripts):
+    """Each segment piped into a shell, as (its pipeline, its start, its end, whether that shell
+    may read its script from stdin), once for each shell it is piped into."""
+    for pipeline, ((_, segments), shell, script) in enumerate(zip(reading.pipelines, shells, scripts)):
+        for k in range(1, len(segments)):
+            if shell[k]:
+                for s, e in segments[:k]:
+                    yield pipeline, s, e, script[k]
+
+
+def _piped_texts(command, s, e, script, bodies, subscripts):
+    """What code_parts adds of the segment from s to e, piped into a shell: the text of each of its
+    quoted strings and of each of its simple commands' words after the first, quotes dropped, and,
+    when the shell may read its script from stdin, what its echo and printf commands print."""
+    piped = command[s:e]
+    added = [single or double for single, double in QUOTED.findall(piped)]
+    for simple in SIMPLE.split(piped.replace("'", "").replace('"', "")):
+        added += simple.split(None, 1)[1:]
+    # What echo or printf prints into the pipe, decoded, as _writes reads it for a file.
+    if script:
+        for words in _segment_commands(command, s, e, bodies, subscripts):
+            added += list(_printed(words))
+    return added
+
+
+def _expands(written, start=0, end=None):
+    """Whether text as written holds a $ or a backtick the shell expands: one outside single
+    quotes and not escaped; with start and end, one from start to end, the text before read for
+    its quotes."""
+    quote, i, end = None, 0, len(written) if end is None else end
+    while i < end:
+        c = written[i]
+        if c == "\\":
+            i += 2
+            continue
+        if quote is None and c == "'":
+            close = written.find("'", i + 1)
+            i = len(written) if close < 0 else close + 1
+            continue
+        if c == '"':
+            quote = None if quote else '"'
+        elif c in "$`" and i >= start:
+            return True
+        i += 1
+    return False
+
+
+def expanded_scripts(command):
+    """The texts a shell the command runs reads as its script after the shell running the command
+    expanded them, as code_parts adds them: the body of a heredoc under an unquoted marker; the
+    word of a here-string that holds, as written, a $ or a backtick outside single quotes; and what
+    code_parts adds of a segment piped into a shell whose text holds one so."""
+    reading = read_command(command)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    shells, scripts = _shell_segments(command, reading, bodies)
+    out = [
+        command[heredoc.body[0] : heredoc.body[1]]
+        for heredoc in reading.heredocs
+        if not heredoc.quoted and _fed(reading, shells, heredoc.pipeline, heredoc.segment)
+    ]
+    out += [
+        word
+        for pipeline, segment, word, written in reading.strings
+        if _fed(reading, shells, pipeline, segment) and _expands(written)
+    ]
+    for _, s, e, script in _piped(reading, shells, scripts):
+        if _expands(command[s:e]):
+            out += _piped_texts(command, s, e, script, bodies, reading.subscripts)
+    return [text for text in out if text]
+
+
+def expanded_strings(command):
+    """The command strings code_parts adds of the command (a shell's -c, eval's and the rest
+    RUNS_STRING finds) that the shell running the command expands first: those whose word as
+    written holds a $ or a backtick outside single quotes, read with the quotes of its line before
+    it, so a string inside a double-quoted one is expanded too."""
+    out = []
+    for match in RUNS_STRING.finditer(command):
+        start = match.end()
+        start += len(dashes.group()) if (dashes := re.match(r"--[ \t]+", command[start:])) else 0
+        line = command.rfind("\n", 0, match.start()) + 1
+        stop = command.find("\n", start)
+        stop = len(command) if stop < 0 else stop
+        end = min(_command_word(command, start, stop)[1], stop)
+        if _expands(command[line:end], start - line):
+            out.append(OPENING.sub("", command[match.end() : stop]))
+    return [text for text in out if text]
+
+
+def expanding_words(command):
+    """The words of the command's simple commands, in every pipeline, as simple_commands reads them,
+    whose text as written holds a $ or a backtick the shell expands (_expands)."""
+    reading = read_command(command)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    found = []
+    for _, segments in reading.pipelines:
+        for start, end in segments:
+            _segment_commands(command, start, end, bodies, reading.subscripts, expanding=found)
+    return found
+
+
+def _code_parts(command, depth):
+    """code_parts of a command, or of a script written depth scripts deep in one."""
+    if depth > DEPTH:
+        raise ValueError(f"a written script nested deeper than {DEPTH}")
+    reading = read_command(command)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    shells, scripts = _shell_segments(command, reading, bodies)
     out, start = [], 0
     for heredoc in reading.heredocs:
         lines = command[heredoc.body[0] : heredoc.body[1]].split("\n")[:-1]
@@ -716,23 +839,9 @@ def _code_parts(command, depth):
     # word character: bash -c "bash -c 'x'" adds both strings. Each is added to its line's end
     # only: its later lines already start lines of the text.
     added = [OPENING.sub("", text[match.end() :].split("\n", 1)[0]) for match in RUNS_STRING.finditer(text)]
-    added += [word for pipeline, segment, word in reading.strings if _fed(reading, shells, pipeline, segment)]
-    for (_, segments), shell, script in zip(reading.pipelines, shells, scripts):
-        for k in range(1, len(segments)):
-            if not shell[k]:
-                continue
-            for s, e in segments[:k]:
-                piped = command[s:e]
-                added += [single or double for single, double in QUOTED.findall(piped)]
-                for simple in SIMPLE.split(piped.replace("'", "").replace('"', "")):
-                    words = simple.split(None, 1)
-                    added += words[1:]
-                # What echo or printf prints into the pipe, decoded, as _writes reads it for a file,
-                # when the shell may read it as its script.
-                if not script[k]:
-                    continue
-                for words in _segment_commands(command, s, e, bodies, reading.subscripts):
-                    added += list(_printed(words))
+    added += [word for pipeline, segment, word, _ in reading.strings if _fed(reading, shells, pipeline, segment)]
+    for _, s, e, script in _piped(reading, shells, scripts):
+        added += _piped_texts(command, s, e, script, bodies, reading.subscripts)
     parts = [text] + [inner for inner in added if inner]
     return parts + _scripts(command, reading, parts, depth)
 
@@ -822,7 +931,7 @@ def _writes(text, reading=None):
         lines = text[heredoc.body[0] : heredoc.body[1]].split("\n")[:-1]
         body = "".join(line + "\n" for line in lines)
         pieces += [(file, (body,)) for file in reached(heredoc.pipeline, heredoc.segment)]
-    for pipeline, segment, word in reading.strings:
+    for pipeline, segment, word, _ in reading.strings:
         pieces += [(file, (word + "\n",)) for file in reached(pipeline, segment)]
     for pipeline, segments in enumerate(simple):
         for segment, found in enumerate(segments):
@@ -1191,12 +1300,13 @@ def _brace_words(raw, word):
     return out
 
 
-def _segment_commands(text, start, end, bodies, subscripts, redirects=None):
+def _segment_commands(text, start, end, bodies, subscripts, redirects=None, expanding=None):
     """The simple commands of the segment from start to end, each its words, as simple_commands
     says; bodies maps where each heredoc body starts to where its closing line ends, and subscripts
     where each subscript read_command read as one bracket pair starts its word to just past its ].
     With a redirects list, each redirection with a word as its target is appended to it as its
-    operator (the fd before it included) and that word."""
+    operator (the fd before it included) and that word; with an expanding list, each word whose
+    text as written holds a $ or a backtick the shell expands (_expands), as _command_word reads it."""
     commands, words, i = [], [], start
 
     def close():
@@ -1246,6 +1356,8 @@ def _segment_commands(text, start, end, bodies, subscripts, redirects=None):
             i = after
         else:
             word, j = _command_word(text, i, end)
+            if expanding is not None and _expands(text[i:j]):
+                expanding.append(word)
             if ASSIGNMENT.match(word) and all(w in LEADING or ASSIGNMENT.match(w) for w in words):
                 # Bash expands no brace in an assignment before a command's name.
                 words.append(word)
@@ -1264,11 +1376,70 @@ def simple_commands(command):
     bodies and the reserved words it starts with left out. A word holding a substitution keeps its text, $ or backtick and all; a quote that never
     closes ends its word and the rest of its segment. A segment holding a compound command yields
     its words too, split at its separators, beside the group's own commands."""
+    for _, words in _rooted(command):
+        yield words
+
+
+def _rooted(command):
+    """simple_commands, each with the index of the pipeline at the command's top level it stands
+    in: its own, or the one holding the group, substitution or compound command it is in."""
     reading = read_command(command)
     bodies = {h.body[0]: h.end for h in reading.heredocs}
-    for _, segments in reading.pipelines:
+    roots = []
+    for k, (parent, segments) in enumerate(reading.pipelines):
+        # A pipeline's parent comes before it, so its top-level pipeline is known.
+        roots.append(k if parent is None else roots[parent[0]])
         for start, end in segments:
-            yield from _segment_commands(command, start, end, bodies, reading.subscripts)
+            for words in _segment_commands(command, start, end, bodies, reading.subscripts):
+                yield roots[k], words
+
+
+# A function's definition, by function or by its name and (), which runs nothing where it stands.
+FUNCTION = re.compile(r"function(?![^\s;&|()<>])|[^\s;&|()<>]+[ \t]*\([ \t]*\)")
+
+
+def top_pipelines(text):
+    """Each pipeline at the text's top level that holds more than blanks or a comment, in order,
+    as (its index, as Place.root gives it; its Command when the shell itself runs it in its place,
+    else None; the separator after it: "&&", "||", "&" when it is sent to the background, else
+    ";"). Its Command is its one segment's when that segment is one simple command, starts with none of
+    the reserved words LEADING holds and defines no function (name() or function), and it is not sent to the
+    background: so it is not piped (a pipeline of more than one command runs each in a subshell),
+    nor a group, an if, while or until command, a function's definition, ! or coproc, nor a
+    background job; a [[ ... ]] test does get one."""
+    reading = read_command(text)
+    bodies = {h.body[0]: h.end for h in reading.heredocs}
+    found = []
+    for k, (parent, segments) in enumerate(reading.pipelines):
+        written = text[segments[0][0] : segments[-1][1]].strip() if segments else ""
+        if parent is not None or not written or (len(segments) == 1 and written.startswith("#")):
+            continue
+        end = segments[-1][1]
+        if text.startswith(("&&", "||"), end):
+            separator = text[end : end + 2]
+        else:
+            separator = "&" if text.startswith("&", end) else ";"
+        command = None
+        if (
+            len(segments) == 1
+            and separator != "&"
+            and written.split(None, 1)[0] not in LEADING
+            and not FUNCTION.match(written)
+        ):
+            simple = _segment_commands(text, *segments[0], bodies, reading.subscripts)
+            if len(simple) == 1:
+                command = next(_walk(simple[0], text, 0, (), DIRECT))
+        found.append((k, command, separator))
+    return tuple(found)
+
+
+def places(text):
+    """Each Command commands(text) yields but a script file's or a sourced file's, mapped to the
+    Places it stands at, as a dict."""
+    found = {}
+    for _ in _commands(text, 0, (), DIRECT, None, found):
+        pass
+    return {command: tuple(at) for command, at in found.items()}
 
 
 # An assignment, as a command's word, of a variable or of an array's element (X[0]=1, its
@@ -1347,6 +1518,25 @@ SCRIPT, SOURCE = "script", "source"
 DEPTH = 20
 # A shell's long options that take a value.
 SHELL_VALUE_LONG = frozenset(("--rcfile", "--init-file"))
+
+
+# How the shell running a command string stands to the one running the command that runs it: the
+# same shell (eval, trap's action), or another process (a shell's -c, su's, env -S and the rest),
+# which holds only the variables exported to it.
+SAME, CHILD = "same", "child"
+
+
+@dataclass(frozen=True)
+class Place:
+    """Where a Command of the walk stands: the text it is a simple command of, the index of the
+    pipeline at that text's top level it stands in (top_pipelines'), and for a command string the
+    shell that runs it (SAME or CHILD) and the Place of the command that runs it (around), both
+    None in the text walked."""
+
+    text: str
+    root: int
+    shell: str | None = None
+    around: "Place | None" = None
 
 
 @dataclass(frozen=True)
@@ -1558,17 +1748,22 @@ def _trap_action(args):
     return args[0] if len(args) > 1 and args[0] != "-" else None
 
 
-def _walk(words, text, depth, outer, reached, texts=None):
+def _walk(words, text, depth, outer, reached, texts=None, places=None, place=None):
     """The Commands of one simple command's words, of the text being walked at depth, behind the
     outer wrappers: the command itself, then what it runs, as commands says; with a texts list,
-    each string it walks is appended to it (_commands)."""
+    each string it walks is appended to it (_commands), and with a places dict, each Command but a
+    script file's or a sourced file's is mapped to each Place it stands at: place for the command and what find -exec runs, a Place
+    in its string for a command of a string it runs."""
     assignments, words, strings, wrappers = _command(list(words))
     behind = outer + tuple(wrappers)
-    yield Command(tuple(assignments), tuple(words), behind, reached)
+    command = Command(tuple(assignments), tuple(words), behind, reached)
+    if places is not None:
+        places.setdefault(command, []).append(place)
+    yield command
 
-    def run(string, how, ran):
+    def run(string, how, ran, shell=CHILD):
         if string is not None and string != text:
-            yield from _commands(string, depth + 1, ran, how, texts)
+            yield from _commands(string, depth + 1, ran, how, texts, places, place, shell)
 
     for how, string in strings:
         yield from run(string, how, behind)
@@ -1576,9 +1771,13 @@ def _walk(words, text, depth, outer, reached, texts=None):
         return
     name, args = os.path.basename(words[0]), words[1:]
     here = behind + (tuple(words),)
+    # eval and trap's action run in the shell itself, but not behind a wrapper of their own that is
+    # a program (env eval), nor run by find -exec.
+    plain = all(tuple(wrapper) in (("command",), ("builtin",)) for wrapper in wrappers)
+    own = SAME if plain and reached != FIND else CHILD
     if name == "find":
         for found in _exec_commands(args):
-            yield from _walk(found, text, depth, here, FIND, texts)
+            yield from _walk(found, text, depth, here, FIND, texts, places, place)
     elif name in SHELLS:
         string = _shell_string(args)
         script = None if string is not None else _shell_script(args)
@@ -1594,20 +1793,23 @@ def _walk(words, text, depth, outer, reached, texts=None):
     elif name in STRING_OPTIONS:
         yield from run(_option_string(args, *STRING_OPTIONS[name]), STRING, here)
     elif name == "eval":
-        yield from run(" ".join(args), STRING, here)
+        yield from run(" ".join(args), STRING, here, own)
     elif name == "trap":
-        yield from run(_trap_action(args), STRING, here)
+        yield from run(_trap_action(args), STRING, here, own)
 
 
-def _commands(text, depth, outer, reached, texts=None):
+def _commands(text, depth, outer, reached, texts=None, places=None, around=None, shell=None):
     """The Commands the text runs, as commands says; with a texts list, the text and each string
-    the walk walks are appended to it, in the order walked."""
+    the walk walks are appended to it, in the order walked; with a places dict, each Command but a
+    script file's or a sourced file's is mapped to each Place it stands at in the text, run by the shell (SAME or CHILD) of the command
+    at around, or the walk's own text when around is None."""
     if depth > DEPTH:
         raise ValueError(f"a command string nested deeper than {DEPTH}")
     if texts is not None:
         texts.append(text)
-    for words in simple_commands(text):
-        yield from _walk(words, text, depth, outer, reached, texts)
+    for root, words in _rooted(text):
+        place = Place(text, root, shell, around) if places is not None else None
+        yield from _walk(words, text, depth, outer, reached, texts, places, place)
 
 
 def commands(text):
@@ -1661,29 +1863,6 @@ def call_commands(command):
     walked = [found for part in code_parts(command) for found in commands(blank_heredocs(part))]
     walked += commands(command)
     return walked
-
-
-def redirections(text):
-    """Each redirection of the text with a word as its target, in every pipeline segment of it,
-    those in its groups and substitutions too, as its operator (the fd before it included) and
-    that word, its quotes removed (_segment_commands' redirects)."""
-    reading = read_command(text)
-    bodies = {h.body[0]: h.end for h in reading.heredocs}
-    found = []
-    for _, segments in reading.pipelines:
-        for start, end in segments:
-            _segment_commands(text, start, end, bodies, reading.subscripts, found)
-    return found
-
-
-def call_redirections(command):
-    """Each redirection a Bash call's command makes, for a guard that reads every one, from the
-    same texts call_commands walks: each of its code parts, each heredoc a part still opens
-    blanked, then the command's own text, so a redirection in a string a shell, eval or a pipe
-    into a shell runs is read as one written plainly."""
-    return [found for part in code_parts(command) for found in redirections(blank_heredocs(part))] + redirections(
-        command
-    )
 
 
 # The redirections that open no file: a heredoc's and a here-string's, whose word is text.

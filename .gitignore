@@ -22,3 +22,6 @@ toolkits/*/evals/results/
 
 # Python's bytecode, which a test that loads a script of bin/lib as a module would leave
 __pycache__/
+
+# The Rust builds of the workspace (cargo)
+/target/

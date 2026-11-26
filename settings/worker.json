@@ -464,7 +464,12 @@
       "Bash(*:9222*)",
       "Bash(*port 9222*)",
       "Bash(*port=9222*)",
-      "Bash(*CHROME_DEVTOOLS_AXI_BROWSER_URL*)"
+      "Bash(*CHROME_DEVTOOLS_AXI_BROWSER_URL*)",
+      "Bash(*agent-team-proto*)",
+      "Bash(*agent-team/proto*)",
+      "Bash(*host.sock*)",
+      "Read(//run/user/*/agent-team-proto/**)",
+      "Read(~/.local/state/agent-team/proto/**)"
     ]
   },
   "autoMode": {

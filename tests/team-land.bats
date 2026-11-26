@@ -81,6 +81,15 @@ trial_checks() {
   answer "$look" "checks-${sha:0:7}" "$(jq -cs '{total_count: length, check_runs: .}' <<<"$*")"
 }
 
+# trial_runs <look> <trial sha> <id>:<name>:<status>...: that trial commit's workflow runs from
+# <look> on, as gh api lists them.
+trial_runs() {
+  local look=$1 sha=$2
+  shift 2
+  answer "$look" "runs-${sha:0:7}" "$(jq -cn '{total_count: ($ARGS.positional | length), workflow_runs: [$ARGS.positional[]
+    | split(":") | {id: (.[0] | tonumber), name: .[1], status: .[2], conclusion: null, updated_at: "2026-11-24T10:00:00Z"}]}' --args "$@")"
+}
+
 # job <job id> <step>=<conclusion>...: the Actions job as gh api shows it, on a runner.
 job() {
   local id=$1
@@ -92,7 +101,8 @@ job() {
 
 # gh answers team-land's read of the PR and team-ci-wait's read of its entry (one answer, pr), an
 # enqueue (enqueue, its variables kept in $GH_DIR/enqueues), a dequeue (dequeue, its variables kept
-# in $GH_DIR/dequeues), a trial commit's check runs, no status and no workflow run of it, a job,
+# in $GH_DIR/dequeues), a trial commit's check runs, no status, its workflow runs (none, unless
+# trial_runs planned some), a job,
 # team-ci-wait's read of dev's rules (branch, rules and ruleset-<id>: setup's unprotected dev, else
 # planned by rules_require; with none planned the read fails, and team-ci-wait holds the registry's
 # checks alone), and a status POST, each from the latest answer at or before the current look;
@@ -140,7 +150,11 @@ case "$1 $2" in
     what=checks-${sha:0:7}
     ;;
   "api repos/owner/proj/commits/"*"/status?per_page=100") answer '{"state": "pending", "statuses": []}' ;;
-  "api repos/owner/proj/actions/runs?head_sha="*) answer '{"total_count": 0, "workflow_runs": []}' ;;
+  "api repos/owner/proj/actions/runs?head_sha="*)
+    sha=${2#*head_sha=} sha=${sha%%&*}
+    what=runs-${sha:0:7}
+    compgen -G "$GH_DIR/$what.*" >/dev/null || answer '{"total_count": 0, "workflow_runs": []}'
+    ;;
   "api repos/owner/proj/actions/runs?status=in_progress&per_page=1") answer '{"total_count": 0, "workflow_runs": []}' ;;
   "api repos/owner/proj/actions/jobs/"*) what=job-${2##*/} ;;
   "api repos/owner/proj/branches/dev") what=branch ;;
@@ -339,6 +353,28 @@ team-land: $url merged as 0e0e0e0
   assert_equal "$(ended_at)" 2
   assert_equal "$(jq -c '[.[0, 2], (.[3] | map(.name))]' <<<"$(end_json)")" \
     '["dequeued","failed checks; enqueuing a1b2c3d once more failed: Pull request is not mergeable",["test"]]'
+}
+
+# Conventioner's e2e on 2026-11-24: the roll-up job is listed nowhere while the shards it needs
+# wait for a runner, so the trial commit's checks end on infrastructure, never on the rules.
+@test "through the real team-ci-wait, a required roll-up not listed while its shards wait for runners is infrastructure: the PR stays in the queue and is enqueued once more" {
+  rules_require backend e2e
+  pr_at 0 OPEN
+  pr_at 1 OPEN "$t1"
+  trial_checks 1 "$t1" "$(check_run backend completed success 7001 97002)" "$(check_run "e2e shard 1/2" queued '' 7001 97011)"
+  trial_runs 1 "$t1" 7001:Test:queued
+  pr_at 12 OPEN '' RMQE_1 "failed checks"
+  pr_at 13 OPEN "$t2" RMQE_1 "failed checks"
+  trial_checks 13 "$t2" "$(check_run backend completed success 7003 97032)" "$(check_run e2e completed success 7003 97030)"
+  pr_at 20 MERGED '' RMQE_1 "failed checks"
+  TEAM_CI_WAIT_QUEUED_SECONDS=60 run_bin team-land "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(end_json)" "[\"merged\",\"$merge\",null,[]]"
+  assert_contains "$output" "  infrastructure: e2e was not reported on the trial commit while its workflow run 7001 (Test) is still queued there"
+  [[ $output != *"  rules: "* && $output != *"took $url out"* ]]
+  assert_equal "$(dequeues)" ""
+  assert_contains "$output" "team-land: only infrastructure failed on the trial commit: enqueued $url at a1b2c3d once more"
+  assert_equal "$(enqueues | wc -l)" 2
 }
 
 @test "a check dev's rules require that never reports on the trial commit takes the PR out of the queue at once, never enqueued again" {
@@ -607,6 +643,208 @@ SH
   assert_equal "$(dequeues)" ""
   # Without --task nothing is held: the landing alone, as the drill runs it.
   run_bin -2 team-land --task 14 "$url" "$head"
+}
+
+# holds_until <look> [<reason>]: team-merge --holds ends 75 with <reason> (default: GitHub has not
+# worked out the conflict) before look <look>, and 0 from it on.
+holds_until() {
+  poster team-merge ""
+  printf '%s\n' "${2:-GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute}" >"$GH_DIR/hold-reason"
+  stub_script team-merge <<SH
+if ((\$(cat "$GH_DIR/look") >= $1)); then exit 0; fi
+{
+  echo "team-merge: T14 cannot merge PR #5, so nothing changed:"
+  echo "  \$(cat "$GH_DIR/hold-reason")"
+} >&2
+exit 75
+SH
+}
+
+# thread_poster: stubs team-post, keeping each call's arguments and the text of the file it posts in
+# $GH_DIR/thread-posts.
+thread_poster() {
+  poster team-post 1001
+  stub_script team-post <<SH
+printf '%s\n' "\$*" >>"$GH_DIR/thread-posts"
+cat "\${@: -1}" >>"$GH_DIR/thread-posts"
+echo 1001
+SH
+}
+
+# The look log of PR 5, and the ledger's events of a kind, compact.
+land_log() {
+  cat "$HOME/.local/state/agent-team/merge/land/owner/proj/5.log" 2>/dev/null || true
+}
+kind_events() {
+  jq -c --arg kind "$1" 'select(.event == $kind) | del(.ts)' "$TEAM_HOME/ledger.jsonl" 2>/dev/null || true
+}
+
+@test "each look that did not post agent-review is logged with the trial commit, the step, the exit and the reason line" {
+  reason="GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
+  holds_until 3
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test completed success)"
+  pr_at 4 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(land_log | wc -l)" 3
+  assert_equal "$(land_log | cut -f 2-)" "$t1	hold	75	$reason
+$t1	hold	75	$reason
+$t1	hold	75	$reason"
+  [[ $(land_log | cut -f 1 | sort -u) =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z ]]
+  # Under the limit, nothing is said in the thread or the ledger.
+  [[ ! -e $GH_DIR/thread-posts ]]
+  assert_equal "$(kind_events trial-unmarked)$(kind_events trial-marked)" ""
+  # A post the poster cannot make now is logged as the post's, without --task too.
+  echo 0 >"$GH_DIR/look"
+  rm "$HOME/.local/state/agent-team/merge/land/owner/proj/5.log"
+  stub_script team-review-status <<SH
+if ((\$(cat "$GH_DIR/look") < 2)); then echo "team-review-status: GitHub cannot be read: gh api: error connecting to api.github.com" >&2; exit 75; fi
+SH
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(land_log | cut -f 2-)" "$t1	post	75	GitHub cannot be read: gh api: error connecting to api.github.com
+$t1	post	75	GitHub cannot be read: gh api: error connecting to api.github.com"
+}
+
+@test "the look logs are bounded when a run starts: the PR's to its last 1000 lines, and any untouched for 30 days removed" {
+  local land=$HOME/.local/state/agent-team/merge/land
+  mkdir -p "$land/owner/proj" "$land/owner/other"
+  seq 1200 | sed "s/^/2026-11-15T10:00:00Z\t$t1\thold\t75\tline /" >"$land/owner/proj/5.log"
+  echo old >"$land/owner/other/7.log"
+  touch -d '40 days ago' "$land/owner/other/7.log"
+  echo recent >"$land/owner/other/8.log"
+  touch -d '20 days ago' "$land/owner/other/8.log"
+  pr_at 0 MERGED
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(land_log | wc -l)" 1000
+  assert_equal "$(land_log | head -n 1 | cut -f 5)" "line 201"
+  assert_equal "$(land_log | tail -n 1 | cut -f 5)" "line 1200"
+  [[ ! -e $land/owner/other/7.log ]]
+  assert_equal "$(cat "$land/owner/other/8.log")" recent
+}
+
+@test "a trial commit unmarked for 10 minutes of looks with the same reason is said once in the thread and the ledger, its other checks green, and marked once it posts" {
+  reason="GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute"
+  # Unmarked at looks 0 to 21: 20 looks after the first make 10 minutes, at look 20.
+  holds_until 22
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test completed success)"
+  pr_at 23 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(land_log | wc -l)" 22
+  assert_equal "$(grep -c '^T14 --file ' "$GH_DIR/thread-posts")" 1
+  assert_contains "$(cat "$GH_DIR/thread-posts")" "PR $url has had no agent-review on its merge queue trial commit 5e5e5e5 for 10 minutes"
+  assert_contains "$(cat "$GH_DIR/thread-posts")" "$reason"
+  assert_contains "$(cat "$GH_DIR/thread-posts")" "Its other checks: every check passed on 5e5e5e5: test passed"
+  assert_contains "$(cat "$GH_DIR/thread-posts")" "team-land tries again at each look, and logs each in ~/.local/state/agent-team/merge/land/owner/proj/5.log."
+  assert_contains "$output" "team-land: PR $url has had no agent-review on its merge queue trial commit 5e5e5e5 for 10 minutes"
+  assert_equal "$(kind_events trial-unmarked | jq -c 'del(.since)')" \
+    "{\"task\":\"T14\",\"event\":\"trial-unmarked\",\"url\":\"$url\",\"head\":\"$head\",\"trial\":\"$t1\",\"reason\":\"$reason\",\"checks\":\"passed\"}"
+  assert_equal "$(kind_events trial-unmarked | jq -r .since)" "$(land_log | head -n 1 | cut -f 1)"
+  assert_equal "$(kind_events trial-marked)" "{\"task\":\"T14\",\"event\":\"trial-marked\",\"url\":\"$url\",\"head\":\"$head\",\"trial\":\"$t1\"}"
+  # The look at the other checks is team-ci-wait's, once, leaving agent-review out.
+  assert_equal "$(grep -c "check-runs" "$GH_DIR/calls")" 3
+}
+
+@test "a trial-unmarked ends with the trial-marked of the next trial commit posted on, when the queue rebuilt the entry, and a new trial commit unmarked is said again" {
+  holds_until 22
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test completed success)"
+  pr_at 22 OPEN "$t2"
+  trial_checks 22 "$t2" "$(check_run test in_progress)"
+  pr_at 24 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(kind_events trial-unmarked | jq -r '[.trial, .checks] | join(" ")')" "$t1 passed"
+  assert_equal "$(kind_events trial-marked | jq -r .trial)" "$t2"
+  assert_equal "$(posted_on)" "--merge-group $url $t2"
+  # The rebuilt entry's trial commit unmarked for 10 minutes of its own looks is said once more,
+  # its count started again at its first look, and marked once it posts.
+  echo 0 >"$GH_DIR/look"
+  rm "$GH_DIR/thread-posts" "$TEAM_HOME/ledger.jsonl" "$STUB_CALLS/team-review-status.log" "$GH_DIR"/pr.* "$GH_DIR"/checks-*
+  holds_until 46
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test completed success)"
+  pr_at 22 OPEN "$t2"
+  trial_checks 22 "$t2" "$(check_run test completed success)"
+  pr_at 47 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(grep -c '^T14 --file ' "$GH_DIR/thread-posts")" 2
+  assert_equal "$(kind_events trial-unmarked | jq -r '[.trial, .checks] | join(" ")')" "$t1 passed
+$t2 passed"
+  assert_equal "$(kind_events trial-marked | jq -r .trial)" "$t2"
+  assert_equal "$(posted_on)" "--merge-group $url $t2"
+}
+
+@test "once said with its checks unknown, a later look at a trial commit's checks GitHub cannot read takes one read, not team-ci-wait's grace" {
+  holds_until 30
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test in_progress)"
+  # From the alert's look on, GitHub answers no read of the trial commit's checks.
+  answer 20 "checks-${t1:0:7}" fail
+  pr_at 31 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(kind_events trial-unmarked | jq -r .checks)" unknown
+  # The alert's look keeps its grace, 4 looks of reads; each later look reads once, 30 s apart:
+  # looks 0 to 20 unmarked, then 25 to 29.
+  assert_equal "$(land_log | wc -l)" 26
+}
+
+@test "no alert before 10 minutes of looks with the same reason: a changed reason starts the count again" {
+  # Reason A at looks 0 to 9, reason B at looks 10 to 29: 30 looks unmarked, never 20 with one reason.
+  holds_until 30 "GitHub cannot be read: gh pr view: error connecting to api.github.com"
+  stub_script sleep <<EOS
+n=\$(cat "$GH_DIR/look")
+((n < 60)) || exit 99
+echo \$((n + 1)) >"$GH_DIR/look"
+((n + 1 != 10)) || echo "GitHub has not worked out yet whether PR #5 conflicts with its base; try again in a minute" >"$GH_DIR/hold-reason"
+echo \$((\$(cat "\$TEAM_GITHUB_CLOCK") + \$1)) >"\$TEAM_GITHUB_CLOCK"
+EOS
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test completed success)"
+  pr_at 31 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(land_log | wc -l)" 30
+  assert_equal "$(land_log | cut -f 5 | uniq -c | awk '{print $1}' | paste -sd ' ')" "10 20"
+  [[ ! -e $GH_DIR/thread-posts ]]
+  assert_equal "$(kind_events trial-unmarked)$(kind_events trial-marked)" ""
+}
+
+@test "an alert while the other checks still run logs them pending, and once more when a later look shows them green, with no second post" {
+  holds_until 26
+  thread_poster
+  pr_at 0 OPEN "$t1"
+  trial_checks 0 "$t1" "$(check_run test in_progress)"
+  trial_checks 23 "$t1" "$(check_run test completed success)"
+  pr_at 27 MERGED
+  run_bin team-land --task T14 "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(grep -c '^T14 --file ' "$GH_DIR/thread-posts")" 1
+  assert_contains "$(cat "$GH_DIR/thread-posts")" "still pending: test"
+  assert_equal "$(kind_events trial-unmarked | jq -r .checks | paste -sd ' ')" "pending passed"
+  assert_equal "$(kind_events trial-marked | wc -l)" 1
+  # Without --task the alert is said on stdout alone.
+  echo 0 >"$GH_DIR/look"
+  rm "$GH_DIR/thread-posts" "$TEAM_HOME/ledger.jsonl"
+  stub_script team-review-status <<SH
+if ((\$(cat "$GH_DIR/look") < 22)); then echo "team-review-status: GitHub cannot be read" >&2; exit 75; fi
+SH
+  pr_at 27 MERGED
+  run_bin team-land "$url" "$head"
+  assert_equal "$status" 0
+  assert_equal "$(grep -c "has had no agent-review on its merge queue trial commit 5e5e5e5 for 10 minutes" <<<"$output")" 1
+  [[ ! -e $GH_DIR/thread-posts && ! -s $TEAM_HOME/ledger.jsonl ]]
 }
 
 @test "at the deadline the reason says where the PR was at the last look: not shown in the queue, or GitHub unread" {

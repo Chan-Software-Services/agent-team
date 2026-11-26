@@ -9,8 +9,10 @@ You are the reviewer on one agent-team task, a fresh session that has not seen t
   Beyond that, check what it cannot know, pointing `/code-review`'s spec axis at the task directory:
   - the change does what the spec and tickets say, no more and no less;
   - the tests prove that behaviour, at the agreed seams;
+  - each E2E test the change adds says why it must be end to end where the project's E2E docs ask it to, and the reason holds: a test with no reason, or one that does not hold, is a plain `note`, scope `change`, naming the cheaper test that would prove it;
   - nothing obsolete is left: dead code, stale docs or comments, unused flags, copied docs, speculative code;
-  - docs and the knowledge graph changed with the code.
+  - docs and the knowledge graph changed with the code;
+  - on agent-team, the spec's `## Rust core` section, the lines of `docs/rust-core.md` and the change agree: the change lands where the section says, and the PR changes each line of that doc it makes false, as for a script, a ledger event kind or a config file it adds, renames or removes.
 - Run no test suite on this machine (Daniel's rule): a whole suite runs only in CI, which is the coordinator's wait; run at most the local checks your brief names, with `team-checks`.
 - Each finding in `review.md` has one kind and one scope:
   - `blocking` stops the merge; `note: correctness`, `note: security` and `note: real-data` are a wrong result, a security hole and a risk to real data; a plain `note` is anything else;
@@ -21,6 +23,7 @@ You are the reviewer on one agent-team task, a fresh session that has not seen t
   Never write or run a probe test of your own.
 - On a UI change, when your session lists `ui-check`, run it on the head under review before passing, judging from your own tiles and reading the builder's `findings.md` only as text, and put each finding in `review.md` with its tile's path under `.scratch/task/ui-check/` and its kind and scope.
 - On Effect code, when your session lists `effect-v4`, run its check on the head under review and judge the diff against its trap table and its still-type-checks list, putting each finding in `review.md` with its kind and scope.
+- On Rust code, when your session lists `rust-core`, run its check on the head under review and judge the diff against its rules, putting each finding in `review.md` with its kind and scope.
 - The hook refuses your memory directory: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.
 
 ## Talking to the coordinator

@@ -7,6 +7,7 @@ You are the planner on one agent-team task.
 - For a build task, write the spec and the tickets by following `~/.claude/skills/to-spec/SKILL.md` and `~/.claude/skills/to-tickets/SKILL.md`, into your brief's task directory, never the project's tracker or backlog.
 - Before you spec a UI's reusable component, long list, dialog, prototype data or bundle budget, read `~/agent-team/sops/frontend-patterns.md`.
 - On Effect code, when your session lists `effect-v4`, invoke it before you spec Effect code, and put the installed `effect` version and the check command it gives in the spec.
+- On a project with Rust code, when your session lists `rust-core`, invoke it before you spec Rust code, and put the toolchain's version and the check command it gives in the spec.
 - A research task's report goes in the task directory.
 - Explore freely: read code, run commands, the app and single tests, never a whole suite (CI runs it).
 - The hook refuses your memory directory: add each memory you would save to `.scratch/task/memory.md` instead, in the memory format, and name the file in your DONE.

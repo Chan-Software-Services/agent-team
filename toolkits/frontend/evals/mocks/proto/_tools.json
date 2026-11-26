@@ -1,0 +1,86 @@
+{
+  "tools": [
+    {
+      "name": "list_targets",
+      "description": "List the prototyping host's targets: each engine (chromium, firefox, webkit, launched; agent-chrome, Daniel's Agent Chrome, attached) with its version, whether it is available or why not and how to fix it, and what it can do, then every size (the presets, the project's own, any Playwright device by name, <width>x<height>[@<scale>]), and the target Daniel's window shows. It changes nothing on Daniel's screen; it starts the host when none runs. It takes no URL; the host opens only localhost.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "set_target",
+      "description": "Switch Daniel's prototyping window to a target, as the toolbar in it does: this changes what Daniel sees on their screen. Another launched engine reopens the page there with the window's localhost login and closes the old browser (a switch to the Agent Chrome writes no login into it, and a switch away from it detaches rather than closing it); another width and height alone resize the window in place. With no window open it opens one, starting the host when none runs. Answers the window's engine, version, size and URL in one line; a switch that fails leaves the window as it was. Only http or https URLs on localhost or 127.0.0.1 are taken; any other is refused before anything opens.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "<engine>/<size> (webkit/phone, firefox/1024x768, chromium/iPhone 15), or an engine or a size alone, keeping the window's other. Engines: chromium, firefox, webkit, agent-chrome. Sizes: phone-small, phone, tablet, laptop, desktop, the project's own, a Playwright device by its exact name, <width>x<height> or <width>x<height>@<scale>, and window for agent-chrome."
+          },
+          "url": {
+            "type": "string",
+            "description": "The page to show; by default the page the window shows now, or the project's URL when no window is open. Only http or https URLs on localhost or 127.0.0.1 are taken; any other is refused before anything opens."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "capture_matrix",
+      "description": "Capture a page at many targets at once, one PNG per target, each in a headless browser of the prototyping host's own: Daniel's window and screen are not touched, and no toolbar is in the images. Each page carries the window's localhost login. The files go in a new .scratch/ui/matrix-<UTC time>/ of the session's git checkout; answers one line per target with its PNG's absolute path or its error, then the path of matrix.md, the index. Read the PNGs it names to see them. Starts the host when none runs. Only http or https URLs on localhost or 127.0.0.1 are taken; any other is refused before anything opens.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The page; by default the page Daniel's window shows, else the project's URL. Only http or https URLs on localhost or 127.0.0.1 are taken; any other is refused before anything opens."
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The engines, of chromium, firefox and webkit (never agent-chrome, Daniel's own window); by default the project's matrix, else all three."
+          },
+          "sizes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The sizes, each a preset (phone-small, phone, tablet, laptop, desktop), a project size, a Playwright device by its exact name, or <width>x<height>[@<scale>]; by default the project's matrix, else the five presets."
+          },
+          "selector": {
+            "type": "string",
+            "description": "A CSS selector: each image is the first element matching it, once visible (10 s at most), rather than the viewport."
+          },
+          "full_page": {
+            "type": "boolean",
+            "description": "Take the whole page, not just the viewport."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

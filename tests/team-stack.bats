@@ -428,9 +428,10 @@ compose_env_since() {
   # The named volume and the network carry the task's labels too.
   assert_equal "$(jq -r --arg n "${PROJECT}_data" '.[] | select(.Name == $n) | .Labels["io.github.chanjdaniel.team.task"]' "$DOCKER_STATE/volumes.json")" T22
   assert_equal "$(jq -r --arg n "${PROJECT}_default" '.[] | select(.Name == $n) | .Labels["io.github.chanjdaniel.team.task"]' "$DOCKER_STATE/networks.json")" T22
-  # Through the wrapper: its config for the project, then (once admitted) up, then its ports for
-  # the seed.
+  # Through the wrapper: its config for the project, then (once admitted) up --no-start, which
+  # makes its network, then up, then its ports for the seed.
   assert_equal "$(docker_compose_env | jq -r '.call | sub(" -f [^ ]+"; "")')" "compose config --format json
+compose up --no-start
 compose up -d --wait
 compose port web 80"
   # The other stacks are untouched.
@@ -907,7 +908,7 @@ team-stack: no room for $PROJECT: stack:shop: the team is at level none: nothing
   ((checks >= 2 && checks <= 3))
 }
 
-@test "the admission lock is held through up -d --wait and released before the seed" {
+@test "the admission lock is held through up --no-start and up -d --wait and released before the seed" {
   open_task T22
   local lock=$HOME/.local/state/agent-team/stacks.lock
   local log=$BATS_TEST_TMPDIR/lock
@@ -922,6 +923,7 @@ SH
   printf 'if flock -n %q true; then echo free; else echo held; fi >>%q\n' "$lock" "$log" >>"$STACK_WORKTREE/scripts/seed.sh"
   run_bin -0 team-stack up --worktree "$STACK_WORKTREE"
   assert_equal "$(cat "$BATS_TEST_TMPDIR/lock")" "held
+held
 free"
 }
 
@@ -934,9 +936,22 @@ free"
   capacity_room $((100 * MIB))
   stack_settings '{"wait_minutes": 0}'
   local dir=$BATS_TEST_TMPDIR a b
-  "$REPO_ROOT/bin/team-stack" up --worktree "$first" --no-seed >"$dir/a.out" 2>"$dir/a.err" &
+  # b starts while a is inside its up --no-start, holding the admission lock, so b's admission
+  # always comes second. Both run as under a heavy run (TEAM_HEAVY_HELD), so neither takes the
+  # heavy-run lock for its network: with wait_minutes 0, b would else stop at the lock a holds for
+  # its own network, before its admission, and the race this test is about would never be run.
+  mv "$first/scripts/compose.sh" "$first/scripts/compose-real.sh"
+  cat >"$first/scripts/compose.sh" <<SH
+#!/usr/bin/env bash
+if [[ \${1:-} == up && \${2:-} == --no-start ]]; then touch "$dir/in-up"; sleep 1; fi
+exec "\$(dirname "\$0")/compose-real.sh" "\$@"
+SH
+  chmod +x "$first/scripts/compose.sh"
+  TEAM_HEAVY_HELD=1 "$REPO_ROOT/bin/team-stack" up --worktree "$first" --no-seed >"$dir/a.out" 2>"$dir/a.err" &
   a=$!
-  "$REPO_ROOT/bin/team-stack" up --worktree "$STACK_WORKTREE" --no-seed >"$dir/b.out" 2>"$dir/b.err" &
+  while [[ ! -e $dir/in-up ]] && kill -0 "$a" 2>/dev/null; do sleep 0.1; done
+  [[ -e $dir/in-up ]]
+  TEAM_HEAVY_HELD=1 "$REPO_ROOT/bin/team-stack" up --worktree "$STACK_WORKTREE" --no-seed >"$dir/b.out" 2>"$dir/b.err" &
   b=$!
   local status_a=0 status_b=0
   wait "$a" || status_a=$?
@@ -1684,7 +1699,8 @@ unhealthy_wrapper() {
   cat >"$STACK_WORKTREE/scripts/compose.sh" <<SH
 #!/usr/bin/env bash
 "\$(dirname "\$0")/compose-real.sh" "\$@" || exit
-if [[ \${1:-} == up && -e "$BATS_TEST_TMPDIR/unhealthy" ]]; then echo "web is unhealthy" >&2; exit 1; fi
+# Only up -d --wait waits for health: up --no-start starts nothing.
+if [[ \${1:-} == up && " \$* " == *" --wait "* && -e "$BATS_TEST_TMPDIR/unhealthy" ]]; then echo "web is unhealthy" >&2; exit 1; fi
 SH
   chmod +x "$STACK_WORKTREE/scripts/compose.sh"
   touch "$BATS_TEST_TMPDIR/unhealthy"
@@ -2091,8 +2107,9 @@ network conventioner_conventioner_network (unowned)"
   add_image conventioner/backend new2 $((2 * 86400))
   add_image conventioner/backend young $((7 * 86400 - 60))
   add_image conventioner/backend old $((7 * 86400 + 60))
-  # The 2 newest are images, not tags: the in-use image's second tag, latest, leaves older the
-  # second newest of conventioner/frontend, however old, and oldest not.
+  # The 2 newest are images, not tags: the in-use image, the newest, with a second tag, latest,
+  # leaves older the second newest of conventioner/frontend, however old, and oldest not.
+  docker_created image conventioner/frontend:2a5cc542bea3 $((10 * 86400))
   docker_state images '. + [(.[] | select(.Repository == "conventioner/frontend") | .Tag = "latest")]'
   add_image conventioner/frontend older $((20 * 86400))
   add_image conventioner/frontend oldest $((30 * 86400))
@@ -2318,6 +2335,7 @@ wrapper_calls_since() {
   # instance's, with Docker's ports.
   assert_equal "$(wrapper_calls_since 1)" "compose config --format json $PROJECT -
 compose config --format json $PROJECT-a auto
+compose up --no-start $PROJECT-a auto
 compose up -d --wait $PROJECT-a auto
 compose port web 80 $PROJECT-a auto"
   # The worktree's own stack is not started.
