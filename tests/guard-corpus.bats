@@ -39,7 +39,8 @@ SESSION=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
 
 # The sessions' world: this machine holds the lease, a worktree with a task directory, the
 # session's job directory, a task's directory in the team home, and the assistant's channel, a
-# thread of it the hook has already read, and a report it may attach.
+# thread of it in its thread list that a fake Discord answers as a thread of that channel (GET
+# channels/<thread>, which the Discord guard reads at every call), and a report it may attach.
 setup() {
   sandbox
   hold_lease home-pc >/dev/null
@@ -49,6 +50,16 @@ setup() {
   echo "# Report" >"$TEAM_HOME/assistant/research/2026-01-02-widget-counts.md"
   echo "$THREAD" >"$HOME/.local/state/agent-team/assistant-threads"
   export TEAM_ASSISTANT_CHANNEL=$ASSISTANT
+  jq -n --arg id "$THREAD" --arg parent "$ASSISTANT" '{id: $id, type: 11, parent_id: $parent, name: "x"}' \
+    >"$BATS_TEST_TMPDIR/thread.json"
+  stub_script curl <<EOF
+if [[ \${*: -1} == https://discord.com/api/v10/channels/$THREAD ]]; then
+  cat "$BATS_TEST_TMPDIR/thread.json"
+else
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+EOF
 }
 
 # The settings files a <role>'s session loads its hooks from, in this checkout: settings_of <role>
