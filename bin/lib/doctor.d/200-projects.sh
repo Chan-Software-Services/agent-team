@@ -210,7 +210,7 @@ check_project() {
     report "origin $project" FAIL "origin is $origin, on $moved, where the registry's $repo moved (bin/lib/repo-moves.json)" \
       "set $project's repo = \"$moved\" in projects.toml, as team-project --check names it, and leave the origin as it is"
   elif [[ $provider == treehouse && -n $(moved_origin "$origin") ]]; then
-    report "origin $project" FAIL "origin is $origin, not $url" "$(pool_move_fix "$project")"
+    report "origin $project" FAIL "origin is $origin, not $url" "$(pool_move_fix "$project" "$repo")"
   else
     report "origin $project" FAIL "origin is $origin, not $url" "git -C $shown remote set-url origin $url"
   fi

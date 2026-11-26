@@ -39,7 +39,9 @@ const properties = [
 ];
 
 // A page's last script: its own elements' computed styles now, before the overlay draws, then,
-// once the toolbar is in, its own again and the toolbar's, posted to /styles.
+// once the toolbar is in and idle, its own again and the toolbar's, posted to /styles. The page a
+// switch opens draws its toolbar busy first, with controls disabled and a status line, so two
+// pages read as soon as it is in can differ for that alone.
 const styleProbe = `<script>(() => {
   const properties = ${JSON.stringify(properties)};
   const read = (node) => {
@@ -52,7 +54,7 @@ const styleProbe = `<script>(() => {
   const wait = () => {
     const root = document.querySelector("proto-overlay")?.shadowRoot;
     const bar = root?.querySelector("[role=toolbar]");
-    if (!bar) {
+    if (!bar || bar.querySelector("select").disabled) {
       if (Date.now() - started < 15000) setTimeout(wait, 50);
       return;
     }

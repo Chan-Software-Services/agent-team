@@ -2216,11 +2216,14 @@ moved_origin() {
   [[ ${url,,} == *"/${to,,}" || ${url,,} == *":${to,,}" ]] || printf '%s\n' "$to"
 }
 
-# The fix for the origin of the treehouse project <project>: treehouse names a pool by a hash of
-# its checkout's origin URL, so a bare set-url sends the next lease to a new, empty pool, and the
-# registry's slots stop matching: pool_move_fix <project>
+# The fix for the origin of the treehouse project <project>, whose registry repo is <repo>:
+# treehouse names a pool by a hash of its checkout's origin URL, so a bare set-url sends the next
+# lease to a new, empty pool, and the registry's slots stop matching. It names the SOP's check that
+# no session runs in a slot, then team-pool-move with the URL team-pool-move takes, <repo> at the
+# end of its moves (bin/lib/repo-moves.json): pool_move_fix <project> <repo>
 pool_move_fix() {
-  printf "move %s's treehouse pool with the origin: see sops/portability.md, A repository that moves owner\n" "$1"
+  printf "move %s's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move %s https://github.com/%s.git\n" \
+    "$1" "$1" "$(canonical_repo "$2")"
 }
 
 # The URL the team home is cloned from, https://github.com/<repo>.git, its repo the end of the

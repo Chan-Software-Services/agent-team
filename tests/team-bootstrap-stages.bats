@@ -236,7 +236,7 @@ intone is set up in ~/projects/intone_app"
   # Conventioner's pool is named from its origin, so its origin is left for the pool move.
   git -C "${CONVENTIONER:?}" remote set-url origin "$old"
   run_bin -1 team-bootstrap --stage projects
-  assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner (origin $old, a repository that moved to Chan-Software-Services/Conventioner)"
+  assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move conventioner https://github.com/Chan-Software-Services/Conventioner.git (origin $old, a repository that moved to Chan-Software-Services/Conventioner)"
   assert_equal "$(git -C "${CONVENTIONER:?}" remote get-url origin)" "$old"
   # Another origin of a treehouse project, on no moved repository, is set as before.
   git -C "${CONVENTIONER:?}" remote set-url origin git@github.com:Chan-Software-Services/Conventioner.git
@@ -263,7 +263,7 @@ intone is set up in ~/projects/intone_app"
   for url in git@github.com:chanjdaniel/Conventioner.git https://github.com/chanjdaniel/Conventioner; do
     git -C "${CONVENTIONER:?}" remote set-url origin "$url"
     run_bin -1 team-bootstrap --stage projects
-    assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner (origin $url, a repository that moved to Chan-Software-Services/Conventioner)"
+    assert_equal "$(stage_lines projects)" "Daniel: move conventioner's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move conventioner https://github.com/Chan-Software-Services/Conventioner.git (origin $url, a repository that moved to Chan-Software-Services/Conventioner)"
     assert_equal "$(git -C "${CONVENTIONER:?}" remote get-url origin)" "$url"
   done
 }
