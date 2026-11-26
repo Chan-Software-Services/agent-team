@@ -10,6 +10,8 @@
 #            main
 #   sha      the head the caller pushed to it, its full 40 hex characters
 # It pushes nothing itself, and takes no --json: only builders run it, and they read its text.
+# It waits on branch_ci's run alone, so a check no merge waits on (bin/lib/advisory-checks), made
+# by a workflow of its own, never holds it or fails it.
 # Refused before any call to GitHub: a malformed command line (exit 2), an unregistered project, a
 # project with no branch_ci and a branch that is the project's base or main (exit 1).
 # It reads GitHub through the reader, bin/lib/github-api.sh, whose cache and ETags make a read of an

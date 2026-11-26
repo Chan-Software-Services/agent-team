@@ -2101,6 +2101,13 @@ day_report() {
   echo "$HOME/.local/state/agent-team/janitor/$(date +%F).md"
 }
 
+# What the Docker janitor wrote in its state directory, one name per line: everything there but
+# the disk sweep's record and day files (disk.json, disk-<date>.md), which every run's disk step
+# may write beside it.
+janitor_files() {
+  find "$HOME/.local/state/agent-team/janitor" -mindepth 1 ! -name 'disk.json' ! -name 'disk-*.md' -printf '%f\n' 2>/dev/null || true
+}
+
 @test "every step that logs on the holder logs in one run, in the heartbeat's order" {
   docker_machine
   # uptime: a production check failing once.
@@ -2153,7 +2160,8 @@ LINES
   run_bin -0 team-timers run
   assert_equal "$(steps "$output")" "lease checkpoint"
   assert_equal "$(docker_acts)" ""
-  [[ ! -e $HOME/.local/state/agent-team/janitor && ! -e $HOME/.local/state/agent-team/stacks ]]
+  assert_equal "$(janitor_files)" ""
+  [[ ! -e $HOME/.local/state/agent-team/stacks ]]
 }
 
 @test "with heartbeat_sweep on, the stacks step sweeps after the level step, a log line per line the sweep prints" {
@@ -2167,7 +2175,7 @@ LINES
   # A sweep that stops nothing prints nothing, so the step logs nothing; the janitor stays off.
   run_bin -0 team-timers run
   assert_equal "$(steps "$output")" "lease checkpoint"
-  [[ ! -e $HOME/.local/state/agent-team/janitor ]]
+  assert_equal "$(janitor_files)" ""
 }
 
 @test "with heartbeat_janitor on, the janitor step runs team-janitor after the checkpoint, once a local day" {

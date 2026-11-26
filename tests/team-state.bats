@@ -171,7 +171,7 @@ review_facts() {
     thread: "1563",
     last_event: {ts: "2026-10-22T02:00:00Z", task: "T14", event: "answered", id: "q1", answer: "team-state"},
     pending_asks: [{id: "q2", text: "Ship it?", ts: "2026-10-22T02:00:00Z"}],
-    waiting: null, parks: [], stowing: null, walk: null, rehome_failures: [], checks_wait: null, pr: null,
+    waiting: null, parks: [], stowing: null, walk: null, interview: null, rehome_failures: [], checks_wait: null, pr: null,
     progress: {tickets: {done: [], total: 0, graph: null}, on: [],
       reviews: {count: 0, verdict: null, head: null, sent_back: null}}}')"
   assert_equal "$(stub_calls gh)" ""
@@ -617,6 +617,26 @@ TOML
     '["merged","1111111",true,"failure",false]'
 }
 
+@test "merge_approved stays true once a word is given, though a review that found something since asks for it again" {
+  # The assistant's walk re-checks a PR it collected from waiting.json by team-state; waiting.json
+  # asks for the word again here (word_stands in bin/lib/ledger.jq), so a re-check on merge_approved
+  # would drop a PR that still waits on Daniel, and so would one on merge_authority's word, whose
+  # per-head word holds on the head it names; the latest approval's ts dates the word instead.
+  open_task
+  event T14 pr '{url: "https://github.com/owner/proj/pull/5", head: "1111111"}'
+  event T14 review '{verdict: "pass", head: "1111111"}'
+  ledger_line '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "merge-approved",
+    url: "https://github.com/owner/proj/pull/5", head: "1111111", discord_message: "1564"}'
+  event T14 review '{verdict: "findings", head: "1111111"}'
+  event T14 pr '{url: "https://github.com/owner/proj/pull/5", head: "'"${head:0:7}"'"}'
+  event T14 review '{verdict: "pass", head: "'"${head:0:7}"'"}'
+  stub_github '{"number": 5, "state": "OPEN", "baseRefName": "main", "headRefOid": "'"$head"'"}' '[]' '[]'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.state, .merge_approved, .merge_authority.word, .merge_authority.words[0].facts.approval.ts]' <<<"$output")" \
+    '["open",true,"head","2026-10-22T03:00:00Z"]'
+  assert_equal "$(jq -r .phase <<<"$output")" awaiting-merge
+}
+
 @test "the team's own project's PR part, with the reviewer App on, reads the App's check run on the head, and the line names it" {
   open_task
   event T14 pr "{url: \"https://github.com/owner/proj/pull/5\", head: \"$head\", project: \"proj\"}"
@@ -702,7 +722,7 @@ EOF
     '[{"name": "shellcheck", "bucket": "pass", "state": "SUCCESS"}]' '[]'
   run_bin -0 team-state T5 --json
   assert_equal "$(jq -c '.pr | [.repo, .project, .number, .ledger_head, .required_missing, .head_moved]' <<<"$output")" \
-    '["Chan-Software-Services/agent-team","agent-team",4,"f5c35825",["data","test","toolkits","zizmor"],true]'
+    '["Chan-Software-Services/agent-team","agent-team",4,"f5c35825",["data","rust","test","toolkits","zizmor"],true]'
   assert_equal "$(jq -c '.phase' <<<"$output")" '"in-review"'
   assert_equal "$(stub_calls gh | jq -r '.[4]' | sort -u)" "Chan-Software-Services/agent-team"
 }
@@ -925,6 +945,34 @@ EOF
       parks: [{id: "waiting-2", kind: "waiting", cause: "ask", on: "Daniel", reason: "ask naming", since: "2026-10-22T02:15:00Z", passed: true}]}
     | state_line'
   assert_equal "$output" "T14 proj feature building | no live worker | parks: waiting-2 ask since 2026-10-22T02:15:00Z: ask naming (passed by a launch)"
+}
+
+@test "interview is the task's interview under way, by interview_under_way's rule, whatever the phase" {
+  # The assistant's walk re-checks an interview item by it, where phase reads planning after a
+  # planner's done, blocked or held while a park stands, and building on a small task.
+  # A: a feature task's interview ends at the planner's done, while the phase stays planning.
+  ledger_line '{ts: "2026-10-22T02:00:00Z", task: "T14", event: "opened", project: "proj", path: "feature",
+    type: "feat", title: "The tooling", branch: "feat/T14-tooling", base: "main", worktree: "/w/1"}'
+  ledger_line '{ts: "2026-10-22T02:10:00Z", task: "T14", event: "interview-thread", discord_thread: "1563000000000000001"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '[.phase, .interview]' <<<"$output")" '["planning",{"since":"2026-10-22T02:10:00Z","thread":"1563000000000000001"}]'
+  event T14 "done" '{role: "planner"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '[.phase, .interview]' <<<"$output")" '["planning",null]'
+  # B: an interview under way stands while a blocked park does, and ends at a plan-approved.
+  ledger_line '{ts: "2026-10-22T03:00:00Z", task: "T14", event: "interview-thread", discord_thread: "1563000000000000002"}'
+  event T14 blocked '{reason: "a denied push"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '[.phase, .interview.thread]' <<<"$output")" '["blocked","1563000000000000002"]'
+  event T14 plan-approved '{by: "Daniel"}'
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c .interview <<<"$output")" null
+  # C: a small task opens in building, and its interview stands there.
+  ledger_line '{ts: "2026-10-22T04:00:00Z", task: "T15", event: "opened", project: "proj", path: "small",
+    type: "fix", title: "A fix", branch: "fix/T15-fix", base: "main", worktree: "/w/2"}'
+  ledger_line '{ts: "2026-10-22T04:10:00Z", task: "T15", event: "interview-thread", discord_thread: "1563000000000000003"}'
+  run_bin -0 team-state T15 --json
+  assert_equal "$(jq -c '[.phase, .interview.thread]' <<<"$output")" '["building","1563000000000000003"]'
 }
 
 @test "a walk that is on shows with its start, before any waiting part, until it is off or the task closes" {
@@ -1439,4 +1487,42 @@ SH
     '[["T14-builder",null,false],["T14-builder-02","02",true],["T14-builder-03","03",true]]'
   run_bin -0 team-state T14
   assert_equal "$output" "T14 proj feature building | T14-builder-02 busy on build-02, T14-builder-03 idle on build-03"
+}
+
+@test "the team's own project's check that no merge waits on is in none of the PR part's checks but listed under advisory, unless required" {
+  review_app_off
+  open_task
+  event T14 pr "{url: \"https://github.com/owner/proj/pull/5\", head: \"$head\", project: \"agent-team\"}"
+  sed -i 's/^\[proj/[agent-team/' "$TEAM_HOME/projects.toml"
+  view='{"number": 5, "state": "OPEN", "baseRefName": "main", "headRefOid": "'"$head"'"}'
+  checks='[
+    {"name": "shellcheck", "bucket": "pass", "state": "SUCCESS"},
+    {"name": "test", "bucket": "pass", "state": "SUCCESS"},
+    {"name": "rust-macos", "bucket": "fail", "state": "FAILURE"}]'
+  required='[]'
+  compare=0
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.checks, .advisory, .required_missing]' <<<"$output")" \
+    '[{"passed":["shellcheck","test"],"failing":[],"pending":[]},[{"name":"rust-macos","bucket":"fail"}],[]]'
+  run_bin -0 team-state T14
+  assert_contains "$output" " checks 2/2 "
+  # A name the project's required_checks, the PR's server-required checks or the base's rules require
+  # is held as any check.
+  required='[{"name": "rust-macos", "bucket": "fail", "state": "FAILURE"}]'
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.checks.failing, .advisory]' <<<"$output")" '[["rust-macos"],null]'
+  required='[]'
+  rules='[{"type": "required_status_checks", "ruleset_id": 9, "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": [{"context": "rust-macos"}]}}]'
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.checks.failing, .advisory]' <<<"$output")" '[["rust-macos"],null]'
+  # Another project's check of the same name is one of its checks.
+  rules='[]'
+  sed -i 's/^\[agent-team/[proj/' "$TEAM_HOME/projects.toml"
+  sed -i 's/"project":"agent-team"/"project":"proj"/' "$TEAM_HOME/ledger.jsonl"
+  stub_github
+  run_bin -0 team-state T14 --json
+  assert_equal "$(jq -c '.pr | [.project, .checks.failing, .advisory]' <<<"$output")" '["proj",["rust-macos"],null]'
 }

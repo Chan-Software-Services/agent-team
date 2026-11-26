@@ -510,7 +510,7 @@ $WORKER_INSTRUCTIONS"
   local name
   name=$(jq -r .name "$plugin/.claude-plugin/plugin.json")
   assert_equal "$name" coordinator-skills
-  # The forbidden pattern is the one grep -Ei line that fails a production or coordinator-only plugin.
+  # The forbidden pattern is the one grep -Ei line that fails a production, coordinator-only or assistant-only plugin.
   grep -E "grep -Eiq '[^']*\b$name\b[^']*'" "$REPO_ROOT/bin/team-load-check"
 }
 
