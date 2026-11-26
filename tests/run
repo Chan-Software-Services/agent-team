@@ -75,7 +75,9 @@
 # else <base> itself, a tree such as the empty tree's, for every file), and each tests/*.bats file
 # that names a path under tests/fixtures/ the diff changes, or one of that path's directories
 # there, as fixtures/<path> with no name character on either side, itself or through a
-# tests/helpers/*.bash it loads (as bats --changed follows a helper). It prints the files first;
+# tests/helpers/*.bash it loads (as bats --changed follows a helper), and tests/tests-run-clock.bats
+# when the diff changes tests/run, tests/shards or tests/helpers/clockshift.c, the clock run's own
+# code, which that file tests. It prints the files first;
 # when there is none it prints "clock-ahead: no bats file touched since <base>" and passes, and
 # --list prints them, one tests/<name>.bats per line, and runs none, on any platform. Otherwise it
 # runs only on Linux, refusing macOS, which has no LD_PRELOAD, and any other system, and refuses
@@ -442,14 +444,16 @@ literal_ere() {
 }
 
 # The bats files --clock-ahead runs (see the header), one tests/<name>.bats per line, repeats and
-# all: the changed ones, and those naming a changed fixture or one of its directories, directly or
-# through a helper they load.
+# all: the changed ones, those naming a changed fixture or one of its directories, directly or
+# through a helper they load, and tests/tests-run-clock.bats on a change to the clock run's code.
 clock_selection() {
   local paths path rel pattern helper fixture_names=()
   paths=$(clock_paths | LC_ALL=C sort -u) || return 1
   cd "$root"
   while IFS= read -r path; do
     case $path in
+      tests/run | tests/shards | tests/helpers/clockshift.c)
+        [[ ! -f tests/tests-run-clock.bats ]] || echo tests/tests-run-clock.bats ;;
       tests/*/*) ;;
       tests/*.bats) [[ ! -f $path ]] || echo "$path" ;;
     esac

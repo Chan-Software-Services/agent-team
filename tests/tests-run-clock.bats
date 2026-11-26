@@ -2,9 +2,10 @@
 # tests/run bats --clock-ahead <days> --touched <base>, the run CI's future-clock job makes: a
 # fixture test comparing a date 30 days ahead with date +%s passes today and fails a year ahead, a
 # test tagged wall-clock is not run there and is named, a jq whose now the shim does not move is
-# refused, a change touching no bats file says so and passes, a changed fixture selects the bats files naming it (directly, by a directory, through a
-# helper), the empty tree selects every file, and macOS, a missing cc and a malformed command line
-# are refused. Each runs in a checkout of its own, with this checkout's bin/, tests/run,
+# refused, a change touching no bats file says so and passes, a changed fixture selects the bats
+# files naming it (directly, by a directory, through a helper), a change to tests/run, tests/shards
+# or the shim selects this file, the empty tree selects every file, and macOS, a missing cc and a
+# malformed command line are refused. Each runs in a checkout of its own, with this checkout's bin/, tests/run,
 # tests/shards and shim, and the vendored bats. The cases that build the shim need Linux and cc,
 # and those that run a file under it a dynamically linked jq too, which the test shards' jq is not;
 # each skips without them unless CLOCK_TESTS=require, which CI's future-clock job sets.
@@ -197,6 +198,29 @@ SH
   echo '{"due": "tomorrow"}' >"$copy/tests/fixtures/dates/due.json"
   run -0 --separate-stderr "$copy/tests/run" bats --clock-ahead 365 --touched base --list
   assert_equal "$output" $'tests/by-dir.bats\ntests/by-file.bats\ntests/by-glob.bats\ntests/by-helper.bats'
+}
+
+@test "a change to tests/run, tests/shards or the clock shim selects tests/tests-run-clock.bats" {
+  local copy=$BATS_TEST_TMPDIR/copy path
+  clock_checkout "$copy"
+  echo '@test "the clock run" { true; }' >"$copy/tests/tests-run-clock.bats"
+  git -C "${copy:?}" add -A
+  git -C "${copy:?}" commit -qm 'the clock tests'
+  git -C "${copy:?}" tag -f base >/dev/null
+  for path in tests/run tests/shards tests/helpers/clockshift.c; do
+    git -C "${copy:?}" checkout -q base -- .
+    # A copy of its own first, since tests/run and tests/shards are links to the run's shared files.
+    cp "$copy/$path" "$copy/$path.new"
+    mv "$copy/$path.new" "$copy/$path"
+    chmod u+w "$copy/$path"
+    echo >>"$copy/$path"
+    run -0 --separate-stderr "$copy/tests/run" bats --clock-ahead 365 --touched base --list
+    assert_equal "$output" tests/tests-run-clock.bats
+  done
+  # Without the file, nothing is selected.
+  git -C "${copy:?}" rm -q tests/tests-run-clock.bats
+  run -0 --separate-stderr "$copy/tests/run" bats --clock-ahead 365 --touched base --list
+  assert_equal "$output" ""
 }
 
 @test "the empty tree as the base touches every bats file" {
