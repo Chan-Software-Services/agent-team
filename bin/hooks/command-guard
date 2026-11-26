@@ -42,9 +42,9 @@
 # status), an upload of a file or body to a host outside the team's own (as bin/lib/outbound.py
 # reads it), a
 # worker's or the assistant's force push or cd into the team's keys' or the Discord bot's
-# directories, a planner's, builder's or reviewer's docker run or docker create past docker's global
-# options (a container started by hand, which outlives the session), a kill that reaches what is not
-# the session's own (by name or pattern, tmux's kill-*,
+# directories, a planner's, builder's, reviewer's or topic session's docker run or docker create
+# past docker's global options (a container started by hand, which outlives the session), a kill
+# that reaches what is not the session's own (by name or pattern, tmux's kill-*,
 # of PIDs read from input, of a PID it cannot read, of a process group, of a literal PID whose
 # process is not proven its own; bin/lib/kill_rules.py), and a recursive delete that reaches what is
 # not the worker's own (outside the worktree and the job's tmp, either of them or its .scratch/task,

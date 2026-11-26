@@ -161,7 +161,7 @@
     },
     {
       "id": "docker-run",
-      "roles": ["planner", "builder", "reviewer"],
+      "roles": ["planner", "builder", "reviewer", "topic"],
       "tool": "Bash",
       "input": "docker run --rm --pull never agent-team-probe:none true",
       "expect": "hook",
@@ -517,14 +517,6 @@
       "input": "team-stack up --help",
       "expect": "rule",
       "family": "stacks"
-    },
-    {
-      "id": "topic-docker-run",
-      "roles": ["topic"],
-      "tool": "Bash",
-      "input": "docker run --rm --pull never agent-team-probe:none true",
-      "expect": "rule",
-      "family": "docker"
     },
     {
       "id": "docker-compose",

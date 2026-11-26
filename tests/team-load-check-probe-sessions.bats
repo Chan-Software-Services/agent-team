@@ -95,13 +95,14 @@ After the last call, use the Write tool to create .scratch/probe-done-$role.txt 
   assert_contains "$output" "PASS topic redirect-outside: hook refused it"
   assert_contains "$(cat "$STUB_FIXTURES/topic.jsonl")" "this role may edit files only under"
   local id
-  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose topic-docker-run npm-install systemctl \
+  for id in own-push commit git-merge post-task-thread post-coordinator stack-up docker-compose npm-install systemctl \
     topic-git-config-push topic-git-option-push topic-git-pull; do
     assert_contains "$output" "PASS topic $id: rule refused it"
   done
   # Its GitHub writes: the real command-guard's topic row blocks a clone and gh by a path, and a
-  # write its deny rules also hold, which the hook refuses first.
-  for id in topic-gh-clone topic-gh-path; do
+  # write its deny rules also hold, which the hook refuses first; and its docker run, which the
+  # docker-run row refuses before its docker deny rules.
+  for id in topic-gh-clone topic-gh-path docker-run; do
     assert_contains "$output" "PASS topic $id: hook refused it"
   done
   for id in topic-github-write topic-pr-merge; do

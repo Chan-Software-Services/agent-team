@@ -130,12 +130,13 @@ The rows, in order:
     bot's files. Each read command by command, never across a call's other commands, as the deny
     rules they replace in settings/worker.json and assistant.settings.json did (the coordinator,
     which runs no command-guard, keeps its own).
-  docker-run, for a planner, builder or reviewer alone (a gate agent, the assistant and an ops
-    session pass): docker, past its global options (-H, --host, -c, --context, --config, -l,
-    --log-level and the --tls options with a value, joined or next; -D, --debug, --tls and
+  docker-run, for a planner, builder, reviewer or topic session alone (a gate agent, the assistant
+    and an ops session pass): docker, past its global options (-H, --host, -c, --context, --config,
+    -l, --log-level and the --tls options with a value, joined or next; -D, --debug, --tls and
     --tlsverify alone), running run or create, or container run or container create, but with
     --help as the first word after it. Reason: a container started by hand outlives the session
-    with its volumes, and the reaper never removes it. Its allowed way: start the worktree's stack
+    with its volumes, and the reaper never removes it. Its allowed way, but for a topic session,
+    whose settings deny team-stack up too, so its refusal names none: start the worktree's stack
     with team-stack up, or run the project's own script for a one-off server.
   The kill rows, bin/lib/kill_rules.py's (its header holds their wording): a kill by name or
     pattern, tmux's kill-*, a kill of PIDs read from input, of a PID the guard cannot read before
@@ -872,7 +873,7 @@ def _cd_into(command, context):
 
 
 # The roles the docker-run row holds: the workers whose roles forbid docker run.
-DOCKER_ROLES = frozenset(("planner", "builder", "reviewer"))
+DOCKER_ROLES = frozenset(("planner", "builder", "reviewer", "topic"))
 # docker's global options before its command that take a value, long and short; the rest
 # (-D, --debug, --tls, --tlsverify) stand alone.
 DOCKER_VALUED = frozenset(("--host", "--context", "--config", "--log-level", "--tlscacert", "--tlscert", "--tlskey"))
@@ -901,8 +902,9 @@ def _docker_command(words):
 
 
 def _docker_run(command, context):
-    """A planner's, builder's or reviewer's docker run or create, or docker container run or
-    create, past docker's global options; --help first after it passes."""
+    """A planner's, builder's, reviewer's or topic session's docker run or create, or docker
+    container run or create, past docker's global options; --help first after it passes. A topic's
+    refusal names no allowed way, since its settings deny team-stack up too."""
     if context.role not in DOCKER_ROLES:
         return False
     for words in heads(command):
@@ -912,7 +914,7 @@ def _docker_run(command, context):
         if rest[:1] == ["container"]:
             rest = _docker_command(rest[1:])
         if rest[:1] and rest[0] in DOCKER_STARTS and rest[1:2] != ["--help"]:
-            return True
+            return (True, None) if context.role == "topic" else True
     return False
 
 

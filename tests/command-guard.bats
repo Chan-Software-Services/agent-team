@@ -895,11 +895,14 @@ DOCKER_RUN="a container started by hand outlives the session with its volumes, a
 DOCKER_WAY="start the worktree's stack with ~/agent-team/bin/team-stack up, or run the project's own script for a one-off server (Conventioner's scripts/real-mongo-test.sh)"
 
 # The roles' rule against docker run, held by the docker-run row past docker's global options,
-# by a path, in a shell's string and after a cd; every other docker call passes.
+# by a path, in a shell's string and after a cd; every other docker call passes. A topic session's
+# refusal names no allowed way, since its settings deny team-stack up too.
 @test "a worker's docker run or docker create is refused past docker's global options, naming the allowed way" {
-  local role
-  for role in planner builder reviewer; do
-    refuses_as "$role" "$DOCKER_RUN" "$DOCKER_WAY" "docker run --rm -d -p 27017:27017 mongo:7" \
+  local role way
+  for role in planner builder reviewer topic; do
+    way=$DOCKER_WAY
+    [[ $role != topic ]] || way=''
+    refuses_as "$role" "$DOCKER_RUN" "$way" "docker run --rm -d -p 27017:27017 mongo:7" \
       "docker create --name x mongo:7" "docker container run --rm mongo:7" "docker container create mongo:7" \
       "docker -H unix:///run/docker.sock run mongo:7" "docker --host=unix:///run/docker.sock run mongo:7" \
       "docker --context default run mongo:7" "docker --context=default run mongo:7" "docker -c default run mongo:7" \
