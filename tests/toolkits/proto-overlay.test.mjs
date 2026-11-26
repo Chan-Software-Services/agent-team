@@ -39,7 +39,9 @@ const properties = [
 ];
 
 // A page's last script: its own elements' computed styles now, before the overlay draws, then,
-// once the toolbar is in, its own again and the toolbar's, posted to /styles.
+// once the toolbar is in and its Engine select enabled, its own again and the toolbar's, posted to
+// /styles. A switch, as the one that opened the page may still be running, disables controls and
+// shows a status line, which are other styles than the idle toolbar's.
 const styleProbe = `<script>(() => {
   const properties = ${JSON.stringify(properties)};
   const read = (node) => {
@@ -52,7 +54,7 @@ const styleProbe = `<script>(() => {
   const wait = () => {
     const root = document.querySelector("proto-overlay")?.shadowRoot;
     const bar = root?.querySelector("[role=toolbar]");
-    if (!bar) {
+    if (!bar || root.querySelector("select").disabled) {
       if (Date.now() - started < 15000) setTimeout(wait, 50);
       return;
     }
