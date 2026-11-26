@@ -85,7 +85,7 @@ PASS changes site: the primary checkout is clean"
 @test "a treehouse project's origin on a moved repository gets the pool move fix, never a bare set-url" {
   only_checks 200-projects.sh
   tools_at arch
-  local url fix="move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  local url fix="move conventioner's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move conventioner https://github.com/Chan-Software-Services/Conventioner.git"
   for url in https://github.com/chanjdaniel/Conventioner.git git@github.com:ChanJDaniel/Conventioner; do
     git -C "${CONVENTIONER:?}" remote set-url origin "$url"
     run_bin -1 team-doctor
@@ -117,7 +117,7 @@ PASS changes site: the primary checkout is clean"
   for url in git@github.com:chanjdaniel/Conventioner.git https://github.com/chanjdaniel/Conventioner; do
     git -C "${CONVENTIONER:?}" remote set-url origin "$url"
     run_bin -1 team-doctor
-    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, not https://github.com/chanjdaniel/Conventioner.git; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+    assert_equal "$(line_of 'origin conventioner')" "FAIL origin conventioner: origin is $url, not https://github.com/chanjdaniel/Conventioner.git; fix: move conventioner's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move conventioner https://github.com/Chan-Software-Services/Conventioner.git"
   done
   # The registry's own URL still passes, and another repository is set back as before.
   git -C "${CONVENTIONER:?}" remote set-url origin https://github.com/chanjdaniel/Conventioner.git
@@ -164,7 +164,7 @@ PASS moved origin site: site's checkout ~/projects/site has origin ssh://git@git
   run_bin -1 team-doctor
   assert_equal "$(line_of 'moved origins')" "FAIL moved origins: the code checkout $CODE_CHECKOUT has origin https://github.com/chanjdaniel/agent-team.git, a repository that moved to Chan-Software-Services/agent-team; the team home $TEAM_HOME has origin git@github.com:chanjdaniel/agent-team-records.git, a repository that moved to Chan-Software-Services/agent-team-records; fix: git -C $CODE_CHECKOUT remote set-url origin https://github.com/Chan-Software-Services/agent-team.git; git -C $TEAM_HOME remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git"
   # shellcheck disable=SC2088 # the doctor's lines name HOME as ~
-  assert_equal "$(line_of 'moved origin conventioner')" "FAIL moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  assert_equal "$(line_of 'moved origin conventioner')" "FAIL moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move conventioner https://github.com/Chan-Software-Services/Conventioner.git"
   # shellcheck disable=SC2088
   assert_equal "$(line_of 'moved origin intone')" "FAIL moved origin intone: intone's checkout ~/projects/intone_app has origin ssh://git@github.com/chanjdaniel/intone_app.git/, a repository that moved to Chan-Software-Services/intone_app; fix: git -C ~/projects/intone_app remote set-url origin https://github.com/Chan-Software-Services/intone_app.git"
   assert_contains "$(line_of 'moved origin site')" "PASS moved origin site: "
@@ -174,7 +174,7 @@ PASS moved origin site: site's checkout ~/projects/site has origin ssh://git@git
   git -C "${TEAM_HOME:?}" remote set-url origin https://github.com/Chan-Software-Services/agent-team-records.git
   git -C "${intone:?}" remote set-url origin https://github.com/Chan-Software-Services/intone_app.git
   run_bin -1 team-doctor
-  assert_equal "$(grep '^FAIL' <<<"$output")" "FAIL moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: see sops/portability.md, A repository that moves owner"
+  assert_equal "$(grep '^FAIL' <<<"$output")" "FAIL moved origin conventioner: conventioner's checkout ~/projects/Conventioner has origin https://github.com/ChanJDaniel/Conventioner/, a repository that moved to Chan-Software-Services/Conventioner; fix: move conventioner's treehouse pool with the origin: check that no session runs in a slot (sops/portability.md, A repository that moves owner, step 3.1), then run team-pool-move conventioner https://github.com/Chan-Software-Services/Conventioner.git"
   assert_equal "$(line_of 'moved origins')" "PASS moved origins: read 2 origins (the code checkout's and the team home's), and none names a moved repository of bin/lib/repo-moves.json"
 }
 
