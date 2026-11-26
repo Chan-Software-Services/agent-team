@@ -3,14 +3,15 @@
 // without --test-force-exit, so only owned() can end what it started: a test that fails or times
 // out mid-run leaves no process of the drill-shaped tree it started, the leader having had
 // SIGTERM first to clean up, a stubborn leader's process started on that SIGTERM included, and
-// node --test ends at once instead of waiting on them.
+// node --test ends at once instead of waiting on them. And ownedPid's end of a detached daemon
+// that is no child of the test, one that ignores SIGTERM, with the child below it.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { repoRoot, tempDir } from "./helpers/mcp.mjs";
-import { owned } from "./helpers/process.mjs";
+import { owned, ownedPid } from "./helpers/process.mjs";
 
 // A process is gone once ps no longer lists it, or lists it as a zombie its parent has yet to reap.
 const gone = (pid) => {
@@ -73,4 +74,30 @@ test("a test that fails or times out mid-run leaves no process it started throug
     }
     assert.ok(existsSync(join(dir, `${name}.cleaned`)), `${name}: the leader had no SIGTERM to clean up on`);
   }
+});
+
+test("ownedPid ends a detached process that is no child of the test, and the tree below it, when its test ends", async (t) => {
+  const dir = tempDir("owned-pid");
+  // A daemon as a client starts one: the shell that started it exits at once, so the daemon is
+  // nobody's child here. It ignores SIGTERM, and its child is a sleeper of its own.
+  const script = join(dir, "daemon.mjs");
+  writeFileSync(script, [
+    `import { spawn } from "node:child_process";`,
+    `import { writeFileSync } from "node:fs";`,
+    `process.on("SIGTERM", () => {});`,
+    `writeFileSync(${JSON.stringify(join(dir, "child"))}, String(spawn("sleep", ["600"], { stdio: "ignore" }).pid));`,
+    `writeFileSync(${JSON.stringify(join(dir, "daemon"))}, String(process.pid));`,
+    `setInterval(() => {}, 1000);`,
+  ].join("\n"));
+  execFileSync("sh", ["-c", `'${process.execPath}' '${script}' >/dev/null 2>&1 &`]);
+  for (const start = Date.now(); !(existsSync(join(dir, "daemon")) && existsSync(join(dir, "child"))) && Date.now() - start < 10_000; ) await new Promise((resolve) => setTimeout(resolve, 50));
+  const daemon = Number(readFileSync(join(dir, "daemon"), "utf8"));
+  const child = Number(readFileSync(join(dir, "child"), "utf8"));
+  assert.ok(!gone(daemon) && !gone(child));
+  await t.test("the test that owns it", (inner) => ownedPid(inner, daemon));
+  for (const pid of [daemon, child]) {
+    for (const start = Date.now(); !gone(pid) && Date.now() - start < 10_000; ) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(gone(pid), `${pid} still runs`);
+  }
+  assert.throws(() => ownedPid(t, daemon), { message: `ownedPid: no process ${daemon}` });
 });

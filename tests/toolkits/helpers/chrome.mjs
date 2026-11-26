@@ -10,6 +10,13 @@
 //   const browser = await browserSession(chrome.browserUrl);   CDP to the browser itself:
 //   await browser.send("Target.getTargets"); browser.on("Target.targetInfoChanged", fn);
 //   browser.close();
+//   const tab = await tabSession(chrome.browserUrl, targetId);   the same on one tab, by its id
+//   const server = await declaredServer(chrome.browserUrl);   the frontend toolkit's MCP server
+//                                                     as .mcp.json declares it, on that Chrome:
+//                                                     server.call(name, args) answers text,
+//                                                     server.client is the MCP client
+//   declared()                                        that server's entry in .mcp.json, with
+//                                                     ${CLAUDE_PLUGIN_ROOT} resolved to the toolkit
 //   await bringToFront(chrome.browserUrl, url);       Daniel's click on the tab at that URL: it is
 //                                                     its window's front tab, the most recent
 //   await chrome.close(); await site.close();
@@ -126,6 +133,19 @@ const loaded = (pages, url) => pages.some((t) => t.url === url && t.title && t.t
 // params of each event of that method.
 export async function browserSession(browserUrl) {
   const { webSocketDebuggerUrl } = await fetch(`${browserUrl}/json/version`, { signal: AbortSignal.timeout(10_000) }).then((r) => r.json());
+  return socketSession(webSocketDebuggerUrl);
+}
+
+// A CDP session on one tab of the browser at `browserUrl`, by its target id, over the tab's own
+// debugging socket, as browserSession's.
+export async function tabSession(browserUrl, targetId) {
+  const tabs = await fetch(`${browserUrl}/json/list`, { signal: AbortSignal.timeout(10_000) }).then((r) => r.json());
+  const tab = tabs.find((t) => t.id === targetId);
+  if (!tab) throw new Error(`tabSession: no tab ${targetId} in ${browserUrl}`);
+  return socketSession(tab.webSocketDebuggerUrl);
+}
+
+async function socketSession(webSocketDebuggerUrl) {
   const socket = new WebSocket(webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     socket.onopen = resolve;
@@ -274,6 +294,34 @@ export async function devtoolsClient(browserUrl, flags = []) {
     return text;
   };
   return { call, close: () => client.close() };
+}
+
+// The toolkit's server exactly as .mcp.json declares it, with ${CLAUDE_PLUGIN_ROOT} resolved as
+// Claude Code does for --plugin-dir and the Agent Chrome's port moved to the test's.
+export async function declaredServer(browserUrl) {
+  const { Client } = await import(join(modules, "@modelcontextprotocol", "sdk", "dist", "esm", "client", "index.js"));
+  const { StdioClientTransport } = await import(join(modules, "@modelcontextprotocol", "sdk", "dist", "esm", "client", "stdio.js"));
+  const entry = declared();
+  const client = new Client({ name: "toolkit-test", version: "0" });
+  await client.connect(
+    new StdioClientTransport({
+      command: entry.command === "node" ? process.execPath : entry.command,
+      args: entry.args.map((arg) => (arg === "--browser-url=http://127.0.0.1:9222" ? `--browser-url=${browserUrl}` : arg)),
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...entry.env },
+      stderr: "ignore",
+    }),
+  );
+  const call = async (name, args = {}) => {
+    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 90_000 });
+    return result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  };
+  return { client, call, close: () => client.close() };
+}
+
+// The frontend server's entry in the toolkit's .mcp.json, ${CLAUDE_PLUGIN_ROOT} resolved.
+export function declared() {
+  const text = readFileSync(join(repoRoot, "toolkits", "frontend", ".mcp.json"), "utf8");
+  return JSON.parse(text.replaceAll("${CLAUDE_PLUGIN_ROOT}", join(repoRoot, "toolkits", "frontend"))).mcpServers.frontend;
 }
 
 // Ask `connect()` for a server until its list_pages names `url`, as `listed` in inspect does:
