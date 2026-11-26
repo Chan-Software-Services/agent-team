@@ -452,6 +452,9 @@ removed $VAR_ROOT/git-template-3 (0 MB, untouched 2 h; no-mistakes)"
   [[ -d $BATS_TEST_TMPDIR/private-tmp/nm-cli-home-2 ]]
 }
 
+# wall-clock: a tmp entry's age is its file's time, which touch sets from the real clock, so with the
+# clock moved ahead the entry touched to be fresh is a year old and the processes are read.
+# bats test_tags=wall-clock
 @test "team-janitor tmp removes nothing and exits 1 saying why when the processes cannot be read" {
   stale_dir "$TMP_ROOT/nm-cli-home-1"
   # What the reading of the processes runs on each platform: tr over /proc's text on Linux, lsof
@@ -673,6 +676,9 @@ tmp.AbCdEfGhIj"
   [[ -d $TMP_ROOT/agent-team-gate-a1B2-c3d && -d $VAR_ROOT/agent-team-T394/nm-cli-home-1 ]]
 }
 
+# wall-clock: a tmp entry's age is its file's time, which the kernel writes from the real clock, so
+# with the clock moved ahead a session tmp made now is a year old and removed.
+# bats test_tags=wall-clock
 @test "team-janitor tmp removes a closed task's session tmp whole, and reads into it only while a process keeps it" {
   closed_task T367
   stale_dir "$TMP_ROOT/agent-team-T367/nm-cli-home-1"

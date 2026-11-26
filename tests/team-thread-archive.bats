@@ -158,6 +158,9 @@ archived 1563000000000001002 T10's interview thread: T10 · agent-team · Old"
   assert_equal "$(stub_calls curl)" ""
 }
 
+# wall-clock: it compares file times set by touch -d, from the clock it reads, with ones the kernel
+# writes from the real clock, so with the clock moved ahead waiting.json is never the older.
+# bats test_tags=wall-clock
 @test "a waiting.json older than the ledger or either list team-inbox reads archives nothing, and one as new does" {
   task_threads T7 rule 1563000000000000701
   thread 1563000000000000701 "$COORDINATOR" "T7 · agent-team · Done" $((2 * DAY))
