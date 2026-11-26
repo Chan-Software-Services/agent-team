@@ -18,8 +18,9 @@
 // chromium on PATH), started with a throwaway profile, the mock keychain and the basic password
 // store (no keychain prompt under the test's HOME), and no first-run, sync or metrics; its tabs
 // are off the record, so no page's first request waits for the profile's cookie database. Each
-// launch has 120 s to open its debugging port, so a slow start on a loaded machine is waited for;
-// a Chrome that exits before then, or one too old for open_devtools, fails startChrome at once.
+// launch has 120 s (or startChrome's { portWaitMs }) to open its debugging port, so a slow start
+// on a loaded machine is waited for; a Chrome that has not by then is ended and fails
+// startChrome, and one that exits first, or one too old for open_devtools, fails it at once.
 // inspect drives the DevTools window through the pinned chrome-devtools-mcp with
 // --experimentalDevtools and --devtoolsComments (which brings open_devtools), setting the
 // Elements panel's selection exactly as a click there does; ui-capture never runs with that flag.
@@ -32,9 +33,10 @@ import { repoRoot, tempDir } from "./mcp.mjs";
 
 const modules = join(repoRoot, "servers", "node_modules");
 const devtoolsServer = join(modules, "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js");
-// How long a launched Chrome has to open its debugging port: a loaded CI runner's has taken more
-// than 30 s, and a test or hook that waits it out still ends inside tests/run's 5 minutes.
-const portWaitMs = 120_000;
+// How long a launched Chrome has to open its debugging port, unless startChrome's caller says: a
+// loaded CI runner's has taken more than 30 s, and this is under half of the 5 minutes tests/run
+// gives a test or hook.
+const defaultPortWaitMs = 120_000;
 
 export function chromePath() {
   const candidates = [process.env.TEAM_CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
@@ -69,9 +71,9 @@ export async function serveFixture(pages) {
 // title). On a busy machine a tab can wait a long time for its first request, and a tab that has
 // not loaded never answers the DevTools protocol, so a tab not loaded within 20 s is closed and
 // opened again, twice, and then the whole Chrome is started again, twice at most.
-export async function startChrome(urls) {
+export async function startChrome(urls, { portWaitMs = defaultPortWaitMs } = {}) {
   for (let launch = 1; ; launch++) {
-    const chrome = await launchChrome();
+    const chrome = await launchChrome(portWaitMs);
     const browser = await browserSession(chrome.browserUrl);
     let pages = [];
     try {
@@ -182,7 +184,7 @@ export async function bringToFront(browserUrl, url) {
 }
 
 // One headless Chrome, at the tab it opens at its start.
-async function launchChrome() {
+async function launchChrome(portWaitMs) {
   const profile = tempDir("chrome-profile");
   const child = spawn(
     chromePath(),
@@ -231,6 +233,7 @@ async function launchChrome() {
       await Promise.race([drained, sleep(1000)]);
     }
     await close();
+    child.stderr.destroy();
     throw new Error(`${failure}:\n${log}`);
   }
   const browserUrl = `http://127.0.0.1:${port}`;
