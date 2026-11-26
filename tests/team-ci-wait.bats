@@ -2646,7 +2646,7 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   assert_contains "$output" "the PR's: test was not reported for 2 minutes, and the project requires it"
 }
 
-@test "a project that requires the macOS check, or another project's check of its name, is held by it as by any check" {
+@test "a project or its base's rules that require the macOS check, or another project's check of its name, hold it as any check" {
   own_team_project
   sed -i 's/^required_checks = \[\]$/required_checks = ["rust-macos"]/' "$TEAM_HOME/projects.toml"
   checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
@@ -2656,6 +2656,23 @@ team-ci-wait: the checks on a1b2c3d did not pass:
   run_bin team-ci-wait "$url" "$head"
   assert_equal "$status" 1
   assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  # A name the base's rules require, which a PR's head's wait reads too, is held as any check, red
+  # or never reported.
+  sed -i 's/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
+  rules_require rust-macos
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos failed: $macos_link"
+  checks 0 "$(check test SUCCESS 7001)"
+  head_runs 0 7001:CI:completed:success
+  echo 0 >"$GH_DIR/look"
+  run_bin team-ci-wait "$url" "$head"
+  assert_equal "$status" 1
+  assert_contains "$output" "the PR's: rust-macos was not reported for 2 minutes, though dev's rules require it"
+  rules_require
+  checks 0 "$(check test SUCCESS 7001)" "$(macos_check FAILURE)"
+  head_runs 0 7001:CI:completed:success "$(macos_run completed failure)"
   # Another project's check of the same name is one of its checks.
   sed -i 's/^\[agent-team/[proj/; s/^required_checks = .*$/required_checks = []/' "$TEAM_HOME/projects.toml"
   echo 0 >"$GH_DIR/look"

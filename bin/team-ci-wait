@@ -98,8 +98,9 @@
 # workflow's open run holds the wait, the settle or a queued clock, none is ever a failure, and
 # every text of a passed, none or pending end names each the look has, with its state (passed,
 # skipped, failed, cancelled or pending) and link: "; no merge waits on these, so none counted:
-# <name> <state> (<link>), ...". A name required_checks or, with --merge-group, the base's rules
-# require is never passed over. --run passes over none, since its caller named the one run.
+# <name> <state> (<link>), ...". A name required_checks require is never passed over, nor one the
+# base's rules require once a read of them has succeeded (above). --run passes over none, since
+# its caller named the one run.
 # Before each look, while the team holds offline (offline_hold), it ends at once with exit 75 and
 # the hold's text.
 # Then, while GitHub's rate limit stands for a resource the look reads (core, and graphql too with
